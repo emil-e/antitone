@@ -1,0 +1,9 @@
+[package]
+name = "black-shadow-check"
+version = "0.0.0"
+edition = "2024"
+[dependencies]
+antitone = { path = "../../../..", features = ["editor"] }
+glam = "=0.34.1"
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "metal", "glsl", "wgsl"] }
+pollster = "=1.0.1"

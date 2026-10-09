@@ -1,0 +1,2 @@
+   Compiling antitone v0.1.0 (/Users/emilsahlen/src/antitone)
+    Finished `release` profile [optimized] target(s) in 14.31s

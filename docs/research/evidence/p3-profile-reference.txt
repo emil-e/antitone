@@ -1,0 +1,9 @@
+   Compiling antitone v0.1.0 (/Users/emilsahlen/src/antitone)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.83s
+     Running `target/debug/antitone-rendering-probe`
+OCIO CPU bridge version=2.6.0 working_space=AP1
+target=Srgb pixels=4816 bulk_vs_scalar_max_error=0.00000000e0 ICC_bytes=592
+target=DisplayP3 pixels=4816 bulk_vs_scalar_max_error=0.00000000e0 ICC_bytes=604
+ld: warning: search path '/opt/homebrew/Cellar/gcc/15.2.0_1/lib/gcc/current/gcc/aarch64-apple-darwin25/15' not found
+ColorSync/CoreImage target=srgb ICC_to_extended_linear_sRGB_max_error=5.9604645e-08 pixels=200 (toes and gamut corners included)
+ColorSync/CoreImage target=display-p3 ICC_to_extended_linear_sRGB_max_error=6.2599778e-05 pixels=200 (toes and gamut corners included)

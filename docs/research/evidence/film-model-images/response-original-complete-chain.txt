@@ -1,0 +1,36 @@
+ld: warning: search path '/opt/homebrew/Cellar/gcc/15.2.0_1/lib/gcc/current/gcc/aarch64-apple-darwin25/15' not found
+OCIO 2.6.0 / input_space=ACEScg (linear AP1, D60)
+camera_pixels=3072 (full-resolution sample grids, when fixture exists)
+TARGET sRGB-D65
+neutral 0 -> 0 0 0
+neutral 0.001 -> 4.1291801e-06 4.1291814e-06 4.1291823e-06
+neutral 0.01 -> 0.00071227935 0.00071227946 0.00071227958
+neutral 0.18 -> 0.099999085 0.099999353 0.099999331
+neutral 1 -> 0.45756522 0.45756575 0.45756575
+neutral 10 -> 0.9079473 0.90794718 0.90794742
+neutral 1000 -> 1 1 1
+AP1_entry_vs_converted_AP0_reference_max_error=2.3245811e-06
+conformance_pixels=4816
+neutral_max_error=5.364418e-07 textures=2 textures3d=0 uniforms=0
+texture=aces_reach_m_table_0 sampler=aces_reach_m_table_0Sampler width=363 height=1 channels=0 binding=1 interpolation=1
+texture=aces_gamut_cusp_table_0 sampler=aces_gamut_cusp_table_0Sampler width=363 height=1 channels=1 binding=2 interpolation=1
+TARGET Display-P3-D65
+neutral 0 -> 0 0 0
+neutral 0.001 -> 4.129181e-06 4.1291823e-06 4.1291823e-06
+neutral 0.01 -> 0.00071227952 0.00071227958 0.00071227958
+neutral 0.18 -> 0.099999115 0.099999376 0.099999331
+neutral 1 -> 0.45756534 0.45756578 0.45756575
+neutral 10 -> 0.90794724 0.90794748 0.90794742
+neutral 1000 -> 1 1 1
+AP1_entry_vs_converted_AP0_reference_max_error=1.8179417e-06
+conformance_pixels=4816
+neutral_max_error=4.4703484e-07 textures=2 textures3d=0 uniforms=0
+texture=aces_reach_m_table_0 sampler=aces_reach_m_table_0Sampler width=363 height=1 channels=0 binding=1 interpolation=1
+texture=aces_gamut_cusp_table_0 sampler=aces_gamut_cusp_table_0Sampler width=363 height=1 channels=1 binding=2 interpolation=1
+   Compiling antitone v0.1.0 (/Users/emilsahlen/src/antitone)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.02s
+     Running `target/debug/antitone-gpu-probe`
+adapter=AdapterInfo { name: "Apple M5 Pro", vendor: 0, device: 0, device_type: IntegratedGpu, device_pci_bus_id: "", driver: "", driver_info: "", backend: Metal, subgroup_min_size: 4, subgroup_max_size: 64, transient_saves_memory: Some(true), limit_bucket: None }
+camera_processing_pixels=3072 CPU_f64_GPU_f32_max_abs_error=1.33514404e-5 submit_readback_seconds=0.004323
+input_space=AP1 target=srgb pixels=4816 CPU_GPU_max_abs_error=3.75509262e-6 compile_render_readback_seconds=0.433
+input_space=AP1 target=display-p3 pixels=4816 CPU_GPU_max_abs_error=2.86102295e-6 compile_render_readback_seconds=0.386

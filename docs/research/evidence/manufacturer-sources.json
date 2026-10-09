@@ -1,0 +1,60 @@
+{
+  "portra400": {
+    "file": "e4050_portra_400.pdf",
+    "origin": [
+      101.814,
+      544.606
+    ],
+    "offsets": [
+      0,
+      -10.173,
+      -29.86
+    ],
+    "axis": [
+      81.163,
+      265.612,
+      504.632,
+      689.147
+    ],
+    "exposure": [
+      -4,
+      1
+    ],
+    "sha256": "e83ac6775d37832a4cb466892a3e1cf4c88917a6ee93384e59d6924b1cd97e3a",
+    "page": 4,
+    "stream_object": 8,
+    "curve_line_width_pdf_points": 0.96,
+    "cubic_subdivisions": 256,
+    "line_width_density": 0.020811316153158274,
+    "resampling_note": "161 equally spaced exposure positions per trace; interpolated points are not independent measurements"
+  },
+  "ektar100": {
+    "file": "e4046_ektar_100.pdf",
+    "origin": [
+      87.101,
+      538.535
+    ],
+    "offsets": [
+      0,
+      -9.689,
+      -29.313
+    ],
+    "axis": [
+      81.193,
+      265.698,
+      499.592,
+      684.076
+    ],
+    "exposure": [
+      -3,
+      2
+    ],
+    "sha256": "e39971d16dc8679fb92742a229c237acde5b0dddb0428a708f8ad68d7a1d5590",
+    "page": 4,
+    "stream_object": 8,
+    "curve_line_width_pdf_points": 0.96,
+    "cubic_subdivisions": 256,
+    "line_width_density": 0.020814813208733542,
+    "resampling_note": "161 equally spaced exposure positions per trace; interpolated points are not independent measurements"
+  }
+}

@@ -1,0 +1,30 @@
+# Durable editor projects
+
+Scope basis: retained approved product work; standalone state foundation exists, editor integration is not started. [Roadmap](../../PLAN.md) owns order/status. Detailed editor transition/recovery/undo design still needs a focused plan before this multi-boundary change.
+
+## Goal and non-goals
+
+Make the current editor Save/Open/recoverable and undoable using the existing stable-ID project model, preserving current grades, full-resolution fitting and RGB-only references. No catalog, automatic migration, reference provenance revival, derived images in JSON or silently overwritten explicit saves.
+
+## Existing contracts and gaps
+
+Read [project-state contract](../contracts/project-state.md), [architecture](../architecture.md#persistence-boundary-and-known-gaps) and `src/project.rs`/tests. Schema 3 supports Original/model 2 and Film/model 3 with exact settings and explicit compatibility rejection. `load()` structural validation is not the same as `require_runtime()`.
+
+The editor currently owns path-keyed photo edits; its backend fixes WB on first successful session load. Opening a saved document must restore its recorded development policy, not initialize another implicit first-source WB. Existing save primitives are not UI dirty-state/recovery/undo implementation.
+
+## Proposed incremental sequence and acceptance
+
+1. Map authoritative editor roll/photo/output/source state to `Project` with stable IDs/order, and keep transient picker/view/worker state separate. Specify dirty transitions and unsaved-open/close behavior before wiring dialogs.
+2. Wire explicit Save/Open with runtime and GPU-domain checks before committing a replacement document. Preserve current state after failed/cancelled load/save. Verify exact model-2/model-3 settings and rendered output after reopen, including legal out-of-slider values.
+3. Wire missing/matching/changed-source UI using existing fingerprint/relink/explicit-acceptance primitives. Matching relink retains IDs/photo edits; source changes/removal never invalidate or resample stored calibration RGB.
+4. Add separate recovery/autosave with explicit saved-document identity and stale/recovery handling. Never silently overwrite the last explicit save; test interrupted/failed writes and corrupt/incompatible records. Do not claim complete power-loss durability without evidence.
+5. Add undo/redo for shared/photo edits, reset and successful picks, coalescing one drag/gesture into one operation. Invalid/cancelled picks create no undo entry; view/navigation and derived resources do not dirty processing state unless deliberately specified.
+6. Verify state/output reopen, document transitions while workers are active, stale-result rejection, recovery decisions and independent undo scopes. Retain narrower state tests before a real editor Save/Open smoke.
+
+Likely files: `src/{editor,editor_tests,project}.rs`, worker commands, dialogs/host close behavior, `tests/{project,film_project}.rs`, new focused recovery/undo tests. Coordinate later geometry/scopes settings without storing derived caches.
+
+## Progress / handoff
+
+Foundation only: schema, stable identity/order, atomic save/load and source primitives are tested. No live editor Save/Open, recovery or undo exists. No new implementation checks were run while extracting this package.
+
+Next action when selected: trace current state ownership and worker IDs, then agree a small first slice for stable-ID ownership plus Save/Open before adding recovery/undo machinery.

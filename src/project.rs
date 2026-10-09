@@ -1,0 +1,439 @@
+use crate::{
+    Error, PROCESSING_MODEL_VERSION,
+    color::wb_matrix,
+    processing::{Calibration, Inversion, PhotoSettings, RollSettings, exposure_multiplier},
+};
+use glam::{DMat3, DVec3};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::HashSet,
+    fs::File,
+    io::{Read, Write},
+    path::{Path, PathBuf},
+};
+
+pub const SCHEMA_VERSION: u32 = 3;
+// Bump when native/raw_bridge.cpp development or scan.rs matrix/normalization/floor contracts change.
+pub const DEVELOPMENT_CONTRACT: &str = "libraw-camera-ahd-u16-linear-ap0-bradford-row-sum-floor-v1";
+pub const OUTPUT_CONTRACT: &str = "ocio-2.6.0-aces2-100nit-antitone-srgb-displayp3-v2";
+const MAX_DOCUMENT_BYTES: u64 = 8 * 1024 * 1024;
+type Result<T> = std::result::Result<T, Error>;
+fn failure(error: impl std::fmt::Display) -> Error {
+    Error::Project(error.to_string())
+}
+fn require(condition: bool, message: &str) -> Result<()> {
+    if condition {
+        Ok(())
+    } else {
+        Err(failure(message))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SourceId(pub u64);
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Fingerprint {
+    pub bytes: u64,
+    pub blake3: String,
+}
+impl Fingerprint {
+    pub fn read(path: &Path) -> Result<Self> {
+        let mut file = File::open(path).map_err(failure)?;
+        let mut hash = blake3::Hasher::new();
+        let mut buffer = [0u8; 64 * 1024];
+        let mut bytes = 0;
+        loop {
+            let count = file.read(&mut buffer).map_err(failure)?;
+            if count == 0 {
+                break;
+            }
+            hash.update(&buffer[..count]);
+            bytes += count as u64;
+        }
+        Ok(Self {
+            bytes,
+            blake3: hash.finalize().to_hex().to_string(),
+        })
+    }
+    fn validate(&self) -> Result<()> {
+        require(
+            self.blake3.len() == 64
+                && self
+                    .blake3
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "invalid BLAKE3 content fingerprint",
+        )
+    }
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Development {
+    pub backend_version: String,
+    pub contract: String,
+    pub fixed_wb: [f64; 4],
+    pub inversion_space: String,
+    pub working_space: String,
+}
+impl Development {
+    pub fn new(backend_version: String, fixed_wb: [f64; 4]) -> Self {
+        Self {
+            backend_version,
+            fixed_wb,
+            contract: DEVELOPMENT_CONTRACT.into(),
+            inversion_space: "AP0/D60".into(),
+            working_space: "AP1/D60".into(),
+        }
+    }
+    fn validate(&self) -> Result<()> {
+        require(
+            !self.backend_version.is_empty()
+                && !self.contract.is_empty()
+                && !self.inversion_space.is_empty()
+                && !self.working_space.is_empty()
+                && self.fixed_wb.iter().all(|v| v.is_finite() && *v > 0.),
+            "invalid RAW development identity",
+        )
+    }
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceDevelopment {
+    pub dimensions: [u32; 2],
+    pub active_area: [u32; 4],
+    pub camera_to_ap0: [[f64; 3]; 3],
+    pub input_floor: f64,
+}
+impl SourceDevelopment {
+    fn validate(&self) -> Result<()> {
+        require(
+            self.dimensions.iter().all(|v| *v > 0)
+                && contains(
+                    [0, 0, self.dimensions[0], self.dimensions[1]],
+                    self.active_area,
+                ),
+            "invalid source dimensions/active area",
+        )?;
+        let matrix = DMat3::from_cols_array_2d(&self.camera_to_ap0);
+        require(
+            matrix.is_finite()
+                && matrix.determinant().abs() > 1e-12
+                && self.input_floor.is_finite()
+                && self.input_floor > 0.,
+            "invalid source matrix/precision floor",
+        )
+    }
+}
+fn contains(area: [u32; 4], region: [u32; 4]) -> bool {
+    region[2] > 0
+        && region[3] > 0
+        && region[0] >= area[0]
+        && region[1] >= area[1]
+        && u64::from(region[0]) + u64::from(region[2]) <= u64::from(area[0]) + u64::from(area[2])
+        && u64::from(region[1]) + u64::from(region[3]) <= u64::from(area[1]) + u64::from(area[3])
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Source {
+    pub id: SourceId,
+    pub path: PathBuf,
+    pub fingerprint: Fingerprint,
+    pub development: SourceDevelopment,
+    pub reference_only: bool,
+    pub photo: PhotoSettings,
+}
+impl Source {
+    fn validate(&self) -> Result<()> {
+        require(!self.path.as_os_str().is_empty(), "empty source path")?;
+        self.fingerprint.validate()?;
+        self.development.validate()?;
+        exposure_multiplier(self.photo.exposure)?;
+        wb_matrix(self.photo.wb)?;
+        Ok(())
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TiffTarget {
+    DisplayP3,
+    Srgb,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExrPrecision {
+    Half,
+    Full,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Output {
+    pub contract: String,
+    pub tiff: TiffTarget,
+    pub exr: ExrPrecision,
+}
+impl Default for Output {
+    fn default() -> Self {
+        Self {
+            contract: OUTPUT_CONTRACT.into(),
+            tiff: TiffTarget::DisplayP3,
+            exr: ExrPrecision::Half,
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Project {
+    pub schema: u32,
+    pub processing_model: u32,
+    pub next_source_id: u64,
+    pub development: Option<Development>,
+    pub sources: Vec<Source>,
+    // Source records survive removal from the ordered filmstrip.
+    pub order: Vec<SourceId>,
+    pub dmin: Option<[f64; 3]>,
+    pub dmax: Option<[f64; 3]>,
+    pub input_floor: Option<f64>,
+    pub roll: RollSettings,
+    pub output: Output,
+}
+impl Default for Project {
+    fn default() -> Self {
+        Self {
+            schema: SCHEMA_VERSION,
+            processing_model: PROCESSING_MODEL_VERSION,
+            next_source_id: 1,
+            development: None,
+            sources: Vec::new(),
+            order: Vec::new(),
+            dmin: None,
+            dmax: None,
+            input_floor: None,
+            roll: RollSettings::new_grade(),
+            output: Output::default(),
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SourceStatus {
+    Matching,
+    Missing,
+    Changed { actual: Fingerprint },
+}
+#[derive(Debug, Clone, Copy)]
+pub enum Save {
+    New,
+    Replace,
+}
+impl Project {
+    pub fn source(&self, id: SourceId) -> Result<&Source> {
+        self.sources
+            .iter()
+            .find(|source| source.id == id)
+            .ok_or_else(|| failure("unknown source ID"))
+    }
+    pub fn source_mut(&mut self, id: SourceId) -> Result<&mut Source> {
+        self.sources
+            .iter_mut()
+            .find(|source| source.id == id)
+            .ok_or_else(|| failure("unknown source ID"))
+    }
+    pub fn add_source(&mut self, mut source: Source) -> Result<SourceId> {
+        source.validate()?;
+        require(
+            self.development.is_some(),
+            "sources require development identity",
+        )?;
+        let id = SourceId(self.next_source_id);
+        let next = self
+            .next_source_id
+            .checked_add(1)
+            .ok_or_else(|| failure("source ID space exhausted"))?;
+        source.id = id;
+        self.sources.push(source);
+        self.order.push(id);
+        self.next_source_id = next;
+        Ok(id)
+    }
+    pub fn remove_from_filmstrip(&mut self, id: SourceId) -> Result<()> {
+        self.source(id)?;
+        self.order.retain(|candidate| *candidate != id);
+        Ok(())
+    }
+    pub fn resolve_path(&self, id: SourceId, project_path: &Path) -> Result<PathBuf> {
+        let path = &self.source(id)?.path;
+        Ok(if path.is_absolute() {
+            path.clone()
+        } else {
+            project_path.parent().unwrap_or(Path::new(".")).join(path)
+        })
+    }
+    pub fn inspect_source(&self, id: SourceId, project_path: &Path) -> Result<SourceStatus> {
+        let path = self.resolve_path(id, project_path)?;
+        match std::fs::metadata(&path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(SourceStatus::Missing);
+            }
+            Err(error) => return Err(failure(error)),
+            Ok(_) => {}
+        }
+        let actual = Fingerprint::read(&path)?;
+        Ok(if actual == self.source(id)?.fingerprint {
+            SourceStatus::Matching
+        } else {
+            SourceStatus::Changed { actual }
+        })
+    }
+    pub fn relink_matching(&mut self, id: SourceId, path: &Path) -> Result<()> {
+        let actual = Fingerprint::read(path)?;
+        require(
+            actual == self.source(id)?.fingerprint,
+            "relink has different content; explicit acceptance is required",
+        )?;
+        self.source_mut(id)?.path = path.to_path_buf();
+        Ok(())
+    }
+    pub fn accept_changed_source(
+        &mut self,
+        id: SourceId,
+        path: &Path,
+        development: SourceDevelopment,
+    ) -> Result<()> {
+        development.validate()?;
+        let fingerprint = Fingerprint::read(path)?;
+        let source = self.source_mut(id)?;
+        source.path = path.to_path_buf();
+        source.fingerprint = fingerprint;
+        source.development = development;
+        Ok(())
+    }
+    pub fn calibration(&self) -> Result<Option<Calibration>> {
+        let (Some(dmin), Some(dmax)) = (self.dmin, self.dmax) else {
+            return Ok(None);
+        };
+        let calibration = Calibration {
+            dmin: DVec3::from_array(dmin),
+            dmax: DVec3::from_array(dmax),
+            input_floor: self
+                .input_floor
+                .ok_or_else(|| failure("missing calibration floor"))?,
+        };
+        Ok(Some(calibration.validate()?))
+    }
+    pub fn validate(&self) -> Result<()> {
+        require(self.schema == SCHEMA_VERSION, "unsupported project schema")?;
+        require(
+            self.processing_model == self.roll.response.processing_model(),
+            "unsupported processing model; no automatic migration",
+        )?;
+        self.roll.channel_gammas()?;
+        exposure_multiplier(self.roll.exposure)?;
+        if let Some(development) = &self.development {
+            development.validate()?;
+        }
+        require(
+            !self.output.contract.is_empty(),
+            "missing output transform identity",
+        )?;
+        require(
+            self.sources.is_empty() || self.development.is_some(),
+            "sources require development identity",
+        )?;
+        let mut ids = HashSet::new();
+        for source in &self.sources {
+            require(
+                source.id.0 > 0 && source.id.0 < self.next_source_id && ids.insert(source.id),
+                "duplicate/invalid source ID allocator",
+            )?;
+            source.validate()?;
+        }
+        let mut ordered = HashSet::new();
+        for id in &self.order {
+            require(
+                ids.contains(id) && ordered.insert(*id),
+                "invalid/duplicate ordered source ID",
+            )?;
+        }
+        require(self.next_source_id > 0, "invalid source ID allocator")?;
+        if let Some(floor) = self.input_floor {
+            require(
+                floor.is_finite() && floor > 0.,
+                "invalid project precision floor",
+            )?;
+        }
+        for reference in [self.dmin, self.dmax].into_iter().flatten() {
+            require(
+                self.development.is_some(),
+                "references require development identity",
+            )?;
+            let floor = self
+                .input_floor
+                .ok_or_else(|| failure("missing calibration floor"))?;
+            require(
+                reference.iter().all(|v| v.is_finite() && *v >= floor),
+                "invalid stored reference RGB",
+            )?;
+        }
+        if let Some(calibration) = self.calibration()? {
+            Inversion::new(calibration, self.roll)?;
+        }
+        Ok(())
+    }
+    pub fn require_runtime(&self, backend_version: &str) -> Result<()> {
+        self.validate()?;
+        if let Some(development) = &self.development {
+            require(
+                development.backend_version == backend_version
+                    && development.contract == DEVELOPMENT_CONTRACT
+                    && development.inversion_space == "AP0/D60"
+                    && development.working_space == "AP1/D60",
+                "RAW development contract differs from this runtime",
+            )?;
+        }
+        require(
+            self.output.contract == OUTPUT_CONTRACT,
+            "output transform contract differs from this runtime",
+        )
+    }
+    pub fn load(path: &Path) -> Result<Self> {
+        let mut bytes = Vec::new();
+        File::open(path)
+            .map_err(failure)?
+            .take(MAX_DOCUMENT_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(failure)?;
+        require(
+            bytes.len() as u64 <= MAX_DOCUMENT_BYTES,
+            "project exceeds the 8 MiB document budget",
+        )?;
+        let project: Self = serde_json::from_slice(&bytes).map_err(failure)?;
+        project.validate()?;
+        Ok(project)
+    }
+    pub fn save(&self, path: &Path, policy: Save) -> Result<()> {
+        self.validate()?;
+        let bytes = serde_json::to_vec_pretty(self).map_err(failure)?;
+        require(
+            (bytes.len() as u64) < MAX_DOCUMENT_BYTES,
+            "project exceeds the 8 MiB document budget",
+        )?;
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(failure)?;
+        temporary.write_all(&bytes).map_err(failure)?;
+        temporary.write_all(b"\n").map_err(failure)?;
+        temporary.as_file().sync_all().map_err(failure)?;
+        match policy {
+            Save::New => {
+                temporary.persist_noclobber(path).map_err(failure)?;
+            }
+            Save::Replace => {
+                temporary.persist(path).map_err(failure)?;
+            }
+        }
+        Ok(())
+    }
+}

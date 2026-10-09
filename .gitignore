@@ -1,0 +1,16 @@
+# Build products, local dependencies and read-only RAW inputs
+target/
+/.cache/
+/samples/
+
+# macOS and Emacs temporary files
+.DS_Store
+*~
+.#*
+\#*\#
+
+# Local environment/credentials; keep example configuration shareable
+.env
+.env.*
+!.env.example
+!.env.template

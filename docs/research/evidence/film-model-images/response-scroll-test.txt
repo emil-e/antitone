@@ -1,0 +1,9 @@
+   Compiling antitone v0.1.0 (/Users/emilsahlen/src/antitone)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.88s
+     Running unittests src/lib.rs (target/debug/deps/antitone-b17060dab170cad5)
+
+running 1 test
+test editor::tests::response_section_is_reachable_by_scrolling_and_output_stays_pinned ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 31 filtered out; finished in 0.22s
+

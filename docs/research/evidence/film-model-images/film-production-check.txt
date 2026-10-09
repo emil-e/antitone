@@ -1,0 +1,22 @@
+WORKING response=Original gamma=0.65 EV=3 photo_WB=Balance { warmth: 0.0, tint: 0.0 } pixels=5120 max_abs=1.735614503e-6 worst_tolerance_multiple=9.506087181e-3 wrong_flags=0
+RENDER target=Srgb max_linear_abs=2.592802048e-6 max_encoded_abs=1.950248417e-6 GPU_black_CPU_nonblack=0
+RENDER target=DisplayP3 max_linear_abs=2.503395081e-6 max_encoded_abs=1.760783518e-6 GPU_black_CPU_nonblack=0
+WORKING response=Film { toe: 2.5, shoulder: 0.0 } gamma=0.65 EV=2.574 photo_WB=Balance { warmth: 0.0, tint: 0.0 } pixels=5120 max_abs=5.951645243e-8 worst_tolerance_multiple=2.648399041e-4 wrong_flags=0
+RENDER target=Srgb max_linear_abs=2.354383469e-6 max_encoded_abs=2.004808049e-6 GPU_black_CPU_nonblack=0
+RENDER target=DisplayP3 max_linear_abs=2.056360245e-6 max_encoded_abs=1.639922067e-6 GPU_black_CPU_nonblack=0
+WORKING response=Film { toe: 2.5, shoulder: 0.02 } gamma=0.65 EV=2.971 photo_WB=Balance { warmth: 0.0, tint: 0.0 } pixels=5120 max_abs=5.955857274e-8 worst_tolerance_multiple=2.646519377e-4 wrong_flags=0
+RENDER target=Srgb max_linear_abs=3.159046173e-6 max_encoded_abs=2.464355037e-6 GPU_black_CPU_nonblack=0
+RENDER target=DisplayP3 max_linear_abs=1.937150955e-6 max_encoded_abs=1.487246508e-6 GPU_black_CPU_nonblack=0
+WORKING response=Film { toe: 1.0, shoulder: 0.0 } gamma=3 EV=16 photo_WB=Balance { warmth: 0.0, tint: 0.0 } pixels=5120 max_abs=1.952923158e-3 worst_tolerance_multiple=2.956957993e-4 wrong_flags=0
+RENDER target=Srgb max_linear_abs=2.026557922e-6 max_encoded_abs=8.914681340e-7 GPU_black_CPU_nonblack=0
+RENDER target=DisplayP3 max_linear_abs=2.443790436e-6 max_encoded_abs=1.092124347e-6 GPU_black_CPU_nonblack=0
+WORKING response=Film { toe: 1.0, shoulder: 0.0 } gamma=3 EV=32 photo_WB=Balance { warmth: 0.0, tint: 0.0 } pixels=5120 max_abs=1.279867721e2 worst_tolerance_multiple=2.956967000e-4 wrong_flags=0
+RENDER target=Srgb max_linear_abs=0.000000000e0 max_encoded_abs=0.000000000e0 GPU_black_CPU_nonblack=0
+RENDER target=DisplayP3 max_linear_abs=0.000000000e0 max_encoded_abs=0.000000000e0 GPU_black_CPU_nonblack=0
+WORKING response=Film { toe: 1.125, shoulder: 0.0043210987 } gamma=0.65 EV=2.345678901 photo_WB=Balance { warmth: 0.345678901, tint: -0.456789012 } pixels=5120 max_abs=5.956825921e-8 worst_tolerance_multiple=2.634564867e-4 wrong_flags=0
+RENDER target=Srgb max_linear_abs=2.801418304e-6 max_encoded_abs=4.194800936e-6 GPU_black_CPU_nonblack=0
+RENDER target=DisplayP3 max_linear_abs=2.443790436e-6 max_encoded_abs=2.508765560e-6 GPU_black_CPU_nonblack=0
+WORKING response=Film { toe: 4.0, shoulder: 0.02 } gamma=3 EV=32 photo_WB=Balance { warmth: -1.0, tint: 1.0 } pixels=5120 max_abs=5.116052170e2 worst_tolerance_multiple=2.964698059e-4 wrong_flags=0
+RENDER target=Srgb max_linear_abs=0.000000000e0 max_encoded_abs=0.000000000e0 GPU_black_CPU_nonblack=0
+RENDER target=DisplayP3 max_linear_abs=0.000000000e0 max_encoded_abs=0.000000000e0 GPU_black_CPU_nonblack=0
+production response gate passed; source_RGB16_8_bytes_per_pixel=true; ordinary_working_and_target_f32=true; ACES_unchanged=true; original_extreme_domain_not_reinterpreted=true

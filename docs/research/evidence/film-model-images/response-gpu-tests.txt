@@ -1,0 +1,11 @@
+   Compiling antitone v0.1.0 (/Users/emilsahlen/src/antitone)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.69s
+     Running tests/gpu_film_response.rs (target/debug/deps/gpu_film_response-87f3ea8c100b1d71)
+
+running 2 tests
+test inverse_pole_cannot_hide_behind_a_floor_anchored_dmax ... ok
+film GPU: 291 accepted / 69 domain-or-range rejected; worst tolerance multiple=2.978629948e-4
+test film_gpu_matches_full_f64_for_shapes_matrices_balances_wb_and_exposure_extremes ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.81s
+

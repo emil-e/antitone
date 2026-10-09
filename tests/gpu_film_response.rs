@@ -1,0 +1,251 @@
+#![cfg(feature = "gpu")]
+use antitone::{
+    color::Balance,
+    gpu::{ProcessingKernel, ProcessingParameters, ProcessingSource},
+    processing::{Calibration, PhotoSettings, Pipeline, Response, RollSettings},
+};
+use glam::{DMat3, DVec3};
+
+fn camera(code: [u16; 4]) -> DVec3 {
+    DVec3::new(code[0] as f64, code[1] as f64, code[2] as f64) / 65535.
+}
+fn read(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    kernel: &ProcessingKernel,
+    source: &ProcessingSource,
+    params: ProcessingParameters,
+    n: usize,
+) -> Vec<[f32; 4]> {
+    let size = n as u64 * 16;
+    let output = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let read = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    kernel.encode(device, &mut encoder, source, &output, params);
+    encoder.copy_buffer_to_buffer(&output, 0, &read, 0, size);
+    queue.submit([encoder.finish()]);
+    let (tx, rx) = std::sync::mpsc::channel();
+    read.map_async(wgpu::MapMode::Read, .., move |r| tx.send(r).unwrap());
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    rx.recv().unwrap().unwrap();
+    let mapped = read.get_mapped_range(..).unwrap();
+    let result = bytemuck::cast_slice::<u8, [f32; 4]>(&mapped).to_vec();
+    drop(mapped);
+    read.unmap();
+    result
+}
+#[test]
+fn film_gpu_matches_full_f64_for_shapes_matrices_balances_wb_and_exposure_extremes() {
+    pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let kernel = ProcessingKernel::new(&device).await.unwrap();
+        let matrices = [
+            DMat3::from_cols(
+                DVec3::new(
+                    0.6062051167485374,
+                    0.01610845369283179,
+                    -0.003058878537448056,
+                ),
+                DVec3::new(0.38024835632147796, 1.192683246450255, -0.14899261591291027),
+                DVec3::new(
+                    0.013546559132378455,
+                    -0.20879153479206025,
+                    1.1520515014561068,
+                ),
+            ),
+            DMat3::IDENTITY,
+            DMat3::from_cols(
+                DVec3::new(1.7, -0.13, 0.1),
+                DVec3::new(-0.32, 1.2, -0.11),
+                DVec3::new(0.09, -0.25, 1.4),
+            ),
+        ];
+        let base_code = [12695, 8535, 7802, 0];
+        let mut codes = vec![
+            base_code,
+            [0; 4],
+            [1, 2, 2, 0],
+            [65535; 4],
+            [65535, 0, 0, 0],
+            [0, 65535, 0, 0],
+            [0, 0, 65535, 0],
+            [500, 200, 100, 0],
+        ];
+        let mut rng = 0x619af501_u32;
+        for _ in 0..512 {
+            let mut code = [0; 4];
+            for c in &mut code[..3] {
+                rng ^= rng << 13;
+                rng ^= rng >> 17;
+                rng ^= rng << 5;
+                *c = rng as u16;
+            }
+            codes.push(code);
+        }
+        let balances = [
+            Balance::default(),
+            Balance {
+                warmth: -1.,
+                tint: 1.,
+            },
+            Balance {
+                warmth: 1.,
+                tint: -1.,
+            },
+            Balance {
+                warmth: 0.123456789,
+                tint: -0.678901234,
+            },
+        ];
+        let mut accepted = 0;
+        let mut rejected = 0;
+        let mut worst = 0_f64;
+        for matrix in matrices {
+            let source = ProcessingSource::new(&device, &codes, matrix).unwrap();
+            let scans: Vec<_> = codes.iter().map(|c| matrix * camera(*c)).collect();
+            for case in 0..120 {
+                let toe = [1., 1.125, 2.5, 3.875, 4.][case % 5];
+                let shoulder = [0., 0.0043210987, 0.02][case / 5 % 3];
+                let gamma = [0.1, 0.65, 3.][case / 15 % 3];
+                let ev = [-32., -0.731234567, 0., 2.345678901, 16., 32.][case / 7 % 6];
+                let cal = Calibration {
+                    dmin: scans[0] * (1. + [-1e-12, 0., 1e-12][case / 11 % 3]),
+                    dmax: DVec3::new(0.008061, 0.003409, 0.001442),
+                    input_floor: 2.1630933622265155e-5,
+                };
+                let roll = RollSettings {
+                    response: Response::Film { toe, shoulder },
+                    gamma,
+                    balance: balances[case / 13 % 4],
+                    exposure: ev / 2.,
+                };
+                let photo = PhotoSettings {
+                    exposure: ev / 2.,
+                    wb: balances[case / 17 % 4],
+                };
+                let params = match ProcessingParameters::positive(cal, roll, photo) {
+                    Ok(p) => p,
+                    Err(_) => {
+                        rejected += 1;
+                        continue;
+                    }
+                };
+                let pipeline = Pipeline::new(cal, roll, photo).unwrap();
+                let gpu = read(&device, &queue, &kernel, &source, params, codes.len());
+                accepted += 1;
+                for (i, s) in scans.iter().enumerate() {
+                    let expected = pipeline.apply(*s).unwrap();
+                    let flags = (0..3).fold(0u32, |b, c| b | (u32::from(expected.floored[c]) << c));
+                    assert_eq!(gpu[i][3] as u32, flags);
+                    for c in 0..3 {
+                        let ratio = (gpu[i][c] as f64 - expected.rgb[c]).abs()
+                            / (2e-5 + 2e-4 * expected.rgb[c].abs());
+                        worst = worst.max(ratio);
+                        assert!(
+                            gpu[i][c].is_finite() && ratio <= 1.,
+                            "case={case} input={i} channel={c} GPU={:?} CPU={:?} ratio={ratio}",
+                            gpu[i],
+                            expected.rgb
+                        );
+                    }
+                }
+            }
+            let cal = Calibration {
+                dmin: scans[0],
+                dmax: scans[7],
+                input_floor: 2.1630933622265155e-5,
+            };
+            let roll = RollSettings::new_grade();
+            let params =
+                ProcessingParameters::positive(cal, roll, PhotoSettings::default()).unwrap();
+            let gpu = read(&device, &queue, &kernel, &source, params, codes.len());
+            let pipeline = Pipeline::new(cal, roll, PhotoSettings::default()).unwrap();
+            for i in [0, 7] {
+                let expected = pipeline.apply(scans[i]).unwrap().rgb;
+                for c in 0..3 {
+                    assert!(
+                        (gpu[i][c] as f64 - expected[c]).abs() <= 2e-5 + 2e-4 * expected[c].abs()
+                    );
+                }
+            }
+        }
+        let zero_source = ProcessingSource::new(&device, &[[0; 4]], DMat3::IDENTITY).unwrap();
+        for exponent in [80., 400., 1000., 4000.] {
+            let floor = 1e-10_f64;
+            let toe = 2.5;
+            let shoulder = 0.02;
+            let l = (1. / floor).ln();
+            let gamma = shoulder * l / std::f64::consts::LN_10 + toe * l / exponent;
+            let cal = Calibration {
+                dmin: DVec3::ONE,
+                dmax: DVec3::splat(floor),
+                input_floor: floor,
+            };
+            let roll = RollSettings {
+                gamma,
+                response: Response::Film { toe, shoulder },
+                ..RollSettings::default()
+            };
+            let parameters =
+                ProcessingParameters::positive(cal, roll, PhotoSettings::default()).unwrap();
+            let expected = Pipeline::new(cal, roll, PhotoSettings::default())
+                .unwrap()
+                .apply(DVec3::ZERO)
+                .unwrap();
+            let result = read(&device, &queue, &kernel, &zero_source, parameters, 1)[0];
+            assert_eq!(result[3], 7.);
+            for (c, actual) in result[..3].iter().enumerate() {
+                assert!(
+                    (*actual as f64 - expected.rgb[c]).abs() <= 2e-5 + 2e-4 * expected.rgb[c].abs()
+                );
+            }
+        }
+        assert!(accepted > 200 && rejected > 0);
+        println!(
+            "film GPU: {accepted} accepted / {rejected} domain-or-range rejected; worst tolerance multiple={worst:.9e}"
+        );
+    });
+}
+#[test]
+fn inverse_pole_cannot_hide_behind_a_floor_anchored_dmax() {
+    let gamma = 0.65;
+    let k = 0.02;
+    let floor = 10_f64.powf(-(gamma / k - 1e-5));
+    let cal = Calibration {
+        dmin: DVec3::ONE,
+        dmax: DVec3::splat(floor),
+        input_floor: floor,
+    };
+    let roll = RollSettings {
+        response: Response::Film {
+            toe: 2.5,
+            shoulder: k,
+        },
+        gamma,
+        ..RollSettings::default()
+    };
+    assert!(
+        Pipeline::new(cal, roll, PhotoSettings::default())
+            .unwrap()
+            .apply(DVec3::splat(floor))
+            .unwrap()
+            .rgb
+            .is_finite()
+    );
+    assert!(ProcessingParameters::positive(cal, roll, PhotoSettings::default()).is_err());
+}

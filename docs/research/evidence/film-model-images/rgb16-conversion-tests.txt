@@ -1,0 +1,10 @@
+   Compiling antitone v0.1.0 (/Users/emilsahlen/src/antitone)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.86s
+     Running unittests src/lib.rs (target/debug/deps/antitone-b17060dab170cad5)
+
+running 2 tests
+test gpu::tests::camera_matrix_rejects_unrepresentable_values_without_repair ... ok
+test gpu::tests::rgb16_conversion_matches_f64_and_preserves_original_f32_input_bits ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 27 filtered out; finished in 0.65s
+

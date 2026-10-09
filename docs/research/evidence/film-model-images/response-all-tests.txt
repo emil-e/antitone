@@ -1,0 +1,216 @@
+   Compiling antitone v0.1.0 (/Users/emilsahlen/src/antitone)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.22s
+     Running unittests src/lib.rs (target/debug/deps/antitone-b17060dab170cad5)
+
+running 32 tests
+test editor::controls::tests::resolve_orientation_keeps_blue_right_and_yellow_left_for_artwork_and_input ... ok
+test editor::tests::rectangle_mapping_is_independent_of_view_scale ... ok
+test editor::controls::tests::wb_wheel_directions_match_local_neutral_response_not_rgb_channel_gains ... ok
+test editor::controls::tests::wheel_adapters_roundtrip_full_coordinate_square_and_do_not_change_processing ... ok
+test editor::tests::rejected_reference_and_cancel_restore_view_without_changing_processing ... ok
+test editor::tests::repicking_uses_current_selection_and_starts_without_a_rectangle ... ok
+test editor::tests::neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings ... ok
+test editor::tests::navigation_invalidates_pending_overwrite ... ok
+test gpu::tests::camera_matrix_rejects_unrepresentable_values_without_repair ... ok
+test editor::tests::stopped_pick_worker_clears_busy_and_stale_samples_do_not_apply ... ok
+test raw::tests::bridge_layout_matches_native_static_assertions ... ok
+test raw::tests::d65_to_d60_preserves_neutral_and_rejects_missing_camera_matrix ... ok
+test raw::tests::metadata_inset_is_not_a_user_crop_and_invalid_geometry_is_rejected ... ok
+test raw::tests::region_sampling_reads_every_source_pixel ... ok
+test viewport::tests::fit_and_retina_one_to_one_have_correct_scale_and_roundtrips ... ok
+test viewport::tests::picker_measurements_are_source_coordinates_at_any_zoom_and_pan ... ok
+test viewport::tests::pointer_zoom_preserves_anchor_and_pan_clamps_to_source_bounds ... ok
+test viewport::tests::rectangle_move_and_corner_resize_keep_valid_source_bounds ... ok
+test raw::tests::failed_open_returns_a_diagnostic_without_a_handle ... ok
+test editor::controls::tests::disabling_a_pending_numeric_edit_does_not_commit_it ... ok
+test editor::controls::tests::tab_focus_allows_numeric_entry_without_a_mouse ... ok
+test editor::controls::tests::numeric_entry_commits_full_range_and_escape_cancels_without_hidden_rounding ... ok
+test editor::controls::tests::parameter_reset_uses_actual_default_and_disabled_controls_do_not_edit ... ok
+test editor::controls::tests::slider_keyboard_steps_are_precise_and_shift_is_finer ... ok
+test editor::controls::tests::wheel_pointer_updates_the_same_coordinates_and_disabled_wheels_are_read_only ... ok
+test editor::tests::original_grade_requires_explicit_response_opt_in_and_drawing_never_regrades_it ... ok
+test editor::controls::tests::response_inputs_preserve_precision_use_true_defaults_and_fine_shoulder_steps ... ok
+test editor::controls::tests::drawing_preserves_manual_precision_and_exposure_outside_normal_slider_range ... ok
+test editor::tests::section_and_color_resets_preserve_calibration_and_other_edit_scopes ... ok
+test editor::tests::structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage ... ok
+test editor::tests::response_section_is_reachable_by_scrolling_and_output_stays_pinned ... ok
+test gpu::tests::rgb16_conversion_matches_f64_and_preserves_original_f32_input_bits ... ok
+
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.67s
+
+     Running unittests src/bin/antitone.rs (target/debug/deps/antitone-dee0ca7c90198801)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/calibration_probe.rs (target/debug/deps/antitone_calibration_probe-421687b9646a9b59)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/export_probe.rs (target/debug/deps/antitone_export_probe-b7934b1cc82657aa)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/gpu_probe.rs (target/debug/deps/antitone_gpu_probe-ae6dce4c540eedaa)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/presentation_probe.rs (target/debug/deps/antitone_presentation_probe-3c9a0ef5a1b4b152)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/probe.rs (target/debug/deps/antitone_probe-bc07d5b82386e7f4)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/raw_probe.rs (target/debug/deps/antitone_raw_probe-b001a6a0751a7004)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/rendering_probe.rs (target/debug/deps/antitone_rendering_probe-eb689fea35e311c4)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/scan_probe.rs (target/debug/deps/antitone_scan_probe-4b1e230e56432843)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/export.rs (target/debug/deps/export-ea462122572e5e4d)
+
+running 4 tests
+test exr_refuses_nonfinite_half_overflow_and_full_overflow_without_final_files ... ok
+test exr_reopens_in_ap0_with_signed_hdr_and_correct_channel_precision_and_metadata ... ok
+test export_errors_cancel_partial_output_and_never_replace_without_confirmation ... ok
+test tiff_reopens_with_exact_rendered_codes_lossless_compression_and_pinned_icc ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/film_export.rs (target/debug/deps/film_export-4cf342febb864dc2)
+
+running 2 tests
+test invalid_response_metadata_cannot_create_an_export ... ok
+test film_exports_reopen_with_actual_response_and_unchanged_target_and_ap0_pixels ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/film_project.rs (target/debug/deps/film_project-4e141dc3b98bc471)
+
+running 3 tests
+test project_validation_rejects_shape_and_calibrated_shoulder_pole ... ok
+test film_parameters_roundtrip_exactly_and_model_response_mismatch_never_migrates ... ok
+test schema_three_missing_response_keeps_original_model_and_exact_grade ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/film_response.rs (target/debug/deps/film_response-8407d30ccc9db9c0)
+
+running 6 tests
+test invalid_shapes_nonfinite_inputs_and_floor_poles_are_rejected ... ok
+test film_one_zero_is_bit_identical_to_original_scalar_execution ... ok
+test new_grades_opt_into_film_and_original_settings_remain_original ... ok
+test signed_continuation_has_no_pedestal_or_above_base_clamp ... ok
+test neutral_fit_uses_actual_response_and_keeps_unrelated_settings ... ok
+test film_anchors_forward_inverse_and_monotonic_floor_domain ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/gpu_film_response.rs (target/debug/deps/gpu_film_response-a59e5b346a165fc4)
+
+running 2 tests
+test inverse_pole_cannot_hide_behind_a_floor_anchored_dmax ... ok
+test film_gpu_matches_full_f64_for_shapes_matrices_balances_wb_and_exposure_extremes ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.73s
+
+     Running tests/gpu_processing.rs (target/debug/deps/gpu_processing-f0d699c81102dcea)
+
+running 2 tests
+test gpu_parameters_reject_overflow_instead_of_silent_cpu_fallback ... ok
+test metal_processing_matches_the_cpu_model_and_source_bypass ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.50s
+
+     Running tests/processing.rs (target/debug/deps/processing-3c7cc37b5de5e037)
+
+running 21 tests
+test gamma_balance_preserves_the_geometric_mean_global_gamma ... ok
+test floors_only_scan_inputs_and_reports_each_affected_channel ... ok
+test ap0_ap1_conversion_preserves_xyz_white_and_signed_hdr_values ... ok
+test exposure_scopes_combine_without_changing_inversion ... ok
+test invalid_references_and_parameters_are_not_repaired ... ok
+test matches_direct_formula_in_the_well_conditioned_domain ... ok
+test anchors_hold_for_all_supported_global_gammas_and_balances ... ok
+test color_matrix_inverse_and_wb_identity ... ok
+test moving_bradford_wb_to_ap1_preserves_the_xyz_operation ... ok
+test compensated_patch_mean_preserves_small_contributions ... ok
+test near_dmin_is_not_rounded_to_zero_by_power_subtraction ... ok
+test photo_pick_uses_ap1_after_the_inversion_conversion ... ok
+test photo_neutral_accepts_outside_ap1_rgb_when_cone_responses_are_usable ... ok
+test photo_pick_uses_linear_patch_mean_and_does_not_change_shared_state ... ok
+test pipeline_outputs_ap1_and_ap0_export_conversion_restores_the_inversion_basis ... ok
+test preserves_negative_outputs_and_values_above_one ... ok
+test ratio_evaluation_avoids_overflow_when_the_result_is_finite ... ok
+test roll_pick_rejects_both_anchors_and_unusable_inputs_without_mutation ... ok
+test wb_gain_normalization_preserves_matrix_determinant ... ok
+test wb_pick_moves_the_controls_to_the_actual_correction ... ok
+test roll_pick_solves_the_mean_of_inverted_full_resolution_pixels ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/project.rs (target/debug/deps/project-de20cfe89f59bf30)
+
+running 7 tests
+test matching_relink_keeps_stable_ids_and_runtime_identity_is_checked_at_roll_level ... ok
+test malformed_source_identity_order_and_rgb_references_are_rejected_before_serialization ... ok
+test changed_photo_bytes_require_acceptance_without_invalidating_calibration ... ok
+test references_are_rgb_only_and_survive_removal_of_all_source_records ... ok
+test output_contract_and_old_schemas_are_rejected_without_reinterpretation ... ok
+test atomic_roundtrip_preserves_calibration_and_output_after_removal_and_missing_sources ... ok
+test failed_save_and_unknown_schema_never_damage_the_previous_document ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/rendering.rs (target/debug/deps/rendering-eb3f59735d3d72a6)
+
+running 6 tests
+test serialized_icc_primaries_and_float_conversion_match_the_rendering_target ... ok
+test display_p3_preserves_displayable_colors_outside_srgb ... ok
+test owned_ocio_processors_render_bulk_and_chunks_without_mutating_working_rgb ... ok
+test sdr_targets_preserve_colored_grid_and_yellows_across_exposure ... ok
+test output_transfers_have_the_correct_toes_and_reject_invalid_channels ... ok
+test serialized_icc_trcs_match_each_encoded_16_bit_value ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+     Running tests/viewer.rs (target/debug/deps/viewer-97d65e1b32a53bd3)
+
+running 3 tests
+test tiled_linear_area_average_matches_scalar_fractional_footprints ... ok
+test gpu_yellows_retain_hue_and_continuity_across_exposure ... ok
+test reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.80s
+
+   Doc-tests antitone
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

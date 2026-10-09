@@ -1,0 +1,10 @@
+   Compiling antitone v0.1.0 (/Users/emilsahlen/src/antitone)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.47s
+     Running `target/debug/antitone-probe`
+Antitone processing model 2 — synthetic numerical probe
+The input floor below is a synthetic test value, not a validated RAW default.
+scan=DVec3(1.0, 1.0, 1.0) positive=DVec3(0.0, 0.0, 0.0) floored=[false, false, false]
+scan=DVec3(0.1, 0.1, 0.1) positive=DVec3(0.02812854626134999, 0.02812854626134999, 0.02812854626134999) floored=[false, false, false]
+scan=DVec3(0.01, 0.01, 0.01) positive=DVec3(1.0, 1.0, 1.0) floored=[false, false, false]
+scan=DVec3(1.1, 1.1, 1.1) positive=DVec3(-0.00011434449934257883, -0.00011434449934257883, -0.00011434449934257883) floored=[false, false, false]
+scan=DVec3(0.0, 0.0, 0.0) positive=DVec3(1426297.446944714, 1426297.446944714, 1426297.446944714) floored=[true, true, true]
