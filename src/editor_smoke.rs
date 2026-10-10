@@ -10,6 +10,10 @@ pub struct SmokeEditor {
     frames: u32,
     start: std::time::Instant,
     layout_start: Option<std::time::Instant>,
+    project_directory: Option<tempfile::TempDir>,
+    unvisited: Option<PathBuf>,
+    saved_project: Option<crate::project::Project>,
+    comparison: Option<(DVec3, Vec<glam::Vec3>, Vec<glam::Vec3>)>,
     pub result: Arc<std::sync::Mutex<Option<String>>>,
 }
 
@@ -19,7 +23,7 @@ impl SmokeEditor {
         queue: &wgpu::Queue,
         arguments: &[String],
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        if arguments.len() != 11 {
+        if arguments.len() != 11 && arguments.len() != 12 {
             return Err("--smoke DMIN.ARW x y w h DMAX.ARW x y w h PHOTO.ARW".into());
         }
         let rect = |offset: usize| -> Result<Rect, Box<dyn std::error::Error>> {
@@ -30,8 +34,19 @@ impl SmokeEditor {
                 height: arguments[offset + 3].parse()?,
             })
         };
+        let project_directory = (arguments.len() == 12)
+            .then(tempfile::tempdir)
+            .transpose()?;
+        let mut editor = Editor::new(device, queue, None);
+        if project_directory.is_some() {
+            editor.document.project.development = Some(Development::new(
+                crate::raw::version(),
+                [2173., 1024., 1731., 1024.],
+            ));
+        }
+        editor.add_raws(vec![PathBuf::from(&arguments[0])]);
         Ok(Self {
-            editor: Editor::new(device, queue, Some(PathBuf::from(&arguments[0]))),
+            editor,
             dmin_source: PathBuf::from(&arguments[0]),
             dmax_source: PathBuf::from(&arguments[5]),
             photo: PathBuf::from(&arguments[10]),
@@ -41,8 +56,41 @@ impl SmokeEditor {
             frames: 0,
             start: std::time::Instant::now(),
             layout_start: None,
+            project_directory,
+            unvisited: arguments.get(11).map(PathBuf::from),
+            saved_project: None,
+            comparison: None,
             result: Arc::new(std::sync::Mutex::new(None)),
         })
+    }
+    fn compare_pixel(&self) -> Result<(DVec3, Vec<glam::Vec3>, Vec<glam::Vec3>), Error> {
+        let document = &self.editor.document;
+        let id = self.editor.current_source.expect("smoke selected source");
+        let source = document.project.source(id)?;
+        let scan = Scan::open(
+            &document.source_path(id)?,
+            document
+                .project
+                .development
+                .as_ref()
+                .map(|value| value.fixed_wb),
+        )?;
+        let pixel = scan.pixel(
+            scan.area.x + scan.area.width / 2,
+            scan.area.y + scan.area.height / 2,
+        )?;
+        let working = crate::processing::Pipeline::new(
+            document.project.calibration()?.expect("smoke calibration"),
+            document.project.roll,
+            source.photo,
+        )?
+        .apply(pixel)?
+        .rgb;
+        Ok((
+            working,
+            crate::rendering::CpuRenderer::new(OutputTarget::Srgb)?.render(&[working])?,
+            crate::rendering::CpuRenderer::new(OutputTarget::DisplayP3)?.render(&[working])?,
+        ))
     }
     fn pick(&mut self, kind: Pick, region: Rect) {
         self.editor.busy = true;
@@ -62,17 +110,25 @@ impl SmokeEditor {
 impl host::App for SmokeEditor {
     fn ui(&mut self, ui: &mut egui::Ui) {
         self.editor.ui(ui);
-        if self.start.elapsed() > Duration::from_secs(45) {
+        if self.start.elapsed()
+            > Duration::from_secs(if self.project_directory.is_some() {
+                120
+            } else {
+                45
+            })
+        {
             *self.result.lock().unwrap() =
                 Some(format!("editor smoke timed out: {}", self.editor.status));
+            self.editor.allow_close = true;
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
         if self.editor.busy {
             return;
         }
-        if self.editor.ready.is_none() {
+        if self.editor.ready.is_none() && !matches!(self.phase, 17 | 18) {
             *self.result.lock().unwrap() = Some(self.editor.status.clone());
+            self.editor.allow_close = true;
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
@@ -96,6 +152,7 @@ impl host::App for SmokeEditor {
             4 => {
                 self.frames += 1;
                 self.editor.source = self.frames >= 16;
+                self.editor.source_exposure = if self.editor.source { 2. } else { 0. };
                 self.editor.target = if self.frames < 8 {
                     OutputTarget::DisplayP3
                 } else {
@@ -202,7 +259,253 @@ impl host::App for SmokeEditor {
                     self.frames = 0;
                 }
             }
+            13 if self.project_directory.is_some() => {
+                self.editor
+                    .add_raws(vec![self.unvisited.clone().expect("unvisited RAW")]);
+                self.phase = 14;
+            }
+            14 => {
+                let unvisited = self
+                    .editor
+                    .document
+                    .find_source(self.unvisited.as_ref().unwrap())
+                    .unwrap();
+                assert_eq!(
+                    self.editor
+                        .document
+                        .project
+                        .source(unvisited)
+                        .unwrap()
+                        .photo,
+                    PhotoSettings::default()
+                );
+                self.editor.photo.exposure = 7.123456789012345;
+                self.editor.roll.response = crate::processing::Response::Film {
+                    toe: 2.789123456789,
+                    shoulder: 0.003123456789,
+                };
+                let current = self.editor.current_source.unwrap();
+                let position = self
+                    .editor
+                    .document
+                    .project
+                    .order
+                    .iter()
+                    .position(|id| *id == current)
+                    .unwrap();
+                self.editor.document.project.order.swap(0, position);
+                self.editor.selected = 0;
+                self.editor.sync_document();
+                self.comparison = Some(self.compare_pixel().unwrap());
+                self.saved_project = Some(self.editor.document.project.clone());
+                let path = self
+                    .project_directory
+                    .as_ref()
+                    .unwrap()
+                    .path()
+                    .join("film.antitone.json");
+                self.editor
+                    .queue_save(path, crate::project::Save::New, None);
+                self.phase = 15;
+            }
+            15 => {
+                assert!(!self.editor.document.dirty());
+                assert_eq!(
+                    self.editor.document.project,
+                    *self.saved_project.as_ref().unwrap()
+                );
+                self.editor.start_document(DocumentWork::New);
+                self.phase = 17;
+            }
+            17 => {
+                assert!(self.editor.document.project.development.is_none());
+                self.editor.add_raws(vec![self.dmax_source.clone()]);
+                self.phase = 18;
+            }
+            18 => {
+                let wb = self
+                    .editor
+                    .document
+                    .project
+                    .development
+                    .as_ref()
+                    .unwrap()
+                    .fixed_wb;
+                assert_eq!(
+                    wb,
+                    crate::raw::RawFile::open(&self.dmax_source)
+                        .unwrap()
+                        .metadata
+                        .cam_mul
+                );
+                assert_ne!(
+                    wb,
+                    self.saved_project
+                        .as_ref()
+                        .unwrap()
+                        .development
+                        .as_ref()
+                        .unwrap()
+                        .fixed_wb
+                );
+                self.editor.start_document(DocumentWork::Open(
+                    self.project_directory
+                        .as_ref()
+                        .unwrap()
+                        .path()
+                        .join("film.antitone.json"),
+                ));
+                self.phase = 19;
+            }
+            19 => {
+                assert_eq!(
+                    self.editor.document.project,
+                    *self.saved_project.as_ref().unwrap()
+                );
+                assert!(!self.editor.document.dirty());
+                assert_eq!(
+                    self.editor.ready.as_ref().unwrap().development.fixed_wb,
+                    self.editor
+                        .document
+                        .project
+                        .development
+                        .as_ref()
+                        .unwrap()
+                        .fixed_wb
+                );
+                if self.editor.settled.is_some() {
+                    assert_eq!(
+                        self.compare_pixel().unwrap(),
+                        *self.comparison.as_ref().unwrap()
+                    );
+                    self.editor.roll.response = crate::processing::Response::Original;
+                    self.editor.sync_document();
+                    self.comparison = Some(self.compare_pixel().unwrap());
+                    self.saved_project = Some(self.editor.document.project.clone());
+                    self.editor.queue_save(
+                        self.project_directory
+                            .as_ref()
+                            .unwrap()
+                            .path()
+                            .join("original.antitone.json"),
+                        crate::project::Save::New,
+                        None,
+                    );
+                    self.phase = 20;
+                }
+            }
+            20 => {
+                self.editor.start_document(DocumentWork::Open(
+                    self.project_directory
+                        .as_ref()
+                        .unwrap()
+                        .path()
+                        .join("original.antitone.json"),
+                ));
+                self.phase = 21;
+            }
+            21 => {
+                assert!(self.editor.roll.response.is_original());
+                assert_eq!(
+                    self.editor.document.project,
+                    *self.saved_project.as_ref().unwrap()
+                );
+                assert!(!self.editor.document.dirty());
+                assert_eq!(
+                    self.compare_pixel().unwrap(),
+                    *self.comparison.as_ref().unwrap()
+                );
+                let mut changed = self.editor.document.project.clone();
+                changed
+                    .source_mut(changed.order[0])
+                    .unwrap()
+                    .fingerprint
+                    .blake3 = "0".repeat(64);
+                let path = self
+                    .project_directory
+                    .as_ref()
+                    .unwrap()
+                    .path()
+                    .join("changed.antitone.json");
+                changed.save(&path, crate::project::Save::New).unwrap();
+                self.editor.start_document(DocumentWork::Open(path));
+                self.phase = 22;
+            }
+            22 => {
+                assert_eq!(
+                    self.editor.document.project,
+                    *self.saved_project.as_ref().unwrap()
+                );
+                assert!(self.editor.status.contains("content changed"));
+                let mut missing = self.editor.document.project.clone();
+                missing.source_mut(missing.order[0]).unwrap().path = self
+                    .project_directory
+                    .as_ref()
+                    .unwrap()
+                    .path()
+                    .join("missing.ARW");
+                let path = self
+                    .project_directory
+                    .as_ref()
+                    .unwrap()
+                    .path()
+                    .join("missing.antitone.json");
+                missing.save(&path, crate::project::Save::New).unwrap();
+                self.editor.start_document(DocumentWork::Open(path));
+                self.phase = 23;
+            }
+            23 => {
+                assert_eq!(
+                    self.editor.document.project,
+                    *self.saved_project.as_ref().unwrap()
+                );
+                assert!(self.editor.status.contains("missing.ARW"));
+                assert!(self.editor.ready.is_some());
+                let mut incompatible = self.editor.document.project.clone();
+                incompatible
+                    .source_mut(incompatible.order[0])
+                    .unwrap()
+                    .development
+                    .dimensions[0] += 2;
+                let path = self
+                    .project_directory
+                    .as_ref()
+                    .unwrap()
+                    .path()
+                    .join("incompatible.antitone.json");
+                incompatible.save(&path, crate::project::Save::New).unwrap();
+                self.editor.start_document(DocumentWork::Open(path));
+                self.phase = 24;
+            }
+            24 => {
+                assert_eq!(
+                    self.editor.document.project,
+                    *self.saved_project.as_ref().unwrap()
+                );
+                assert!(self.editor.status.contains("development identity differs"));
+                assert!(self.editor.ready.is_some());
+                if self
+                    .editor
+                    .thumbnails
+                    .ready_count(&self.editor.document, self.editor.target)
+                    < self.editor.document.project.order.len().min(16)
+                {
+                    return;
+                }
+                println!(
+                    "thumbnail_smoke ready={} retained selected RAW/document after background jobs",
+                    self.editor
+                        .thumbnails
+                        .ready_count(&self.editor.document, self.editor.target)
+                );
+                println!(
+                    "project_smoke passed: stable IDs/order/unvisited RAW, custom saved WB after New/other-WB import, exact model-3/model-2 state and working/sRGB/P3 pixel reopen, live settled GPU preview, changed/missing/incompatible ordered RAW atomicity"
+                );
+                self.editor.allow_close = true;
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            }
             13 => {
+                self.editor.allow_close = true;
                 println!(
                     "editor_smoke passed: full-resolution calibration, GPU edits/both targets/source bypass, fit and native-pixel settled views, RGB-only Dmin/Dmax, current-photo re-pick, explicit reference source switching and working-photo return; elapsed_seconds={:.2}",
                     self.start.elapsed().as_secs_f64()

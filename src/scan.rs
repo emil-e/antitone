@@ -25,9 +25,7 @@ impl Scan {
         let matrix = raw.metadata.camera_to_ap0()?;
         let area = raw.metadata.image_area()?;
         raw.develop_camera(wb)?;
-        let input_floor = (matrix.x_axis.abs() + matrix.y_axis.abs() + matrix.z_axis.abs())
-            .max_element()
-            / 65535.0;
+        let input_floor = Self::precision_floor(matrix);
         Ok(Self {
             raw,
             camera_to_ap0: matrix,
@@ -37,6 +35,9 @@ impl Scan {
         })
     }
 
+    pub(crate) fn precision_floor(matrix: DMat3) -> f64 {
+        (matrix.x_axis.abs() + matrix.y_axis.abs() + matrix.z_axis.abs()).max_element() / 65535.0
+    }
     pub fn dimensions(&self) -> Result<(u32, u32)> {
         let image = self.raw.camera_image()?;
         Ok((image.width, image.height))

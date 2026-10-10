@@ -10,7 +10,42 @@ fn fixture() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
     editor.dmin = Some(DVec3::new(0.2, 0.15, 0.1));
     editor.dmax = Some(DVec3::new(0.008, 0.005, 0.002));
     editor.floor = 2.2e-5;
+    editor.document.project.development =
+        Some(Development::new(crate::raw::version(), [2., 1., 1.5, 1.]));
     (editor, send, receiver)
+}
+#[test]
+fn source_inspection_is_transient_and_pick_commands_never_receive_its_gain() {
+    let (mut editor, send, receiver) = fixture();
+    editor.sync_document();
+    let project = editor.document.project.clone();
+    let settings = (editor.dmin, editor.dmax, editor.roll, editor.photo);
+    editor.source_exposure = 2.3456789;
+    editor.source = true;
+    editor.sync_document();
+    assert_eq!(editor.document.project, project);
+    editor.begin_pick(Pick::Dmin);
+    editor.region = Some(patch());
+    editor.apply_pick();
+    let Command::Pick(id, kind, _, _, roll, photo) = receiver.try_recv().unwrap() else {
+        panic!()
+    };
+    assert_eq!(roll, settings.2);
+    assert_eq!(photo, settings.3);
+    send.send(Message::Picked(
+        id,
+        kind,
+        Ok(Measurement::Reference(settings.0.unwrap())),
+    ))
+    .unwrap();
+    editor.receive();
+    assert_eq!(
+        (editor.dmin, editor.dmax, editor.roll, editor.photo),
+        settings
+    );
+    assert_eq!(editor.source_exposure, 2.3456789);
+    editor.sync_document();
+    assert_eq!(editor.document.project, project);
 }
 #[test]
 fn rejected_reference_and_cancel_restore_view_without_changing_processing() {
@@ -142,7 +177,10 @@ fn navigation_invalidates_pending_overwrite() {
     ));
     editor.load("another.arw".into());
     assert!(editor.overwrite.is_none());
-    assert!(matches!(receiver.recv().unwrap(), Command::Load(1, _)));
+    assert!(matches!(
+        receiver.recv().unwrap(),
+        Command::Load(1, _, _, _)
+    ));
 }
 fn patch() -> Rect {
     Rect {
@@ -155,7 +193,30 @@ fn patch() -> Rect {
 #[test]
 fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
     let (mut editor, send, receiver) = fixture();
-    editor.files = vec!["previous.arw".into(), "current.arw".into()];
+    for path in ["previous.arw", "current.arw"] {
+        editor
+            .document
+            .register(
+                Source {
+                    id: SourceId(0),
+                    path: path.into(),
+                    fingerprint: crate::project::Fingerprint {
+                        bytes: 1,
+                        blake3: "a".repeat(64),
+                    },
+                    development: crate::project::SourceDevelopment {
+                        dimensions: [900, 600],
+                        active_area: [0, 0, 900, 600],
+                        camera_to_ap0: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+                        input_floor: 2.2e-5,
+                    },
+                    reference_only: false,
+                    photo: PhotoSettings::default(),
+                },
+                Development::new(crate::raw::version(), [2., 1., 1.5, 1.]),
+            )
+            .unwrap();
+    }
     editor.selected = 1;
     editor.region = Some(patch());
     editor.begin_pick(Pick::Dmin);
@@ -171,7 +232,7 @@ fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
     .unwrap();
     editor.receive();
     assert_eq!(editor.dmin, Some(value));
-    editor.files.clear();
+    editor.document.project.order.clear();
     assert!(editor.calibration().is_some());
     editor.begin_pick(Pick::Dmax);
     assert!(editor.region.is_none());

@@ -14,7 +14,7 @@ ProPhoto and 100-nit SDR Rec.2020 were rejected after colour-collapse gates. [De
 
 Convert linear target RGB into extended-sRGB, then encode once into `RGBA16Float`. Explicitly tag the macOS Metal layer extended-sRGB after each surface configuration and disable EDR. Ordinary egui UI is encoded sRGB; handle image/UI encoding separately. OS monitor conversion is the only monitor transform. Preserve out-of-sRGB coordinates from P3 before that conversion.
 
-Layer tagging and offscreen reference/readback do not establish physical calibration, 100-nit monitor luminance, monitor-transition correctness or M1/macOS-14 acceptance. Zero submitted frames is a failed onscreen check, not success via an occlusion bypass.
+Layer tagging and offscreen reference/readback do not establish physical calibration, 100-nit monitor luminance, monitor-transition correctness or broader-device/macOS-14 acceptance. Zero submitted frames is a failed onscreen check, not success via an occlusion bypass.
 
 ## TIFF
 

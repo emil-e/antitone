@@ -39,6 +39,14 @@ impl ProcessingParameters {
         }
     }
 
+    pub fn source_inspection(exposure: f64) -> Result<Self, Error> {
+        let gain = exposure_multiplier(exposure)?;
+        Ok(Self {
+            post: matrix_columns(ap0_to_ap1() * gain),
+            ..Self::source()
+        })
+    }
+
     pub fn positive(
         calibration: Calibration,
         roll: RollSettings,

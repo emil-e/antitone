@@ -1,6 +1,101 @@
 use super::*;
 
 #[test]
+fn source_inspection_is_zero_default_and_changes_only_the_source_post_matrix() {
+    let base = ProcessingParameters::source();
+    assert_eq!(
+        bytemuck::bytes_of(&base),
+        bytemuck::bytes_of(&ProcessingParameters::source_inspection(0.).unwrap())
+    );
+    for exposure in [-16.0_f64, -2., 2., 16.] {
+        let gain = exposure.exp2();
+        let adjusted = ProcessingParameters::source_inspection(exposure).unwrap();
+        assert_eq!(adjusted.post, matrix_columns(ap0_to_ap1() * gain));
+        let unchanged = ProcessingParameters {
+            post: base.post,
+            ..adjusted
+        };
+        assert_eq!(bytemuck::bytes_of(&unchanged), bytemuck::bytes_of(&base));
+    }
+    for exposure in [f64::NAN, f64::INFINITY, -17., 17.] {
+        assert!(ProcessingParameters::source_inspection(exposure).is_err());
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn source_inspection_gpu_matches_scaled_camera_to_ap1_with_zero_diagnostic_flags() {
+    pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let codes = [
+            [16384, 8192, 4096, 0],
+            [0, 0, 0, 5432],
+            [65535, 65535, 65535, 0],
+            [4000, 16000, 8000, 65535],
+        ];
+        let matrix = DMat3::from_cols(
+            DVec3::new(0.6, 0.02, -0.01),
+            DVec3::new(0.4, 1.2, -0.15),
+            DVec3::new(0., -0.22, 1.16),
+        );
+        let source = ProcessingSource::new(&device, &codes, matrix).unwrap();
+        let kernel = ProcessingKernel::new(&device).await.unwrap();
+        let output = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        for exposure in [-16.0_f64, -2., 0., 2., 16.] {
+            let mut encoder = device.create_command_encoder(&Default::default());
+            kernel.encode(
+                &device,
+                &mut encoder,
+                &source,
+                &output,
+                ProcessingParameters::source_inspection(exposure).unwrap(),
+            );
+            encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, 64);
+            queue.submit([encoder.finish()]);
+            let (send, receive) = std::sync::mpsc::channel();
+            readback
+                .slice(..)
+                .map_async(wgpu::MapMode::Read, move |result| {
+                    send.send(result).unwrap()
+                });
+            device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+            receive.recv().unwrap().unwrap();
+            let mapped = readback.slice(..).get_mapped_range().unwrap();
+            let values: &[Vec4] = bytemuck::cast_slice(&mapped);
+            for (pixel, actual) in codes.iter().zip(values) {
+                let camera = DVec3::new(pixel[0] as f64, pixel[1] as f64, pixel[2] as f64) / 65535.;
+                let expected = ap0_to_ap1() * (matrix * camera) * exposure.exp2();
+                for channel in 0..3 {
+                    assert!(
+                        (actual[channel] as f64 - expected[channel]).abs()
+                            <= 2e-5 + 2e-4 * expected[channel].abs()
+                    );
+                }
+                assert_eq!(actual.w, 0.);
+            }
+            drop(mapped);
+            readback.unmap();
+        }
+    });
+}
+
+#[test]
 fn camera_matrix_rejects_unrepresentable_values_without_repair() {
     assert_eq!(size_of::<CameraMatrix>(), 144);
     for value in [f64::NAN, f64::INFINITY, 1e300, 1e-300] {

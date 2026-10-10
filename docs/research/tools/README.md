@@ -7,6 +7,7 @@ Authored research source was promoted here from ignored `.cache/probes` during t
 | Source | Role / status |
 | --- | --- |
 | `film/Cargo.toml`, `film/src/bin/film-production-check.rs` | Actual production scalar/GPU/complete-target gate; uses read-only `samples/DSC04393.ARW`, no archived source fixture required |
+| `film/src/bin/preview-budget-check.rs` | Large Retina Fit request compares default Metal rejection with production adapter-supported buffer limits; no RAW IO. [Fix/verification record](../../plans/completed/preview-stability.md) |
 | `film/src/bin/film-wide-precision.rs`, `film/*.wgsl` | Resolved candidate arithmetic sweep/microbenchmark; uses that RAW and the locally generated `dmin-trace/run2/fur-scan-ap0-f64.bin` fixture |
 | `film/src/bin/camera-u16-precision.rs` | Initial compact-input prototype; preserves expected original-formula extreme-EV failures, not the final production gate |
 | Other `film/src/` bins | Historical Dmin/DRT/toe/image experiments. Several predate current source/export APIs and do not compile unchanged; preserved for evidence, not automatically modernized |

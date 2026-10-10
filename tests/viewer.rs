@@ -367,6 +367,162 @@ fn tiled_linear_area_average_matches_scalar_fractional_footprints() {
     });
 }
 
+#[cfg(feature = "editor")]
+#[test]
+fn large_retina_fit_area_average_uses_supported_buffer_limits() {
+    pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        let source = antitone::raw::Rect {
+            x: 12,
+            y: 12,
+            width: 8640,
+            height: 5760,
+        };
+        let geometry = antitone::viewport::Viewport::default().layout(
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(2560., 1707.)),
+            source,
+            2.,
+        );
+        let region = geometry.visible_area();
+        assert_eq!(region, source);
+        let output = geometry.output_size(region, 2.);
+        assert_eq!(output, [5120, 3414]);
+        let size = u64::from(output[0]) * u64::from(output[1]) * 16;
+        assert!(size > wgpu::Limits::default().max_storage_buffer_binding_size);
+        assert!(size > wgpu::Limits::default().max_buffer_size);
+        let (default_device, _) = adapter.request_device(&Default::default()).await.unwrap();
+        assert!(matches!(
+            antitone::resample::AreaAverage::new(
+                &default_device,
+                [source.width, source.height],
+                output,
+            )
+            .await,
+            Err(antitone::Error::Gpu(message))
+                if message == "invalid area-average dimensions or GPU budget"
+        ));
+        drop(default_device);
+        let limits = antitone::platform::device_limits(adapter.limits());
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                required_limits: limits.clone(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(device.limits(), limits);
+        let average =
+            antitone::resample::AreaAverage::new(&device, [source.width, source.height], output)
+                .await
+                .unwrap();
+        for (source, output) in [([0, 9], [4, 3]), ([15, 9], [0, 3]), ([15, 9], [16, 3])] {
+            assert!(
+                antitone::resample::AreaAverage::new(&device, source, output)
+                    .await
+                    .is_err()
+            );
+        }
+        let texture = |width, height, usage| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: None,
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba32Float,
+                usage,
+                view_formats: &[],
+            })
+        };
+        let tile = texture(
+            1,
+            1,
+            wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        let target = texture(
+            output[0],
+            output[1],
+            wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        );
+        let rgb = [0.25f32, 0.5, 0.75, 1.];
+        queue.write_texture(
+            tile.as_image_copy(),
+            bytemuck::cast_slice(&rgb),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(16),
+                rows_per_image: Some(1),
+            },
+            tile.size(),
+        );
+        let samples = texture(
+            3,
+            1,
+            wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
+        );
+        let mut encoder = device.create_command_encoder(&Default::default());
+        average.accumulate(&device, &mut encoder, &tile, [0, 0]);
+        average.accumulate(
+            &device,
+            &mut encoder,
+            &tile,
+            [source.width - 1, source.height - 1],
+        );
+        average.finish(&device, &mut encoder, &target);
+        for (i, [x, y]) in [
+            [0, 0],
+            [output[0] / 2, output[1] / 2],
+            [output[0] - 1, output[1] - 1],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    origin: wgpu::Origin3d { x, y, z: 0 },
+                    ..target.as_image_copy()
+                },
+                wgpu::TexelCopyTextureInfo {
+                    origin: wgpu::Origin3d {
+                        x: i as u32,
+                        y: 0,
+                        z: 0,
+                    },
+                    ..samples.as_image_copy()
+                },
+                tile.size(),
+            );
+        }
+        queue.submit([encoder.finish()]);
+        let actual = read(&device, &queue, &samples).await;
+        let footprint = f64::from(source.width) / f64::from(output[0])
+            * (f64::from(source.height) / f64::from(output[1]));
+        for (i, pixel) in actual.iter().enumerate() {
+            for (c, (&actual, &input)) in pixel.iter().zip(&rgb).enumerate() {
+                let expected = if c == 3 {
+                    1.
+                } else if i == 1 {
+                    0.
+                } else {
+                    f64::from(input) / footprint
+                };
+                assert!(
+                    (f64::from(actual) - expected).abs() < 2e-6,
+                    "{i},{c}: {actual} vs {expected}"
+                );
+            }
+        }
+    });
+}
+
 async fn read(
     device: &wgpu::Device,
     queue: &wgpu::Queue,

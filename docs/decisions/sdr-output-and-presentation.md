@@ -12,7 +12,7 @@ Keep pinned OCIO 2.6.0 ACES 2 mathematics unchanged. Use 100-nit sRGB/D65 and Di
 
 ## Consequences
 
-Output contract v2 rejects obsolete output state rather than silently reinterpreting it. Preserve P3 out-of-sRGB coordinates until managed presentation; encode once, handle UI separately, and do not apply a second DRT/monitor transform. Generated tables are not permission for a baked-LUT/approximate ACES replacement. Broader gamut/HDR policies require separate approval/colour gates. Software checks and user appearance feedback do not establish physical-monitor/M1/macOS-14 acceptance or complete CTL conformance.
+Output contract v2 rejects obsolete output state rather than silently reinterpreting it. Preserve P3 out-of-sRGB coordinates until managed presentation; encode once, handle UI separately, and do not apply a second DRT/monitor transform. Generated tables are not permission for a baked-LUT/approximate ACES replacement. Broader gamut/HDR policies require separate approval/colour gates. Software checks and user appearance feedback do not establish physical-monitor/broader-device/macOS-14 acceptance or complete CTL conformance.
 
 ## Evidence
 

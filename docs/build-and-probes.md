@@ -51,7 +51,18 @@ ANTITONE_SMOKE_CONTROLS=1 target/release/antitone --smoke \
   samples/DSC04378.ARW 4000 2600 128 128 samples/DSC04416.ARW
 ```
 
-The editor is unsaved: Save/Open/recovery/undo are not wired despite the project foundation. Fit, physical-pixel 100%, source bypass, picker return and full-source regional refinement are implemented. New grades use model 3; old/default diagnostic grades may deliberately use model 2. The current smoke verifies actual GPU/worker/layout paths, not photographic calibration or M1 performance.
+The editor supports explicit Save/Open, stable-ID photo state and dirty New/Open/Close protection; recovery/relink/undo remain unwired. Launch a document with `target/release/antitone /path/to/grade.antitone.json`. The same-row File and Export menus replace action buttons. Fit, physical-pixel 100%, source bypass, picker return and full-source regional refinement are implemented. New grades use model 3; old/default diagnostic grades may deliberately use model 2. The current smoke verifies actual GPU/worker/layout paths, not photographic calibration or broader-device performance.
+
+For Save/Open, append one additional unvisited source:
+
+```sh
+target/release/antitone --smoke-project \
+  samples/DSC04397.ARW 4000 5644 128 32 \
+  samples/DSC04378.ARW 4000 2600 128 128 \
+  samples/DSC04416.ARW samples/DSC04393.ARW
+```
+
+This uses temporary project files, leaves RAWs untouched, and verifies exact model-2/model-3 state, custom saved WB after New/different-WB import, unvisited records, working/sRGB/P3 pixel reproduction, live refinement and failed Open preservation. A zero-onscreen-frame result remains failure; a locked macOS session can pass persistence assertions but fail this presentation gate. [Save/Open closure](plans/completed/save-open.md).
 
 For window capture use [the relocated capture helper](research/tools/README.md#manufacturer-study--capture); outputs stay under `.cache/probes`. Requires normal desktop/screen-capture permissions. Do not bypass occlusion or automate Lightroom/Resolve.
 
@@ -123,7 +134,7 @@ For an independent full TIFF/ImageIO reopening after a diagnostic export:
   --bin antitone-presentation-probe -- --interactive
 ```
 
-Core Image provides an encoding/reference comparison, not interactive rendering. The host explicitly tags extended-sRGB `RGBA16Float` SDR/EDR=false after configuration. The chart checks f32/half transfer/readback, ordinary UI and two resizes. **Zero submitted frames fails the onscreen check.** Layer/readback evidence does not establish physical-monitor matching, monitor transitions, UI blending, forced surface recovery, macOS-14 or M1 Pro/16 GB performance.
+Core Image provides an encoding/reference comparison, not interactive rendering. The host explicitly tags extended-sRGB `RGBA16Float` SDR/EDR=false after configuration. The chart checks f32/half transfer/readback, ordinary UI and two resizes. **Zero submitted frames fails the onscreen check.** Layer/readback evidence does not establish physical-monitor matching, monitor transitions, UI blending, forced surface recovery, macOS-14 or other-device performance.
 
 ## Documentation/cache work
 

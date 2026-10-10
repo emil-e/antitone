@@ -6,6 +6,7 @@ The editor uses `src/editor_controls.rs` for a small shared hierarchy: **section
 
 ## Layout and actions
 
+- File (New, Open, Add RAWs, Save, Save As) and Export (TIFF, EXR half/full) menus replace action buttons within the existing header row; document name/Modified status stays single-line. No added toolbar row. Cmd-N/O/S and Cmd-Shift-S trigger file actions after accepted numeric/control edits; New/Open/Close share Save/Discard/Cancel protection.
 - Roll: Calibration (RGB-only Dmin/Dmax) → Gamma & balance → Toe & shoulder → Exposure.
 - Photo: White balance → Exposure. Geometry is not shown until implemented.
 - Output remains visible below the scrollable edits, in the same position on both tabs. No empty Roll-post stage.
@@ -29,6 +30,19 @@ The editor uses `src/editor_controls.rs` for a small shared hierarchy: **section
 Numeric drag speed is 0.01 (shoulder: 0.0001), with egui's Shift-drag fine adjustment. Click or Tab to enter text; Enter/focus loss commits and Escape cancels. Model-range limits constrain numeric edits. Existing legal values are not rounded or clamped merely by drawing a row, including exposure outside the normal slider span. Moving the exposure track intentionally returns to its normal span. Display precision is separate from the stored f64 value.
 
 Stable IDs separate roll, photo, sections and individual parameters. Disabled rows render a read-only value snapshot: egui 0.36.2's `DragValue` can otherwise commit pending text on focus loss **even while disabled**. Busy/overwrite transitions therefore cannot unexpectedly apply that text. Existing complete GPU-parameter validation still rejects unsupported combined proposals and restores the previous edits; there is no source-view or CPU fallback.
+
+## Viewer navigation and source inspection
+
+- Unmodified scroll pans both axes; Ctrl/Cmd-scroll or pinch zooms around the pointer. Multitouch uses its own center/translation and does not also apply synthetic wheel/zoom events.
+- Click a fitted image for physical-pixel 100% around that point; click an explicitly zoomed image to Fit. Zoomed primary drag pans; middle/Space-primary drag also pans during picking. `z` Fits unless text input has focus.
+- Picker primary click/drag retains patch/rectangle priority; zoom, grabbing, crosshair, move and corner-resize cursors follow the active interaction. Picks remain in full-source coordinates.
+- While developed-source view is active, **Inspection** in the existing viewer control row opens a zero-default exposure adjustment with the standard exposure range/reset. It changes only source-preview brightness before unchanged ACES; it is not saved and does not affect RAW development, calibration, fitting, edits or exports. Positive preview ignores it. No added viewer row/panel.
+
+## Filmstrip thumbnails
+
+The existing bottom strip shows whole-frame approximate thumbnails and filenames. Drag its top edge to change height (default 140 points, 52…240 points and window-height limited); images follow available height with preserved aspect. Resizing, scrolling and caches are transient and do not dirty/save the project. A visible page fits the bounded cache; horizontally offscreen cells are virtualized.
+
+Without calibration thumbnails show developed source at zero inspection gain; otherwise they show actual shared roll and each photo's grade through the existing GPU/ACES/managed presentation path. The viewer's source bypass/inspection EV does not change thumbnails. Normal selection and Dmin/Dmax reference-source selection retain their existing behavior. Loading placeholders and error markers/tooltips retain filenames and selection; thumbnails never supply measurements or export pixels.
 
 ## Resolve-style wheel orientation and mapping
 
@@ -60,4 +74,4 @@ ANTITONE_SMOKE_CONTROLS=1 CC=/usr/bin/clang CXX=/usr/bin/clang++ \
   samples/DSC04378.ARW 4000 2600 128 128 samples/DSC04416.ARW
 ```
 
-It exercises both tabs at 1100×800 and 800×600 logical window sizes, with 315/270-point control panels. Current window-only screenshots/logs are ignored under `.cache/probes/film-model-images/response-controls-{roll,photo}-{normal,narrow}.png` and the retained [response-controls smoke log](../research/evidence/film-model-images/response-controls-smoke.txt). The response-enabled layout run completes in **31.49 s / 1,576 submitted frames** on M5 Pro, including the four timed holds. Screenshots confirm blue-right/yellow-left orientation, White balance before Photo Exposure and pinned Output; the added Roll rows require scrolling below gamma/balance at these window heights, covered by the mouse-wheel regression. These are diagnostic settings, not the user's photographic grade or M1/physical-monitor acceptance. Trackpad/click-zoom work, thumbnails/scopes and Save/Open/recovery/undo remain separate approved steps.
+It exercises both tabs at 1100×800 and 800×600 logical window sizes, with 315/270-point control panels. Current window-only screenshots/logs are ignored under `.cache/probes/film-model-images/response-controls-{roll,photo}-{normal,narrow}.png` and the retained [response-controls smoke log](../research/evidence/film-model-images/response-controls-smoke.txt). The response-enabled layout run completes in **31.49 s / 1,576 submitted frames** on M5 Pro, including the four timed holds. Screenshots confirm blue-right/yellow-left orientation, White balance before Photo Exposure and pinned Output; the added Roll rows require scrolling below gamma/balance at these window heights, covered by the mouse-wheel regression. These are diagnostic settings, not the user's photographic grade or broader-device/physical-monitor acceptance. Navigation/source inspection is implemented with focused event/GPU coverage and an unlocked 722-frame real-source smoke; physical trackpad feel remains unverified. Bounded thumbnails now have cache/identity/cancellation/parameter and event resize/selection coverage plus a four-source onscreen smoke. Scopes and recovery/relink/undo remain separate steps. Basic Save/Open is implemented; [closure/checks](../plans/completed/save-open.md).

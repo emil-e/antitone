@@ -2,7 +2,7 @@
 
 Current numerical contract. Architecture: [overview](../architecture.md); rationale: [decisions](../decisions/README.md).
 
-The numerical core is a double-precision scalar reference using pinned `glam 0.34.1` vectors/matrices. Owned GPU kernels, the unsaved editor/export implementation and OCIO/presentation probes validate selected processing/rendering paths; saved-editor UI and broader device/monitor acceptance remain incomplete. The scalar core itself does not apply an ACES transform or a display transfer function. Matrix constants use explicit column constructors; matrix-vector products and inverses are supplied by `glam`.
+The numerical core is a double-precision scalar reference using pinned `glam 0.34.1` vectors/matrices. Owned GPU kernels, the editor/export implementation and OCIO/presentation probes validate selected processing/rendering paths; basic saved-editor state/output reproduction is verified; broader device/monitor acceptance remains incomplete. The scalar core itself does not apply an ACES transform or a display transfer function. Matrix constants use explicit column constructors; matrix-vector products and inverses are supplied by `glam`.
 
 ## Color-space roles
 
@@ -93,4 +93,4 @@ The reusable OCIO CPU renderer consumes AP1/D60 and shares its target/group defi
 
 The pinned original ICC artifacts in `../../assets/profiles/` are generated from the same target primaries/whites, with ICC D50 PCS adaptation and fixed-point precision checked using Little CMS and independently using ColorSync/Core Image. Their validation is distinct from TIFF reopening, Lightroom interoperability and physical-monitor correctness.
 
-A passed scalar test does not validate the camera matrix, RAW headroom, output-target color behavior, display path, or actual M1 Pro performance.
+A passed scalar test does not validate the camera matrix, RAW headroom, output-target color behavior, display path, or actual device performance.

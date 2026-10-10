@@ -19,7 +19,7 @@ Contrast/pivot is also requested. Its stage, signed/HDR semantics, defaults and 
 ## Export and release work
 
 - Export progress/cancellation, batch settings snapshots, reference-only exclusions, destination collisions/per-photo failures and source metadata propagation.
-- Aggregate worker/cache/buffer memory and latency on M1 Pro/16 GB; macOS-14 compatibility, monitor/reference matching and transitions; broader camera/metadata/domain tests.
+- Aggregate worker/cache/buffer memory and latency on available devices, prioritizing observed problems rather than a speculative minimum chip/RAM target; macOS-14 compatibility, monitor/reference matching and transitions; broader camera/metadata/domain tests.
 - Bundle native dependencies, review dependency licenses/notices and distribution layout. Checkout-local rpaths are not deployable packaging.
 - Lightroom/Resolve interoperability remains deferred; no application automation is authorized.
 

@@ -336,7 +336,12 @@ impl Gpu {
                 ..Default::default()
             })
             .await?;
-        let (device, queue) = adapter.request_device(&Default::default()).await?;
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                required_limits: super::device_limits(adapter.limits()),
+                ..Default::default()
+            })
+            .await?;
         let size = window.inner_size();
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))

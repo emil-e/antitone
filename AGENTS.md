@@ -27,7 +27,7 @@ Verification is proportional: run the narrow relevant checks, inspect the change
 
 ## Engineering boundaries
 
-- macOS/Apple Silicon first; M1 Pro/16 GB is the conservative baseline, not established by M5 results. macOS 14 and physical-monitor acceptance remain separate gates.
+- macOS/Apple Silicon first; no minimum chip/RAM requirement is established. M1 Pro/16 GB was a provisional example, not a mandatory target or acceptance gate. Resource policy should follow observed problems, not speculative hardware constraints. macOS 14 and physical-monitor acceptance remain separate checks.
 - Reuse pinned LibRaw development. No custom demosaicer, camera-specific repair, CPU interactive fallback, approximate ACES replacement or weakened numerical gate.
 - Preserve signed/HDR AP1 working data, AP0 calibration/inversion and AP0 EXR; ACES mathematics are unchanged. Preview/TIFF targets are matching 100-nit sRGB and Display P3, with managed extended-sRGB SDR presentation.
 - Dmin/Dmax are RGB-only values. Picker context is transient; source fingerprints and development compatibility are separate concerns. Invalid/cancelled picks and rejected edits change no processing state.

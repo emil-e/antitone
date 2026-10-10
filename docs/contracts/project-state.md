@@ -1,6 +1,6 @@
-# Project-state foundation
+# Project state
 
-Implemented in `src/project.rs` behind the `project` feature; **not connected to Editor Save/Open**. The live editor remains unsaved and path-keyed. This describes existing primitives, not a completed recovery/undo workflow.
+Implemented in `src/project.rs` behind the `project` feature and connected to Editor through `src/editor_document.rs` and `src/editor_files.rs`. Explicit Save/Open is implemented; recovery, relink/source-change UI and undo remain separate work.
 
 ## Document and identity
 
@@ -13,7 +13,7 @@ Implemented in `src/project.rs` behind the `project` feature; **not connected to
 
 ## Validation and source changes
 
-`validate()` checks structure, numerics, identity consistency and calibrated inversion. `require_runtime()` additionally checks current RAW/backend/space/output compatibility; a future editor load must not stop at JSON parse/structural validation.
+`validate()` checks structure, numerics, identity consistency and calibrated inversion. `require_runtime()` additionally checks current RAW/backend/space/output compatibility; Editor Open also checks runtime compatibility, stored GPU processing domains and ordered-source fingerprints/header identity before preparing the first photo with saved WB.
 
 `inspect_source()` distinguishes matching, missing and changed content. `relink_matching()` requires identical content and retains the source ID. `accept_changed_source()` is a separate explicit action that captures the new fingerprint/development record. Neither operation resamples calibration RGB.
 
@@ -28,6 +28,14 @@ output: ocio-2.6.0-aces2-100nit-antitone-srgb-displayp3-v2
 
 `load()` bounds input and validates the resulting state. `save()` validates before writing a same-directory temporary file, syncs it, then persists with New/no-clobber or Replace semantics. Failure preserves an existing document; this is not a complete crash/power-loss durability claim.
 
-Separate recovery files, saveable dirty state, stable-ID editor ownership, source-change UI, undo/redo and document-transition behavior remain in the [durable-project work package](../plans/durable-projects.md). Derived previews, scopes, thumbnails and decoded/GPU caches never belong in the saved document. Planned recovery must never silently overwrite an explicit save.
+The editor's source records own photo settings by stable ID, not path. New documents fix development WB on first successful source development; Open restores recorded WB. Imports capture headers/fingerprints without developing the whole filmstrip. Unregistered picker-only sources remain transient.
 
-Evidence: `tests/project.rs`, `tests/film_project.rs`. Rationale: [RGB-only calibration decision](../decisions/rgb-only-calibration.md), [versioned response decision](../decisions/versioned-film-response.md).
+File New/Open/Add RAWs/Save/Save As and Export TIFF/EXR half/full occupy the existing header row. `.antitone.json` is the default naming convention; Save accepts JSON filenames and compatibility is validated from content, not naming alone. Save As rebases relative locators against the new directory. Input RAWs cannot be project destinations, and Export cannot replace the currently open project.
+
+Dirty state compares accepted persistent values with the last successful Save/Open snapshot. Numeric focus loss is processed before file actions; views, selection, rectangles and source bypass do not dirty a document. Dirty New/Open/Close asks Save/Discard/Cancel. Failed/cancelled Save prevents continuation; failed Open retains old state and display even after Discard. Monotonic request IDs reject stale results during document work.
+
+Open selects the first ordered photo at Fit, or no scan for an empty filmstrip. Missing/changed/incompatible ordered RAWs reject Open with the path; unavailable nonordered records are retained without blocking Open or invalidating RGB calibration. No source substitution, changed-byte acceptance or migration occurs.
+
+Separate recovery files, source-change UI and undo/redo remain in the [durable-project work package](../plans/durable-projects.md). Derived previews, scopes, thumbnails and decoded/GPU caches never belong in the saved document. Planned recovery must never silently overwrite an explicit save.
+
+Evidence: `tests/project.rs`, `tests/film_project.rs`, `src/editor_{document,files}_tests.rs` and the [Save/Open closure](../plans/completed/save-open.md). Rationale: [RGB-only calibration decision](../decisions/rgb-only-calibration.md), [versioned response decision](../decisions/versioned-film-response.md).

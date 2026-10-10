@@ -15,9 +15,9 @@ Antitone is a single Rust package with narrow native bridges. The numerical core
 | Output rendering | `src/rendering.rs`, `native/{ocio_bridge.cpp,rendering_transform.h}`, `assets/ocio/` | Shared OCIO ACES target definitions, CPU reference/export and pinned generated GPU algorithms/tables |
 | Viewer/refinement | `src/{viewer,refinement,resample,viewport}.rs` | Provisional GPU images, tiled settled rendering, area averaging and source/view geometry |
 | Desktop host | `src/platform/{host,macos}.rs` | winit events, egui integration, owned wgpu surface, native SDR tagging, repaint/surface lifecycle |
-| Editor | `src/{editor,editor_controls}.rs` | In-memory roll/photo edits, picker workflow, dialogs, navigation, worker commands and GPU preflight |
+| Editor | `src/{editor,editor_controls,editor_navigation,editor_document,editor_files}.rs` | Stable-ID document state, live edits, picker/view workflow, file menus, staged worker transitions and GPU preflight |
 | Output files | `src/{export,profiles}.rs` | Full-source TIFF/AP0 EXR, encoding/ICC/metadata, bounded buffers and safe destination replacement |
-| Project foundation | `src/project.rs` | Schema-3 documents, stable source IDs/order, identity/compatibility, load/save/relink primitives; **not wired into Editor** |
+| Project state | `src/project.rs` | Schema-3 documents, stable source IDs/order, identity/compatibility and atomic save/load; relink primitives have no editor UI yet |
 
 There is no eframe host, vendored renderer patch, custom demosaicer or CPU interactive-viewer fallback.
 
@@ -38,7 +38,7 @@ RAW Bayer samples
                  → OS monitor conversion
 ```
 
-Calibration and fitting operate on full-resolution source pixels, never display pixels. Dmin/Dmax are each one AP0 RGB value; they carry no source/rectangle relationship. The development matrix is derived from the camera-to-sRGB convention with explicit XYZ/Bradford D65→D60 conversion. Source bypass enters the rendering path as developed AP1 while ignoring inversion/photographic edits; it does not change exported processing.
+Calibration and fitting operate on full-resolution source pixels, never display pixels. Dmin/Dmax are each one AP0 RGB value; they carry no source/rectangle relationship. The development matrix is derived from the camera-to-sRGB convention with explicit XYZ/Bradford D65→D60 conversion. Source bypass enters the rendering path as developed AP1 while ignoring inversion/photographic edits; its transient inspection EV scales only the source-preview post matrix before unchanged ACES. It does not change development, measurement/fitting, saved grades or exported processing.
 
 `Response::Original` is model 2; model 3 adds shared toe/optional shoulder and precise temporary arithmetic. `RollSettings::default()` remains Original for compatibility; the explicit new-grade factory selects model 3, toe 2.5/shoulder off. Model-2 shader execution is retained, not rewritten under a new storage API. See [processing contract](contracts/processing-model.md).
 
@@ -47,7 +47,7 @@ ACES's specified rendering limits are downstream of signed working data. Neither
 ## Ownership and execution
 
 - `RawFile` uniquely owns the native LibRaw handle. `Developed` borrows its camera image; a mutable development operation invalidates the previous view. `Scan` retains the selected developed source and reads it without redecode on adjustment or picking.
-- The winit/egui UI owns live edit/view state. A single backend thread owns one selected `Scan` and serially handles load, full-resolution pick, export and refinement commands over channels. Loading one source does not develop the whole roll. The first successful load fixes the session's development WB gains.
+- The winit/egui UI owns live edit/view state. A single backend thread owns one selected `Scan` and serially handles load, document work, full-resolution pick, export and refinement commands over channels. Imports register headers/fingerprints without developing the whole roll. The first successful development fixes a new document's WB; every later load uses explicit document WB, including reopened projects. Candidate documents/initial GPU previews are prepared before replacing the active scan/state.
 - UI and backend share handles to the same wgpu device/queue. Interactive compute/render preparation runs in the viewer; backend refinement submits tiled work. Results return as `Arc<GpuImage>` or small measurements/outcomes.
 - Request IDs and generation counters reject stale source/refinement results. Refinement checks cancellation between tiles; submitted GPU dispatches themselves are not cancellable. Picks/exports run against the requested loaded source and a settings snapshot; app-level export cancellation is not implemented.
 - Proposed edits/picks are validated before state mutation, including calibrated inversion and GPU precision/range. Worker failure or invalid input is reported; no silent numerical/rendering fallback is selected.
@@ -61,7 +61,11 @@ After 250 ms idle, refinement visits every full-resolution pixel in the **visibl
 
 Each source pixel occupies 8 bytes. A tile source buffer is 2 MiB and the existing working buffer 4 MiB. Camera constants occupy 144 bytes; processing parameters/signatures 224 bytes. Higher precision is temporary expansion/pair arithmetic, not a retained wide source image. `GpuImage::new_rendered` creates a settled target/presentation image without source, working or unused processing resources.
 
-Preparation is keyed by actual parameters; unchanged repaints do not rerun compute/render work. Source replacement invalidates that key. The editor also keys settled work by target/view and rejects old generations. Only one settled job is outstanding, and tile completion is drained to bound staging accumulation. Whole-roll source/thumbnail caches and aggregate M1 memory budgets are not yet implemented/accepted.
+The host requests the adapter's reported storage-binding and buffer-size limits; other device limits remain at wgpu defaults. These are API capacities, not reserved memory or an aggregate application budget. Averaging retains 16 scratch bytes per output pixel alongside the 16-byte linear output texture. Strip reconstruction is deferred unless actual memory/performance problems justify it.
+
+Preparation is keyed by actual parameters; unchanged repaints do not rerun compute/render work. Source replacement invalidates that key. The editor also keys settled work by target/view and rejects old generations. Only one settled job is outstanding, and tile completion is drained to bound staging accumulation. An aggregate application memory budget and whole-roll RAW cache are not implemented.
+
+`editor_thumbnails` uses a separate one-request worker, leaving the selected `Scan` untouched. It verifies full-byte source identity, develops one temporary RAW with recorded WB, extracts a maximum-dimension-256 nearest-centre RGB16 proxy, then releases the RAW. Worker RGB16 and UI `GpuImage` LRU caches each hold at most 16 entries (~48 MiB maximum retained pixel storage together, excluding driver overhead, callbacks/in-flight work and one temporary RAW). Source ID/fingerprint/source and roll development key proxies; target additionally keys GPU images. Actual roll/photo parameter changes reuse these images and rerun existing GPU processing/rendering; uncalibrated thumbnails show zero-gain developed source. Visible/nearby requests wait for foreground/refinement idle. Generation cancellation is checked between phases; stale results never install, and cancellation does not enqueue another request before the old one completes. The strip virtualizes horizontal cells and resizes transiently; no project schema/export change.
 
 ## Presentation and exports
 
@@ -71,6 +75,8 @@ TIFF/EXR are recomputed from full-resolution source through the f64 pipeline. TI
 
 ## Persistence boundary and known gaps
 
-The standalone project module has stable IDs/order, fingerprints, development metadata, RGB-only calibration, actual-response state, runtime gates and atomic saves. The live editor still owns path-keyed in-memory photo edits and does **not** invoke project Save/Open. Recovery, dirty-document transitions, stable-ID editor integration and undo/redo remain future work; the project's existence must not be mistaken for a saveable application.
+`Document` owns authoritative `Project` state, its path and saved baseline. Accepted controls flush into source-ID-owned photo settings and shared roll/calibration/output state; no competing path-keyed photo store remains. Selection, picker rectangles/return context, viewport, source bypass, GPU resources and worker IDs stay transient. Save validates a snapshot and updates the baseline/path only after atomic write success; Save As rebases relative locators. Open verifies runtime/GPU domains and ordered sources, prepares the first photo with saved WB, then commits. New/Open/Close share a Save/Discard/Cancel guard; document work suppresses stale mutations while retaining the old display. See [project-state contract](contracts/project-state.md).
 
-Other scheduled gaps include source-inspection brightness, refined Mac gestures/cursors/click zoom, thumbnails, whole-frame scopes, geometry, assisted roll analysis, batch/export cancellation/metadata and distribution. See [roadmap](../PLAN.md), not this overview, for priorities. M1 Pro/16 GB, macOS 14 and physical-monitor tests remain separate acceptance work.
+Recovery/autosave, missing-source/relink/changed-source UI and undo/redo remain future work. Unavailable ordered RAWs currently reject Open; nonordered unavailable records and stored reference RGB remain preserved.
+
+Source-inspection brightness and Mac scroll/pinch/click/drag/cursor/Fit behavior are implemented; physical trackpad feel remains unverified. Bounded thumbnails are implemented. Other scheduled gaps include whole-frame scopes, remaining layout/colour investigations, geometry, assisted roll analysis, batch/export cancellation/metadata and distribution. See [roadmap](../PLAN.md), not this overview, for priorities. Broader device/resource tests, macOS 14 and physical-monitor checks remain separate acceptance work; no minimum chip/RAM target has been established.

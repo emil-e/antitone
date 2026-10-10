@@ -1,3 +1,3 @@
 # Feedback inbox
 
-No untriaged feedback remains. Outstanding work is recorded in [plans](plans/README.md); add new observations here.
+No untriaged feedback remains. CPU-path and supported-input questions are recorded in [inspection/interaction](plans/inspection-and-interaction.md#recorded-supportarchitecture-questions). Add new observations here.

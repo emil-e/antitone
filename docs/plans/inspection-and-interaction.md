@@ -1,6 +1,6 @@
 # Source inspection and interaction feedback
 
-Scope basis: remaining approved feedback pass; not started. [Roadmap](../../PLAN.md) owns order/status. Completed Dmin/toe and output work are not to be reopened by default.
+Scope basis: remaining approved feedback pass. The user selected navigation polish, then source inspection, then thumbnails. The [preview buffer-limit fix](completed/preview-stability.md) is complete; navigation, source-inspection controls and bounded thumbnails in the approved resizable filmstrip are implemented. [Roadmap](../../PLAN.md) owns order/status. Completed Dmin/toe and output work are not to be reopened by default.
 
 ## Goal and boundaries
 
@@ -12,26 +12,39 @@ Make developed-source inspection and Mac image navigation usable without changin
 - Outside picker mode, a fitted-image click should zoom to native pixels around that point; zoomed primary drag pans. Distinguish click/drag, provide a clear zoom-out/Fit interaction and matching zoom/grab cursors.
 - Picker click patches, rectangle creation/move/corner resize retain priority over ordinary navigation and appropriate cursors.
 - `z` should Fit. The reported stale fitted resolution needs reproduction/diagnosis; existing refinement is implemented, so do not assume downsampling is absent.
-- Preview sometimes fails to update with **“Settled preview failed: GPU processing: invalid area-average dimensions or GPU budget”**. Reproduce the failing view/window state and diagnose dimensions, resource budget and refinement scheduling; do not mask the error by silently weakening budgets or skipping refinement.
+- The reported **“Settled preview failed: GPU processing: invalid area-average dimensions or GPU budget”** has a [confirmed default-limit cause and adapter-supported fix](completed/preview-stability.md). Strip processing is deferred unless actual memory/performance problems justify it. Other stale-resolution symptoms still need reproduction; do not skip refinement or weaken numerical gates.
 - The user explicitly wants consultation for **each existing UI insertion that changes viewer size** before choosing a replacement. Gather the cases/screenshots first. Tab prominence and Output placement feedback also need a current-layout discussion; current pinned Output was previously approved.
-- Dark-source normalization/inspection needs its own check. If correct but inconvenient, a clearly separate source-view brightness control may be appropriate; it must never alter measurement/development/export. Exact UX/default is not decided.
+- Developed-source codes retain their original linear range and normalize by 65535; development deliberately has no auto-brightness. An **Inspection** popup in the existing viewer controls now supplies zero-default EV adjustment, using the standard −3…3 slider/−16…16 numeric range/reset. The gain applies only to the source-preview AP0→AP1 post matrix, before unchanged ACES. It is transient and never changes RAW development, calibration/fitting, photo/roll edits, project state or exports.
 - Red rendering appears dark in user feedback; exact source/settings are not recorded. Investigate only with a reproducible grade before claiming an inversion-basis defect or changing processing policy.
 - Toe lift produces rather cold shadows, at least with **Vision3 500T**. The user suspects that the tungsten stock's greater blue sensitivity could leave only blue when other channels fall below a threshold; this is an unverified hypothesis, not an established cause. Capture the RAW, calibration, response and Roll/Photo settings, then trace near-base signed working channels through rendering before proposing a remedy. Do not silently warm shadows, add a pedestal/clamp or reinterpret the accepted response.
 - Give the remaining UI a focused UX-polish pass: review unnecessary descriptions/redundant scope wording, hierarchy and action placement across calibration, editing and navigation. Controls and copy already cleaned up are not a new redesign requirement; keep actionable errors and concise state indicators.
+
+## Recorded support/architecture questions
+
+- “Do we need the CPU path? Is it just for export? Why?” Explain the boundary rather than silently removing it: CPU LibRaw development, full-resolution f64 measurements/fitting/domain validation, reference tests and full-source export; interactive processing/presentation remains GPU-only. [Architecture](../architecture.md#ownership-and-execution).
+- “What files can it open?” Clarify current exposed input support: ARW RAW import/reference selection and schema-3 JSON projects (default `.antitone.json`). Sony ILCE-1M2 lossless-compressed ARW is the verified camera input; LibRaw's wider decoding capability is not an application-wide support claim. JPEG/TIFF/EXR developed-image import is not implemented. [Product](../contracts/product.md), [project state](../contracts/project-state.md).
+
+## Current execution plan
+
+1. [x] Implement unmodified scroll pan, independent anchored pinch/modified-wheel zoom, click-native/click-Fit, primary drag pan, `z` Fit and picker/navigation cursors without adding UI rows. Verify egui events, geometry, text-focus gating and picker priority.
+2. [x] Add presentation-only source-inspection EV in an existing-row popup. Verify zero-default equivalence, GPU output, transient state and pick/settings independence. No RAW/calibration/fitting/export change.
+3. [x] Implement bounded thumbnails in the existing enlarged/resizable filmstrip with approved layout, stable-ID/development cache keys, foreground priority and stale-work rejection. [Implementation/checks](visual-feedback.md#progress--handoff). Scopes and larger completion packages still require their own design.
 
 ## Steps and acceptance
 
 1. Reproduce remaining source/navigation/refinement/layout and colour symptoms against current code; separate already-fixed issues from outstanding ones, discuss viewer-intrusion cases and review remaining UX clutter. Distinguish the Vision3 cold-shadow observation from its proposed cause; any processing-policy change still requires separate agreement.
 2. Specify presentation-only source inspection state and implement only the agreed behavior. Verify bypass, calibration/fitting/export independence and invalid/cancelled picks.
 3. Implement gesture/click/cursor/Fit behavior with event/geometry tests and actual Mac trackpad exercise. Verify anchors, bounds, physical-pixel 100%, click-vs-drag and picker isolation.
-4. Diagnose reproduced stale-resolution and area-average-dimensions/GPU-budget failures at their source. Verify fit/native/resize/rapid-switch behavior, valid dimensions/resource bounds and stale-result rejection, without perpetual idle redraw or weakened budget checks.
+4. Diagnose any remaining reproduced stale-resolution failures at their source. Verify fit/native/resize/rapid-switch behavior, valid dimensions/adapter limits and stale-result rejection, without perpetual idle redraw or weakened numerical checks.
 
 Likely files: `src/{editor,viewport,viewer,refinement,resample,editor_tests,editor_smoke}.rs`; `src/platform/host.rs` only for a demonstrated event translation issue. Numeric/processing policy changes require separate agreement and regression gates.
 
 ## Progress / handoff
 
-No implementation or new verification in this package. Existing code has source bypass, fit/100%, wheel/pinch zoom, several pan gestures and tiled regional refinement. This work refines those paths rather than implementing them from scratch.
+Navigation/source inspection are implemented in `src/editor_navigation.rs`, `src/editor.rs` and `ProcessingParameters::source_inspection`. Ordinary scroll pans both axes, Ctrl/Cmd-wheel/native pinch use egui's zoom factor once, multitouch prefers its own center/translation rather than synthetic duplicates. Fit click selects physical 100% at the pointer; an explicit-zoom click returns to Fit; zoomed primary/middle/Space drag pans. `z` ignores text focus; picker primary interactions win and use matching resize/move/crosshair cursors. Picker drag state clears between gestures. No host/event translation or new toolbar row was needed.
 
-Next action when selected: inspect current viewer event handling and reproduce the remaining trackpad/source-inspection cases; ask the user which viewer-intrusion cases to address before changing their layout.
+Verification snapshot: **73 focused tests passed** (59 library, 7 project, 3 film-project, 4 viewer), strict all-target Clippy, formatting and release editor build. Seven new egui-event navigation tests cover wheel/pinch/touch, click/drag, cursor/picker priority and `z` text focus. Source-inspection tests verify zero-default parameter bytes, post-matrix-only changes, range rejection, CPU/GPU working agreement at unchanged tolerances, zero diagnostic flags and unchanged persisted settings/pick commands. The real-source Save/Open smoke, now exercising +2 EV source inspection, passes **722 onscreen frames** on the unlocked M5 Pro; Fit/native/reopened refinement and exact saved state/WB/output remain valid. Actual physical trackpad feel and popup visual inspection were not externally driven; no universal-device/monitor acceptance claim. No fresh full export integration suite.
+
+Bounded thumbnails are now implemented in the existing bottom strip; the user approved enlargement and requested adjustable size. Drag its top edge to resize (52…240 points, also window-limited); image display follows height, while source/GPU caches stay bounded. Remaining layout/colour investigations, physical interaction exercise and scopes remain open; no further slice is automatically authorized.
 
 Evidence/context: remaining symptoms were consolidated from `docs/feedback.md`; it is now an inbox, not the persistent requirement record. See [historical approved pass](../research/history/feedback-plan.md), [architecture](../architecture.md) and [control contract](../contracts/editor-controls.md).
