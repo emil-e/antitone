@@ -15,6 +15,17 @@ Add useful filmstrip thumbnails and whole-image vectorscope/waveform feedback wi
 
 Scopes, geometry, relink/recovery/undo and other input formats are not included. Resizing is transient UI state, not project schema. Cache caps bound this new cache, not a minimum-hardware or application-wide resource policy. Actual scheduling/performance is measured before introducing shared-renderer/atlas machinery.
 
+## Triaged thumbnail follow-up
+
+The bounded thumbnail slice is implemented; these new observations are open follow-up, not scope approval for a cache redesign. Read-only inspection covered `src/editor_thumbnails.rs` and the shared `ImagePaint` callback in `src/viewer.rs`; no new performance or visual run was made.
+
+- **Partially visible thumbnails squish at scroll edges — reported rendering defect.** Cell/image geometry already preserves aspect ratio, so that alone does not disprove the observation. Reproduce at both edges and trace callback viewport/scissor clipping and UVs. Acceptance: partially visible thumbnails are cropped, not rescaled, at different strip heights and display scales. Add a focused clipping regression once the cause is isolated.
+- **Thumbnails invalidate too easily — investigation.** Distinguish GPU parameter reprocessing, UI-image cache misses, proxy cache eviction and cancelled in-flight work. Source changes/document work cancel generations but do not directly clear the caches; roll/photo edits are not source-cache keys. Capture the triggering interaction, keys, cancellation and development counts for photo switching, grade changes, target changes, import/Save and scrolling beyond 16 sources. Reuse valid work without weakening source/development identity or stale-result rejection.
+- **Cold thumbnail latency — measured concern, not a diagnosed GPU bottleneck.** Reported log: `thumbnail source_id=35 target=DisplayP3 source_cache_hit=false seconds=1.516`. This is end-to-end worker time for a proxy-cache miss, including source validation, full RAW development, proxy extraction and GPU image creation. It is consistent with the earlier 1.40–1.51 s cold-source checkpoint; cached proxies previously took 0.002–0.003 s. Instrument phases and cold/warm/rapid-switch cases before choosing an optimization. Preserve pinned development, selected-image priority and bounded RGB16 storage; do not introduce a full-roll RAW cache or speculative renderer machinery.
+- **Thumbnail development spinner — missing.** The loading placeholder is a static ellipsis. Coordinate animated loading indicators with the [shared operation-feedback work](completion.md#operation-feedback); distinguish queued, developing and error states without perpetual idle repaint.
+
+Next action when selected: reproduce the edge-squashing case, then capture the reported invalidation sequence and phase timings. Keep layout correctness, wasted work and cold development cost separate; scopes do not block these investigations.
+
 ## Scope design to settle later
 
 - Scope stage, common RGB basis, white/transfer, luma coefficients, bin scaling and signed/HDR boundary display. Different target RGB codes are not directly comparable.
