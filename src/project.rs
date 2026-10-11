@@ -182,6 +182,10 @@ impl Default for Output {
         }
     }
 }
+#[path = "project_flat_field.rs"]
+mod flat;
+pub use flat::FlatFieldSettings;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Project {
@@ -197,6 +201,8 @@ pub struct Project {
     pub input_floor: Option<f64>,
     pub roll: RollSettings,
     pub output: Output,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flat_field: Option<FlatFieldSettings>,
 }
 impl Default for Project {
     fn default() -> Self {
@@ -212,6 +218,7 @@ impl Default for Project {
             input_floor: None,
             roll: RollSettings::new_grade(),
             output: Output::default(),
+            flat_field: None,
         }
     }
 }
@@ -301,7 +308,19 @@ impl Project {
         development: SourceDevelopment,
     ) -> Result<()> {
         development.validate()?;
+        if let Some(field) = self.active_flat_field()
+            && self.order.contains(&id)
+        {
+            field.require_source(&development)?;
+        }
         let fingerprint = Fingerprint::read(path)?;
+        require(
+            self.flat_field.as_ref().is_none_or(|field| {
+                field.reference != id
+                    || (field.fingerprint == fingerprint && field.development == development)
+            }),
+            "changing a flat-field reference requires a newly accepted map",
+        )?;
         let source = self.source_mut(id)?;
         source.path = path.to_path_buf();
         source.fingerprint = fingerprint;
@@ -320,6 +339,20 @@ impl Project {
                 .ok_or_else(|| failure("missing calibration floor"))?,
         };
         Ok(Some(calibration.validate()?))
+    }
+    pub fn active_flat_field(&self) -> Option<&FlatFieldSettings> {
+        self.flat_field.as_ref().filter(|field| field.enabled)
+    }
+    pub fn processing_calibration(&self) -> Result<Option<Calibration>> {
+        self.calibration()?
+            .map(|calibration| match self.active_flat_field() {
+                Some(field) => field.map.processing_calibration(
+                    DMat3::from_cols_array_2d(&field.development.camera_to_ap0),
+                    calibration,
+                ),
+                None => Ok(calibration),
+            })
+            .transpose()
     }
     pub fn validate(&self) -> Result<()> {
         require(self.schema == SCHEMA_VERSION, "unsupported project schema")?;
@@ -375,8 +408,11 @@ impl Project {
                 "invalid stored reference RGB",
             )?;
         }
-        if let Some(calibration) = self.calibration()? {
+        if let Some(calibration) = self.processing_calibration()? {
             Inversion::new(calibration, self.roll)?;
+        }
+        if let Some(field) = &self.flat_field {
+            field.validate(self)?;
         }
         Ok(())
     }

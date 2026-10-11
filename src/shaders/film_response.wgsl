@@ -109,6 +109,16 @@ fn process_film(scan: ConvertedScan) -> vec4f {
         if below { flags |= 1u << c; s = floor; }
         q[c] = invert_film(s, c);
     }
+    return photographic_post(q, flags);
+}
+fn process_corrected_source(scan: ConvertedScan) -> vec4f {
+    let q = array<Pair, 3>(
+        pair_from_triple(Triple(scan.high.x, scan.low.x, scan.tail.x)),
+        pair_from_triple(Triple(scan.high.y, scan.low.y, scan.tail.y)),
+        pair_from_triple(Triple(scan.high.z, scan.low.z, scan.tail.z)));
+    return photographic_post(q, 0u);
+}
+fn photographic_post(q: array<Pair, 3>, flags: u32) -> vec4f {
     var result = vec3f(0.0);
     for (var c = 0u; c < 3u; c++) {
         let x = pair_mul(Pair(parameters.post[0][c], parameters.post_low[0][c]), q[0]);

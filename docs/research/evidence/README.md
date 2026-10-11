@@ -17,6 +17,15 @@ Retained under `film-model-images/` (formerly `.cache/probes/film-model-images/`
 - [Wide candidate arithmetic sweep](film-model-images/film-wide-precision.txt), [production real-camera/rendering gate](film-model-images/film-production-check.txt).
 - [Preceding RGB16 conversion test](film-model-images/rgb16-conversion-tests.txt).
 
+## Flat-field checkpoints
+
+- [Initial independent estimator evidence](flat-field-initial.txt).
+- [Production scalar/GPU processing and real-source gates](flat-field-gpu.txt).
+- [Editor/persistence/thumbnail and corrected-file integration](flat-field-editor.txt); historical headless pass and zero-visible-frame failure.
+- [Later corrected onscreen and full-size TIFF/AP0 EXR acceptance](flat-field-acceptance.txt); both approved RAW pairs pass the visible-frame gate. Native-dialog/physical-input acceptance remains separate.
+
+User-accepted closure and verification limits: [completed plan](../../plans/completed/flat-field-correction.md#verified-automated-acceptance).
+
 ## Earlier independent gates
 
 These remain separate historical checkpoints rather than being summed into one current test count:

@@ -64,6 +64,27 @@ target/release/antitone --smoke-project \
 
 This uses temporary project files, leaves RAWs untouched, and verifies exact model-2/model-3 state, custom saved WB after New/different-WB import, unvisited records, working/sRGB/P3 pixel reproduction, live refinement and failed Open preservation. A zero-onscreen-frame result remains failure; a locked macOS session can pass persistence assertions but fail this presentation gate. [Save/Open closure](plans/completed/save-open.md).
 
+The flat-field editor/worker integration has an explicit read-only local-RAW/Metal test (temporary projects/32×32 corrected TIFF/AP0 EXR crops):
+
+```sh
+./scripts/cargo.sh test --offline --release --all-features --lib \
+  editor::flat::tests::real_reference_editor_save_open_and_corrected_exports \
+  -- --ignored --nocapture
+```
+
+It uses `DSC01739`/`DSC01737`, tests cancellation/failure, automatic support acceptance, corrected thumbnail completion, Save/Open and Enabled/view preservation. It is headless; it does not establish actual reference-picker/rectangle onscreen or native-dialog acceptance. [Checkpoint/limits](plans/completed/flat-field-correction.md#verified-editor-checkpoint).
+
+Scripted corrected onscreen acceptance (keeps the nonzero-visible-frame gate and rejects early window closure):
+
+```sh
+target/release/antitone --smoke-flat-field samples/DSC01737.ARW samples/DSC01739.ARW
+target/release/antitone --smoke-flat-field samples/DSC01811.ARW samples/DSC01813.ARW
+./scripts/cargo.sh test --offline --release --all-features --test flat_field_export \
+  -- --ignored --nocapture
+```
+
+The host smoke renders Fit/reference support, exercises scripted geometry move/resize/cancel and support edits, verifies actual corrected Dmin/Dmax/Gamma/WB backend results against independent CPU calls, both-target settled previews/thumbnails, +2 EV native-pixel inspection, Enabled/Clear and exact Save/Open. It does not automate the native file dialog or physical gestures. The explicit full-size test writes temporary 8640×5760 sRGB/P3 TIFF and half/full AP0 EXR, decodes every pixel, checks metadata and 247 independent scalar-derived positions, and verifies signed/HDR EXR range. Both commands leave RAWs unchanged. [Acceptance snapshot/limits](research/evidence/flat-field-acceptance.txt).
+
 For window capture use [the relocated capture helper](research/tools/README.md#manufacturer-study--capture); outputs stay under `.cache/probes`. Requires normal desktop/screen-capture permissions. Do not bypass occlusion or automate Lightroom/Resolve.
 
 ## RAW and complete GPU chain

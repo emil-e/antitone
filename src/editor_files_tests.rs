@@ -331,6 +331,8 @@ fn new_resets_development_and_rejects_previous_document_messages() {
             ready: None,
             selected: None,
             reuse_ready: false,
+            correction: None,
+            preserve_view: false,
         })),
     ))
     .unwrap();
@@ -373,7 +375,7 @@ fn navigation_and_view_state_do_not_dirty_a_saved_document() {
         .source_path(editor.current_source.unwrap())
         .unwrap();
     editor.load(source_path);
-    let Command::Load(_, _, wb, expected) = receiver.recv().unwrap() else {
+    let Command::Load(_, _, wb, expected, _) = receiver.recv().unwrap() else {
         panic!()
     };
     assert_eq!(

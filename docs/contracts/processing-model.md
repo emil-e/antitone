@@ -24,6 +24,18 @@ For model 2, conversion produces the same f32 AP0 values previously obtained by 
 
 Working AP1 and linear target outputs remain f32; presentation remains RGBA16Float. A 1024×256 source tile is 2 MiB (previously 4 MiB), with its existing 4-MiB working buffer. Settled output images retain only the rendered target/presentation resources, with no source, working buffer or unused processing/ACES pipeline. CPU calibration/fitting/export still read full-resolution normalized RGB16 and use the unchanged f64 camera conversion. This upload change does not alter the processing model, project schema, development/output contracts or export metadata.
 
+## Optional roll-level flat-field correction
+
+The editor selects/edits/persists this source stage and shares its accepted map across viewer, refinement and thumbnails; CPU sampling/fitting/export use the same correction. No-field source conversion, original/model-2 equations, model-3 response and ACES remain unchanged. [Persistent compatibility](project-state.md#flat-field-state), [control workflow](editor-controls.md#flat-field-workflow).
+
+`FlatField` holds positive camera-RGB gain nodes (maximum 256×256), bilinearly evaluated at original source pixel centres. The accepted rectangle is support, not a crop; outside it gains are exactly identity. Apply three gains to normalized developed camera RGB **before** camera→AP0 conversion. Do not rewrite the RGB16 source or apply a field in AP0/display coordinates. Neutral reference luminance is the averaged centre-patch Y; inverse camera matrix derives the camera-RGB target for equal AP0/D60 gray, without assuming camera channels are equal.
+
+`Scan::estimate_flat_field` bypasses any existing field, rejects sensor black/white contamination, and computes uniform physical-cell statistics from full pixels strictly inside support. `Scan::set_flat_field` validates support before replacing its optional immutable field. CPU pixels, Dmin/Dmax means and neutral fitting then use corrected input. Stored Dmin/Dmax are never automatically resampled.
+
+The existing global one-code precision policy propagates through gains: maximum absolute corrected matrix-row sum over gain nodes, divided by 65535, also including identity outside support. Each bound is linear in the bilinear field, so its maximum occurs at a node. `processing_calibration` multiplies the explicitly stored floor by the corrected/base row-sum ratio; it does not mutate stored calibration. It can reject formerly usable Dmax or unsupported response settings. Callers preparing GPU parameters or export pipelines must use this effective calibration; field removal restores the base floor. This is a transformed quantization bound, not a measured sensor-noise floor or a new strength/clamp control.
+
+`GpuFlatField` shares nine-float gain nodes (36 bytes/node, maximum 2.25 MiB); precise interpolation/gain multiplication stay in temporaries. Source geometry uses the same integer nearest-centre rule as `Scan::preview_source`, including full-pixel tiles and their padding. GPU preflight separately rejects underflow of a corrected code before matrix conversion and of subsequent matrix products, unsupported constants/ranges and geometry. `ProcessingParameters::corrected_source` supplies compensated source post-transform constants for signed/high-EV cancellation; the existing uncorrected source path is retained. Processing constants remain 224 bytes, camera constants 144 bytes, with a separate 64-byte field-coordinate block. [Verified datasets/reproduction](../research/evidence/flat-field-gpu.txt).
+
 ## Coordinates and ranges
 
 For both two-coordinate controls, the orthonormal opponent mapping is:
@@ -54,7 +66,7 @@ A = a(ln(dmin/dmax))
 E = sign(a) * exp((ln(abs(expm1(a))) - ln(expm1(A))) / beta)
 ```
 
-Dmin maps exactly to 0 and Dmax to 1. Toe is 1…4, default 2.5; shoulder is 0…0.02, default/off 0. At beta 1 / shoulder 0 the scalar dispatch calls the unchanged original stable `expm1` ratio, bit-for-bit. Above-base negative values use the approved signed-root continuation, explicitly a numerical/noise policy rather than physical below-base exposure. There is no pedestal, scan clamp, flat-field correction or ACES-derived shaping. The generic default is not a stock calibration or population median; see [manufacturer study](../research/film-response-model-study.md) and [image validation](../research/film-response-image-validation.md).
+Dmin maps exactly to 0 and Dmax to 1. Toe is 1…4, default 2.5; shoulder is 0…0.02, default/off 0. At beta 1 / shoulder 0 the scalar dispatch calls the unchanged original stable `expm1` ratio, bit-for-bit. Above-base negative values use the approved signed-root continuation, explicitly a numerical/noise policy rather than physical below-base exposure. There is no pedestal, scan clamp or ACES-derived shaping. Optional flat-field correction is a separate pre-conversion source stage, not part of the response. The generic default is not a stock calibration or population median; see [manufacturer study](../research/film-response-model-study.md) and [image validation](../research/film-response-image-validation.md).
 
 Scalar construction rejects invalid shapes and any `g - k*log10(dmin/floor) <= 0` shoulder pole over the complete floor domain. Full-resolution roll fitting evaluates this actual response on every sample/trial; photo fitting uses actual-response AP1 before the existing photo WB. Gamma/balance/exposure coordinates are unchanged.
 

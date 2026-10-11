@@ -21,10 +21,18 @@ impl SourceKey {
         }
     }
 }
+#[derive(Clone, Debug)]
+struct FieldKey(Arc<crate::flat_field::FlatField>);
+impl PartialEq for FieldKey {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0) || self.0 == other.0
+    }
+}
 #[derive(Clone, Debug, PartialEq)]
 struct ImageKey {
     source: SourceKey,
     target: OutputTarget,
+    field: Option<FieldKey>,
 }
 struct Cache<K, V> {
     entries: VecDeque<(K, V)>,
@@ -71,6 +79,7 @@ struct Job {
     key: ImageKey,
     path: PathBuf,
     source: Source,
+    correction: Option<Arc<Correction>>,
 }
 struct Outcome {
     ticket: u64,
@@ -105,6 +114,8 @@ impl Thumbnails {
             .filter(|(key, value)| {
                 value.is_ok()
                     && key.target == target
+                    && key.field.as_ref().map(|f| &f.0)
+                        == document.project.active_flat_field().map(|f| &f.map)
                     && document
                         .project
                         .source(key.source.id)
@@ -148,6 +159,8 @@ impl Thumbnails {
                     .zip(document.project.development.as_ref())
                     .is_some_and(|(source, development)| {
                         SourceKey::new(source, development) == outcome.key.source
+                            && outcome.key.field.as_ref().map(|f| &f.0)
+                                == document.project.active_flat_field().map(|f| &f.map)
                     });
                 if self.generation.load(std::sync::atomic::Ordering::Relaxed) == outcome.ticket
                     && current
@@ -161,7 +174,13 @@ impl Thumbnails {
             }
         }
     }
-    fn request(&mut self, key: ImageKey, path: PathBuf, source: Source) {
+    fn request(
+        &mut self,
+        key: ImageKey,
+        path: PathBuf,
+        source: Source,
+        correction: Option<Arc<Correction>>,
+    ) {
         if self.pending.is_some() || self.cache.get(&key).is_some() {
             return;
         }
@@ -178,6 +197,7 @@ impl Thumbnails {
                 key: key.clone(),
                 path,
                 source,
+                correction,
             })
             .is_ok()
         {
@@ -229,7 +249,7 @@ fn worker(
             if !active() {
                 return Ok(None);
             }
-            let image = pollster::block_on(GpuImage::new(
+            let mut image = pollster::block_on(GpuImage::new(
                 &device,
                 &queue,
                 proxy.width,
@@ -238,6 +258,18 @@ fn worker(
                 proxy.matrix,
                 job.key.target,
             ))?;
+            if let Some(correction) = &job.correction {
+                correction
+                    .settings
+                    .require_source(&job.source.development)?;
+                image.set_flat_field(
+                    Some(correction.gpu.clone()),
+                    crate::gpu::SourceGeometry::new(
+                        job.source.development.active_area,
+                        [proxy.width, proxy.height],
+                    )?,
+                )?;
+            }
             Ok(active().then(|| Arc::new(image)))
         })()
         .map_err(|error| error.to_string());
@@ -271,8 +303,14 @@ impl Editor {
             source.photo
         };
         self.calibration().map_or_else(
-            || Ok(ProcessingParameters::source()),
-            |calibration| ProcessingParameters::positive(calibration, self.roll, photo),
+            || {
+                if self.correction.is_some() {
+                    ProcessingParameters::corrected_source(0.)
+                } else {
+                    Ok(ProcessingParameters::source())
+                }
+            },
+            |calibration| self.positive_parameters(calibration, self.roll, photo),
         )
     }
     pub(super) fn filmstrip(&mut self, ui: &mut egui::Ui) {
@@ -308,7 +346,7 @@ impl Editor {
                     let visuals = ui.style().interact_selectable(&response,selected);
                     ui.painter().rect_filled(cell,3.,visuals.bg_fill);
                     let image_rect = egui::Rect::from_min_size(cell.min,egui::vec2(image_width,image_height)).shrink(2.);
-                    let key = self.document.project.development.as_ref().map(|development|ImageKey { source:SourceKey::new(source,development),target:self.target });
+                    let key = self.document.project.development.as_ref().map(|development|ImageKey { source:SourceKey::new(source,development),target:self.target,field:self.correction.as_ref().map(|c|FieldKey(c.settings.map.clone())) });
                     let entry = key.as_ref().and_then(|key|self.thumbnails.cache.get(key)).cloned();
                     let parameters = self.thumbnail_parameters(source);
                     let mut error = None;
@@ -329,7 +367,7 @@ impl Editor {
                     let name = path.file_name().unwrap_or_default().to_string_lossy();
                     let galley = ui.painter().layout(name.into_owned(),egui::FontId::proportional(11.),visuals.text_color(),image_width);
                     ui.painter().with_clip_rect(cell.intersect(ui.clip_rect())).galley(cell.min+egui::vec2(2.,image_height+2.),galley,visuals.text_color());
-                    if response.clicked() && !self.busy { select = Some(index); }
+                    if response.clicked() && !self.busy && self.flat_edit.is_none() { select = Some(index); }
                     response.on_hover_text(error.unwrap_or_else(||format!("{}\nApproximate whole-frame thumbnail; drag the strip's top edge to resize.",path.display())));
                 }
             });
@@ -361,7 +399,8 @@ impl Editor {
             wanted.retain(|(index, _, _, _)| visible.contains(index));
             wanted.sort_by_key(|(index, _, _, _)| index.abs_diff(self.selected));
             if let Some((_, key, path, source)) = wanted.into_iter().next() {
-                self.thumbnails.request(key, path, source);
+                self.thumbnails
+                    .request(key, path, source, self.correction.clone());
             }
         }
         if self.thumbnails.pending.is_some() {

@@ -11,6 +11,12 @@ Implemented in `src/project.rs` behind the `project` feature and connected to Ed
 - Dmin/Dmax each store only an optional RGB array; floor/development compatibility is roll-level. Picker source/rectangle/fingerprint does not belong to a reference.
 - Model 2 requires Original response; model 3 requires Film response. New `Project` state uses the new-grade factory. Missing response in a model-2 schema-3 document retains Original; mismatches/old schemas are rejected, not migrated silently.
 
+## Flat-field state
+
+Schema 3 has an optional `flat_field`; absent-field serialization/behavior remains unchanged. Present state stores the explicit algorithm contract from `src/flat_field.rs`, Enabled, reference source ID/fingerprint, source development, roll development including fixed WB, accepted support and bounded RGB gain nodes (maximum 256×256). Deserialization validates node geometry/representability; document validation rejects unknown contracts, snapshot mismatches, incompatible enabled photo geometry/matrix/floor and invalid corrected calibration domains. The existing 8 MiB document limit remains.
+
+The map is saved, not silently recomputed on Open: a missing nonordered reference file does not block use of its accepted map. Edit area reopens/verifies that reference. Choosing a separate reference registers it outside the filmstrip; an existing photo remains visible. Replacing/changing accepted reference content requires rebuilding/clearing its map, not silently updating identity. Dmin/Dmax/base floor remain untouched; runtime calibration transforms a copy of the precision floor once. Changing/enabling correction recommends re-picking calibration for the setup. Accepted map changes preserve an existing Enabled setting; first acceptance defaults to enabled.
+
 ## Validation and source changes
 
 `validate()` checks structure, numerics, identity consistency and calibrated inversion. `require_runtime()` additionally checks current RAW/backend/space/output compatibility; Editor Open also checks runtime compatibility, stored GPU processing domains and ordered-source fingerprints/header identity before preparing the first photo with saved WB.
@@ -38,4 +44,4 @@ Open selects the first ordered photo at Fit, or no scan for an empty filmstrip. 
 
 Separate recovery files, source-change UI and undo/redo remain in the [durable-project work package](../plans/durable-projects.md). Derived previews, scopes, thumbnails and decoded/GPU caches never belong in the saved document. Planned recovery must never silently overwrite an explicit save.
 
-Evidence: `tests/project.rs`, `tests/film_project.rs`, `src/editor_{document,files}_tests.rs` and the [Save/Open closure](../plans/completed/save-open.md). Rationale: [RGB-only calibration decision](../decisions/rgb-only-calibration.md), [versioned response decision](../decisions/versioned-film-response.md).
+Evidence: `tests/{project,film_project,flat_field_project}.rs`, `src/editor_{document,files,flat_field}_tests.rs` and the [Save/Open closure](../plans/completed/save-open.md). Rationale: [RGB-only calibration decision](../decisions/rgb-only-calibration.md), [versioned response decision](../decisions/versioned-film-response.md).

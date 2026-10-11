@@ -15,6 +15,163 @@ fn fixture() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
     (editor, send, receiver)
 }
 #[test]
+fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
+    pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let images = [
+            Arc::new(
+                GpuImage::new_rendered(&device, &queue, 16, 16, OutputTarget::Srgb)
+                    .await
+                    .unwrap(),
+            ),
+            Arc::new(
+                GpuImage::new_rendered(&device, &queue, 16, 16, OutputTarget::DisplayP3)
+                    .await
+                    .unwrap(),
+            ),
+        ];
+        let area = Rect {
+            x: 12,
+            y: 12,
+            width: 8640,
+            height: 5760,
+        };
+        for (width, height, ppp) in [(1100., 800., 1.), (800., 600., 2.)] {
+            for kind in [Pick::Flat, Pick::Dmin] {
+                let (mut editor, _send, _receiver) = fixture();
+                editor.dmin = None;
+                editor.dmax = None;
+                editor.source = true;
+                editor.pick = Some(kind);
+                editor.region = Some(Rect {
+                    x: 46,
+                    y: 46,
+                    width: 8602,
+                    height: 5508,
+                });
+                let path = PathBuf::from(format!(
+                    "/Users/example/{}/reference-with-a-long-filename.ARW",
+                    "a-long-scanning-session-directory/".repeat(12)
+                ));
+                editor.ready = Some(Ready {
+                    path: path.clone(),
+                    area,
+                    floor: editor.floor,
+                    images: images.clone(),
+                    record: Source {
+                        id: SourceId(0),
+                        path,
+                        fingerprint: crate::project::Fingerprint {
+                            bytes: 1,
+                            blake3: "0".repeat(64),
+                        },
+                        development: crate::project::SourceDevelopment {
+                            dimensions: [8704, 6144],
+                            active_area: [12, 12, 8640, 5760],
+                            camera_to_ap0: glam::DMat3::IDENTITY.to_cols_array_2d(),
+                            input_floor: editor.floor,
+                        },
+                        reference_only: true,
+                        photo: Default::default(),
+                    },
+                    development: editor.document.project.development.clone().unwrap(),
+                });
+                let context = egui::Context::default();
+                context.set_pixels_per_point(ppp);
+                let mut fit_point = None;
+                for frame in 0..5 {
+                    let events = if frame < 3 {
+                        vec![]
+                    } else {
+                        let pos = fit_point.unwrap();
+                        if frame == 4 {
+                            editor.viewport.zoom = Some(2.);
+                        }
+                        vec![
+                            egui::Event::PointerMoved(pos),
+                            egui::Event::PointerButton {
+                                pos,
+                                button: egui::PointerButton::Primary,
+                                pressed: frame == 3,
+                                modifiers: egui::Modifiers::NONE,
+                            },
+                        ]
+                    };
+                    let mut output = context.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(width, height),
+                            )),
+                            events,
+                            ..Default::default()
+                        },
+                        |ui| host::App::ui(&mut editor, ui),
+                    );
+                    output.textures_delta.clear();
+                    let mut image = false;
+                    let mut rectangle = false;
+                    let mut cancel = false;
+                    for shape in output.shapes {
+                        match shape.shape {
+                            egui::Shape::Callback(callback) => {
+                                image = true;
+                                assert!(
+                                    shape.clip_rect.expand(0.1).contains_rect(callback.rect),
+                                    "Fit image exceeds visible viewer: {:?} / {:?}",
+                                    callback.rect,
+                                    shape.clip_rect
+                                );
+                                assert!(
+                                    (callback.rect.aspect_ratio()
+                                        - area.width as f32 / area.height as f32)
+                                        .abs()
+                                        < 1e-4,
+                                    "Fit did not restore aspect: frame={frame} kind={kind:?} zoom={:?} image={:?}",
+                                    editor.viewport.zoom,
+                                    callback.rect
+                                );
+                            }
+                            egui::Shape::Rect(rect)
+                                if rect.stroke.color == egui::Color32::WHITE
+                                    && rect.stroke.width == 1. =>
+                            {
+                                rectangle = true;
+                                assert!(
+                                    shape.clip_rect.expand(0.1).contains_rect(rect.rect),
+                                    "proposed support exceeds visible viewer"
+                                );
+                            }
+                            egui::Shape::Text(text) if text.galley.job.text == "Fit" => {
+                                fit_point = Some(
+                                    egui::Rect::from_min_size(text.pos, text.galley.size())
+                                        .center(),
+                                );
+                            }
+                            egui::Shape::Text(text) if text.galley.job.text == "Cancel pick" => {
+                                cancel = true;
+                                let rect = egui::Rect::from_min_size(text.pos, text.galley.size());
+                                assert!(
+                                    shape.clip_rect.expand(0.1).contains_rect(rect),
+                                    "Cancel is outside the visible picker header"
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                    assert!(image && rectangle && cancel);
+                    assert!(editor.viewport.zoom.is_none());
+                }
+            }
+        }
+    });
+}
+#[test]
 fn source_inspection_is_transient_and_pick_commands_never_receive_its_gain() {
     let (mut editor, send, receiver) = fixture();
     editor.sync_document();
@@ -179,7 +336,7 @@ fn navigation_invalidates_pending_overwrite() {
     assert!(editor.overwrite.is_none());
     assert!(matches!(
         receiver.recv().unwrap(),
-        Command::Load(1, _, _, _)
+        Command::Load(1, _, _, _, _)
     ));
 }
 fn patch() -> Rect {

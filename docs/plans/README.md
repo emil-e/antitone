@@ -4,6 +4,7 @@
 
 - [Completed documentation structure](completed/documentation-structure.md): workflow/cache reorganization, verification and deliberate historical/private-input boundaries.
 - [Completed settled-preview buffer limits](completed/preview-stability.md): adapter-supported limits, large Fit regression and editor/presentation checks; no speculative minimum chip/RAM target.
+- [Completed roll-level flat-field correction](completed/flat-field-correction.md): user-accepted source correction with editable support, shared CPU/GPU map, corrected picks/thumbnails/exports and persistence; verification limits retained.
 - [Source inspection and interaction feedback](inspection-and-interaction.md): remaining focused feedback; the roadmap selects the next slice.
 - [Thumbnails and whole-image scopes](visual-feedback.md): bounded visual feedback; scope basis/design still to be specified.
 - [Completed basic editor Save/Open](completed/save-open.md): stable-ID ownership, transactional Open, atomic Save, File/Export menus, dirty protection and checks/limits.

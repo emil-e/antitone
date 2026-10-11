@@ -46,7 +46,7 @@ impl Document {
     }
     pub fn validate(&self) -> Result<()> {
         self.project.require_runtime(&crate::raw::version())?;
-        if let Some(calibration) = self.project.calibration()? {
+        if let Some(calibration) = self.project.processing_calibration()? {
             ProcessingParameters::positive(calibration, self.project.roll, Default::default())?;
             for source in &self.project.sources {
                 ProcessingParameters::positive(calibration, self.project.roll, source.photo)?;
@@ -103,6 +103,20 @@ impl Document {
             self.project.input_floor = Some(source.development.input_floor);
         }
         self.project.add_source(source)
+    }
+    pub fn register_reference(
+        &mut self,
+        mut source: Source,
+        development: Development,
+    ) -> Result<SourceId> {
+        if let Some(id) = self.find_source(&source.path) {
+            verify_source(self.project.source(id)?, &source)?;
+            return Ok(id);
+        }
+        source.reference_only = true;
+        let id = self.register(source, development)?;
+        self.project.remove_from_filmstrip(id)?;
+        Ok(id)
     }
     pub fn save(&self, path: &Path, policy: Save) -> Result<Self> {
         let path = absolute(path)?;

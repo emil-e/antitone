@@ -1,6 +1,6 @@
 use crate::{
     Error,
-    gpu::{ProcessingKernel, ProcessingParameters, ProcessingSource},
+    gpu::{GpuFlatField, ProcessingKernel, ProcessingParameters, ProcessingSource, SourceGeometry},
     rendering::OutputTarget,
 };
 use glam::{DMat3, Vec4};
@@ -343,6 +343,20 @@ impl GpuImage {
         self.processing
             .as_ref()
             .map_or((0, 0), |p| (p.source.byte_len(), p.working.size()))
+    }
+
+    pub fn set_flat_field(
+        &mut self,
+        field: Option<Arc<GpuFlatField>>,
+        geometry: SourceGeometry,
+    ) -> Result<(), Error> {
+        let processing = self
+            .processing
+            .as_mut()
+            .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
+        processing.source.set_flat_field(field, geometry)?;
+        *self.last_parameters.lock().unwrap() = None;
+        Ok(())
     }
 
     pub fn write_source(&self, queue: &wgpu::Queue, pixels: &[[u16; 4]]) -> Result<(), Error> {

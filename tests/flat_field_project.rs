@@ -1,0 +1,131 @@
+#![cfg(feature = "project")]
+use antitone::{
+    flat_field::FlatField,
+    processing::PhotoSettings,
+    project::{
+        Development, Fingerprint, FlatFieldSettings, Project, Save, Source, SourceDevelopment,
+        SourceId,
+    },
+};
+use glam::{DMat3, DVec3};
+use std::sync::Arc;
+fn fixture() -> Project {
+    let mut project = Project {
+        development: Some(Development::new("test-backend".into(), [2., 1., 1.7, 1.])),
+        input_floor: Some(1. / 65535.),
+        dmin: Some([0.2; 3]),
+        dmax: Some([0.001; 3]),
+        ..Project::default()
+    };
+    let source = Source {
+        id: SourceId(0),
+        path: "photo.ARW".into(),
+        fingerprint: Fingerprint {
+            bytes: 1,
+            blake3: "0".repeat(64),
+        },
+        development: SourceDevelopment {
+            dimensions: [824, 624],
+            active_area: [12, 12, 800, 600],
+            camera_to_ap0: DMat3::IDENTITY.to_cols_array_2d(),
+            input_floor: 1. / 65535.,
+        },
+        reference_only: false,
+        photo: PhotoSettings::default(),
+    };
+    let id = project.add_source(source).unwrap();
+    let map = Arc::new(
+        FlatField::from_nodes(
+            [30, 30, 760, 550],
+            [2, 2],
+            vec![
+                DVec3::new(0.932345678912345, 1.01, 0.98),
+                DVec3::new(1.2, 1.3, 1.1),
+                DVec3::ONE,
+                DVec3::splat(1.1),
+            ],
+        )
+        .unwrap(),
+    );
+    project.flat_field = Some(FlatFieldSettings::new(
+        project.source(id).unwrap(),
+        map,
+        project.development.as_ref().unwrap(),
+    ));
+    project
+}
+#[test]
+fn map_roundtrip_is_exact_and_does_not_require_reference_file_or_resample_rgb() {
+    let project = fixture();
+    project.validate().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("roll.antitone.json");
+    project.save(&path, Save::New).unwrap();
+    let reopened = Project::load(&path).unwrap();
+    assert_eq!(reopened, project);
+    assert_eq!(
+        reopened.calibration().unwrap(),
+        project.calibration().unwrap()
+    );
+    assert!(
+        reopened
+            .processing_calibration()
+            .unwrap()
+            .unwrap()
+            .input_floor
+            > project.input_floor.unwrap()
+    );
+    let mut disabled = project.clone();
+    disabled.flat_field.as_mut().unwrap().enabled = false;
+    assert_eq!(
+        disabled.processing_calibration().unwrap(),
+        disabled.calibration().unwrap()
+    );
+    let mut plain = project;
+    plain.flat_field = None;
+    let json = serde_json::to_string(&plain).unwrap();
+    assert!(!json.contains("flat_field"));
+    assert_eq!(serde_json::from_str::<Project>(&json).unwrap(), plain);
+}
+#[test]
+fn contract_identity_geometry_and_incompatible_sources_reject() {
+    let project = fixture();
+    let mut changed = project.clone();
+    changed.flat_field.as_mut().unwrap().contract = "unknown".into();
+    assert!(changed.validate().is_err());
+    changed = project.clone();
+    changed.flat_field.as_mut().unwrap().fingerprint.bytes += 1;
+    assert!(changed.validate().is_err());
+    changed = project.clone();
+    changed.development.as_mut().unwrap().fixed_wb[0] += 0.1;
+    assert!(changed.validate().is_err());
+    changed = project.clone();
+    changed.sources[0].development.camera_to_ap0[0][0] += 0.1;
+    assert!(changed.validate().is_err());
+    changed = project.clone();
+    changed.flat_field.as_mut().unwrap().map =
+        Arc::new(FlatField::from_nodes([0, 0, 10, 10], [2, 2], vec![DVec3::ONE; 4]).unwrap());
+    assert!(changed.validate().is_err());
+    changed = project.clone();
+    let mut other = changed.sources[0].clone();
+    other.development.dimensions = [1024, 824];
+    other.path = "other.ARW".into();
+    changed.add_source(other).unwrap();
+    assert!(changed.validate().is_err());
+    changed.flat_field.as_mut().unwrap().enabled = false;
+    changed.validate().unwrap();
+    let mut json = serde_json::to_value(&project).unwrap();
+    json["flat_field"]["map"]["size"] = serde_json::json!([0, 2]);
+    assert!(serde_json::from_value::<Project>(json).is_err());
+}
+#[test]
+fn reference_kept_visible_and_removing_it_from_order_does_not_remove_map() {
+    let mut project = fixture();
+    let id = project.order[0];
+    assert!(!project.source(id).unwrap().reference_only);
+    project.remove_from_filmstrip(id).unwrap();
+    project.validate().unwrap();
+    assert!(project.order.is_empty());
+    assert!(project.flat_field.is_some());
+    assert!(project.source(id).is_ok());
+}

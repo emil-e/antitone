@@ -1,5 +1,9 @@
 use bytemuck::Zeroable;
-use std::num::NonZeroU64;
+use std::{num::NonZeroU64, sync::Arc};
+
+#[path = "gpu_flat_field.rs"]
+mod flat;
+pub use flat::{GpuFlatField, SourceGeometry};
 
 use glam::{DMat3, DVec3, Vec4, Vec4Swizzles};
 use wgpu::util::DeviceExt;
@@ -45,6 +49,19 @@ impl ProcessingParameters {
             post: matrix_columns(ap0_to_ap1() * gain),
             ..Self::source()
         })
+    }
+
+    /// Preserve corrected signed source cancellation through the inspection post-transform.
+    pub fn corrected_source(exposure: f64) -> Result<Self, Error> {
+        let mut result = Self::source_inspection(exposure)?;
+        let matrix = ap0_to_ap1() * exposure_multiplier(exposure)?;
+        result.post_low = std::array::from_fn(|c| {
+            let column = [matrix.x_axis, matrix.y_axis, matrix.z_axis][c];
+            (column - result.post[c].xyz().as_dvec3())
+                .as_vec3()
+                .extend(0.)
+        });
+        Ok(result)
     }
 
     pub fn positive(
@@ -213,6 +230,8 @@ pub struct ProcessingSource {
     input: wgpu::Buffer,
     matrix: wgpu::Buffer,
     pixels: u32,
+    camera_to_ap0: DMat3,
+    flat_field: Option<(Arc<GpuFlatField>, SourceGeometry)>,
 }
 
 impl ProcessingSource {
@@ -225,6 +244,7 @@ impl ProcessingSource {
         {
             return Err(Error::Gpu("source exceeds GPU limits".into()));
         }
+        let camera_to_ap0 = matrix;
         let matrix = CameraMatrix::new(matrix)?;
         Ok(Self {
             input: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -238,7 +258,26 @@ impl ProcessingSource {
                 usage: wgpu::BufferUsages::UNIFORM,
             }),
             pixels: count,
+            camera_to_ap0,
+            flat_field: None,
         })
+    }
+
+    pub fn set_flat_field(
+        &mut self,
+        field: Option<Arc<GpuFlatField>>,
+        geometry: SourceGeometry,
+    ) -> Result<(), Error> {
+        if geometry.pixels() != self.pixels {
+            return Err(Error::Gpu(
+                "flat-field source geometry differs from RGB16 storage".into(),
+            ));
+        }
+        if let Some(field) = &field {
+            field.validate_matrix(self.camera_to_ap0)?;
+        }
+        self.flat_field = field.map(|field| (field, geometry));
+        Ok(())
     }
 
     pub fn write(&self, queue: &wgpu::Queue, pixels: &[[u16; 4]]) -> Result<(), Error> {
@@ -256,6 +295,7 @@ impl ProcessingSource {
 
 pub struct ProcessingKernel {
     pipeline: wgpu::ComputePipeline,
+    identity: wgpu::Buffer,
 }
 
 impl ProcessingKernel {
@@ -265,8 +305,9 @@ impl ProcessingKernel {
             label: Some("camera RGB16 to AP1 photographic processing"),
             source: wgpu::ShaderSource::Wgsl(
                 format!(
-                    "{}\n{}\n{}",
+                    "{}\n{}\n{}\n{}",
                     include_str!("shaders/camera_conversion.wgsl"),
+                    include_str!("shaders/flat_field.wgsl"),
                     include_str!("shaders/film_response.wgsl"),
                     include_str!("shaders/processing.wgsl")
                 )
@@ -284,7 +325,10 @@ impl ProcessingKernel {
         if let Some(error) = scope.pop().await {
             return Err(Error::Gpu(error.to_string()));
         }
-        Ok(Self { pipeline })
+        Ok(Self {
+            pipeline,
+            identity: flat::identity_nodes(device),
+        })
     }
 
     pub fn encode(
@@ -300,6 +344,15 @@ impl ProcessingKernel {
         let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("processing parameters"),
             contents: bytemuck::bytes_of(&parameters),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let (nodes, geometry) = match &source.flat_field {
+            Some((field, geometry)) => (&field.nodes, flat::FieldGeometry::new(field, *geometry)),
+            None => (&self.identity, flat::FieldGeometry::zeroed()),
+        };
+        let field_uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("flat-field source geometry"),
+            contents: bytemuck::bytes_of(&geometry),
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -326,6 +379,14 @@ impl ProcessingKernel {
                     binding: 3,
                     resource: source.matrix.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: nodes.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: field_uniform.as_entire_binding(),
+                },
             ],
         });
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -340,6 +401,9 @@ impl ProcessingKernel {
     }
 }
 
+#[cfg(test)]
+#[path = "gpu_flat_field_tests.rs"]
+mod flat_tests;
 #[cfg(test)]
 #[path = "gpu_tests.rs"]
 mod tests;

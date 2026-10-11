@@ -31,11 +31,17 @@ use files::{FileAction, Transition};
 #[path = "editor_thumbnails.rs"]
 mod thumbnails;
 use thumbnails::Thumbnails;
+#[path = "editor_flat_field.rs"]
+mod flat;
 #[path = "editor_navigation.rs"]
 mod navigation;
+use flat::{Correction, FlatEdit, FlatPreview};
 #[path = "editor_smoke.rs"]
 mod smoke;
 pub use smoke::SmokeEditor;
+#[path = "editor_flat_field_smoke.rs"]
+mod flat_smoke;
+pub use flat_smoke::FlatFieldSmoke;
 #[cfg(test)]
 #[path = "editor_tests.rs"]
 mod tests;
@@ -46,6 +52,7 @@ enum Pick {
     Dmax,
     Gamma,
     Wb,
+    Flat,
 }
 struct PickReturn {
     path: PathBuf,
@@ -65,16 +72,28 @@ enum DocumentWork {
     Open(PathBuf),
     New,
     Save(Document, PathBuf, crate::project::Save),
+    Correction(Document, Option<SourceId>),
 }
 struct Prepared {
     document: Document,
     ready: Option<Ready>,
     selected: Option<SourceId>,
     reuse_ready: bool,
+    correction: Option<Arc<Correction>>,
+    preserve_view: bool,
 }
 enum Command {
     Refine(u64, u64, ProcessingParameters, OutputTarget, ViewRequest),
-    Load(u64, PathBuf, Option<[f64; 4]>, Option<Box<Source>>),
+    Load(
+        u64,
+        PathBuf,
+        Option<[f64; 4]>,
+        Option<Box<Source>>,
+        Option<Arc<Correction>>,
+    ),
+    FlatPreview(u64, PathBuf, Option<[f64; 4]>, Option<Box<Source>>),
+    FlatAccept(u64, Rect, Box<Document>, Option<SourceId>),
+    CancelFlat(u64),
     Document(u64, Box<DocumentWork>),
     Pick(
         u64,
@@ -110,6 +129,7 @@ enum Message {
     Exported(u64, Result<PathBuf, String>),
     Prepared(u64, Result<Box<Prepared>, String>),
     Saved(u64, Result<Box<Document>, String>),
+    FlatPreview(u64, Result<Box<FlatPreview>, String>),
 }
 
 fn prepare_source(
@@ -118,33 +138,41 @@ fn prepare_source(
     path: PathBuf,
     wb: Option<[f64; 4]>,
     expected: Option<&Source>,
+    correction: Option<&Arc<Correction>>,
 ) -> Result<(Ready, Scan), Error> {
     let (record, _) = document::read_source(&path)?;
     if let Some(expected) = expected {
         document::verify_source(expected, &record)?;
     }
-    let scan = Scan::open(&path, wb)?;
+    let mut scan = Scan::open(&path, wb)?;
     document::verify_scan(&record, &scan)?;
+    if let Some(correction) = correction {
+        correction.settings.require_source(&record.development)?;
+        scan.set_flat_field(Some(correction.settings.map.clone()))?;
+    }
     let (width, height, pixels) = scan.preview_source(1024)?;
+    let make_image = |target| -> Result<Arc<GpuImage>, Error> {
+        let mut image = pollster::block_on(GpuImage::new(
+            device,
+            queue,
+            width,
+            height,
+            &pixels,
+            scan.camera_to_ap0,
+            target,
+        ))?;
+        if let Some(correction) = correction {
+            let a = scan.area;
+            image.set_flat_field(
+                Some(correction.gpu.clone()),
+                crate::gpu::SourceGeometry::new([a.x, a.y, a.width, a.height], [width, height])?,
+            )?;
+        }
+        Ok(Arc::new(image))
+    };
     let images = [
-        Arc::new(pollster::block_on(GpuImage::new(
-            device,
-            queue,
-            width,
-            height,
-            &pixels,
-            scan.camera_to_ap0,
-            OutputTarget::Srgb,
-        ))?),
-        Arc::new(pollster::block_on(GpuImage::new(
-            device,
-            queue,
-            width,
-            height,
-            &pixels,
-            scan.camera_to_ap0,
-            OutputTarget::DisplayP3,
-        ))?),
+        make_image(OutputTarget::Srgb)?,
+        make_image(OutputTarget::DisplayP3)?,
     ];
     let ready = Ready {
         path,
@@ -162,7 +190,13 @@ fn prepare_document(
     source: &mut Option<(u64, Scan)>,
     id: u64,
     work: DocumentWork,
+    previous_correction: Option<&Arc<Correction>>,
 ) -> Result<Prepared, Error> {
+    let preserve_view = matches!(work, DocumentWork::Correction(..));
+    let selected_override = match &work {
+        DocumentWork::Correction(_, selected) => Some(*selected),
+        _ => None,
+    };
     let (document, reuse) = match work {
         DocumentWork::Import(mut document, paths, reuse) => {
             document.import(&paths)?;
@@ -170,9 +204,11 @@ fn prepare_document(
         }
         DocumentWork::Open(path) => (Document::open(&path)?, None),
         DocumentWork::New => (Document::default(), None),
+        DocumentWork::Correction(document, _) => (document, None),
         DocumentWork::Save(..) => unreachable!("save does not prepare a RAW"),
     };
     document.validate()?;
+    let correction = Correction::prepare(device, &document, previous_correction)?;
     for record in &document.project.sources {
         crate::gpu::ProcessingSource::new(
             device,
@@ -190,9 +226,11 @@ fn prepare_document(
             ready: None,
             selected: Some(selected),
             reuse_ready: true,
+            correction,
+            preserve_view,
         });
     }
-    let selected = document.project.order.first().copied();
+    let selected = selected_override.unwrap_or_else(|| document.project.order.first().copied());
     let prepared = if let Some(selected) = selected {
         let path = document.source_path(selected)?;
         let wb = document
@@ -206,6 +244,7 @@ fn prepare_document(
             path,
             wb,
             Some(document.project.source(selected)?),
+            correction.as_ref(),
         )?;
         Some((ready, scan))
     } else {
@@ -226,6 +265,8 @@ fn prepare_document(
         ready,
         selected,
         reuse_ready: false,
+        correction,
+        preserve_view,
     })
 }
 
@@ -237,14 +278,23 @@ fn backend(
     generation: Arc<std::sync::atomic::AtomicU64>,
 ) {
     let mut source: Option<(u64, Scan)> = None;
+    let mut correction: Option<Arc<Correction>> = None;
+    let mut flat_preview: Option<(u64, Scan, Source)> = None;
     while let Ok(command) = commands.recv() {
         match command {
             Command::Refine(id, revision, parameters, target, view) => {
-                let result = match &source {
-                    Some((loaded, scan)) if *loaded == id => crate::refinement::refine(
+                let active = match &flat_preview {
+                    Some((loaded, scan, _)) if *loaded == id => Some((scan, None)),
+                    _ => source
+                        .as_ref()
+                        .filter(|(loaded, _)| *loaded == id)
+                        .map(|(_, scan)| (scan, correction.as_ref().map(|c| c.gpu.clone()))),
+                };
+                let result = match active {
+                    Some(context) => crate::refinement::refine(
                         &device,
                         &queue,
-                        scan,
+                        context,
                         parameters,
                         target,
                         (&generation, revision),
@@ -257,14 +307,86 @@ fn backend(
                     break;
                 }
             }
-            Command::Load(id, path, wb, expected) => {
-                let result = prepare_source(&device, &queue, path, wb, expected.as_deref())
-                    .map(|(ready, scan)| {
-                        source = Some((id, scan));
-                        Box::new(ready)
-                    })
-                    .map_err(|error| error.to_string());
+            Command::Load(id, path, wb, expected, field) => {
+                let result = prepare_source(
+                    &device,
+                    &queue,
+                    path,
+                    wb,
+                    expected.as_deref(),
+                    field.as_ref(),
+                )
+                .map(|(ready, scan)| {
+                    source = Some((id, scan));
+                    correction = field;
+                    Box::new(ready)
+                })
+                .map_err(|error| error.to_string());
                 if messages.send(Message::Ready(id, result)).is_err() {
+                    break;
+                }
+            }
+            Command::FlatPreview(id, path, wb, expected) => {
+                let result = prepare_source(&device, &queue, path, wb, expected.as_deref(), None)
+                    .and_then(|(ready, scan)| {
+                        let region = scan.propose_flat_field_area()?;
+                        flat_preview = Some((id, scan, ready.record.clone()));
+                        Ok(Box::new(FlatPreview { ready, region }))
+                    })
+                    .map_err(|e| e.to_string());
+                if messages.send(Message::FlatPreview(id, result)).is_err() {
+                    break;
+                }
+            }
+            Command::CancelFlat(id) => {
+                if flat_preview
+                    .as_ref()
+                    .is_some_and(|(loaded, _, _)| *loaded == id)
+                {
+                    flat_preview = None;
+                }
+            }
+            Command::FlatAccept(id, region, mut document, selected) => {
+                let result = (|| -> Result<Box<Prepared>, Error> {
+                    let (_, scan, record) = flat_preview
+                        .as_mut()
+                        .filter(|(loaded, _, _)| *loaded == id)
+                        .ok_or(Error::UnusableSample("flat-field reference changed"))?;
+                    let map = Arc::new(scan.estimate_flat_field(region)?);
+                    let reference = document.register_reference(
+                        record.clone(),
+                        Development::new(crate::raw::version(), scan.fixed_wb),
+                    )?;
+                    let enabled = document
+                        .project
+                        .flat_field
+                        .as_ref()
+                        .is_none_or(|field| field.enabled);
+                    let mut settings = crate::project::FlatFieldSettings::new(
+                        document.project.source(reference)?,
+                        map,
+                        document
+                            .project
+                            .development
+                            .as_ref()
+                            .ok_or(Error::UnusableSample("flat-field roll development missing"))?,
+                    );
+                    settings.enabled = enabled;
+                    document.project.flat_field = Some(settings);
+                    let prepared = prepare_document(
+                        &device,
+                        &queue,
+                        &mut source,
+                        id,
+                        DocumentWork::Correction(*document, selected),
+                        correction.as_ref(),
+                    )?;
+                    correction = prepared.correction.clone();
+                    flat_preview = None;
+                    Ok(Box::new(prepared))
+                })()
+                .map_err(|e| e.to_string());
+                if messages.send(Message::Prepared(id, result)).is_err() {
                     break;
                 }
             }
@@ -279,9 +401,19 @@ fn backend(
                     ),
                     work => Message::Prepared(
                         id,
-                        prepare_document(&device, &queue, &mut source, id, work)
-                            .map(Box::new)
-                            .map_err(|error| error.to_string()),
+                        prepare_document(
+                            &device,
+                            &queue,
+                            &mut source,
+                            id,
+                            work,
+                            correction.as_ref(),
+                        )
+                        .map(|prepared| {
+                            correction = prepared.correction.clone();
+                            Box::new(prepared)
+                        })
+                        .map_err(|error| error.to_string()),
                     ),
                 };
                 if messages.send(message).is_err() {
@@ -309,6 +441,9 @@ fn backend(
                                 roll,
                             )
                             .map(Measurement::Balance),
+                        Pick::Flat => Err(Error::InvalidParameter(
+                            "flat-field acceptance uses a separate transaction",
+                        )),
                         Pick::Wb => scan
                             .photo_neutral(
                                 region,
@@ -334,7 +469,11 @@ fn backend(
                     if id != *loaded {
                         return Err(Error::UnusableSample("source changed before export"));
                     }
-                    let pipeline = crate::processing::Pipeline::new(calibration, roll, photo)?;
+                    let pipeline = crate::processing::Pipeline::new(
+                        scan.processing_calibration(calibration)?,
+                        roll,
+                        photo,
+                    )?;
                     let area = scan.area;
                     let size = ImageSize {
                         width: area.width,
@@ -411,6 +550,8 @@ pub struct Editor {
     allow_close: bool,
     selected: usize,
     overwrite: Option<(PathBuf, OutputFormat)>,
+    correction: Option<Arc<Correction>>,
+    flat_edit: Option<FlatEdit>,
 }
 impl Editor {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, initial: Option<PathBuf>) -> Self {
@@ -484,6 +625,8 @@ impl Editor {
             allow_close: false,
             selected: 0,
             overwrite: None,
+            correction: None,
+            flat_edit: None,
         }
     }
     fn calibration(&self) -> Option<Calibration> {
@@ -592,7 +735,13 @@ impl Editor {
         self.status = "Developing full-resolution RAW…".into();
         if self
             .commands
-            .send(Command::Load(self.id, path, wb, expected))
+            .send(Command::Load(
+                self.id,
+                path,
+                wb,
+                expected,
+                self.correction.clone(),
+            ))
             .is_err()
         {
             self.busy = false;
@@ -680,7 +829,7 @@ impl Editor {
                                     }
                                     .validate()
                                     .and_then(|cal| {
-                                        ProcessingParameters::positive(cal, self.roll, self.photo)
+                                        self.positive_parameters(cal, self.roll, self.photo)
                                             .map(|_| cal)
                                     })
                                 })
@@ -706,7 +855,7 @@ impl Editor {
                                 photo.wb = balance;
                             }
                             if let Some(cal) = self.calibration()
-                                && let Err(error) = ProcessingParameters::positive(cal, roll, photo)
+                                && let Err(error) = self.positive_parameters(cal, roll, photo)
                             {
                                 self.status = format!("Pick rejected: {error}");
                                 self.finish_pick();
@@ -725,6 +874,8 @@ impl Editor {
                     self.busy = false;
                     match result {
                         Ok(prepared) => {
+                            let flat_context = self.flat_edit.take();
+                            self.correction = prepared.correction;
                             self.document = prepared.document;
                             self.id = id;
                             self.current_source = prepared.selected;
@@ -761,8 +912,10 @@ impl Editor {
                             };
                             if !prepared.reuse_ready {
                                 self.ready = prepared.ready;
-                                self.viewport.fit();
-                                self.source = self.calibration().is_none();
+                                if !prepared.preserve_view {
+                                    self.viewport.fit();
+                                    self.source = self.calibration().is_none();
+                                }
                             }
                             self.pick = None;
                             self.pick_view = None;
@@ -775,9 +928,30 @@ impl Editor {
                             self.settled = None;
                             self.refining = None;
                             self.refinement_error = None;
-                            self.status = "Project ready".into();
+                            if let Some(context) = flat_context {
+                                self.viewport = context.viewport;
+                                self.source = context.source;
+                            }
+                            self.status = if self.document.project.flat_field.is_some() || prepared.preserve_view {"Project ready. Flat-field changes keep Dmin/Dmax RGB; re-pick calibration for this setup."} else {"Project ready"}.into();
                         }
-                        Err(error) => self.status = format!("Project: {error}"),
+                        Err(error) => {
+                            self.status = format!("Project: {error}");
+                            self.finish_flat_edit();
+                        }
+                    }
+                }
+                Message::FlatPreview(id, result) if id == self.id && self.flat_edit.is_some() => {
+                    self.busy = false;
+                    match result {
+                        Ok(preview) => {
+                            self.region = self.region.or(preview.region);
+                            self.ready = Some(preview.ready);
+                            self.status=if self.region.is_some(){"Proposed illuminated rectangle: adjust edges, then Apply."}else{"Illuminated area is ambiguous; draw a rectangle around the usable light."}.into();
+                        }
+                        Err(error) => {
+                            self.status = error;
+                            self.finish_flat_edit();
+                        }
                     }
                 }
                 Message::Saved(id, result) if self.document_pending == Some(id) => {
@@ -809,6 +983,10 @@ impl Editor {
         }
     }
     fn finish_pick(&mut self) {
+        if self.flat_edit.is_some() {
+            self.finish_flat_edit();
+            return;
+        }
         let source = self
             .pick_view
             .take()
@@ -876,6 +1054,10 @@ impl Editor {
         self.source = true;
     }
     fn apply_pick(&mut self) {
+        if self.pick == Some(Pick::Flat) {
+            self.apply_flat_edit();
+            return;
+        }
         if let (Some(kind), Some(region)) = (self.pick, self.region) {
             self.thumbnails.cancel();
             self.busy = true;
@@ -932,8 +1114,8 @@ impl Editor {
     }
     fn controls(&mut self, ui: &mut egui::Ui) {
         use controls::{ColorControl, Parameter};
-        let editable = !self.busy && self.calibration().is_some();
-        let can_pick = !self.busy && self.ready.is_some();
+        let editable = !self.busy && self.flat_edit.is_none() && self.calibration().is_some();
+        let can_pick = !self.busy && self.ready.is_some() && self.flat_edit.is_none();
         let mut start_pick = None;
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.tab, 0, "Roll");
@@ -964,6 +1146,7 @@ impl Editor {
         egui::ScrollArea::vertical().show(ui, |ui| {
             if self.tab == 0 {
                 ui.push_id("roll", |ui| {
+                    self.flat_controls(ui);
                     controls::section(ui, "calibration", "Calibration", None, |ui| {
                         if controls::calibration(
                             ui, "dmin", "Dmin (film base)", self.dmin, can_pick,
@@ -1272,15 +1455,15 @@ impl host::App for Editor {
             .min_size(270.)
             .show(ui, |ui| self.controls(ui));
         if let Some(calibration) = self.calibration()
-            && let Err(error) = ProcessingParameters::positive(calibration, self.roll, self.photo)
+            && let Err(error) = self.positive_parameters(calibration, self.roll, self.photo)
         {
             self.roll = previous_roll;
             self.photo = previous_photo;
             self.status = format!("Edit rejected: {error}");
         }
         egui::CentralPanel::default().show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut self.source, "Developed source");
+            ui.horizontal_wrapped(|ui| {
+                ui.add_enabled(self.pick!=Some(Pick::Flat),egui::Checkbox::new(&mut self.source, "Developed source"));
                 if calibration.is_none() {
                     self.source = true;
                     ui.label("Dmin and Dmax required for a positive preview");
@@ -1297,7 +1480,8 @@ impl host::App for Editor {
                 }
                 if let Some(pick) = self.pick {
                     if let Some(ready) = &self.ready {
-                        ui.label(format!("Sampling {}", ready.path.display()));
+                        ui.add(egui::Label::new(format!("Sampling {}", ready.path.file_name().unwrap_or_default().to_string_lossy())).wrap())
+                            .on_hover_text(ready.path.display().to_string());
                     }
                     ui.label(format!(
                         "{pick:?}: click for a patch or drag a rectangle; adjust before applying"
@@ -1356,7 +1540,7 @@ impl host::App for Editor {
                 }
                 ui.label("?").on_hover_text("Scroll: pan. Pinch or Ctrl/Cmd-scroll: zoom. Click: native/Fit. Drag when zoomed, middle/space drag: pan. Z: Fit.");
             });
-            let available = (ui.available_size()
+            let available = (ui.available_rect_before_wrap().intersect(ui.clip_rect()).size()
                 - egui::vec2(0., if self.pick.is_some() { 36. } else { 0. }))
             .max(egui::vec2(1., 1.));
             let (canvas, response) =
@@ -1383,7 +1567,8 @@ impl host::App for Editor {
                 output: geometry.output_size(geometry.visible_area(), pixels_per_point),
             };
             let parameters = if self.source {
-                match ProcessingParameters::source_inspection(self.source_exposure) {
+                let source_parameters=if self.correction.is_some() && self.flat_edit.is_none() {ProcessingParameters::corrected_source(self.source_exposure)} else {ProcessingParameters::source_inspection(self.source_exposure)};
+                match source_parameters {
                     Ok(parameters) => parameters,
                     Err(error) => { ui.label(format!("Source inspection unavailable: {error}")); return; }
                 }
@@ -1392,7 +1577,7 @@ impl host::App for Editor {
                     ui.label("Positive preview requires valid calibration");
                     return;
                 };
-                match ProcessingParameters::positive(cal, self.roll, self.photo) {
+                match self.positive_parameters(cal, self.roll, self.photo) {
                     Ok(p) => p,
                     Err(error) => {
                         ui.label(format!("Positive preview unavailable: {error}"));
@@ -1520,7 +1705,7 @@ impl host::App for Editor {
                                 .range(1..=area.y + area.height - region.y)
                                 .prefix("h "),
                         );
-                        if ui.button("Apply pick").clicked() {
+                        if ui.button(if self.pick==Some(Pick::Flat){"Apply correction"}else{"Apply pick"}).clicked() {
                             self.apply_pick();
                         }
                     });

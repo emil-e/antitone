@@ -45,9 +45,13 @@ fn invert_original(scan: f32, dmin: f32, gamma: f32, anchor: f32, log_gain: f32)
 fn main(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) groups: vec3u) {
     let index = id.x + id.y * groups.x * 64u;
     if index >= arrayLength(&scans) { return; }
-    let scan = convert_camera(scans[index]);
+    let scan = convert_source(scans[index], index);
     if parameters.gamma_mode.w > 1.5 {
         positives[index] = process_film(scan);
+        return;
+    }
+    if parameters.gamma_mode.w < 0.5 && field.grid.z != 0u {
+        positives[index] = process_corrected_source(scan);
         return;
     }
     var value = scan.high;

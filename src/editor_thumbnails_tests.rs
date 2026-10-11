@@ -33,6 +33,10 @@ fn key(document: &Document, id: SourceId) -> ImageKey {
             document.project.development.as_ref().unwrap(),
         ),
         target: OutputTarget::DisplayP3,
+        field: document
+            .project
+            .active_flat_field()
+            .map(|f| FieldKey(f.map.clone())),
     }
 }
 #[test]
@@ -74,6 +78,34 @@ fn source_identity_excludes_locator_photo_and_roll_edits_but_includes_bytes_matr
     assert_ne!(candidate, original);
 }
 #[test]
+fn correction_changes_image_identity_without_invalidating_unconverted_raw_proxies() {
+    let mut document = fixture();
+    let id = document.project.order[0];
+    let plain = key(&document, id);
+    let source = document.project.source(id).unwrap();
+    let a = source.development.active_area;
+    let map = Arc::new(
+        crate::flat_field::FlatField::from_nodes(a, [2, 2], vec![DVec3::splat(1.1); 4]).unwrap(),
+    );
+    document.project.flat_field = Some(crate::project::FlatFieldSettings::new(
+        source,
+        map,
+        document.project.development.as_ref().unwrap(),
+    ));
+    let corrected = key(&document, id);
+    assert_ne!(corrected, plain);
+    assert_eq!(corrected.source, plain.source);
+    let mut recreated = corrected.clone();
+    recreated.field = Some(FieldKey(Arc::new(
+        (*corrected.field.as_ref().unwrap().0).clone(),
+    )));
+    assert_eq!(corrected, recreated);
+    document.project.flat_field.as_mut().unwrap().enabled = false;
+    assert_eq!(key(&document, id), plain);
+    document.project.flat_field = None;
+    assert_eq!(key(&document, id), plain);
+}
+#[test]
 fn one_outstanding_job_is_kept_until_cancelled_completion_and_stale_results_do_not_install() {
     let document = fixture();
     let id = document.project.order[0];
@@ -89,6 +121,7 @@ fn one_outstanding_job_is_kept_until_cancelled_completion_and_stale_results_do_n
         image_key.clone(),
         document.source_path(id).unwrap(),
         document.project.source(id).unwrap().clone(),
+        None,
     );
     let job = receiver.try_recv().unwrap();
     thumbnails.cancel();
@@ -96,6 +129,7 @@ fn one_outstanding_job_is_kept_until_cancelled_completion_and_stale_results_do_n
         image_key.clone(),
         document.source_path(id).unwrap(),
         document.project.source(id).unwrap().clone(),
+        None,
     );
     assert!(receiver.try_recv().is_err());
     assert!(thumbnails.pending.is_some());
@@ -112,6 +146,7 @@ fn one_outstanding_job_is_kept_until_cancelled_completion_and_stale_results_do_n
         image_key,
         document.source_path(id).unwrap(),
         document.project.source(id).unwrap().clone(),
+        None,
     );
     assert!(receiver.try_recv().is_ok());
 }
@@ -130,6 +165,7 @@ fn changed_document_identity_rejects_result_and_worker_disconnection_clears_pend
         key(&document, id),
         document.source_path(id).unwrap(),
         document.project.source(id).unwrap().clone(),
+        None,
     );
     let job = receiver.try_recv().unwrap();
     document.project.development.as_mut().unwrap().fixed_wb[0] += 0.1;
@@ -145,6 +181,7 @@ fn changed_document_identity_rejects_result_and_worker_disconnection_clears_pend
         key(&document, id),
         document.source_path(id).unwrap(),
         document.project.source(id).unwrap().clone(),
+        None,
     );
     receiver.try_recv().unwrap();
     drop(send);

@@ -1,5 +1,9 @@
 use crate::{
-    Error, gpu::ProcessingParameters, rendering::OutputTarget, resample::AreaAverage, scan::Scan,
+    Error,
+    gpu::{GpuFlatField, ProcessingParameters, SourceGeometry},
+    rendering::OutputTarget,
+    resample::AreaAverage,
+    scan::Scan,
     viewer::GpuImage,
 };
 use std::sync::{
@@ -16,7 +20,7 @@ pub struct ViewRequest {
 pub fn refine(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    scan: &Scan,
+    (scan, field): (&Scan, Option<Arc<GpuFlatField>>),
     parameters: ProcessingParameters,
     target: OutputTarget,
     (generation, expected): (&AtomicU64, u64),
@@ -24,12 +28,15 @@ pub fn refine(
 ) -> Result<Option<Arc<GpuImage>>, Error> {
     let start = std::time::Instant::now();
     scan.validate_area(view.area)?;
+    if scan.flat_field() != field.as_ref().map(|field| field.field()) {
+        return Err(Error::Gpu("CPU and GPU flat-field resources differ".into()));
+    }
     let [width, height] = view.output;
     let output = pollster::block_on(GpuImage::new_rendered(device, queue, width, height, target))?;
     let tile_width = 1024;
     let tile_height = 256;
     let zeros = vec![[0; 4]; tile_width as usize * tile_height as usize];
-    let tile = pollster::block_on(GpuImage::new(
+    let mut tile = pollster::block_on(GpuImage::new(
         device,
         queue,
         tile_width,
@@ -55,6 +62,15 @@ pub fn refine(
             sampling += tick.elapsed();
             let tick = std::time::Instant::now();
             tile.write_source(queue, &pixels)?;
+            if let Some(field) = &field {
+                tile.set_flat_field(
+                    Some(field.clone()),
+                    SourceGeometry::new(
+                        [view.area.x + x, view.area.y + y, tile_width, tile_height],
+                        [tile_width, tile_height],
+                    )?,
+                )?;
+            }
             let mut encoder = device.create_command_encoder(&Default::default());
             tile.encode(device, &mut encoder, parameters);
             average.accumulate(device, &mut encoder, &tile.linear, [x, y]);

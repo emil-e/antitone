@@ -1,0 +1,54 @@
+Flat-field CPU/GPU source-processing checkpoint; no Roll controls/project state yet.
+Host: macOS Apple M5 Pro, Metal; Rust 1.99.0, pinned LibRaw 0.22.0.
+
+Synthetic GPU checks:
+  64941 RGB16 samples across nearest-centre 257x173, interior full-pixel 64x32,
+  and two full-pixel 96x96 support-boundary geometries.
+  Correction gains and camera-to-AP0 conversion use temporary f32 expansions;
+  converted AP0 matches f64 bit-for-bit in all three channels over this dataset.
+  Source inspection -16/0/+16 EV; Original and Film toe2.5/shoulder0,
+  Film toe4/shoulder.003; exact and +/-1e-12 near-Dmin anchors.
+  Nine processing cases per geometry, existing 2e-5+2e-4*abs(reference) working gates,
+  exact floor masks. No tolerance increased.
+  Existing uncorrected 393216-sample/three-matrix conversion and Original f32 bits pass.
+  Unsupported geometry, tiny/huge gains, product-underflow paths reject without replacing
+  the previous source resource. One-code gain product is checked before matrix amplification.
+  Both matching 100-nit target renders match CPU within existing 2e-5 target-linear gate.
+
+Production reference-statistics path:
+  Uses all pixels inside the passed rectangle only; fractional cell-edge weights create
+  uniform physical cells without sampling any pixel outside integer rectangle support.
+  Separately measures image-centre 256x256 patch; sensor black/white rejection unchanged.
+  Manual research rectangle [46,46,8602,5508] for both approved references.
+  Grid 256x164 = 41984 RGB nodes; CPU gains 1007616 bytes, shared GPU gains 1511424 bytes.
+  GPU nodes use nine floats (36 bytes/node); maximum grid GPU size 2359296 bytes.
+  Reference development fixed WB [2133,1024,1770,1024] across both refs/negatives.
+
+DSC01739:
+  Base floor 0.000021630933622265155; corrected envelope 0.00002754444186434206.
+  Corrected centre-patch neutral RGB error EV [-0.0007814303528737742,-0.0008022766764592956,-0.0008598039968686337].
+DSC01813:
+  Base floor 0.000021630933622265155; corrected envelope 0.000026730200385763104.
+  Corrected centre-patch neutral RGB error EV [-0.0008918485589535112,-0.0009222407679877798,-0.0009701700891155209].
+
+Real RAW GPU/CPU comparison: 10880 nearest-centre samples per image; source, Original,
+Film toe2.5/shoulder0; sRGB and P3. Test-grade calibration preset is numerical evidence,
+not a measured film calibration or an appearance recommendation.
+Maximum target-linear error across source/Original/Film (sRGB / P3):
+  DSC01739: 3.695487976e-6 / 3.397464752e-6
+  DSC01737: 3.278255463e-6 / 3.278255463e-6
+  DSC01813: 4.172325134e-6 / 3.516674042e-6
+  DSC01811: 3.993511200e-6 / 3.814697266e-6
+Rejected unsupported rectangle preserves active CPU field; clearing restores original
+camera conversion and original source precision floor exactly. RAW files read-only.
+Excluded overexposed DSC01738/DSC01812 not used.
+
+Limits: finite Metal/M5 evidence, not universal matrices/hardware acceptance; no onscreen
+smoke, corrected TIFF/EXR file reopen, thumbnail-worker wiring, UI transaction or document
+roundtrip claimed. Existing uncorrected grades/RAW development/ACES are unchanged.
+
+Reproduce from repository root:
+export CC=/usr/bin/clang CXX=/usr/bin/clang++
+./scripts/cargo.sh test --offline --all-features --lib --test processing --test film_response --test gpu_film_response --test gpu_processing --test project --test film_project --test viewer
+CARGO_TARGET_DIR="$PWD/target" ./scripts/cargo.sh build --offline --locked --release --manifest-path docs/research/tools/film/Cargo.toml --bin flat-field-gpu-check
+DYLD_LIBRARY_PATH="$PWD/.cache/deps/ocio-install/lib" target/release/flat-field-gpu-check samples/DSC01739.ARW samples/DSC01737.ARW samples/DSC01813.ARW samples/DSC01811.ARW 46 46 8602 5508

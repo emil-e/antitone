@@ -49,7 +49,7 @@ Next action when selected: propose the source scope, language tooling, slice ord
 - Bundle native dependencies, review dependency licenses/notices and distribution layout. Checkout-local rpaths are not deployable packaging.
 - Lightroom/Resolve interoperability remains deferred; no application automation is authorized.
 
-[Flat-field correction](flat-field-correction.md) is the separately selected current work, not folded into calibration/toe or these later requests. Windows/HDR output, custom RAW development and dust/catalog features are outside the current pass.
+[Flat-field correction](completed/flat-field-correction.md) is completed and user-accepted, not folded into calibration/toe or these later requests. Windows/HDR output, custom RAW development and dust/catalog features are outside the current pass.
 
 ## Handoff
 

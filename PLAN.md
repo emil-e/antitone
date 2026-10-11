@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Documentation/workflow reorganization is complete; [closure record](docs/plans/completed/documentation-structure.md). The user approved stabilizing the existing editor and making it saveable, with an initial commit/push first. The settled-preview buffer-limit fix is complete; [closure/reproduction](docs/plans/completed/preview-stability.md). Adapter-supported limits replace restrictive defaults; strip processing is deferred until observed problems justify it. Basic editor Save/Open is implemented; [closure and verification limits](docs/plans/completed/save-open.md). Recovery/relink/undo remain separate slices. Current approved sequence: navigation polish and source inspection are implemented; bounded thumbnails are implemented in the approved enlarged/resizable filmstrip; [execution plan](docs/plans/inspection-and-interaction.md#current-execution-plan).
+Documentation/workflow reorganization is complete; [closure record](docs/plans/completed/documentation-structure.md). The user approved stabilizing the existing editor and making it saveable, with an initial commit/push first. The settled-preview buffer-limit fix is complete; [closure/reproduction](docs/plans/completed/preview-stability.md). Adapter-supported limits replace restrictive defaults; strip processing is deferred until observed problems justify it. Basic editor Save/Open is implemented; [closure and verification limits](docs/plans/completed/save-open.md). Recovery/relink/undo remain separate slices. Navigation, source inspection and bounded/resizable thumbnails are implemented. The user considers roll-level flat-field correction complete; [accepted closure](docs/plans/completed/flat-field-correction.md). No next implementation slice has been selected.
 
 Start here, then use [the documentation map](docs/README.md), [architecture](docs/architecture.md) and [repository workflow](AGENTS.md). Detailed contracts/decisions/evidence have their own homes; this is the only current cross-package status/order record.
 
@@ -14,6 +14,8 @@ Completed feedback includes output-target diagnosis/replacement, RGB-only Dmin/D
 
 The editor owns schema-3 project state through stable source IDs, restores saved development WB, offers transactional Open and atomic Save/Save As, and guards dirty New/Open/Close. File and Export menus replace the header action buttons without another row. Recovery, relink/source-change UI and undo remain unwired. [Project contract](docs/contracts/project-state.md).
 
+Roll-level flat-field correction is implemented and user-accepted: automatic/editable rectangular support, three-channel neutral-gray correction preserving centre luminance, corrected processing/picks/thumbnails/exports and durable map state. [Closure/evidence limits](docs/plans/completed/flat-field-correction.md).
+
 ## Remaining work
 
 Recovery/relink/undo is already recorded, but the user does **not** consider it the highest priority now. Navigation polish and source inspection are implemented. Bounded thumbnails are implemented in the user-approved enlarged/resizable strip; cache/worker design and verification limits are recorded in the visual-feedback plan.
@@ -24,7 +26,7 @@ Recovery/relink/undo is already recorded, but the user does **not** consider it 
 
 - **Later persistence work: recovery, relink and undo/redo** — separately scoped; basic Save/Open is complete. Ordered missing/changed/incompatible RAWs currently reject Open while retaining the current document. Never silently overwrite explicit saves or resample reference RGB. [Broader package](docs/plans/durable-projects.md).
 
-Flat-field correction remains separate deferred work. Windows/HDR and custom RAW development are not part of the current pass.
+Windows/HDR and custom RAW development are not part of the current pass.
 
 ## Limits and blockers
 
@@ -35,6 +37,6 @@ Flat-field correction remains separate deferred work. Windows/HDR and custom RAW
 
 ## Handoff
 
-Initial commit/push is complete; subsequent preview, Save/Open, navigation, inspection and thumbnail work remain uncommitted. Save/Open's 63 focused tests, strict all-target Clippy and release build pass; real-source state/WB/output checks pass, with an earlier 727-frame onscreen run and a final screen-locked visible-frame failure explicitly recorded. Navigation/source inspection checks pass: 73 focused tests, strict all-target Clippy, release build and a 722-frame unlocked real-source Save/Open smoke. Bounded thumbnails pass 79 focused tests, strict Clippy and release build; the initial four-thumbnail real-source Save/Open smoke submitted 906 frames with unchanged persistence/output checks. The final repeat passed those assertions but failed the visible-frame gate with the macOS session locked. [Thumbnail verification/limits](docs/plans/visual-feedback.md#progress--handoff). Scopes and remaining investigations need separate agreement; no next implementation is presumed. CPU-path/input-support feedback is recorded in the interaction plan; recovery/relink/undo is tracked for later. Do not restart completed black/toe/source work from stale historical checkboxes.
+Initial commit/push is complete; the editor follow-up `c06d4b5` is published. Save/Open's 63 focused tests, strict all-target Clippy and release build pass; real-source state/WB/output checks pass, with an earlier 727-frame onscreen run and a final screen-locked visible-frame failure explicitly recorded. Navigation/source inspection checks pass: 73 focused tests, strict all-target Clippy, release build and a 722-frame unlocked real-source Save/Open smoke. Bounded thumbnails pass 79 focused tests, strict Clippy and release build; the initial four-thumbnail real-source Save/Open smoke submitted 906 frames with unchanged persistence/output checks. The final repeat passed those assertions but failed the visible-frame gate with the macOS session locked. [Thumbnail verification/limits](docs/plans/visual-feedback.md#progress--handoff). Flat-field correction is user-accepted and closed; corrected scripted onscreen and full-size TIFF/AP0 EXR acceptance pass, with unperformed native/physical checks retained as evidence limits rather than active feature blockers. [Closure](docs/plans/completed/flat-field-correction.md). Scopes and other investigations remain separately scoped. CPU-path/input-support feedback is recorded in the interaction plan; recovery/relink/undo is tracked for later. Do not restart completed black/toe/source work from stale historical checkboxes.
 
 Current commands: [runbook](docs/build-and-probes.md). Original accumulated plans/checkpoints are preserved as [history](docs/research/history/README.md), not active queues. Samples remain read-only; commits, pushes and global installs require explicit user authorization.

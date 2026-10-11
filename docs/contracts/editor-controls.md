@@ -7,7 +7,7 @@ The editor uses `src/editor_controls.rs` for a small shared hierarchy: **section
 ## Layout and actions
 
 - File (New, Open, Add RAWs, Save, Save As) and Export (TIFF, EXR half/full) menus replace action buttons within the existing header row; document name/Modified status stays single-line. No added toolbar row. Cmd-N/O/S and Cmd-Shift-S trigger file actions after accepted numeric/control edits; New/Open/Close share Save/Discard/Cancel protection.
-- Roll: Calibration (RGB-only Dmin/Dmax) → Gamma & balance → Toe & shoulder → Exposure.
+- Roll: Flat-field correction → Calibration (RGB-only Dmin/Dmax) → Gamma & balance → Toe & shoulder → Exposure.
 - Photo: White balance → Exposure. Geometry is not shown until implemented.
 - Output remains visible below the scrollable edits, in the same position on both tabs. No empty Roll-post stage.
 - Each scalar row has its label/value/unit/reset above a full-width slider. Calibration rows share availability, RGB display and a pick action.
@@ -16,6 +16,12 @@ The editor uses `src/editor_controls.rs` for a small shared hierarchy: **section
 - Existing model-2 grades show “Original response · model 2” and an explicit **Use adjustable response** action. Drawing controls never opts in; the action preserves calibration/gamma/balance/exposure and changes only response. A reset does not convert an original grade.
 - Shoulder **0 = off**. Both linked numeric/slider parameters share actual processing/fitting state; inverse poles and unsupported GPU range/precision are rejected atomically.
 - Implementation details live in tooltips. Unsaved state, approximation/refinement and actionable errors remain visible. Successful refinement no longer overwrites an earlier pick/edit error in the status line.
+
+## Flat-field workflow
+
+Choose reference RAW opens an uncorrected reference with a reference-specific automatic rectangular proposal, or manual selection if detection is ambiguous. Inspect/move/resize/edit the rectangle using the existing viewer workflow; Apply correction accepts it and returns to the working photo, Cancel restores the original view/state. Estimation excludes borders before smoothing and rejects clipped/unusable support. The reference must be film-free and from the same scanning setup; metadata compatibility alone does not prove matching lighting/aperture/focus.
+
+The Roll section shows filename, Enabled, Edit area and Clear before Calibration. New reference selection never adds a filmstrip photo or hides an existing one. Failed/stale/cancelled operations retain accepted map, grade and working context. Enabled/Clear preserve viewport and inspection mode. Dmin/Dmax are never resampled; the setup/calibration warning recommends re-picking after correction changes. Enabled/map/support are saved; reference-edit context and inspection EV remain transient. No extra panel or toolbar.
 
 ## Numeric and keyboard behavior
 
@@ -34,6 +40,7 @@ Stable IDs separate roll, photo, sections and individual parameters. Disabled ro
 ## Viewer navigation and source inspection
 
 - Unmodified scroll pans both axes; Ctrl/Cmd-scroll or pinch zooms around the pointer. Multitouch uses its own center/translation and does not also apply synthetic wheel/zoom events.
+- Fit uses the visible viewer canvas, excluding the controls panel. Picker header content wraps within that width; sampling shows the filename with the full path on hover, keeping Cancel accessible. Long paths/instructions cannot enlarge the fitted canvas.
 - Click a fitted image for physical-pixel 100% around that point; click an explicitly zoomed image to Fit. Zoomed primary drag pans; middle/Space-primary drag also pans during picking. `z` Fits unless text input has focus.
 - Picker primary click/drag retains patch/rectangle priority; zoom, grabbing, crosshair, move and corner-resize cursors follow the active interaction. Picks remain in full-source coordinates.
 - While developed-source view is active, **Inspection** in the existing viewer control row opens a zero-default exposure adjustment with the standard exposure range/reset. It changes only source-preview brightness before unchanged ACES; it is not saved and does not affect RAW development, calibration, fitting, edits or exports. Positive preview ignores it. No added viewer row/panel.
@@ -42,7 +49,7 @@ Stable IDs separate roll, photo, sections and individual parameters. Disabled ro
 
 The existing bottom strip shows whole-frame approximate thumbnails and filenames. Drag its top edge to change height (default 140 points, 52…240 points and window-height limited); images follow available height with preserved aspect. Resizing, scrolling and caches are transient and do not dirty/save the project. A visible page fits the bounded cache; horizontally offscreen cells are virtualized.
 
-Without calibration thumbnails show developed source at zero inspection gain; otherwise they show actual shared roll and each photo's grade through the existing GPU/ACES/managed presentation path. The viewer's source bypass/inspection EV does not change thumbnails. Normal selection and Dmin/Dmax reference-source selection retain their existing behavior. Loading placeholders and error markers/tooltips retain filenames and selection; thumbnails never supply measurements or export pixels.
+Without calibration thumbnails show developed source at zero inspection gain; otherwise they show actual shared roll and each photo's grade through the existing GPU/ACES/managed presentation path. The viewer's source bypass/inspection EV does not change thumbnails. Enabled flat-field gains apply in original source coordinates; changing/clearing the map invalidates GPU image identity but reuses uncorrected RGB16 proxy cache entries. Normal selection and Dmin/Dmax reference-source selection retain their existing behavior. Loading placeholders and error markers/tooltips retain filenames and selection; thumbnails never supply measurements or export pixels.
 
 ## Resolve-style wheel orientation and mapping
 

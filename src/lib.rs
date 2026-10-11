@@ -3,6 +3,7 @@ pub mod color;
 pub mod editor;
 #[cfg(feature = "export")]
 pub mod export;
+pub mod flat_field;
 #[cfg(feature = "gpu")]
 pub mod gpu;
 #[cfg(feature = "ui")]

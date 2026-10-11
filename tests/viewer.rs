@@ -1,12 +1,134 @@
 #![cfg(all(feature = "ui", feature = "render"))]
 use antitone::{
     color::{Balance, ap0_to_ap1, ap1_to_ap0},
-    gpu::ProcessingParameters,
+    flat_field::FlatField,
+    gpu::{GpuFlatField, ProcessingParameters, SourceGeometry},
     processing::{Calibration, PhotoSettings, Pipeline, Response, RollSettings},
     rendering::{CpuRenderer, OutputTarget},
     viewer::GpuImage,
 };
 use glam::{DMat3, DVec3};
+
+#[test]
+fn corrected_viewer_shares_the_field_and_matches_both_cpu_output_targets() {
+    pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let matrix = DMat3::from_cols(
+            DVec3::new(0.6, 0.02, -0.01),
+            DVec3::new(0.4, 1.2, -0.15),
+            DVec3::new(0., -0.22, 1.16),
+        );
+        let field = std::sync::Arc::new(
+            FlatField::from_nodes(
+                [46, 46, 8602, 5508],
+                [2, 2],
+                vec![
+                    DVec3::new(0.9, 1., 0.95),
+                    DVec3::new(1.2, 1.1, 1.),
+                    DVec3::new(1., 1.2, 0.9),
+                    DVec3::new(1.3, 1.15, 1.1),
+                ],
+            )
+            .unwrap(),
+        );
+        let gpu = std::sync::Arc::new(GpuFlatField::new(&device, field.clone()).unwrap());
+        let geometry = SourceGeometry::new([12, 12, 8640, 5760], [8, 8]).unwrap();
+        let pixels: Vec<_> = (0..64u32)
+            .map(|i| {
+                [
+                    (i * 12347) as u16,
+                    (i * 19531) as u16,
+                    (i * 9109) as u16,
+                    65535,
+                ]
+            })
+            .collect();
+        let scans: Vec<_> = pixels
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let [x, y] = geometry.pixel(i as u32).unwrap();
+                matrix
+                    * (DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.
+                        * field.gain([x as f64 + 0.5, y as f64 + 0.5]).unwrap())
+            })
+            .collect();
+        let base = Calibration {
+            dmin: DVec3::new(0.28, 0.23, 0.25),
+            dmax: DVec3::new(0.01, 0.005, 0.001),
+            input_floor: 2.2e-5,
+        };
+        let calibration = field.processing_calibration(matrix, base).unwrap();
+        let mut cases = vec![(
+            ProcessingParameters::corrected_source(0.).unwrap(),
+            scans.iter().map(|p| ap0_to_ap1() * p).collect::<Vec<_>>(),
+        )];
+        for response in [Response::Original, Response::film()] {
+            let roll = RollSettings {
+                response,
+                exposure: -2.,
+                ..RollSettings::default()
+            };
+            let pipeline = Pipeline::new(calibration, roll, PhotoSettings::default()).unwrap();
+            cases.push((
+                ProcessingParameters::positive(calibration, roll, PhotoSettings::default())
+                    .unwrap(),
+                scans
+                    .iter()
+                    .map(|p| pipeline.apply(*p).unwrap().rgb)
+                    .collect(),
+            ));
+        }
+        for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
+            let mut image = GpuImage::new(&device, &queue, 8, 8, &pixels, matrix, target)
+                .await
+                .unwrap();
+            image.set_flat_field(Some(gpu.clone()), geometry).unwrap();
+            assert_eq!(image.processing_byte_len(), (64 * 8, 64 * 16));
+            for (parameters, working) in &cases {
+                let mut encoder = device.create_command_encoder(&Default::default());
+                image.encode(&device, &mut encoder, *parameters);
+                queue.submit([encoder.finish()]);
+                let expected = CpuRenderer::new(target).unwrap().render(working).unwrap();
+                let actual = read(&device, &queue, &image.linear).await;
+                for (a, b) in actual.iter().zip(expected) {
+                    for c in 0..3 {
+                        assert!(
+                            (a[c] - b[c]).abs() < 2e-5,
+                            "target={target:?} actual={a:?} expected={b:?}"
+                        );
+                    }
+                }
+            }
+            image.set_flat_field(None, geometry).unwrap();
+            let mut encoder = device.create_command_encoder(&Default::default());
+            image.encode(&device, &mut encoder, ProcessingParameters::source());
+            queue.submit([encoder.finish()]);
+            let actual = read(&device, &queue, &image.linear).await;
+            let uncorrected: Vec<_> = pixels
+                .iter()
+                .map(|p| {
+                    ap0_to_ap1()
+                        * (matrix * (DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.))
+                })
+                .collect();
+            let expected = CpuRenderer::new(target)
+                .unwrap()
+                .render(&uncorrected)
+                .unwrap();
+            for (a, b) in actual.iter().zip(expected) {
+                for c in 0..3 {
+                    assert!((a[c] - b[c]).abs() < 2e-5);
+                }
+            }
+        }
+    });
+}
 
 #[test]
 fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {

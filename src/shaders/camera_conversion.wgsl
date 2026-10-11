@@ -75,6 +75,9 @@ fn convert_camera(code: vec2u) -> ConvertedScan {
     let x = normalized(code.x & 65535u);
     let y = normalized(code.x >> 16u);
     let z = normalized(code.y & 65535u);
+    return convert_components(x, y, z);
+}
+fn convert_components(x: Triple, y: Triple, z: Triple) -> ConvertedScan {
     var s: ConvertedScan;
     for (var c = 0u; c < 3u; c++) {
         let mx = Triple(camera_matrix.high[0][c], camera_matrix.low[0][c], camera_matrix.tail[0][c]);
