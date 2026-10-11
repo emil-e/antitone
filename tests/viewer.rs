@@ -1,6 +1,6 @@
 #![cfg(all(feature = "ui", feature = "render"))]
 use antitone::{
-    color::{Balance, ap0_to_ap1, ap1_to_ap0},
+    color::{Balance, ap1_to_ap0},
     flat_field::FlatField,
     gpu::{GpuFlatField, ProcessingParameters, SourceGeometry},
     processing::{Calibration, PhotoSettings, Pipeline, Response, RollSettings},
@@ -53,20 +53,19 @@ fn corrected_viewer_shares_the_field_and_matches_both_cpu_output_targets() {
             .enumerate()
             .map(|(i, p)| {
                 let [x, y] = geometry.pixel(i as u32).unwrap();
-                matrix
-                    * (DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.
-                        * field.gain([x as f64 + 0.5, y as f64 + 0.5]).unwrap())
+                DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.
+                    * field.gain([x as f64 + 0.5, y as f64 + 0.5]).unwrap()
             })
             .collect();
         let base = Calibration {
             dmin: DVec3::new(0.28, 0.23, 0.25),
             dmax: DVec3::new(0.01, 0.005, 0.001),
-            input_floor: 2.2e-5,
+            input_floor: antitone::processing::CAMERA_INPUT_FLOOR,
         };
-        let calibration = field.processing_calibration(matrix, base).unwrap();
+        let calibration = field.processing_calibration(base).unwrap();
         let mut cases = vec![(
-            ProcessingParameters::corrected_source(0.).unwrap(),
-            scans.iter().map(|p| ap0_to_ap1() * p).collect::<Vec<_>>(),
+            ProcessingParameters::source(),
+            scans.iter().map(|p| matrix * p).collect::<Vec<_>>(),
         )];
         for response in [Response::Original, Response::film()] {
             let roll = RollSettings {
@@ -74,9 +73,10 @@ fn corrected_viewer_shares_the_field_and_matches_both_cpu_output_targets() {
                 exposure: -2.,
                 ..RollSettings::default()
             };
-            let pipeline = Pipeline::new(calibration, roll, PhotoSettings::default()).unwrap();
+            let pipeline =
+                Pipeline::new(calibration, roll, PhotoSettings::default(), matrix).unwrap();
             cases.push((
-                ProcessingParameters::positive(calibration, roll, PhotoSettings::default())
+                ProcessingParameters::positive(calibration, roll, PhotoSettings::default(), matrix)
                     .unwrap(),
                 scans
                     .iter()
@@ -112,10 +112,7 @@ fn corrected_viewer_shares_the_field_and_matches_both_cpu_output_targets() {
             let actual = read(&device, &queue, &image.linear).await;
             let uncorrected: Vec<_> = pixels
                 .iter()
-                .map(|p| {
-                    ap0_to_ap1()
-                        * (matrix * (DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.))
-                })
+                .map(|p| matrix * (DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.))
                 .collect();
             let expected = CpuRenderer::new(target)
                 .unwrap()
@@ -168,11 +165,11 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
         .collect();
         let scans: Vec<_> = pixels
             .iter()
-            .map(|p| matrix * (DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.))
+            .map(|p| DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.)
             .collect();
-        assert!(scans.iter().any(|p| p.min_element() < 0.));
-        assert!(scans.iter().any(|p| p.max_element() > 1.));
-        let working: Vec<_> = scans.iter().map(|p| ap0_to_ap1() * *p).collect();
+        let working: Vec<_> = scans.iter().map(|p| matrix * *p).collect();
+        assert!(working.iter().any(|p| p.min_element() < 0.));
+        assert!(working.iter().any(|p| p.max_element() > 1.));
         let calibration = Calibration {
             dmin: DVec3::new(0.2, 0.15, 0.1),
             dmax: DVec3::new(0.008, 0.005, 0.002),
@@ -194,7 +191,7 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
             },
             exposure: 0.5,
         };
-        let pipeline = Pipeline::new(calibration, roll, photo).unwrap();
+        let pipeline = Pipeline::new(calibration, roll, photo, matrix).unwrap();
         let positive: Vec<_> = scans
             .iter()
             .map(|p| pipeline.apply(*p).unwrap().rgb)
@@ -208,13 +205,13 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
         ]
         .map(|response| {
             let settings = RollSettings { response, ..roll };
-            let pipeline = Pipeline::new(calibration, settings, photo).unwrap();
+            let pipeline = Pipeline::new(calibration, settings, photo, matrix).unwrap();
             let values: Vec<_> = scans
                 .iter()
                 .map(|s| pipeline.apply(*s).unwrap().rgb)
                 .collect();
             (
-                ProcessingParameters::positive(calibration, settings, photo).unwrap(),
+                ProcessingParameters::positive(calibration, settings, photo, matrix).unwrap(),
                 values,
             )
         })
@@ -236,7 +233,7 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
             for (parameters, working) in [
                 (ProcessingParameters::source(), &working),
                 (
-                    ProcessingParameters::positive(calibration, roll, photo).unwrap(),
+                    ProcessingParameters::positive(calibration, roll, photo, matrix).unwrap(),
                     &positive,
                 ),
                 (films[0].0, &films[0].1),
@@ -348,9 +345,7 @@ fn gpu_yellows_retain_hue_and_continuity_across_exposure() {
             .collect();
         let inputs: Vec<_> = pixels
             .iter()
-            .map(|p| {
-                ap0_to_ap1() * matrix * (DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.)
-            })
+            .map(|p| matrix * (DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.))
             .collect();
         for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
             let image = GpuImage::new(&device, &queue, 321, 3, &pixels, matrix, target)

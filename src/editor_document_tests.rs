@@ -15,8 +15,9 @@ fn fixture(directory: &Path) -> Document {
                     development: SourceDevelopment {
                         dimensions: [900, 600],
                         active_area: [0, 0, 900, 600],
-                        camera_to_ap0: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
-                        input_floor: 0.00002,
+                        camera_model: "test-camera".into(),
+                        camera_to_ap1: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+                        input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                     },
                     reference_only: false,
                     photo: PhotoSettings::default(),

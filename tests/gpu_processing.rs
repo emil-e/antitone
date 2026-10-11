@@ -1,6 +1,6 @@
 #![cfg(all(feature = "gpu", target_os = "macos"))]
 
-use antitone::color::{Balance, ap0_to_ap1};
+use antitone::color::Balance;
 use antitone::gpu::{ProcessingKernel, ProcessingParameters, ProcessingSource};
 use antitone::processing::{Calibration, PhotoSettings, Pipeline, RollSettings};
 use glam::{DMat3, DVec3, Vec4};
@@ -38,7 +38,7 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
         ]
         .into_iter()
         .map(|s| {
-            let camera = matrix.inverse() * s;
+            let camera = s;
             [
                 (camera.x * 65535.).round() as u16,
                 (camera.y * 65535.).round() as u16,
@@ -54,10 +54,10 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
         .collect();
         let scans: Vec<_> = pixels
             .iter()
-            .map(|p| matrix * (DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.))
+            .map(|p| DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.)
             .collect();
-        assert!(scans.iter().any(|s| s.min_element() < 0.));
-        assert!(scans.iter().any(|s| s.max_element() > 1.));
+        assert!(scans.iter().any(|s| (matrix * *s).min_element() < 0.));
+        assert!(scans.iter().any(|s| (matrix * *s).max_element() > 1.));
         let input = ProcessingSource::new(&device, &pixels, matrix).unwrap();
         assert_eq!(input.byte_len(), (pixels.len() * 8) as u64);
         let output = device.create_buffer(&wgpu::BufferDescriptor {
@@ -94,8 +94,11 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
                         tint: -0.1,
                     },
                 };
-                let parameters = ProcessingParameters::positive(cal, roll, photo).unwrap();
-                configurations.push((Some(Pipeline::new(cal, roll, photo).unwrap()), parameters));
+                let parameters = ProcessingParameters::positive(cal, roll, photo, matrix).unwrap();
+                configurations.push((
+                    Some(Pipeline::new(cal, roll, photo, matrix).unwrap()),
+                    parameters,
+                ));
             }
         }
         let attenuated_cal = Calibration {
@@ -112,9 +115,14 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
             ..Default::default()
         };
         configurations.push((
-            Some(Pipeline::new(attenuated_cal, attenuated_roll, attenuated_photo).unwrap()),
-            ProcessingParameters::positive(attenuated_cal, attenuated_roll, attenuated_photo)
-                .unwrap(),
+            Some(Pipeline::new(attenuated_cal, attenuated_roll, attenuated_photo, matrix).unwrap()),
+            ProcessingParameters::positive(
+                attenuated_cal,
+                attenuated_roll,
+                attenuated_photo,
+                matrix,
+            )
+            .unwrap(),
         ));
         for (pipeline, parameters) in configurations {
             let mut encoder = device.create_command_encoder(&Default::default());
@@ -139,7 +147,7 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
                         .fold(0u32, |m, (c, f)| m | (u32::from(*f) << c));
                     (value.rgb, flags)
                 } else {
-                    (ap0_to_ap1() * scan, 0)
+                    (matrix * scan, 0)
                 };
                 for c in 0..3 {
                     let gpu = f64::from(actual[i][c]);
@@ -181,7 +189,8 @@ fn gpu_parameters_reject_overflow_instead_of_silent_cpu_fallback() {
             PhotoSettings {
                 exposure: 16.0,
                 ..Default::default()
-            }
+            },
+            DMat3::IDENTITY,
         )
         .is_err()
     );

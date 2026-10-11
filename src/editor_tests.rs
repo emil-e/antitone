@@ -9,9 +9,13 @@ fn fixture() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
     );
     editor.dmin = Some(DVec3::new(0.2, 0.15, 0.1));
     editor.dmax = Some(DVec3::new(0.008, 0.005, 0.002));
-    editor.floor = 2.2e-5;
+    editor.floor = crate::processing::CAMERA_INPUT_FLOOR;
     editor.document.project.development =
         Some(Development::new(crate::raw::version(), [2., 1., 1.5, 1.]));
+    editor.document.project.camera_basis = Some(crate::project::CameraBasis {
+        camera_model: "test-camera".into(),
+        camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
+    });
     (editor, send, receiver)
 }
 #[test]
@@ -73,7 +77,8 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                         development: crate::project::SourceDevelopment {
                             dimensions: [8704, 6144],
                             active_area: [12, 12, 8640, 5760],
-                            camera_to_ap0: glam::DMat3::IDENTITY.to_cols_array_2d(),
+                            camera_model: "test-camera".into(),
+                            camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
                             input_floor: editor.floor,
                         },
                         reference_only: true,
@@ -246,6 +251,28 @@ fn rejected_reference_and_cancel_restore_view_without_changing_processing() {
 #[test]
 fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
     let (mut editor, send, _receiver) = fixture();
+    let id = editor
+        .document
+        .project
+        .add_source(Source {
+            id: SourceId(0),
+            path: "test-camera.ARW".into(),
+            fingerprint: crate::project::Fingerprint {
+                bytes: 1,
+                blake3: "a".repeat(64),
+            },
+            development: crate::project::SourceDevelopment {
+                dimensions: [900, 600],
+                active_area: [0, 0, 900, 600],
+                camera_model: "test-camera".into(),
+                camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
+                input_floor: editor.floor,
+            },
+            reference_only: false,
+            photo: Default::default(),
+        })
+        .unwrap();
+    editor.current_source = Some(id);
     editor.source = false;
     editor.photo.exposure = 0.5;
     editor.photo.wb = Balance {
@@ -336,7 +363,7 @@ fn navigation_invalidates_pending_overwrite() {
     assert!(editor.overwrite.is_none());
     assert!(matches!(
         receiver.recv().unwrap(),
-        Command::Load(1, _, _, _, _)
+        Command::Load(1, _, _, _, _, _)
     ));
 }
 fn patch() -> Rect {
@@ -364,8 +391,9 @@ fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
                     development: crate::project::SourceDevelopment {
                         dimensions: [900, 600],
                         active_area: [0, 0, 900, 600],
-                        camera_to_ap0: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
-                        input_floor: 2.2e-5,
+                        camera_model: "test-camera".into(),
+                        camera_to_ap1: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+                        input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                     },
                     reference_only: false,
                     photo: PhotoSettings::default(),
@@ -375,6 +403,7 @@ fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
             .unwrap();
     }
     editor.selected = 1;
+    editor.current_source = Some(editor.document.project.order[editor.selected]);
     editor.region = Some(patch());
     editor.begin_pick(Pick::Dmin);
     assert_eq!(editor.selected, 1);

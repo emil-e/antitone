@@ -19,8 +19,8 @@ Choose checks relevant to the change before running the broad suite:
 
 ```sh
 ./scripts/cargo.sh fmt --all -- --check
-./scripts/cargo.sh test --offline --no-default-features --test processing --test film_response
-./scripts/cargo.sh test --offline --features project --test project --test film_project
+./scripts/cargo.sh test --offline --no-default-features --test camera_inversion --test processing --test film_response
+./scripts/cargo.sh test --offline --features project --test camera_project --test project --test film_project
 ./scripts/cargo.sh test --offline --features gpu --test gpu_film_response -- --nocapture
 ```
 
@@ -51,7 +51,7 @@ ANTITONE_SMOKE_CONTROLS=1 target/release/antitone --smoke \
   samples/DSC04378.ARW 4000 2600 128 128 samples/DSC04416.ARW
 ```
 
-The editor supports explicit Save/Open, stable-ID photo state and dirty New/Open/Close protection; recovery/relink/undo remain unwired. Launch a document with `target/release/antitone /path/to/grade.antitone.json`. The same-row File and Export menus replace action buttons. Fit, physical-pixel 100%, source bypass, picker return and full-source regional refinement are implemented. New grades use model 3; old/default diagnostic grades may deliberately use model 2. The current smoke verifies actual GPU/worker/layout paths, not photographic calibration or broader-device performance.
+The editor supports explicit Save/Open, stable-ID photo state and dirty New/Open/Close protection; recovery/relink/undo remain unwired. Launch a document with `target/release/antitone /path/to/grade.antitone.json`. The same-row File and Export menus replace action buttons. Fit, physical-pixel 100%, source bypass, picker return and full-source regional refinement are implemented. New grades use camera model 4/toe 2.5; classic-curve diagnostics also use model 4. Old AP0 projects reject rather than migrate. The current smoke verifies actual GPU/worker/layout paths, not photographic calibration or broader-device performance.
 
 For Save/Open, append one additional unvisited source:
 
@@ -62,7 +62,7 @@ target/release/antitone --smoke-project \
   samples/DSC04416.ARW samples/DSC04393.ARW
 ```
 
-This uses temporary project files, leaves RAWs untouched, and verifies exact model-2/model-3 state, custom saved WB after New/different-WB import, unvisited records, working/sRGB/P3 pixel reproduction, live refinement and failed Open preservation. A zero-onscreen-frame result remains failure; a locked macOS session can pass persistence assertions but fail this presentation gate. [Save/Open closure](plans/completed/save-open.md).
+This uses temporary project files, leaves RAWs untouched, and verifies exact model-4 response state, custom saved WB after New/different-WB import, unvisited records, working/sRGB/P3 pixel reproduction, live refinement and failed Open preservation. A zero-onscreen-frame result remains failure; a locked macOS session can pass persistence assertions but fail this presentation gate. [Save/Open closure](plans/completed/save-open.md).
 
 The flat-field editor/worker integration has an explicit read-only local-RAW/Metal test (temporary projects/32×32 corrected TIFF/AP0 EXR crops):
 
@@ -89,6 +89,17 @@ For window capture use [the relocated capture helper](research/tools/README.md#m
 
 ## RAW and complete GPU chain
 
+Camera-model replacement checks use read-only train samples/diagnostic anchors, not a recovered photographic grade:
+
+```sh
+CC=/usr/bin/clang CXX=/usr/bin/clang++ \
+  ./scripts/cargo.sh test --offline --release --features raw,gpu \
+  --test camera_raw -- --ignored --nocapture
+```
+
+The ignored real flat-field Save/Open/corrected-export check above exercises the same native-camera model with an accepted map. These headless checks do not establish actual onscreen or physical colour acceptance.
+
+
 ```sh
 ./scripts/cargo.sh run --offline --features raw,gpu \
   --bin antitone-calibration-probe -- \
@@ -98,9 +109,9 @@ For window capture use [the relocated capture helper](research/tools/README.md#m
 ./scripts/probe-ocio.sh
 ```
 
-Calibration writes full-resolution camera sample grids, matrix/parameters and CPU AP1 reference fixtures under `.cache/probes`; OCIO adds them to synthetic cases before the GPU complete-chain comparison. Regenerate in that order after changing fixtures. Camera source is `camera-source-model2.rgb16` plus column-major `camera-to-ap0-model2.f64`; there is no float-source fallback. These are regenerable RAW-derived fixtures, not hidden authored source or a full-image comparison.
+Calibration writes full-resolution camera sample grids, matrix/parameters and CPU AP1 reference fixtures under `.cache/probes`; OCIO adds them to synthetic cases before the GPU complete-chain comparison. Regenerate in that order after changing fixtures. Camera source is `camera-source-model4.rgb16` plus post-inversion column-major `camera-to-ap1-model4.f64`; there is no float-source fallback. These are regenerable RAW-derived fixtures, not hidden authored source or a full-image comparison.
 
-Production film-response real-camera comparison and the broader candidate precision probe now live in [durable research tools](research/tools/README.md#current-gate-reproduction). Build named bins using the relocated manifest. Some historical research bins predate current APIs; never run all of them as the production suite.
+The older AP0/model-2/3 real-camera comparison and candidate precision probes are preserved as [historical research tools](research/tools/README.md#current-gate-reproduction), requiring their matching baseline APIs. Do not run them as a model-4 production gate or adapt them into fallback inversion paths; current root regressions are maintained.
 
 ## Rendering, gamut and ICC
 

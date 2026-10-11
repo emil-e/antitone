@@ -83,6 +83,7 @@ impl SmokeEditor {
             document.project.calibration()?.expect("smoke calibration"),
             document.project.roll,
             source.photo,
+            scan.camera_to_ap1,
         )?
         .apply(pixel)?
         .rgb;
@@ -499,7 +500,7 @@ impl host::App for SmokeEditor {
                         .ready_count(&self.editor.document, self.editor.target)
                 );
                 println!(
-                    "project_smoke passed: stable IDs/order/unvisited RAW, custom saved WB after New/other-WB import, exact model-3/model-2 state and working/sRGB/P3 pixel reopen, live settled GPU preview, changed/missing/incompatible ordered RAW atomicity"
+                    "project_smoke passed: stable IDs/order/unvisited RAW, custom saved WB after New/other-WB import, exact camera-model-4 response state and working/sRGB/P3 pixel reopen, live settled GPU preview, changed/missing/incompatible ordered RAW atomicity"
                 );
                 self.editor.allow_close = true;
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);

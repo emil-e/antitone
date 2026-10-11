@@ -12,9 +12,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 // Bump when native/raw_bridge.cpp development or scan.rs matrix/normalization/floor contracts change.
-pub const DEVELOPMENT_CONTRACT: &str = "libraw-camera-ahd-u16-linear-ap0-bradford-row-sum-floor-v1";
+pub const DEVELOPMENT_CONTRACT: &str =
+    "libraw-camera-ahd-u16-linear-camera-inversion-ap1-bradford-code-floor-v2";
 pub const OUTPUT_CONTRACT: &str = "ocio-2.6.0-aces2-100nit-antitone-srgb-displayp3-v2";
 const MAX_DOCUMENT_BYTES: u64 = 8 * 1024 * 1024;
 type Result<T> = std::result::Result<T, Error>;
@@ -83,7 +84,7 @@ impl Development {
             backend_version,
             fixed_wb,
             contract: DEVELOPMENT_CONTRACT.into(),
-            inversion_space: "AP0/D60".into(),
+            inversion_space: "native-camera-RGB".into(),
             working_space: "AP1/D60".into(),
         }
     }
@@ -100,14 +101,43 @@ impl Development {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct CameraBasis {
+    pub camera_model: String,
+    pub camera_to_ap1: [[f64; 3]; 3],
+}
+impl CameraBasis {
+    pub fn require_source(&self, source: &SourceDevelopment) -> Result<()> {
+        require(
+            *self == source.camera_basis(),
+            "native-camera basis differs; use a separate roll/calibration",
+        )
+    }
+    fn validate(&self) -> Result<()> {
+        require(
+            !self.camera_model.trim().is_empty(),
+            "missing native-camera model identity",
+        )?;
+        crate::processing::validate_camera_matrix(DMat3::from_cols_array_2d(&self.camera_to_ap1))
+    }
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SourceDevelopment {
     pub dimensions: [u32; 2],
     pub active_area: [u32; 4],
-    pub camera_to_ap0: [[f64; 3]; 3],
+    pub camera_model: String,
+    pub camera_to_ap1: [[f64; 3]; 3],
     pub input_floor: f64,
 }
 impl SourceDevelopment {
+    pub fn camera_basis(&self) -> CameraBasis {
+        CameraBasis {
+            camera_model: self.camera_model.clone(),
+            camera_to_ap1: self.camera_to_ap1,
+        }
+    }
     fn validate(&self) -> Result<()> {
+        self.camera_basis().validate()?;
         require(
             self.dimensions.iter().all(|v| *v > 0)
                 && contains(
@@ -116,13 +146,9 @@ impl SourceDevelopment {
                 ),
             "invalid source dimensions/active area",
         )?;
-        let matrix = DMat3::from_cols_array_2d(&self.camera_to_ap0);
         require(
-            matrix.is_finite()
-                && matrix.determinant().abs() > 1e-12
-                && self.input_floor.is_finite()
-                && self.input_floor > 0.,
-            "invalid source matrix/precision floor",
+            self.input_floor == crate::processing::CAMERA_INPUT_FLOOR,
+            "source base floor must be one native RGB16 code",
         )
     }
 }
@@ -193,6 +219,7 @@ pub struct Project {
     pub processing_model: u32,
     pub next_source_id: u64,
     pub development: Option<Development>,
+    pub camera_basis: Option<CameraBasis>,
     pub sources: Vec<Source>,
     // Source records survive removal from the ordered filmstrip.
     pub order: Vec<SourceId>,
@@ -211,6 +238,7 @@ impl Default for Project {
             processing_model: PROCESSING_MODEL_VERSION,
             next_source_id: 1,
             development: None,
+            camera_basis: None,
             sources: Vec::new(),
             order: Vec::new(),
             dmin: None,
@@ -252,16 +280,25 @@ impl Project {
             self.development.is_some(),
             "sources require development identity",
         )?;
+        self.require_camera_basis(&source.development)?;
         let id = SourceId(self.next_source_id);
         let next = self
             .next_source_id
             .checked_add(1)
             .ok_or_else(|| failure("source ID space exhausted"))?;
+        if self.camera_basis.is_none() {
+            self.camera_basis = Some(source.development.camera_basis());
+        }
         source.id = id;
         self.sources.push(source);
         self.order.push(id);
         self.next_source_id = next;
         Ok(id)
+    }
+    pub fn require_camera_basis(&self, source: &SourceDevelopment) -> Result<()> {
+        self.camera_basis
+            .as_ref()
+            .map_or(Ok(()), |basis| basis.require_source(source))
     }
     pub fn remove_from_filmstrip(&mut self, id: SourceId) -> Result<()> {
         self.source(id)?;
@@ -308,6 +345,7 @@ impl Project {
         development: SourceDevelopment,
     ) -> Result<()> {
         development.validate()?;
+        self.require_camera_basis(&development)?;
         if let Some(field) = self.active_flat_field()
             && self.order.contains(&id)
         {
@@ -346,10 +384,7 @@ impl Project {
     pub fn processing_calibration(&self) -> Result<Option<Calibration>> {
         self.calibration()?
             .map(|calibration| match self.active_flat_field() {
-                Some(field) => field.map.processing_calibration(
-                    DMat3::from_cols_array_2d(&field.development.camera_to_ap0),
-                    calibration,
-                ),
+                Some(field) => field.map.processing_calibration(calibration),
                 None => Ok(calibration),
             })
             .transpose()
@@ -365,6 +400,14 @@ impl Project {
         if let Some(development) = &self.development {
             development.validate()?;
         }
+        if let Some(basis) = &self.camera_basis {
+            basis.validate()?;
+        }
+        require(
+            self.sources.is_empty() && self.dmin.is_none() && self.dmax.is_none()
+                || self.camera_basis.is_some(),
+            "sources/calibration require native-camera basis identity",
+        )?;
         require(
             !self.output.contract.is_empty(),
             "missing output transform identity",
@@ -380,6 +423,7 @@ impl Project {
                 "duplicate/invalid source ID allocator",
             )?;
             source.validate()?;
+            self.require_camera_basis(&source.development)?;
         }
         let mut ordered = HashSet::new();
         for id in &self.order {
@@ -391,8 +435,8 @@ impl Project {
         require(self.next_source_id > 0, "invalid source ID allocator")?;
         if let Some(floor) = self.input_floor {
             require(
-                floor.is_finite() && floor > 0.,
-                "invalid project precision floor",
+                floor == crate::processing::CAMERA_INPUT_FLOOR,
+                "project base floor must be one native RGB16 code",
             )?;
         }
         for reference in [self.dmin, self.dmax].into_iter().flatten() {
@@ -422,7 +466,7 @@ impl Project {
             require(
                 development.backend_version == backend_version
                     && development.contract == DEVELOPMENT_CONTRACT
-                    && development.inversion_space == "AP0/D60"
+                    && development.inversion_space == "native-camera-RGB"
                     && development.working_space == "AP1/D60",
                 "RAW development contract differs from this runtime",
             )?;

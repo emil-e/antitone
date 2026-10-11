@@ -12,7 +12,8 @@ fn record(path: &str) -> Source {
         development: SourceDevelopment {
             dimensions: [824, 624],
             active_area: [12, 12, 800, 600],
-            camera_to_ap0: glam::DMat3::IDENTITY.to_cols_array_2d(),
+            camera_model: "test-camera".into(),
+            camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
             input_floor: 1. / 65535.,
         },
         reference_only: false,
@@ -252,8 +253,13 @@ fn real_reference_editor_save_open_and_corrected_exports() {
         let calibration = scan
             .processing_calibration(editor.calibration().unwrap())
             .unwrap();
-        let pipeline =
-            crate::processing::Pipeline::new(calibration, editor.roll, editor.photo).unwrap();
+        let pipeline = crate::processing::Pipeline::new(
+            calibration,
+            editor.roll,
+            editor.photo,
+            scan.camera_to_ap1,
+        )
+        .unwrap();
         let a = scan.area;
         let x = a.x + a.width / 2;
         let y = a.y + a.height / 2;

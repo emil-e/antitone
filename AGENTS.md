@@ -29,9 +29,9 @@ Verification is proportional: run the narrow relevant checks, inspect the change
 
 - macOS/Apple Silicon first; no minimum chip/RAM requirement is established. M1 Pro/16 GB was a provisional example, not a mandatory target or acceptance gate. Resource policy should follow observed problems, not speculative hardware constraints. macOS 14 and physical-monitor acceptance remain separate checks.
 - Reuse pinned LibRaw development. No custom demosaicer, camera-specific repair, CPU interactive fallback, approximate ACES replacement or weakened numerical gate.
-- Preserve signed/HDR AP1 working data, AP0 calibration/inversion and AP0 EXR; ACES mathematics are unchanged. Preview/TIFF targets are matching 100-nit sRGB and Display P3, with managed extended-sRGB SDR presentation.
+- Preserve native-camera calibration/inversion, signed/HDR AP1 working data and AP0 EXR; AP0 is otherwise internal to unchanged ACES. Native-camera model/matrix identity must match the roll's retained basis. Preview/TIFF targets are matching 100-nit sRGB and Display P3, with managed extended-sRGB SDR presentation.
 - Dmin/Dmax are RGB-only values. Picker context is transient; source fingerprints and development compatibility are separate concerns. Invalid/cancelled picks and rejected edits change no processing state.
-- Existing model-2 grades retain original behavior. New grades use model 3 toe 2.5/shoulder off; changing an existing grade requires explicit opt-in.
+- The user approved camera processing/project model/schema 4 outright. Old AP0 grades reject; do not add migration/legacy inversion branches. New grades retain toe 2.5/shoulder off; classic toe-1 response also uses the camera model.
 - One production RGB16 source path: 8 bytes/pixel, extra precision in temporaries/small constants, not a wide retained source cache. Historical research snapshots are not supported upload paths or fallbacks.
 - Samples are read-only, ignored and not committed. Do not automate Lightroom/Resolve or pursue flat-field correction without a new request. Do not silently add a pedestal/clamp or change development to improve inspection.
 

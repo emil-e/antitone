@@ -222,8 +222,9 @@ fn fixture() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
                 development: crate::project::SourceDevelopment {
                     dimensions: [900, 600],
                     active_area: [0, 0, 900, 600],
-                    camera_to_ap0: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
-                    input_floor: 0.00002,
+                    camera_model: "test-camera".into(),
+                    camera_to_ap1: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+                    input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                 },
                 reference_only: false,
                 photo: PhotoSettings::default(),
@@ -232,7 +233,7 @@ fn fixture() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
         )
         .unwrap();
     editor.current_source = Some(editor.document.project.order[0]);
-    editor.floor = 0.00002;
+    editor.floor = crate::processing::CAMERA_INPUT_FLOOR;
     editor.dmin = Some(DVec3::new(0.2, 0.15, 0.1));
     editor.dmax = Some(DVec3::new(0.008, 0.005, 0.002));
     editor.sync_document();
@@ -375,7 +376,7 @@ fn navigation_and_view_state_do_not_dirty_a_saved_document() {
         .source_path(editor.current_source.unwrap())
         .unwrap();
     editor.load(source_path);
-    let Command::Load(_, _, wb, expected, _) = receiver.recv().unwrap() else {
+    let Command::Load(_, _, wb, expected, _, _) = receiver.recv().unwrap() else {
         panic!()
     };
     assert_eq!(

@@ -90,8 +90,15 @@ enum Command {
         Option<[f64; 4]>,
         Option<Box<Source>>,
         Option<Arc<Correction>>,
+        Option<crate::project::CameraBasis>,
     ),
-    FlatPreview(u64, PathBuf, Option<[f64; 4]>, Option<Box<Source>>),
+    FlatPreview(
+        u64,
+        PathBuf,
+        Option<[f64; 4]>,
+        Option<Box<Source>>,
+        Option<crate::project::CameraBasis>,
+    ),
     FlatAccept(u64, Rect, Box<Document>, Option<SourceId>),
     CancelFlat(u64),
     Document(u64, Box<DocumentWork>),
@@ -139,8 +146,12 @@ fn prepare_source(
     wb: Option<[f64; 4]>,
     expected: Option<&Source>,
     correction: Option<&Arc<Correction>>,
+    basis: Option<&crate::project::CameraBasis>,
 ) -> Result<(Ready, Scan), Error> {
     let (record, _) = document::read_source(&path)?;
+    if let Some(basis) = basis {
+        basis.require_source(&record.development)?;
+    }
     if let Some(expected) = expected {
         document::verify_source(expected, &record)?;
     }
@@ -158,7 +169,7 @@ fn prepare_source(
             width,
             height,
             &pixels,
-            scan.camera_to_ap0,
+            scan.camera_to_ap1,
             target,
         ))?;
         if let Some(correction) = correction {
@@ -213,7 +224,7 @@ fn prepare_document(
         crate::gpu::ProcessingSource::new(
             device,
             &[[0; 4]],
-            glam::DMat3::from_cols_array_2d(&record.development.camera_to_ap0),
+            glam::DMat3::from_cols_array_2d(&record.development.camera_to_ap1),
         )?;
     }
     if let Some((loaded, selected)) = reuse
@@ -245,6 +256,7 @@ fn prepare_document(
             wb,
             Some(document.project.source(selected)?),
             correction.as_ref(),
+            document.project.camera_basis.as_ref(),
         )?;
         Some((ready, scan))
     } else {
@@ -307,7 +319,7 @@ fn backend(
                     break;
                 }
             }
-            Command::Load(id, path, wb, expected, field) => {
+            Command::Load(id, path, wb, expected, field, basis) => {
                 let result = prepare_source(
                     &device,
                     &queue,
@@ -315,6 +327,7 @@ fn backend(
                     wb,
                     expected.as_deref(),
                     field.as_ref(),
+                    basis.as_ref(),
                 )
                 .map(|(ready, scan)| {
                     source = Some((id, scan));
@@ -326,14 +339,22 @@ fn backend(
                     break;
                 }
             }
-            Command::FlatPreview(id, path, wb, expected) => {
-                let result = prepare_source(&device, &queue, path, wb, expected.as_deref(), None)
-                    .and_then(|(ready, scan)| {
-                        let region = scan.propose_flat_field_area()?;
-                        flat_preview = Some((id, scan, ready.record.clone()));
-                        Ok(Box::new(FlatPreview { ready, region }))
-                    })
-                    .map_err(|e| e.to_string());
+            Command::FlatPreview(id, path, wb, expected, basis) => {
+                let result = prepare_source(
+                    &device,
+                    &queue,
+                    path,
+                    wb,
+                    expected.as_deref(),
+                    None,
+                    basis.as_ref(),
+                )
+                .and_then(|(ready, scan)| {
+                    let region = scan.propose_flat_field_area()?;
+                    flat_preview = Some((id, scan, ready.record.clone()));
+                    Ok(Box::new(FlatPreview { ready, region }))
+                })
+                .map_err(|e| e.to_string());
                 if messages.send(Message::FlatPreview(id, result)).is_err() {
                     break;
                 }
@@ -473,6 +494,7 @@ fn backend(
                         scan.processing_calibration(calibration)?,
                         roll,
                         photo,
+                        scan.camera_to_ap1,
                     )?;
                     let area = scan.area;
                     let size = ImageSize {
@@ -741,6 +763,7 @@ impl Editor {
                 wb,
                 expected,
                 self.correction.clone(),
+                self.document.project.camera_basis.clone(),
             ))
             .is_err()
         {
@@ -1150,13 +1173,13 @@ impl Editor {
                     controls::section(ui, "calibration", "Calibration", None, |ui| {
                         if controls::calibration(
                             ui, "dmin", "Dmin (film base)", self.dmin, can_pick,
-                            "Minimum-density film base. Linear AP0/D60 RGB, not optical-density numbers.",
+                            "Minimum-density film base. Linear native-camera RGB, not optical-density numbers.",
                         ) {
                             start_pick = Some(Pick::Dmin);
                         }
                         if controls::calibration(
                             ui, "dmax", "Dmax", self.dmax, can_pick,
-                            "Maximum-density film reference. Linear AP0/D60 RGB, not optical-density numbers.",
+                            "Maximum-density film reference. Linear native-camera RGB, not optical-density numbers.",
                         ) {
                             start_pick = Some(Pick::Dmax);
                         }
@@ -1185,7 +1208,7 @@ impl Editor {
                             |ui| {
                                 match &mut self.roll.response {
                                     crate::processing::Response::Original => {
-                                        ui.label("Original response · model 2");
+                                        ui.label("Classic curve · camera model 4");
                                         if ui.button("Use adjustable response").on_hover_text(
                                             "Explicitly use toe 2.5 with shoulder off. Calibration, gamma, balance and exposure are kept; this changes the response, not RAW development or ACES.",
                                         ).clicked() {
@@ -1567,7 +1590,7 @@ impl host::App for Editor {
                 output: geometry.output_size(geometry.visible_area(), pixels_per_point),
             };
             let parameters = if self.source {
-                let source_parameters=if self.correction.is_some() && self.flat_edit.is_none() {ProcessingParameters::corrected_source(self.source_exposure)} else {ProcessingParameters::source_inspection(self.source_exposure)};
+                let source_parameters=ProcessingParameters::source_inspection(self.source_exposure);
                 match source_parameters {
                     Ok(parameters) => parameters,
                     Err(error) => { ui.label(format!("Source inspection unavailable: {error}")); return; }

@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut raw = RawFile::open(&path)?;
         let metadata = raw.metadata;
         let wb = *fixed_wb.get_or_insert(metadata.cam_mul);
-        let matrix = metadata.camera_to_ap0()?;
+        let matrix = metadata.camera_to_ap1()?;
         let area = metadata.image_area()?;
         println!("\nSOURCE {}", path.display());
         println!(
@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "camera_to_srgb_columns={:?}",
             metadata.camera_to_srgb().to_cols_array_2d()
         );
-        println!("camera_to_ap0_columns={:?}", matrix.to_cols_array_2d());
+        println!("camera_to_ap1_columns={:?}", matrix.to_cols_array_2d());
         if metadata_only {
             continue;
         }
@@ -78,8 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         let mut min = DVec3::splat(f64::INFINITY);
         let mut max = DVec3::splat(f64::NEG_INFINITY);
-        let floor = (matrix.x_axis.abs() + matrix.y_axis.abs() + matrix.z_axis.abs()).max_element()
-            / 65535.0;
+        let floor = antitone::processing::CAMERA_INPUT_FLOOR;
         let mut nonpositive = [0u64; 3];
         let mut below_floor = [0u64; 3];
         let mut floored_pixels = 0u64;
@@ -90,14 +89,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for y in area.y..area.y + area.height {
             for x in area.x..area.x + area.width {
                 let camera = developed.pixel(x, y)?;
-                let ap0 = matrix * camera;
-                min = min.min(ap0);
-                max = max.max(ap0);
-                sum += ap0;
-                floored_pixels += u64::from(ap0.min_element() < floor);
+                min = min.min(camera);
+                max = max.max(camera);
+                sum += camera;
+                floored_pixels += u64::from(camera.min_element() < floor);
                 for c in 0..3 {
-                    nonpositive[c] += u64::from(ap0[c] <= 0.0);
-                    below_floor[c] += u64::from(ap0[c] < floor);
+                    nonpositive[c] += u64::from(camera[c] <= 0.0);
+                    below_floor[c] += u64::from(camera[c] < floor);
                     zeros[c] += u64::from(camera[c] == 0.0);
                     saturated[c] += u64::from(camera[c] == 1.0);
                 }
@@ -108,17 +106,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let count = u64::from(area.width) * u64::from(area.height);
         println!(
-            "image_pixels={count} AP0_min={min:?} AP0_max={max:?} AP0_mean={:?}",
+            "image_pixels={count} camera_min={min:?} camera_max={max:?} camera_mean={:?}",
             sum / count as f64
         );
         println!(
-            "AP0_nonpositive={nonpositive:?} camera_zero={zeros:?} camera_u16_ceiling={saturated:?}"
+            "camera_nonpositive={nonpositive:?} camera_zero={zeros:?} camera_u16_ceiling={saturated:?}"
         );
         println!(
-            "AP0_below_precision_floor={below_floor:?} affected_pixels={floored_pixels}/{count}"
+            "camera_below_precision_floor={below_floor:?} affected_pixels={floored_pixels}/{count}"
         );
         println!(
-            "one_camera_code_projected_floor={floor:.12e} (precision bound, not a measured noise estimate)"
+            "one_camera_code_floor={floor:.12e} (precision bound, not a measured noise estimate)"
         );
         if below_floor.into_iter().any(|v| v > count / 100) {
             return Err(
@@ -159,7 +157,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     && *y > area.y + area.height / 3
                     && *y < area.y + 2 * area.height / 3
             })
-            .map(|(_, _, _, camera)| matrix * *camera)
+            .map(|(_, _, _, camera)| *camera)
             .collect();
         println!("central_scan_patch_grid_mean={:?}", mean(&center_scan)?);
         let synthetic_cal = Calibration {
@@ -170,7 +168,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let inversion = Inversion::new(synthetic_cal, roll)?;
         let mut affected = 0usize;
         for &(_, _, _, camera) in &points {
-            affected += usize::from(inversion.apply(matrix * camera)?.floored.iter().any(|v| *v));
+            affected += usize::from(inversion.apply(camera)?.floored.iter().any(|v| *v));
         }
         println!(
             "synthetic_anchor_grid_floored={affected}/{} (not real roll calibration)",

@@ -2,7 +2,7 @@
 
 Current UI/control behavior. Remaining work is scheduled in [the roadmap](../../PLAN.md), not in the verification snapshot below.
 
-The editor uses `src/editor_controls.rs` for a small shared hierarchy: **section → parameter row → specialized input**. `Editor::controls` owns roll/photo grouping and reset scope; the helpers own spacing, entry, range, focus and presentation. New grades use adjustable film response/model 3; original model-2 grades are retained without implicit opt-in. Project schema 3 and the development/output contracts are unchanged.
+The editor uses `src/editor_controls.rs` for a small shared hierarchy: **section → parameter row → specialized input**. `Editor::controls` owns roll/photo grouping and reset scope; the helpers own spacing, entry, range, focus and presentation. New grades use adjustable film response in native-camera model 4; old AP0 projects reject. Project schema/development identity are versioned accordingly; the output contract is unchanged.
 
 ## Layout and actions
 
@@ -13,7 +13,7 @@ The editor uses `src/editor_controls.rs` for a small shared hierarchy: **section
 - Each scalar row has its label/value/unit/reset above a full-width slider. Calibration rows share availability, RGB display and a pick action.
 - Gamma balance and WB share a color component: named/resettable container, wheel, warmth/tint rows, then neutral pick. There is no separate “Neutral” reset button or hidden fitted baseline.
 - Gamma & balance reset changes gamma/balance only; Toe & shoulder reset restores shared toe **2.5** / shoulder **0** without changing other edits; exposure resets affect their own scope only; color reset restores the actual zero-coordinate identity. Calibration is never erased by an edit-section reset. Gamma resets to **0.65**, not 1.
-- Existing model-2 grades show “Original response · model 2” and an explicit **Use adjustable response** action. Drawing controls never opts in; the action preserves calibration/gamma/balance/exposure and changes only response. A reset does not convert an original grade.
+- A model-4 classic-curve diagnostic state shows “Classic curve · camera model 4” and an explicit **Use adjustable response** action. Drawing controls never opts in; the action preserves calibration/gamma/balance/exposure and changes only response. A reset does not convert an original grade.
 - Shoulder **0 = off**. Both linked numeric/slider parameters share actual processing/fitting state; inverse poles and unsupported GPU range/precision are rejected atomically.
 - Implementation details live in tooltips. Unsaved state, approximation/refinement and actionable errors remain visible. Successful refinement no longer overwrites an earlier pick/edit error in the status line.
 
@@ -63,7 +63,7 @@ O = [ -sqrt(3)/2   1/2       ]
     [  1/2        sqrt(3)/2  ]
 ```
 
-- **Gamma balance:** display matrix `O`. Coordinates still control relative log gamma in AP0, not RGB gains. Pixel response depends on the negative/calibration.
+- **Gamma balance:** display matrix `O`. Coordinates control relative log gamma in native-camera RGB, not RGB gains. Pixel response depends on the negative/calibration.
 - **White balance:** display matrix `O * J`, where `J` is the exact differential AP1 neutral-white response to the existing Bradford log-cone-gain coordinates. With `C = Bradford * AP1_to_XYZ`, its columns are `P(C^-1 * diag(C*white) * opponent(1,0))` and the corresponding tint column. This is a local display adapter, not a replacement WB operator.
 
 Each matrix is normalized by the maximum mapped corner length of the legal warmth/tint square. Input uses its inverse; coordinates outside the legal square are clipped to the existing ±1 limits. Wheel, sliders, numeric entry and fitted neutral corrections all share the same `Balance` state. There is no new saturation/strength state, physical Kelvin interpretation, or processing/profile change.

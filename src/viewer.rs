@@ -58,7 +58,7 @@ impl GpuImage {
         width: u32,
         height: u32,
         pixels: &[[u16; 4]],
-        camera_to_ap0: DMat3,
+        camera_to_ap1: DMat3,
         target: OutputTarget,
     ) -> Result<Self, Error> {
         if width.checked_mul(height).map(u64::from) != Some(pixels.len() as u64) {
@@ -66,7 +66,7 @@ impl GpuImage {
                 "source dimensions do not match the GPU image".into(),
             ));
         }
-        let source = ProcessingSource::new(device, pixels, camera_to_ap0)?;
+        let source = ProcessingSource::new(device, pixels, camera_to_ap1)?;
         Self::create(device, queue, width, height, Some(source), target).await
     }
 

@@ -4,6 +4,8 @@
 
 ## Goal and approved scope
 
+The [camera-inversion replacement](../camera-inversion.md) is integrated onto the finalized flat-field commit. It moves inversion/calibration/floor to native-camera RGB and expresses the same physical neutral target through camera→AP1→XYZ. Historical AP0/model-2/3 checkpoints below describe the accepted flat-field baseline, not fresh replacement-model acceptance.
+
 Correct lens/light-source spatial exposure variation using a separate unclipped RAW of the same scanning setup without film. The user selected this work after the editor commit and approved **rectangles only**, with automatic detection where simple and an editable result. No holder-specific geometry, polygons, ML segmentation, dust-removal feature, changed RAW development or ACES changes.
 
 The correction is a smooth **three-channel source gain field**, correcting brightness and spatial colour shading and **neutralizing the reference to uniform gray**. Set neutral target luminance from an averaged image-centre area: centre brightness is preserved, but centre colour need not be and the three centre gains need not equal one. Estimate it only from the valid illuminated rectangle: rig borders must never enter smoothing/estimation. This is distinct from Dmin/Dmax and from transient source-inspection brightness.

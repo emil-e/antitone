@@ -6,8 +6,8 @@ Authored research source was promoted here from ignored `.cache/probes` during t
 
 | Source | Role / status |
 | --- | --- |
-| `film/Cargo.toml`, `film/src/bin/film-production-check.rs` | Actual production scalar/GPU/complete-target gate; uses read-only `samples/DSC04393.ARW`, no archived source fixture required |
-| `film/src/bin/flat-field-inspect.rs`, `film/src/flat_field.rs`, `film/src/bin/flat-field-gpu-check.rs` | Reference-RAW rectangle/smoothing analysis and scalar/GPU source/render verification. [Processing checkpoint](../../plans/completed/flat-field-correction.md#verified-processing-checkpoint), [estimator evidence](../evidence/flat-field-initial.txt), [GPU evidence/reproduction](../evidence/flat-field-gpu.txt). Generated CSVs remain private/cache-only |
+| `film/Cargo.toml`, `film/src/bin/film-production-check.rs` | Historical AP0/model-2/3 scalar/GPU/complete-target gate (requires matching baseline API); uses read-only `samples/DSC04393.ARW`, no archived source fixture required |
+| `film/src/bin/flat-field-inspect.rs`, `film/src/flat_field.rs`, `film/src/bin/flat-field-gpu-check.rs` | AP0-baseline reference-RAW rectangle/smoothing analysis and scalar/GPU source/render verification; not a model-4 production gate. [Processing checkpoint](../../plans/completed/flat-field-correction.md#verified-processing-checkpoint), [estimator evidence](../evidence/flat-field-initial.txt), [GPU evidence/reproduction](../evidence/flat-field-gpu.txt). Generated CSVs remain private/cache-only |
 | `film/src/bin/preview-budget-check.rs` | Large Retina Fit request compares default Metal rejection with production adapter-supported buffer limits; no RAW IO. [Fix/verification record](../../plans/completed/preview-stability.md) |
 | `film/src/bin/film-wide-precision.rs`, `film/*.wgsl` | Resolved candidate arithmetic sweep/microbenchmark; uses that RAW and the locally generated `dmin-trace/run2/fur-scan-ap0-f64.bin` fixture |
 | `film/src/bin/camera-u16-precision.rs` | Initial compact-input prototype; preserves expected original-formula extreme-EV failures, not the final production gate |
@@ -21,7 +21,7 @@ The separate research crate's dependency path points to the root package; it is 
 
 ## Current gate reproduction
 
-Use the checkout-local toolchain/native libraries. These commands do not install global packages:
+Current native-camera model-4 gates are root `tests/{camera_inversion,camera_project,camera_raw,gpu_film_response,viewer}.rs` and the real-RAW flat-field editor regression; [runbook](../../build-and-probes.md). The commands below reproduce the **historical AP0/model-2/3** gate on a matching pre-replacement checkout, not current APIs. Research tools are deliberately not converted into alternate production inversion paths. Use checkout-local dependencies; no global packages:
 
 ```sh
 CARGO_TARGET_DIR="$PWD/target" CC=/usr/bin/clang CXX=/usr/bin/clang++ \

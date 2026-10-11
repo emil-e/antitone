@@ -29,7 +29,8 @@ fn film_exports_reopen_with_actual_response_and_unchanged_target_and_ap0_pixels(
         dmax: DVec3::new(0.008061, 0.003409, 0.001442),
         input_floor: 2.1630933622265155e-5,
     };
-    let pipeline = Pipeline::new(cal, roll, PhotoSettings::default()).unwrap();
+    let pipeline =
+        Pipeline::new(cal, roll, PhotoSettings::default(), glam::DMat3::IDENTITY).unwrap();
     let scans = [
         cal.dmin * (1. - 1e-12),
         cal.dmin * (1. + 1e-12),
@@ -53,7 +54,8 @@ fn film_exports_reopen_with_actual_response_and_unchanged_target_and_ap0_pixels(
         .unwrap();
         let mut decoder = Decoder::new(File::open(&path).unwrap()).unwrap();
         let description = decoder.get_tag_ascii_string(Tag::ImageDescription).unwrap();
-        assert!(description.contains("Antitone model 3"));
+        assert!(description.contains("Antitone model 4"));
+        assert!(description.contains("native-camera RGB inversion to AP1"));
         assert!(description.contains("toe=2.543210987654321"));
         assert!(description.contains("shoulder=0.003210987654321"));
         assert!(description.contains("signed-root"));
@@ -82,7 +84,13 @@ fn film_exports_reopen_with_actual_response_and_unchanged_target_and_ap0_pixels(
     let attrs = &image.layer_data.attributes.other;
     assert_eq!(
         attrs.get(&Text::from("antitoneProcessingModel")),
-        Some(&AttributeValue::I32(3))
+        Some(&AttributeValue::I32(4))
+    );
+    assert_eq!(
+        attrs.get(&Text::from("antitoneInversionSpace")),
+        Some(&AttributeValue::Text(Text::from(
+            "native-camera RGB; post-inversion metadata camera-to-AP1"
+        )))
     );
     assert_eq!(
         attrs.get(&Text::from("antitoneFilmResponse")),

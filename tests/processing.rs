@@ -222,7 +222,7 @@ fn exposure_scopes_combine_without_changing_inversion() {
     let cal = calibration();
     let scan = DVec3::new(0.06, 0.08, 0.04);
     let roll = RollSettings::default();
-    let base = Pipeline::new(cal, roll, PhotoSettings::default())
+    let base = Pipeline::new(cal, roll, PhotoSettings::default(), ap0_to_ap1())
         .unwrap()
         .apply(scan)
         .unwrap();
@@ -236,6 +236,7 @@ fn exposure_scopes_combine_without_changing_inversion() {
             exposure: -0.5,
             ..PhotoSettings::default()
         },
+        ap0_to_ap1(),
     )
     .unwrap()
     .apply(scan)
@@ -336,7 +337,7 @@ fn roll_pick_solves_the_mean_of_inverted_full_resolution_pixels() {
         },
         ..RollSettings::default()
     };
-    let solved = roll_neutral(cal, initial, &patch).unwrap();
+    let solved = roll_neutral(cal, initial, &patch, DMat3::IDENTITY).unwrap();
     assert!((solved.warmth - expected.warmth).abs() < 1e-8);
     assert!((solved.tint - expected.tint).abs() < 1e-8);
     assert_eq!(initial.exposure, 3.0);
@@ -363,7 +364,7 @@ fn roll_pick_rejects_both_anchors_and_unusable_inputs_without_mutation() {
         vec![],
     ] {
         assert!(
-            roll_neutral(cal, roll, &patch).is_err(),
+            roll_neutral(cal, roll, &patch, DMat3::IDENTITY).is_err(),
             "accepted {patch:?}"
         );
     }
@@ -390,13 +391,13 @@ fn ap0_ap1_conversion_preserves_xyz_white_and_signed_hdr_values() {
 }
 
 #[test]
-fn pipeline_outputs_ap1_and_ap0_export_conversion_restores_the_inversion_basis() {
+fn pipeline_maps_camera_positive_to_ap1_and_ap0_export_preserves_xyz() {
     let cal = calibration();
     let roll = RollSettings::default();
     let original = DVec3::new(4.0, 0.03, 0.1);
     let scan = scan_for_positive(cal, roll, original);
     let inverted = Inversion::new(cal, roll).unwrap().apply(scan).unwrap();
-    let processed = Pipeline::new(cal, roll, PhotoSettings::default())
+    let processed = Pipeline::new(cal, roll, PhotoSettings::default(), ap0_to_ap1())
         .unwrap()
         .apply(scan)
         .unwrap();
@@ -424,7 +425,7 @@ fn moving_bradford_wb_to_ap1_preserves_the_xyz_operation() {
     };
     let scan = DVec3::new(0.05, 0.07, 0.02);
     let inverted = Inversion::new(cal, roll).unwrap().apply(scan).unwrap();
-    let processed = Pipeline::new(cal, roll, photo)
+    let processed = Pipeline::new(cal, roll, photo, ap0_to_ap1())
         .unwrap()
         .apply(scan)
         .unwrap();
@@ -464,7 +465,7 @@ fn photo_pick_uses_ap1_after_the_inversion_conversion() {
     };
     let cast_ap1 = wb_matrix(correction).unwrap().inverse() * DVec3::splat(0.2);
     let scan = scan_for_positive(cal, roll, ap1_to_ap0() * cast_ap1);
-    let before_wb = Pipeline::new(cal, roll, PhotoSettings::default())
+    let before_wb = Pipeline::new(cal, roll, PhotoSettings::default(), ap0_to_ap1())
         .unwrap()
         .apply(scan)
         .unwrap();
@@ -478,6 +479,7 @@ fn photo_pick_uses_ap1_after_the_inversion_conversion() {
             wb: solved,
             ..PhotoSettings::default()
         },
+        ap0_to_ap1(),
     )
     .unwrap()
     .apply(scan)

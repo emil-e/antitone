@@ -17,11 +17,11 @@ Antitone is a single Rust package with narrow native bridges. The numerical core
 | Desktop host | `src/platform/{host,macos}.rs` | winit events, egui integration, owned wgpu surface, native SDR tagging, repaint/surface lifecycle |
 | Editor | `src/{editor,editor_controls,editor_navigation,editor_document,editor_files,editor_flat_field}.rs` | Stable-ID document state, live edits, picker/view workflow, file menus, staged worker transitions and GPU preflight |
 | Output files | `src/{export,profiles}.rs` | Full-source TIFF/AP0 EXR, encoding/ICC/metadata, bounded buffers and safe destination replacement |
-| Project state | `src/project.rs` | Schema-3 documents, stable source IDs/order, identity/compatibility and atomic save/load; relink primitives have no editor UI yet |
+| Project state | `src/project.rs` | Schema-4 camera-model documents, stable source IDs/order, identity/compatibility and atomic save/load; relink primitives have no editor UI yet |
 
 There is no eframe host, vendored renderer patch, custom demosaicer or CPU interactive-viewer fallback.
 
-**Roll-level flat-field correction:** `src/flat_field.rs` estimates/evaluates a bounded three-channel camera-RGB gain field with robust local log-light regression and centre luminance normalization. `Scan::estimate_flat_field` collects weighted full-pixel reference statistics within accepted support; optional `Scan::set_flat_field` applies gains before the AP0 matrix for CPU pixels, measurements and fitting. `processing_calibration` propagates the existing one-code bound without modifying stored Dmin/Dmax. `gpu_flat_field.rs` owns immutable shared gain storage; `SourceGeometry` maps sparse previews/full tiles to exact source pixel centres. `GpuImage::set_flat_field` binds it and invalidates cached parameters; refinement accepts the same resource and rejects CPU/GPU map mismatches. Source storage remains RGB16. `editor_flat_field` owns transactional reference preview/rectangle acceptance and one shared roll CPU/GPU map; accepted correction reaches provisional/settled views, full-resolution picks/fitting, thumbnails and exports. `project_flat_field` persists the map, algorithm contract, enabled state, reference identity and source/roll development snapshots including fixed WB. Reference-only records do not enter the filmstrip; existing photos stay visible. [Plan/checkpoints](plans/completed/flat-field-correction.md#verified-editor-checkpoint).
+**Roll-level flat-field correction:** `src/flat_field.rs` estimates/evaluates a bounded three-channel camera-RGB gain field with robust local log-light regression and centre luminance normalization. `Scan::estimate_flat_field` collects weighted full-pixel reference statistics within accepted support; optional `Scan::set_flat_field` applies gains in camera coordinates before CPU measurements/inversion/fitting. Its neutral/centre-luminance target uses camera→AP1→XYZ without assuming equal camera channels. `processing_calibration` propagates the existing one-code bound without modifying stored Dmin/Dmax. `gpu_flat_field.rs` owns immutable shared gain storage; `SourceGeometry` maps sparse previews/full tiles to exact source pixel centres. `GpuImage::set_flat_field` binds it and invalidates cached parameters; refinement accepts the same resource and rejects CPU/GPU map mismatches. Source storage remains RGB16. `editor_flat_field` owns transactional reference preview/rectangle acceptance and one shared roll CPU/GPU map; accepted correction reaches provisional/settled views, full-resolution picks/fitting, thumbnails and exports. `project_flat_field` persists the map, algorithm contract, enabled state, reference identity and source/roll development snapshots including fixed WB. Reference-only records do not enter the filmstrip; existing photos stay visible. [Plan/checkpoints](plans/completed/flat-field-correction.md#verified-editor-checkpoint).
 
 ## Data and colour flow
 
@@ -30,9 +30,8 @@ RAW Bayer samples
   → LibRaw black subtraction / fixed roll WB / AHD development
   → developed camera RGB16 (four u16 slots; fourth ignored)
   → normalize / optional source-coordinate camera-RGB flat-field gains
-  → camera-to-AP0/D60 matrix
-  → AP0 calibration / versioned inversion / roll gamma balance
-  → exposure and AP0-to-AP1/D60 / photographic Bradford WB
+  → native-camera RGB calibration / model-4 inversion / roll gamma balance
+  → positive camera-to-AP1/D60 matrix / exposure / photographic Bradford WB
   → signed/HDR AP1 working RGB
        ├→ AP1-to-AP0 → scene-linear EXR (no DRT/monitor conversion)
        └→ pinned OCIO ACES 2, 100-nit sRGB or P3/D65
@@ -41,9 +40,9 @@ RAW Bayer samples
                  → OS monitor conversion
 ```
 
-Calibration and fitting operate on full-resolution source pixels, never display pixels. Dmin/Dmax are each one AP0 RGB value; they carry no source/rectangle relationship. The development matrix is derived from the camera-to-sRGB convention with explicit XYZ/Bradford D65→D60 conversion. Source bypass enters the rendering path as developed AP1 while ignoring inversion/photographic edits; its transient inspection EV scales only the source-preview post matrix before unchanged ACES. It does not change development, measurement/fitting, saved grades or exported processing.
+Calibration and fitting operate on full-resolution source pixels, never display pixels. Dmin/Dmax are each one native-camera RGB value; they carry no source/rectangle relationship. The development matrix is derived from the camera-to-sRGB convention with explicit XYZ/Bradford D65→D60 conversion. A retained roll camera-model/matrix identity rejects mismatched native-channel sources/references; it survives source removal. Base floor is exactly one native code, with the same corrected bound used directly by CPU/GPU/persistence paths. Source bypass enters the rendering path as developed AP1 while ignoring inversion/photographic edits; its transient inspection EV scales only the source-preview post matrix before unchanged ACES. It does not change development, measurement/fitting, saved grades or exported processing.
 
-`Response::Original` is model 2; model 3 adds shared toe/optional shoulder and precise temporary arithmetic. `RollSettings::default()` remains Original for compatibility; the explicit new-grade factory selects model 3, toe 2.5/shoulder off. Model-2 shader execution is retained, not rewritten under a new storage API. See [processing contract](contracts/processing-model.md).
+All response shapes use camera processing model 4 with precise temporary arithmetic. `Response::Original` / numerical defaults denote the classic toe-1/shoulder-0 curve, not an AP0 compatibility branch. New grades use toe 2.5/shoulder off. Camera→AP1 occurs after response; roll-neutral fitting targets the camera direction mapping to AP1 white. Old AP0 schemas/models reject explicitly. See [processing contract](contracts/processing-model.md).
 
 ACES's specified rendering limits are downstream of signed working data. Neither display limiting nor the TIFF transfer affects AP0 EXR. Generated shader assets are algorithms plus small parameter tables, not a baked 3D LUT.
 

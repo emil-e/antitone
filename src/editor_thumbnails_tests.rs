@@ -14,8 +14,9 @@ fn fixture() -> Document {
                     development: SourceDevelopment {
                         dimensions: [900, 600],
                         active_area: [0, 0, 900, 600],
-                        camera_to_ap0: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
-                        input_floor: 0.00002,
+                        camera_model: "test-camera".into(),
+                        camera_to_ap1: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+                        input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                     },
                     reference_only: false,
                     photo: PhotoSettings::default(),
@@ -65,7 +66,7 @@ fn source_identity_excludes_locator_photo_and_roll_edits_but_includes_bytes_matr
     document.project.source_mut(id).unwrap().fingerprint.bytes += 1;
     assert_ne!(key(&document, id), original);
     let mut candidate = original.clone();
-    candidate.source.source.camera_to_ap0[0][0] += 0.1;
+    candidate.source.source.camera_to_ap1[0][0] += 0.1;
     assert_ne!(candidate, original);
     candidate = original.clone();
     candidate.source.development.fixed_wb[0] += 0.1;
@@ -313,11 +314,15 @@ fn thumbnail_parameters_follow_actual_roll_and_each_photo_without_inspection_gai
     );
     editor.dmin = Some(DVec3::new(0.2, 0.15, 0.1));
     editor.dmax = Some(DVec3::new(0.008, 0.005, 0.002));
-    editor.floor = 0.00002;
+    editor.floor = crate::processing::CAMERA_INPUT_FLOOR;
     let first = editor.thumbnail_parameters(&source).unwrap();
-    let expected =
-        ProcessingParameters::positive(editor.calibration().unwrap(), editor.roll, editor.photo)
-            .unwrap();
+    let expected = ProcessingParameters::positive(
+        editor.calibration().unwrap(),
+        editor.roll,
+        editor.photo,
+        glam::DMat3::IDENTITY,
+    )
+    .unwrap();
     assert_eq!(bytemuck::bytes_of(&first), bytemuck::bytes_of(&expected));
     let unchanged_key = key(&editor.document, id);
     editor.photo.exposure = 1.25;
@@ -352,6 +357,7 @@ fn thumbnail_parameters_follow_actual_roll_and_each_photo_without_inspection_gai
         editor.calibration().unwrap(),
         editor.roll,
         editor.document.project.source(other).unwrap().photo,
+        glam::DMat3::IDENTITY,
     )
     .unwrap();
     assert_eq!(

@@ -1,6 +1,6 @@
 # Add adjustable film response without reinterpreting existing grades
 
-Status: accepted; production integration complete for the tested domain.
+Status: accepted response mathematics/defaults/continuation; grade-compatibility and model/schema clauses superseded by [native-camera inversion](native-camera-inversion.md). The earlier compatibility rationale below is preserved, not a current migration requirement.
 
 ## Context
 

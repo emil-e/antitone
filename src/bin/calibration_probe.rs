@@ -24,13 +24,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dmax_region = region(6)?;
     let mut dmax_source = RawFile::open(Path::new(&arguments[5]))?;
     let wb = dmax_source.metadata.cam_mul;
-    let matrix = dmax_source.metadata.camera_to_ap0()?;
-    let floor =
-        (matrix.x_axis.abs() + matrix.y_axis.abs() + matrix.z_axis.abs()).max_element() / 65535.0;
+    let matrix = dmax_source.metadata.camera_to_ap1()?;
+    let floor = antitone::processing::CAMERA_INPUT_FLOOR;
     let dmax_sensor = dmax_source.region_sensor_diagnostics(dmax_region)?;
     let dmax_area = dmax_source.metadata.image_area()?;
     let dmax_image = dmax_source.develop_camera(wb)?;
-    let dmax = dmax_image.sample_mean(dmax_region, matrix)?;
+    let dmax = dmax_image.sample_mean(dmax_region, glam::DMat3::IDENTITY)?;
     #[cfg(feature = "gpu")]
     let mut scans = if gpu_fixture {
         grid(&dmax_image, dmax_area)?
@@ -41,10 +40,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = dmax_area;
     let mut dmin_source = RawFile::open(Path::new(&arguments[0]))?;
     let dmin_sensor = dmin_source.region_sensor_diagnostics(dmin_region)?;
-    let dmin_matrix = dmin_source.metadata.camera_to_ap0()?;
+    let dmin_matrix = dmin_source.metadata.camera_to_ap1()?;
     let dmin_area = dmin_source.metadata.image_area()?;
     let dmin_image = dmin_source.develop_camera(wb)?;
-    let dmin = dmin_image.sample_mean(dmin_region, dmin_matrix)?;
+    let dmin = dmin_image.sample_mean(dmin_region, glam::DMat3::IDENTITY)?;
     #[cfg(feature = "gpu")]
     if gpu_fixture {
         if dmin_matrix != matrix {
@@ -94,7 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for path in &arguments[11..] {
             let mut raw = RawFile::open(Path::new(path))?;
             let area = raw.metadata.image_area()?;
-            if raw.metadata.camera_to_ap0()? != matrix {
+            if raw.metadata.camera_to_ap1()? != matrix {
                 return Err("GPU fixture requires one camera conversion matrix".into());
             }
             scans.extend(grid(&raw.develop_camera(wb)?, area)?);
@@ -145,12 +144,12 @@ fn write_gpu_fixture(
             tint: 0.15,
         },
     };
-    let parameters = ProcessingParameters::positive(calibration, roll, photo)?;
-    let pipeline = Pipeline::new(calibration, roll, photo)?;
+    let parameters = ProcessingParameters::positive(calibration, roll, photo, matrix)?;
+    let pipeline = Pipeline::new(calibration, roll, photo, matrix)?;
     let mut working = Vec::with_capacity(scans.len());
     let mut flags = Vec::with_capacity(scans.len());
     for &[r, g, b, _] in scans {
-        let scan = matrix * (glam::DVec3::new(r as f64, g as f64, b as f64) / 65535.);
+        let scan = glam::DVec3::new(r as f64, g as f64, b as f64) / 65535.;
         let pixel = pipeline.apply(scan)?;
         working.push(pixel.rgb.as_vec3().extend(1.0));
         flags.push(
@@ -163,20 +162,20 @@ fn write_gpu_fixture(
     }
     std::fs::create_dir_all(".cache/probes")?;
     std::fs::write(
-        ".cache/probes/camera-source-model2.rgb16",
+        ".cache/probes/camera-source-model4.rgb16",
         bytemuck::cast_slice(scans),
     )?;
     std::fs::write(
-        ".cache/probes/camera-to-ap0-model2.f64",
+        ".cache/probes/camera-to-ap1-model4.f64",
         bytemuck::cast_slice(&matrix.to_cols_array()),
     )?;
     std::fs::write(
-        ".cache/probes/camera-working-ap1-model2.f32",
+        ".cache/probes/camera-working-ap1-model4.f32",
         bytemuck::cast_slice(&working),
     )?;
-    std::fs::write(".cache/probes/camera-floor-flags-model2.u8", flags)?;
+    std::fs::write(".cache/probes/camera-floor-flags-model4.u8", flags)?;
     std::fs::write(
-        ".cache/probes/camera-processing-model2.bin",
+        ".cache/probes/camera-processing-model4.bin",
         bytemuck::bytes_of(&parameters),
     )?;
     println!(

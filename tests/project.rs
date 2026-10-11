@@ -12,7 +12,7 @@ fn fixture(directory: &std::path::Path) -> (Project, SourceId, SourceId) {
             "0.22.0".into(),
             [2133., 1024., 1771., 1024.],
         )),
-        input_floor: Some(0.00002),
+        input_floor: Some(antitone::processing::CAMERA_INPUT_FLOOR),
         dmin: Some([
             0.16512039312008006,
             0.13295850981449217,
@@ -35,8 +35,9 @@ fn fixture(directory: &std::path::Path) -> (Project, SourceId, SourceId) {
             development: SourceDevelopment {
                 dimensions: [900, 600],
                 active_area: [12, 12, 864, 576],
-                camera_to_ap0: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
-                input_floor: 0.00002,
+                camera_model: "test-camera".into(),
+                camera_to_ap1: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+                input_floor: antitone::processing::CAMERA_INPUT_FLOOR,
             },
             reference_only: false,
             photo: PhotoSettings::default(),
@@ -66,6 +67,13 @@ fn atomic_roundtrip_preserves_calibration_and_output_after_removal_and_missing_s
         calibration,
         project.roll,
         project.source(dmin_source_id).unwrap().photo,
+        glam::DMat3::from_cols_array_2d(
+            &project
+                .source(dmin_source_id)
+                .unwrap()
+                .development
+                .camera_to_ap1,
+        ),
     )
     .unwrap()
     .apply(DVec3::new(0.08, 0.04, 0.015))
@@ -88,6 +96,13 @@ fn atomic_roundtrip_preserves_calibration_and_output_after_removal_and_missing_s
         restored.calibration().unwrap().unwrap(),
         restored.roll,
         restored.source(dmin_source_id).unwrap().photo,
+        glam::DMat3::from_cols_array_2d(
+            &restored
+                .source(dmin_source_id)
+                .unwrap()
+                .development
+                .camera_to_ap1,
+        ),
     )
     .unwrap()
     .apply(DVec3::new(0.08, 0.04, 0.015))
@@ -103,7 +118,7 @@ fn references_are_rgb_only_and_survive_removal_of_all_source_records() {
     let (mut project, _, _) = fixture(dir.path());
     let calibration = project.calibration().unwrap();
     let mut value = serde_json::to_value(&project).unwrap();
-    assert_eq!(value["schema"], 3);
+    assert_eq!(value["schema"], 4);
     assert_eq!(value["dmin"], serde_json::json!(project.dmin));
     assert_eq!(value["dmax"], serde_json::json!(project.dmax));
     assert_eq!(value["dmin"].as_array().unwrap().len(), 3);

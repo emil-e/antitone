@@ -141,7 +141,7 @@ pub fn tiff(
                 .map_err(failure)?;
             let model = response.processing_model();
             let mut description = format!(
-                "Antitone model {model}; ACES 2 / OCIO 2.6.0; {target:?} v1 / 100-nit SDR; rendering and encoding in matching target RGB"
+                "Antitone model {model}; native-camera RGB inversion to AP1; ACES 2 / OCIO 2.6.0; {target:?} v1 / 100-nit SDR; rendering and encoding in matching target RGB"
             );
             if let Response::Film { toe, shoulder } = response {
                 description.push_str(&format!(
@@ -235,6 +235,12 @@ pub fn exr(
     attributes.other.insert(
         Text::from("antitoneProcessingModel"),
         AttributeValue::I32(response.processing_model() as i32),
+    );
+    attributes.other.insert(
+        Text::from("antitoneInversionSpace"),
+        AttributeValue::Text(Text::from(
+            "native-camera RGB; post-inversion metadata camera-to-AP1",
+        )),
     );
     if let Response::Film { toe, shoulder } = response {
         attributes.other.insert(

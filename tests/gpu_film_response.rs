@@ -117,7 +117,7 @@ fn film_gpu_matches_full_f64_for_shapes_matrices_balances_wb_and_exposure_extrem
         let mut worst = 0_f64;
         for matrix in matrices {
             let source = ProcessingSource::new(&device, &codes, matrix).unwrap();
-            let scans: Vec<_> = codes.iter().map(|c| matrix * camera(*c)).collect();
+            let scans: Vec<_> = codes.iter().map(|c| camera(*c)).collect();
             for case in 0..120 {
                 let toe = [1., 1.125, 2.5, 3.875, 4.][case % 5];
                 let shoulder = [0., 0.0043210987, 0.02][case / 5 % 3];
@@ -138,14 +138,14 @@ fn film_gpu_matches_full_f64_for_shapes_matrices_balances_wb_and_exposure_extrem
                     exposure: ev / 2.,
                     wb: balances[case / 17 % 4],
                 };
-                let params = match ProcessingParameters::positive(cal, roll, photo) {
+                let params = match ProcessingParameters::positive(cal, roll, photo, matrix) {
                     Ok(p) => p,
                     Err(_) => {
                         rejected += 1;
                         continue;
                     }
                 };
-                let pipeline = Pipeline::new(cal, roll, photo).unwrap();
+                let pipeline = Pipeline::new(cal, roll, photo, matrix).unwrap();
                 let gpu = read(&device, &queue, &kernel, &source, params, codes.len());
                 accepted += 1;
                 for (i, s) in scans.iter().enumerate() {
@@ -172,9 +172,10 @@ fn film_gpu_matches_full_f64_for_shapes_matrices_balances_wb_and_exposure_extrem
             };
             let roll = RollSettings::new_grade();
             let params =
-                ProcessingParameters::positive(cal, roll, PhotoSettings::default()).unwrap();
+                ProcessingParameters::positive(cal, roll, PhotoSettings::default(), matrix)
+                    .unwrap();
             let gpu = read(&device, &queue, &kernel, &source, params, codes.len());
-            let pipeline = Pipeline::new(cal, roll, PhotoSettings::default()).unwrap();
+            let pipeline = Pipeline::new(cal, roll, PhotoSettings::default(), matrix).unwrap();
             for i in [0, 7] {
                 let expected = pipeline.apply(scans[i]).unwrap().rgb;
                 for c in 0..3 {
@@ -201,9 +202,14 @@ fn film_gpu_matches_full_f64_for_shapes_matrices_balances_wb_and_exposure_extrem
                 response: Response::Film { toe, shoulder },
                 ..RollSettings::default()
             };
-            let parameters =
-                ProcessingParameters::positive(cal, roll, PhotoSettings::default()).unwrap();
-            let expected = Pipeline::new(cal, roll, PhotoSettings::default())
+            let parameters = ProcessingParameters::positive(
+                cal,
+                roll,
+                PhotoSettings::default(),
+                DMat3::IDENTITY,
+            )
+            .unwrap();
+            let expected = Pipeline::new(cal, roll, PhotoSettings::default(), DMat3::IDENTITY)
                 .unwrap()
                 .apply(DVec3::ZERO)
                 .unwrap();
@@ -240,12 +246,15 @@ fn inverse_pole_cannot_hide_behind_a_floor_anchored_dmax() {
         ..RollSettings::default()
     };
     assert!(
-        Pipeline::new(cal, roll, PhotoSettings::default())
+        Pipeline::new(cal, roll, PhotoSettings::default(), DMat3::IDENTITY)
             .unwrap()
             .apply(DVec3::splat(floor))
             .unwrap()
             .rgb
             .is_finite()
     );
-    assert!(ProcessingParameters::positive(cal, roll, PhotoSettings::default()).is_err());
+    assert!(
+        ProcessingParameters::positive(cal, roll, PhotoSettings::default(), DMat3::IDENTITY)
+            .is_err()
+    );
 }

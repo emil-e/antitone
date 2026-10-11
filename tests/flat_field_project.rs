@@ -27,7 +27,8 @@ fn fixture() -> Project {
         development: SourceDevelopment {
             dimensions: [824, 624],
             active_area: [12, 12, 800, 600],
-            camera_to_ap0: DMat3::IDENTITY.to_cols_array_2d(),
+            camera_model: "test-camera".into(),
+            camera_to_ap1: DMat3::IDENTITY.to_cols_array_2d(),
             input_floor: 1. / 65535.,
         },
         reference_only: false,
@@ -100,7 +101,7 @@ fn contract_identity_geometry_and_incompatible_sources_reject() {
     changed.development.as_mut().unwrap().fixed_wb[0] += 0.1;
     assert!(changed.validate().is_err());
     changed = project.clone();
-    changed.sources[0].development.camera_to_ap0[0][0] += 0.1;
+    changed.sources[0].development.camera_to_ap1[0][0] += 0.1;
     assert!(changed.validate().is_err());
     changed = project.clone();
     changed.flat_field.as_mut().unwrap().map =

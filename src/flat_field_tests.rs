@@ -75,7 +75,7 @@ fn malformed_geometry_and_unrepresentable_nodes_are_rejected() {
     }
 }
 #[test]
-fn global_tint_is_neutralized_in_ap0_while_center_luminance_is_preserved() {
+fn global_tint_is_neutralized_in_ap1_while_center_luminance_is_preserved() {
     let camera = DVec3::new(0.11, 0.09, 0.13);
     let matrix = DMat3::from_diagonal(DVec3::new(1.2, 0.8, 1.4));
     let field = FlatField::estimate(
@@ -87,7 +87,7 @@ fn global_tint_is_neutralized_in_ap0_while_center_luminance_is_preserved() {
         [400., 300.],
     )
     .unwrap();
-    let y = (AP0_TO_XYZ * (matrix * camera)).y;
+    let y = (AP1_TO_XYZ * (matrix * camera)).y;
     for point in [[400., 300.], [0.5, 0.5], [799.5, 599.5]] {
         let corrected = matrix * (camera * field.gain(point).unwrap());
         assert!((corrected - DVec3::splat(y)).abs().max_element() < 2e-12);
@@ -120,7 +120,7 @@ fn smooth_nonradial_color_shading_is_removed_including_boundaries() {
         })
         .collect();
     let center = light(0., 0.);
-    let y = (AP0_TO_XYZ * center).y;
+    let y = (AP1_TO_XYZ * center).y;
     let field =
         FlatField::estimate(area, [w, h], &means, DMat3::IDENTITY, center, [850., 670.]).unwrap();
     assert!(
@@ -233,13 +233,8 @@ fn corner_trend_is_not_mistaken_for_dust() {
     }
 }
 #[test]
-fn corrected_precision_bound_projects_each_node_without_resampling_calibration() {
+fn corrected_camera_precision_bound_uses_maximum_gain_without_resampling_calibration() {
     use crate::processing::Calibration;
-    let matrix = DMat3::from_cols(
-        DVec3::new(0.6, 0.02, -0.01),
-        DVec3::new(0.4, 1.2, -0.15),
-        DVec3::new(0., -0.22, 1.16),
-    );
     let nodes = vec![
         DVec3::new(0.8, 1.3, 0.9),
         DVec3::new(1.4, 0.9, 1.1),
@@ -247,42 +242,35 @@ fn corrected_precision_bound_projects_each_node_without_resampling_calibration()
         DVec3::new(1.1, 1.2, 0.7),
     ];
     let field = FlatField::from_nodes([100, 200, 80, 40], [2, 2], nodes.clone()).unwrap();
-    let base =
-        (matrix.x_axis.abs() + matrix.y_axis.abs() + matrix.z_axis.abs()).max_element() / 65535.;
+    let base = 1. / 65535.;
     let expected = nodes
         .iter()
-        .map(|g| {
-            (matrix.x_axis.abs() * g.x + matrix.y_axis.abs() * g.y + matrix.z_axis.abs() * g.z)
-                .max_element()
-                / 65535.
-        })
+        .map(|g| g.max_element() / 65535.)
         .fold(base, f64::max);
-    assert_eq!(field.precision_floor(matrix).unwrap(), expected);
+    assert_eq!(field.precision_floor().unwrap(), expected);
     let calibration = Calibration {
         dmin: DVec3::splat(0.2),
         dmax: DVec3::splat(0.01),
         input_floor: base,
     };
-    let corrected = field.processing_calibration(matrix, calibration).unwrap();
+    let corrected = field.processing_calibration(calibration).unwrap();
     assert_eq!(corrected.dmin, calibration.dmin);
     assert_eq!(corrected.dmax, calibration.dmax);
-    assert!((corrected.input_floor - expected).abs() < 1e-20);
+    assert_eq!(corrected.input_floor, expected);
+    assert!(field.processing_calibration(corrected).is_err());
     let unusable = Calibration {
         dmax: DVec3::splat(base),
         ..calibration
     };
-    assert!(field.processing_calibration(matrix, unusable).is_err());
+    assert!(field.processing_calibration(unusable).is_err());
     let identity = FlatField::from_nodes([100, 200, 80, 40], [2, 2], vec![DVec3::ONE; 4]).unwrap();
     assert_eq!(
-        identity
-            .processing_calibration(matrix, calibration)
-            .unwrap(),
+        identity.processing_calibration(calibration).unwrap(),
         calibration
     );
     let attenuating =
         FlatField::from_nodes([100, 200, 80, 40], [2, 2], vec![DVec3::splat(0.8); 4]).unwrap();
-    assert_eq!(attenuating.precision_floor(matrix).unwrap(), base);
-    assert!(field.precision_floor(DMat3::ZERO).is_err());
+    assert_eq!(attenuating.precision_floor().unwrap(), base);
 }
 #[test]
 fn unusable_reference_inputs_do_not_produce_a_field() {

@@ -10,7 +10,7 @@ use crate::{
 pub(super) struct Correction {
     pub settings: FlatFieldSettings,
     pub gpu: Arc<GpuFlatField>,
-    floor_ratio: f64,
+    corrected_floor: f64,
 }
 impl Correction {
     pub fn prepare(
@@ -34,7 +34,7 @@ impl Correction {
                 let mut input = crate::gpu::ProcessingSource::new(
                     device,
                     &[[0; 4]],
-                    glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap0),
+                    glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1),
                 )?;
                 input.set_flat_field(
                     Some(gpu.clone()),
@@ -42,14 +42,11 @@ impl Correction {
                 )?;
             }
         }
-        let matrix = glam::DMat3::from_cols_array_2d(&settings.development.camera_to_ap0);
-        let base = (matrix.x_axis.abs() + matrix.y_axis.abs() + matrix.z_axis.abs()).max_element()
-            / 65535.;
-        let floor_ratio = settings.map.precision_floor(matrix)? / base;
+        let corrected_floor = settings.map.precision_floor()?;
         Ok(Some(Arc::new(Self {
             settings: settings.clone(),
             gpu,
-            floor_ratio,
+            corrected_floor,
         })))
     }
 }
@@ -163,7 +160,13 @@ impl Editor {
         self.status = "Preparing uncorrected flat-field reference…".into();
         if self
             .commands
-            .send(Command::FlatPreview(self.id, path, wb, expected))
+            .send(Command::FlatPreview(
+                self.id,
+                path,
+                wb,
+                expected,
+                self.document.project.camera_basis.clone(),
+            ))
             .is_err()
         {
             self.busy = false;
@@ -219,14 +222,35 @@ impl Editor {
         roll: RollSettings,
         photo: PhotoSettings,
     ) -> Result<ProcessingParameters, Error> {
+        let basis = self
+            .document
+            .project
+            .camera_basis
+            .as_ref()
+            .ok_or(Error::UnusableSample("no native-camera basis identity"))?;
+        let matrix = glam::DMat3::from_cols_array_2d(&basis.camera_to_ap1);
+        self.positive_parameters_for_matrix(calibration, roll, photo, matrix)
+    }
+    pub(super) fn positive_parameters_for_matrix(
+        &self,
+        calibration: Calibration,
+        roll: RollSettings,
+        photo: PhotoSettings,
+        camera_to_ap1: glam::DMat3,
+    ) -> Result<ProcessingParameters, Error> {
+        if calibration.input_floor != crate::processing::CAMERA_INPUT_FLOOR {
+            return Err(Error::InvalidParameter(
+                "editor calibration requires the native-code base floor",
+            ));
+        }
         let calibration = match &self.correction {
             Some(c) => Calibration {
-                input_floor: calibration.input_floor * c.floor_ratio,
+                input_floor: c.corrected_floor,
                 ..calibration
             }
             .validate()?,
             None => calibration,
         };
-        ProcessingParameters::positive(calibration, roll, photo)
+        ProcessingParameters::positive(calibration, roll, photo, camera_to_ap1)
     }
 }

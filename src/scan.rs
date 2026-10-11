@@ -13,7 +13,8 @@ type Result<T> = std::result::Result<T, Error>;
 
 pub struct Scan {
     raw: RawFile,
-    pub camera_to_ap0: DMat3,
+    pub camera_to_ap1: DMat3,
+    pub camera_model: String,
     pub area: Rect,
     pub fixed_wb: [f64; 4],
     pub input_floor: f64,
@@ -25,13 +26,15 @@ impl Scan {
     pub fn open(path: &Path, fixed_wb: Option<[f64; 4]>) -> Result<Self> {
         let mut raw = RawFile::open(path)?;
         let wb = fixed_wb.unwrap_or(raw.metadata.cam_mul);
-        let matrix = raw.metadata.camera_to_ap0()?;
+        let matrix = raw.metadata.camera_to_ap1()?;
+        let camera_model = raw.metadata.camera_model();
         let area = raw.metadata.image_area()?;
         raw.develop_camera(wb)?;
-        let input_floor = Self::precision_floor(matrix);
+        let input_floor = crate::processing::CAMERA_INPUT_FLOOR;
         Ok(Self {
             raw,
-            camera_to_ap0: matrix,
+            camera_to_ap1: matrix,
+            camera_model,
             area,
             fixed_wb: wb,
             input_floor,
@@ -40,9 +43,6 @@ impl Scan {
         })
     }
 
-    pub(crate) fn precision_floor(matrix: DMat3) -> f64 {
-        (matrix.x_axis.abs() + matrix.y_axis.abs() + matrix.z_axis.abs()).max_element() / 65535.0
-    }
     pub fn dimensions(&self) -> Result<(u32, u32)> {
         let image = self.raw.camera_image()?;
         Ok((image.width, image.height))
@@ -56,7 +56,7 @@ impl Scan {
                 width,
                 height,
             })?;
-            field.precision_floor(self.camera_to_ap0)?
+            field.precision_floor()?
         } else {
             self.input_floor
         };
@@ -89,8 +89,8 @@ impl Scan {
             .iter()
             .zip(counts)
             .map(|(p, n)| {
-                (crate::color::AP0_TO_XYZ
-                    * (self.camera_to_ap0
+                (crate::color::AP1_TO_XYZ
+                    * (self.camera_to_ap1
                         * (DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64)
                             / (n as f64 * 65535.))))
                     .y
@@ -166,7 +166,7 @@ impl Scan {
             [region.x, region.y, region.width, region.height],
             size,
             &means,
-            self.camera_to_ap0,
+            self.camera_to_ap1,
             center_camera,
             [
                 self.area.x as f64 + self.area.width as f64 / 2.,
@@ -184,9 +184,12 @@ impl Scan {
 
     /// Stored calibration remains RGB-only; correction transforms its explicit precision bound.
     pub fn processing_calibration(&self, mut calibration: Calibration) -> Result<Calibration> {
-        if self.flat_field.is_some() {
-            calibration.input_floor *= self.corrected_floor / self.input_floor;
+        if calibration.input_floor != self.input_floor {
+            return Err(Error::InvalidParameter(
+                "scan calibration requires the native-code base floor",
+            ));
         }
+        calibration.input_floor = self.corrected_floor;
         calibration.validate()
     }
 
@@ -195,7 +198,7 @@ impl Scan {
         if let Some(field) = &self.flat_field {
             camera *= field.gain([x as f64 + 0.5, y as f64 + 0.5])?;
         }
-        Ok(self.camera_to_ap0 * camera)
+        Ok(camera)
     }
 
     fn checked_region(&mut self, region: Rect) -> Result<SensorDiagnostics> {
@@ -230,7 +233,7 @@ impl Scan {
         } else {
             self.raw
                 .camera_image()?
-                .sample_mean(region, self.camera_to_ap0)?
+                .sample_mean(region, DMat3::IDENTITY)?
         };
         if !mean.is_finite() || mean.min_element() <= self.corrected_floor {
             return Err(Error::UnusableSample(
@@ -264,7 +267,8 @@ impl Scan {
         roll: RollSettings,
     ) -> Result<Balance> {
         let calibration = self.processing_calibration(calibration)?;
-        sampling::roll_neutral(calibration, roll, &self.patch(region)?)
+        let matrix = self.camera_to_ap1;
+        sampling::roll_neutral(calibration, roll, &self.patch(region)?, matrix)
     }
 
     pub fn photo_neutral(
@@ -281,6 +285,7 @@ impl Scan {
                 wb: Balance::default(),
                 ..photo
             },
+            self.camera_to_ap1,
         )?;
         let mut pixels = self.patch(region)?;
         for pixel in &mut pixels {

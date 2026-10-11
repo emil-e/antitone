@@ -1,6 +1,6 @@
 # Retain compact developed RGB16 on the GPU
 
-Status: accepted; replaces the float-AP0 source-upload path and rejects a proposed wider retained source cache.
+Status: accepted compact source/temporary-precision policy. AP0-conversion/model-2 compatibility clauses below are superseded by [native-camera inversion](native-camera-inversion.md); retain them as historical rationale.
 
 ## Context
 

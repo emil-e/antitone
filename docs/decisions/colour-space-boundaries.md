@@ -1,6 +1,6 @@
 # Separate inversion, photography and interchange spaces
 
-Status: accepted.
+Status: superseded by [native-camera inversion](native-camera-inversion.md). The separation of photographic/interchange/rendering roles is retained; the AP0 inversion choice below is historical rationale, not the current contract.
 
 ## Context
 

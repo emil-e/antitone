@@ -10,7 +10,7 @@ fn source_inspection_is_zero_default_and_changes_only_the_source_post_matrix() {
     for exposure in [-16.0_f64, -2., 2., 16.] {
         let gain = exposure.exp2();
         let adjusted = ProcessingParameters::source_inspection(exposure).unwrap();
-        assert_eq!(adjusted.post, matrix_columns(ap0_to_ap1() * gain));
+        assert_eq!(adjusted.post, matrix_columns(DMat3::IDENTITY * gain));
         let unchanged = ProcessingParameters {
             post: base.post,
             ..adjusted
@@ -80,7 +80,7 @@ fn source_inspection_gpu_matches_scaled_camera_to_ap1_with_zero_diagnostic_flags
             let values: &[Vec4] = bytemuck::cast_slice(&mapped);
             for (pixel, actual) in codes.iter().zip(values) {
                 let camera = DVec3::new(pixel[0] as f64, pixel[1] as f64, pixel[2] as f64) / 65535.;
-                let expected = ap0_to_ap1() * (matrix * camera) * exposure.exp2();
+                let expected = matrix * camera * exposure.exp2();
                 for channel in 0..3 {
                     assert!(
                         (actual[channel] as f64 - expected[channel]).abs()
@@ -120,7 +120,7 @@ fn camera_matrix_rejects_unrepresentable_values_without_repair() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn rgb16_conversion_matches_f64_and_preserves_original_f32_input_bits() {
+fn rgb16_native_normalization_matches_f64_and_source_mapping_preserves_f32_bits() {
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,
@@ -220,10 +220,6 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
                         binding: 1,
                         resource: output.as_entire_binding(),
                     },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: source.matrix.as_entire_binding(),
-                    },
                 ],
             });
             for full_precision in [true, false] {
@@ -253,8 +249,12 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
                 let mapped = readback.slice(..bytes).get_mapped_range().unwrap();
                 let data: &[Vec4] = bytemuck::cast_slice(&mapped);
                 for (i, p) in codes.iter().enumerate() {
-                    let expected =
-                        matrix * (DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.);
+                    let camera = DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.;
+                    let expected = if full_precision {
+                        camera
+                    } else {
+                        matrix * camera
+                    };
                     for c in 0..3 {
                         if full_precision {
                             let actual = data[3 * i][c] as f64

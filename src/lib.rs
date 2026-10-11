@@ -30,8 +30,7 @@ pub mod resample;
 #[cfg(all(feature = "ui", feature = "render"))]
 pub mod viewer;
 
-pub const ORIGINAL_PROCESSING_MODEL_VERSION: u32 = 2;
-pub const PROCESSING_MODEL_VERSION: u32 = 3;
+pub const PROCESSING_MODEL_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Error {

@@ -1,5 +1,8 @@
 use super::*;
-use crate::{flat_field::FlatField, processing::Pipeline};
+use crate::{
+    flat_field::FlatField,
+    processing::{Pipeline, Response},
+};
 
 #[test]
 fn source_geometry_uses_exact_nearest_centres_and_rejects_overflow() {
@@ -179,10 +182,6 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                     resource: output.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: source.matrix.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
                     binding: 4,
                     resource: gpu.nodes.as_entire_binding(),
                 },
@@ -201,9 +200,8 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                 .enumerate()
                 .map(|(i, p)| {
                     let [x, y] = geometry.pixel(i as u32).unwrap();
-                    matrix
-                        * (DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.
-                            * field.gain([x as f64 + 0.5, y as f64 + 0.5]).unwrap())
+                    DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.
+                        * field.gain([x as f64 + 0.5, y as f64 + 0.5]).unwrap()
                 })
                 .collect();
             let mut encoder = device.create_command_encoder(&Default::default());
@@ -238,16 +236,16 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                     );
                 }
             }
-            let floor = field.precision_floor(matrix).unwrap();
+            let floor = field.precision_floor().unwrap();
             let calibration = Calibration {
                 dmin: DVec3::new(0.28, 0.23, 0.25),
                 dmax: DVec3::new(0.01, 0.005, 0.001),
                 input_floor: floor,
             };
             let mut cases = vec![
-                (ProcessingParameters::corrected_source(-16.).unwrap(), None),
-                (ProcessingParameters::corrected_source(0.).unwrap(), None),
-                (ProcessingParameters::corrected_source(16.).unwrap(), None),
+                (ProcessingParameters::source_inspection(-16.).unwrap(), None),
+                (ProcessingParameters::source_inspection(0.).unwrap(), None),
+                (ProcessingParameters::source_inspection(16.).unwrap(), None),
             ];
             for response in [
                 Response::Original,
@@ -270,8 +268,8 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                     ..PhotoSettings::default()
                 };
                 cases.push((
-                    ProcessingParameters::positive(calibration, roll, photo).unwrap(),
-                    Some(Pipeline::new(calibration, roll, photo).unwrap()),
+                    ProcessingParameters::positive(calibration, roll, photo, matrix).unwrap(),
+                    Some(Pipeline::new(calibration, roll, photo, matrix).unwrap()),
                 ));
             }
             for offset in [0., 1e-12, -1e-12] {
@@ -281,9 +279,14 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                 };
                 let roll = RollSettings::new_grade();
                 cases.push((
-                    ProcessingParameters::positive(anchored, roll, PhotoSettings::default())
-                        .unwrap(),
-                    Some(Pipeline::new(anchored, roll, PhotoSettings::default()).unwrap()),
+                    ProcessingParameters::positive(
+                        anchored,
+                        roll,
+                        PhotoSettings::default(),
+                        matrix,
+                    )
+                    .unwrap(),
+                    Some(Pipeline::new(anchored, roll, PhotoSettings::default(), matrix).unwrap()),
                 ));
             }
             for (parameters, pipeline) in cases {
@@ -300,7 +303,7 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                             (r.rgb, r.floored)
                         }
                         None => (
-                            ap0_to_ap1()
+                            matrix
                                 * pixel
                                 * (parameters.post[0].x / ProcessingParameters::source().post[0].x)
                                     as f64,

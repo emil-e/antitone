@@ -232,7 +232,7 @@ impl ColorControl {
     fn tooltip(self) -> &'static str {
         match self {
             Self::GammaBalance => {
-                "RGB directions represent relative AP0 log gamma. Image response depends on the negative and its calibration; this is not a saturation or RGB-gain control."
+                "RGB directions represent relative native-camera log gamma. Image response depends on the negative and its calibration; this is not a saturation or RGB-gain control."
             }
             Self::WhiteBalance => {
                 "RGB directions represent the local AP1 neutral-white response to Bradford WB. Warmth/tint remain cone-gain coordinates, not RGB channel gains or physical Kelvin."

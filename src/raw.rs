@@ -6,7 +6,7 @@ use std::ptr::NonNull;
 use glam::{DMat3, DVec3};
 
 use crate::Error;
-use crate::color::{AP0_TO_XYZ, BRADFORD};
+use crate::color::{AP1_TO_XYZ, BRADFORD};
 use crate::sampling::mean;
 
 const SRGB_TO_XYZ: DMat3 = DMat3::from_cols(
@@ -59,17 +59,20 @@ impl Metadata {
         DMat3::from_cols_array(&self.rgb_cam)
     }
 
-    pub fn camera_to_ap0(&self) -> Result<DMat3, Error> {
+    pub fn camera_model(&self) -> String {
+        format!("{} {}", self.make(), self.model())
+    }
+    pub fn camera_to_ap1(&self) -> Result<DMat3, Error> {
         let camera_to_srgb = self.camera_to_srgb();
         if !camera_to_srgb.is_finite() || camera_to_srgb.determinant().abs() < 1e-8 {
             return Err(Error::Raw("invalid camera-to-sRGB matrix".into()));
         }
         let source_white = DVec3::new(0.95047, 1.0, 1.08883);
-        let target_white = AP0_TO_XYZ * DVec3::ONE;
+        let target_white = AP1_TO_XYZ * DVec3::ONE;
         let adaptation = BRADFORD.inverse()
             * DMat3::from_diagonal((BRADFORD * target_white) / (BRADFORD * source_white))
             * BRADFORD;
-        Ok(AP0_TO_XYZ.inverse() * adaptation * SRGB_TO_XYZ * camera_to_srgb)
+        Ok(AP1_TO_XYZ.inverse() * adaptation * SRGB_TO_XYZ * camera_to_srgb)
     }
 
     pub fn image_area(&self) -> Result<Rect, Error> {
@@ -451,10 +454,10 @@ mod tests {
     #[test]
     fn d65_to_d60_preserves_neutral_and_rejects_missing_camera_matrix() {
         let mut m = metadata_fixture();
-        let neutral = m.camera_to_ap0().unwrap() * DVec3::ONE;
+        let neutral = m.camera_to_ap1().unwrap() * DVec3::ONE;
         assert!((neutral - DVec3::ONE).abs().max_element() < 2e-7);
         m.rgb_cam = [0.0; 9];
-        assert!(m.camera_to_ap0().is_err());
+        assert!(m.camera_to_ap1().is_err());
     }
 
     #[test]

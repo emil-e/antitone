@@ -1,5 +1,5 @@
 //! Bounded camera-RGB flat-field estimation and source-coordinate evaluation.
-use crate::{Error, color::AP0_TO_XYZ};
+use crate::{Error, color::AP1_TO_XYZ};
 use glam::{DMat3, DVec3};
 
 pub const CONTRACT: &str = "camera-rgb-neutral-gray-local-quadratic-log-gaussian-v1";
@@ -63,7 +63,7 @@ impl FlatField {
         area: [u32; 4],
         size: [usize; 2],
         camera_means: &[DVec3],
-        camera_to_ap0: DMat3,
+        camera_to_ap1: DMat3,
         center_camera: DVec3,
         center: [f64; 2],
     ) -> Result<Self, Error> {
@@ -82,7 +82,7 @@ impl FlatField {
                 "flat-field camera means must be finite and within 0..1",
             ));
         }
-        if !camera_to_ap0.is_finite() || camera_to_ap0.determinant().abs() < 1e-8 {
+        if !camera_to_ap1.is_finite() || camera_to_ap1.determinant().abs() < 1e-8 {
             return Err(Error::InvalidParameter("invalid flat-field camera matrix"));
         }
         if center.iter().any(|v| !v.is_finite()) || !contains(area, center) {
@@ -90,8 +90,8 @@ impl FlatField {
                 "flat-field support must contain the image centre",
             ));
         }
-        let luminance = (AP0_TO_XYZ * (camera_to_ap0 * center_camera)).y;
-        let target = camera_to_ap0.inverse() * DVec3::splat(luminance);
+        let luminance = (AP1_TO_XYZ * (camera_to_ap1 * center_camera)).y;
+        let target = camera_to_ap1.inverse() * DVec3::splat(luminance);
         if !target.is_finite() || target.min_element() <= 0. {
             return Err(Error::UnusableSample(
                 "flat-field neutral target is not positive in camera RGB",
@@ -142,24 +142,10 @@ impl FlatField {
                 (min.min(*g), max.max(*g))
             })
     }
-    /// Project one RGB16 code through the corrected matrix, over the entire field.
-    /// Each row bound is linear in the bilinear gains, so its maximum occurs at a node.
-    /// Include identity for source pixels outside support.
-    pub fn precision_floor(&self, matrix: DMat3) -> Result<f64, Error> {
-        let rows = |g: DVec3| {
-            (matrix.x_axis.abs() * g.x + matrix.y_axis.abs() * g.y + matrix.z_axis.abs() * g.z)
-                .max_element()
-                / 65535.
-        };
-        if !matrix.is_finite() {
-            return Err(Error::InvalidParameter(
-                "nonfinite flat-field camera matrix",
-            ));
-        }
-        let floor = self
-            .gains
-            .iter()
-            .fold(rows(DVec3::ONE), |bound, g| bound.max(rows(*g)));
+    /// One camera RGB16 code amplified by the largest gain, including identity outside support.
+    /// Bilinear gain extrema occur at nodes.
+    pub fn precision_floor(&self) -> Result<f64, Error> {
+        let floor = self.bounds().1.max_element() / 65535.;
         if !floor.is_finite() || floor <= 0. {
             return Err(Error::NumericalOverflow);
         }
@@ -167,12 +153,14 @@ impl FlatField {
     }
     pub fn processing_calibration(
         &self,
-        matrix: DMat3,
         mut calibration: crate::processing::Calibration,
     ) -> Result<crate::processing::Calibration, Error> {
-        let base = (matrix.x_axis.abs() + matrix.y_axis.abs() + matrix.z_axis.abs()).max_element()
-            / 65535.;
-        calibration.input_floor *= self.precision_floor(matrix)? / base;
+        if calibration.input_floor != crate::processing::CAMERA_INPUT_FLOOR {
+            return Err(Error::InvalidParameter(
+                "flat-field calibration requires the native-code base floor",
+            ));
+        }
+        calibration.input_floor = self.precision_floor()?;
         calibration.validate()
     }
     pub fn gain(&self, point: [f64; 2]) -> Result<DVec3, Error> {

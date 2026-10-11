@@ -78,16 +78,18 @@ fn convert_camera(code: vec2u) -> ConvertedScan {
     return convert_components(x, y, z);
 }
 fn convert_components(x: Triple, y: Triple, z: Triple) -> ConvertedScan {
-    var s: ConvertedScan;
+    return ConvertedScan(vec3f(x.h, y.h, z.h), vec3f(x.l, y.l, z.l), vec3f(x.t, y.t, z.t));
+}
+fn camera_source_to_ap1(scan: ConvertedScan) -> ConvertedScan {
+    var working: ConvertedScan;
     for (var c = 0u; c < 3u; c++) {
-        let mx = Triple(camera_matrix.high[0][c], camera_matrix.low[0][c], camera_matrix.tail[0][c]);
-        let my = Triple(camera_matrix.high[1][c], camera_matrix.low[1][c], camera_matrix.tail[1][c]);
-        let mz = Triple(camera_matrix.high[2][c], camera_matrix.low[2][c], camera_matrix.tail[2][c]);
-        let a = round53(multiply(mx, x));
-        let b = round53(multiply(my, y));
-        let d = round53(multiply(mz, z));
-        let q = round53(add(round53(add(a, b)), d));
-        s.high[c] = q.h; s.low[c] = q.l; s.tail[c] = q.t;
+        var sum = Triple(0.0, 0.0, 0.0);
+        for (var j = 0u; j < 3u; j++) {
+            let m = Triple(camera_matrix.high[j][c], camera_matrix.low[j][c], camera_matrix.tail[j][c]);
+            let s = Triple(scan.high[j], scan.low[j], scan.tail[j]);
+            sum = round53(add(sum, round53(multiply(m, s))));
+        }
+        working.high[c] = sum.h; working.low[c] = sum.l; working.tail[c] = sum.t;
     }
-    return s;
+    return working;
 }

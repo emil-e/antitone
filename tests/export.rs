@@ -98,7 +98,7 @@ fn exr_reopens_in_ap0_with_signed_hdr_and_correct_channel_precision_and_metadata
                 .attributes
                 .other
                 .get(&Text::from("antitoneProcessingModel")),
-            Some(&AttributeValue::I32(2))
+            Some(&AttributeValue::I32(4))
         );
         for channel in &image.layer_data.channel_data.list {
             let index = match channel.name.to_string().as_str() {

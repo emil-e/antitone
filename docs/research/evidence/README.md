@@ -2,7 +2,11 @@
 
 Compact text logs promoted from `.cache/probes` during the documentation reorganization. They retain their original contents/paths and are **captured checkpoint outcomes, not a fresh run or CI/device certification**. Reproduction writes new outputs to cache; do not overwrite archived evidence in place.
 
-## Response-integration checkpoint
+## Native-camera replacement checkpoint
+
+- [Model-4 numerical/source/editor/output snapshot](camera-inversion.txt): isolated flat-field baseline, unchanged tolerances, independent review fixes, real train/flat-field regressions and release build. No new onscreen or calibrated-colour acceptance. [Integration/handoff plan](../../plans/camera-inversion.md).
+
+## Response-integration checkpoint (historical AP0 models)
 
 Environment recorded by the runbook/history: Apple M5 Pro / `Mac17,9`, 48 GiB, macOS 26.6.2, checkout-local Rust 1.99.0, LibRaw 0.22.0, OCIO 2.6.0, Metal/wgpu 30.0.1. This is not M1 Pro/16 GB, macOS-14 or physical-monitor acceptance.
 

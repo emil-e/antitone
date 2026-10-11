@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let codes = pixels[(y * width + x) as usize];
             let camera =
                 glam::DVec3::new(codes[0] as f64, codes[1] as f64, codes[2] as f64) / 65535.;
-            if scan.camera_to_ap0 * camera != scan.pixel(sx, sy)? {
+            if camera != scan.pixel(sx, sy)? {
                 return Err("preview/full-resolution coordinate mismatch".into());
             }
         }

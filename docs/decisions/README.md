@@ -5,11 +5,12 @@ Selective rationale for consequential choices—not a second specification or ta
 | Decision | Status |
 | --- | --- |
 | [Established LibRaw development](established-raw-development.md) | Accepted |
-| [Separate inversion, photography and interchange spaces](colour-space-boundaries.md) | Accepted |
+| [Separate inversion, photography and interchange spaces](colour-space-boundaries.md) | AP0 inversion choice superseded; downstream role separation retained |
+| [Native-camera inversion](native-camera-inversion.md) | Accepted; outright replacement, schema/model 4, no AP0-grade migration |
 | [Unchanged ACES, matching SDR outputs and managed presentation](sdr-output-and-presentation.md) | Accepted |
 | [RGB-only calibration references](rgb-only-calibration.md) | Accepted; replaces original provenance-bearing design |
 | [Compact RGB16 GPU source](rgb16-gpu-source.md) | Accepted; replaces float-AP0 upload |
-| [Versioned adjustable film response](versioned-film-response.md) | Accepted; preserves Original rather than superseding its grades |
+| [Versioned adjustable film response](versioned-film-response.md) | Response mathematics retained; compatibility/version clauses superseded |
 
 ## When to add a record
 

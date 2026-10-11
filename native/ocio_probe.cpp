@@ -26,7 +26,7 @@ int main() try {
         inputs.push_back({0.f, 0.f, value, 1.f});
     }
     size_t cameraCount = 0;
-    std::ifstream camera(".cache/probes/camera-working-ap1-model2.f32", std::ios::binary | std::ios::ate);
+    std::ifstream camera(".cache/probes/camera-working-ap1-model4.f32", std::ios::binary | std::ios::ate);
     if (camera) {
         const auto bytes = camera.tellg();
         if (bytes <= 0 || bytes % sizeof(inputs[0]) != 0) return 7;

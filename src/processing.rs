@@ -1,8 +1,9 @@
 use glam::{DMat3, DVec3};
 
 use crate::Error;
-use crate::color::{Balance, ap0_to_ap1, wb_matrix};
+use crate::color::{Balance, wb_matrix};
 
+pub const CAMERA_INPUT_FLOOR: f64 = 1. / 65535.;
 pub const DEFAULT_GAMMA: f64 = 0.65;
 pub const MIN_GAMMA: f64 = 0.1;
 pub const MAX_GAMMA: f64 = 3.0;
@@ -38,10 +39,7 @@ impl Response {
         matches!(self, Self::Original)
     }
     pub fn processing_model(self) -> u32 {
-        match self {
-            Self::Original => crate::ORIGINAL_PROCESSING_MODEL_VERSION,
-            Self::Film { .. } => crate::PROCESSING_MODEL_VERSION,
-        }
+        crate::PROCESSING_MODEL_VERSION
     }
     pub fn shape(self) -> Result<(f64, f64), Error> {
         let Self::Film { toe, shoulder } = self else {
@@ -60,7 +58,7 @@ impl Response {
     }
 }
 
-/// Linear RGB measurements in the inversion basis, not optical densities.
+/// Linear native-camera RGB measurements, not optical densities.
 /// Dmin (film base) transmits more light than Dmax: dmin > dmax per channel.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Calibration {
@@ -100,13 +98,6 @@ impl Calibration {
 #[cfg_attr(feature = "project", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "project", serde(deny_unknown_fields))]
 pub struct RollSettings {
-    #[cfg_attr(
-        feature = "project",
-        serde(
-            default = "Response::original",
-            skip_serializing_if = "Response::is_original"
-        )
-    )]
     pub response: Response,
     pub gamma: f64,
     pub balance: Balance,
@@ -207,7 +198,7 @@ impl Inversion {
         })
     }
 
-    /// Scan, calibration and output share the inversion basis (initially AP0).
+    /// Scan, calibration and output are native-camera RGB.
     pub fn apply(&self, scan: DVec3) -> Result<InvertedPixel, Error> {
         let mut rgb = DVec3::ZERO;
         let mut floored = [false; 3];
@@ -250,9 +241,14 @@ impl Pipeline {
         calibration: Calibration,
         roll: RollSettings,
         photo: PhotoSettings,
+        camera_to_ap1: DMat3,
     ) -> Result<Self, Error> {
+        validate_camera_matrix(camera_to_ap1)?;
         let gain = exposure_multiplier(roll.exposure)? * exposure_multiplier(photo.exposure)?;
-        let post_inversion_matrix = wb_matrix(photo.wb)? * ap0_to_ap1() * gain;
+        let post_inversion_matrix = wb_matrix(photo.wb)? * camera_to_ap1 * gain;
+        if !post_inversion_matrix.is_finite() {
+            return Err(Error::NumericalOverflow);
+        }
         Ok(Self {
             inversion: Inversion::new(calibration, roll)?,
             post_inversion_matrix,
@@ -268,6 +264,14 @@ impl Pipeline {
         }
         Ok(pixel)
     }
+}
+
+pub(crate) fn validate_camera_matrix(matrix: DMat3) -> Result<(), Error> {
+    let determinant = matrix.determinant();
+    if !matrix.is_finite() || !determinant.is_finite() || determinant.abs() <= 1e-12 {
+        return Err(Error::InvalidParameter("invalid camera-to-AP1 matrix"));
+    }
+    Ok(())
 }
 
 pub(crate) fn log_abs_expm1(a: f64) -> f64 {

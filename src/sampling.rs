@@ -1,4 +1,4 @@
-use glam::{DMat2, DVec2, DVec3};
+use glam::{DMat2, DMat3, DVec2, DVec3};
 
 use crate::Error;
 use crate::color::{Balance, neutral_wb};
@@ -44,7 +44,15 @@ pub fn roll_neutral(
     calibration: Calibration,
     roll: RollSettings,
     scan_patch: &[DVec3],
+    camera_to_ap1: DMat3,
 ) -> Result<Balance, Error> {
+    crate::processing::validate_camera_matrix(camera_to_ap1)?;
+    let target = camera_to_ap1.inverse() * DVec3::ONE;
+    if !target.is_finite() || target.min_element() <= 0. {
+        return Err(Error::UnusableSample(
+            "neutral AP1 is not positive in camera RGB",
+        ));
+    }
     calibration.validate()?;
     roll.channel_gammas()?;
     mean(scan_patch)?;
@@ -77,8 +85,8 @@ pub fn roll_neutral(
             ));
         }
         Ok(DVec2::new(
-            positive.x.ln() - positive.y.ln(),
-            positive.z.ln() - positive.y.ln(),
+            (positive.x / target.x).ln() - (positive.y / target.y).ln(),
+            (positive.z / target.z).ln() - (positive.y / target.y).ln(),
         ))
     };
 

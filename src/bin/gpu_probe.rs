@@ -39,7 +39,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         contents: &input_bytes,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
     });
-    if std::path::Path::new(".cache/probes/camera-source-model2.rgb16").exists() {
+    if std::path::Path::new(".cache/probes/camera-source-model4.rgb16").exists() {
         let (working, reference) = camera_processing(&device, &queue).await?;
         if !input_bytes.ends_with(&reference) {
             return Err("Regenerate OCIO artifacts after creating the camera fixture".into());
@@ -322,11 +322,11 @@ async fn camera_processing(
     queue: &wgpu::Queue,
 ) -> Result<(wgpu::Buffer, Vec<u8>), Box<dyn std::error::Error>> {
     use antitone::gpu::{ProcessingKernel, ProcessingParameters, ProcessingSource};
-    let scans = std::fs::read(".cache/probes/camera-source-model2.rgb16")?;
-    let matrix = std::fs::read(".cache/probes/camera-to-ap0-model2.f64")?;
-    let reference = std::fs::read(".cache/probes/camera-working-ap1-model2.f32")?;
-    let flags = std::fs::read(".cache/probes/camera-floor-flags-model2.u8")?;
-    let parameters = std::fs::read(".cache/probes/camera-processing-model2.bin")?;
+    let scans = std::fs::read(".cache/probes/camera-source-model4.rgb16")?;
+    let matrix = std::fs::read(".cache/probes/camera-to-ap1-model4.f64")?;
+    let reference = std::fs::read(".cache/probes/camera-working-ap1-model4.f32")?;
+    let flags = std::fs::read(".cache/probes/camera-floor-flags-model4.u8")?;
+    let parameters = std::fs::read(".cache/probes/camera-processing-model4.bin")?;
     if scans.is_empty()
         || scans.len() % 8 != 0
         || matrix.len() != 72

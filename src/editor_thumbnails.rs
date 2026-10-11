@@ -240,7 +240,7 @@ fn worker(
                         width,
                         height,
                         pixels,
-                        matrix: scan.camera_to_ap0,
+                        matrix: scan.camera_to_ap1,
                     });
                     sources.insert(job.key.source.clone(), proxy.clone());
                     proxy
@@ -303,14 +303,15 @@ impl Editor {
             source.photo
         };
         self.calibration().map_or_else(
-            || {
-                if self.correction.is_some() {
-                    ProcessingParameters::corrected_source(0.)
-                } else {
-                    Ok(ProcessingParameters::source())
-                }
+            || Ok(ProcessingParameters::source()),
+            |calibration| {
+                self.positive_parameters_for_matrix(
+                    calibration,
+                    self.roll,
+                    photo,
+                    glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1),
+                )
             },
-            |calibration| self.positive_parameters(calibration, self.roll, photo),
         )
     }
     pub(super) fn filmstrip(&mut self, ui: &mut egui::Ui) {

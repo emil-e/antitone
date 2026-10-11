@@ -1,0 +1,62 @@
+Native-camera model-4 implementation — pre-rebase verification snapshot
+
+Checkout: .worktrees/camera-inversion / impl/camera-inversion.
+Baseline: ace562838e758c96c3937ed989aebf7a411ef1eb plus the copied 46-file uncommitted flat-field snapshot. Implementation-only diff is generated against that snapshot, not against concurrently changing main. No commits/pushes or camera edits to main.
+Environment: macOS / Apple Silicon Metal, checkout-local Rust 1.99.0, pinned LibRaw 0.22.0 and OCIO 2.6.0, CC=/usr/bin/clang CXX=/usr/bin/clang++.
+
+Checks actually run after review fixes:
+- ./scripts/cargo.sh test --offline --all-features: 151 passed, 3 ignored (snapshot; ignored local-RAW cases are not covered by this command).
+- ./scripts/cargo.sh clippy --offline --all-features --all-targets -- -D warnings: passed.
+- ./scripts/cargo.sh build --offline --release --features editor --bin antitone: passed.
+- ./scripts/cargo.sh fmt --all -- --check; git diff --check: passed. Final implementation-only comparison: 67 files; 148 local links/anchors in changed Markdown checked, no missing targets/headings.
+- ./scripts/cargo.sh test --offline --release --all-features --lib editor::flat::tests::real_reference_editor_save_open_and_corrected_exports -- --ignored --nocapture: 1 passed; 14.95 s test time. Read-only DSC01739/DSC01737; corrected thumbnails, Save/Open, map enable/disable and small TIFF/AP0 EXR outputs.
+- ./scripts/cargo.sh test --offline --release --features raw,gpu --test camera_raw -- --ignored --nocapture: 1 passed; 4.35 s test time. DSC04524 train, 174592 native RGB16 proxy samples, diagnostic anchors from DSC04397/DSC04378. Worst GPU/scalar error divided by unchanged abs 2e-5 + rel 2e-4 gate: 2.771745091e-4. This is a numerical/source regression, not the user's recovered photographic grade.
+
+The independent implementation-only review was run once. Its two findings were fixed: retained roll camera-model/matrix basis with source/transient-reference rejection, and exact one-code persisted base floors. Dedicated camera_project tests cover mismatched model/matrix, unchanged rejected-import state, retained basis after source removal/roundtrip, and altered saved floors. Corrected floors now use one exact shared bound rather than differing floating-point rescalings; already-amplified floors reject.
+
+New camera_inversion tests cover matrix AFTER response and BEFORE AP1 Bradford WB, unequal native-camera neutral target, actual-response fitting, signed AP1 values versus camera-floor flags, and above-base GPU range bounds. Existing source/GPU gates retain their tolerances and compact RGB16 representation.
+
+An initial build failed because inherited CC pointed to missing /opt/homebrew/bin/gcc-15; documented Apple Clang settings resolved it. Initial new-test expectation failures were corrected (including stale original EXR model-2 metadata). No numerical tolerance was relaxed.
+
+Limits: no new onscreen interaction/physical-monitor acceptance, per-stock calibration or universal metadata/domain proof. Post-inversion positive camera mapping is the agreed pragmatic baseline, not established scene-colour reconstruction. Full-size flat-field file reopening remains a separate ignored expensive check; small corrected-output reopening passed. Flat-field's final concurrent-main work must be integrated deliberately from the preserved baseline. The pre-existing Original unit-response extra-field serde limitation is documented, not silently changed.
+
+Post-rebase verification on c0b664a
+=================================
+Fresh snapshot: 2026-10-11; macOS 26.6.2/arm64, Apple Silicon Metal,
+checkout-local Rust/Cargo 1.99.0, pinned LibRaw 0.22.0 and OCIO 2.6.0.
+Branch impl/camera-inversion now has finalized main c0b664a as its base;
+camera edits remain uncommitted. No camera commits or pushes were made.
+
+Method: three-way transplant only the 67 camera paths against the saved
+46-file flat-field snapshot, retaining main's finalized code/documentation.
+Main's only post-snapshot code delta, src/editor_flat_field_smoke.rs, is
+preserved byte-for-byte (settled native inspection and saved support rectangle).
+Four documentation overlaps were resolved. Flat-field stays accepted/closed
+under docs/plans/completed; its acceptance evidence is retained.
+
+Fresh checks from repository root with CC=/usr/bin/clang CXX=/usr/bin/clang++:
+  ./scripts/cargo.sh test --offline --all-features
+    151 passed, 0 failed, 3 ignored (snapshot; not cumulative).
+  ./scripts/cargo.sh clippy --offline --all-features --all-targets -- -D warnings
+    pass.
+  ./scripts/cargo.sh fmt --all -- --check; git diff --check
+    pass; 153 changed-Markdown local links/anchors checked, none broken.
+  ./scripts/cargo.sh test --offline --release --all-features --lib \
+    editor::flat::tests::real_reference_editor_save_open_and_corrected_exports \
+    -- --ignored --nocapture
+    pass; 15.23 s test time, read-only DSC01739/DSC01737, temporary
+    Save/Open and corrected small TIFF/AP0 EXR outputs.
+  ./scripts/cargo.sh test --offline --release --features raw,gpu \
+    --test camera_raw -- --ignored --nocapture
+    pass; 174592 samples, worst error/gate ratio 2.771745091e-4;
+    unchanged 2e-5 + 2e-4*abs(reference) gate.
+  ./scripts/cargo.sh build --offline --release --features editor --bin antitone
+    pass; target/release/antitone rebuilt.
+
+Backup/three-way inputs and raw fresh logs: .cache/rebase-main-c0b664a/.
+Current main-relative comparison: .cache/camera-implementation.patch and
+.cache/camera-implementation-files.json (disposable, regenerated).
+Main remains at c0b664a with no camera edits; its existing .pi/ is untouched.
+No new onscreen smoke or expensive full-size export was run in this rebase.
+These headless checks do not establish photographic calibration, physical
+monitor acceptance or a universal supported numerical domain.

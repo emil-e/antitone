@@ -42,8 +42,8 @@ fn new_grades_opt_into_film_and_original_settings_remain_original() {
             shoulder: 0.
         }
     );
-    assert_eq!(Response::Original.processing_model(), 2);
-    assert_eq!(Response::film().processing_model(), 3);
+    assert_eq!(Response::Original.processing_model(), 4);
+    assert_eq!(Response::film().processing_model(), 4);
 }
 #[test]
 fn film_one_zero_is_bit_identical_to_original_scalar_execution() {
@@ -60,8 +60,14 @@ fn film_one_zero_is_bit_identical_to_original_scalar_execution() {
             },
             ..original
         };
-        let a = Pipeline::new(cal, original, PhotoSettings::default()).unwrap();
-        let b = Pipeline::new(cal, film, PhotoSettings::default()).unwrap();
+        let a = Pipeline::new(
+            cal,
+            original,
+            PhotoSettings::default(),
+            glam::DMat3::IDENTITY,
+        )
+        .unwrap();
+        let b = Pipeline::new(cal, film, PhotoSettings::default(), glam::DMat3::IDENTITY).unwrap();
         for scan in [
             cal.dmin,
             cal.dmax,
@@ -213,7 +219,7 @@ fn neutral_fit_uses_actual_response_and_keeps_unrelated_settings() {
             balance: Balance::default(),
             ..truth
         };
-        let balance = roll_neutral(cal, initial, &patch).unwrap();
+        let balance = roll_neutral(cal, initial, &patch, glam::DMat3::IDENTITY).unwrap();
         assert!((balance.warmth - truth.balance.warmth).abs() < 1e-8);
         assert!((balance.tint - truth.balance.tint).abs() < 1e-8);
         let inv = Inversion::new(cal, RollSettings { balance, ..initial }).unwrap();
@@ -223,7 +229,7 @@ fn neutral_fit_uses_actual_response_and_keeps_unrelated_settings() {
         assert_eq!(initial.response, response);
         assert_eq!(initial.gamma, truth.gamma);
         assert_eq!(initial.exposure, truth.exposure);
-        assert!(roll_neutral(cal, initial, &[cal.dmin]).is_err());
-        assert!(roll_neutral(cal, initial, &[DVec3::ZERO]).is_err());
+        assert!(roll_neutral(cal, initial, &[cal.dmin], glam::DMat3::IDENTITY).is_err());
+        assert!(roll_neutral(cal, initial, &[DVec3::ZERO], glam::DMat3::IDENTITY).is_err());
     }
 }

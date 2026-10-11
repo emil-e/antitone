@@ -9,10 +9,10 @@ use glam::{DMat3, DVec3, Vec4, Vec4Swizzles};
 use wgpu::util::DeviceExt;
 
 use crate::Error;
-use crate::color::{ap0_to_ap1, wb_matrix};
+use crate::color::wb_matrix;
 use crate::processing::{
-    Calibration, Inversion, PhotoSettings, Response, RollSettings, exposure_multiplier,
-    log_abs_expm1, log_ratio,
+    Calibration, Inversion, PhotoSettings, RollSettings, exposure_multiplier, log_abs_expm1,
+    log_ratio, validate_camera_matrix,
 };
 
 #[repr(C)]
@@ -38,23 +38,18 @@ impl ProcessingParameters {
             dmin_floor: Vec4::ZERO,
             gamma_mode: Vec4::ZERO,
             anchor: Vec4::ZERO,
-            post: matrix_columns(ap0_to_ap1()),
+            post: matrix_columns(DMat3::IDENTITY),
             ..Self::zeroed()
         }
     }
 
     pub fn source_inspection(exposure: f64) -> Result<Self, Error> {
         let gain = exposure_multiplier(exposure)?;
-        Ok(Self {
-            post: matrix_columns(ap0_to_ap1() * gain),
+        let matrix = DMat3::IDENTITY * gain;
+        let mut result = Self {
+            post: matrix_columns(matrix),
             ..Self::source()
-        })
-    }
-
-    /// Preserve corrected signed source cancellation through the inspection post-transform.
-    pub fn corrected_source(exposure: f64) -> Result<Self, Error> {
-        let mut result = Self::source_inspection(exposure)?;
-        let matrix = ap0_to_ap1() * exposure_multiplier(exposure)?;
+        };
         result.post_low = std::array::from_fn(|c| {
             let column = [matrix.x_axis, matrix.y_axis, matrix.z_axis][c];
             (column - result.post[c].xyz().as_dvec3())
@@ -68,69 +63,73 @@ impl ProcessingParameters {
         calibration: Calibration,
         roll: RollSettings,
         photo: PhotoSettings,
+        camera_to_ap1: DMat3,
     ) -> Result<Self, Error> {
+        validate_camera_matrix(camera_to_ap1)?;
+        CameraMatrix::new(camera_to_ap1)?;
         let inversion = Inversion::new(calibration, roll)?;
         let gain = exposure_multiplier(roll.exposure)? * exposure_multiplier(photo.exposure)?;
-        let matrix = wb_matrix(photo.wb)? * ap0_to_ap1();
-        let largest = inversion
+        let matrix = wb_matrix(photo.wb)?;
+        let (toe, shoulder) = roll.response.shape()?;
+        let floor_bound = inversion
             .apply(DVec3::splat(calibration.input_floor))?
             .rgb
-            .abs()
-            * gain;
-        let bound = matrix.x_axis.abs() * largest.x
-            + matrix.y_axis.abs() * largest.y
-            + matrix.z_axis.abs() * largest.z;
+            .abs();
+        // Above-base continuation is bounded by |expm1(a)| <= 1 for a <= 0.
+        let negative_bound = inversion
+            .anchor_exponents
+            .map(|a| (-log_abs_expm1(a) / toe).exp());
+        let largest = floor_bound.max(negative_bound) * gain;
+        let working_bound = camera_to_ap1.x_axis.abs() * largest.x
+            + camera_to_ap1.y_axis.abs() * largest.y
+            + camera_to_ap1.z_axis.abs() * largest.z;
+        let bound = matrix.x_axis.abs() * working_bound.x
+            + matrix.y_axis.abs() * working_bound.y
+            + matrix.z_axis.abs() * working_bound.z;
         if !largest.is_finite()
             || largest.max_element() > f32::MAX as f64 / 4.0
+            || !working_bound.is_finite()
+            || working_bound.max_element() > f32::MAX as f64 / 4.0
             || !bound.is_finite()
             || bound.max_element() > f32::MAX as f64 / 4.0
         {
             return Err(Error::Gpu(
-                "settings can exceed the f32 working range at the scan floor".into(),
+                "settings can exceed the f32 working range in the response domain".into(),
             ));
         }
         let gammas = roll.channel_gammas()?;
-        let anchor = DVec3::from_array(std::array::from_fn(|c| {
-            (calibration.dmin[c].ln() - calibration.dmax[c].ln()) / gammas[c]
-        }));
+        for c in 0..3 {
+            let l = log_ratio(calibration.dmin[c], calibration.input_floor);
+            let a = toe * l / (gammas[c] - shoulder * l / std::f64::consts::LN_10);
+            if !a.is_finite() || a > 4096. {
+                return Err(Error::Gpu(
+                    "response exponent exceeds the supported GPU precision domain; reduce shoulder"
+                        .into(),
+                ));
+            }
+        }
+        let reference = split_constants(calibration.dmin, calibration.input_floor)?;
+        let gamma = split_constants(gammas, toe)?;
+        let logs = split_constants(inversion.anchor_exponents.map(log_abs_expm1), gain.ln())?;
+        let k = shoulder as f32;
         let mut result = Self {
-            dmin_floor: calibration
-                .dmin
-                .as_vec3()
-                .extend(calibration.input_floor as f32),
-            gamma_mode: gammas.as_vec3().extend(1.0),
-            anchor: anchor.as_vec3().extend(gain.ln() as f32),
+            dmin_floor: reference[0],
+            dmin_low: reference[1],
+            dmin_tail: reference[2],
+            gamma_mode: gamma[0].xyz().extend(1.),
+            gamma_low: gamma[1],
+            shape: Vec4::new(toe as f32, k, gamma[1].w, (shoulder - k as f64) as f32),
+            anchor: logs[0],
+            anchor_low: logs[1],
             post: matrix_columns(matrix),
             ..Self::zeroed()
         };
-        if let Response::Film { toe, shoulder } = roll.response {
-            for c in 0..3 {
-                let l = log_ratio(calibration.dmin[c], calibration.input_floor);
-                let a = toe * l / (gammas[c] - shoulder * l / std::f64::consts::LN_10);
-                // A floor-anchored Dmax can conceal a nearly singular inverse from gain-range checks.
-                if !a.is_finite() || a > 4096. {
-                    return Err(Error::Gpu("response exponent exceeds the supported GPU precision domain; reduce shoulder".into()));
-                }
-            }
-            let reference = split_constants(calibration.dmin, calibration.input_floor)?;
-            result.dmin_floor = reference[0];
-            result.dmin_low = reference[1];
-            result.dmin_tail = reference[2];
-            let gamma = split_constants(gammas, toe)?;
-            result.gamma_mode = gamma[0].xyz().extend(2.);
-            result.gamma_low = gamma[1];
-            let k = shoulder as f32;
-            result.shape = Vec4::new(toe as f32, k, gamma[1].w, (shoulder - k as f64) as f32);
-            let logs = split_constants(inversion.anchor_exponents.map(log_abs_expm1), gain.ln())?;
-            result.anchor = logs[0];
-            result.anchor_low = logs[1];
-            result.post_low = std::array::from_fn(|c| {
-                let column = [matrix.x_axis, matrix.y_axis, matrix.z_axis][c];
-                (column - result.post[c].xyz().as_dvec3())
-                    .as_vec3()
-                    .extend(0.)
-            });
-        }
+        result.post_low = std::array::from_fn(|c| {
+            let column = [matrix.x_axis, matrix.y_axis, matrix.z_axis][c];
+            (column - result.post[c].xyz().as_dvec3())
+                .as_vec3()
+                .extend(0.)
+        });
         if !result.dmin_floor.is_finite()
             || result.dmin_floor.w < f32::MIN_POSITIVE
             || !result.gamma_mode.is_finite()
@@ -230,7 +229,7 @@ pub struct ProcessingSource {
     input: wgpu::Buffer,
     matrix: wgpu::Buffer,
     pixels: u32,
-    camera_to_ap0: DMat3,
+    camera_to_ap1: DMat3,
     flat_field: Option<(Arc<GpuFlatField>, SourceGeometry)>,
 }
 
@@ -244,7 +243,8 @@ impl ProcessingSource {
         {
             return Err(Error::Gpu("source exceeds GPU limits".into()));
         }
-        let camera_to_ap0 = matrix;
+        validate_camera_matrix(matrix)?;
+        let camera_to_ap1 = matrix;
         let matrix = CameraMatrix::new(matrix)?;
         Ok(Self {
             input: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -253,12 +253,12 @@ impl ProcessingSource {
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             }),
             matrix: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("camera to AP0 conversion constants"),
+                label: Some("camera to AP1 post-inversion constants"),
                 contents: bytemuck::bytes_of(&matrix),
                 usage: wgpu::BufferUsages::UNIFORM,
             }),
             pixels: count,
-            camera_to_ap0,
+            camera_to_ap1,
             flat_field: None,
         })
     }
@@ -274,7 +274,7 @@ impl ProcessingSource {
             ));
         }
         if let Some(field) = &field {
-            field.validate_matrix(self.camera_to_ap0)?;
+            field.validate_matrix(self.camera_to_ap1)?;
         }
         self.flat_field = field.map(|field| (field, geometry));
         Ok(())

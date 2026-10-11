@@ -109,21 +109,34 @@ fn process_film(scan: ConvertedScan) -> vec4f {
         if below { flags |= 1u << c; s = floor; }
         q[c] = invert_film(s, c);
     }
-    return photographic_post(q, flags);
+    return photographic_post(camera_positive_to_ap1(q), flags);
 }
-fn process_corrected_source(scan: ConvertedScan) -> vec4f {
+fn process_camera_source(scan: ConvertedScan) -> vec4f {
+    let working = camera_source_to_ap1(scan);
     let q = array<Pair, 3>(
-        pair_from_triple(Triple(scan.high.x, scan.low.x, scan.tail.x)),
-        pair_from_triple(Triple(scan.high.y, scan.low.y, scan.tail.y)),
-        pair_from_triple(Triple(scan.high.z, scan.low.z, scan.tail.z)));
+        pair_from_triple(Triple(working.high.x, working.low.x, working.tail.x)),
+        pair_from_triple(Triple(working.high.y, working.low.y, working.tail.y)),
+        pair_from_triple(Triple(working.high.z, working.low.z, working.tail.z)));
     return photographic_post(q, 0u);
 }
-fn photographic_post(q: array<Pair, 3>, flags: u32) -> vec4f {
+fn camera_positive_to_ap1(q: array<Pair, 3>) -> array<Pair, 3> {
+    var working: array<Pair, 3>;
+    for (var c = 0u; c < 3u; c++) {
+        var sum = pair(0.0);
+        for (var j = 0u; j < 3u; j++) {
+            let m = pair_from_triple(Triple(camera_matrix.high[j][c], camera_matrix.low[j][c], camera_matrix.tail[j][c]));
+            sum = pair_add(sum, pair_mul(m, q[j]));
+        }
+        working[c] = sum;
+    }
+    return working;
+}
+fn photographic_post(working: array<Pair, 3>, flags: u32) -> vec4f {
     var result = vec3f(0.0);
     for (var c = 0u; c < 3u; c++) {
-        let x = pair_mul(Pair(parameters.post[0][c], parameters.post_low[0][c]), q[0]);
-        let y = pair_mul(Pair(parameters.post[1][c], parameters.post_low[1][c]), q[1]);
-        let z = pair_mul(Pair(parameters.post[2][c], parameters.post_low[2][c]), q[2]);
+        let x = pair_mul(Pair(parameters.post[0][c], parameters.post_low[0][c]), working[0]);
+        let y = pair_mul(Pair(parameters.post[1][c], parameters.post_low[1][c]), working[1]);
+        let z = pair_mul(Pair(parameters.post[2][c], parameters.post_low[2][c]), working[2]);
         let sum = pair_add(pair_add(x, y), z);
         result[c] = fma(1.0, sum.h, sum.l);
     }

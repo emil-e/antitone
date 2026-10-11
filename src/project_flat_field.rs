@@ -59,11 +59,7 @@ impl FlatFieldSettings {
                 self.require_source(&project.source(*id)?.development)?;
             }
             if let Some(calibration) = project.calibration()? {
-                let matrix = DMat3::from_cols_array_2d(&self.development.camera_to_ap0);
-                Inversion::new(
-                    self.map.processing_calibration(matrix, calibration)?,
-                    project.roll,
-                )?;
+                Inversion::new(self.map.processing_calibration(calibration)?, project.roll)?;
             }
         }
         Ok(())

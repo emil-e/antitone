@@ -42,7 +42,13 @@ fn corrected_full_size_tiff_and_ap0_exr_reopen() {
         exposure: 2.,
         ..RollSettings::new_grade()
     };
-    let pipeline = Pipeline::new(calibration, roll, PhotoSettings::default()).unwrap();
+    let pipeline = Pipeline::new(
+        calibration,
+        roll,
+        PhotoSettings::default(),
+        scan.camera_to_ap1,
+    )
+    .unwrap();
     let size = ImageSize {
         width: a.width,
         height: a.height,

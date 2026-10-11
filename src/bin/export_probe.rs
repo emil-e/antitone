@@ -23,15 +23,14 @@ fn rect(arguments: &[String], offset: usize) -> Result<Rect> {
 }
 fn reference(path: &Path, area: Rect, wb: [f64; 4]) -> Result<DVec3> {
     let mut raw = RawFile::open(path)?;
-    let matrix = raw.metadata.camera_to_ap0()?;
     let diagnostics = raw.region_sensor_diagnostics(area)?;
     if diagnostics.at_white.iter().any(|v| *v > 0) || diagnostics.below_black.iter().any(|v| *v > 0)
     {
         return Err("reference contains sensor clipping; choose another rectangle".into());
     }
     let developed = raw.develop_camera(wb)?;
-    let mean = developed.sample_mean(area, matrix)?;
-    println!("reference={path:?} rectangle={area:?} AP0_mean={mean:?}");
+    let mean = developed.sample_mean(area, glam::DMat3::IDENTITY)?;
+    println!("reference={path:?} rectangle={area:?} camera_mean={mean:?}");
     Ok(mean)
 }
 
@@ -43,8 +42,7 @@ fn main() -> Result<()> {
     let start = Instant::now();
     let dmax_source = RawFile::open(Path::new(&a[5]))?;
     let wb = dmax_source.metadata.cam_mul;
-    let m = dmax_source.metadata.camera_to_ap0()?;
-    let floor = (m.x_axis.abs() + m.y_axis.abs() + m.z_axis.abs()).max_element() / 65535.0;
+    let floor = antitone::processing::CAMERA_INPUT_FLOOR;
     drop(dmax_source);
     let calibration = Calibration {
         dmin: reference(Path::new(&a[0]), rect(&a, 1)?, wb)?,
@@ -52,11 +50,6 @@ fn main() -> Result<()> {
         input_floor: floor,
     }
     .validate()?;
-    let pipeline = Pipeline::new(
-        calibration,
-        RollSettings::default(),
-        PhotoSettings::default(),
-    )?;
     println!(
         "fixed_development_wb={wb:?} precision_floor={floor:.12e} (not a noise estimate) calibration_seconds={:.2}",
         start.elapsed().as_secs_f64()
@@ -69,7 +62,13 @@ fn main() -> Result<()> {
         .ok_or("source has no filename")?
         .to_string_lossy();
     let mut raw = RawFile::open(source)?;
-    let matrix = raw.metadata.camera_to_ap0()?;
+    let matrix = raw.metadata.camera_to_ap1()?;
+    let pipeline = Pipeline::new(
+        calibration,
+        RollSettings::default(),
+        PhotoSettings::default(),
+        matrix,
+    )?;
     let developed = raw.develop_camera(wb)?;
     let size = ImageSize {
         width: developed.width,
@@ -81,11 +80,7 @@ fn main() -> Result<()> {
         size.height,
         start.elapsed().as_secs_f64()
     );
-    let pixel = |x, y| {
-        pipeline
-            .apply(matrix * developed.pixel(x, y)?)
-            .map(|p| p.rgb)
-    };
+    let pixel = |x, y| pipeline.apply(developed.pixel(x, y)?).map(|p| p.rgb);
     for (suffix, target) in [
         ("display-p3", OutputTarget::DisplayP3),
         ("srgb", OutputTarget::Srgb),

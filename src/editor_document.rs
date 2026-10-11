@@ -47,9 +47,13 @@ impl Document {
     pub fn validate(&self) -> Result<()> {
         self.project.require_runtime(&crate::raw::version())?;
         if let Some(calibration) = self.project.processing_calibration()? {
-            ProcessingParameters::positive(calibration, self.project.roll, Default::default())?;
             for source in &self.project.sources {
-                ProcessingParameters::positive(calibration, self.project.roll, source.photo)?;
+                ProcessingParameters::positive(
+                    calibration,
+                    self.project.roll,
+                    source.photo,
+                    glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1),
+                )?;
             }
         }
         if let Some(development) = &self.project.development
@@ -200,13 +204,14 @@ fn rebase_relative(path: &Path, old_parent: &Path, new_parent: &Path) -> Result<
     Ok(relative)
 }
 fn metadata_development(metadata: &Metadata) -> Result<SourceDevelopment> {
-    let matrix = metadata.camera_to_ap0()?;
+    let matrix = metadata.camera_to_ap1()?;
     let area = metadata.image_area()?;
     Ok(SourceDevelopment {
         dimensions: [metadata.width, metadata.height],
         active_area: [area.x, area.y, area.width, area.height],
-        camera_to_ap0: matrix.to_cols_array_2d(),
-        input_floor: Scan::precision_floor(matrix),
+        camera_model: metadata.camera_model(),
+        camera_to_ap1: matrix.to_cols_array_2d(),
+        input_floor: crate::processing::CAMERA_INPUT_FLOOR,
     })
 }
 pub(super) fn read_source(path: &Path) -> Result<(Source, [f64; 4])> {
@@ -248,7 +253,8 @@ pub(super) fn verify_scan(source: &Source, scan: &Scan) -> Result<()> {
     let actual = SourceDevelopment {
         dimensions: [width, height],
         active_area: [area.x, area.y, area.width, area.height],
-        camera_to_ap0: scan.camera_to_ap0.to_cols_array_2d(),
+        camera_model: scan.camera_model.clone(),
+        camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
         input_floor: scan.input_floor,
     };
     if source.development != actual {

@@ -42,7 +42,7 @@ pub fn refine(
         tile_width,
         tile_height,
         &zeros,
-        scan.camera_to_ap0,
+        scan.camera_to_ap1,
         target,
     ))?;
     let average = pollster::block_on(AreaAverage::new(
