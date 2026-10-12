@@ -59,7 +59,7 @@ Next action when selected: inventory worker events and agree the smallest shared
 
 ## Code readability and style
 
-The user will read the code and requests a repository-wide humanization pass. This is a substantial behavior-preserving cleanup, recorded here rather than executed during feedback triage. Current focus/order remains in [the roadmap](../../PLAN.md).
+A repository-wide readability pass is requested as a behavior-preserving cleanup. Source scope and language tooling remain to be agreed; current priority is in [the roadmap](../../PLAN.md).
 
 - Agree the tracked source scope/tooling first, excluding generated/vendor files, dependencies, build products, cached research outputs and samples. Inventory standard formatters for the included languages; do not install tools globally or hand-format generated shader assets.
 - Run standard tooling, then manually inspect formatting, odd/opaque names, dense expressions, overly long functions and other readability problems. Work in small reviewable slices, production code before tests/tools; avoid generalizing or redesigning architecture as cleanup.
@@ -78,6 +78,6 @@ Next action when selected: propose the source scope, language tooling, slice ord
 
 [Flat-field correction](completed/flat-field-correction.md) is completed and user-accepted, not folded into calibration/toe or these later requests. The [completed geometry integration](completed/flip-crop-rotate.md#baseline-and-integration-boundary) preserves its original-source coordinates and main's native-camera model. Windows/HDR output, custom RAW development and dust/catalog features are outside the current pass.
 
-## Handoff
+## Remaining scope
 
-This package retains unfinished requirements, deferred guides and post-implementation acceptance; no new implementation is authorized by this documentation audit. Completed camera/geometry work is archived above. Select remaining items through the roadmap and design their smallest verifiable slice. Original requirements/approval context: [historical feedback amendment](../research/history/feedback-plan.md), [historical product plan](../research/history/product-plan.md). Additional observations may remain in the feedback inbox; this audit does not edit or silently triage the user's unrelated inbox changes.
+This package contains unfinished requirements, deferred guides and post-implementation acceptance, not one settled implementation design. The roadmap determines priority; selected items need focused scope and acceptance. Original requirements are preserved in the [historical feedback amendment](../research/history/feedback-plan.md) and [product plan](../research/history/product-plan.md). New observations remain in the feedback inbox until triaged.

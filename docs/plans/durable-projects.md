@@ -23,8 +23,8 @@ The editor owns photo edits by stable source ID and passes document WB explicitl
 
 Likely files: `src/{editor,editor_tests,project}.rs`, worker commands, dialogs/host close behavior, `tests/{project,film_project}.rs`, new focused recovery/undo tests. Include already-implemented shared/photo orientation, accepted framing and roll flat-field changes in any agreed undo/recovery scope; picker/crop drafts and derived caches remain transient. Future scopes do not belong in saved processing state.
 
-## Progress / handoff
+## Implementation status
 
-Basic Save/Open is complete: stable-ID ownership, background registration, explicit WB, atomic snapshots, staged transitions and File/Export menus. [Closure](completed/save-open.md) records its historical 63-test checkpoint, real-source verification, independent review and screen-lock presentation limit. Camera/geometry integration updated the current schema and persistence paths; those implementation closures retain their separate evidence. No application checks were rerun for this documentation audit.
+Basic Save/Open is complete: stable-ID ownership, background registration, explicit WB, atomic snapshots, staged transitions and File/Export menus. [Closure and verification limits](completed/save-open.md) link the original state/data-loss and real-source checks. Camera/geometry integration established the current schema and persistence paths; recovery/relink/undo are the remaining implementation scope.
 
 Next action: select/design one missing-source/relink, recovery or undo slice with the user before implementation.

@@ -1,27 +1,23 @@
 # Responsive vectorscope and waveform — completed
 
-Status: implementation closed and delivered locally to main after rebasing onto `bbc9afd` (native-camera model/schema 4 and accepted geometry). The user requested wrap-up under the updated repository procedure. No push. [Roadmap](../../../PLAN.md) owns priorities; [remaining scope acceptance/full-source work](../completion.md#scopes) is separate.
+Status: implemented and integrated with native-camera processing and accepted composition. Fresh photographic/physical acceptance and full-source analysis remain separate [follow-up](../completion.md#scopes).
 
-## Goal, approval and scope
+## Scope and result
 
-Provide responsive feedback for the rendered positive photograph without changing processing, calibration, picks or exports. The user agreed selected-output-native encoded sRGB/P3, whole-frame approximate proxy coverage, one collapsible switchable slot above Roll/Photo controls, independent vector amplification and bounded GPU scheduling. Subsequent feedback approved width-responsive sizing/divider, retained coherent grading traces, distinct trace/guide colours, vectorscope default, brighter zoomed vector traces and persistent colour/approximate Skin directions. The last refinement dims only the Skin line, not its label or waveform.
+Positive-grade feedback uses selected-output-native encoded sRGB/P3 from the existing bounded whole-source proxy, sampled through accepted composition in final-frame order. It does not change calibration, picks, processing, exports or project state.
 
-No histogram, automatic correction, full-source analysis, extra RAW/wide retained image, CPU interactive fallback, new colour transform or project state. Canonical formulas/approximation/lifecycle are in the [scope contract](../../contracts/scopes.md); rationale in the [accepted decision](../../decisions/output-native-scopes.md).
+- One collapsible switchable slot above Roll/Photo controls, width-responsive height/divider, vectorscope default and independent amplification.
+- Shared viewer processing/ACES preparation, RGB/luma bin reuse and re-binning of existing rendered samples for vector amplification.
+- One reduction/16-byte asynchronous diagnostic readback outstanding. Compatible grading traces remain Updating; incompatible source/revision/composition/target/projection/scale traces cannot paint.
+- Source/reference views and crop drafts suspend scopes. Regional settled images never supply scope coverage.
+- Stable colour/rim and approximate Skin guides; amplification does not rotate guides or imply full-source statistics.
 
-## Completed implementation and integration
-
-- `scopes`, `gpu_scopes`, two shaders and `editor_scopes` provide target-derived scalar conventions, GPU bins/display, transient UI and positive-only suspension. RGB/luma reuse four planes; vector amplification re-bins existing rendered samples. One reduction/16-byte diagnostic readback is outstanding. Compatible grading traces stay Updating; incompatible source/revision/composition/target/projection/scale traces cannot paint.
-- `GpuImage::prepare` shares exact parameter-keyed native-camera processing/ACES with the viewer, whichever callback prepares first. Original-source flat-field coordinates and model-4 camera identity remain unchanged; regional settled images never supply scopes.
-- `Editor::scope_input` declares the whole accepted export composition through `Composition`/`FrameRaster`; canonical affine mapping samples the existing whole-source proxy in final-frame order. Crop/straightening is not its source bounding rectangle. Sampling pitch remains approximate; this is not full-source coverage-weighted export reconstruction. Accepted geometry joins scope identity; crop drafts suspend/invalidate until Apply/Cancel.
-- The existing short-window scope cap now reserves main's pinned Scan orientation/Composition panel as well as grading space. Output and viewer dimensions remain unchanged; pending numeric Save and scroll reachability regressions pass.
-- Contracts, architecture, roadmap, decision/indexes and mixed thumbnail plan reflect the delivered feature. Deferred work/acceptance lives in completion work, not an unfinished implementation checklist.
+Canonical formulas, approximation and lifecycle: [scope contract](../../contracts/scopes.md). Rationale: [output-native scope decision](../../decisions/output-native-scopes.md).
 
 ## Verification and limits
 
-Fresh integrated snapshot: **155 tests passed** (140 library, 8 scope GPU, 7 viewer); two unrelated/manual tests remain ignored. Strict editor-feature all-target Clippy, formatting, release editor build, diff whitespace and local documentation links passed. Reproduction/environment and selected results: [integration evidence](../../research/evidence/scopes-integration.txt). Tests cover both targets, nonzero source origins, turns/flips/exact and angled crops, independently mapped frame-centre bins/counts, native-camera parameter propagation, geometry invalidation/reuse, crop cancellation/suspension, retained traces and combined layout/Save behavior. Existing native-camera/flat-field/rotated-reconstruction viewer gates pass without weakened numerical tolerances.
+[Integration evidence](../../research/evidence/scopes-integration.txt) covers both targets, source origins, turns/flips/exact and angled crops, scalar frame-centre bins/counts, native-camera parameters, geometry invalidation/reuse, retained traces and layout/Save behavior. [Initial](../../research/evidence/scopes-checkpoint.txt) and [layout/flicker](../../research/evidence/scopes-layout-and-flicker.txt) evidence preserve earlier timing/onscreen snapshots; they are not fresh integrated photographic acceptance.
 
-Historical pre-integration measurements and onscreen checks: [initial checkpoint](../../research/evidence/scopes-checkpoint.txt), [layout/flicker follow-up](../../research/evidence/scopes-layout-and-flicker.txt). Those are snapshots, not fresh integrated photographic acceptance. Prior guide capture attempts were occluded and produced no captures; no visible-frame/occlusion gate was bypassed. Fresh composed-photo/guide appearance, physical-input feel, full-source statistics, real-photo export reopen, other devices/macOS 14 and physical monitors remain unclaimed.
+Prior guide capture attempts were occluded. Composed-photo/guide appearance, physical controls, full-source statistics, real-photo export reopen, other devices/macOS 14 and physical monitors remain unclaimed. No histogram, automatic correction, full-source analysis, extra RAW/wide retained image, CPU interactive fallback or new colour transform was added.
 
-## Exact next action
-
-No further implementation is selected. When requested, agree an unoccluded real-photo scope acceptance exercise through [completion work](../completion.md#scopes). Full-source analysis requires separate approval; do not resume the historical geometry-rebase or deferred implementation steps.
+[Archived implementation record](../../research/history/implementation/vectorscope-and-waveform.txt) preserves the original scope and checkpoints. [Completion work](../completion.md#scopes) owns photographic acceptance and any future full-source design.

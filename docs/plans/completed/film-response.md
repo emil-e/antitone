@@ -1,26 +1,20 @@
-# Adjustable film response and compact GPU source
+# Adjustable film response and compact GPU source — completed
 
-Status: completed for the tested domain; user approved integration/signed continuation and subsequently reported successful testing. This is a historical closure record, not an active queue. Its AP0/model-2/3 compatibility/version clauses were superseded by the [completed native-camera replacement](camera-inversion.md); response mathematics/defaults and compact-source precision policy remain.
+Status: completed response/source integration. Historical AP0/model-2/3 compatibility clauses were subsequently superseded by the [native-camera replacement](camera-inversion.md); response mathematics/defaults and compact-source precision policy remain.
 
-## Historical agreed scope
+## Result
 
-Preserve existing Original/model-2 grades. New grades use Film/model 3, toe 2.5/shoulder off, with explicit opt-in for old grades. Keep anchors, signed/HDR values, actual-response full-resolution fitting, current calibration/control scopes and unchanged RAW/ACES/ICC/AP0 EXR. Use one exact RGB16 production source with precision in shader temporaries/constants, not a wider retained cache or obsolete upload shim.
+- Adjustable toe/shoulder response, actual-response full-resolution neutral fitting, scoped controls/defaults and explicit response state.
+- New-grade toe 2.5/shoulder off and signed continuation, with anchor and signed/HDR behavior preserved.
+- One exact RGB16 production source; extra precision lives in shader temporaries/constants, not a wide retained cache.
+- Matching CPU/GPU, preview/refinement and TIFF/AP0 EXR response behavior with unchanged RAW development, ACES and output encoding.
 
-## Completed steps
-
-- [x] Isolated source/response precision/domain gates without weakening tolerances.
-- [x] Compact RGB16 source replacement and exact conversion/original input-bit checks.
-- [x] Versioned scalar/state/actual-model fitting and model-2 compatibility.
-- [x] Precise model-3 GPU arithmetic, preflight rejection and preview/refinement integration.
-- [x] Toe/shoulder controls, scoped defaults/resets, section order and original-grade opt-in.
-- [x] Actual-response TIFF/EXR metadata and numerical/editor closure checks.
+All current response shapes use camera processing model 4; old AP0 grades reject without migration. See the [processing contract](../../contracts/processing-model.md), [response decision](../../decisions/versioned-film-response.md) and [source decision](../../decisions/rgb16-gpu-source.md).
 
 ## Verification and limits
 
-[The production checkpoint](../../research/film-response-precision-gate.md#production-film-response-checkpoint) is the detailed numerical record; [selected logs](../../research/evidence/README.md) retain small decisive results outside the cache. Scalar/GPU/complete-target, original camera-chain, state/export, controls/layout, Clippy/format/release and real editor checks passed at that checkpoint.
+[The precision report](../../research/film-response-precision-gate.md#production-film-response-checkpoint) and [selected evidence](../../research/evidence/README.md) retain the tested domains, arithmetic sweeps, target comparisons, controls/export checks and historical failures. Historical Original-model expanded extreme-EV cancellation limits remain documented; the AP0 snapshots do not establish universal model-4 limits.
 
-Original-model expanded extreme-EV cancellation limitations remain preserved/documented. Finite M5 tests and user testing do not establish universal numerical-domain/device, macOS-14 or physical-monitor acceptance. Editor persistence/recovery/undo and flat field were not part of this integration.
+Finite device/domain tests and user testing do not establish universal numerical-domain/device, macOS-14 or physical-monitor acceptance. Recovery/undo and flat-field correction were separate implementations, not acceptance implied by this response work.
 
-## Handoff
-
-Do not reopen the completed source/response integration merely because historical prototypes failed. Use [current contracts](../../contracts/processing-model.md), [response ADR](../../decisions/versioned-film-response.md) and [source ADR](../../decisions/rgb16-gpu-source.md). Original approved plan/checkpoints are preserved in [the execution archive](../../research/history/execution-plan.md#film-response-production-integration-approved). Current next work belongs to [the roadmap](../../../PLAN.md).
+[Archived implementation record](../../research/history/implementation/film-response.txt) and [original execution record](../../research/history/execution-plan.md#film-response-production-integration-approved) preserve the historical scope and checkpoints.

@@ -2,12 +2,12 @@
 
 Status: cause of the synthetic color collapse identified. The user subsequently evaluated sRGB + Rec.2020, encountered its [SDR gate](rec2020-rendering-gate.md), and explicitly approved the implemented [sRGB/P3 replacement](p3-output-update.md). This document records the retired ProPhoto failure; ACES mathematics, calibration and native dependency builds were not patched. This finding does **not** establish the complete cause of the user's reported excessive saturation in their current grade.
 
-## Reproduction and new acceptance check
+## Replacement-target acceptance check
 
-With the existing local OCIO build, no RAW or generated fixture is needed:
+This current check uses the replacement sRGB/P3 targets, not the retired ProPhoto parameterization. With native setup complete, no RAW or generated fixture is needed:
 
 ```sh
-CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh run --offline \
+cargo run --locked --offline \
   --features render --bin antitone-rendering-probe -- --gamut-check
 ```
 

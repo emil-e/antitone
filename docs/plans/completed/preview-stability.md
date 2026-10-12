@@ -1,38 +1,19 @@
-# Settled-preview buffer limits
+# Settled-preview buffer limits — completed
 
-Status: complete. Adapter-supported buffer limits implemented and focused checks passed. User approved raising limits and deferring strip processing until observed problems warrant it. No minimum chip/RAM target is established.
+Status: implemented. The host requests adapter-supported buffer capacities; strip processing remains deferred until observed resource/performance problems warrant it. No minimum chip/RAM target is established.
 
-## Goal and scope
+## Diagnosis and result
 
-Fix the reported `Settled preview failed: GPU processing: invalid area-average dimensions or GPU budget` without changing reconstruction, response/ACES/ICC/export mathematics, physical-pixel output/native 100%, cancellation or other device limits. No strip implementation, reduced-resolution fallback, persistence or gesture/UI redesign.
+Valid large-display Fit requests could exceed requested wgpu defaults even when the adapter supported them. The previous defaults were 128 MiB maximum storage binding and 256 MiB maximum buffer size. An 8640×5760 source fitted to a 2560×1707 logical canvas at 2 pixels/point requests 5120×3414 output and **279,674,880 bytes** of RGBA32F sums—more than either default.
 
-## Confirmed diagnosis and decision
+`platform::device_limits` now requests the adapter's reported storage-binding and buffer-size limits while leaving other limits at defaults. Requesting those capacities does not allocate them upfront. Reconstruction, physical-pixel output, numerical processing, cancellation and invalid-dimension rejection are unchanged.
 
-A valid large-display request can exceed the **requested default** wgpu buffer limits despite the adapter supporting it. `Geometry::output_size` generates positive dimensions no larger than the visible source region; `AreaAverage::new` requires one output-sized RGBA32F buffer. The host previously requested default limits: 128 MiB maximum storage binding and 256 MiB maximum buffer size.
+Scratch and linear output each still use 16 bytes per output pixel, excluding other retained data. This is not an aggregate memory budget or a universal device guarantee.
 
-Reproduced on M5 Pro/Metal without RAW IO: an 8640×5760 source fitted into a 2560×1707 logical canvas at 2 pixels/point requests 5120×3414 output. Full-frame sums require **279,674,880 bytes**, exceeding both defaults. Construction rejects this with the exact reported error. This establishes a reachable cause, not the user's exact unknown window/source state or every possible preview failure.
+## Verification and limits
 
-The actual adapter reports **4,294,967,292-byte** maximum storage binding and **4,294,967,295-byte** maximum buffer size. Raising both requested fields to their reported capacities fixes this mismatch without a new reconstruction algorithm or fixed speculative memory ceiling. Other limits remain at defaults; resource/dimension rejection remains intact. Requesting capacities does not allocate them upfront.
+Unit checks cover the two-field limits policy. A Metal regression reproduces the old rejection and accumulates/finishes the full-size output under negotiated limits, checking corners/interior normalization and unchanged tolerance; invalid zero/upscale requests still reject. Existing fractional averaging, target/presentation and real-source Fit/native smoke checks passed at the recorded checkpoint.
 
-The earlier strip proposal is not selected. Implement it only if actual application/user memory or performance problems justify it. Larger previews still allocate more memory: scratch and linear output each use 16 bytes per output pixel, excluding retained images/RAW/runtime. This is not a claim of an aggregate memory budget or universal device acceptance.
+[Archived verification](../../research/history/implementation/preview-stability.txt) preserves the environment, adapter capacities, timings and original probe details. The research `preview-budget-check` bin is historical; the maintained regression is `large_retina_fit_area_average_uses_supported_buffer_limits` in `tests/viewer.rs`, reproduced through [feature-specific checks](../../development.md#feature-specific-checks).
 
-## Implementation and verification
-
-- [x] Reproduce the default-limit rejection and query the actual Metal adapter.
-- [x] `platform::device_limits` selects only the two adapter buffer capacities; the shared host uses it when requesting the device.
-- [x] Unit regression verifies only those fields change, including default-size and larger supported capacities.
-- [x] Metal regression uses real viewport Fit geometry, confirms the old rejection, then accumulates/finishes into the full-size 5120×3414 output under negotiated limits. Samples at both corners and a zero interior check normalization, storage beyond the old limit and full target coverage at the unchanged 2e-6 tolerance. Invalid zero/upscale requests still reject.
-- [x] Existing fractional tiled averaging, viewer/CPU targets, yellow continuity and extended-sRGB tests pass (4 viewer tests total, 0.46 s M5 snapshot).
-- [x] Four viewport tests, 21 editor/control tests and the buffer-limit unit test pass. Strict Clippy for the library/viewer regression/editor binary and root/new-probe formatting pass. Release editor/presentation binaries and named research probe build offline.
-- [x] Presentation probe passes transfer/UI checks and two requested resizes, with 11 submitted frames. Real-source editor smoke passes Fit/native refinement and photo/reference switching in 10.64 s / 429 submitted frames; Fit 1538×1026 takes 2.381 s, native 1538×1320 takes 0.145 s (M5 snapshots).
-- [x] Record final checks/limits and hand off to basic Save/Open, without automatic commit/push or next-feature implementation.
-
-Diagnostic: `docs/research/tools/film/src/bin/preview-budget-check.rs` compares the default rejection with the same production limits policy. Build/run named bins using the [tools guide](../../research/tools/README.md#current-gate-reproduction). Its baseline initially exited 1; the updated probe passes and prints both default rejection and successful negotiated construction. The Metal regression additionally proves actual accumulation and finish/readback, not merely constructor acceptance.
-
-Production scope is `src/platform/{host,mod}.rs`; the averaging kernel, refinement scheduler and viewer geometry are unchanged. Active guidance bases resource policy on observed needs, not an assumed hardware baseline; historical results remain historical.
-
-## Handoff
-
-At this checkpoint, basic Save/Open was next; it has since been [implemented and closed](save-open.md). No active implementation remains in this preview-limit package. Record actual resource/performance problems before considering strip machinery; [the roadmap](../../../PLAN.md) owns current priority.
-
-Large output was verified offscreen; real-source editor smoke used its normal window, not a physical large-display scenario. No fresh full suite, aggregate peak-memory benchmark or universal device claim. Broader device/macOS-14/physical-monitor checks remain separate work. An initial viewport command inherited an unavailable GCC path; rerunning with the documented Apple-Clang environment passed, without global environment/toolchain changes.
+Large output was verified offscreen, not on a physical large-display setup. Aggregate peak memory, broader devices, actual macOS-14 execution and physical-monitor acceptance remain separate [release work](../completion.md#export-and-release-work).

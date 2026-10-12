@@ -1,6 +1,6 @@
 # Architectural decisions
 
-Selective rationale for consequential choices—not a second specification or task tracker. The records below document already agreed decisions; this reorganization does not authorize new processing policy.
+Rationale for consequential choices and their tradeoffs. The records below document accepted decisions; current behavior is specified in [the contracts](../README.md#current-contracts).
 
 | Decision | Status |
 | --- | --- |
@@ -37,4 +37,4 @@ Tradeoffs, limits and conditions for revisiting.
 Links to contracts, research, tests or historical approval records.
 ```
 
-A proposal is not accepted merely because an agent wrote it. Preserve accepted rationale; supersede explicitly if an approved later decision replaces it. Research may explore alternatives without altering any accepted decision.
+Proposed decisions require explicit acceptance before they describe project policy. Preserve accepted rationale; supersede explicitly if an approved later decision replaces it. Research may explore alternatives without altering any accepted decision.

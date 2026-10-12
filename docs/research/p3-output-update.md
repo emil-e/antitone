@@ -23,7 +23,9 @@ Scene-linear AP0 EXR, half/full precision, photographic AP1 processing, calibrat
 
 Tests use explicit diagnostic calibration/settings, not the user's current grade. Physical monitor matching, actual-image visual acceptance and Lightroom/Resolve interoperability remain unverified. No Lightroom/Resolve automation or source-sample changes.
 
-## Reproduction and evidence
+## Historical reproduction and evidence
+
+The following commands record the original checkpoint and include the removed Cargo wrapper. Use [development checks](../development.md) and [specialist verification](../build-and-probes.md) for current setup and supported commands; the snapshot is not a fresh model-4 compatibility result.
 
 ```sh
 ./scripts/probe-gamut.sh
@@ -39,4 +41,4 @@ Ignored evidence: `.cache/probes/p3-{focused-tests,all-tests,clippy,ocio-gpu,pro
 
 ## Remaining feedback work
 
-At this checkpoint black clipping and control cleanup remained open. They were subsequently addressed by the [Dmin trace](dmin-shadow-trace.md), [film-response integration](film-response-precision-gate.md) and [control contract](../contracts/editor-controls.md). Dark-source inspection, Mac gestures, thumbnails/scopes, **project Save/Open/recovery/undo** and larger features remain in [the current roadmap](../../PLAN.md). This output-target change alone did not solve the tonal feedback.
+At this checkpoint black clipping and control cleanup remained open. Later work is recorded in the [Dmin trace](dmin-shadow-trace.md), [film-response integration](film-response-precision-gate.md) and [control contract](../contracts/editor-controls.md). The [current roadmap](../../PLAN.md) distinguishes subsequent implemented features from remaining photographic, persistence and release work. This output-target change alone did not resolve all tonal feedback.

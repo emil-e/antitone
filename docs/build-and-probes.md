@@ -1,42 +1,14 @@
-# Build and verification runbook
+# Specialist build and verification probes
 
-Run from the repository root. Use [the README](../README.md) for initial developer setup; humans and agents use the same Cargo/native setup path. macOS/Apple Silicon is the current supported checkout; samples are read-only/local. This is a command guide, not a claim that all checks ran today. Historical outcomes are in [research evidence](research/evidence/README.md); acceptance gaps/status are in [PLAN.md](../PLAN.md).
+Use [the README](../README.md) for setup/build/run and [development checks](development.md) for everyday and feature-specific tests. This guide covers numerical/reference comparisons, explicit RAW tests, export reopening and scripted presentation. Recorded outcomes are in [verification evidence](research/evidence/README.md); remaining acceptance is tracked in [the roadmap](../PLAN.md).
 
-## Toolchain and native dependencies
+## Prerequisites and interpreting results
 
-Run ordinary `cargo` commands. `rust-toolchain.toml` selects Rust 1.99.0 with rustfmt/Clippy through normal rustup project selection; package MSRV is separately 1.95. Your global default toolchain is unchanged. `.cargo/config.toml` selects Apple Clang for Cargo native builds, including when an ambient `CC`/`CXX` points elsewhere. Older historical records use the removed `scripts/cargo.sh` wrapper and checkout-local Rust; those are not current setup instructions.
+Run from the repository root on macOS/Apple Silicon. Native features use the pinned local libraries and Apple Clang configured by the shared setup/Cargo path. OpenMP's source-built arm64/macOS-14 runtime and local licenses are described in [the native guide](research/tools/raw-development.md); deployment targets and checkout-local rpaths do not establish distributable packaging or actual macOS-14 acceptance. Little CMS remains statically built through Cargo; `LCMS2_LIB_DIR` is not a supported override.
 
-Native dependencies are pinned LibRaw 0.22.0, LLVM OpenMP 22.1.8 and OCIO 2.6.0:
+Commands below use `--offline` with populated caches. Omit it for a first build, retaining `--locked`. RAW probes need explicitly supplied read-only local samples; setup never downloads photographs. Photographic outputs remain ignored/private.
 
-```sh
-./scripts/setup-native.sh
-```
-
-Setup checks host prerequisites, then runs `build-libraw.sh` (which builds OpenMP first) and `build-ocio.sh`; these can also be invoked individually. Bootstrap/downloads require network. LibRaw/OpenMP use private ignored `.cache/native-deps`; OCIO uses `.cache/deps`. OpenMP's LLVM release archive is SHA256-pinned and extracted selectively, source-built arm64/macOS-14 with `@rpath/libomp.dylib`. Licenses remain beside local products. Agents must obtain any required environment permissions and must not install system/Homebrew packages without a separate request.
-
-`LIBRAW_SOURCE` and `OCIO_PREFIX` select existing compatible native builds for Cargo/probes; setup always builds the pinned local defaults. OpenMP remains required at `.cache/native-deps/openmp-22.1.8-install`, with no inherited runtime override. Existing serial LibRaw builds in `.cache/deps` are not the production default. OpenMP/OCIO rpaths remain checkout-local, not distributable packaging. Little CMS is built statically through the pinned Rust dependency; do not set `LCMS2_LIB_DIR` to override that choice.
-
-The focused commands below use `--offline` to avoid downloads during verification with an already populated cache. For a first build, omit it; retain `--locked` to use the committed dependency resolution.
-
-## Focused checks
-
-Choose checks relevant to the change before running the broad suite:
-
-```sh
-cargo fmt --all -- --check
-cargo test --locked --offline --no-default-features --test camera_inversion --test processing --test film_response
-cargo test --locked --offline --features project --test camera_project --test project --test film_project
-cargo test --locked --offline --features gpu --test gpu_film_response -- --nocapture
-```
-
-Project/scalar checks do not require native RAW/render libraries. GPU checks require available Metal. For a processing/rendering integration closure, when warranted:
-
-```sh
-cargo test --locked --offline --all-features
-cargo clippy --locked --offline --all-features --all-targets -- -D warnings
-```
-
-Do not treat unavailable hardware or an unrelated test failure as permission to weaken gates or broaden scope. Numerical gates and actual onscreen/device acceptance are separate.
+Numerical gates, scripted lifecycle/visible-frame checks and physical/device acceptance address different boundaries. A missing device, locked/occluded window or zero-visible-frame smoke is a verification limit or failure, not a passed acceptance check.
 
 ## Editor and layout smoke
 
@@ -160,7 +132,7 @@ cargo run --locked --offline --features raw,gpu \
 
 Calibration writes full-resolution camera sample grids, matrix/parameters and CPU AP1 reference fixtures under `.cache/probes`; OCIO adds them to synthetic cases before the GPU complete-chain comparison. Regenerate in that order after changing fixtures. Camera source is `camera-source-model4.rgb16` plus post-inversion column-major `camera-to-ap1-model4.f64`; there is no float-source fallback. These are regenerable RAW-derived fixtures, not hidden authored source or a full-image comparison.
 
-The older AP0/model-2/3 real-camera comparison and candidate precision probes are preserved as [historical research tools](research/tools/README.md#current-gate-reproduction), requiring their matching baseline APIs. Do not run them as a model-4 production gate or adapt them into fallback inversion paths; current root regressions are maintained.
+The older AP0/model-2/3 real-camera comparison and candidate precision probes are preserved as [historical research tools](research/tools/README.md#historical-experiments), requiring their matching baseline APIs. Do not run them as a model-4 production gate or adapt them into fallback inversion paths; current root regressions are maintained.
 
 ## Rendering, gamut and ICC
 
@@ -215,6 +187,6 @@ cargo run --locked --offline --features ui \
 
 Core Image provides an encoding/reference comparison, not interactive rendering. The host explicitly tags extended-sRGB `RGBA16Float` SDR/EDR=false after configuration. The chart checks f32/half transfer/readback, ordinary UI and two resizes. **Zero submitted frames fails the onscreen check.** Layer/readback evidence does not establish physical-monitor matching, monitor transitions, UI blending, forced surface recovery, macOS-14 or other-device performance.
 
-## Documentation/cache work
+## Results and retained evidence
 
-Inspect local Markdown links/anchors and moved references, and record exactly which relocation checks ran. Do not reflexively rerun the full GPU/RAW/export suite for documentation-only changes. Authored source and selected small decisive evidence belong outside ignored cache; dependencies, generated fixtures/private images and third-party downloads stay local. [Cache policy/tool inventory](research/tools/README.md).
+Probe results need their source/model, tested domain, tolerances, environment and reproduction to be interpretable. [Selected evidence](research/evidence/README.md) retains decisive numerical outcomes; [historical records](research/history/README.md) preserve earlier execution/checkpoints. Generated fixtures, private images/exports and third-party downloads remain local under the [cache/tool boundaries](research/tools/README.md#cache-and-evidence-boundaries).

@@ -56,11 +56,10 @@ cargo fmt --all -- --check
 cargo test --locked --no-default-features
 ```
 
-For feature-specific tests, Metal checks and photographic probes, use [the build and verification runbook](docs/build-and-probes.md). `--offline` is useful with a populated cache, but is not required for normal builds. Local RAW samples are optional, read-only and never downloaded by setup.
+For feature-specific tests, see [development checks](docs/development.md). Numerical/reference, RAW, export and presentation probes are in [specialist verification](docs/build-and-probes.md). `--offline` is useful with a populated cache, but is not required for normal builds. Local RAW samples are optional, read-only and never downloaded by setup.
 
 ## More context
 
 - [Roadmap](PLAN.md)
 - [Architecture](docs/architecture.md)
 - [Documentation map](docs/README.md)
-- [Repository workflow for agents](AGENTS.md)

@@ -1,50 +1,25 @@
-# Research tools and cache boundaries
+# Research and verification tools
 
-Authored research source was promoted here from ignored `.cache/probes` during the documentation reorganization. This is a research source collection, **not another production backend or a fully maintained test suite**. Run from the repository root. Generated results still go into `.cache/probes`; the preserved source/evidence must not be overwritten by a reproduction run.
+Current helpers complement the maintained root tests and [specialist verification guide](../../build-and-probes.md). Run from the repository root; generated results go into ignored `.cache/probes`, not beside authored source or archived evidence.
 
-## Inventory and compatibility
+## Current verification tools
 
-| Source | Role / status |
-| --- | --- |
-| `film/Cargo.toml`, `film/src/bin/film-production-check.rs` | Historical AP0/model-2/3 scalar/GPU/complete-target gate (requires matching baseline API); uses read-only `samples/DSC04393.ARW`, no archived source fixture required |
-| `film/src/bin/flat-field-inspect.rs`, `film/src/flat_field.rs`, `film/src/bin/flat-field-gpu-check.rs` | AP0-baseline reference-RAW rectangle/smoothing analysis and scalar/GPU source/render verification; not a model-4 production gate. [Processing checkpoint](../../plans/completed/flat-field-correction.md#verified-processing-checkpoint), [estimator evidence](../evidence/flat-field-initial.txt), [GPU evidence/reproduction](../evidence/flat-field-gpu.txt). Generated CSVs remain private/cache-only |
-| `film/src/bin/preview-budget-check.rs` | Large Retina Fit request compares default Metal rejection with production adapter-supported buffer limits; no RAW IO. [Fix/verification record](../../plans/completed/preview-stability.md) |
-| `film/src/bin/film-wide-precision.rs`, `film/*.wgsl` | Resolved candidate arithmetic sweep/microbenchmark; uses that RAW and the locally generated `dmin-trace/run2/fur-scan-ap0-f64.bin` fixture |
-| `film/src/bin/camera-u16-precision.rs` | Initial compact-input prototype; preserves expected original-formula extreme-EV failures, not the final production gate |
-| Other `film/src/` bins | Historical Dmin/DRT/toe/image experiments. Several predate current source/export APIs and do not compile unchanged; preserved for evidence, not automatically modernized |
-| `film-response-docs/{extract-curves.py,fit-curves.py,read.swift,plot-fits.swift}` | Owned manufacturer-drawing extraction/fitting/inspection; local downloaded PDFs and derived data, not independent film measurements |
-| `capture-response-controls.py`, `capture-controls.py`, `controls-window-id.m` | macOS window-only layout capture; response harness uses current smoke, old harness is historical. Requires desktop/screen-capture permission, built app/helper and local RAWs |
-| `{dmin-trace,drt-lift,film-model-images}/*.swift`, `film-identification.swift`, `read-kodak.swift` | Historical inspection/compositing helpers with fixed local input/output paths; not application automation/presentation references |
-| Root `native/raw_development_probe.cpp` | Current pinned-LibRaw complete-RGB/metadata/immutable-diagnostics equality and thread-scope probe; [source-built OpenMP guide and baseline comparison](raw-development.md). No alternate development settings/source path |
-| `native/*.cpp`, `native/build-internals.py` | Historical public/internal OCIO, clipping, profile-generation and image-identification diagnostics; native include/library/build paths and source versions matter |
-
-The separate research crate's dependency path points to the root package; it is not part of the production feature graph. Build **named bins**, not `--all-targets`/all research bins. Shader source is included from this durable directory, while RAW-derived fixtures/output remain in local cache. Historical wide/float-source snapshots must not be restored wholesale into production or confused with supported upload APIs.
-
-## Current gate reproduction
-
-Current native-camera model-4 gates are root `tests/{camera_inversion,camera_project,camera_raw,gpu_film_response,viewer}.rs` and the real-RAW flat-field editor regression; [runbook](../../build-and-probes.md). The commands below reproduce the **historical AP0/model-2/3** gate on a matching pre-replacement checkout, not current APIs. Research tools are deliberately not converted into alternate production inversion paths. Use checkout-local dependencies; no global packages:
-
-```sh
-CARGO_TARGET_DIR="$PWD/target" CC=/usr/bin/clang CXX=/usr/bin/clang++ \
-  ./scripts/cargo.sh build --offline --locked --release \
-  --manifest-path docs/research/tools/film/Cargo.toml \
-  --bin film-production-check --bin film-wide-precision
-DYLD_LIBRARY_PATH="$PWD/.cache/deps/ocio-install/lib" \
-  target/release/film-production-check
-# Requires the locally generated fur fixture described above:
-DYLD_LIBRARY_PATH="$PWD/.cache/deps/ocio-install/lib" \
-  target/release/film-wide-precision
-```
-
-The production gate uses diagnostic references/settings, not an exact user-session reconstruction. The older wide probe checks its archived source fixture before arithmetic/timing. Creating that fixture through the old Dmin trace may require deliberate adaptation to current APIs; that is not performed by this documentation migration. Production tests in `src/gpu_tests.rs` and `tests/gpu_film_response.rs` remain the maintained regressions.
-
-Historical tools may have fixed fresh-output-directory requirements and no-overwrite exports. Do not rerun them blindly over prior photographic results. Native internal diagnostics require the exact pinned OCIO build and object layout. `build-internals.py` writes objects/executables/logs into `.cache/probes`, not next to durable source. The candidate-internals diagnostic intentionally still needs the local copied upstream `prophoto-boundary-candidate.cpp`; that unapproved experiment was not promoted as owned production code.
+- Root `tests/{camera_inversion,camera_project,camera_raw,gpu_film_response,viewer}.rs` and the explicit real-RAW flat-field editor regression maintain model-4 numerical/source/output checks; [commands and limits](../../build-and-probes.md).
+- `native/raw_development_probe.cpp` checks pinned-LibRaw complete RGB16/metadata/immutable diagnostics and scoped thread policy; [build/reproduction guide](raw-development.md). This is not an alternate developer.
+- Root `scripts/probe-*.sh` reproduce OCIO/GPU, gamut, profile and macOS presentation comparisons; [reference guide](../../build-and-probes.md). Native setup is described in [the README](../../../README.md).
 
 ## Manufacturer study / capture
 
-Extraction and fitting use Python standard library only. With the cited PDFs already downloaded to `.cache/probes/film-response-docs/`, run `python3 docs/research/tools/film-response-docs/extract-curves.py`, then `fit-curves.py`. Swift PDF/plot helpers use the macOS toolchain. Consult [the study](../film-response-model-study.md) for URLs, drawing axes and measurement/copyright limitations; no downloaded PDF/trace/plot is redistributed here.
+Manufacturer extraction/fitting uses Python's standard library. With the cited PDFs already downloaded into `.cache/probes/film-response-docs/`:
 
-For current response layout capture, first build the release editor per [the runbook](../../build-and-probes.md), create `.cache/probes/film-model-images`, then:
+```sh
+python3 docs/research/tools/film-response-docs/extract-curves.py
+python3 docs/research/tools/film-response-docs/fit-curves.py
+```
+
+Swift PDF/plot helpers use the macOS toolchain. [The study](../film-response-model-study.md) records URLs, drawing axes and measurement/copyright limitations. Downloaded drawings/traces are not redistributed, and these fits are not independent film measurements.
+
+For current response-layout capture, build the editor, create `.cache/probes/film-model-images`, then:
 
 ```sh
 /usr/bin/clang -fobjc-arc docs/research/tools/controls-window-id.m \
@@ -53,14 +28,19 @@ For current response layout capture, first build the release editor per [the run
 python3 docs/research/tools/capture-response-controls.py
 ```
 
-This captures only the application window during timed smoke holds; it does not automate Lightroom/Resolve. Output images/logs remain private/regenerable. UI/screen-capture work requires an available unlocked desktop and normal permissions.
+This captures only the application window during timed smoke holds. It needs local RAWs, an unlocked desktop and normal screen-capture permissions; it does not automate Lightroom/Resolve. Photographic screenshots and logs stay private/cache-local.
 
-## What remains in `.cache` and why
+## Historical experiments
 
-- `.cache/native-deps/` (LibRaw/OpenMP) and `.cache/deps/` (OCIO): downloaded native dependencies and build trees/libraries; reconstruct via `scripts/setup-native.sh`. These are not distributable app packaging. Historical `.cache/rustup/` toolchains may remain as local inputs; current builds use normal rustup project selection through `rust-toolchain.toml`, not the old Cargo wrapper.
-- Generated camera/rendering fixtures, regenerated OCIO intermediates, binaries/objects, duplicate build logs and full-resolution TIFF/EXR/PNG outputs: rebuildable diagnostics, not authoritative source.
-- Sample-derived photography/user screenshots: private local material, not automatically committed. The RAWs remain read-only under ignored `samples/`.
-- Kodak PDFs/text/drawing derivatives and the copied/modified upstream OCIO boundary experiment: third-party material kept local. URLs, source provenance, reported findings and owned extraction/internal-inspection tools are durable; no wholesale upstream vendoring or copyrighted-document promotion.
-- `film-integration-baseline/`: obsolete source/WIP checkpoint, not a restoration path or necessary application dependency. Its diagnostic findings are preserved in the reports.
+The `film/` crate, older capture/compositing helpers and `native/` internal diagnostics under this directory preserve research methodology. Many depend on AP0/model-2/3 APIs, private fixtures, matching OCIO object layouts or old fixed paths; they are not a supported current test suite.
 
-Do not delete this user's cache as part of a documentation task. After generated inputs are available again, production commands should not depend on hidden authored source. Preserve new reusable tools and decisive compact results outside the cache when a future investigation finishes; see [evidence guide](../evidence/README.md). Historical exact-image reproduction may still require local/private inputs.
+[Archived inventory and reproduction notes](../history/tools-guide.txt) identify those sources and their compatibility requirements. The source remains here, but the old commands—including the removed Cargo wrapper—describe historical checkouts. Build only explicitly compatible named bins, not all research targets. Historical float/wide source snapshots are not production upload paths, and experiments are not alternate inversion/rendering backends.
+
+## Cache and evidence boundaries
+
+- `.cache/native-deps/` (LibRaw/OpenMP) and `.cache/deps/` (OCIO) hold reconstructible native inputs/products; setup is in the project README. Historical `.cache/rustup/` inputs may remain, but current builds use normal project toolchain selection.
+- `.cache/probes/` holds regenerated camera/rendering fixtures, objects/binaries, full-size exports, plots, screenshots and duplicate logs. Samples remain read-only under ignored `samples/`.
+- Downloaded copyrighted documents and copied/modified upstream experiments remain local. Owned tools, source provenance and selected decisive results belong in research/evidence; they are not automatically promoted into production.
+- Obsolete `film-integration-baseline/` snapshots are not a restoration path or application dependency.
+
+[Selected evidence](../evidence/README.md) records durable outcomes. Its archived contents are not overwritten by reproduction runs.

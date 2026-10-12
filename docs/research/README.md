@@ -1,6 +1,6 @@
 # Research knowledge base
 
-Flexible notes, studies, experiments and supporting evidence. No mandatory template, numbering or completeness checklist. Read by question, not in chronological bulk. Distinguish measured results, hypotheses and limitations; flag superseded conclusions when they could mislead. Promote accepted conclusions into [contracts](../README.md#current-contracts) or [decisions](../decisions/README.md), not automatically into production.
+Studies, experiments, measured findings and supporting evidence, organized by question. Reports distinguish observations, hypotheses, limitations and superseded conclusions. Current accepted behavior is defined in [contracts](../README.md#current-contracts) and [decisions](../decisions/README.md).
 
 ## Rendering / colour management
 
@@ -19,8 +19,6 @@ Flexible notes, studies, experiments and supporting evidence. No mandatory templ
 ## Product observations and reproduction
 
 - [Feedback inbox](../feedback.md): new user observations awaiting triage. Completed or already-planned items are removed; remaining symptoms and uncertainties move into the relevant [work plan](../plans/README.md). The inbox is not the persistent requirement record or execution queue.
-- [Historical records](history/README.md): earlier product/execution/feedback plans and mockup.
-- [Authored tools](tools/README.md): durable source outside `.cache`, with compatibility status.
-- [Selected evidence](evidence/README.md): compact logs retained outside `.cache`; photographic and third-party inputs stay local.
-
-There is room here for short observations, long investigations, external references and unresolved questions. Add links where useful; do not force every note into an ADR or work-plan format.
+- [Current tools](tools/README.md): verification, extraction and capture helpers, separated from historical experiments.
+- [Selected evidence](evidence/README.md): archived numerical/verification results; photographic and third-party inputs stay local.
+- [Historical records](history/README.md): earlier product/feedback plans, execution/checkpoint narratives, archived tooling notes and mockup.

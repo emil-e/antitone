@@ -1,6 +1,6 @@
 # Dmin-first shadow diagnosis: DSC04393
 
-Completed diagnosis, not pending work. This report describes the original-response diagnostic checkpoint. Later [film-response production integration](film-response-precision-gate.md#production-film-response-checkpoint) is complete; dark-source editor inspection and flat-field work remain separate.
+Completed historical diagnosis on the original AP0-response baseline, not current native-camera acceptance or pending implementation. Later [film-response integration](film-response-precision-gate.md#production-film-response-checkpoint) and [native-camera replacement](../plans/completed/camera-inversion.md) have their own evidence; current processing is defined in [the contract](../contracts/processing-model.md). Recorded reproduction commands require the matching historical tools/APIs, not the current setup.
 
 ## Findings in plain language
 

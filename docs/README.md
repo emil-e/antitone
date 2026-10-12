@@ -1,31 +1,32 @@
-# Documentation map
+# Documentation
 
-Start with [the roadmap](../PLAN.md) and [repository workflow](../AGENTS.md). Read only the material relevant to the selected task; historical experiments are not mandatory startup context.
+For setup, building and launching Antitone, start with [the project README](../README.md). For current work and remaining acceptance, see [the roadmap](../PLAN.md).
 
-## Architecture and operation
+## Development and architecture
 
-- [Architecture](architecture.md): implemented modules, colour/data flow, ownership, workers, GPU resources and gaps.
-- [Developer setup](../README.md): prerequisites and the shared human/agent Cargo build path.
-- [Build and probes](build-and-probes.md): focused commands and verification boundaries, not a rolling list of test counts.
-- [Work plans](plans/README.md): focused scopes/acceptance/handoff; root roadmap owns status/order.
+- [Architecture](architecture.md): implemented modules, data/colour flow, ownership and boundaries.
+- [Development checks](development.md): everyday and feature-specific Cargo checks.
+- [Build and probes](build-and-probes.md): specialist numerical, RAW, export and presentation verification.
+- [Current research tools](research/tools/README.md): supported helpers, prerequisites and experimental-tool status.
 
 ## Current contracts
 
-- [Product/scope](contracts/product.md).
-- [Processing models, source representation, calibration and tolerances](contracts/processing-model.md).
-- [Editor controls, defaults, scope and interactions](contracts/editor-controls.md).
-- [Image geometry, coordinate terminology and picker-view requirements](contracts/geometry.md).
-- [Display-referred scopes](contracts/scopes.md): target-native waveform/vector conventions, approximate accepted-frame coverage and bounded lifecycle.
+- [Product and scope](contracts/product.md).
+- [Processing, source representation, calibration and tolerances](contracts/processing-model.md).
+- [Editor controls, defaults and interactions](contracts/editor-controls.md).
+- [Image geometry and picker coverage](contracts/geometry.md).
+- [Display-referred scopes](contracts/scopes.md).
 - [Rendering, presentation, TIFF/AP0 EXR and safety](contracts/output.md).
-- [Project state](contracts/project-state.md): live stable-ID Save/Open, schema-4 identity, composition and flat-field persistence; recovery/relink/undo remain unwired.
-- [Pinned OCIO artifacts](../assets/ocio/README.md) and [ICC profiles](../assets/profiles/README.md): asset definitions/checksums.
+- [Project state and compatibility](contracts/project-state.md).
+- [Pinned OCIO artifacts](../assets/ocio/README.md) and [ICC profiles](../assets/profiles/README.md).
 
-## Rationale and knowledge
+## Design, research and work
 
-- [Accepted decisions](decisions/README.md): why consequential choices were made; change only through explicit agreement.
-- [Research knowledge base](research/README.md): loosely structured diagnoses, experiments, references and evidence; observations/hypotheses are not automatic contracts.
-- [Research tools/cache policy](research/tools/README.md): authored sources preserved outside the cache, snapshot compatibility and local outputs.
-- [Retained evidence](research/evidence/README.md): small checkpoint logs, environment and reproduction limits.
-- [Historical plans/checkpoints](research/history/README.md): preserved original execution/product/feedback material, not current work queues.
+- [Architectural decisions](decisions/README.md): accepted choices and tradeoffs.
+- [Research knowledge base](research/README.md): findings, hypotheses, methods and limitations.
+- [Work packages](plans/README.md): current scope/acceptance and concise implementation closures.
 
-When behavior changes, update its contract and architecture if boundaries change. Record consequential rationale in an ADR and task progress in the active plan. Do not repeat status/test counts across every document. See `AGENTS.md` for checkpoint/handoff rules.
+## Archives and evidence
+
+- [Verification evidence](research/evidence/README.md): captured results and their environments, not current test-run claims.
+- [Historical records](research/history/README.md): superseded plans, execution/checkpoint records and archived tooling notes. These are provenance, not current build instructions or work queues.

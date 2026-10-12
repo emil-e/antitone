@@ -1,6 +1,6 @@
 # Work plans
 
-[The root roadmap](../../PLAN.md) owns current status/order. These files hold scope, acceptance and handoff details—not independent competing queues.
+[The roadmap](../../PLAN.md) records current priorities. These work packages describe scope, decisions, acceptance and remaining implementation; completed packages summarize results and verification limits.
 
 ## Active packages
 
@@ -10,6 +10,8 @@
 - [Later completion work](completion.md): post-implementation photographic acceptance, deferred dense guides, roll assistance, photographic controls/B&W, operation feedback, readability and release/export work. Alternate inversion bases are superseded, not an active implementation choice.
 
 ## Completed implementations
+
+- [Documentation audiences](completed/documentation-audiences.md): human-first guides/current closures separated from unchanged archival checkpoint records.
 
 - [Responsive rendering and thumbnail caching](completed/rendering-performance.md): shared GPU resources, pressure-responsive/persistent caches, bounded OpenMP/lazy diagnostics and combined geometry/scope integration; further acceptance and cache/fingerprint proposals are separate.
 - [Documentation structure](completed/documentation-structure.md): workflow/cache reorganization and deliberate historical/private-input boundaries.
@@ -21,4 +23,4 @@
 - [Responsive vectorscope and waveform](completed/vectorscope-and-waveform.md): output-native positive-only proxy analysis, composition integration and bounded GPU/UI lifecycle; remaining acceptance/full-source work is separate.
 - [Flip, crop and rotation](completed/flip-crop-rotate.md): shared geometry, constrained framing, coverage-aware measurements/reconstruction/exports and accepted crop UX; native-camera/flat-field integration delivered on main. Deferred acceptance/guides live in completion work.
 
-For a substantial selected task, use a short plan with goal, scope/non-goals, approved decisions/open questions, steps, acceptance, progress/verification and exact next action. Small local changes need no plan file. Archive completed implementations under `completed/`; retain verification limits without turning them into stale implementation queues. Mixed packages stay active only for their unfinished work. Do not create tickets, estimates or a file per tiny action, or duplicate the roadmap.
+Original execution/checkpoint narratives are preserved in [the implementation archive](../research/history/implementation/README.md); captured numerical logs are in [verification evidence](../research/evidence/README.md). Neither archive is a current implementation checklist.

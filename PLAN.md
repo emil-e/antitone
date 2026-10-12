@@ -4,7 +4,7 @@
 
 Native-camera inversion, geometry, responsive scopes and rendering/thumbnail performance are implemented and integrated on main; their implementation plans are closed. The user reports improved responsiveness from the earlier performance release build. Remaining photographic, real-use and release acceptance is separately scoped; no next implementation is selected. [Performance closure/checks](docs/plans/completed/rendering-performance.md), [active follow-up](docs/plans/completion.md).
 
-Start here, then use [the documentation map](docs/README.md), [architecture](docs/architecture.md) and [repository workflow](AGENTS.md). This is the current cross-package status/order record; details live in contracts, plans and evidence.
+For developer setup, use [the README](README.md); for implementation and design, use [the documentation map](docs/README.md) and [architecture](docs/architecture.md). This roadmap records current cross-package status/order; details live in contracts, plans and evidence.
 
 ## Implemented
 
@@ -36,4 +36,4 @@ Recovery/relink/undo is recorded but is not the user's highest priority.
 - Lightroom/Resolve interoperability remains deferred; no application automation. Exact historical dog Photo/session settings are unknown.
 - Native dependencies use checkout-local builds/rpaths; distribution and universal numerical-domain coverage are not established. Windows/HDR and custom RAW development are outside this pass.
 
-Current commands: [runbook](docs/build-and-probes.md). Old checkpoints are [history](docs/research/history/README.md), not active queues. Samples remain read-only. The requested performance wrap-up includes local main delivery; pushes and global installation are not authorized.
+Current checks: [development guide](docs/development.md) and [specialist verification](docs/build-and-probes.md). Earlier execution/checkpoint records are [archived](docs/research/history/README.md), not active work queues. Samples remain read-only.

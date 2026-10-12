@@ -1,6 +1,6 @@
 # Source inspection and interaction feedback
 
-Status: active follow-up, not an unfinished navigation/source-inspection implementation. The selected navigation, source-inspection and thumbnail slices are implemented on main; their historical checks are retained below and in [visual feedback](visual-feedback.md#progress--handoff). The [preview buffer-limit fix](completed/preview-stability.md) is complete. Remaining interaction/layout/colour reports still need selection, reproduction or design. [Roadmap](../../PLAN.md) owns order; this audit approves no new feature fixes.
+Status: active interaction/layout/colour follow-up. Navigation, source inspection, thumbnails and the [preview buffer-limit fix](completed/preview-stability.md) are implemented; [thumbnail follow-up](visual-feedback.md) tracks remaining strip defects. The [roadmap](../../PLAN.md) determines priority among the outstanding requests below.
 
 ## Goal and boundaries
 
@@ -21,7 +21,7 @@ Make developed-source inspection and Mac image navigation usable without changin
 
 ## Triaged interaction follow-up
 
-These are recorded requests, not an approved implementation sequence. Current behavior was inspected in `src/editor_navigation.rs`, `src/editor_files.rs`, `src/editor_thumbnails.rs`, `src/editor.rs` and `src/editor_controls.rs`; no fresh runtime verification was performed for this triage.
+These requests need focused reproduction or design before implementation. The cursor/New-tab observations below are based on inspection of `src/editor_navigation.rs`, `src/editor_files.rs`, `src/editor_thumbnails.rs`, `src/editor.rs` and `src/editor_controls.rs`, not a runtime acceptance exercise.
 
 ### Focused fixes and checks
 
@@ -56,13 +56,13 @@ Thumbnail defects/performance are tracked in [visual feedback](visual-feedback.m
 
 Likely files: `src/{editor,viewport,viewer,refinement,resample,editor_tests,editor_smoke}.rs`; `src/platform/host.rs` only for a demonstrated event translation issue. Numeric/processing policy changes require separate agreement and regression gates.
 
-## Progress / handoff
+## Implementation status
 
 Navigation/source inspection are implemented in `src/editor_navigation.rs`, `src/editor.rs` and `ProcessingParameters::source_inspection`. Ordinary scroll pans both axes, Ctrl/Cmd-wheel/native pinch use egui's zoom factor once, multitouch prefers its own center/translation rather than synthetic duplicates. Fit click selects physical 100% at the pointer; an explicit-zoom click returns to Fit; zoomed primary/middle/Space drag pans. `z` ignores text focus; picker primary interactions win and use matching resize/move/crosshair cursors. Picker drag state clears between gestures. No host/event translation or new toolbar row was needed.
 
-Historical navigation/source-inspection verification snapshot, before native-camera/geometry integration (not rerun for this plan audit): **73 focused tests passed** (59 library, 7 project, 3 film-project, 4 viewer), strict all-target Clippy, formatting and release editor build. Seven new egui-event navigation tests cover wheel/pinch/touch, click/drag, cursor/picker priority and `z` text focus. Source-inspection tests verify zero-default parameter bytes, post-matrix-only changes, range rejection, CPU/GPU working agreement at unchanged tolerances, zero diagnostic flags and unchanged persisted settings/pick commands. The real-source Save/Open smoke, now exercising +2 EV source inspection, passes **722 onscreen frames** on the unlocked M5 Pro; Fit/native/reopened refinement and exact saved state/WB/output remain valid. Actual physical trackpad feel and popup visual inspection were not externally driven; no universal-device/monitor acceptance claim. No fresh full export integration suite.
+Event tests cover wheel/pinch/touch, click/drag, picker/cursor priority and text-focus handling. Source-inspection checks cover zero-default state, post-matrix-only effects, range rejection, CPU/GPU agreement and unchanged persistent settings/pick commands. [Archived interaction checkpoints](../research/history/implementation/inspection-and-interaction.txt) preserve the original tests and real-source smoke results. Physical trackpad feel, popup appearance and universal device/monitor acceptance remain unverified; the navigation checkpoint did not rerun full export integration.
 
-Bounded thumbnails are implemented in the existing bottom strip; the user approved enlargement and requested adjustable size. Drag its top edge to resize (52…240 points, also window-limited); image display follows height, while source/GPU caches stay bounded. Remaining layout/colour investigations, physical interaction exercise and scopes remain open; no further slice is automatically authorized.
+Thumbnails use the existing resizable bottom strip (52…240 points, also window-limited), with current cache/pressure behavior in the [performance closure](completed/rendering-performance.md). Remaining layout/colour symptoms, physical interaction and photographic scope acceptance are separate from those implemented features.
 
 Next action: select one remaining interaction/UX slice and agree its scope before implementation. Camera/geometry photographic checks and dense guides are tracked in [completion work](completion.md#geometry), not reopened navigation work.
 

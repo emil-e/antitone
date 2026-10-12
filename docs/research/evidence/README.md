@@ -1,6 +1,6 @@
 # Selected verification evidence
 
-Compact text logs promoted from `.cache/probes` during the documentation reorganization. They retain their original contents/paths and are **captured checkpoint outcomes, not a fresh run or CI/device certification**. Reproduction writes new outputs to cache; do not overwrite archived evidence in place.
+Archived text logs of selected numerical and verification results. They retain their original contents/paths and are **captured checkpoint outcomes, not a fresh run or CI/device certification**. Original execution narratives are in [the implementation archive](../history/implementation/README.md); current reproduction commands are in [specialist verification](../../build-and-probes.md). Reproduction writes new outputs to cache, not over these archived records.
 
 ## Native-camera replacement checkpoint
 

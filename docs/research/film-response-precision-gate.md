@@ -2,6 +2,8 @@
 
 ## Status
 
+Historical AP0/model-2/3 response/source checkpoint. Its compatibility and source-space conclusions were superseded by the [native-camera replacement](../plans/completed/camera-inversion.md); current model-4 behavior and tolerances are in the [processing contract](../contracts/processing-model.md). The measurements below preserve their original scope, not current-model certification.
+
 The user approved the production integration plan, including a separate toe/shoulder section, logical section ordering and the tested signed continuation. The initial numerical gate led to the explicitly approved compact RGB16 source integration below. The scalar/state/GPU/control/export response integration is now complete for the tested domain. New grades explicitly use model 3; model-2 grades remain original. Physical-monitor acceptance and a universal domain proof remain open.
 
 **Rounding the converted AP0 source to one f32 loses needed near-Dmin differences. It does not follow that the GPU must store a wider source.** LibRaw's developed RGB16 contains all the source information. The user asked to retain those integer samples and perform accurate conversion on the GPU, then explicitly authorized an isolated confirmation. That compact-input prototype now passes the tested source/new-response gates: RGB16 stays at 8 bytes/pixel; the extra arithmetic precision exists only in shader temporaries and small matrix/calibration constants. This supersedes the proposed 48-byte AP0 source cache.
