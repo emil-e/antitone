@@ -1,0 +1,71 @@
+UI polish — workspace hierarchy and application preferences checkpoint
+
+Worktree: .worktrees/ui-polish; branch plan/ui-polish; preceding commit d1cd936.
+Environment: Apple M5 Pro / Metal, macOS 26.6.2; checkout-local Rust 1.99.0,
+Apple Clang, debug/test profiles. No downloads, global installs or sample edits.
+No macOS-14/other-hardware/physical-monitor/trackpad/VoiceOver certification.
+
+Commands from the worktree root:
+  CARGO_HOME="$PWD/.cache/cargo" CC=/usr/bin/clang CXX=/usr/bin/clang++ \
+    ./scripts/cargo.sh test --offline --features editor --lib editor::
+  CARGO_HOME="$PWD/.cache/cargo" CC=/usr/bin/clang CXX=/usr/bin/clang++ \
+    ./scripts/cargo.sh clippy --offline --features editor --lib --tests -- -D warnings
+  CARGO_HOME="$PWD/.cache/cargo" ./scripts/cargo.sh fmt --all -- --check
+  CARGO_HOME="$PWD/.cache/cargo" CC=/usr/bin/clang CXX=/usr/bin/clang++ \
+    ./scripts/cargo.sh build --offline --features editor --bin antitone
+
+Outcomes: 115 focused editor tests passed, 0 failed, 1 intentionally ignored
+real-RAW integration test, 46 non-editor tests filtered. Strict Clippy,
+formatting and debug build passed. Project/processing/output schemas,
+worker/resource bounds and numerical/crop tolerances were not changed.
+
+Coverage: Roll/Photo/Rendering navigation and selected/focus metadata;
+orientation/Composition in the inspector scroll area; normal/narrow grading
+and crop-transaction reachability; shared target selection/reset and draft
+guards; successful New from Photo/Rendering versus failed/cancelled/stale New;
+Open/import tab retention; symbolic scope-specific section preferences;
+fresh-context restore, project/dirty neutrality, atomic preference round-trip,
+missing/partial defaults and corrupt/future/invalid-file preservation;
+filmstrip drag preference and restoration after window constraints.
+
+Normal launch loads application JSON, not project fields, and the host saves
+changed preferences on event-loop exit. Tests use temporary stores; smoke
+launches never read/write the user's preferences. Normal-app manual relaunch
+and full native accessibility acceptance were not performed.
+
+Window smoke command (ANTITONE_SMOKE_SCOPES unset):
+  ANTITONE_SMOKE_CONTROLS=1 target/debug/antitone --smoke \
+    ../../samples/DSC04397.ARW 4000 5644 128 32 \
+    ../../samples/DSC04378.ARW 4000 2600 128 128 ../../samples/DSC04416.ARW
+
+Passed: app reported elapsed_seconds=38.10, submitted_frames=1722.
+Six holds: roll/photo/rendering at normal 1100x800 and narrow 800x600 logical
+window sizes, 315/270-point sidebar. Final six app-window-only captures were
+inspected: correct active tabs, readable target, separated scopes, no pinned
+Output, bounded inspector scrolling, final disabled-icon appearance. Visible
+vectorscopes do not establish combined waveform/both-target readback acceptance.
+Photographs are diagnostic/private, not user grades or authored evidence.
+Captures precede the final tiny-window filmstrip clamp and initial-RAW startup
+New flag. These do not change the captured normal/narrow smoke states; the
+final headless checks/build were rerun afterward. The startup flag was inspected,
+not exercised by a normal-app RAW launch.
+
+Initial six-hold attempt timed out because retaining four seconds per hold
+added eight scripted seconds to the existing 45-second deadline. Its Rendering
+captures also showed stale Photo frames under occlusion. These are not accepted
+captures. The corrected six holds use 2.5 seconds each within the original
+four-hold wait budget; Rendering uses the existing stages' focus request.
+The 45-second timeout and nonzero-visible-frame gates remain unchanged.
+No host occlusion workaround or numerical gate weakening was introduced.
+
+Private outputs remain ignored under .cache/probes/ui-polish/:
+  workspace-tests.txt, workspace-clippy.txt, workspace-build.txt;
+  workspace/controls-smoke.txt and first-attempt captures;
+  workspace-retry/controls-smoke.txt and six accepted-stage captures.
+The existing window-id helper and screencapture were used. The maintained
+research capture wrapper now recognizes the additional Rendering stages.
+
+Remaining: fresh crop/picker/other-state screenshots, physical focus/pointer/
+trackpad/VoiceOver, manual normal-app relaunch, optional combined scope-readback
+smoke, broader-device/monitor/photographic acceptance. Viewer bar/contextual
+overlay, feedback and native menus remain later, unselected slices.

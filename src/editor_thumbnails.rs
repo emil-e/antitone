@@ -319,12 +319,24 @@ impl Editor {
         let mut wanted = Vec::new();
         let mut visible = Vec::new();
         let mut select = None;
+        let height = self
+            .preferences
+            .filmstrip_height
+            .min(max_height)
+            .min(ui.available_height());
+        let panel_id = egui::Id::new("thumbnail-filmstrip");
+        if let Some(mut state) = egui::containers::panel::PanelState::load(ui.ctx(), panel_id) {
+            // Window constraints must not replace the user's preferred height.
+            state.outer_rect.min.y = state.outer_rect.max.y - height;
+            ui.ctx()
+                .data_mut(|data| data.insert_persisted(panel_id, state));
+        }
         let panel = egui::Panel::bottom("thumbnail-filmstrip")
             .resizable(true)
-            .default_size(140.)
+            .default_size(height)
             .min_size(52.)
             .max_size(max_height);
-        panel.show(ui, |ui| {
+        let strip = panel.show(ui, |ui| {
             ui.take_available_height();
             let image_height = (ui.available_height()-28.).max(20.);
             // Keep the visible page within cache capacity even when the strip is very short.
@@ -379,6 +391,9 @@ impl Editor {
                 }
             });
         });
+        if (strip.response.rect.height() - height).abs() > 0.5 {
+            self.preferences.filmstrip_height = strip.response.rect.height().clamp(52., 240.);
+        }
         if let Some(index) = select {
             let id = self.document.project.order[index];
             let path = self

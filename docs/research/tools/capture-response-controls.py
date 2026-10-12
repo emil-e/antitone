@@ -11,7 +11,7 @@ with log.open('w') as out:
     app = subprocess.Popen(args, stdout=out, stderr=subprocess.STDOUT, env=env)
     while app.poll() is None:
         text = log.read_text()
-        for stage in ['roll-normal', 'photo-normal', 'roll-narrow', 'photo-narrow']:
+        for stage in ['roll-normal', 'photo-normal', 'rendering-normal', 'roll-narrow', 'photo-narrow', 'rendering-narrow']:
             if f'controls_layout stage={stage}' in text and stage not in captured:
                 window = subprocess.run(['.cache/probes/controls-window-id', str(app.pid)], capture_output=True, text=True)
                 if window.returncode == 0:

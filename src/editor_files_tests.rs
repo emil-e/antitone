@@ -104,17 +104,11 @@ fn command_save_commits_pending_numeric_text_before_snapshot() {
         .unwrap();
     editor.tab = 1;
     let context = egui::Context::default();
-    let initial = ui_frame(&mut editor, &context, vec![]);
-    let output_top = initial
-        .iter()
-        .find(|(label, _)| label == "Output")
-        .unwrap()
-        .1
-        .top();
+    ui_frame(&mut editor, &context, vec![]);
     for frame in 0..60 {
         let events = if frame == 0 {
             vec![
-                egui::Event::PointerMoved(egui::pos2(950., output_top - 40.)),
+                egui::Event::PointerMoved(egui::pos2(950., 550.)),
                 egui::Event::MouseWheel {
                     unit: egui::MouseWheelUnit::Point,
                     phase: egui::TouchPhase::Move,

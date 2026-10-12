@@ -2,11 +2,11 @@
 
 ## Purpose and availability
 
-Scopes judge the rendered positive photograph, not scene-linear AP1, film calibration, physical luminance or broadcast compliance. One collapsible slot above Roll/Photo controls switches between waveform and vectorscope, initially vectorscope at 1×. Output stays pinned; showing/switching scopes changes grading scroll space, not the viewer canvas. RGB/luma waveform modes share the same slot height. Vectorscope magnification is 1×/2×/4×/8× with a 1× reset.
+Scopes judge the rendered positive photograph, not scene-linear AP1, film calibration, physical luminance or broadcast compliance. One shaded inspection region above Roll/Photo/Rendering switches between waveform and vectorscope, initially vectorscope at 1×. Showing/switching scopes changes inspector scroll space, not the viewer canvas; Target lives in Rendering, not a pinned Output card. RGB/luma waveform modes share the same slot height. Vectorscope magnification is 1×/2×/4×/8× with a 1× reset.
 
-Plot height defaults to 85% of sidebar content width. A visible divider below the caption resizes it; double-click resets the default. The chosen height/width ratio is transient and shared across plots, so widening the sidebar also enlarges a manually sized scope. Short windows cap plot height while reserving the pinned Scan orientation/Composition panel and grading scroll space; the plot minimum is 96 points. Shrink/collapse scopes when more grading space is needed.
+Plot height defaults to 85% of sidebar content width. A visible divider below the caption resizes it; double-click resets the default. Visibility and the chosen height/width ratio persist as application preferences, separate from project state. The ratio is shared across plots, so widening the sidebar also enlarges a manually sized scope. Short windows cap plot height without overwriting the preference, while reserving the tab row and usable inspector scroll space; the plot minimum is 96 points. Shrink/collapse scopes when more grading space is needed.
 
-Scopes are suspended for developed-source view, missing calibration/image, temporary reference/flat-field inspection, unaccepted crop drafts and busy image/document operations. Source inspection EV never enters scope data. Visibility, plot selection, magnification, GPU resources and diagnostics are transient: no project dirty/schema/export change.
+Scopes are suspended for developed-source view, missing calibration/image, temporary reference/flat-field inspection, unaccepted crop drafts and busy image/document operations. Source inspection EV never enters scope data. Plot selection, magnification, GPU resources and diagnostics remain transient. Visibility/sizing preferences cause no project dirty/schema/export change. [UI preference storage](editor-controls.md#shared-visual-language).
 
 ## Colour convention
 

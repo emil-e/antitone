@@ -10,6 +10,60 @@ use egui::{Color32, Response, Ui};
 use glam::{DMat2, DMat3, DVec2, DVec3};
 use std::ops::RangeInclusive;
 
+#[derive(Clone, Default)]
+struct SectionExpansion(std::collections::BTreeMap<String, bool>);
+
+pub fn restore_expansion(ctx: &egui::Context, sections: std::collections::BTreeMap<String, bool>) {
+    ctx.data_mut(|data| {
+        data.insert_temp(
+            egui::Id::new("inspector-expansion"),
+            SectionExpansion(sections),
+        )
+    });
+}
+
+pub fn collect_expansion(ctx: &egui::Context) -> std::collections::BTreeMap<String, bool> {
+    ctx.data_mut(|data| data.remove_temp::<SectionExpansion>(egui::Id::new("inspector-expansion")))
+        .unwrap_or_default()
+        .0
+}
+
+pub fn stage_tabs(ui: &mut Ui, selected: &mut usize) {
+    // One allocation avoids fractional button widths growing the sidebar and changing Fit.
+    let (bar, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 28.), egui::Sense::hover());
+    let width = (bar.width() - 24.) / 3.;
+    for (index, (label, help)) in [
+        ("Roll", "Shared scanning setup, calibration and negative inversion."),
+        ("Photo", "Composition and photographic grade for this image."),
+        ("Rendering", "Shared rendered appearance: matching preview, thumbnails, scopes and TIFF target; not the monitor profile. EXR bypasses it."),
+    ].into_iter().enumerate() {
+        let rect = egui::Rect::from_min_size(bar.min + egui::vec2(index as f32 * (width + 12.), 0.), egui::vec2(width, bar.height()));
+        if index != 0 {
+            Icon::ChevronRight.paint(ui, egui::Rect::from_center_size(rect.left_center() - egui::vec2(6., 0.), egui::vec2(10., 10.)), ui.visuals().widgets.noninteractive.fg_stroke);
+        }
+        let response = ui.interact(rect, ui.make_persistent_id(("inspector-tab", index)), egui::Sense::click());
+        if response.clicked() { *selected = index; }
+        let active = *selected == index;
+        let visuals = ui.style().interact(&response);
+        if response.hovered() || response.has_focus() || response.is_pointer_button_down_on() {
+            ui.painter().rect(rect, 4., visuals.weak_bg_fill, visuals.bg_stroke, egui::StrokeKind::Inside);
+        }
+        let color = if active { ui.visuals().strong_text_color() } else { visuals.fg_stroke.color };
+        let text = ui.painter().layout_no_wrap(label.into(), egui::TextStyle::Button.resolve(ui.style()), color);
+        ui.painter().galley(rect.center() - text.size() * 0.5, text, color);
+        response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, response.enabled(), active, label));
+        ui.ctx().accesskit_node_builder(response.id, |node| {
+            node.set_role(egui::accesskit::Role::Tab);
+            node.set_selected(active);
+        });
+        if active {
+            ui.painter().line_segment([rect.left_bottom(), rect.right_bottom()], egui::Stroke::new(2., ui.visuals().selection.stroke.color));
+        }
+        response.on_hover_text(help);
+    }
+}
+
 pub struct SectionHeader<'a> {
     pub summary: &'a str,
     pub changed: bool,
@@ -40,6 +94,14 @@ pub fn section<R>(
             state_id,
             default_open.unwrap_or(true),
         );
+        if default_open.is_some()
+            && let Some(open) = ui.ctx().data_mut(|data| {
+                data.get_temp::<SectionExpansion>(egui::Id::new("inspector-expansion"))
+                    .and_then(|sections| sections.0.get(id).copied())
+            })
+        {
+            state.set_open(open);
+        }
         let open = default_open.is_none() || state.is_open();
         let mut reset = false;
         let header = icons::row(ui, |ui| {
@@ -125,6 +187,16 @@ pub fn section<R>(
             state.toggle(ui);
         }
         state.store(ui.ctx());
+        if default_open.is_some() {
+            ui.ctx().data_mut(|data| {
+                let key = egui::Id::new("inspector-expansion");
+                if data.get_temp::<SectionExpansion>(key).is_some() {
+                    data.get_temp_mut_or_default::<SectionExpansion>(key)
+                        .0
+                        .insert(id.into(), state.is_open());
+                }
+            });
+        }
         let open = default_open.is_none() || state.is_open();
         if default_open.is_some() {
             ui.ctx()
@@ -375,7 +447,7 @@ pub fn color(ui: &mut Ui, kind: ColorControl, value: &mut Balance, can_pick: boo
         }
         ColorControl::WhiteBalance => section(
             ui,
-            "White balance",
+            "photo-white-balance",
             "White balance",
             SectionHeader {
                 summary: &format!("Warmth {:+.2} · Tint {:+.2}", value.warmth, value.tint),

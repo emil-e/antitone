@@ -11,7 +11,7 @@ pub(super) struct Scopes {
     pub(super) vector: bool,
     pub(super) waveform: Plot,
     pub(super) amplification: u32,
-    height_ratio: f32,
+    pub(super) height_ratio: f32,
     pub(super) gpu: Option<Arc<GpuScopes>>,
     error: Option<String>,
 }
@@ -91,7 +91,7 @@ impl Scopes {
             }
         });
         let width = ui.available_width();
-        // The caller also reserves its pinned orientation/composition controls.
+        // Keep a usable inspector scroll region below the independent scope chrome.
         let max_height = (ui.available_height() - reserved_height).max(96.);
         let height = (width * self.height_ratio).clamp(96., max_height);
         let (plot, response) =
@@ -153,13 +153,11 @@ impl Scopes {
 
 impl Editor {
     pub(super) fn scope_panel(&mut self, ui: &mut egui::Ui) -> Option<Slot> {
-        let rows = if self.tab == 1 && self.crop_edit.is_some() {
-            10.
-        } else {
-            6.
-        };
-        let geometry_height = rows * (ui.spacing().interact_size.y + ui.spacing().item_spacing.y);
-        self.scopes.panel(ui, self.target, 120. + geometry_height)
+        egui::Frame::new()
+            .fill(ui.visuals().faint_bg_color)
+            .inner_margin(8)
+            .show(ui, |ui| self.scopes.panel(ui, self.target, 180.))
+            .inner
     }
 
     pub(super) fn scope_input(

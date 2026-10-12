@@ -7,7 +7,7 @@ Start with [the roadmap](../PLAN.md) and [repository workflow](../AGENTS.md). Re
 - [Architecture](architecture.md): implemented modules, colour/data flow, ownership, workers, GPU resources and gaps.
 - [Build and probes](build-and-probes.md): current checkout-local commands and verification boundaries, not a rolling list of test counts.
 - [Work plans](plans/README.md): focused scopes/acceptance/handoff; root roadmap owns status/order.
-- [UI polish package](plans/ui-polish.md): agreed workspace/UX direction, audit and wireframe; first control-primitives slice is implemented, with remaining slices and visual limits explicit.
+- [UI polish package](plans/ui-polish.md): agreed workspace/UX direction, audit and wireframe; shared controls, stage tabs/layout and application preferences are implemented, with remaining slices and acceptance limits explicit.
 
 ## Current contracts
 

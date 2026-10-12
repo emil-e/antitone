@@ -71,7 +71,7 @@ impl Editor {
         };
         controls::section(
             ui,
-            "flat-field",
+            "roll-flat-field",
             "Flat-field correction",
             controls::SectionHeader {
                 summary,

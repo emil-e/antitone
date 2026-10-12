@@ -28,6 +28,8 @@ mod controls;
 mod document;
 #[path = "editor_icons.rs"]
 mod icons;
+#[path = "editor_preferences.rs"]
+mod preferences;
 use crate::project::{Development, Source, SourceId};
 use document::Document;
 #[path = "editor_files.rs"]
@@ -590,6 +592,9 @@ pub struct Editor {
     region: Option<Coverage>,
     pick_drag: Option<PickDrag>,
     tab: usize,
+    preferences: preferences::Preferences,
+    preference_store: Option<preferences::Store>,
+    new_project_pending: bool,
     document: Document,
     current_source: Option<SourceId>,
     persistent_load: bool,
@@ -625,6 +630,7 @@ impl Editor {
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("arw"))
             {
                 editor.add_raws(vec![path]);
+                editor.new_project_pending = editor.document_pending.is_some();
             } else {
                 editor.start_document(DocumentWork::Open(path));
             }
@@ -673,6 +679,9 @@ impl Editor {
             region: None,
             pick_drag: None,
             tab: 0,
+            preferences: preferences::Preferences::default(),
+            preference_store: None,
+            new_project_pending: false,
             document: Document::default(),
             current_source: None,
             persistent_load: true,
@@ -688,6 +697,25 @@ impl Editor {
             correction: None,
             flat_edit: None,
         }
+    }
+    pub fn restore_ui_preferences(&mut self) {
+        match preferences::Store::open_default() {
+            Ok((store, preferences)) => {
+                self.apply_preferences(preferences);
+                self.preference_store = Some(store);
+                if self.document_pending.is_none() || self.new_project_pending {
+                    self.preferences
+                        .sections
+                        .insert("roll-calibration".into(), true);
+                }
+            }
+            Err(error) => eprintln!("UI preferences not loaded (file left unchanged): {error}"),
+        }
+    }
+    fn apply_preferences(&mut self, preferences: preferences::Preferences) {
+        self.scopes.visible = preferences.scopes_visible;
+        self.scopes.height_ratio = preferences.scope_height_ratio;
+        self.preferences = preferences;
     }
     fn calibration(&self) -> Option<Calibration> {
         Calibration {
@@ -731,6 +759,7 @@ impl Editor {
         self.generation
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.document_pending = Some(id);
+        self.new_project_pending = matches!(work, DocumentWork::New);
         self.busy = true;
         self.status = "Preparing project…".into();
         if self
@@ -739,6 +768,7 @@ impl Editor {
             .is_err()
         {
             self.document_pending = None;
+            self.new_project_pending = false;
             self.busy = false;
             self.status = "RAW worker stopped".into();
         }
@@ -947,6 +977,7 @@ impl Editor {
                     self.finish_pick();
                 }
                 Message::Prepared(id, result) if self.document_pending == Some(id) => {
+                    let new_project = std::mem::take(&mut self.new_project_pending);
                     self.document_pending = None;
                     self.busy = false;
                     match result {
@@ -954,6 +985,12 @@ impl Editor {
                             let flat_context = self.flat_edit.take();
                             self.correction = prepared.correction;
                             self.document = prepared.document;
+                            if new_project {
+                                self.tab = 0;
+                                self.preferences
+                                    .sections
+                                    .insert("roll-calibration".into(), true);
+                            }
                             self.id = id;
                             self.current_source = prepared.selected;
                             self.selected = prepared
@@ -1240,57 +1277,10 @@ impl Editor {
         use controls::{ColorControl, Parameter, SectionHeader};
         use icons::Icon;
         let previous_orientation = (self.roll_orientation, self.photo_orientation);
-        // Reserve four rows plus section chrome before the panel has a cached size.
-        let output_height =
-            4. * ui.spacing().interact_size.y + 3. * ui.spacing().item_spacing.y + 36.;
-        egui::Panel::bottom("control-output")
-            .default_size(output_height)
-            .resizable(false)
-            .frame(egui::Frame::NONE)
-            .show(ui, |ui| {
-                if self.crop_edit.is_some() || self.flat_edit.is_some() { ui.disable(); }
-                let (_, reset) = controls::section(
-                    ui, "output", "Output", SectionHeader { summary: "", changed: self.target != OutputTarget::DisplayP3, reset: Some(self.target != OutputTarget::DisplayP3), default_open: None },
-                    |ui| {
-                        ui.label("Preview / TIFF").on_hover_text(
-                            "100-nit ACES 2 SDR rendering with matching TIFF encoding/ICC. Preview is converted to tagged extended sRGB for OS monitor management. EXR remains scene-linear AP0.",
-                        );
-                        ui.radio_value(&mut self.target, OutputTarget::DisplayP3, "Display P3 / D65");
-                        ui.radio_value(&mut self.target, OutputTarget::Srgb, "sRGB / D65");
-                    },
-                );
-                if reset {
-                    self.target = OutputTarget::DisplayP3;
-                }
-            });
+        controls::restore_expansion(ui.ctx(), self.preferences.sections.clone());
         let scope_slot = self.scope_panel(ui);
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.tab, 0, "Roll");
-            ui.selectable_value(&mut self.tab, 1, "Photo");
-        });
-        if self.tab == 1 {
-            self.composition_controls(ui);
-        } else {
-            let geometry_editable = !self.busy
-                && self.crop_edit.is_none()
-                && self.ready.is_some()
-                && self.pick.is_none();
-            ui.push_id("roll", |ui| {
-                ui.add_enabled_ui(geometry_editable, |ui| {
-                    let changed = !self.roll_orientation.is_identity();
-                    let (_, reset) = controls::section(ui, "orientation", "Scan orientation", SectionHeader { summary: "Shared scanning baseline", changed, reset: Some(changed), default_open: Some(false) }, |ui| {
-                        ui.horizontal(|ui| {
-                            if icons::button(ui, Icon::TurnLeft, true, "Turn left", "Turn the shared scan baseline 90° left.").clicked() { self.roll_orientation.turn_counterclockwise(); }
-                            if icons::button(ui, Icon::TurnRight, true, "Turn right", "Turn the shared scan baseline 90° right.").clicked() { self.roll_orientation.turn_clockwise(); }
-                            if icons::button(ui, Icon::FlipHorizontal, true, "Flip horizontal", "Flip the shared scan baseline left/right; photo exceptions apply afterward.").clicked() { self.roll_orientation.horizontal ^= true; }
-                            if icons::button(ui, Icon::FlipVertical, true, "Flip vertical", "Flip the shared scan baseline top/bottom; photo exceptions apply afterward.").clicked() { self.roll_orientation.vertical ^= true; }
-                        });
-                    });
-                    if reset { self.roll_orientation = RollOrientation::default(); }
-                });
-            });
-        }
         ui.add_space(8.);
+        controls::stage_tabs(ui, &mut self.tab);
         let editable = !self.busy
             && self.crop_edit.is_none()
             && self.flat_edit.is_none()
@@ -1300,9 +1290,25 @@ impl Editor {
             && self.flat_edit.is_none()
             && self.ready.is_some();
         let mut start_pick = None;
-        egui::ScrollArea::vertical().show(ui, |ui| {
+        egui::ScrollArea::vertical().id_salt(("inspector", self.tab)).show(ui, |ui| {
             if self.tab == 0 {
+                let geometry_editable = !self.busy
+                    && self.crop_edit.is_none()
+                    && self.ready.is_some()
+                    && self.pick.is_none();
                 ui.push_id("roll", |ui| {
+                    ui.add_enabled_ui(geometry_editable, |ui| {
+                        let changed = !self.roll_orientation.is_identity();
+                        let (_, reset) = controls::section(ui, "roll-orientation", "Scan orientation", SectionHeader { summary: "Shared scanning baseline", changed, reset: Some(changed), default_open: Some(false) }, |ui| {
+                            ui.horizontal(|ui| {
+                                if icons::button(ui, Icon::TurnLeft, true, "Turn left", "Turn the shared scan baseline 90° left.").clicked() { self.roll_orientation.turn_counterclockwise(); }
+                                if icons::button(ui, Icon::TurnRight, true, "Turn right", "Turn the shared scan baseline 90° right.").clicked() { self.roll_orientation.turn_clockwise(); }
+                                if icons::button(ui, Icon::FlipHorizontal, true, "Flip horizontal", "Flip the shared scan baseline left/right; photo exceptions apply afterward.").clicked() { self.roll_orientation.horizontal ^= true; }
+                                if icons::button(ui, Icon::FlipVertical, true, "Flip vertical", "Flip the shared scan baseline top/bottom; photo exceptions apply afterward.").clicked() { self.roll_orientation.vertical ^= true; }
+                            });
+                        });
+                        if reset { self.roll_orientation = RollOrientation::default(); }
+                    });
                     self.flat_controls(ui);
                     let calibration_summary = match (self.dmin.is_some(), self.dmax.is_some()) {
                         (true, true) => "Dmin + Dmax measured",
@@ -1310,7 +1316,7 @@ impl Editor {
                         (false, true) => "Dmin not measured",
                         (true, false) => "Dmax not measured",
                     };
-                    controls::section(ui, "calibration", "Calibration", SectionHeader { summary: calibration_summary, changed: false, reset: None, default_open: Some(true) }, |ui| {
+                    controls::section(ui, "roll-calibration", "Calibration", SectionHeader { summary: calibration_summary, changed: false, reset: None, default_open: Some(true) }, |ui| {
                         if controls::calibration(
                             ui, "dmin", "Dmin (film base)", self.dmin, can_pick,
                             "Minimum-density film base. Linear native-camera RGB, not optical-density numbers.",
@@ -1328,7 +1334,7 @@ impl Editor {
                         let inversion_changed = self.roll.gamma != crate::processing::DEFAULT_GAMMA
                             || self.roll.balance != Balance::default();
                         let (_, reset) = controls::section(
-                            ui, "gamma-balance", "Gamma & balance",
+                            ui, "roll-gamma-balance", "Gamma & balance",
                             SectionHeader {
                                 summary: &format!("Gamma {:.2} · Balance {}", self.roll.gamma, if self.roll.balance == Balance::default() { "neutral" } else { "adjusted" }),
                                 changed: inversion_changed, reset: Some(inversion_changed), default_open: Some(true),
@@ -1351,7 +1357,7 @@ impl Editor {
                             crate::processing::Response::Film { toe, shoulder } => format!("Toe {toe:.2} · Shoulder {shoulder:.4}"),
                         };
                         let (_, reset) = controls::section(
-                            ui, "response", "Toe & shoulder", SectionHeader {
+                            ui, "roll-response", "Toe & shoulder", SectionHeader {
                                 summary: &response_summary,
                                 changed: self.roll.response != crate::processing::Response::film(),
                                 reset: Some(!self.roll.response.is_original() && self.roll.response != crate::processing::Response::film()),
@@ -1379,7 +1385,7 @@ impl Editor {
                         );
                         if reset { self.roll.response = crate::processing::Response::film(); }
                         let (_, reset) = controls::section(
-                            ui, "exposure", "Exposure", SectionHeader { summary: &format!("{:+.2} EV", self.roll.exposure), changed: self.roll.exposure != 0., reset: Some(self.roll.exposure != 0.), default_open: Some(false) },
+                            ui, "roll-exposure", "Exposure", SectionHeader { summary: &format!("{:+.2} EV", self.roll.exposure), changed: self.roll.exposure != 0., reset: Some(self.roll.exposure != 0.), default_open: Some(false) },
                             |ui| {
                                 controls::parameter(ui, Parameter::Exposure, &mut self.roll.exposure);
                             },
@@ -1389,7 +1395,8 @@ impl Editor {
                         }
                     });
                 });
-            } else {
+            } else if self.tab == 1 {
+                self.composition_controls(ui);
                 ui.push_id("photo", |ui| {
                     ui.add_enabled_ui(editable, |ui| {
                         if controls::color(
@@ -1398,7 +1405,7 @@ impl Editor {
                             start_pick = Some(Pick::Wb);
                         }
                         let (_, reset) = controls::section(
-                            ui, "exposure", "Exposure", SectionHeader { summary: &format!("{:+.2} EV", self.photo.exposure), changed: self.photo.exposure != 0., reset: Some(self.photo.exposure != 0.), default_open: Some(true) },
+                            ui, "photo-exposure", "Exposure", SectionHeader { summary: &format!("{:+.2} EV", self.photo.exposure), changed: self.photo.exposure != 0., reset: Some(self.photo.exposure != 0.), default_open: Some(true) },
                             |ui| {
                                 controls::parameter(ui, Parameter::Exposure, &mut self.photo.exposure);
                             },
@@ -1408,8 +1415,34 @@ impl Editor {
                         }
                     });
                 });
+            } else {
+                ui.add_enabled_ui(self.crop_edit.is_none() && self.flat_edit.is_none(), |ui| {
+                    let changed = self.target != OutputTarget::DisplayP3;
+                    let (_, reset) = controls::section(ui, "rendering-target", "Target", SectionHeader {
+                        summary: if self.target == OutputTarget::DisplayP3 { "Display P3 · 100 nit" } else { "sRGB · 100 nit" },
+                        changed, reset: Some(changed), default_open: Some(true),
+                    }, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("Target");
+                            egui::ComboBox::from_id_salt("rendering-target")
+                                .width(150.)
+                                .selected_text(if self.target == OutputTarget::DisplayP3 { "Display P3" } else { "sRGB" })
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut self.target, OutputTarget::DisplayP3, "Display P3");
+                                    ui.selectable_value(&mut self.target, OutputTarget::Srgb, "sRGB");
+                                });
+                        });
+                        ui.small("Preview + TIFF · 100 nit").on_hover_text(
+                            "Shared ACES 2 SDR target for preview, thumbnails, scopes and TIFF encoding/ICC. Not the monitor profile: presentation is tagged extended sRGB for OS monitor management. EXR remains scene-linear AP0 and bypasses this target.",
+                        );
+                    });
+                    if reset { self.target = OutputTarget::DisplayP3; }
+                });
             }
         });
+        self.preferences.sections = controls::collect_expansion(ui.ctx());
+        self.preferences.scopes_visible = self.scopes.visible;
+        self.preferences.scope_height_ratio = self.scopes.height_ratio;
         if previous_orientation != (self.roll_orientation, self.photo_orientation) {
             self.viewport.fit();
         }
@@ -1447,6 +1480,13 @@ impl Editor {
 }
 
 impl host::App for Editor {
+    fn on_exit(&mut self) {
+        if let Some(store) = &mut self.preference_store
+            && let Err(error) = store.save(&self.preferences)
+        {
+            eprintln!("UI preferences not saved: {error}");
+        }
+    }
     fn ui(&mut self, ui: &mut egui::Ui) {
         if !self.started {
             self.started = true;
@@ -1733,6 +1773,8 @@ impl host::App for Editor {
                     });
                 }
                 ui.label("?").on_hover_text("Scroll: pan. Pinch or Ctrl/Cmd-scroll: zoom. Click: native/Fit. Drag when zoomed, middle/space drag: pan. Z: Fit.");
+                ui.small(if self.target == OutputTarget::DisplayP3 { "Display P3" } else { "sRGB" })
+                    .on_hover_text("Shared 100-nit preview + TIFF rendering target, not the monitor profile. Change it in Rendering; EXR bypasses it.");
             });
             let available = (ui.available_rect_before_wrap().intersect(ui.clip_rect()).size()
                 - egui::vec2(0., if self.pick.is_some() { 36. } else { 0. }))

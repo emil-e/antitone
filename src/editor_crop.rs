@@ -148,7 +148,7 @@ impl Editor {
             ui.add_enabled_ui(editable, |ui| {
                 (_, reset) = controls::section(
                     ui,
-                    "composition",
+                    "photo-composition",
                     "Composition",
                     controls::SectionHeader {
                         summary: if self.crop.is_some() {
@@ -257,7 +257,7 @@ impl Editor {
         let mut reset = false;
         controls::section(
             ui,
-            "composition",
+            "photo-composition",
             "Composition",
             controls::SectionHeader {
                 summary: "",

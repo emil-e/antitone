@@ -43,7 +43,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         let initial = arguments.first().map(std::path::PathBuf::from);
         host::run("Antitone", move |device, queue| {
-            Ok(Editor::new(device, queue, initial))
+            let mut editor = Editor::new(device, queue, initial);
+            editor.restore_ui_preferences();
+            Ok(editor)
         })?;
     }
     Ok(())

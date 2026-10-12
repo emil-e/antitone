@@ -2,9 +2,11 @@
 
 Compact text logs promoted from `.cache/probes` during the documentation reorganization. They retain their original contents/paths and are **captured checkpoint outcomes, not a fresh run or CI/device certification**. Reproduction writes new outputs to cache; do not overwrite archived evidence in place.
 
-## UI-polish control-primitives checkpoint
+## UI-polish checkpoints
 
 - [Shared icons and collapsible sections](ui-polish-controls.txt): focused editor checks, debug build, controls-only real-window smoke and partial capture; remaining visual/physical acceptance and the occluded scope-wait attempt are explicit. [Active package](../../plans/ui-polish.md#slice-1-checkpoint).
+
+- [Workspace hierarchy and UI preferences](ui-polish-workspace.txt): three-tab/control reachability, New behavior, separate preference storage, six-hold real-window smoke and captures. [Active checkpoint/limits](../../plans/ui-polish.md#slice-2-checkpoint).
 
 ## Native-camera replacement checkpoint
 

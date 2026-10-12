@@ -1,6 +1,6 @@
 # UI polish and interaction language
 
-Status: **slice 1 implemented; visual acceptance partial**. The user agreed the UX direction/product choices and authorized the first slice: shared icons, collapsible sections and flatter control hierarchy. Remaining workspace/feedback/native-shell slices are not implemented. Exact visual details remain subject to validation; first-slice authorization is not authorization to execute the entire package.
+Status: **slices 1–2 implemented; acceptance partial**. The user agreed the UX direction/product choices, authorized the shared-control slice, then requested its commit and continuation into workspace hierarchy/application preferences. Slice 1 is committed as `d1cd936`; the user visually accepted slice 2 and requested its commit. Slice 3 (viewer/tools) is now authorized, not implemented. Feedback/native-shell slices are not implemented or selected. Exact visual details remain subject to validation; authorization does not cover the entire package.
 
 Worktree: `.worktrees/ui-polish`, branch `plan/ui-polish`, baseline `0beee3e`. [Audit and sources](../research/ui-polish-audit.md). [Roadmap](../../PLAN.md) owns cross-package priority.
 
@@ -38,7 +38,7 @@ window title: project name + unsaved indicator
 
 - The bottom viewer bar belongs to the **viewer width**, immediately above the filmstrip. It is not the global status bar and does not extend under the inspector.
 - Its height is fixed across positive/source view, pick/crop entry, loading and errors. Moving existing rows will change the normal Fit canvas once; temporary tool entry must not change it again.
-- Scopes stay in the existing right sidebar, in a distinct inspection region with its own header/background, controls and resize boundary. No new floating/dockable windows in this pass.
+- Scopes stay in the existing right sidebar, in a distinct inspection region with its own header/background, controls and resize boundary. No new floating/dockable windows in this pass. Post-slice-2 feedback explicitly requests collapsible/hideable scopes: the existing checkbox already hides the plot and persists visibility; refine this into an obvious disclosure-style region header in slice 6. Keep reopening accessible and retain the preferred size; collapsing must not alter grades or viewer geometry.
 - The inspector has one stable tab row and one scroll region. Remove the always-pinned Output card and avoid oversized pinned orientation/crop cards above scrollable edits.
 - Persistent panel resizing may intentionally change available space. Transient text, previews, errors, progress and toolbars must not.
 - On macOS, native menus replace the in-window File/Export row once integration is accepted. Until then retain that row, rather than hiding commands prematurely. Remove repeated app branding from the content header; retain document identity/dirty state in a useful title or compact document header.
@@ -69,7 +69,7 @@ Section headers have a disclosure chevron, a visible title and a trailing scoped
 
 Allow multiple sections open; do not automatically close another section. Remember section expansion, scope visibility/size and filmstrip height across application launches as application preferences, not project fields. They must not dirty a project or alter processing. Every successfully created new project starts on **Roll**, regardless of the previous tab or restored UI preferences; do not reset the tab merely on photo switching/import. Open-tab behavior otherwise retains existing semantics. Inspection EV, viewport and tool drafts are not made durable by this preference decision.
 
-Proposed first-run defaults: Calibration and Gamma & balance open on Roll; Scan orientation, flat-field, Toe & shoulder and shared Exposure collapsed. Composition, White balance and Exposure open on Photo. Rendering's Target open. Missing calibration opens Calibration for a new project, not on every repaint. Collapse preferences must not affect orientation availability before calibration.
+Implemented first-run defaults: Calibration and Gamma & balance open on Roll; Scan orientation, flat-field, Toe & shoulder and shared Exposure collapsed. Composition, White balance and Exposure open on Photo. Rendering's Target open. Missing calibration opens Calibration for a new project, not on every repaint. Collapse preferences must not affect orientation availability before calibration.
 
 Keep stable parameter names, values, units, numeric entry and slider semantics. Keep existing normal/fine steps; do not change wheel sensitivity during this layout pass. Section reset, parameter reset, crop-only reset and orientation reset keep their existing distinct scopes/defaults. Generic “Reset all” is not introduced.
 
@@ -163,7 +163,7 @@ Use user-facing picker names instead of Rust debug enum labels (`Wb`, `Flat`), c
 
 ## Implementation slices and acceptance
 
-Slice 1 was selected/authorized and is recorded in the checkpoint below. Remaining priorities are proposed, not approval to execute the whole package.
+Slices 1–2 were implemented and slice 3 is now selected/authorized; checkpoints are below. Remaining priorities are proposed, not approval to execute the whole package.
 
 | Slice | Focus / likely files | Acceptance |
 | --- | --- | --- |
@@ -200,7 +200,7 @@ The user endorsed the overall workspace/interaction direction and explicitly con
 2. Adjusted sections remain collapsed with a non-default marker and concise summary; do not automatically open them.
 3. Native integration concerns the **menu bar only**, not context menus or inspector dropdowns. Future Windows/Linux support remains separately scoped.
 
-Icon artwork, spacing, first-run section defaults and compact-overlay details are implementation choices to validate visually. The first slice was explicitly selected/authorized and is recorded below; select/authorize the next slice before expanding application-code changes. Update `docs/contracts/editor-controls.md` (or a linked UX contract if it becomes too large) as each slice changes implemented behavior; keep accepted design intent here until then so current layout contracts aren't mistaken for delivered polish.
+Icon artwork, spacing, first-run section defaults and compact-overlay details are implementation choices to validate visually. The first two slices were explicitly selected/authorized and are recorded below; the user has now authorized continuation into slice 3. Later slices still require selection before expanding application-code changes. Update `docs/contracts/editor-controls.md` (or a linked UX contract if it becomes too large) as each slice changes implemented behavior; keep accepted design intent here until then so current layout contracts aren't mistaken for delivered polish.
 
 ## Progress / handoff
 
@@ -225,4 +225,28 @@ The controls-only real-source/window smoke passed its unchanged nonzero-visible-
 
 The earlier optional scopes-readback smoke was stopped after 120 seconds under occlusion, before layout holds. Its unmodified wait can return before requesting another repaint while no scope GPU callback is submitted; the controls-only retry omits that optional wait, not the visible-frame gate. No host/smoke workaround was committed. Combined scope/window acceptance, full Photo/narrow/crop screenshots and physical keyboard/pointer/VoiceOver review remain open.
 
-Next action: select/authorize **slice 2 — workspace hierarchy and application UI preferences**, while retaining the outstanding visual checks above. No commit/push or main-worktree edits were made.
+Slice 1 was subsequently committed as `d1cd936` at the user's request; the user then authorized slice 2. The snapshot above remains historical evidence, with later verification distinguished below. No push or main-worktree edits were made.
+
+### Slice 2 checkpoint
+
+Implemented workspace hierarchy and application UI preferences:
+
+- Equal-allocation **Roll → Photo → Rendering** tabs with visible selection, scope tooltips and tested keyboard/AccessKit tab metadata. One tab-specific scroll region contains normal orientation/Composition and grading controls. Rendering owns the matching shared Target selector/reset and 100-nit preview/TIFF note; the existing viewer row and scope caption retain target identity. No processing/output/project schema changes.
+- Distinct shaded scopes region, independent chrome/divider and stable inspector reservation across tabs/drafts. Scope visibility and width-relative size, symbolic per-scope section expansion and filmstrip preferred height persist separately. Window limits do not overwrite preferred size. Adjusted sections remain collapsed; crop drafts do not overwrite ordinary Composition expansion.
+- `editor_preferences.rs` owns version-1 application JSON, validation, defaults and same-directory atomic writes. Normal launch loads it; the host's small exit hook saves changed preferences after the event loop ends. Read/version/write failures are diagnostic and cannot dirty or block a project; unreadable/malformed/future files are left unchanged. Tests/smokes use defaults or temporary stores, not the user's settings. Inspection EV, view, drafts, tab and scope plot/scale are not persisted.
+- Successfully prepared New selects Roll and opens missing Calibration only, irrespective of prior Photo/Rendering selection. Cancelled/failed/stale New leaves the previous tab/document intact. Initial RAW startup creates a new Roll project; ordinary imports, Open and photo switching keep existing tab semantics.
+- Targeted regressions cover three-tab state/view/draft neutrality, independent reset/selector and crop guards, actual normal/narrow scrolling reachability (including crop Apply/Cancel), fresh-context preference restore/project neutrality, atomic storage/defaults/rejection and constrained filmstrip sizing. Fractional tab-button allocations initially caused slight sidebar growth and changed a frozen crop Fit scale; a single bar allocation fixes the source without changing the existing tolerance or viewport code.
+
+Verification snapshot: **115 focused editor tests passed, one real-RAW integration test intentionally ignored**; strict editor-feature library/test Clippy, formatting and debug build passed. [Environment, commands and retained evidence](../research/evidence/ui-polish-workspace.txt).
+
+The real-source controls/window smoke passed: **1,722 submitted frames**, reported elapsed **38.10 s**, six normal/narrow Roll/Photo/Rendering holds. All six final app-window captures were inspected: selected stage, readable tabs/target, separated scopes and no repeated pinned Output. Inspector overflow remains scrollable; it is not a claim that all expanded controls fit onscreen simultaneously. Captures also include the final disabled-icon rendering from slice 1. Private photographs/logs stay ignored.
+
+The first six-hold attempt kept four seconds per hold and exceeded the existing 45-second smoke deadline; its Rendering captures were stale under occlusion and are not acceptance. The corrected holds use 2.5 seconds each, sharing the original wait budget, and the added Rendering holds use the same focus request as existing holds. Timeout and nonzero-visible-frame gates remain unchanged; no numerical/host occlusion workaround was added. The retry passed and captured the correct stages.
+
+Limits: no physical keyboard/trackpad/VoiceOver, macOS-14/other-hardware/monitor acceptance, fresh crop/picker window captures, or normal-app manual relaunch acceptance. Preference round-trip/shutdown wiring is verified with temporary stores/headless editor contexts, not by changing the user's settings. The optional combined scope-readback smoke was not repeated; visible vectorscopes are not full photographic/numerical scope acceptance.
+
+The user visually accepted slice 2 and requested its commit. Next action is the authorized **slice 3 — stable viewer bar and common contextual tool overlay**, retaining the outstanding acceptance above. No push/main integration or native-menu work was performed.
+
+### Slice 3 authorization / next action
+
+The user requested continuation after accepting the workspace and asked that scopes be collapsible/hideable (timing flexible). The scope presentation follow-up is recorded above for slice 6; checkbox hiding/persistence already works. Slice 3 will reserve the fixed viewer-width bottom bar, relocate crop/picker/flat-field controls into one in-canvas contextual overlay independent of inspector tabs, and verify numeric precedence, input ownership, narrow layout and intentional viewed-domain transforms. Processing, worker/resource contracts, native menus and broader feedback remain outside this slice.

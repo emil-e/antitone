@@ -45,7 +45,7 @@ target/release/antitone samples/DSC04416.ARW
 target/release/antitone --smoke \
   samples/DSC04397.ARW 4000 5644 128 32 \
   samples/DSC04378.ARW 4000 2600 128 128 samples/DSC04416.ARW
-# Four normal/narrow Roll/Photo layout holds:
+# Six normal/narrow Roll/Photo/Rendering layout holds:
 ANTITONE_SMOKE_CONTROLS=1 target/release/antitone --smoke \
   samples/DSC04397.ARW 4000 5644 128 32 \
   samples/DSC04378.ARW 4000 2600 128 128 samples/DSC04416.ARW

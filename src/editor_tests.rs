@@ -1,4 +1,7 @@
 use super::*;
+#[path = "editor_workspace_tests.rs"]
+mod workspace;
+
 pub(super) fn fixture() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
     let (commands, receiver) = mpsc::channel();
     let (send, messages) = mpsc::channel();
@@ -493,7 +496,7 @@ fn ui_labels(output: egui::FullOutput) -> Vec<(String, egui::Rect)> {
     labels
 }
 #[test]
-fn crop_panel_is_photo_only_pinned_and_survives_tab_changes_at_narrow_widths() {
+fn crop_controls_remain_photo_only_and_survive_tab_changes_at_narrow_widths() {
     let (mut editor, _send, _receiver) = fixture();
     add_ready_fixture(&mut editor);
     let saved = (
@@ -546,7 +549,7 @@ fn crop_panel_is_photo_only_pinned_and_survives_tab_changes_at_narrow_widths() {
                     assert!(rect.top() > title.bottom());
                 }
             }
-            let title_before = title;
+            let tabs_before = tabs;
             controls_frame_sized(
                 &mut editor,
                 &context,
@@ -564,8 +567,8 @@ fn crop_panel_is_photo_only_pinned_and_survives_tab_changes_at_narrow_widths() {
             );
             let text = controls_frame_sized(&mut editor, &context, width, 600., vec![]);
             assert_eq!(
-                text.iter().find(|(s, _)| s == heading).unwrap().1,
-                title_before
+                text.iter().find(|(s, _)| s == "Roll").unwrap().1,
+                tabs_before
             );
         }
     }
@@ -626,6 +629,7 @@ fn tab_clicks_show_only_the_selected_scope_without_changing_view_or_crop_draft()
         for (tab, label, heading, hidden) in [
             (0, "Roll", "Scan orientation", "Composition"),
             (1, "Photo", "Composition", "Scan orientation"),
+            (2, "Rendering", "Target", "Composition"),
         ] {
             let labels = app_frame(&mut editor, &context, vec![]);
             let button = labels.iter().find(|(s, _)| s == label).unwrap().1.center();
@@ -748,7 +752,12 @@ fn crop_explicit_zoom_can_leave_the_frame_offscreen_without_requesting_refinemen
         );
     }
     let fitted = editor.crop_edit.as_ref().unwrap().layout.unwrap();
-    assert!((fitted.scale * context.pixels_per_point() - zoom).abs() < 1e-6);
+    assert!(
+        (fitted.scale * context.pixels_per_point() - zoom).abs() < 1e-6,
+        "crop Fit changed: {layout:?} -> {fitted:?}; zoom={zoom}; widths={:?} heights={:?}",
+        [layout.canvas.width(), fitted.canvas.width()],
+        [layout.canvas.height(), fitted.canvas.height()]
+    );
     assert!(
         fitted
             .canvas
@@ -775,7 +784,7 @@ fn crop_button_and_enter_escape_keys_apply_or_restore_the_starting_view() {
                 egui::Event::MouseWheel {
                     unit: egui::MouseWheelUnit::Point,
                     phase: egui::TouchPhase::Move,
-                    delta: egui::vec2(0., -500.),
+                    delta: egui::vec2(0., 1000.),
                     modifiers: egui::Modifiers::NONE,
                 },
             ],
@@ -1844,7 +1853,7 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
     for width in [270., 315.] {
         let context = egui::Context::default();
         let (mut editor, _send, _receiver) = fixture();
-        for tab in [0, 1] {
+        for tab in [0, 1, 2] {
             editor.tab = tab;
             let text = controls_frame(&mut editor, &context, width, vec![]);
             let labels: Vec<_> = text.iter().map(|(label, _)| label.as_str()).collect();
@@ -1856,10 +1865,11 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
                     "Balance",
                     "Toe & shoulder",
                     "Exposure",
-                    "Output",
                 ]
+            } else if tab == 1 {
+                vec!["Composition", "White balance", "Exposure"]
             } else {
-                vec!["Composition", "White balance", "Exposure", "Output"]
+                vec!["Target", "Display P3", "Preview + TIFF · 100 nit"]
             };
             for label in &required {
                 assert!(labels.contains(label), "missing {label}");
@@ -1873,10 +1883,10 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
             } else {
                 "Scan orientation"
             }));
-            let heading = if tab == 0 {
-                "Scan orientation"
-            } else {
-                "Composition"
+            let heading = match tab {
+                0 => "Scan orientation",
+                1 => "Composition",
+                _ => "Target",
             };
             let tabs = text.iter().find(|(label, _)| label == "Roll").unwrap().1;
             assert!(
@@ -1895,8 +1905,10 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
                     "Toe & shoulder",
                     "Exposure",
                 ]
-            } else {
+            } else if tab == 1 {
                 vec!["Composition", "White balance", "Exposure"]
+            } else {
+                vec!["Target"]
             };
             for adjacent in sections.windows(2) {
                 let a = text
@@ -2085,7 +2097,7 @@ fn section_and_color_resets_preserve_calibration_and_other_edit_scopes() {
 }
 
 #[test]
-fn response_section_is_reachable_by_scrolling_and_output_stays_pinned() {
+fn response_section_is_reachable_by_scrolling_while_stage_tabs_stay_fixed() {
     for (width, height) in [(315., 800.), (270., 600.)] {
         let context = egui::Context::default();
         let (mut editor, _send, _receiver) = fixture();
@@ -2094,7 +2106,8 @@ fn response_section_is_reachable_by_scrolling_and_output_stays_pinned() {
             controls_frame_sized(&mut editor, &context, width, height, vec![]);
         }
         let first = controls_frame_sized(&mut editor, &context, width, height, vec![]);
-        let output = first.iter().find(|(label, _)| label == "Output").unwrap().1;
+        let tabs = first.iter().find(|(label, _)| label == "Roll").unwrap().1;
+        assert!(!first.iter().any(|(label, _)| label == "Target"));
         let grading_top = first
             .iter()
             .find(|(label, _)| label == "Roll")
@@ -2106,7 +2119,7 @@ fn response_section_is_reachable_by_scrolling_and_output_stays_pinned() {
         for frame in 0..90 {
             let events = if frame % 10 == 0 {
                 vec![
-                    egui::Event::PointerMoved(egui::pos2(width / 2., output.top() - 40.)),
+                    egui::Event::PointerMoved(egui::pos2(width / 2., height - 40.)),
                     egui::Event::MouseWheel {
                         unit: egui::MouseWheelUnit::Point,
                         phase: egui::TouchPhase::Move,
@@ -2120,7 +2133,7 @@ fn response_section_is_reachable_by_scrolling_and_output_stays_pinned() {
             let text = controls_frame_sized(&mut editor, &context, width, height, events);
             for (i, name) in names.iter().enumerate() {
                 if text.iter().any(|(label, rect)| {
-                    label == name && rect.top() > grading_top && rect.bottom() < output.top()
+                    label == name && rect.top() > grading_top && rect.bottom() < height - 8.
                 }) {
                     visible[i] = true;
                 }
@@ -2134,10 +2147,10 @@ fn response_section_is_reachable_by_scrolling_and_output_stays_pinned() {
         assert_eq!(
             scrolled
                 .iter()
-                .find(|(label, _)| label == "Output")
+                .find(|(label, _)| label == "Roll")
                 .unwrap()
                 .1,
-            output
+            tabs
         );
     }
 }

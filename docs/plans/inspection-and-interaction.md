@@ -1,6 +1,6 @@
 # Source inspection and interaction feedback
 
-Status: active follow-up, not an unfinished navigation/source-inspection implementation. The selected layout/coherence design work now lives in the [UI polish proposal](ui-polish.md); its direction/product choices are agreed but do not yet replace implemented behavior contracts. The selected navigation, source-inspection and thumbnail slices are implemented on main; their historical checks are retained below and in [visual feedback](visual-feedback.md#progress--handoff). The [preview buffer-limit fix](completed/preview-stability.md) is complete. Remaining interaction/layout/colour reports still need selection, reproduction or design. [Roadmap](../../PLAN.md) owns order; this audit approves no new feature fixes.
+Status: active follow-up, not an unfinished navigation/source-inspection implementation. The selected layout/coherence design work now lives in the [UI polish proposal](ui-polish.md); its shared controls and workspace/preferences slices are implemented on the isolated worktree and reflected in that checkout's behavior contracts, with remaining slices/acceptance explicit. The selected navigation, source-inspection and thumbnail slices are implemented on main; their historical checks are retained below and in [visual feedback](visual-feedback.md#progress--handoff). The [preview buffer-limit fix](completed/preview-stability.md) is complete. Remaining interaction/layout/colour reports still need selection, reproduction or design. [Roadmap](../../PLAN.md) owns order; this audit approves no new feature fixes.
 
 ## Goal and boundaries
 
@@ -26,7 +26,7 @@ These are recorded requests, not an approved implementation sequence. Current be
 ### Focused fixes and checks
 
 - **Hand cursor before dragging:** confirmed behavior mismatch. When zoomed primary drag can pan, hover currently shows ZoomOut; Grab appears only with Space and Grabbing during drag. Show the hand whenever the available drag would pan, preserving picker priority, disabled-state behavior and click-to-Fit. Extend the navigation cursor tests.
-- **Roll tab for new projects:** startup selects Roll, but successful File → New retains the previous tab because prepared-document installation does not reset `tab`. Verify New from Photo selects Roll; do not reset it on ordinary imports or decide Open behavior implicitly.
+- **Roll tab for new projects:** fixed on the isolated UI-polish worktree: successful New from Photo or Rendering selects Roll, while cancelled/failed/stale New and ordinary import/Open retain tab semantics. [Implementation/checks](ui-polish.md#slice-2-checkpoint); main delivery remains separate.
 - **Save confirmation in the corner:** the dirty-project prompt is an egui Window with no explicit placement. Treat this as a placement/UX question, not a save-state defect. Propose a centered, owner-relative dialog and discuss positioning/modality; preserve Save/Discard/Cancel and failure behavior.
 
 ### Camera roll workflow
@@ -49,7 +49,7 @@ Thumbnail defects/performance are tracked in [visual feedback](visual-feedback.m
 
 ## Remaining steps and acceptance
 
-1. Select a concrete interaction fix or UX-design question with the user; the triaged hand cursor/New-tab cases are code-confirmed, while dialog/toolbar/roll-workflow choices need agreement. Do not repeat the implemented navigation/inspection/thumbnail slices.
+1. Select a concrete interaction fix or UX-design question with the user; the triaged hand cursor is code-confirmed and New-tab behavior is addressed by UI polish, while dialog/toolbar/roll-workflow choices need agreement. Do not repeat the implemented navigation/inspection/thumbnail slices.
 2. Reproduce remaining source/navigation/refinement/layout and colour symptoms against current model-4/composed views. Separate fixed issues from outstanding ones, consult on viewer-space changes and distinguish the Vision3 observation from its proposed cause. Processing-policy changes require separate agreement.
 3. Implement only the selected slice with event/geometry/state tests. Preserve bypass/calibration/fitting/export independence, physical-pixel scale/source anchors, picker/crop priority and invalid/cancelled state. Actual trackpad feel and popup inspection remain separate checks, not inferred from headless events.
 4. Diagnose remaining reproduced stale-resolution failures at their source. Verify Fit/native/resize/rapid-switch behavior, valid dimensions/adapter limits and stale-result rejection without perpetual idle redraw or weakened numerical gates.
@@ -64,6 +64,6 @@ Historical navigation/source-inspection verification snapshot, before native-cam
 
 Bounded thumbnails are implemented in the existing bottom strip; the user approved enlargement and requested adjustable size. Drag its top edge to resize (52…240 points, also window-limited); image display follows height, while source/GPU caches stay bounded. Remaining layout/colour investigations, physical interaction exercise and scopes remain open; no further slice is automatically authorized.
 
-Next action for layout/UX: select/authorize the workspace/preferences slice following the implemented [shared-icon/section checkpoint](ui-polish.md#slice-1-checkpoint). Other interaction/colour follow-ups still require separate selection. Camera/geometry photographic checks and dense guides are tracked in [completion work](completion.md#geometry), not reopened navigation work.
+Next action for layout/UX: select/authorize the stable viewer/contextual-tools slice following the implemented [workspace/preferences checkpoint](ui-polish.md#slice-2-checkpoint). Other interaction/colour follow-ups still require separate selection. Camera/geometry photographic checks and dense guides are tracked in [completion work](completion.md#geometry), not reopened navigation work.
 
 Evidence/context: remaining symptoms were consolidated from `docs/feedback.md`; it is now an inbox, not the persistent requirement record. See [historical approved pass](../research/history/feedback-plan.md), [architecture](../architecture.md) and [control contract](../contracts/editor-controls.md).

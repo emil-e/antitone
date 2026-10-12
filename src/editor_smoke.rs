@@ -295,14 +295,29 @@ impl host::App for SmokeEditor {
                 if elapsed > Duration::from_secs(1) && self.frames == 0 {
                     println!(
                         "controls_layout stage={}",
-                        ["roll-normal", "photo-normal", "roll-narrow", "photo-narrow"]
-                            [usize::from(index)]
+                        if self.editor.tab == 2 {
+                            if index >= 2 {
+                                "rendering-narrow"
+                            } else {
+                                "rendering-normal"
+                            }
+                        } else {
+                            ["roll-normal", "photo-normal", "roll-narrow", "photo-narrow"]
+                                [usize::from(index)]
+                        }
                     );
                     self.frames = 1;
                 }
-                if elapsed > Duration::from_secs(4) {
-                    self.phase += 1;
-                    self.layout_start = None;
+                // Six holds share the original four-hold wait budget; keep the 45-second gate.
+                if elapsed > Duration::from_millis(2500) {
+                    if index % 2 == 1 && self.editor.tab != 2 {
+                        self.editor.tab = 2;
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
+                        self.layout_start = Some(std::time::Instant::now());
+                    } else {
+                        self.phase += 1;
+                        self.layout_start = None;
+                    }
                     self.frames = 0;
                 }
             }

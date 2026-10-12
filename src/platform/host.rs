@@ -12,6 +12,7 @@ pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 pub trait App {
     fn ui(&mut self, ui: &mut egui::Ui);
+    fn on_exit(&mut self) {}
 }
 
 pub fn run<A: App + 'static>(
@@ -37,7 +38,11 @@ pub fn run<A: App + 'static>(
         next_repaint: None,
         error: None,
     };
-    event_loop.run_app(&mut host)?;
+    let outcome = event_loop.run_app(&mut host);
+    if let Some(state) = &mut host.state {
+        state.app.on_exit();
+    }
+    outcome?;
     if let Some(error) = host.error {
         return Err(error);
     }

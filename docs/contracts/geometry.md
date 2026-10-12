@@ -59,7 +59,7 @@ Selections snap/constrain in the final frame's native pixel grid and remain axis
 
 ## Panels and picker views
 
-Changing Roll/Photo panels alone changes control scope, not the composition or numerical preview pipeline. Developed-source inspection ordinarily retains the photo composition while bypassing numerical grading.
+Changing Roll/Photo/Rendering tabs alone changes control scope, not the composition or numerical preview pipeline. Normal Scan orientation/Composition controls scroll with their tab's edits; crop drafts remain Photo-owned until the separately planned contextual overlay. Developed-source inspection ordinarily retains the photo composition while bypassing numerical grading.
 
 - **Gamma-balance neutral and photo WB picks:** retain the current composition, displayed grade/balance and navigation. Starting a picker adds selection interaction; it does not bypass photo edits or reveal hidden pixels. Numerical fitting retains its existing inputs/operators, independent of what helps identify a target visually.
 - **Dmin/Dmax picks:** start on the current source with an empty region. Temporarily show developed source over the full active area, retaining exact roll/photo orientation but bypassing photo crop/straightening. This exposes film base/leader without changing persistent geometry. Accepted source correction remains active; inspection gain remains display-only. Full-resolution measurements map to original source pixels and store only RGB.

@@ -306,9 +306,48 @@ fn filmstrip_resize_and_selection_preserve_project_state_and_loading_placeholder
             },
         ]);
     }
+    drop(run);
     assert!(matches!(receiver.try_recv().unwrap(), Command::Load(..)));
+    assert!((editor.preferences.filmstrip_height - resized.height()).abs() < 1.);
     assert_eq!(editor.document.project, before);
 }
+#[test]
+fn restored_filmstrip_height_survives_window_constraints_and_a_fresh_context() {
+    let (mut editor, _send, _receiver) = crate::editor::tests::fixture();
+    editor.preferences.filmstrip_height = 210.;
+    let before = editor.document.project.clone();
+    for context in [egui::Context::default(), egui::Context::default()] {
+        for height in [800., 300., 20., 800.] {
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1100., height),
+                    )),
+                    ..Default::default()
+                },
+                |ui| editor.filmstrip(ui),
+            );
+            output.textures_delta.clear();
+            let panel = egui::containers::panel::PanelState::load(
+                &context,
+                egui::Id::new("thumbnail-filmstrip"),
+            )
+            .unwrap();
+            let expected = if height == 300. {
+                105.
+            } else if height == 20. {
+                20.
+            } else {
+                210.
+            };
+            assert!((panel.outer_rect.height() - expected).abs() < 1.);
+            assert_eq!(editor.preferences.filmstrip_height, 210.);
+        }
+    }
+    assert_eq!(editor.document.project, before);
+}
+
 #[test]
 fn thumbnail_parameters_follow_actual_roll_and_each_photo_without_inspection_gain_or_source_redecode()
  {
