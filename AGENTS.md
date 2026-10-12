@@ -9,6 +9,15 @@
 
 The latest user request determines authorization. A roadmap entry, accepted ADR or previously approved broad plan does not authorize unrelated implementation, commits, pushes, global installs or remote actions. Confirm ambiguous/risky scope; keep routine local changes focused.
 
+## Documentation audiences
+
+- `README.md` is for humans: project introduction, prerequisites, normal build/run/check commands and contributor navigation. Do not require readers to consult `AGENTS.md` or include agent authorization, checkpoint or handoff procedures there.
+- `AGENTS.md` is for agents: instruction discovery, authorization boundaries, execution workflow and documentation-maintenance rules belong here. Keep it discoverable at the repository root; do not duplicate these procedures across human-facing documents.
+- Shared documentation is project knowledge, not an execution journal. Keep architecture, contracts, decisions, research findings and reproducible verification useful to human contributors. Human-facing navigation should lead to these documents, not through agent instructions. Specialist probes are not agent-only merely because agents use them.
+- Plans retain task-specific scope, decisions, progress, verification limits and next actions. Keep generic agent protocol, chronological session/worktree narratives, repeated permission/no-push notes and details of unrelated local edits out of current plans and roadmaps. Completed plans should be concise closure records linking to relevant evidence.
+- Current contracts describe behavior and invariants, not historical test counts, compiler transcripts or smoke timings. Put meaningful measurements and acceptance evidence in the appropriate research/verification record and link rather than repeat them. Archive useful execution history and raw logs separately from current guidance; do not discard durable research or provenance merely because an agent produced it.
+- Clearly separate supported tools/current reproduction commands from archived experiments and obsolete commands. Historical records are evidence, not an alternative setup path or active work queue.
+
 ## Documentation roles
 
 - `PLAN.md`: one short current-status/ordered-roadmap record. Link details; do not accumulate session transcripts, repeated test counts or completed step lists here.
