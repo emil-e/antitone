@@ -10,7 +10,6 @@ fn fixture(directory: &Path) -> Document {
             .register(
                 Source {
                     id: SourceId(0),
-                    fingerprint: Fingerprint::read(&path).unwrap(),
                     path,
                     development: SourceDevelopment {
                         dimensions: [900, 600],
@@ -49,7 +48,7 @@ fn stable_identity_keeps_photo_edits_independent_of_order_and_locator() {
     document.project.order.reverse();
     let moved = directory.path().join("renamed.ARW");
     std::fs::rename(directory.path().join("one.ARW"), &moved).unwrap();
-    document.project.relink_matching(one, &moved).unwrap();
+    document.project.source_mut(one).unwrap().path = moved.clone();
     assert_eq!(document.find_source(&moved), Some(one));
     assert_eq!(document.project.source(one).unwrap().photo, photo);
     assert_eq!(

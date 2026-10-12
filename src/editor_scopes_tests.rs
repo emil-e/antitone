@@ -423,10 +423,6 @@ fn whole_proxy_scopes_are_independent_of_viewport_and_do_not_resize_the_viewer()
             record: Source {
                 id: SourceId(0),
                 path,
-                fingerprint: crate::project::Fingerprint {
-                    bytes: 1,
-                    blake3: "0".repeat(64),
-                },
                 development: crate::project::SourceDevelopment {
                     dimensions: [7040, 3072],
                     active_area: [12, 34, 7000, 3000],

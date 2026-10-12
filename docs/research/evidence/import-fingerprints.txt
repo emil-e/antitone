@@ -1,0 +1,131 @@
+Import/switching fingerprint measurement — 2026-10-12 local snapshot
+Subsequent user decision: remove full RAW hashing; do not enforce byte immutability.
+These are historical measured costs, not current implementation requirements or approved hash optimization.
+Current removal: docs/plans/completed/remove-raw-hashing.md; header inventory (identity/relink design deferred): docs/research/capture-metadata.md.
+Base: main 97b7ad4; branch impl/rendering-performance, .worktrees/rendering-performance.
+User approved measurements, not identity/cache/scheduling optimization or further delivery.
+Environment: Apple M5 Pro / Mac17,9, 48 GiB; macOS 26.6.2 (25G83);
+Cargo/Rust 1.99.0, Apple Clang, Metal/wgpu 30.0.1, LibRaw 0.22.0, LLVM OpenMP 22.1.8.
+Observed native caps: foreground 8, background 2. This is measured hardware, not a baseline.
+
+Read-only inputs: first 4 and first 36 consecutive supplied Sony roll sources,
+samples/DSC04378.ARW through DSC04381.ARW / DSC04413.ARW. Each roll size has 3 trials.
+Fresh Document and temporary project/disk-cache directory per trial; shared/prewarmed renderer.
+Each trial: fresh import, Save outside timing, project Open, switch last/second/last/first,
+then independently controlled cold/memory/disk/selected-seed thumbnail worker paths.
+Memory case rebuilds the other target from the retained RGB16 source; it is NOT a GPU-cache hit.
+Disk case discards source memory, retaining only the disposable proxy from the cold case.
+Seed case uses the exact verified selected Ready thumbnail. Temporary artifacts are discarded.
+Selected WB, source development and complete RAW verification remain unchanged.
+
+All times below are milliseconds. Triples are chronological trials 1,2,3, not cold/warm disk gates.
+Filesystem/page-cache state and other system activity uncontrolled; no purge/F_NOCACHE/sample edits.
+No injected foreground rendering, refinement, thumbnail prefetch or scope work during timing.
+Boundary: backend Ready / worker image construction, NOT first rendered/presented frame or input latency.
+Thumbnail timing includes starting/joining a worker for each case; retained source/disk state is explicit.
+Observer records successful Fingerprint::read calls on its enabled thread only; timer starts before
+File::open and ends after complete BLAKE3 finalization. Bytes are logical hash input, not physical IO.
+Test-only clock/vector/path overhead not removed; release production contains no observer.
+
+roll phase              full_reads  wall_ms trials                         hash_ms trials
+4    import             6           865.811875 821.943125 817.962708         171.931041 160.847668 160.174625
+4    open               6           854.498667 823.037208 818.762625         163.045083 161.185500 160.082126
+4    switch_last        2           718.440750 712.696083 713.354250         58.050083 57.435916 57.354709
+4    switch_second      2           730.518042 721.047958 719.849750         59.607792 59.094251 59.066875
+4    revisit_last       2           718.635000 714.293958 712.105292         57.273334 57.150791 57.309626
+4    return_first       2           712.316750 708.551542 706.203959         49.430375 49.380999 49.028084
+4    thumbnail_cold     2           970.865291 960.237708 963.867833         48.993916 48.948709 49.116916
+4    thumbnail_memory   0           0.168250 0.170291 0.178708               0 0 0
+4    thumbnail_disk     1           24.671709 24.867167 24.899000            24.182792 24.392916 24.445666
+4    thumbnail_seed     0           0.153667 0.169958 0.199333               0 0 0
+36   import             38          1820.681041 1764.673083 1803.332916      1142.967582 1077.928911 1103.192000
+36   open               38          1725.288167 1755.986833 1768.705542      1063.981168 1085.099127 1083.273583
+36   switch_last        2           719.671167 732.507208 728.154792         58.555791 60.083250 58.964249
+36   switch_second      2           726.701500 730.297167 732.922792         60.641542 60.313334 59.028125
+36   revisit_last       2           735.795250 741.967375 723.446334         59.949001 59.444292 58.343959
+36   return_first       2           713.818833 724.733167 711.768375         50.604084 49.987250 49.834874
+36   thumbnail_cold     2           967.690875 1013.386458 1047.214333        52.375500 49.946293 53.428708
+36   thumbnail_memory   0           0.190208 0.179750 0.301833               0 0 0
+36   thumbnail_disk     1           26.992458 24.568042 27.414625            26.359209 24.071625 26.861625
+36   thumbnail_seed     0           0.195708 0.173166 0.172791               0 0 0
+
+Registration-only hash_ms (excludes selected pre/post hashes):
+4  import 122.722208 111.107001 110.904208
+4  open   113.630832 111.452791 111.075792
+36 import 1094.139332 1027.231494 1052.884000
+36 open   1015.270710 1035.459752 1034.245333
+Selected first-source pre/post pair: approximately 49–51 ms in these document trials.
+Full-read logical bytes per import/Open: 348,524,544 (4 sources), 2,322,878,464 (36).
+First-source bytes: 53,022,720. Cold thumbnail reads 106,045,440; disk reuse 53,022,720;
+memory/seed paths zero. All observed full reads assert source file length.
+
+Derived local medians:
+4-source import 821.943125 wall / 160.847668 hash; Open 823.037208 / 161.185500.
+36-source import 1803.332916 wall / 1103.192000 hash; Open 1755.986833 / 1083.273583.
+Median per-trial hash share about 19.6% (4) / 61.2–61.7% (36).
+Switch/revisit pools (12 moves per roll, different source sizes):
+4 median 713.824104 wall / 57.332167 hash; 36 median 727.428146 / 58.996187.
+Hash share about 8%; revisits still redevelop the selected RAW. No switching-cache optimization.
+Disk-thumbnail median wall 24.867167 / 26.992458; compulsory hash accounts for about 98%.
+Memory/seed construction medians approximately 0.17–0.19 ms; excludes GPU processing/presentation.
+No controlled statistical speedup, storage-cold, end-to-end interaction or broader-device claim.
+
+Original commands at 97b7ad4 (historical wrapper, removed by later main tooling update):
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --release --features editor --lib import_switching_fingerprint_latency -- --ignored --nocapture
+Result: 1 passed, 166 filtered out; 39.13 s local run. Strict count assertions passed for every trial.
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --features editor --lib --test project --test camera_project --test film_project --test flat_field_project
+Result: 159 library passed/8 ignored; 19 project-family tests passed.
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --features project --test project --test camera_project --test film_project --test flat_field_project
+Result: 19 passed; editor-only observer excluded.
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh clippy --offline --features editor --all-targets -- -D warnings
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh build --offline --release --features editor --bin antitone
+Strict Clippy and production release build passed; formatting/diff and local-document links checked.
+Observer regression covers inactive capture, completed versus failed reads, another thread and panic cleanup.
+Private full transcripts: .cache/fingerprint-measurement/{observer,probe,verification,project-only,clippy,release}.txt.
+No new onscreen/numerical/native-comparison/physical acceptance; no processing/dependency inputs changed.
+
+Ordinary-Cargo integration/repeat: main advanced to 6809ff5 during measurement.
+That committed developer-build-only update is integrated in the same worktree. Its source,
+native/dependency/build.rs and thread-policy inputs are unchanged; rust-toolchain.toml and
+.cargo/config.toml now select the pinned toolchain/Apple Clang, and scripts/cargo.sh is removed.
+The existing private native builds were reused. No native setup/download/rebuild was performed.
+A normal rustup toolchain-list command unexpectedly auto-fetched missing user-local Rust 1.99.0;
+global default unchanged. Subsequent checks used the existing worktree toolchain cache through
+session-only RUSTUP_HOME, avoiding further downloads; no separate bootstrap/wrapper was added.
+
+Current reproduction, ordinary Cargo from the worktree root with populated prerequisites:
+cargo test --locked --offline --release --features editor --lib import_switching_fingerprint_latency -- --ignored --nocapture
+cargo test --locked --offline --features editor --lib --test project --test camera_project --test film_project --test flat_field_project
+cargo test --locked --offline --features project --test project --test camera_project --test film_project --test flat_field_project
+cargo clippy --locked --offline --features editor --all-targets -- -D warnings
+cargo build-app --offline
+cargo fmt --all -- --check
+Fresh repeat: probe passed, 39.40 s; 330 completed fingerprints / 19,891,789,824 logical bytes,
+same strict per-case counts. Library 159 passed/8 ignored plus 19 editor-feature project tests;
+19 project-only tests; strict Clippy, production build-app and formatting/diff/link checks passed.
+Production binary inspected: no fingerprint observer/probe diagnostic strings.
+
+Repeat medians (milliseconds; switches pool 12 moves per roll; other rows 3 trials):
+roll phase             wall_ms       hash_ms      full_reads
+4    import            833.361459    163.336169    6
+4    open              833.473917    163.115835    6
+4    switch            725.880979    58.386459     2
+4    thumbnail_cold    970.251458    49.865625     2
+4    thumbnail_memory  0.160375      0             0
+4    thumbnail_disk    25.426625     24.914833     1
+4    thumbnail_seed    0.173500      0             0
+36   import            1775.394500   1081.378665   38
+36   open              1759.873375   1079.602206   38
+36   switch            739.245605    59.347688     2
+36   thumbnail_cold    973.692625    50.161874     2
+36   thumbnail_memory  0.178792      0             0
+36   thumbnail_disk    25.488375     24.947375     1
+36   thumbnail_seed    0.154458      0             0
+36-source registration-only hash medians: import 1031.264374 / Open 1029.843247.
+Repeat switch wall range: 715.470792–772.288416 ms across the two rolls.
+Median per-trial hash shares: 4-source import/Open about 19.6–19.7%; 36-source about 61.0–61.3%;
+switching about 8%; disk reuse about 98%. Not a controlled tooling speedup comparison.
+Private transcripts: .cache/fingerprint-measurement/{probe,verification,project-only,clippy,release}-tooling.txt.
+Recovery stash ID: .cache/fingerprint-measurement/tooling-stash-id.txt; retained, not discarded.
+No unresolved failure. No commit, main delivery or push of this measurement slice.
+Main's unrelated dirty patch unchanged; filesystem-cold/physical/resource acceptance remains open.

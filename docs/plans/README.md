@@ -11,6 +11,7 @@
 
 ## Completed implementations
 
+- [Remove full RAW hashing](completed/remove-raw-hashing.md): schema-5 removal, unchanged processing model 4 and cache-only path/stat freshness; metadata identity/relinking deferred, no old-project compatibility.
 - [Documentation audiences](completed/documentation-audiences.md): human-first guides/current closures separated from unchanged archival checkpoint records.
 
 - [Responsive rendering and thumbnail caching](completed/rendering-performance.md): shared GPU resources, pressure-responsive/persistent caches, bounded OpenMP/lazy diagnostics and combined geometry/scope integration; further acceptance and cache/fingerprint proposals are separate.

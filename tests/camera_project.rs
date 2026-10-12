@@ -1,7 +1,7 @@
 #![cfg(feature = "project")]
 use antitone::{
     processing::CAMERA_INPUT_FLOOR,
-    project::{Development, Fingerprint, Project, Save, Source, SourceDevelopment, SourceId},
+    project::{Development, Project, Save, Source, SourceDevelopment, SourceId},
 };
 use glam::{DMat3, DVec3};
 
@@ -9,10 +9,6 @@ fn source(model: &str, matrix: DMat3) -> Source {
     Source {
         id: SourceId(0),
         path: "test.ARW".into(),
-        fingerprint: Fingerprint {
-            bytes: 1,
-            blake3: "a".repeat(64),
-        },
         development: SourceDevelopment {
             dimensions: [900, 600],
             active_area: [0, 0, 900, 600],

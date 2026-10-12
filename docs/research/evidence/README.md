@@ -8,6 +8,8 @@ Archived text logs of selected numerical and verification results. They retain t
 
 ## Rendering-performance checkpoint
 
+- [Hash-free import/Open/switching snapshot](import-without-hashing.txt): current cache/readiness boundaries, byte-edit/selected-revision regression and integrated schema-5 checks. [Before/after method/limits](../import-fingerprints.md). No physical/cold-storage acceptance claim.
+- [Import/switching full-byte read measurements](import-fingerprints.txt): chronological 4-/36-source import/Open, switching/revisit and controlled thumbnail-cache trials. [Method/limits](../import-fingerprints.md). Filesystem cache is uncontrolled; backend Ready is not physical input/presentation acceptance.
 - [Import, renderer, thumbnail and bounded-overlap measurements](rendering-performance.txt): local model-4 snapshot, unchanged numerical gates and visible Save/Open smoke. [Implementation/integration closure](../../plans/completed/rendering-performance.md). Not physical memory-pressure, input-latency or broader-device acceptance.
 
 ## Response-integration checkpoint (historical AP0 models)

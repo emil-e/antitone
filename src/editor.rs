@@ -76,7 +76,7 @@ struct PickView {
     anchored: Viewport,
 }
 struct Ready {
-    thumbnail: Option<Arc<thumbnails::Proxy>>,
+    thumbnail: Option<(thumbnails::FileKey, Arc<thumbnails::Proxy>)>,
     path: PathBuf,
     area: Rect,
     floor: f64,
@@ -169,6 +169,7 @@ fn prepare_source(
     basis: Option<&crate::project::CameraBasis>,
 ) -> Result<(Ready, Scan), Error> {
     let started = std::time::Instant::now();
+    let thumbnail_file = thumbnails::FileKey::new(&path);
     let (record, raw) = document::open_source(&path)?;
     let registration_seconds = started.elapsed().as_secs_f64();
     if let Some(basis) = basis {
@@ -189,7 +190,10 @@ fn prepare_source(
     }
     let tick = std::time::Instant::now();
     let (width, height, pixels) = scan.preview_source(1024)?;
-    let thumbnail = Some(Arc::new(thumbnails::Proxy::from_scan(&scan)?));
+    let thumbnail = Some((
+        thumbnail_file,
+        Arc::new(thumbnails::Proxy::from_scan(&scan)?),
+    ));
     let proxy_seconds = tick.elapsed().as_secs_f64();
     let tick = std::time::Instant::now();
     let renderer = renderers.get(device, queue)?;
@@ -741,7 +745,7 @@ impl Editor {
         let Some(ready) = &mut self.ready else {
             return;
         };
-        let Some(proxy) = ready.thumbnail.take() else {
+        let Some((file, proxy)) = ready.thumbnail.take() else {
             return;
         };
         let Some(id) = self.current_source else {
@@ -749,11 +753,16 @@ impl Editor {
         };
         let source = self.document.project.source(id).expect("accepted source");
         // Flat-field editing displays a reference while retaining the working source ID.
-        if source.fingerprint == ready.record.fingerprint
+        let path = self
+            .document
+            .source_path(id)
+            .expect("accepted source locator");
+        if document::same_path(&path, &ready.record.path)
             && source.development == ready.record.development
             && self.document.project.development.as_ref() == Some(&ready.development)
         {
-            self.thumbnails.seed(source, &ready.development, proxy);
+            self.thumbnails
+                .seed(source, &ready.development, file, proxy);
         }
     }
     fn sync_document(&mut self) {

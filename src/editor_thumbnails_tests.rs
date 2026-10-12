@@ -7,10 +7,6 @@ fn fixture() -> Document {
                 Source {
                     id: SourceId(0),
                     path: format!("photo-{index}.ARW").into(),
-                    fingerprint: Fingerprint {
-                        bytes: index + 1,
-                        blake3: "a".repeat(64),
-                    },
                     development: SourceDevelopment {
                         dimensions: [900, 600],
                         active_area: [0, 0, 900, 600],
@@ -34,6 +30,7 @@ fn key(document: &Document, id: SourceId) -> ImageKey {
         source: SourceKey::new(
             document.project.source(id).unwrap(),
             document.project.development.as_ref().unwrap(),
+            FileKey::new(&document.source_path(id).unwrap()),
         ),
         target: OutputTarget::DisplayP3,
         field: document
@@ -42,6 +39,109 @@ fn key(document: &Document, id: SourceId) -> ImageKey {
             .map(|f| FieldKey(f.map.clone())),
     }
 }
+#[test]
+fn transient_reference_with_the_same_development_cannot_seed_the_working_photo() {
+    let (mut editor, _, _) = super::super::tests::fixture();
+    super::super::tests::add_ready_fixture(&mut editor);
+    let ready = editor.ready.as_mut().unwrap();
+    ready.record.path = "different-reference.ARW".into();
+    ready.thumbnail = Some((
+        FileKey::new(&ready.record.path),
+        Arc::new(Proxy {
+            width: 1,
+            height: 1,
+            pixels: vec![[0; 4]],
+            matrix: glam::DMat3::IDENTITY,
+        }),
+    ));
+    editor.seed_thumbnail();
+    assert!(editor.thumbnails.sources.lock().unwrap().entries.is_empty());
+}
+
+#[test]
+fn file_stats_and_resolved_locators_keep_cache_revisions_separate() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("photo.ARW");
+    std::fs::write(&path, b"original").unwrap();
+    let original = FileKey::new(&path);
+    assert!(original.revision.is_some());
+    std::fs::create_dir(directory.path().join("other-card")).unwrap();
+    let other = directory.path().join("other-card/photo.ARW");
+    std::fs::copy(&path, &other).unwrap();
+    assert_ne!(FileKey::new(&other), original);
+    #[cfg(unix)]
+    {
+        let alias = directory.path().join("alias.ARW");
+        std::os::unix::fs::symlink(&path, &alias).unwrap();
+        assert_eq!(FileKey::new(&alias), original);
+    }
+    #[cfg(unix)]
+    {
+        std::fs::write(&path, b"modified").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_times(
+                std::fs::FileTimes::new()
+                    .set_modified(original.revision.as_ref().unwrap().modified),
+            )
+            .unwrap();
+        let edited = FileKey::new(&path);
+        assert_eq!(
+            edited.revision.as_ref().unwrap().bytes,
+            original.revision.as_ref().unwrap().bytes
+        );
+        assert_eq!(
+            edited.revision.as_ref().unwrap().modified,
+            original.revision.as_ref().unwrap().modified
+        );
+        assert_ne!(edited, original);
+    }
+    std::fs::write(&path, b"intentionally edited source").unwrap();
+    assert_ne!(FileKey::new(&path), original);
+    let edited = FileKey::new(&path);
+    std::fs::remove_file(&path).unwrap();
+    std::fs::copy(&other, &path).unwrap();
+    assert_ne!(FileKey::new(&path), edited);
+    std::fs::remove_file(&path).unwrap();
+    assert!(FileKey::new(&path).revision.is_none());
+}
+
+#[test]
+fn queued_thumbnail_results_do_not_install_after_file_stats_change() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("photo.ARW");
+    std::fs::write(&path, b"before").unwrap();
+    let mut document = fixture();
+    let id = document.project.order[0];
+    document.project.source_mut(id).unwrap().path = path.clone();
+    let (commands, receiver) = mpsc::channel();
+    let (send, messages) = mpsc::channel();
+    let mut thumbnails = Thumbnails {
+        commands: Some(commands),
+        messages: Some(messages),
+        ..Default::default()
+    };
+    thumbnails.request(
+        key(&document, id),
+        path.clone(),
+        document.project.source(id).unwrap().clone(),
+        None,
+    );
+    let job = receiver.try_recv().unwrap();
+    std::fs::write(&path, b"after a deliberate edit").unwrap();
+    send.send(Outcome {
+        ticket: job.ticket,
+        key: job.key,
+        image: Err("old outcome".into()),
+    })
+    .unwrap();
+    thumbnails.receive(&document);
+    assert!(thumbnails.cache.entries.is_empty());
+    assert!(thumbnails.pending.is_none());
+}
+
 #[test]
 fn cache_is_bounded_lru_and_replacement_does_not_grow_it() {
     const CAPACITY: usize = 16;
@@ -58,11 +158,10 @@ fn cache_is_bounded_lru_and_replacement_does_not_grow_it() {
     assert_eq!(cache.entries.len(), CAPACITY);
 }
 #[test]
-fn source_identity_excludes_locator_photo_and_roll_edits_but_includes_bytes_matrix_wb_and_id() {
+fn source_cache_key_excludes_grading_but_includes_locator_revision_matrix_wb_and_id() {
     let mut document = fixture();
     let id = document.project.order[0];
     let original = key(&document, id);
-    document.project.source_mut(id).unwrap().path = "moved.ARW".into();
     document.project.source_mut(id).unwrap().photo.exposure = 7.12345;
     document.project.roll.exposure = 1.5;
     document.project.orientation.horizontal = true;
@@ -81,7 +180,7 @@ fn source_identity_excludes_locator_photo_and_roll_edits_but_includes_bytes_matr
     }));
     // Composition is applied on paint, so source/processed textures remain reusable.
     assert_eq!(key(&document, id), original);
-    document.project.source_mut(id).unwrap().fingerprint.bytes += 1;
+    document.project.source_mut(id).unwrap().path = "moved.ARW".into();
     assert_ne!(key(&document, id), original);
     let mut candidate = original.clone();
     candidate.source.source.camera_to_ap1[0][0] += 0.1;
@@ -691,6 +790,7 @@ fn critical_pressure_releases_the_seed_when_the_working_source_is_gone() {
     thumbnails.seed(
         source,
         document.project.development.as_ref().unwrap(),
+        FileKey::new(&document.source_path(source.id).unwrap()),
         Arc::new(Proxy {
             width: 1,
             height: 1,
@@ -722,6 +822,7 @@ fn obsolete_scroll_work_is_cancelled_once_without_dropping_valid_source_seeds() 
     thumbnails.seed(
         source,
         document.project.development.as_ref().unwrap(),
+        FileKey::new(&document.source_path(source.id).unwrap()),
         proxy,
     );
     let old = key(&document, id);
@@ -750,7 +851,7 @@ fn obsolete_scroll_work_is_cancelled_once_without_dropping_valid_source_seeds() 
 }
 
 #[test]
-fn disk_worker_reuses_verified_pixels_without_raw_development_and_rejects_changed_bytes() {
+fn disk_worker_reuses_checksummed_pixels_and_changed_stats_miss_instead_of_rejecting_content() {
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,
@@ -764,7 +865,6 @@ fn disk_worker_reuses_verified_pixels_without_raw_development_and_rejects_change
         let mut document = Document::default();
         let mut source = fixture().project.sources.remove(0);
         source.path = path.clone();
-        source.fingerprint = Fingerprint::read(&path).unwrap();
         source.development.dimensions = [2, 1];
         source.development.active_area = [0, 0, 2, 1];
         let development = Development::new(crate::raw::version(), [1.; 4]);
@@ -772,7 +872,7 @@ fn disk_worker_reuses_verified_pixels_without_raw_development_and_rejects_change
         let source = document.project.source(id).unwrap().clone();
         let disk = disk::DiskCache::at(directory.path().join("cache"));
         disk.store(
-            &SourceKey::new(&source, &development),
+            &SourceKey::new(&source, &development, FileKey::new(&path)),
             &Proxy {
                 width: 2,
                 height: 1,
@@ -809,7 +909,13 @@ fn disk_worker_reuses_verified_pixels_without_raw_development_and_rejects_change
             std::thread::sleep(Duration::from_millis(1));
         }
         assert!(
-            matches!(restarted.cache.get(&key(&document, id)).unwrap(), Err(error) if error.contains("RAW content changed"))
+            matches!(restarted.cache.get(&key(&document, id)).unwrap(), Err(error) if !error.contains("content changed"))
+        );
+        assert!(
+            disk::DiskCache::at(directory.path().join("cache"))
+                .load(&key(&document, id).source)
+                .unwrap()
+                .is_none()
         );
     });
 }

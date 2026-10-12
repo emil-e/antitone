@@ -45,7 +45,7 @@ Thumbnail defects/performance are tracked in [visual feedback](visual-feedback.m
 ## Recorded support/architecture questions
 
 - “Do we need the CPU path? Is it just for export? Why?” Explain the boundary rather than silently removing it: CPU LibRaw development, full-resolution f64 measurements/fitting/domain validation, reference tests and full-source export; interactive processing/presentation remains GPU-only. [Architecture](../architecture.md#ownership-and-execution).
-- “What files can it open?” Clarify current exposed input support: ARW RAW import/reference selection and schema-4 native-camera JSON projects (default `.antitone.json`). Sony ILCE-1M2 lossless-compressed ARW is the verified camera input; LibRaw's wider decoding capability is not an application-wide support claim. JPEG/TIFF/EXR developed-image import is not implemented. [Product](../contracts/product.md), [project state](../contracts/project-state.md).
+- “What files can it open?” Clarify current exposed input support: ARW RAW import/reference selection and schema-5/model-4 native-camera JSON projects (default `.antitone.json`). Sony ILCE-1M2 lossless-compressed ARW is the verified camera input; LibRaw's wider decoding capability is not an application-wide support claim. JPEG/TIFF/EXR developed-image import is not implemented. [Product](../contracts/product.md), [project state](../contracts/project-state.md).
 
 ## Remaining steps and acceptance
 

@@ -71,10 +71,6 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                     record: Source {
                         id: SourceId(0),
                         path,
-                        fingerprint: crate::project::Fingerprint {
-                            bytes: 1,
-                            blake3: "0".repeat(64),
-                        },
                         development: crate::project::SourceDevelopment {
                             dimensions: [8704, 6144],
                             active_area: [12, 12, 8640, 5760],
@@ -294,10 +290,6 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
         .add_source(Source {
             id: SourceId(0),
             path: "test-camera.ARW".into(),
-            fingerprint: crate::project::Fingerprint {
-                bytes: 1,
-                blake3: "a".repeat(64),
-            },
             development: crate::project::SourceDevelopment {
                 dimensions: [900, 600],
                 active_area: [0, 0, 900, 600],
@@ -404,10 +396,6 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
     let record = Source {
         id: SourceId(0),
         path: "current.ARW".into(),
-        fingerprint: crate::project::Fingerprint {
-            bytes: 1,
-            blake3: "a".repeat(64),
-        },
         development: crate::project::SourceDevelopment {
             dimensions: [900, 600],
             active_area: [12, 7, 864, 576],
@@ -1492,7 +1480,6 @@ fn shared_roll_turns_apply_to_new_photos_and_export_snapshots() {
     let mut record = ready.record;
     record.id = SourceId(0);
     record.path = "new.ARW".into();
-    record.fingerprint.blake3 = "b".repeat(64);
     send.send(Message::Ready(
         editor.id,
         Ok(Box::new(Ready {
@@ -1585,10 +1572,6 @@ fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
                 Source {
                     id: SourceId(0),
                     path: path.into(),
-                    fingerprint: crate::project::Fingerprint {
-                        bytes: 1,
-                        blake3: "a".repeat(64),
-                    },
                     development: crate::project::SourceDevelopment {
                         dimensions: [900, 600],
                         active_area: [0, 0, 900, 600],

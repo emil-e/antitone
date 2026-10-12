@@ -238,10 +238,6 @@ fn fixture() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
             Source {
                 id: SourceId(0),
                 path: "fixture.ARW".into(),
-                fingerprint: crate::project::Fingerprint {
-                    bytes: 1,
-                    blake3: "a".repeat(64),
-                },
                 development: crate::project::SourceDevelopment {
                     dimensions: [900, 600],
                     active_area: [0, 0, 900, 600],

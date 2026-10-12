@@ -1,23 +1,68 @@
 use super::*;
-use crate::project::{Fingerprint, SourceDevelopment};
+use crate::project::SourceDevelopment;
+use serde::{Deserialize, Serialize};
 #[path = "thumbnail_disk.rs"]
 mod disk;
 #[path = "thumbnail_lru.rs"]
 mod lru;
 use lru::Cache;
 const SOURCE_SIZE: u32 = 256;
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileRevision {
+    bytes: u64,
+    modified: std::time::SystemTime,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+    #[cfg(unix)]
+    changed: (i64, i64),
+}
+impl FileRevision {
+    fn read(path: &std::path::Path) -> std::io::Result<Self> {
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt;
+        let metadata = std::fs::metadata(path)?;
+        Ok(Self {
+            bytes: metadata.len(),
+            modified: metadata.modified()?,
+            #[cfg(unix)]
+            device: metadata.dev(),
+            #[cfg(unix)]
+            inode: metadata.ino(),
+            #[cfg(unix)]
+            changed: (metadata.ctime(), metadata.ctime_nsec()),
+        })
+    }
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct FileKey {
+    path: PathBuf,
+    revision: Option<FileRevision>,
+}
+impl FileKey {
+    pub(super) fn new(path: &std::path::Path) -> Self {
+        Self {
+            path: path.canonicalize().unwrap_or_else(|_| path.to_path_buf()),
+            // Unavailable stats disable disk reuse; opening/development reports source errors.
+            revision: FileRevision::read(path).ok(),
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq)]
 struct SourceKey {
     id: SourceId,
-    fingerprint: Fingerprint,
+    file: FileKey,
     source: SourceDevelopment,
     development: Development,
 }
 impl SourceKey {
-    fn new(source: &Source, development: &Development) -> Self {
+    fn new(source: &Source, development: &Development, file: FileKey) -> Self {
         Self {
             id: source.id,
-            fingerprint: source.fingerprint.clone(),
+            file,
             source: source.development.clone(),
             development: development.clone(),
         }
@@ -103,8 +148,14 @@ impl Default for Thumbnails {
     }
 }
 impl Thumbnails {
-    pub fn seed(&mut self, source: &Source, development: &Development, proxy: Arc<Proxy>) {
-        let key = SourceKey::new(source, development);
+    pub fn seed(
+        &mut self,
+        source: &Source,
+        development: &Development,
+        file: FileKey,
+        proxy: Arc<Proxy>,
+    ) {
+        let key = SourceKey::new(source, development, file);
         let mut sources = self.sources.lock().unwrap();
         sources.protect(vec![key.clone()]);
         sources.insert(key, proxy);
@@ -186,7 +237,13 @@ impl Thumbnails {
                         .ok()
                         .zip(document.project.development.as_ref())
                         .is_some_and(|(source, development)| {
-                            SourceKey::new(source, development) == key.source
+                            SourceKey::new(
+                                source,
+                                development,
+                                FileKey::new(
+                                    &document.source_path(source.id).expect("thumbnail locator"),
+                                ),
+                            ) == key.source
                         })
             })
             .count()
@@ -222,7 +279,13 @@ impl Thumbnails {
                     .ok()
                     .zip(document.project.development.as_ref())
                     .is_some_and(|(source, development)| {
-                        SourceKey::new(source, development) == outcome.key.source
+                        SourceKey::new(
+                            source,
+                            development,
+                            FileKey::new(
+                                &document.source_path(source.id).expect("thumbnail locator"),
+                            ),
+                        ) == outcome.key.source
                             && outcome.key.field.as_ref().map(|f| &f.0)
                                 == document.project.active_flat_field().map(|f| &f.map)
                     });
@@ -290,7 +353,7 @@ fn worker(
         let mut metrics = ThumbnailMetrics::default();
         let active = || generation.load(std::sync::atomic::Ordering::Relaxed) == job.ticket;
         let image = (|| -> Result<Option<Arc<GpuImage>>, Error> {
-            if !active() {
+            if !active() || FileKey::new(&job.path) != job.key.source.file {
                 return Ok(None);
             }
             let proxy = match cached {
@@ -306,17 +369,6 @@ fn worker(
                     proxy
                 }
                 None => {
-                    let tick = std::time::Instant::now();
-                    let fingerprint = Fingerprint::read(&job.path)?;
-                    metrics.hash_seconds = tick.elapsed().as_secs_f64();
-                    if fingerprint != job.source.fingerprint {
-                        return Err(Error::Project(
-                            "RAW content changed; explicit acceptance is required".into(),
-                        ));
-                    }
-                    if !active() {
-                        return Ok(None);
-                    }
                     if let Some(disk) = &disk {
                         let tick = std::time::Instant::now();
                         let cached = disk.load(&job.key.source);
@@ -353,9 +405,7 @@ fn worker(
                     )?;
                     metrics.development_seconds = tick.elapsed().as_secs_f64();
                     let tick = std::time::Instant::now();
-                    let mut resolved_source = job.source.clone();
-                    resolved_source.path = job.path.clone();
-                    document::verify_scan(&resolved_source, &scan)?;
+                    document::verify_scan(&job.source, &scan)?;
                     metrics.verification_seconds = tick.elapsed().as_secs_f64();
                     let tick = std::time::Instant::now();
                     let proxy = Arc::new(Proxy::from_scan(&scan)?);
@@ -415,7 +465,6 @@ fn worker(
 #[derive(Default, Debug)]
 struct ThumbnailMetrics {
     disk_hit: bool,
-    hash_seconds: f64,
     disk_seconds: f64,
     development_seconds: f64,
     verification_seconds: f64,
@@ -542,7 +591,7 @@ impl Editor {
                     let visuals = ui.style().interact_selectable(&response,selected);
                     ui.painter().rect_filled(cell,3.,visuals.bg_fill);
                     let image_rect = egui::Rect::from_min_size(cell.min,egui::vec2(image_width,image_height)).shrink(2.);
-                    let key = self.document.project.development.as_ref().map(|development|ImageKey { source:SourceKey::new(source,development),target:self.target,field:self.correction.as_ref().map(|c|FieldKey(c.settings.map.clone())) });
+                    let key = self.document.project.development.as_ref().map(|development|ImageKey { source:SourceKey::new(source,development,FileKey::new(&path)),target:self.target,field:self.correction.as_ref().map(|c|FieldKey(c.settings.map.clone())) });
                     if let Some(key) = &key { protected.push(key.clone()); }
                     let entry = key.as_ref().and_then(|key|self.thumbnails.cache.get(key)).cloned();
                     let parameters = self.thumbnail_parameters(source);
@@ -589,8 +638,12 @@ impl Editor {
                     .project
                     .source(self.document.project.order[index])
                     .expect("prefetch source");
+                let path = self
+                    .document
+                    .source_path(source.id)
+                    .expect("prefetch locator");
                 let key = ImageKey {
-                    source: SourceKey::new(source, development),
+                    source: SourceKey::new(source, development, FileKey::new(&path)),
                     target: self.target,
                     field: self
                         .correction
@@ -599,14 +652,7 @@ impl Editor {
                 };
                 eligible.push(key.clone());
                 if !self.thumbnails.cache.contains(&key) {
-                    wanted.push((
-                        index,
-                        key,
-                        self.document
-                            .source_path(source.id)
-                            .expect("prefetch locator"),
-                        source.clone(),
-                    ));
+                    wanted.push((index, key, path, source.clone()));
                 }
             }
         }

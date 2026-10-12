@@ -2,6 +2,9 @@ use super::*;
 use crate::renderer::RendererCache;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+#[path = "editor_import_tests.rs"]
+mod import;
+
 #[test]
 #[ignore = "read-only local RAW/Metal corrected affine shared-renderer integration"]
 fn corrected_affine_refinement_matches_scalar_coverage() {
@@ -222,9 +225,10 @@ fn initial_import_with_renderer_prewarm() {
             renderers.clone(),
             Some(disk::DiskCache::at(directory.path().into())),
         );
-        seeded.seed(source, &ready.development, ready.thumbnail.clone().unwrap());
+        let (file, proxy) = ready.thumbnail.clone().unwrap();
+        seeded.seed(source, &ready.development, file.clone(), proxy);
         let key = ImageKey {
-            source: SourceKey::new(source, &ready.development),
+            source: SourceKey::new(source, &ready.development, file),
             target: OutputTarget::DisplayP3,
             field: None,
         };
@@ -359,7 +363,11 @@ fn project_relative_locator_cold_thumbnail() {
             Some(disk::DiskCache::at(directory.path().join("cache"))),
         );
         let key = ImageKey {
-            source: SourceKey::new(&source, document.project.development.as_ref().unwrap()),
+            source: SourceKey::new(
+                &source,
+                document.project.development.as_ref().unwrap(),
+                FileKey::new(&document.source_path(id).unwrap()),
+            ),
             target: OutputTarget::DisplayP3,
             field: None,
         };
@@ -558,9 +566,10 @@ fn import_and_refinement_latency() {
             &renderers.get(&device, &queue).unwrap()
         ));
         let mut thumbnails = Thumbnails::new(device.clone(), queue.clone(), Arc::new(renderers));
-        thumbnails.seed(source, &ready.development, ready.thumbnail.clone().unwrap());
+        let (file, proxy) = ready.thumbnail.clone().unwrap();
+        thumbnails.seed(source, &ready.development, file.clone(), proxy);
         let key = thumbnails::ImageKey {
-            source: thumbnails::SourceKey::new(source, &ready.development),
+            source: thumbnails::SourceKey::new(source, &ready.development, file),
             target: OutputTarget::DisplayP3,
             field: None,
         };

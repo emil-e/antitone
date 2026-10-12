@@ -1,5 +1,5 @@
-use super::{Proxy, SOURCE_SIZE, SourceKey};
-use crate::project::{Development, Fingerprint, SourceDevelopment};
+use super::{FileKey, Proxy, SOURCE_SIZE, SourceKey};
+use crate::project::{Development, SourceDevelopment};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -8,12 +8,12 @@ use std::{
     sync::Arc,
 };
 
-const MAGIC: &[u8; 8] = b"ANTTHM01";
+const MAGIC: &[u8; 8] = b"ANTTHM02";
 const LIMIT: u64 = 128 << 20;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Header {
-    fingerprint: Fingerprint,
+    file: FileKey,
     source: SourceDevelopment,
     development: Development,
     width: u32,
@@ -34,19 +34,17 @@ impl DiskCache {
     }
     pub fn default_location() -> Option<Self> {
         std::env::var_os("HOME").map(|home| Self {
-            root: PathBuf::from(home).join(".cache/antitone/thumbnails-v1"),
+            root: PathBuf::from(home).join(".cache/antitone/thumbnails-v2"),
             budget: LIMIT,
         })
     }
     fn path(&self, key: &SourceKey) -> io::Result<PathBuf> {
-        // Locator, document source ID, correction and grade do not change raw proxy pixels.
-        let identity = serde_json::to_vec(&(
-            1,
-            SOURCE_SIZE,
-            &key.fingerprint,
-            &key.source,
-            &key.development,
-        ))?;
+        if key.file.revision.is_none() {
+            return Err(invalid("source file stats unavailable for thumbnail reuse"));
+        }
+        // File stats are disposable cache freshness, not persisted photograph identity.
+        let identity =
+            serde_json::to_vec(&(2, SOURCE_SIZE, &key.file, &key.source, &key.development))?;
         Ok(self
             .root
             .join(format!("{}.rgb16", blake3::hash(&identity).to_hex())))
@@ -76,7 +74,7 @@ impl DiskCache {
             (width as f64 * scale).round().max(1.) as u32,
             (height as f64 * scale).round().max(1.) as u32,
         ];
-        if header.fingerprint != key.fingerprint
+        if header.file != key.file
             || header.source != key.source
             || header.development != key.development
             || [header.width, header.height] != dimensions
@@ -110,7 +108,7 @@ impl DiskCache {
         fs::create_dir_all(&self.root)?;
         let bytes = bytemuck::cast_slice(&proxy.pixels);
         let header = serde_json::to_vec(&Header {
-            fingerprint: key.fingerprint.clone(),
+            file: key.file.clone(),
             source: key.source.clone(),
             development: key.development.clone(),
             width: proxy.width,
@@ -160,9 +158,18 @@ mod tests {
     fn fixture() -> (SourceKey, Proxy) {
         let key = SourceKey {
             id: crate::project::SourceId(1),
-            fingerprint: Fingerprint {
-                bytes: 1,
-                blake3: "a".repeat(64),
+            file: FileKey {
+                path: "/fixture.ARW".into(),
+                revision: Some(super::super::FileRevision {
+                    bytes: 1,
+                    modified: std::time::UNIX_EPOCH,
+                    #[cfg(unix)]
+                    device: 1,
+                    #[cfg(unix)]
+                    inode: 1,
+                    #[cfg(unix)]
+                    changed: (1, 0),
+                }),
             },
             source: SourceDevelopment {
                 dimensions: [2, 1],
@@ -198,6 +205,23 @@ mod tests {
         assert_eq!(cache.load(&key).unwrap().unwrap().pixels, proxy.pixels);
         key.development.fixed_wb[0] = 2.;
         assert!(cache.load(&key).unwrap().is_none());
+    }
+    #[test]
+    fn changed_stats_locators_and_unavailable_stats_do_not_reuse_disk_pixels() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = DiskCache::at(directory.path().into());
+        let (key, proxy) = fixture();
+        cache.store(&key, &proxy).unwrap();
+        let mut changed = key.clone();
+        changed.file.revision.as_mut().unwrap().bytes += 1;
+        assert!(cache.load(&changed).unwrap().is_none());
+        changed = key.clone();
+        changed.file.path = "/other-card/fixture.ARW".into();
+        assert!(cache.load(&changed).unwrap().is_none());
+        changed.file.revision = None;
+        assert!(cache.load(&changed).is_err());
+        assert!(cache.store(&changed, &proxy).is_err());
+        assert_eq!(cache.load(&key).unwrap().unwrap().pixels, proxy.pixels);
     }
     #[test]
     fn corrupt_truncated_and_wrong_identity_entries_are_rejected() {

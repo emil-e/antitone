@@ -14,7 +14,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
 // Bump when native/raw_bridge.cpp development or scan.rs matrix/normalization/floor contracts change.
 pub const DEVELOPMENT_CONTRACT: &str =
     "libraw-camera-ahd-u16-linear-camera-inversion-ap1-bradford-code-floor-v2";
@@ -35,42 +35,6 @@ fn require(condition: bool, message: &str) -> Result<()> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct SourceId(pub u64);
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Fingerprint {
-    pub bytes: u64,
-    pub blake3: String,
-}
-impl Fingerprint {
-    pub fn read(path: &Path) -> Result<Self> {
-        let mut file = File::open(path).map_err(failure)?;
-        let mut hash = blake3::Hasher::new();
-        let mut buffer = [0u8; 64 * 1024];
-        let mut bytes = 0;
-        loop {
-            let count = file.read(&mut buffer).map_err(failure)?;
-            if count == 0 {
-                break;
-            }
-            hash.update(&buffer[..count]);
-            bytes += count as u64;
-        }
-        Ok(Self {
-            bytes,
-            blake3: hash.finalize().to_hex().to_string(),
-        })
-    }
-    fn validate(&self) -> Result<()> {
-        require(
-            self.blake3.len() == 64
-                && self
-                    .blake3
-                    .bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
-            "invalid BLAKE3 content fingerprint",
-        )
-    }
-}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Development {
@@ -162,7 +126,6 @@ fn contains(area: [u32; 4], region: [u32; 4]) -> bool {
 pub struct Source {
     pub id: SourceId,
     pub path: PathBuf,
-    pub fingerprint: Fingerprint,
     pub development: SourceDevelopment,
     pub reference_only: bool,
     pub photo: PhotoSettings,
@@ -174,7 +137,6 @@ pub struct Source {
 impl Source {
     fn validate(&self) -> Result<()> {
         require(!self.path.as_os_str().is_empty(), "empty source path")?;
-        self.fingerprint.validate()?;
         self.development.validate()?;
         if let Some(crop) = self.crop {
             crop.region(self.development.active_area.into())?;
@@ -257,12 +219,6 @@ impl Default for Project {
         }
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SourceStatus {
-    Matching,
-    Missing,
-    Changed { actual: Fingerprint },
-}
 #[derive(Debug, Clone, Copy)]
 pub enum Save {
     New,
@@ -319,61 +275,6 @@ impl Project {
         } else {
             project_path.parent().unwrap_or(Path::new(".")).join(path)
         })
-    }
-    pub fn inspect_source(&self, id: SourceId, project_path: &Path) -> Result<SourceStatus> {
-        let path = self.resolve_path(id, project_path)?;
-        match std::fs::metadata(&path) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(SourceStatus::Missing);
-            }
-            Err(error) => return Err(failure(error)),
-            Ok(_) => {}
-        }
-        let actual = Fingerprint::read(&path)?;
-        Ok(if actual == self.source(id)?.fingerprint {
-            SourceStatus::Matching
-        } else {
-            SourceStatus::Changed { actual }
-        })
-    }
-    pub fn relink_matching(&mut self, id: SourceId, path: &Path) -> Result<()> {
-        let actual = Fingerprint::read(path)?;
-        require(
-            actual == self.source(id)?.fingerprint,
-            "relink has different content; explicit acceptance is required",
-        )?;
-        self.source_mut(id)?.path = path.to_path_buf();
-        Ok(())
-    }
-    pub fn accept_changed_source(
-        &mut self,
-        id: SourceId,
-        path: &Path,
-        development: SourceDevelopment,
-    ) -> Result<()> {
-        development.validate()?;
-        self.require_camera_basis(&development)?;
-        if let Some(field) = self.active_flat_field()
-            && self.order.contains(&id)
-        {
-            field.require_source(&development)?;
-        }
-        if let Some(crop) = self.source(id)?.crop {
-            crop.region(development.active_area.into())?;
-        }
-        let fingerprint = Fingerprint::read(path)?;
-        require(
-            self.flat_field.as_ref().is_none_or(|field| {
-                field.reference != id
-                    || (field.fingerprint == fingerprint && field.development == development)
-            }),
-            "changing a flat-field reference requires a newly accepted map",
-        )?;
-        let source = self.source_mut(id)?;
-        source.path = path.to_path_buf();
-        source.fingerprint = fingerprint;
-        source.development = development;
-        Ok(())
     }
     pub fn calibration(&self) -> Result<Option<Calibration>> {
         let (Some(dmin), Some(dmax)) = (self.dmin, self.dmax) else {

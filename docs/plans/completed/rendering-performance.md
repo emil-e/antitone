@@ -2,12 +2,14 @@
 
 Status: implemented and integrated with native-camera processing, accepted geometry and responsive scopes. The user reported improved responsiveness from the earlier performance release build. Broader real-use/resource acceptance remains separate [follow-up](../completion.md#rendering-and-thumbnail-performance).
 
+The original full-byte verification/cache policy is superseded by [removing RAW hashing](../../decisions/no-raw-content-hashing.md), with schema 5 and cache-only file-stat freshness. Historical checkpoint evidence remains unchanged.
+
 ## Scope and result
 
 - Shared/prewarmed immutable GPU processing, both ACES targets, presentation and averaging resources; mutable source/output storage, revisions and preparation signatures remain image/job-owned.
 - Rectangular averaging dispatches only conservative tile/output overlap with unchanged weights/order; affine reconstruction retains actual coverage and full-output dispatch.
 - Exact verified selected-Scan RGB16 proxies seed thumbnails. Pressure-responsive byte budgets protect visible/current work, retain recent entries and cancel obsolete phases; idle prefetch uses spare capacity without evicting retained work.
-- Versioned/checksummed atomic disk proxies retain full-byte RAW/development verification and bounded storage. Corrupt optional cache entries are misses; changed/missing/incompatible RAWs remain errors.
+- Versioned/checksummed atomic disk proxies retain bounded storage. The original full-byte RAW verification was subsequently removed; current proxies use cache-only path/stat freshness. Corrupt optional entries are misses, and missing/unloadable/development-incompatible RAWs remain development errors.
 - Pinned local OpenMP accelerates unchanged LibRaw development with scoped/restored bounded CPU policy. Decoding is separate from optional whole-sensor diagnostics; regional picks retain immutable original sensor data.
 - Scopes keep independent whole-composition coverage, bins/readback identity and lifecycle. Viewer navigation, thumbnails and regional refinement never substitute for scope input.
 

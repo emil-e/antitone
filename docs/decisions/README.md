@@ -7,7 +7,8 @@ Rationale for consequential choices and their tradeoffs. The records below docum
 | [Established LibRaw development](established-raw-development.md) | Accepted |
 | [Bounded upstream parallel LibRaw](parallel-libraw.md) | Accepted; same development/pixels, pinned local OpenMP and lazy immutable diagnostics |
 | [Separate inversion, photography and interchange spaces](colour-space-boundaries.md) | AP0 inversion choice superseded; downstream role separation retained |
-| [Native-camera inversion](native-camera-inversion.md) | Accepted; outright replacement, schema/model 4, no AP0-grade migration |
+| [Native-camera inversion](native-camera-inversion.md) | Accepted; processing model 4, no AP0-grade migration; original project schema superseded by schema 5 |
+| [No RAW content hashing](no-raw-content-hashing.md) | Accepted; schema 5 without fingerprints, cache-only path/stat freshness; identity/relink design deferred |
 | [Unchanged ACES, matching SDR outputs and managed presentation](sdr-output-and-presentation.md) | Accepted |
 | [Output-native scopes and independent magnification](output-native-scopes.md) | Accepted; responsive accepted-frame proxy slice implemented |
 | [RGB-only calibration references](rgb-only-calibration.md) | Accepted; replaces original provenance-bearing design |

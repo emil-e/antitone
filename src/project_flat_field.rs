@@ -8,7 +8,6 @@ pub struct FlatFieldSettings {
     pub contract: String,
     pub enabled: bool,
     pub reference: SourceId,
-    pub fingerprint: Fingerprint,
     pub development: SourceDevelopment,
     pub roll_development: Development,
     pub map: Arc<FlatField>,
@@ -19,7 +18,6 @@ impl FlatFieldSettings {
             contract: CONTRACT.into(),
             enabled: true,
             reference: reference.id,
-            fingerprint: reference.fingerprint.clone(),
             development: reference.development.clone(),
             roll_development: roll_development.clone(),
             map,
@@ -40,10 +38,9 @@ impl FlatFieldSettings {
             "flat-field roll development or WB differs",
         )?;
         self.development.validate()?;
-        self.fingerprint.validate()?;
         let reference = project.source(self.reference)?;
         require(
-            reference.fingerprint == self.fingerprint && reference.development == self.development,
+            reference.development == self.development,
             "flat-field reference identity differs from its accepted map",
         )?;
         require(

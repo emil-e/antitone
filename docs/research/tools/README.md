@@ -6,6 +6,7 @@ Current helpers complement the maintained root tests and [specialist verificatio
 
 - Root `tests/{camera_inversion,camera_project,camera_raw,gpu_film_response,viewer}.rs` and the explicit real-RAW flat-field editor regression maintain model-4 numerical/source/output checks; [commands and limits](../../build-and-probes.md).
 - `native/raw_development_probe.cpp` checks pinned-LibRaw complete RGB16/metadata/immutable diagnostics and scoped thread policy; [build/reproduction guide](raw-development.md). This is not an alternate developer.
+- `native/raw_identity_probe.cpp` inventories headers through pinned LibRaw/public EXIF callbacks, without unpacking, development, input hashing or source writes. [Findings/reproduction](../capture-metadata.md); capture identity/relink design is deferred, and actual private metadata stays ignored.
 - Root `scripts/probe-*.sh` reproduce OCIO/GPU, gamut, profile and macOS presentation comparisons; [reference guide](../../build-and-probes.md). Native setup is described in [the README](../../../README.md).
 
 ## Manufacturer study / capture
@@ -33,6 +34,8 @@ This captures only the application window during timed smoke holds. It needs loc
 ## Historical experiments
 
 The `film/` crate, older capture/compositing helpers and `native/` internal diagnostics under this directory preserve research methodology. Many depend on AP0/model-2/3 APIs, private fixtures, matching OCIO object layouts or old fixed paths; they are not a supported current test suite.
+
+[Archived full-RAW-hash measurement modules](import-fingerprints/README.md) reproduce the old observer/readiness snapshot on its matching baseline. They are not compiled by current Cargo targets or a supported RAW hashing path; use the current hash-free readiness probe linked from the specialist guide.
 
 [Archived inventory and reproduction notes](../history/tools-guide.txt) identify those sources and their compatibility requirements. The source remains here, but the old commands—including the removed Cargo wrapper—describe historical checkouts. Build only explicitly compatible named bins, not all research targets. Historical float/wide source snapshots are not production upload paths, and experiments are not alternate inversion/rendering backends.
 

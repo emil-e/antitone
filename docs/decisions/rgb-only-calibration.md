@@ -1,6 +1,6 @@
 # Store calibration references as RGB values only
 
-Status: accepted; replaces the original provenance-bearing reference design.
+Status: accepted; replaces the original provenance-bearing reference design. The original photo-fingerprint clauses below are superseded by [removing RAW content hashing](no-raw-content-hashing.md); RGB-only calibration and development compatibility remain unchanged.
 
 ## Context
 

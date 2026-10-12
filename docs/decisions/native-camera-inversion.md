@@ -2,6 +2,8 @@
 
 Status: accepted by the user; outright replacement, no old-grade preservation/migration required. Supersedes the inversion choice in [colour-space boundaries](colour-space-boundaries.md), and the grade-compatibility/version clauses of [adjustable response](versioned-film-response.md) and [compact source](rgb16-gpu-source.md). Their earlier rationale is retained.
 
+The original project schema-4 storage choice below is superseded by [hash-free schema 5](no-raw-content-hashing.md). Native-camera processing model 4 and the inversion/development rationale remain unchanged.
+
 ## Context
 
 Colour matrices and channel-wise nonlinear negative inversion do not commute. AP0 channels are colour-mixed coordinates, not physical film-dye measurements. Train-red comparisons established basis-dependent brightness before ACES, not that the brighter rendering is more accurate. Native developed camera channels are the most direct available measurements of the negative, although Bayer spectral overlap and film/scene information loss remain.

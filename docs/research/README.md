@@ -4,6 +4,8 @@ Studies, experiments, measured findings and supporting evidence, organized by qu
 
 ## Rendering / colour management
 
+- [Capture metadata](capture-metadata.md): header-only identifier availability/provenance; metadata identity/relink policy deferred, not implemented.
+- [Import/switching measurements](import-fingerprints.md): historical full-read costs and hash-free 4-/36-source readiness/cache snapshots; byte-immutability/hash-overlap policy rejected.
 - [ACES yellow-collapse mechanism](aces-yellow-collapse.md): concise reproducible finding; current resolution is unchanged ACES with sRGB/P3.
 - [ProPhoto diagnosis](prophoto-gamut-diagnosis.md) and [100-nit SDR Rec.2020 gate](rec2020-rendering-gate.md): rejected output candidates, not pending replacements.
 - [P3 output implementation](p3-output-update.md): completed output-update evidence, with historical test counts.

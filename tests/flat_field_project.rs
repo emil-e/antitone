@@ -2,10 +2,7 @@
 use antitone::{
     flat_field::FlatField,
     processing::PhotoSettings,
-    project::{
-        Development, Fingerprint, FlatFieldSettings, Project, Save, Source, SourceDevelopment,
-        SourceId,
-    },
+    project::{Development, FlatFieldSettings, Project, Save, Source, SourceDevelopment, SourceId},
 };
 use glam::{DMat3, DVec3};
 use std::sync::Arc;
@@ -20,10 +17,6 @@ fn fixture() -> Project {
     let source = Source {
         id: SourceId(0),
         path: "photo.ARW".into(),
-        fingerprint: Fingerprint {
-            bytes: 1,
-            blake3: "0".repeat(64),
-        },
         development: SourceDevelopment {
             dimensions: [824, 624],
             active_area: [12, 12, 800, 600],
@@ -108,7 +101,7 @@ fn contract_identity_geometry_and_incompatible_sources_reject() {
     changed.flat_field.as_mut().unwrap().contract = "unknown".into();
     assert!(changed.validate().is_err());
     changed = project.clone();
-    changed.flat_field.as_mut().unwrap().fingerprint.bytes += 1;
+    changed.flat_field.as_mut().unwrap().reference = SourceId(999);
     assert!(changed.validate().is_err());
     changed = project.clone();
     changed.development.as_mut().unwrap().fixed_wb[0] += 0.1;

@@ -1,15 +1,11 @@
 use super::*;
 use crate::export::ImageSize;
-use crate::project::{Fingerprint, SourceDevelopment};
+use crate::project::SourceDevelopment;
 
 fn record(path: &str) -> Source {
     Source {
         id: SourceId(0),
         path: path.into(),
-        fingerprint: Fingerprint {
-            bytes: 1,
-            blake3: "0".repeat(64),
-        },
         development: SourceDevelopment {
             dimensions: [824, 624],
             active_area: [12, 12, 800, 600],

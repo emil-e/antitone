@@ -1,7 +1,7 @@
 use crate::{
     Error,
     gpu::ProcessingParameters,
-    project::{Development, Fingerprint, Project, Save, Source, SourceDevelopment, SourceId},
+    project::{Development, Project, Save, Source, SourceDevelopment, SourceId},
     raw::{Metadata, RawFile},
     scan::Scan,
 };
@@ -228,23 +228,16 @@ pub(super) fn read_source(path: &Path) -> Result<(Source, [f64; 4])> {
 pub(super) fn open_source(path: &Path) -> Result<(Source, RawFile)> {
     let path = absolute(path)?;
     let started = std::time::Instant::now();
-    // Hash before opening the handle for development: pathname replacement must not
-    // associate an older open RAW with the new file's fingerprint.
-    let fingerprint = Fingerprint::read(&path)
-        .map_err(|error| failure(format!("{}: {error}", path.display())))?;
-    let fingerprint_seconds = started.elapsed().as_secs_f64();
-    let tick = std::time::Instant::now();
     let raw =
         RawFile::open(&path).map_err(|error| failure(format!("{}: {error}", path.display())))?;
     println!(
-        "source_registration header_seconds={:.6} fingerprint_seconds={fingerprint_seconds:.6}",
-        tick.elapsed().as_secs_f64()
+        "source_registration header_seconds={:.6}",
+        started.elapsed().as_secs_f64()
     );
     Ok((
         Source {
             id: SourceId(0),
             path,
-            fingerprint,
             development: metadata_development(&raw.metadata)?,
             reference_only: false,
             photo: Default::default(),
@@ -255,12 +248,6 @@ pub(super) fn open_source(path: &Path) -> Result<(Source, RawFile)> {
     ))
 }
 pub(super) fn verify_source(expected: &Source, actual: &Source) -> Result<()> {
-    if expected.fingerprint != actual.fingerprint {
-        return Err(failure(format!(
-            "{}: RAW content changed; explicit acceptance is required",
-            actual.path.display()
-        )));
-    }
     if expected.development != actual.development {
         return Err(failure(format!(
             "{}: RAW development identity differs",
@@ -283,9 +270,6 @@ pub(super) fn verify_scan(source: &Source, scan: &Scan) -> Result<()> {
         return Err(failure(
             "developed RAW differs from its recorded header identity",
         ));
-    }
-    if Fingerprint::read(&source.path)? != source.fingerprint {
-        return Err(failure("RAW content changed during development"));
     }
     Ok(())
 }
