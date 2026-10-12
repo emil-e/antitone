@@ -16,10 +16,10 @@ Vectorscope amplification independently narrows the plotted chroma range about n
 
 A common extended-sRGB basis was considered for stable cross-target coordinates, but would introduce negative/above-one coordinates for valid P3 colours and was not needed for the user's task. Output-native codes instead correspond to TIFF encoding before quantization. Changing target changes both rendering and coordinate meaning; identical native codes are not necessarily identical colours.
 
-Magnification is not grading, image gamut conversion or trace brightness. Re-binning cached rendered samples retains useful zoom detail without rerunning ACES. Proxy coverage is explicitly approximate; full-source analysis and the concurrent geometry branch require separate acceptance.
+Magnification is not grading, image gamut conversion or trace brightness. Re-binning cached rendered samples retains useful zoom detail without rerunning ACES. Proxy coverage follows accepted composition through canonical geometry mappings and remains explicitly approximate. Full-source analysis requires separate approval; fresh combined photographic/onscreen acceptance remains open.
 
 ## Evidence
 
 - [Scope contract](../contracts/scopes.md).
-- [Scope plan/agreement and geometry rebase boundary](../plans/vectorscope-and-waveform.md).
+- [Completed implementation/integration](../plans/completed/vectorscope-and-waveform.md).
 - [Unchanged rendering/presentation decision](sdr-output-and-presentation.md).

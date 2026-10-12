@@ -10,9 +10,19 @@ Remaining work is separate from those implementation closures:
 
 - **Photographic/native-diagnostic acceptance:** agree an unlocked-desktop real-photo exercise of straightening and native/settled agreement, rotated Gamma/WB picks, invalid/cancelled selections, Save/Open and TIFF/AP0 EXR reopen, including corrected and uncorrected sources. Synthetic/Metal/file checks already pass; the photographic exercise is not claimed as performed. Camera-model visual review is not calibrated stock/scene-colour acceptance.
 - **Dense alignment guides:** optional visual-only follow-up; thirds are already implemented. Settle the overlay/control design before implementation; guides must not affect framing, measurements, processing or exports.
-- Future scopes and undo must follow accepted composition, but remain owned by [visual feedback](visual-feedback.md#scope-design-to-settle-later) and [durable projects](durable-projects.md), not missing geometry implementation.
+- Responsive scopes now follow accepted composition; [scope acceptance](#scopes) and [durable projects](durable-projects.md) remain separate, not missing geometry implementation.
 
 Next action when selected: agree the photographic acceptance exercise or the smallest guide-design slice. Broader device/monitor/interoperability checks stay in [release work](#export-and-release-work).
+
+## Scopes
+
+[Responsive waveform/vectorscope implementation](completed/vectorscope-and-waveform.md) is closed and integrated with native-camera processing and accepted composition. [Current contract](../contracts/scopes.md) owns basis, approximation and lifecycle. Do not resume the old geometry-rebase or implementation steps.
+
+- **Fresh visual acceptance:** inspect rim directions, approximate Skin guide and its dimmer stroke on an unoccluded desktop; exercise accepted turned/flipped/cropped/straightened photographs alongside source/reference/crop-draft suspension. Synthetic/Metal/layout integration checks pass, but no new combined real-photo/physical-control acceptance is claimed. Prior guide capture attempts were occluded; no gate bypass.
+- **Full-source analysis:** deferred and requires separate approval. Decide requested versus automatic analysis from observed cost/use need. Use canonical exported coverage, bounded source tiles and valid-edge masks; process/render before accumulation, preserve original-source flat-field coordinates, yield to foreground work, cancel/reject stale generations and reconcile counts. No retained full rendered image, new RAW development or CPU interactive fallback. Magnifying full-source bins requires another tile pass to recover detail; never relabel proxy data Full source.
+- Broader device/macOS-14/monitor checks remain in release work. Existing performance measurements are machine-specific reduction snapshots, not end-to-end gesture acceptance.
+
+Next action when selected: agree an unoccluded real-photo acceptance exercise. No further scope implementation is selected.
 
 ## Inversion bases and roll assistance
 

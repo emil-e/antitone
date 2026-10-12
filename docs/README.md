@@ -14,6 +14,7 @@ Start with [the roadmap](../PLAN.md) and [repository workflow](../AGENTS.md). Re
 - [Processing models, source representation, calibration and tolerances](contracts/processing-model.md).
 - [Editor controls, defaults, scope and interactions](contracts/editor-controls.md).
 - [Image geometry, coordinate terminology and picker-view requirements](contracts/geometry.md).
+- [Display-referred scopes](contracts/scopes.md): target-native waveform/vector conventions, approximate accepted-frame coverage and bounded lifecycle.
 - [Rendering, presentation, TIFF/AP0 EXR and safety](contracts/output.md).
 - [Project state](contracts/project-state.md): live stable-ID Save/Open, schema-4 identity, composition and flat-field persistence; recovery/relink/undo remain unwired.
 - [Pinned OCIO artifacts](../assets/ocio/README.md) and [ICC profiles](../assets/profiles/README.md): asset definitions/checksums.

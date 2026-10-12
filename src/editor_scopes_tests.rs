@@ -33,7 +33,7 @@ fn plot_switch_and_amplification_keep_slot_height_and_processing_state() {
                     },
                     |ui| {
                         egui::CentralPanel::default().show(ui, |ui| {
-                            slot = scopes.panel(ui, OutputTarget::DisplayP3);
+                            slot = scopes.panel(ui, OutputTarget::DisplayP3, 120.);
                         });
                     },
                 );
@@ -69,7 +69,7 @@ fn panel_frame(
         },
         |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
-                slot = scopes.panel(ui, OutputTarget::DisplayP3);
+                slot = scopes.panel(ui, OutputTarget::DisplayP3, 120.);
             });
         },
     );
@@ -389,6 +389,7 @@ fn whole_proxy_scopes_are_independent_of_viewport_and_do_not_resize_the_viewer()
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let matrix = glam::DMat3::from_cols_array(&[0.9, 0.02, 0., 0.05, 1.1, 0., 0., 0.03, 0.8]);
         let images = [OutputTarget::Srgb, OutputTarget::DisplayP3].map(|target| {
             Arc::new(
                 pollster::block_on(GpuImage::new(
@@ -397,7 +398,7 @@ fn whole_proxy_scopes_are_independent_of_viewport_and_do_not_resize_the_viewer()
                     7,
                     3,
                     &[[4000, 3000, 2000, 0]; 21],
-                    glam::DMat3::IDENTITY,
+                    matrix,
                     target,
                 ))
                 .unwrap(),
@@ -413,7 +414,7 @@ fn whole_proxy_scopes_are_independent_of_viewport_and_do_not_resize_the_viewer()
         let ready = Ready {
             path: path.clone(),
             area,
-            floor: 2.2e-5,
+            floor: crate::processing::CAMERA_INPUT_FLOOR,
             images: images.clone(),
             record: Source {
                 id: SourceId(0),
@@ -425,16 +426,26 @@ fn whole_proxy_scopes_are_independent_of_viewport_and_do_not_resize_the_viewer()
                 development: crate::project::SourceDevelopment {
                     dimensions: [7040, 3072],
                     active_area: [12, 34, 7000, 3000],
-                    camera_to_ap0: glam::DMat3::IDENTITY.to_cols_array_2d(),
-                    input_floor: 2.2e-5,
+                    camera_model: "test-camera".into(),
+                    camera_to_ap1: matrix.to_cols_array_2d(),
+                    input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                 },
                 reference_only: false,
                 photo: Default::default(),
+                orientation: Default::default(),
+                crop: None,
             },
             development: Development::new(crate::raw::version(), [2., 1., 1.5, 1.]),
         };
         let (mut editor, _send, _receiver) = super::super::tests::fixture();
         editor.ready = Some(ready);
+        editor
+            .document
+            .project
+            .camera_basis
+            .as_mut()
+            .unwrap()
+            .camera_to_ap1 = matrix.to_cols_array_2d();
         editor.source = false;
         editor.scopes = Scopes::new(&device);
         let gpu = editor.scopes.gpu.as_ref().unwrap().clone();
@@ -502,7 +513,7 @@ fn whole_proxy_scopes_are_independent_of_viewport_and_do_not_resize_the_viewer()
                 }
             }
             assert!(found);
-            let (input, _) = editor.scope_input().unwrap();
+            let (input, _, _) = editor.scope_input().unwrap();
             assert!(Arc::ptr_eq(&input, &images[editor.target as usize]));
             prepare(with, size);
             let reductions = gpu.reduction_count();
@@ -511,23 +522,106 @@ fn whole_proxy_scopes_are_independent_of_viewport_and_do_not_resize_the_viewer()
             assert_eq!(gpu.reduction_count(), reductions);
             editor.viewport.fit();
         }
-        let before = editor.document.project.clone();
-        let (image, parameters) = editor.scope_input().unwrap();
+        let (image, parameters, scope_frame) = editor.scope_input().unwrap();
+        let expected = ProcessingParameters::positive(
+            editor.calibration().unwrap(),
+            editor.roll,
+            editor.photo,
+            matrix,
+        )
+        .unwrap();
+        assert_eq!(
+            bytemuck::bytes_of(&parameters),
+            bytemuck::bytes_of(&expected)
+        );
         let settings = Settings {
             target: editor.target,
             plot: Plot::Vector,
             ..Default::default()
         };
         assert_eq!(
-            gpu.status(&image, parameters, settings)
+            gpu.status(&image, parameters, scope_frame, settings)
                 .unwrap()
                 .unwrap()
                 .valid,
             21
         );
+        editor.roll_orientation.turn_clockwise();
+        editor.photo_orientation.flips.horizontal = true;
+        editor.crop = Some(
+            Crop {
+                center: [3512., 1534.],
+                size: [5000, 1000],
+                angle: 13_f64.to_radians(),
+            }
+            .constrained(area)
+            .unwrap(),
+        );
+        let (_, composed_parameters, composed_frame) = editor.scope_input().unwrap();
+        assert_eq!(
+            bytemuck::bytes_of(&parameters),
+            bytemuck::bytes_of(&composed_parameters)
+        );
+        assert_eq!(composed_frame.output, [1, 5]);
+        assert_eq!(
+            composed_frame.composition,
+            Composition::with_crop(
+                area,
+                editor.roll_orientation,
+                editor.photo_orientation,
+                editor.crop
+            )
+            .unwrap()
+        );
+        assert!(
+            gpu.status(&image, parameters, composed_frame, settings)
+                .is_none()
+        );
+        prepare(
+            frame(&mut editor, egui::vec2(1100., 800.)),
+            egui::vec2(1100., 800.),
+        );
+        assert_eq!(
+            gpu.status(&image, parameters, composed_frame, settings)
+                .unwrap()
+                .unwrap()
+                .valid,
+            5
+        );
+        assert!(
+            gpu.status(&image, parameters, scope_frame, settings)
+                .is_none()
+        );
+        let mut encoder = device.create_command_encoder(&Default::default());
+        assert!(
+            !image.prepare(&device, &mut encoder, parameters),
+            "geometry must not rerender ACES"
+        );
+        editor.viewport.zoom = Some(3.);
+        assert_eq!(editor.scope_input().unwrap().2, composed_frame);
+        editor.begin_crop();
+        assert_eq!(
+            editor.scope_input().err(),
+            Some("Apply crop to update scopes")
+        );
+        frame(&mut editor, egui::vec2(1100., 800.));
+        assert!(
+            gpu.status(&image, parameters, composed_frame, settings)
+                .is_none()
+        );
+        editor.finish_crop(false);
+        assert_eq!(editor.scope_input().unwrap().2, composed_frame);
+        prepare(
+            frame(&mut editor, egui::vec2(1100., 800.)),
+            egui::vec2(1100., 800.),
+        );
+        let before = editor.document.project.clone();
         editor.source = true;
         frame(&mut editor, egui::vec2(800., 600.));
-        assert!(gpu.status(&image, parameters, settings).is_none());
+        assert!(
+            gpu.status(&image, parameters, composed_frame, settings)
+                .is_none()
+        );
         assert_eq!(editor.document.project, before);
     });
 }

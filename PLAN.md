@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Native-camera inversion and orientation/crop/straightening are implemented and integrated on main; their implementation plans are closed. The crop UX is user-accepted for now. Remaining photographic acceptance and feedback are separately scoped; no next implementation is selected. [Completed geometry/checks](docs/plans/completed/flip-crop-rotate.md), [active acceptance/follow-up](docs/plans/completion.md#geometry).
+Native-camera inversion, orientation/crop/straightening and responsive output-native waveform/vectorscope are implemented and integrated on main; their implementation plans are closed. The crop UX is user-accepted for now. Remaining photographic acceptance and feedback are separately scoped; no next implementation is selected. [Completed geometry/checks](docs/plans/completed/flip-crop-rotate.md), [active acceptance/follow-up](docs/plans/completion.md#geometry).
 
 Start here, then use [the documentation map](docs/README.md), [architecture](docs/architecture.md) and [repository workflow](AGENTS.md). This is the current cross-package status/order record; details live in contracts, plans and evidence.
 
@@ -14,6 +14,7 @@ The saveable editor develops RAWs with fixed LibRaw settings, offers full-resolu
 - Stable-ID Save/Open, fixed development WB, atomic saves and dirty New/Open/Close guards are implemented. Recovery/relink/source-change UI and undo remain unwired. [Project contract](docs/contracts/project-state.md), [Save/Open closure](docs/plans/completed/save-open.md).
 - Navigation, source-inspection brightness and bounded/resizable thumbnails are implemented. [Interaction package](docs/plans/inspection-and-interaction.md), [visual feedback](docs/plans/visual-feedback.md).
 - Roll-level flat-field correction is implemented and user-accepted: editable rectangular support, native-camera gains, corrected processing/picks/thumbnails/exports and durable map state. [Closure/evidence limits](docs/plans/completed/flat-field-correction.md).
+- Responsive positive-grade scopes reuse the bounded whole-source proxy through accepted composition, independently of viewer navigation. [Scope contract](docs/contracts/scopes.md), [implementation/checks](docs/plans/completed/vectorscope-and-waveform.md); full-source analysis is deferred.
 - Shared roll/photo turns/flips, source-anchored crop/straightening, actual-coverage picks, bounded rotated reconstruction and composed exports are implemented. Tab-scoped Scan orientation/Composition panels, action flips, stable-source crop UX and thirds guides are user-accepted for now. [Geometry contract](docs/contracts/geometry.md), [implementation closure](docs/plans/completed/flip-crop-rotate.md).
 
 ## Remaining work
@@ -21,7 +22,7 @@ The saveable editor develops RAWs with fixed LibRaw settings, offers full-resolu
 Recovery/relink/undo is recorded but is not the user's highest priority.
 
 1. **Camera/geometry photographic acceptance** — native/settled straightening agreement, rotated Gamma/WB picks, Save/Open and TIFF/EXR reopen on real photographs; synthetic combined checks pass. Dense guides remain separate. [Active acceptance/follow-up](docs/plans/completion.md#geometry).
-2. **Scopes and inspection/interaction polish** — scopes need their own basis/design; physical trackpad exercise and remaining viewer-intrusion/layout complaints remain open. Dark-red/cold-toe appearance is a reproducible investigation, not an assumed processing fix. [Interaction](docs/plans/inspection-and-interaction.md), [visual feedback](docs/plans/visual-feedback.md).
+2. **Scope acceptance and inspection/interaction polish** — fresh scope-guide/composed-photo visual checks, physical trackpad exercise and remaining viewer-intrusion/layout complaints remain open. [Scope acceptance](docs/plans/completion.md#scopes). Dark-red/cold-toe appearance is a reproducible investigation, not an assumed processing fix. [Interaction](docs/plans/inspection-and-interaction.md), [visual feedback](docs/plans/visual-feedback.md).
 3. **Larger completion work** — explicitly accepted/cancellable roll estimates, photographic controls/B&W design, general operation feedback and separately scoped readability work. [Package](docs/plans/completion.md).
 4. **Export/release acceptance** — progress/cancellation/batch snapshots/metadata, observed aggregate-resource needs, packaging/licensing and broader device/monitor/interoperability checks. [Scope](docs/plans/completion.md#export-and-release-work).
 5. **Later persistence** — recovery, relink/source-change UI and undo/redo. Never silently overwrite explicit saves or resample reference RGB. [Package](docs/plans/durable-projects.md).

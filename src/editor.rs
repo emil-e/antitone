@@ -1237,15 +1237,6 @@ impl Editor {
     fn controls(&mut self, ui: &mut egui::Ui) -> Option<ScopeSlot> {
         use controls::{ColorControl, Parameter};
         let previous_orientation = (self.roll_orientation, self.photo_orientation);
-        let editable = !self.busy
-            && self.crop_edit.is_none()
-            && self.flat_edit.is_none()
-            && self.calibration().is_some();
-        let can_pick = !self.busy
-            && self.crop_edit.is_none()
-            && self.flat_edit.is_none()
-            && self.ready.is_some();
-        let mut start_pick = None;
         // Reserve four rows plus section chrome before the panel has a cached size.
         let output_height =
             4. * ui.spacing().interact_size.y + 3. * ui.spacing().item_spacing.y + 36.;
@@ -1299,6 +1290,15 @@ impl Editor {
             });
         }
         ui.add_space(8.);
+        let editable = !self.busy
+            && self.crop_edit.is_none()
+            && self.flat_edit.is_none()
+            && self.calibration().is_some();
+        let can_pick = !self.busy
+            && self.crop_edit.is_none()
+            && self.flat_edit.is_none()
+            && self.ready.is_some();
+        let mut start_pick = None;
         egui::ScrollArea::vertical().show(ui, |ui| {
             if self.tab == 0 {
                 ui.push_id("roll", |ui| {

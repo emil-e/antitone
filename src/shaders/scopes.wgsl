@@ -2,6 +2,8 @@ struct Parameters {
     size: vec4u,
     luma_gain: vec4f,
     direction_extent: vec4f,
+    uv_x: vec4f,
+    uv_y: vec4f,
 }
 @group(0) @binding(0) var image: texture_2d<f32>;
 @group(0) @binding(1) var<uniform> p: Parameters;
@@ -16,7 +18,15 @@ fn bin(v: f32) -> u32 {
 @compute @workgroup_size(16, 16)
 fn reduce(@builtin(global_invocation_id) id: vec3u) {
     if any(id.xy >= p.size.xy) { return; }
-    let rgb = textureLoad(image, vec2i(id.xy), 0).rgb;
+    let uv = (vec2f(id.xy) + .5) / vec2f(p.size.xy);
+    let mapped = p.uv_x.xy + uv.x * p.uv_x.zw + uv.y * p.uv_y.xy;
+    if any(mapped < vec2f(0.)) || any(mapped > vec2f(1.)) {
+        atomicAdd(&totals[1], 1u);
+        return;
+    }
+    let source_size = textureDimensions(image);
+    let xy = min(vec2u(mapped * vec2f(source_size)), source_size - vec2u(1));
+    let rgb = textureLoad(image, vec2i(xy), 0).rgb;
     if !all(rgb >= vec3f(0.)) || !all(rgb <= vec3f(1.)) {
         atomicAdd(&totals[1], 1u);
         return;

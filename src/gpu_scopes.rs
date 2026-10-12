@@ -1,5 +1,7 @@
 use crate::{
     Error,
+    frame_raster::FrameRaster,
+    geometry::TextureMapping,
     gpu::ProcessingParameters,
     scopes::{BINS, Basis, Counts, PLANE_LEN, Plot, Settings},
     viewer::GpuImage,
@@ -13,6 +15,8 @@ struct Parameters {
     size: [u32; 4],
     luma_gain: [f32; 4],
     direction_extent: [f32; 4],
+    uv_x: [f32; 4],
+    uv_y: [f32; 4],
 }
 
 struct Key {
@@ -20,6 +24,7 @@ struct Key {
     source_revision: u64,
     parameters: [u8; ProcessingParameters::BYTE_LEN],
     settings: Settings,
+    frame: FrameRaster,
 }
 fn accumulation_settings(mut settings: Settings) -> Settings {
     if settings.plot == Plot::Luma {
@@ -28,27 +33,40 @@ fn accumulation_settings(mut settings: Settings) -> Settings {
     settings
 }
 impl Key {
-    fn new(image: &Arc<GpuImage>, parameters: ProcessingParameters, settings: Settings) -> Self {
+    fn new(
+        image: &Arc<GpuImage>,
+        parameters: ProcessingParameters,
+        frame: FrameRaster,
+        settings: Settings,
+    ) -> Self {
         Self {
             image: Arc::downgrade(image),
             source_revision: image.source_revision(),
             parameters: bytemuck::bytes_of(&parameters).try_into().unwrap(),
             settings: accumulation_settings(settings),
+            frame,
         }
     }
     fn matches(
         &self,
         image: &Arc<GpuImage>,
         parameters: ProcessingParameters,
+        frame: FrameRaster,
         settings: Settings,
     ) -> bool {
-        self.same_presentation(image, settings)
+        self.same_presentation(image, frame, settings)
             && self.parameters.as_slice() == bytemuck::bytes_of(&parameters)
     }
-    fn same_presentation(&self, image: &Arc<GpuImage>, settings: Settings) -> bool {
+    fn same_presentation(
+        &self,
+        image: &Arc<GpuImage>,
+        frame: FrameRaster,
+        settings: Settings,
+    ) -> bool {
         self.image.ptr_eq(&Arc::downgrade(image))
             && self.source_revision == image.source_revision()
             && self.settings == accumulation_settings(settings)
+            && self.frame == frame
     }
 }
 struct Prepared {
@@ -225,14 +243,49 @@ impl GpuScopes {
         frame: &wgpu::Texture,
         settings: Settings,
     ) -> Result<wgpu::BindGroup, Error> {
-        settings.validate([frame.width(), frame.height()])?;
-        if frame.format() != wgpu::TextureFormat::Rgba32Float {
+        self.encode_mapped(
+            device,
+            encoder,
+            frame,
+            [frame.width(), frame.height()],
+            TextureMapping::IDENTITY,
+            settings,
+        )
+    }
+
+    /// Samples the accepted whole frame from the rendered whole-active-area proxy.
+    pub fn encode_frame(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        source: &wgpu::Texture,
+        frame: FrameRaster,
+        settings: Settings,
+    ) -> Result<wgpu::BindGroup, Error> {
+        let mapping =
+            frame
+                .composition
+                .texture_mapping(frame.min, frame.max, frame.composition.area());
+        self.encode_mapped(device, encoder, source, frame.output, mapping, settings)
+    }
+
+    fn encode_mapped(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        source: &wgpu::Texture,
+        size: [u32; 2],
+        mapping: TextureMapping,
+        settings: Settings,
+    ) -> Result<wgpu::BindGroup, Error> {
+        settings.validate(size)?;
+        if source.format() != wgpu::TextureFormat::Rgba32Float {
             return Err(Error::InvalidParameter(
                 "scopes require a linear-target float raster",
             ));
         }
-        let uniform = Self::uniform(device, frame, settings);
-        let view = frame.create_view(&Default::default());
+        let uniform = Self::uniform(device, size, mapping, settings);
+        let view = source.create_view(&Default::default());
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("scope reduction resources"),
             layout: &self.reduce.get_bind_group_layout(0),
@@ -261,19 +314,24 @@ impl GpuScopes {
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.set_pipeline(&self.reduce);
             pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(frame.width().div_ceil(16), frame.height().div_ceil(16), 1);
+            pass.dispatch_workgroups(size[0].div_ceil(16), size[1].div_ceil(16), 1);
         }
         self.reductions
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(self.draw_group(device, &uniform))
     }
 
-    fn uniform(device: &wgpu::Device, frame: &wgpu::Texture, settings: Settings) -> wgpu::Buffer {
+    fn uniform(
+        device: &wgpu::Device,
+        size: [u32; 2],
+        mapping: TextureMapping,
+        settings: Settings,
+    ) -> wgpu::Buffer {
         let basis = Basis::new(settings.target);
         let parameters = Parameters {
             size: [
-                frame.width(),
-                frame.height(),
+                size[0],
+                size[1],
                 match settings.plot {
                     Plot::Rgb => 0,
                     Plot::Luma => 1,
@@ -293,6 +351,13 @@ impl GpuScopes {
                 (basis.extent / settings.amplification as f64) as f32,
                 0.,
             ],
+            uv_x: [
+                mapping.origin[0],
+                mapping.origin[1],
+                mapping.x_axis[0],
+                mapping.x_axis[1],
+            ],
+            uv_y: [mapping.y_axis[0], mapping.y_axis[1], 0., 0.],
         };
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("scope target and plot parameters"),
@@ -330,6 +395,7 @@ impl GpuScopes {
         &self,
         image: &Arc<GpuImage>,
         parameters: ProcessingParameters,
+        frame: FrameRaster,
         settings: Settings,
     ) -> Option<Result<Counts, String>> {
         if self
@@ -337,7 +403,7 @@ impl GpuScopes {
             .lock()
             .unwrap()
             .as_ref()
-            .is_some_and(|prepared| prepared.key.matches(image, parameters, settings))
+            .is_some_and(|prepared| prepared.key.matches(image, parameters, frame, settings))
         {
             self.diagnostic.lock().unwrap().result.clone()
         } else {
@@ -411,6 +477,7 @@ pub struct ScopePaint {
     pub gpu: Arc<GpuScopes>,
     pub image: Arc<GpuImage>,
     pub parameters: ProcessingParameters,
+    pub frame: FrameRaster,
     pub settings: Settings,
     pub context: egui::Context,
     group: Mutex<Option<wgpu::BindGroup>>,
@@ -420,6 +487,7 @@ impl ScopePaint {
         gpu: Arc<GpuScopes>,
         image: Arc<GpuImage>,
         parameters: ProcessingParameters,
+        frame: FrameRaster,
         settings: Settings,
         context: egui::Context,
     ) -> Self {
@@ -427,6 +495,7 @@ impl ScopePaint {
             gpu,
             image,
             parameters,
+            frame,
             settings,
             context,
             group: Mutex::new(None),
@@ -447,17 +516,20 @@ impl egui_wgpu::CallbackTrait for ScopePaint {
         let matches = cached.as_ref().is_some_and(|prepared| {
             prepared
                 .key
-                .matches(&self.image, self.parameters, self.settings)
+                .matches(&self.image, self.parameters, self.frame, self.settings)
         });
         // UI state supplies the newest request on the completion repaint. Don't enqueue another
         // reduction/readback while the previous one is outstanding, even after hide/source changes.
         let pending = self.gpu.diagnostic.lock().unwrap().pending;
         if !matches && !pending {
-            let key = Key::new(&self.image, self.parameters, self.settings);
-            match self
-                .gpu
-                .encode(device, encoder, &self.image.linear, self.settings)
-            {
+            let key = Key::new(&self.image, self.parameters, self.frame, self.settings);
+            match self.gpu.encode_frame(
+                device,
+                encoder,
+                &self.image.linear,
+                self.frame,
+                self.settings,
+            ) {
                 Ok(group) => {
                     *cached = Some(Prepared {
                         key,
@@ -482,11 +554,19 @@ impl egui_wgpu::CallbackTrait for ScopePaint {
         *self.group.lock().unwrap() = cached.as_mut().and_then(|prepared| {
             // Retain coherent bins during grading edits; status stays Updating until the current
             // parameters complete. Never pair old bins with a different source or graticule.
-            if !prepared.key.same_presentation(&self.image, self.settings) {
+            if !prepared
+                .key
+                .same_presentation(&self.image, self.frame, self.settings)
+            {
                 return None;
             }
             if prepared.plot != self.settings.plot && prepared.group.is_some() {
-                let uniform = GpuScopes::uniform(device, &self.image.linear, self.settings);
+                let uniform = GpuScopes::uniform(
+                    device,
+                    self.frame.output,
+                    TextureMapping::IDENTITY,
+                    self.settings,
+                );
                 prepared.group = Some(self.gpu.draw_group(device, &uniform));
                 prepared.plot = self.settings.plot;
             }

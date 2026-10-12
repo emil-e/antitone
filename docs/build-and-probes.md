@@ -89,7 +89,7 @@ For window capture use [the relocated capture helper](research/tools/README.md#m
 
 ## Responsive image scopes
 
-The above-controls slot provides positive-grade-only whole-frame approximate waveform/vectorscope, in selected output-native codes. RGB/luma reuse bins; vectorscope scale re-bins cached rendering without rerunning ACES. Source/reference views suspend scopes. [Contract](contracts/scopes.md), [plan/rebase boundary and verification](plans/vectorscope-and-waveform.md).
+The above-controls slot provides positive-grade-only whole-frame approximate waveform/vectorscope, in selected output-native codes. RGB/luma reuse bins; vectorscope scale re-bins cached rendering without rerunning ACES. Source/reference views and crop drafts suspend scopes. Accepted crop/orientation follows canonical whole-frame mapping, independently of viewer navigation. [Contract](contracts/scopes.md), [implementation/integration closure](plans/completed/vectorscope-and-waveform.md).
 
 ```sh
 CC=/usr/bin/clang CXX=/usr/bin/clang++ \

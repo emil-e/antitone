@@ -8,6 +8,7 @@ Selective rationale for consequential choices—not a second specification or ta
 | [Separate inversion, photography and interchange spaces](colour-space-boundaries.md) | AP0 inversion choice superseded; downstream role separation retained |
 | [Native-camera inversion](native-camera-inversion.md) | Accepted; outright replacement, schema/model 4, no AP0-grade migration |
 | [Unchanged ACES, matching SDR outputs and managed presentation](sdr-output-and-presentation.md) | Accepted |
+| [Output-native scopes and independent magnification](output-native-scopes.md) | Accepted; responsive accepted-frame proxy slice implemented |
 | [RGB-only calibration references](rgb-only-calibration.md) | Accepted; replaces original provenance-bearing design |
 | [Compact RGB16 GPU source](rgb16-gpu-source.md) | Accepted; replaces float-AP0 upload |
 | [Versioned adjustable film response](versioned-film-response.md) | Response mathematics retained; compatibility/version clauses superseded |

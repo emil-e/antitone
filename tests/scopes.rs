@@ -1,5 +1,7 @@
 #![cfg(all(feature = "ui", feature = "render"))]
 use antitone::{
+    frame_raster::FrameRaster,
+    geometry::{Composition, SourceRegion},
     gpu::ProcessingParameters,
     gpu_scopes::{GpuScopes, ScopePaint},
     rendering::OutputTarget,
@@ -9,6 +11,26 @@ use antitone::{
 use egui_wgpu::CallbackTrait;
 use glam::DMat3;
 use std::sync::Arc;
+
+#[path = "scopes/geometry.rs"]
+mod geometry;
+
+fn full_frame(size: [u32; 2]) -> FrameRaster {
+    FrameRaster::full(
+        Composition::new(
+            SourceRegion {
+                x: 0,
+                y: 0,
+                width: size[0],
+                height: size[1],
+            },
+            Default::default(),
+            Default::default(),
+        )
+        .unwrap(),
+    )
+    .unwrap()
+}
 
 async fn device() -> (wgpu::Device, wgpu::Queue) {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -156,6 +178,7 @@ fn grading_edits_keep_a_trace_but_other_sources_and_graticules_do_not() {
         Amplification,
         Source,
         SourceRevision,
+        Composition,
         Suspend,
     }
     pollster::block_on(async {
@@ -173,6 +196,7 @@ fn grading_edits_keep_a_trace_but_other_sources_and_graticules_do_not() {
             Change::Amplification,
             Change::Source,
             Change::SourceRevision,
+            Change::Composition,
             Change::Suspend,
         ] {
             let gpu = Arc::new(GpuScopes::new(&device).await.unwrap());
@@ -198,6 +222,7 @@ fn grading_edits_keep_a_trace_but_other_sources_and_graticules_do_not() {
                 gpu.clone(),
                 image.clone(),
                 parameters,
+                full_frame([7, 3]),
                 settings,
                 context.clone(),
             );
@@ -205,6 +230,7 @@ fn grading_edits_keep_a_trace_but_other_sources_and_graticules_do_not() {
             first.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
             let mut requested_image = image.clone();
             let mut requested_settings = settings;
+            let mut requested_frame = full_frame([7, 3]);
             match change {
                 Change::Grade => {}
                 Change::Target => requested_settings.target = OutputTarget::Srgb,
@@ -228,6 +254,19 @@ fn grading_edits_keep_a_trace_but_other_sources_and_graticules_do_not() {
                 Change::SourceRevision => image
                     .write_source(&queue, &[[4000, 5000, 6000, 0]; 21])
                     .unwrap(),
+                Change::Composition => {
+                    let mut frame = requested_frame;
+                    frame.composition = Composition::new(
+                        frame.composition.area(),
+                        Default::default(),
+                        antitone::geometry::PhotoOrientation {
+                            turns: antitone::geometry::QuarterTurns::Two,
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+                    requested_frame = frame;
+                }
                 Change::Suspend => gpu.invalidate(),
             }
             let latest_parameters = ProcessingParameters::source_inspection(0.2).unwrap();
@@ -235,14 +274,20 @@ fn grading_edits_keep_a_trace_but_other_sources_and_graticules_do_not() {
                 gpu.clone(),
                 requested_image.clone(),
                 latest_parameters,
+                requested_frame,
                 requested_settings,
                 context.clone(),
             );
             latest.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
             assert_eq!(gpu.reduction_count(), 1, "retain the outstanding-job bound");
             assert!(
-                gpu.status(&requested_image, latest_parameters, requested_settings)
-                    .is_none(),
+                gpu.status(
+                    &requested_image,
+                    latest_parameters,
+                    requested_frame,
+                    requested_settings
+                )
+                .is_none(),
                 "held bins must remain labelled Updating"
             );
             let pixels = paint_pixels(&device, &queue, encoder, |pass| {
@@ -269,7 +314,7 @@ fn grading_edits_keep_a_trace_but_other_sources_and_graticules_do_not() {
                 device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
                 assert_eq!(gpu.reduction_count(), 2);
                 assert_eq!(
-                    gpu.status(&image, latest_parameters, settings)
+                    gpu.status(&image, latest_parameters, full_frame([7, 3]), settings)
                         .unwrap()
                         .unwrap()
                         .valid,
@@ -430,6 +475,7 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
                 gpu.clone(),
                 image.clone(),
                 parameters,
+                full_frame([7, 3]),
                 settings,
                 context.clone(),
             )
@@ -445,7 +491,7 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
         queue.submit([encoder.finish()]);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         assert_eq!(
-            gpu.status(&image, parameters, settings)
+            gpu.status(&image, parameters, full_frame([7, 3]), settings)
                 .unwrap()
                 .unwrap()
                 .valid,
@@ -455,7 +501,10 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
             amplification: 8,
             ..settings
         };
-        assert!(gpu.status(&image, parameters, zoom).is_none());
+        assert!(
+            gpu.status(&image, parameters, full_frame([7, 3]), zoom)
+                .is_none()
+        );
         let mut encoder = device.create_command_encoder(&Default::default());
         paint(zoom).prepare(&device, &queue, &screen, &mut encoder, &mut resources);
         assert!(
@@ -466,7 +515,8 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
         queue.submit([encoder.finish()]);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         assert!(
-            gpu.status(&image, parameters, zoom).is_none(),
+            gpu.status(&image, parameters, full_frame([7, 3]), zoom)
+                .is_none(),
             "late diagnostics must not reinstall after suspension"
         );
         image
@@ -491,12 +541,16 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
             .await
             .unwrap(),
         );
-        assert!(gpu.status(&other, parameters, settings).is_none());
+        assert!(
+            gpu.status(&other, parameters, full_frame([7, 3]), settings)
+                .is_none()
+        );
         image
             .write_source(&queue, &[[5000, 6000, 7000, 0]; 21])
             .unwrap();
         assert!(
-            gpu.status(&image, parameters, settings).is_none(),
+            gpu.status(&image, parameters, full_frame([7, 3]), settings)
+                .is_none(),
             "source writes must invalidate same-image scope identity"
         );
         let bad = Settings {
@@ -505,7 +559,11 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
         };
         let mut encoder = device.create_command_encoder(&Default::default());
         paint(bad).prepare(&device, &queue, &screen, &mut encoder, &mut resources);
-        assert!(gpu.status(&image, parameters, bad).unwrap().is_err());
+        assert!(
+            gpu.status(&image, parameters, full_frame([7, 3]), bad)
+                .unwrap()
+                .is_err()
+        );
         let failed_count = gpu.reduction_count();
         paint(bad).prepare(&device, &queue, &screen, &mut encoder, &mut resources);
         assert_eq!(gpu.reduction_count(), failed_count);
@@ -695,6 +753,7 @@ fn rapid_requests_and_hide_show_coalesce_until_completion_and_luma_reuses_bins()
                 gpu.clone(),
                 image.clone(),
                 parameters,
+                full_frame([7, 3]),
                 settings,
                 context.clone(),
             )
@@ -724,14 +783,17 @@ fn rapid_requests_and_hide_show_coalesce_until_completion_and_luma_reuses_bins()
         );
         queue.submit([encoder.finish()]);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-        assert!(gpu.status(&image, parameters, waveform).is_none());
+        assert!(
+            gpu.status(&image, parameters, full_frame([7, 3]), waveform)
+                .is_none()
+        );
         let mut encoder = device.create_command_encoder(&Default::default());
         paint(latest).prepare(&device, &queue, &screen, &mut encoder, &mut resources);
         queue.submit([encoder.finish()]);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         assert_eq!(gpu.reduction_count(), 2);
         assert_eq!(
-            gpu.status(&image, parameters, latest)
+            gpu.status(&image, parameters, full_frame([7, 3]), latest)
                 .unwrap()
                 .unwrap()
                 .valid,
@@ -750,8 +812,8 @@ fn rapid_requests_and_hide_show_coalesce_until_completion_and_luma_reuses_bins()
         paint(luma).prepare(&device, &queue, &screen, &mut encoder, &mut resources);
         assert_eq!(gpu.reduction_count(), before);
         assert_eq!(
-            gpu.status(&image, parameters, luma),
-            gpu.status(&image, parameters, waveform)
+            gpu.status(&image, parameters, full_frame([7, 3]), luma),
+            gpu.status(&image, parameters, full_frame([7, 3]), waveform)
         );
         queue.submit([encoder.finish()]);
     });

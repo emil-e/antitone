@@ -1,10 +1,10 @@
-# Thumbnail follow-up and whole-image scopes
+# Thumbnail follow-up
 
-Status: active thumbnail investigations and unimplemented scopes. The bounded/resizable thumbnail slice is complete and integrated on main; it is not an outstanding cache/UI implementation step. The initial scope/checks are retained below as historical context. [Roadmap](../../PLAN.md) owns order; follow-up fixes and scope design require selection/approval.
+Status: active thumbnail investigations. Bounded/resizable thumbnails and [responsive scopes](completed/vectorscope-and-waveform.md) are implemented and integrated on main; neither is an outstanding implementation step. Historical thumbnail checks remain below. [Roadmap](../../PLAN.md) owns order; follow-up fixes require selection/approval.
 
 ## Goal and non-goals
 
-Resolve reported thumbnail layout/invalidation/latency issues and design whole-image vectorscope/waveform feedback without retaining one full RAW per thumbnail, reading back full-resolution frames each repaint, degrading interactive GPU edits or implying that a zoomed regional scope represents the whole frame. No catalog, automatic correction or new colour-processing model.
+Resolve reported thumbnail layout/invalidation/latency issues without retaining one full RAW per thumbnail, reading back full-resolution frames each repaint or degrading interactive GPU edits. No catalog, automatic correction or new colour-processing model.
 
 ## Completed thumbnail slice
 
@@ -26,18 +26,12 @@ The bounded thumbnail slice is implemented; these new observations are open foll
 
 Next action when selected: reproduce the edge-squashing case, then capture the reported invalidation sequence and phase timings. Keep layout correctness, wasted work and cold development cost separate; scopes do not block these investigations.
 
-## Scope design to settle later
-
-- Scope stage, common RGB basis, white/transfer, luma coefficients, bin scaling and signed/HDR boundary display. Different target RGB codes are not directly comparable.
-- Coverage/resolution, provisional whole-frame versus full-source-derived scope states, relationship to rendering target, and graticule/wheel directions.
-- Scheduling/cancellation so thumbnails/scopes do not displace selected-image refinement. Layout must respect the user's consultation request for viewer-intrusion cases.
-
 ## Remaining steps and acceptance
 
-1. Select either a reproduced thumbnail follow-up or scope design; they are separate work, and the existing bounded caches are not to be rebuilt from this checklist.
-2. For thumbnails, isolate clipping, invalidation and cold-development cost using the cases above. Preserve selected-image priority, cache bounds/identity, stale-work rejection, source/positive/target behavior and calibration/measurement/export independence.
-3. Before scopes, agree stage/basis/coverage/scheduling/layout. Then implement GPU reductions from the declared whole accepted composition before monitor conversion; zoomed regional refinement is not whole-image coverage. Avoid full-frame per-repaint CPU readback.
-4. Compare scope neutrals, primaries/secondaries, ramps, counts and boundary cases against scalar fixtures. Verify coverage under zoom/crop, target convention and measured memory/latency.
+1. Select a reproduced thumbnail follow-up; existing bounded caches are not to be rebuilt from this checklist.
+2. Isolate clipping, invalidation and cold-development cost using the cases above. Preserve selected-image priority, cache bounds/identity, stale-work rejection, source/positive/target behavior and calibration/measurement/export independence.
+
+Scope conventions, GPU implementation and synthetic composition integration are closed in the [completed scope plan](completed/vectorscope-and-waveform.md). [Remaining scope acceptance/full-source work](completion.md#scopes) is separate.
 
 Likely boundaries: editor/backend scheduling, `src/{viewer,refinement}.rs`, dedicated thumbnail/scope resources and shaders, synthetic tests and targeted performance probes. Production colour/measurement/export contracts remain unchanged.
 
@@ -49,6 +43,6 @@ Historical thumbnail verification snapshot on the pre-camera/geometry baseline (
 
 User follow-up exposed a resize defect: content used six points less than the panel height, so egui persisted a six-point shrink on every idle frame. The panel now explicitly consumes its available height; default height is increased to **140 points**. The resize regression first reproduced **144→138 points** after release, then passed with the fix, checking the fresh default and 20 idle frames. At that correction checkpoint, all 51 focused editor tests (including six thumbnail tests), strict all-target Clippy, formatting and release build passed; no new real-RAW/physical resize smoke is claimed. Thumbnail worker/development behavior and latency remain unchanged.
 
-Scopes remain unimplemented. Existing settled refinement covers the visible composed frame/required source footprints, which cannot silently become a whole-frame scope. Scope basis/coverage/design needs separate agreement; no additional implementation is presumed next.
+Responsive scopes independently sample the accepted whole composition from the whole-source proxy; regional settled refinement is never their input. No thumbnail optimization or full-source scope analysis is presumed next.
 
 Context: [historical feedback scope](../research/history/feedback-plan.md#4-add-visual-feedback-thumbnails-and-scopes), [architecture](../architecture.md#preview-resources-and-caches).

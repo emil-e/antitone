@@ -189,27 +189,18 @@ impl host::App for SmokeEditor {
                             .gpu
                             .as_ref()
                             .expect("smoke scope GPU resources");
-                        let image = &self.editor.ready.as_ref().unwrap().images
-                            [self.editor.target as usize];
-                        let parameters = self
-                            .editor
-                            .positive_parameters(
-                                self.editor.calibration().unwrap(),
-                                self.editor.roll,
-                                self.editor.photo,
-                            )
-                            .unwrap();
+                        let (image, parameters, frame) = self.editor.scope_input().unwrap();
                         let settings = crate::scopes::Settings {
                             target: self.editor.target,
                             plot: self.editor.scopes.waveform,
                             amplification: 1,
                         };
-                        let Some(result) = gpu.status(image, parameters, settings) else {
+                        let Some(result) = gpu.status(&image, parameters, frame, settings) else {
                             return;
                         };
                         let counts = result.expect("smoke scope diagnostics");
                         assert_eq!(counts.invalid, 0);
-                        assert_eq!(counts.valid, image.linear.width() * image.linear.height());
+                        assert_eq!(counts.valid, frame.output[0] * frame.output[1]);
                         assert!(gpu.reduction_count() >= 3);
                         println!(
                             "scope_smoke target={:?} samples={} reductions={} invalid={}",

@@ -4,7 +4,7 @@ Antitone converts camera-scanned film negatives into grading-friendly positive i
 
 - macOS/Apple Silicon first; initial camera is Sony ILCE-1M2 lossless-compressed ARW. Reuse established RAW development rather than camera-specific hacks. No minimum chip/RAM requirement is established; M1 Pro/16 GB was a provisional example, not an acceptance gate.
 - A roll is an explicitly selected ordered set of external, untouched photographs, not a watched folder/catalog. Shared roll edits and individual photo edits are separate scopes.
-- Initial inversion/calibration basis AP0/D60; photographic working space AP1/D60; signed/HDR AP0 EXR and matching sRGB/Display P3 rendered TIFF. [Processing](processing-model.md) and [output](output.md) define exact behavior.
+- Native-camera inversion/calibration with explicit camera-model/matrix identity; photographic working space AP1/D60; signed/HDR AP0 EXR and matching sRGB/Display P3 rendered TIFF. [Processing](processing-model.md) and [output](output.md) define exact behavior.
 - Four full-resolution single-patch corrections: Dmin, Dmax, roll gamma neutral and photo WB neutral. Invalid or cancelled picks leave processing state unchanged. Stored reference values are independent of photo availability.
 - Developed-source inspection is an explicit bypass; inspection convenience must not silently change development, calibration or exports.
 - Interactive GPU processing is required. Responsive approximate previews are followed by full-source-derived settled regional previews; never use proxy pixels for measurement or export.
@@ -13,7 +13,7 @@ Antitone converts camera-scanned film negatives into grading-friendly positive i
 
 ## Boundaries and future goals
 
-[PLAN.md](../../PLAN.md) is the only current priority/status list. Navigation/source inspection, bounded thumbnails and responsive display-referred proxy scopes are implemented. Recorded goals include remaining interaction polish, geometry integration, inversion bases, assisted roll analysis and contrast/pivot. Their numerical/UX design is not settled merely because they appear in feedback. Consult the user about each existing viewer-intrusion case before choosing a layout replacement.
+[PLAN.md](../../PLAN.md) is the only current priority/status list. Navigation/source inspection, bounded thumbnails and responsive display-referred proxy scopes are implemented. Native-camera inversion and accepted composition are integrated. Recorded goals include remaining interaction/photographic acceptance, assisted roll analysis and contrast/pivot. Their numerical/UX design is not settled merely because they appear in feedback. Consult the user about each existing viewer-intrusion case before choosing a layout replacement.
 
 Flat-field correction remains separate deferred work. Custom demosaicing, dust removal, catalogs, arbitrary node graphs, HDR display output and later-platform support are not current implementation scope. Do not change ACES mathematics or introduce a pedestal/clamp as an implicit remedy.
 

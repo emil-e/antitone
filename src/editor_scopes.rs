@@ -1,5 +1,7 @@
 use super::*;
 use crate::{
+    frame_raster::FrameRaster,
+    geometry::FramePoint,
     gpu_scopes::{GpuScopes, ScopePaint},
     scopes::{Basis, Plot, Settings, references},
 };
@@ -41,7 +43,12 @@ impl Scopes {
         }
         state
     }
-    fn panel(&mut self, ui: &mut egui::Ui, target: OutputTarget) -> Option<Slot> {
+    fn panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        target: OutputTarget,
+        reserved_height: f32,
+    ) -> Option<Slot> {
         ui.horizontal(|ui| {
             ui.checkbox(&mut self.visible, "Scopes");
             if self.visible {
@@ -80,8 +87,8 @@ impl Scopes {
             }
         });
         let width = ui.available_width();
-        // Reserve caption/tab space and a usable grading scroll area in short windows.
-        let max_height = (ui.available_height() - 120.).max(96.);
+        // The caller also reserves its pinned orientation/composition controls.
+        let max_height = (ui.available_height() - reserved_height).max(96.);
         let height = (width * self.height_ratio).clamp(96., max_height);
         let (plot, response) =
             ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
@@ -142,24 +149,53 @@ impl Scopes {
 
 impl Editor {
     pub(super) fn scope_panel(&mut self, ui: &mut egui::Ui) -> Option<Slot> {
-        self.scopes.panel(ui, self.target)
+        let rows = if self.tab == 1 && self.crop_edit.is_some() {
+            10.
+        } else {
+            6.
+        };
+        let geometry_height = rows * (ui.spacing().interact_size.y + ui.spacing().item_spacing.y);
+        self.scopes.panel(ui, self.target, 120. + geometry_height)
     }
 
-    // Identity composition on this branch. Geometry integration must supply its whole final-frame
-    // raster here, with canonical frame/source coverage; never substitute a visible ViewRequest.
-    fn scope_input(&self) -> Result<(Arc<GpuImage>, ProcessingParameters), &'static str> {
+    pub(super) fn scope_input(
+        &self,
+    ) -> Result<(Arc<GpuImage>, ProcessingParameters, FrameRaster), &'static str> {
         if self.source || self.pick_return.is_some() || self.flat_edit.is_some() {
             return Err("Positive grade only");
         }
         if self.busy || self.document_pending.is_some() {
             return Err("Waiting for image");
         }
+        if self.crop_edit.is_some() {
+            return Err("Apply crop to update scopes");
+        }
         let ready = self.ready.as_ref().ok_or("No image")?;
         let calibration = self.calibration().ok_or("Calibration required")?;
         let parameters = self
             .positive_parameters(calibration, self.roll, self.photo)
             .map_err(|_| "Positive grade unavailable")?;
-        Ok((ready.images[self.target as usize].clone(), parameters))
+        let composition = Composition::with_crop(
+            ready.area,
+            self.roll_orientation,
+            self.photo_orientation,
+            self.crop,
+        )
+        .map_err(|_| "Composition unavailable")?;
+        let image = ready.images[self.target as usize].clone();
+        // Preserve the whole-source proxy's sampling pitch rather than imply finer crop detail.
+        let pitch = (f64::from(ready.area.width) / f64::from(image.linear.width()))
+            .max(f64::from(ready.area.height) / f64::from(image.linear.height()));
+        let extent = composition.size();
+        let size = extent.map(|v| (f64::from(v) / pitch).round().clamp(1., 1024.) as u32);
+        let frame = FrameRaster::new(
+            composition,
+            FramePoint([0., 0.]),
+            FramePoint(extent.map(f64::from)),
+            size,
+        )
+        .map_err(|_| "Composition unavailable")?;
+        Ok((image, parameters, frame))
     }
 
     pub(super) fn paint_scope(&self, slot: Option<Slot>) {
@@ -174,7 +210,7 @@ impl Editor {
         slot.painter
             .rect_filled(slot.plot, 3., egui::Color32::from_gray(6));
         let input = self.scope_input();
-        let (image, parameters) = match input {
+        let (image, parameters, frame) = match input {
             Ok(input) => input,
             Err(reason) => {
                 if let Some(gpu) = &self.scopes.gpu {
@@ -217,6 +253,7 @@ impl Editor {
                     gpu.clone(),
                     image.clone(),
                     parameters,
+                    frame,
                     slot.settings,
                     slot.painter.ctx().clone(),
                 ),
@@ -238,7 +275,7 @@ impl Editor {
             egui::FontId::proportional(10.),
             egui::Color32::GRAY,
         );
-        let (text, color) = match gpu.status(&image, parameters, slot.settings) {
+        let (text, color) = match gpu.status(&image, parameters, frame, slot.settings) {
             Some(Ok(counts)) if counts.invalid > 0 => (
                 format!("Invalid rendered samples: {}", counts.invalid),
                 egui::Color32::LIGHT_RED,
@@ -251,7 +288,7 @@ impl Editor {
                 egui::Color32::GRAY,
             ),
             Some(Ok(_)) => (
-                format!("{}×{} samples", image.linear.width(), image.linear.height()),
+                format!("{}×{} samples", frame.output[0], frame.output[1]),
                 egui::Color32::GRAY,
             ),
             Some(Err(error)) => (error, egui::Color32::LIGHT_RED),
