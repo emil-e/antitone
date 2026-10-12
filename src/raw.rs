@@ -110,7 +110,7 @@ impl Metadata {
 pub use crate::geometry::SourceRegion as Rect;
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SensorDiagnostics {
     pub sites: [u64; 4],
     pub below_black: [u64; 4],
@@ -140,6 +140,12 @@ unsafe extern "C" {
     ) -> *mut c_void;
     fn antitone_raw_unpack(
         handle: *mut c_void,
+        threads: c_int,
+        error: *mut c_char,
+        size: usize,
+    ) -> c_int;
+    fn antitone_raw_sensor_diagnostics(
+        handle: *mut c_void,
         diagnostics: *mut SensorDiagnostics,
         error: *mut c_char,
         size: usize,
@@ -148,6 +154,7 @@ unsafe extern "C" {
         handle: *mut c_void,
         wb: *const f64,
         output_color: c_int,
+        threads: c_int,
         view: *mut NativeView,
         error: *mut c_char,
         size: usize,
@@ -172,9 +179,37 @@ pub fn version() -> String {
         .into_owned()
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DevelopmentPriority {
+    #[default]
+    Foreground,
+    Background,
+}
+impl DevelopmentPriority {
+    fn threads(self, cpus: usize, pressure: crate::resources::MemoryPressure) -> c_int {
+        use crate::resources::MemoryPressure;
+        let cap = match (self, pressure) {
+            (_, MemoryPressure::Critical) => 1,
+            (Self::Background, MemoryPressure::Warning) => 1,
+            (Self::Background, MemoryPressure::Normal) => 2,
+            (_, MemoryPressure::Warning) => 2,
+            (Self::Foreground, MemoryPressure::Normal) => 8,
+        };
+        cpus.saturating_sub(2).max(1).min(cap) as c_int
+    }
+    fn current_threads(self) -> c_int {
+        self.threads(
+            std::thread::available_parallelism().map_or(1, usize::from),
+            crate::resources::memory_pressure(),
+        )
+    }
+}
+
 pub struct RawFile {
     handle: NonNull<c_void>,
     pub metadata: Metadata,
+    unpacked: bool,
+    priority: DevelopmentPriority,
     diagnostics: Option<SensorDiagnostics>,
     camera_view: Option<NativeView>,
 }
@@ -198,21 +233,48 @@ impl RawFile {
         Ok(Self {
             handle,
             metadata: unsafe { metadata.assume_init() },
+            unpacked: false,
+            priority: DevelopmentPriority::default(),
             diagnostics: None,
             camera_view: None,
         })
     }
 
+    /// Changes resource scheduling only, never development settings or cached pixels.
+    pub fn set_development_priority(&mut self, priority: DevelopmentPriority) {
+        self.priority = priority;
+    }
+    fn ensure_unpacked(&mut self) -> Result<(), Error> {
+        if self.unpacked {
+            return Ok(());
+        }
+        let mut error = [0; 512];
+        // This uniquely owned handle decodes once, retaining the original sensor snapshot.
+        let code = unsafe {
+            antitone_raw_unpack(
+                self.handle.as_ptr(),
+                self.priority.current_threads(),
+                error.as_mut_ptr(),
+                error.len(),
+            )
+        };
+        if code != 0 {
+            return Err(native_error("unpack", &error));
+        }
+        self.unpacked = true;
+        Ok(())
+    }
+    /// Explicit whole-sensor statistics, cached independently of decoding/development.
     pub fn unpack(&mut self) -> Result<SensorDiagnostics, Error> {
         if let Some(diagnostics) = self.diagnostics {
             return Ok(diagnostics);
         }
-        self.camera_view = None;
+        self.ensure_unpacked()?;
         let mut diagnostics = SensorDiagnostics::default();
         let mut error = [0; 512];
         // The handle is uniquely owned; the bridge does not retain the output buffers.
         let code = unsafe {
-            antitone_raw_unpack(
+            antitone_raw_sensor_diagnostics(
                 self.handle.as_ptr(),
                 &mut diagnostics,
                 error.as_mut_ptr(),
@@ -227,7 +289,7 @@ impl RawFile {
     }
 
     pub fn region_sensor_diagnostics(&mut self, area: Rect) -> Result<SensorDiagnostics, Error> {
-        self.unpack()?;
+        self.ensure_unpacked()?;
         let mut diagnostics = SensorDiagnostics::default();
         let mut error = [0; 512];
         // The bridge reads the immutable RAW snapshot, including its original CFA and black/white levels.
@@ -266,7 +328,11 @@ impl RawFile {
                 "roll WB gains must be positive, finite f32 values".into(),
             ));
         }
-        self.unpack()?;
+        let started = std::time::Instant::now();
+        self.ensure_unpacked()?;
+        let threads = self.priority.current_threads();
+        let unpack_seconds = started.elapsed().as_secs_f64();
+        let tick = std::time::Instant::now();
         self.camera_view = None;
         let mut view = std::mem::MaybeUninit::<NativeView>::zeroed();
         let mut error = [0; 512];
@@ -276,6 +342,7 @@ impl RawFile {
                 self.handle.as_ptr(),
                 fixed_wb.as_ptr(),
                 output_color,
+                threads,
                 view.as_mut_ptr(),
                 error.as_mut_ptr(),
                 error.len(),
@@ -285,6 +352,13 @@ impl RawFile {
             return Err(native_error("develop", &error));
         }
         let view = unsafe { view.assume_init() };
+        println!(
+            "raw_development width={} height={} priority={:?} threads={threads} unpack_seconds={unpack_seconds:.6} process_seconds={:.6}",
+            view.width,
+            view.height,
+            self.priority,
+            tick.elapsed().as_secs_f64()
+        );
         if output_color == 0 {
             self.camera_view = Some(view);
         }
@@ -489,6 +563,72 @@ mod tests {
         );
         assert!(developed.pixel_codes(4, 0).is_err());
         assert!(developed.pixel(4, 0).is_err());
+    }
+
+    #[test]
+    fn development_threads_are_bounded_and_leave_foreground_capacity() {
+        use crate::resources::MemoryPressure::*;
+        for cpus in 0..=128 {
+            for priority in [
+                DevelopmentPriority::Foreground,
+                DevelopmentPriority::Background,
+            ] {
+                for pressure in [Normal, Warning, Critical] {
+                    let count = priority.threads(cpus, pressure);
+                    assert!((1..=8).contains(&count));
+                    assert!(count as usize <= cpus.saturating_sub(2).max(1));
+                }
+            }
+        }
+        assert_eq!(DevelopmentPriority::Foreground.threads(18, Normal), 8);
+        assert_eq!(DevelopmentPriority::Foreground.threads(18, Warning), 2);
+        assert_eq!(DevelopmentPriority::Background.threads(18, Normal), 2);
+        assert_eq!(DevelopmentPriority::Background.threads(18, Warning), 1);
+        assert_eq!(DevelopmentPriority::Foreground.threads(18, Critical), 1);
+    }
+
+    #[test]
+    #[ignore = "read-only local RAW lazy/full/region diagnostics and cached-development invariants"]
+    fn development_and_region_picks_do_not_compute_or_invalidate_full_diagnostics() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples/DSC04393.ARW");
+        let mut raw = RawFile::open(&path).unwrap();
+        let wb = raw.metadata.cam_mul;
+        let area = Rect {
+            x: 4000,
+            y: 2600,
+            width: 128,
+            height: 128,
+        };
+        let before = raw.region_sensor_diagnostics(area).unwrap();
+        assert!(raw.unpacked && raw.diagnostics.is_none());
+        let data = raw.develop_camera(wb).unwrap();
+        let pointer = data.pixels.as_ptr();
+        let pixel = data.pixel_codes(4000, 2600).unwrap();
+        assert!(raw.diagnostics.is_none());
+        assert_eq!(before, raw.region_sensor_diagnostics(area).unwrap());
+        assert!(raw.diagnostics.is_none());
+        let full = raw.unpack().unwrap();
+        assert_eq!(raw.unpack().unwrap(), full);
+        assert_eq!(
+            full.sites.iter().sum::<u64>(),
+            raw.metadata.width as u64 * raw.metadata.height as u64
+        );
+        assert_eq!(raw.camera_image().unwrap().pixels.as_ptr(), pointer);
+        assert_eq!(
+            raw.camera_image().unwrap().pixel_codes(4000, 2600).unwrap(),
+            pixel
+        );
+        raw.set_development_priority(DevelopmentPriority::Background);
+        assert_eq!(raw.camera_image().unwrap().pixels.as_ptr(), pointer);
+        assert!(
+            raw.region_sensor_diagnostics(Rect { width: 0, ..area })
+                .is_err()
+        );
+        assert_eq!(
+            raw.camera_image().unwrap().pixel_codes(4000, 2600).unwrap(),
+            pixel
+        );
+        assert_eq!(before, raw.region_sensor_diagnostics(area).unwrap());
     }
 
     #[test]

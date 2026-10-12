@@ -1,0 +1,8 @@
+[alias]
+app = "run --locked --release --features editor --bin antitone"
+build-app = "build --locked --release --features editor --bin antitone"
+
+[env]
+# Native bridges use the same Apple Clang as the pinned dependency builds.
+CC = { value = "/usr/bin/clang", force = true }
+CXX = { value = "/usr/bin/clang++", force = true }

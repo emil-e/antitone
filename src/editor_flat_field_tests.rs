@@ -1,15 +1,11 @@
 use super::*;
 use crate::export::ImageSize;
-use crate::project::{Fingerprint, SourceDevelopment};
+use crate::project::SourceDevelopment;
 
 fn record(path: &str) -> Source {
     Source {
         id: SourceId(0),
         path: path.into(),
-        fingerprint: Fingerprint {
-            bytes: 1,
-            blake3: "0".repeat(64),
-        },
         development: SourceDevelopment {
             dimensions: [824, 624],
             active_area: [12, 12, 800, 600],
@@ -174,6 +170,7 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
     record.path = "light.ARW".into();
     record.reference_only = true;
     let reference = Ready {
+        thumbnail: None,
         path: record.path.clone(),
         area,
         floor: ready.floor,

@@ -30,7 +30,6 @@ fn fixture(directory: &std::path::Path) -> (Project, SourceId, SourceId) {
         std::fs::write(&path, b"test source bytes").unwrap();
         Source {
             id: SourceId(0),
-            fingerprint: Fingerprint::read(&path).unwrap(),
             path: name.into(),
             development: SourceDevelopment {
                 dimensions: [900, 600],
@@ -279,12 +278,9 @@ fn crops_roundtrip_by_source_id_and_reject_outside_fractional_or_empty_coverage(
         active_area: [0, 0, 64, 64],
         ..before.development.clone()
     };
-    assert!(
-        replacement
-            .accept_changed_source(one, &dir.path().join("dmin.ARW"), small)
-            .is_err()
-    );
-    assert_eq!(replacement.source(one).unwrap(), &before);
+    replacement.source_mut(one).unwrap().development = small;
+    assert!(replacement.validate().is_err());
+    assert_eq!(restored.source(one).unwrap(), &before);
     let mut value = serde_json::to_value(&restored).unwrap();
     value["sources"][0]["crop"]["basis"] = serde_json::json!(1.);
     assert!(serde_json::from_value::<Project>(value).is_err());
@@ -318,10 +314,6 @@ fn atomic_roundtrip_preserves_calibration_and_output_after_removal_and_missing_s
     std::fs::remove_file(dir.path().join("dmax.ARW")).unwrap();
     let restored = Project::load(&path).unwrap();
     assert_eq!(restored, project);
-    assert_eq!(
-        restored.inspect_source(dmin_source_id, &path).unwrap(),
-        SourceStatus::Missing
-    );
     assert_eq!(restored.calibration().unwrap().unwrap(), calibration);
     let after = Pipeline::new(
         restored.calibration().unwrap().unwrap(),
@@ -349,7 +341,9 @@ fn references_are_rgb_only_and_survive_removal_of_all_source_records() {
     let (mut project, _, _) = fixture(dir.path());
     let calibration = project.calibration().unwrap();
     let mut value = serde_json::to_value(&project).unwrap();
-    assert_eq!(value["schema"], 4);
+    assert_eq!(value["schema"], 5);
+    assert_eq!(value["processing_model"], 4);
+    assert!(value["sources"][0].get("fingerprint").is_none());
     assert_eq!(value["dmin"], serde_json::json!(project.dmin));
     assert_eq!(value["dmax"], serde_json::json!(project.dmax));
     assert_eq!(value["dmin"].as_array().unwrap().len(), 3);
@@ -375,7 +369,7 @@ fn output_contract_and_old_schemas_are_rejected_without_reinterpretation() {
     value["output"]["tiff"] = "pro_photo".into();
     assert!(serde_json::from_value::<Project>(value).is_err());
     let path = dir.path().join("legacy.antitone.json");
-    for schema in [1, 2] {
+    for schema in [1, 2, 3, 4] {
         let mut legacy = project.clone();
         legacy.schema = schema;
         assert!(legacy.validate().is_err());
@@ -388,42 +382,29 @@ fn output_contract_and_old_schemas_are_rejected_without_reinterpretation() {
     assert!(legacy.require_runtime("0.22.0").is_err());
 }
 #[test]
-fn changed_photo_bytes_require_acceptance_without_invalidating_calibration() {
+fn changed_photo_bytes_do_not_change_saved_state_or_invalidate_calibration() {
     let dir = tempfile::tempdir().unwrap();
-    let (mut project, dmin_source_id, _) = fixture(dir.path());
+    let (project, _, _) = fixture(dir.path());
     let calibration = project.calibration().unwrap();
     let path = dir.path().join("roll.antitone.json");
-    std::fs::write(dir.path().join("dmin.ARW"), b"changed file data").unwrap();
-    assert!(matches!(
-        project.inspect_source(dmin_source_id, &path).unwrap(),
-        SourceStatus::Changed { .. }
-    ));
-    let original = project.clone();
-    assert!(
-        project
-            .relink_matching(dmin_source_id, &dir.path().join("dmin.ARW"))
-            .is_err()
-    );
-    assert_eq!(project, original);
-    let mut development = project.source(dmin_source_id).unwrap().development.clone();
-    development.dimensions = [64, 64];
-    development.active_area = [0, 0, 64, 64];
-    project
-        .accept_changed_source(dmin_source_id, &dir.path().join("dmin.ARW"), development)
-        .unwrap();
-    assert_eq!(project.dmin, original.dmin);
-    assert_eq!(project.dmax, original.dmax);
-    assert_eq!(project.calibration().unwrap(), calibration);
     project.save(&path, Save::New).unwrap();
-    assert_eq!(Project::load(&path).unwrap(), project);
+    std::fs::write(dir.path().join("dmin.ARW"), b"changed file data").unwrap();
+    let restored = Project::load(&path).unwrap();
+    assert_eq!(restored, project);
+    assert_eq!(restored.calibration().unwrap(), calibration);
+    assert!(
+        !std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("fingerprint")
+    );
 }
 #[test]
-fn matching_relink_keeps_stable_ids_and_runtime_identity_is_checked_at_roll_level() {
+fn source_locators_keep_stable_ids_and_runtime_identity_is_checked_at_roll_level() {
     let dir = tempfile::tempdir().unwrap();
     let (mut project, dmin_source_id, _) = fixture(dir.path());
     let moved = dir.path().join("renamed.ARW");
     std::fs::rename(dir.path().join("dmin.ARW"), &moved).unwrap();
-    project.relink_matching(dmin_source_id, &moved).unwrap();
+    project.source_mut(dmin_source_id).unwrap().path = moved.clone();
     assert_eq!(project.source(dmin_source_id).unwrap().path, moved);
     let calibration = project.calibration().unwrap();
     project.development.as_mut().unwrap().contract = "different development contract".into();
@@ -461,9 +442,10 @@ fn malformed_source_identity_order_and_rgb_references_are_rejected_before_serial
     let mut duplicate = project.clone();
     duplicate.order.push(source_id);
     assert!(duplicate.validate().is_err());
-    let mut identity = project.clone();
-    identity.source_mut(source_id).unwrap().fingerprint.blake3 = "invalid".into();
-    assert!(identity.validate().is_err());
+    let mut identity = serde_json::to_value(&project).unwrap();
+    identity["sources"][0]["fingerprint"] =
+        serde_json::json!({"bytes": 1, "blake3": "a".repeat(64)});
+    assert!(serde_json::from_value::<Project>(identity).is_err());
     let mut numeric = project.clone();
     numeric.source_mut(source_id).unwrap().photo.wb.warmth = f64::INFINITY;
     assert!(numeric.validate().is_err());

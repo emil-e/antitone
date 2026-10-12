@@ -26,10 +26,11 @@ struct AntitoneRawView {
 extern "C" {
 const char *antitone_raw_version();
 void *antitone_raw_open(const char *path, AntitoneRawMetadata *metadata, char *error, size_t error_size);
-int antitone_raw_unpack(void *handle, AntitoneRawDiagnostics *diagnostics, char *error, size_t error_size);
+int antitone_raw_unpack(void *handle, int threads, char *error, size_t error_size);
+int antitone_raw_sensor_diagnostics(void *handle, AntitoneRawDiagnostics *diagnostics, char *error, size_t error_size);
 int antitone_raw_region_diagnostics(void *handle, uint32_t x, uint32_t y, uint32_t width, uint32_t height,
     AntitoneRawDiagnostics *diagnostics, char *error, size_t error_size);
-int antitone_raw_develop(void *handle, const double *wb, int output_color,
+int antitone_raw_develop(void *handle, const double *wb, int output_color, int threads,
     AntitoneRawView *view, char *error, size_t error_size);
 void antitone_raw_close(void *handle);
 }

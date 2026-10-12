@@ -146,6 +146,9 @@ fn corrected_rotated_tiles_use_original_source_coordinates_before_native_camera_
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let renderer = antitone::renderer::GpuRenderer::new(&device, &queue)
+            .await
+            .unwrap();
         let area = SourceRegion {
             x: 120,
             y: 73,
@@ -267,10 +270,17 @@ fn corrected_rotated_tiles_use_original_source_coordinates_before_native_camera_
                         .unwrap();
                         let bounds = raster.bounds().unwrap();
                         let average = AreaAverage::new_affine(&device, raster).await.unwrap();
-                        let mut tile =
-                            GpuImage::new(&device, &queue, 6, 4, &[[0; 4]; 24], matrix, target)
-                                .await
-                                .unwrap();
+                        let mut tile = GpuImage::new_shared(
+                            &renderer,
+                            &device,
+                            6,
+                            4,
+                            &[[0; 4]; 24],
+                            matrix,
+                            target,
+                        )
+                        .await
+                        .unwrap();
                         for y in (0..bounds.height).step_by(4) {
                             for x in (0..bounds.width).step_by(6) {
                                 let pixels: Vec<_> = (0..4)
@@ -299,10 +309,11 @@ fn corrected_rotated_tiles_use_original_source_coordinates_before_native_camera_
                                 device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
                             }
                         }
-                        let result =
-                            GpuImage::new_rendered(&device, &queue, output[0], output[1], target)
-                                .await
-                                .unwrap();
+                        let result = GpuImage::new_rendered_shared(
+                            &renderer, &device, output[0], output[1], target,
+                        )
+                        .await
+                        .unwrap();
                         let mut encoder = device.create_command_encoder(&Default::default());
                         average.finish(&device, &mut encoder, &result.linear);
                         queue.submit([encoder.finish()]);
@@ -538,6 +549,9 @@ fn oriented_presentation_matches_exact_source_pixel_mapping() {
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let renderer = antitone::renderer::GpuRenderer::new(&device, &queue)
+            .await
+            .unwrap();
         let area = SourceRegion {
             x: 12,
             y: 7,
@@ -548,9 +562,10 @@ fn oriented_presentation_matches_exact_source_pixel_mapping() {
             .map(|i| [3000 + i * 2500, 12000 + i * 700, 35000 - i * 1500, 0])
             .collect();
         for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-            let image = GpuImage::new(&device, &queue, 5, 3, &pixels, DMat3::IDENTITY, target)
-                .await
-                .unwrap();
+            let image =
+                GpuImage::new_shared(&renderer, &device, 5, 3, &pixels, DMat3::IDENTITY, target)
+                    .await
+                    .unwrap();
             let mut encoder = device.create_command_encoder(&Default::default());
             image.encode(&device, &mut encoder, ProcessingParameters::source());
             queue.submit([encoder.finish()]);

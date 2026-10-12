@@ -23,6 +23,8 @@ pub mod raw;
 mod refinement;
 #[cfg(feature = "render")]
 pub mod rendering;
+#[cfg(feature = "raw")]
+mod resources;
 pub mod sampling;
 #[cfg(feature = "raw")]
 pub mod scan;
@@ -31,6 +33,8 @@ pub mod viewport;
 
 #[cfg(all(feature = "ui", feature = "render"))]
 pub mod gpu_scopes;
+#[cfg(all(feature = "ui", feature = "render"))]
+pub mod renderer;
 #[cfg(all(feature = "ui", feature = "render"))]
 pub mod resample;
 #[cfg(feature = "render")]

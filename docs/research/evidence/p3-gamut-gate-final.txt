@@ -1,4 +1,0 @@
-ld: warning: search path '/opt/homebrew/Cellar/gcc/15.2.0_1/lib/gcc/current/gcc/aarch64-apple-darwin25/15' not found
-OCIO 2.6.0 / direct ACES2 fixed-function / AP1 input / no inversion or presentation
-target=sRGB-100nit colored_checked=990 collapsed=0
-target=Display-P3-100nit colored_checked=990 collapsed=0

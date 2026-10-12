@@ -26,7 +26,18 @@ pub struct Scan {
 
 impl Scan {
     pub fn open(path: &Path, fixed_wb: Option<[f64; 4]>) -> Result<Self> {
+        Self::open_with_priority(path, fixed_wb, crate::raw::DevelopmentPriority::Foreground)
+    }
+    pub fn open_with_priority(
+        path: &Path,
+        fixed_wb: Option<[f64; 4]>,
+        priority: crate::raw::DevelopmentPriority,
+    ) -> Result<Self> {
         let mut raw = RawFile::open(path)?;
+        raw.set_development_priority(priority);
+        Self::from_raw(raw, fixed_wb)
+    }
+    pub(crate) fn from_raw(mut raw: RawFile, fixed_wb: Option<[f64; 4]>) -> Result<Self> {
         let wb = fixed_wb.unwrap_or(raw.metadata.cam_mul);
         let matrix = raw.metadata.camera_to_ap1()?;
         let camera_model = raw.metadata.camera_model();

@@ -39,7 +39,7 @@ impl Editor {
                 ui.spacing_mut().item_spacing.x = 4.;
                 icons::row(ui, |ui| {
                     let target = if self.target == OutputTarget::DisplayP3 { "Display P3" } else { "sRGB" };
-                    let quality = if self.source || self.ready.is_none() { "" } else if self.refining.is_some() { " · Refining" } else if self.settled.is_none() { " · Approximate" } else { "" };
+                    let quality = if self.pending_preview.is_some() { " · Cached preview" } else if self.source || self.ready.is_none() { "" } else if self.refining.is_some() { " · Refining" } else if self.settled.is_none() { " · Approximate" } else { "" };
                     let state = format!("{target}{quality}");
                     let tool_font = egui::FontId::proportional(12.);
                     let tool_action_space = 8.;
@@ -134,7 +134,7 @@ impl Editor {
                                 });
                             });
                         } else {
-                            ui.add(egui::Label::new(egui::RichText::new(state).small().weak()).truncate()).on_hover_text("Shared preview / thumbnail / scope / TIFF target · 100 nit. EXR is scene-linear AP0.");
+                            ui.add(egui::Label::new(egui::RichText::new(state).small().weak()).truncate()).on_hover_text("Shared preview / thumbnail / scope / TIFF target · 100 nit. EXR is scene-linear AP0. Cached preview remains provisional while the full-resolution RAW develops.");
                         }
                     });
                 });

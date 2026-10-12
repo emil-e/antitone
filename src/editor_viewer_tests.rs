@@ -490,6 +490,7 @@ fn flat_fixture(
     record.path = "light.ARW".into();
     record.reference_only = true;
     let reference = Ready {
+        thumbnail: None,
         path: record.path.clone(),
         area: ready.area,
         floor: ready.floor,

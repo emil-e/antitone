@@ -582,8 +582,8 @@ impl host::App for SmokeEditor {
                 changed
                     .source_mut(changed.order[0])
                     .unwrap()
-                    .fingerprint
-                    .blake3 = "0".repeat(64);
+                    .development
+                    .dimensions[0] += 1;
                 let path = self
                     .project_directory
                     .as_ref()
@@ -599,7 +599,7 @@ impl host::App for SmokeEditor {
                     self.editor.document.project,
                     *self.saved_project.as_ref().unwrap()
                 );
-                assert!(self.editor.status.contains("content changed"));
+                assert!(self.editor.status.contains("development identity differs"));
                 let mut missing = self.editor.document.project.clone();
                 missing.source_mut(missing.order[0]).unwrap().path = self
                     .project_directory
@@ -662,7 +662,7 @@ impl host::App for SmokeEditor {
                         .ready_count(&self.editor.document, self.editor.target)
                 );
                 println!(
-                    "project_smoke passed: stable IDs/order/unvisited RAW, custom saved WB after New/other-WB import, exact camera-model-4 response state and working/sRGB/P3 pixel reopen, live settled GPU preview, changed/missing/incompatible ordered RAW atomicity"
+                    "project_smoke passed: stable IDs/order/unvisited RAW, custom saved WB after New/other-WB import, exact camera-model-4 response state and working/sRGB/P3 pixel reopen, live settled GPU preview, development-mismatched/missing/incompatible ordered RAW atomicity"
                 );
                 self.editor.allow_close = true;
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);

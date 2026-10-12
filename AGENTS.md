@@ -1,52 +1,61 @@
 # Working on Antitone
 
-## Start with the right context
+## Context and authorization
 
-1. Read [PLAN.md](PLAN.md) for current focus, work order and blockers.
-2. Use [docs/README.md](docs/README.md) to find the relevant plan and contracts. Read [architecture](docs/architecture.md) when tracing unfamiliar boundaries.
-3. Read relevant [accepted decisions](docs/decisions/README.md) before proposing changes to those choices. Consult research selectively, not as a mandatory reading list.
-4. Inspect the actual code/tests before editing. Conversation summaries are hints, not a substitute for repository state. If code and a contract disagree, investigate rather than silently declaring either correct.
+1. Read [PLAN.md](PLAN.md) for current focus, priority and blockers.
+2. Use [docs/README.md](docs/README.md) to find relevant contracts and unfinished work. Read [architecture](docs/architecture.md) when tracing unfamiliar boundaries.
+3. Read relevant [decision rationale](docs/decisions/README.md) before changing those choices.
+4. Inspect actual code/tests before editing. If code and contract disagree, investigate rather than silently declaring either correct.
 
-The latest user request determines authorization. A roadmap entry, accepted ADR or previously approved broad plan does not authorize unrelated implementation, commits, pushes, global installs or remote actions. Confirm ambiguous/risky scope; keep routine local changes focused.
+The latest user request determines authorization. Roadmaps, decisions and broad plans do not authorize unrelated implementation, commits, pushes, global installs or remote actions. Confirm ambiguous/risky scope; keep routine changes focused. Use a separate worktree for substantive changes and preserve unrelated working changes.
 
-## Documentation roles
+## Documentation policy
 
-- `PLAN.md`: one short current-status/ordered-roadmap record. Link details; do not accumulate session transcripts, repeated test counts or completed step lists here.
-- `docs/architecture.md`: the implemented system and its boundaries. Explicitly distinguish foundations from wired features and plans.
-- `docs/contracts/`: current behavior/invariants and compatibility requirements. Update the relevant contract when an authorized change changes it.
-- `docs/decisions/`: selective ADRs explaining consequential choices and tradeoffs. Do not write one for every implementation detail or duplicate full specifications. Preserve accepted rationale; explicitly supersede an ADR when an approved replacement changes the decision.
-- `docs/plans/`: substantial work packages. Record goal, scope/non-goals, approval/open questions, steps, acceptance, progress/verification and exact next action. Small changes need no plan file. Mark completed plans and move them to `completed/`; root roadmap owns cross-package status/order.
-- `docs/research/`: flexible knowledge base. No compulsory template. Separate observations from hypotheses, link sources/evidence, identify important limitations and flag superseded findings that could mislead. Accepted conclusions belong in contracts/ADRs; experiments are not implementation instructions.
-- `docs/research/history/`: old plans/checkpoints and mockup. Never resume from their unchecked steps. Use them only for historical context.
+The checkout describes the current system and unfinished work, not how the project got here.
 
-## Checkpoints and handoff
+- `README.md` is for humans: introduction, prerequisites, normal build/run/check commands and contributor navigation. Agent authorization and handoff procedures belong only in root `AGENTS.md`.
+- Contracts state current behavior/invariants. Architecture explains implemented boundaries. Decisions explain current choices and tradeoffs, without superseded instructions or approval narration.
+- Plans contain only genuinely unfinished scope, open questions, acceptance and next actions. Remove completed steps; delete a finished plan after transferring current behavior and remaining requirements to their proper homes.
+- Delete obsolete tools, superseded decisions, duplicate notes and execution records. Do not create archives, completed-plan collections, compiler transcripts, approval histories or session/worktree narratives. Git preserves removed versions; do not retrieve them to resurrect designs or tools unless the user explicitly requests historical investigation.
+- Keep a technical explanation only if it helps understand or maintain the current system. Write the insight directly, not the sequence of experiments that produced it. Do not repeat facts across contracts, plans and roadmaps.
+- Keep maintained tools in `scripts/` or `native/`, with current commands in the contributor guides. Do not keep unsupported snapshots for hypothetical agent use.
+- Proposed designs are not policy. Distinguish open hypotheses from established behavior and do not promote feedback or a passing consistency check into a design decision or physical acceptance claim.
 
-Update the active plan at meaningful verified checkpoints and before handoff/context exhaustion. Record changes, checks actually run, unresolved failures/limits and the next concrete action. Update the root roadmap only when current focus/status/order/blockers change. Keep shared facts in one canonical document and link them elsewhere.
+## Documentation roles and handoff
 
-Verification is proportional: run the narrow relevant checks, inspect the change and repair affected documentation links. Label recorded test counts/timings as snapshots, with environment and reproduction; do not claim a fresh test run or hardware acceptance from an old log. Use [the runbook](docs/build-and-probes.md), not historical command collections.
+- `PLAN.md`: short current status, ordered roadmap and blockers.
+- `docs/development.md`: everyday/feature checks; `docs/build-and-probes.md`: numerical/reference, RAW, export and presentation checks; `docs/native-development.md`: production RAW diagnostic.
+- `docs/architecture.md`: implemented boundaries, distinguished from unwired foundations.
+- `docs/contracts/`: behavior, invariants and compatibility; update affected contracts when an authorized change changes them.
+- `docs/decisions/`: selective rationale for consequential current choices, not repeated specifications.
+- `docs/plans/`: substantial unfinished packages. Record scope/non-goals, open design/approval questions, acceptance, current limits and exact next action. Small changes need no plan file.
+
+At a meaningful checkpoint or handoff, update unfinished scope, verification limits and next action; do not append a session log. Update the roadmap only when focus/status/order/blockers change. Run proportional checks and repair affected links. Report checks actually run and unverified acceptance without inflating a snapshot into a general guarantee.
 
 ## Wrap-up procedure
 
-When the user requests wrap-up of agreed work, that request authorizes the following local delivery procedure. An ordinary implementation request does not automatically authorize commits or main integration; this procedure never authorizes a push.
+An explicit wrap-up request authorizes local delivery of agreed work, never a push:
 
-1. **Rebase and integrate onto current main.** Checkpoint-commit the agreed work first if needed, preserving unrelated working changes and other worktrees. Inspect new main changes and their relevant code, contracts and tests. Integrate their behavior and boundaries with the feature, including interactions that Git merges without conflicts; merely resolving conflict markers or making the code compile is insufficient. Preserve main's accepted semantics and verify that existing and new features work together. Discuss material new scope/design decisions before expanding the work.
-2. **Close and update documentation before the final commit.** Update affected contracts, architecture, roadmap and plans; move completed implementation plans to `docs/plans/completed/` and repair links. Track deferred work and unperformed acceptance separately without claiming it passed. Keep mixed packages active only for genuinely unfinished work.
-3. **Verify the integrated result.** Run proportional checks after rebase, including relevant combined-behavior regressions, and inspect the final code/documentation diff. Report unresolved failures and verification limits rather than masking them.
-4. **Commit and deliver locally to main.** Commit only the agreed changes and fast-forward main to the verified result, preserving unrelated local changes. If the work is already on main, commit there; do not rewrite unrelated history.
-5. **Report delivery.** State the main commit, checks actually run and remaining limits. Do not push unless separately requested.
+1. Checkpoint-commit agreed changes if needed, then rebase/integrate onto current main, preserving unrelated changes/worktrees. Inspect new main behavior, contracts and tests, including semantic interactions that merge without conflicts. Discuss material new design/scope before expanding work.
+2. Update current contracts, architecture and roadmap; remove completed plans and repair links. Keep deferred work/unperformed acceptance explicit, without a closure journal.
+3. Verify the integrated result proportionally and inspect the final diff. Report unresolved failures and limits.
+4. Commit only agreed changes and fast-forward main to the verified result. If already on main, commit there; do not rewrite unrelated history.
+5. Report the main commit, checks and remaining limits. Push only when separately requested.
 
 ## Engineering boundaries
 
-- macOS/Apple Silicon first; no minimum chip/RAM requirement is established. M1 Pro/16 GB was a provisional example, not a mandatory target or acceptance gate. Resource policy should follow observed problems, not speculative hardware constraints. macOS 14 and physical-monitor acceptance remain separate checks.
+- macOS/Apple Silicon first; no minimum chip/RAM target is established. Resource policy follows observed problems. Actual macOS 14, broader devices and physical monitors require separate acceptance.
 - Reuse pinned LibRaw development. No custom demosaicer, camera-specific repair, CPU interactive fallback, approximate ACES replacement or weakened numerical gate.
-- Preserve native-camera calibration/inversion, signed/HDR AP1 working data and AP0 EXR; AP0 is otherwise internal to unchanged ACES. Native-camera model/matrix identity must match the roll's retained basis. Preview/TIFF targets are matching 100-nit sRGB and Display P3, with managed extended-sRGB SDR presentation.
-- Dmin/Dmax are RGB-only values. Picker context is transient; source fingerprints and development compatibility are separate concerns. Invalid/cancelled picks and rejected edits change no processing state.
-- The user approved camera processing/project model/schema 4 outright. Old AP0 grades reject; do not add migration/legacy inversion branches. New grades retain toe 2.5/shoulder off; classic toe-1 response also uses the camera model.
-- One production RGB16 source path: 8 bytes/pixel, extra precision in temporaries/small constants, not a wide retained source cache. Historical research snapshots are not supported upload paths or fallbacks.
-- Samples are read-only, ignored and not committed. Do not automate Lightroom/Resolve or pursue flat-field correction without a new request. Do not silently add a pedestal/clamp or change development to improve inspection.
+- Preserve native-camera calibration/inversion, signed/HDR AP1 working data and AP0 EXR. AP0 otherwise belongs only inside ACES. Camera model/matrix identity must match the roll's retained basis. Preview/TIFF targets are matching 100-nit sRGB/Display P3 with managed extended-sRGB SDR presentation.
+- Dmin/Dmax are RGB-only values. Picker context is transient; thumbnail-cache freshness and development compatibility are separate. Do not introduce RAW content hashing or capture identity without a new requirement. Invalid/cancelled picks and rejected edits change no processing state.
+- Processing model is 4; project schema is 5 with no RAW fingerprints. Unsupported schemas/AP0 grades reject without migration. New grades use toe 2.5/shoulder off; the classic toe-1 curve uses the same camera model.
+- One RGB16 production source path: 8 bytes/pixel. Higher precision belongs in temporaries/small constants, not a wide retained source cache.
+- Samples are read-only, ignored and never committed. Do not automate Lightroom/Resolve or add correction workflows without a request. No hidden pedestal/clamp or development changes to improve inspection.
 
-## Cache and durable research
+## Build and generated storage
 
-`.cache/` is disposable storage, not the only home for authored source, decisions or irreplaceable evidence. Keep reusable tools in `scripts/`/`native/` or research tools alongside their guide; preserve selected compact results in research evidence. Put dependencies, build products, generated/private photographic outputs and downloaded third-party inputs in ignored local storage. Never automatically promote user photographs, copied upstream code or copyrighted documents. See [research tools/cache policy](docs/research/tools/README.md).
+Dogfood the human workflow: ordinary Cargo from the repository root, project rustup selection and Apple Clang from `.cargo/config.toml`. Follow [README](README.md), `./scripts/setup-native.sh`, `cargo build-app` and `cargo app`. Do not maintain an agent bootstrap or Cargo wrapper. Sandbox-required environment overrides are local execution details, not a second workflow.
 
-Run commands from the repository root through `./scripts/cargo.sh`. No system/Homebrew installations or sample edits are authorized by this file. Local commits/main integration require a user request, including an explicit wrap-up request as defined above; pushes require separate authorization.
+`.cache/` is disposable storage for dependencies, build/probe products, generated/private photographic outputs and downloaded third-party inputs. Maintained source and current rationale belong in the checkout; generated logs/screenshots do not. Never promote user photographs, copied upstream experiments or copyrighted documents automatically.
+
+Setup/downloads require permission when the environment requires it. No system/Homebrew installations, sample edits, commits/main integration or pushes are authorized by this file; commits/integration require a user request, including explicit wrap-up as defined above.

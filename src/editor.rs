@@ -38,6 +38,9 @@ use files::{FileAction, Transition};
 #[path = "editor_thumbnails.rs"]
 mod thumbnails;
 use thumbnails::Thumbnails;
+#[path = "editor_selected_preview.rs"]
+mod selected_preview;
+use selected_preview::{SelectionPaint, SelectionTiming};
 #[path = "editor_scopes.rs"]
 mod scopes;
 use scopes::{Scopes, Slot as ScopeSlot};
@@ -47,6 +50,8 @@ use flat::{Correction, FlatEdit, FlatPreview};
 #[path = "editor_crop.rs"]
 mod crop_editor;
 use crop_editor::CropEdit;
+#[path = "editor_memory.rs"]
+mod memory;
 #[path = "editor_navigation.rs"]
 mod navigation;
 #[path = "editor_smoke.rs"]
@@ -80,6 +85,7 @@ struct PickView {
     anchored: Viewport,
 }
 struct Ready {
+    thumbnail: Option<(thumbnails::FileKey, Arc<thumbnails::Proxy>)>,
     path: PathBuf,
     area: Rect,
     floor: f64,
@@ -160,7 +166,9 @@ enum Message {
     FlatPreview(u64, Result<Box<FlatPreview>, String>),
 }
 
+#[allow(clippy::too_many_arguments)]
 fn prepare_source(
+    renderers: &crate::renderer::RendererCache,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     path: PathBuf,
@@ -169,24 +177,41 @@ fn prepare_source(
     correction: Option<&Arc<Correction>>,
     basis: Option<&crate::project::CameraBasis>,
 ) -> Result<(Ready, Scan), Error> {
-    let (record, _) = document::read_source(&path)?;
+    let started = std::time::Instant::now();
+    let thumbnail_file = thumbnails::FileKey::new(&path);
+    let (record, raw) = document::open_source(&path)?;
+    let registration_seconds = started.elapsed().as_secs_f64();
     if let Some(basis) = basis {
         basis.require_source(&record.development)?;
     }
     if let Some(expected) = expected {
         document::verify_source(expected, &record)?;
     }
-    let mut scan = Scan::open(&path, wb)?;
+    let tick = std::time::Instant::now();
+    let mut scan = Scan::from_raw(raw, wb)?;
+    let development_seconds = tick.elapsed().as_secs_f64();
+    let tick = std::time::Instant::now();
     document::verify_scan(&record, &scan)?;
+    let verification_seconds = tick.elapsed().as_secs_f64();
     if let Some(correction) = correction {
         correction.settings.require_source(&record.development)?;
         scan.set_flat_field(Some(correction.settings.map.clone()))?;
     }
+    let tick = std::time::Instant::now();
     let (width, height, pixels) = scan.preview_source(1024)?;
+    let thumbnail = Some((
+        thumbnail_file,
+        Arc::new(thumbnails::Proxy::from_scan(&scan)?),
+    ));
+    let proxy_seconds = tick.elapsed().as_secs_f64();
+    let tick = std::time::Instant::now();
+    let renderer = renderers.get(device, queue)?;
+    let renderer_seconds = tick.elapsed().as_secs_f64();
+    let tick = std::time::Instant::now();
     let make_image = |target| -> Result<Arc<GpuImage>, Error> {
-        let mut image = pollster::block_on(GpuImage::new(
+        let mut image = pollster::block_on(GpuImage::new_shared(
+            &renderer,
             device,
-            queue,
             width,
             height,
             &pixels,
@@ -206,7 +231,13 @@ fn prepare_source(
         make_image(OutputTarget::Srgb)?,
         make_image(OutputTarget::DisplayP3)?,
     ];
+    println!(
+        "selected_source seconds={:.6} registration_seconds={registration_seconds:.6} development_seconds={development_seconds:.6} verification_seconds={verification_seconds:.6} proxy_seconds={proxy_seconds:.6} renderer_seconds={renderer_seconds:.6} images_seconds={:.6}",
+        started.elapsed().as_secs_f64(),
+        tick.elapsed().as_secs_f64()
+    );
     let ready = Ready {
+        thumbnail,
         path,
         area: scan.area,
         floor: scan.input_floor,
@@ -216,7 +247,9 @@ fn prepare_source(
     };
     Ok((ready, scan))
 }
+#[allow(clippy::too_many_arguments)]
 fn prepare_document(
+    renderers: &crate::renderer::RendererCache,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     source: &mut Option<(u64, Scan)>,
@@ -271,6 +304,7 @@ fn prepare_document(
             .as_ref()
             .map(|value| value.fixed_wb);
         let (ready, scan) = prepare_source(
+            renderers,
             device,
             queue,
             path,
@@ -304,6 +338,7 @@ fn prepare_document(
 }
 
 fn backend(
+    renderers: Arc<crate::renderer::RendererCache>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     commands: mpsc::Receiver<Command>,
@@ -324,16 +359,21 @@ fn backend(
                         .map(|(_, scan)| (scan, correction.as_ref().map(|c| c.gpu.clone()))),
                 };
                 let result = match active {
-                    Some(context) => crate::refinement::refine(
-                        &device,
-                        &queue,
-                        context,
-                        parameters,
-                        target,
-                        (&generation, revision),
-                        view,
-                    )
-                    .map_err(|e| e.to_string()),
+                    Some(context) => renderers
+                        .get(&device, &queue)
+                        .and_then(|renderer| {
+                            crate::refinement::refine(
+                                &renderer,
+                                &device,
+                                &queue,
+                                context,
+                                parameters,
+                                target,
+                                (&generation, revision),
+                                view,
+                            )
+                        })
+                        .map_err(|e| e.to_string()),
                     _ => Ok(None),
                 };
                 if messages.send(Message::Refined(revision, result)).is_err() {
@@ -342,6 +382,7 @@ fn backend(
             }
             Command::Load(id, path, wb, expected, field, basis) => {
                 let result = prepare_source(
+                    &renderers,
                     &device,
                     &queue,
                     path,
@@ -362,6 +403,7 @@ fn backend(
             }
             Command::FlatPreview(id, path, wb, expected, basis) => {
                 let result = prepare_source(
+                    &renderers,
                     &device,
                     &queue,
                     path,
@@ -416,6 +458,7 @@ fn backend(
                     settings.enabled = enabled;
                     document.project.flat_field = Some(settings);
                     let prepared = prepare_document(
+                        &renderers,
                         &device,
                         &queue,
                         &mut source,
@@ -444,6 +487,7 @@ fn backend(
                     work => Message::Prepared(
                         id,
                         prepare_document(
+                            &renderers,
                             &device,
                             &queue,
                             &mut source,
@@ -572,6 +616,8 @@ pub struct Editor {
     messages: mpsc::Receiver<Message>,
     id: u64,
     ready: Option<Ready>,
+    pending_preview: Option<thumbnails::SelectedPreview>,
+    selection_timing: Option<Arc<SelectionTiming>>,
     busy: bool,
     status: String,
     return_notice: Option<String>,
@@ -615,13 +661,17 @@ impl Editor {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, initial: Option<PathBuf>) -> Self {
         let (commands, receiver) = mpsc::channel();
         let (send, messages) = mpsc::channel();
-        let thumbnails = Thumbnails::new(device.clone(), queue.clone());
+        let renderers = Arc::new(crate::renderer::RendererCache::default());
+        renderers.prewarm(device.clone(), queue.clone());
+        let thumbnails = Thumbnails::new(device.clone(), queue.clone(), renderers.clone());
         let scopes = Scopes::new(device);
         let device = device.clone();
         let queue = queue.clone();
         let generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let worker_generation = generation.clone();
-        std::thread::spawn(move || backend(device, queue, receiver, send, worker_generation));
+        std::thread::spawn(move || {
+            backend(renderers, device, queue, receiver, send, worker_generation)
+        });
         let mut editor = Self::state(commands, messages, generation);
         editor.thumbnails = thumbnails;
         editor.scopes = scopes;
@@ -658,6 +708,8 @@ impl Editor {
             messages,
             id: 0,
             ready: None,
+            pending_preview: None,
+            selection_timing: None,
             busy: false,
             status: "Add a RAW to begin".into(),
             return_notice: None,
@@ -726,6 +778,30 @@ impl Editor {
         .validate()
         .ok()
     }
+    fn seed_thumbnail(&mut self) {
+        let Some(ready) = &mut self.ready else {
+            return;
+        };
+        let Some((file, proxy)) = ready.thumbnail.take() else {
+            return;
+        };
+        let Some(id) = self.current_source else {
+            return;
+        };
+        let source = self.document.project.source(id).expect("accepted source");
+        // Flat-field editing displays a reference while retaining the working source ID.
+        let path = self
+            .document
+            .source_path(id)
+            .expect("accepted source locator");
+        if document::same_path(&path, &ready.record.path)
+            && source.development == ready.record.development
+            && self.document.project.development.as_ref() == Some(&ready.development)
+        {
+            self.thumbnails
+                .seed(source, &ready.development, file, proxy);
+        }
+    }
     fn sync_document(&mut self) {
         let project = &mut self.document.project;
         project.roll = self.roll;
@@ -754,6 +830,8 @@ impl Editor {
         self.next_request
     }
     fn start_document(&mut self, work: DocumentWork) {
+        self.pending_preview = None;
+        self.selection_timing = None;
         self.thumbnails.cancel();
         let id = self.request_id();
         self.generation
@@ -783,6 +861,11 @@ impl Editor {
         self.start_document(DocumentWork::Import(self.document.clone(), paths, reuse));
     }
     fn load(&mut self, path: PathBuf) {
+        let started = std::time::Instant::now();
+        let selecting_photo = self.pick.is_none() && self.flat_edit.is_none();
+        self.seed_thumbnail();
+        self.pending_preview = None;
+        self.selection_timing = None;
         self.thumbnails.cancel();
         self.sync_document();
         self.current_source = self.document.find_source(&path);
@@ -828,6 +911,8 @@ impl Editor {
         self.pick_return = None;
         self.id = self.request_id();
         self.ready = None;
+        self.selection_timing =
+            selecting_photo.then(|| Arc::new(SelectionTiming::new(self.id, started)));
         self.region = None;
         self.pick = None;
         self.source = self.calibration().is_none();
@@ -846,7 +931,33 @@ impl Editor {
             .is_err()
         {
             self.busy = false;
+            self.selection_timing = None;
             self.status = "RAW worker stopped".into();
+        } else if selecting_photo
+            && self.pick.is_none()
+            && self.flat_edit.is_none()
+            && let Some(source) = self.current_source
+        {
+            match self.thumbnails.selected_preview(
+                self.id,
+                &self.document,
+                source,
+                self.correction.as_ref(),
+            ) {
+                Ok(preview) => {
+                    println!(
+                        "selected_switch request={} cache_hit={} boundary=admission elapsed_ms={:.6}",
+                        self.id,
+                        preview.is_some(),
+                        started.elapsed().as_secs_f64() * 1000.
+                    );
+                    self.pending_preview = preview;
+                }
+                Err(error) => eprintln!(
+                    "selected_preview request={} unavailable reason={error}",
+                    self.id
+                ),
+            }
         }
     }
     fn receive(&mut self) {
@@ -874,6 +985,14 @@ impl Editor {
                     }
                 }
                 Message::Ready(id, result) if id == self.id && self.document_pending.is_none() => {
+                    self.pending_preview = None;
+                    if let Some(timing) = &self.selection_timing {
+                        println!(
+                            "selected_switch request={id} success={} boundary=backend_ready elapsed_ms={:.6}",
+                            result.is_ok(),
+                            timing.started.elapsed().as_secs_f64() * 1000.
+                        );
+                    }
                     self.busy = false;
                     match result {
                         Ok(ready) => {
@@ -904,7 +1023,10 @@ impl Editor {
                             }
                             self.ready = Some(*ready);
                         }
-                        Err(error) => self.status = error,
+                        Err(error) => {
+                            self.selection_timing = None;
+                            self.status = error;
+                        }
                     }
                 }
                 Message::Picked(id, kind, result)
@@ -1490,7 +1612,9 @@ impl host::App for Editor {
                 .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1100., 800.)));
         }
         self.receive();
+        self.seed_thumbnail();
         self.thumbnails.receive(&self.document);
+        self.validate_pending_preview();
         let available = !self.busy
             && self.pick.is_none()
             && self.crop_edit.is_none()
@@ -1715,7 +1839,7 @@ impl host::App for Editor {
                 .max(egui::vec2(1., 1.));
             let (canvas, response) =
                 ui.allocate_exact_size(available, egui::Sense::click_and_drag());
-            let Some(ready) = &self.ready else {
+            let Some((area, provisional, pending)) = self.selected_view() else {
                 ui.painter().text(
                     canvas.center(),
                     egui::Align2::CENTER_CENTER,
@@ -1729,8 +1853,6 @@ impl host::App for Editor {
                 );
                 return;
             };
-            let area = ready.area;
-            let provisional = ready.images[self.target as usize].clone();
             let pixels_per_point = ui.ctx().pixels_per_point();
             let canvas_input = self.canvas_input_allowed(ui, canvas);
             let crop = if matches!(self.pick, Some(Pick::Dmin | Pick::Dmax | Pick::Flat)) {
@@ -1837,7 +1959,6 @@ impl host::App for Editor {
                 composition,
             );
             if self.signature != Some(signature) {
-                self.thumbnails.cancel();
                 self.signature = Some(signature);
                 self.generation
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1893,7 +2014,11 @@ impl host::App for Editor {
                 .with_clip_rect(canvas)
                 .add(egui_wgpu::Callback::new_paint_callback(
                     draw,
-                    ImagePaint::new(image, parameters, mapping),
+                    SelectionPaint::new(
+                        ImagePaint::new(image, parameters, mapping),
+                        self.selection_timing.clone(),
+                        pending,
+                    ),
                 ));
             if cropping {
                 self.paint_crop(ui, geometry);
