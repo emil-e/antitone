@@ -335,7 +335,8 @@ impl Editor {
             .resizable(true)
             .default_size(height)
             .min_size(52.)
-            .max_size(max_height);
+            .max_size(max_height)
+            .frame(egui::Frame::side_top_panel(ui.style()).fill(egui::Color32::from_gray(28)));
         let strip = panel.show(ui, |ui| {
             ui.take_available_height();
             let image_height = (ui.available_height()-28.).max(20.);
@@ -401,7 +402,7 @@ impl Editor {
                 .source_path(id)
                 .expect("selected filmstrip locator");
             if matches!(self.pick, Some(Pick::Dmin | Pick::Dmax)) {
-                self.pick_source(path);
+                self.pick_roll_source(id);
             } else {
                 self.selected = index;
                 self.load(path);

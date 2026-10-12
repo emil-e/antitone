@@ -51,6 +51,8 @@ use crop_editor::CropEdit;
 mod navigation;
 #[path = "editor_smoke.rs"]
 mod smoke;
+#[path = "editor_viewer.rs"]
+mod viewer_ui;
 pub use smoke::SmokeEditor;
 #[path = "editor_flat_field_smoke.rs"]
 mod flat_smoke;
@@ -597,7 +599,6 @@ pub struct Editor {
     new_project_pending: bool,
     document: Document,
     current_source: Option<SourceId>,
-    persistent_load: bool,
     next_request: u64,
     document_pending: Option<u64>,
     transition: Option<Transition>,
@@ -684,7 +685,6 @@ impl Editor {
             new_project_pending: false,
             document: Document::default(),
             current_source: None,
-            persistent_load: true,
             next_request: 0,
             document_pending: None,
             transition: None,
@@ -783,9 +783,6 @@ impl Editor {
         self.start_document(DocumentWork::Import(self.document.clone(), paths, reuse));
     }
     fn load(&mut self, path: PathBuf) {
-        self.load_source(path, true);
-    }
-    fn load_source(&mut self, path: PathBuf, persistent: bool) {
         self.thumbnails.cancel();
         self.sync_document();
         self.current_source = self.document.find_source(&path);
@@ -805,7 +802,6 @@ impl Editor {
             .and_then(|source| source.crop);
         self.crop_edit = None;
         self.last_layout = None;
-        self.persistent_load = persistent;
         let expected = self.current_source.map(|id| {
             Box::new(
                 self.document
@@ -884,7 +880,7 @@ impl Editor {
                             if self.floor == 0. {
                                 self.floor = ready.floor;
                             }
-                            if self.persistent_load && self.current_source.is_none() {
+                            if self.current_source.is_none() {
                                 let mut record = ready.record.clone();
                                 record.photo = self.photo;
                                 record.orientation = self.photo_orientation;
@@ -1172,8 +1168,7 @@ impl Editor {
             } else {
                 layout.composition
             };
-            // Picker controls change canvas size; freeze a fitted view's physical scale as well.
-            if next != layout.composition || self.viewport.zoom.is_none() {
+            if next != layout.composition {
                 self.viewport.reframe(layout, next, pixels_per_point);
             }
         }
@@ -1183,23 +1178,24 @@ impl Editor {
             anchored: self.viewport,
         });
     }
-    fn pick_source(&mut self, path: PathBuf) {
+    fn pick_roll_source(&mut self, id: SourceId) {
+        let Some(index) = self
+            .document
+            .project
+            .order
+            .iter()
+            .position(|candidate| *candidate == id)
+        else {
+            return;
+        };
+        let path = self.document.source_path(id).expect("selected roll source");
         let kind = self.pick;
         let context = self.pick_return.take();
         let view = self.pick_view;
         if self.ready.as_ref().is_none_or(|ready| ready.path != path) {
-            self.load_source(path.clone(), false);
+            self.load(path);
         }
-        if let Some(id) = self.document.find_source(&path)
-            && let Some(index) = self
-                .document
-                .project
-                .order
-                .iter()
-                .position(|candidate| *candidate == id)
-        {
-            self.selected = index;
-        }
+        self.selected = index;
         self.pick = kind;
         self.pick_return = context;
         self.pick_view = view;
@@ -1543,11 +1539,18 @@ impl host::App for Editor {
                 }
             });
         }
+        // egui clears text focus at pass start on Escape, before tool shortcuts run.
+        let text_was_focused = ui.ctx().data(|data| {
+            data.get_temp::<bool>(ui.id().with("editor-text-focus"))
+                .unwrap_or(false)
+        });
         if !self.busy
+            && !(text_was_focused && ui.input(|input| input.key_pressed(egui::Key::Escape)))
             && self.overwrite.is_none()
             && self.transition.is_none()
             && self.project_overwrite.is_none()
             && !ui.ctx().egui_wants_keyboard_input()
+            && !egui::Popup::is_any_open(ui.ctx())
         {
             if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Z)) {
                 self.viewport.fit();
@@ -1558,6 +1561,12 @@ impl host::App for Editor {
                 self.status = "Pick cancelled; processing unchanged".into();
                 self.finish_pick();
                 self.region = None;
+            }
+            if self.pick.is_some()
+                && self.region.is_some()
+                && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+            {
+                self.apply_pick();
             }
             if self.crop_edit.is_some() {
                 if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
@@ -1695,102 +1704,64 @@ impl host::App for Editor {
             self.photo = previous_photo;
             self.status = format!("Edit rejected: {error}");
         }
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.add_enabled(self.crop_edit.is_none() && self.pick!=Some(Pick::Flat), egui::Checkbox::new(&mut self.source, "Developed source"));
-                if calibration.is_none() {
-                    self.source = true;
-                    ui.label("Dmin and Dmax required for a positive preview");
-                }
-                if matches!(self.pick, Some(Pick::Dmin | Pick::Dmax))
-                    && ui
-                        .add_enabled(!self.busy, egui::Button::new("Choose reference RAW…"))
-                        .clicked()
-                    && let Some(path) = rfd::FileDialog::new()
-                        .add_filter("Camera RAW", &["arw"])
-                        .pick_file()
-                {
-                    self.pick_source(path);
-                }
-                if let Some(pick) = self.pick {
-                    if let Some(ready) = &self.ready {
-                        ui.add(egui::Label::new(format!("Sampling {}", ready.path.file_name().unwrap_or_default().to_string_lossy())).wrap())
-                            .on_hover_text(ready.path.display().to_string());
-                    }
-                    ui.label(format!(
-                        "{pick:?}: click for a patch or drag a rectangle; adjust before applying"
-                    ));
-                    if ui
-                        .add_enabled(!self.busy, egui::Button::new("Cancel pick"))
-                        .clicked()
-                    {
-                        self.status = "Pick cancelled; processing unchanged".into();
-                        self.finish_pick();
-                        self.region = None;
-                    }
-                }
-            });
+        let zoom_action = self.viewer_bar(ui);
+        let viewer = egui::CentralPanel::default()
+            .frame(egui::Frame::central_panel(ui.style()).fill(viewer_ui::surface()));
+        viewer.show(ui, |ui| {
+            let available = ui
+                .available_rect_before_wrap()
+                .intersect(ui.clip_rect())
+                .size()
+                .max(egui::vec2(1., 1.));
+            let (canvas, response) =
+                ui.allocate_exact_size(available, egui::Sense::click_and_drag());
             let Some(ready) = &self.ready else {
-                ui.centered_and_justified(|ui| {
-                    ui.label(if self.busy {
+                ui.painter().text(
+                    canvas.center(),
+                    egui::Align2::CENTER_CENTER,
+                    if self.busy {
                         "Developing…"
                     } else {
                         "Add a RAW to begin"
-                    });
-                });
+                    },
+                    egui::FontId::proportional(14.),
+                    ui.visuals().text_color(),
+                );
                 return;
             };
-            ui.small(if self.settled.is_some() {
-                "Preview ready"
-            } else if self.refining.is_some() {
-                "Refining preview…"
-            } else {
-                "Approximate preview"
-            }).on_hover_text("Interactive preview uses nearest-center samples. Settled preview processes every visible full-resolution source pixel before linear-target area averaging. Calibration and export always use the full source.");
             let area = ready.area;
             let provisional = ready.images[self.target as usize].clone();
             let pixels_per_point = ui.ctx().pixels_per_point();
-            let mut zoom_action = None;
-            ui.horizontal(|ui| {
-                if ui.button(if self.crop_edit.is_some() { "Fit source" } else { "Fit" }).clicked() {
-                    self.viewport.fit();
-                }
-                if ui.button("100%").clicked() {
-                    zoom_action = Some(1.);
-                }
-                if ui.button("−").clicked() {
-                    zoom_action = Some(-0.8);
-                }
-                if ui.button("+").clicked() {
-                    zoom_action = Some(-1.25);
-                }
-                if self.source {
-                    ui.menu_button("Inspection", |ui| {
-                        ui.label("Developed-source view only");
-                        ui.set_min_width(220.);
-                        controls::parameter(ui, controls::Parameter::Exposure, &mut self.source_exposure);
-                        ui.small("Does not affect measurements, grades or exports.");
-                    });
-                }
-                ui.label("?").on_hover_text("Scroll: pan. Pinch or Ctrl/Cmd-scroll: zoom. Click: native/Fit. Drag when zoomed, middle/space drag: pan. Z: Fit.");
-                ui.small(if self.target == OutputTarget::DisplayP3 { "Display P3" } else { "sRGB" })
-                    .on_hover_text("Shared 100-nit preview + TIFF rendering target, not the monitor profile. Change it in Rendering; EXR bypasses it.");
-            });
-            let available = (ui.available_rect_before_wrap().intersect(ui.clip_rect()).size()
-                - egui::vec2(0., if self.pick.is_some() { 36. } else { 0. }))
-            .max(egui::vec2(1., 1.));
-            let (canvas, response) =
-                ui.allocate_exact_size(available, egui::Sense::click_and_drag());
-            let crop = if matches!(self.pick, Some(Pick::Dmin | Pick::Dmax | Pick::Flat)) { None }
-                else { self.crop_edit.as_ref().map(|edit| edit.draft).or(self.crop) };
-            let composition = if self.pick==Some(Pick::Flat) {Composition::new(area,RollOrientation::default(),PhotoOrientation::default())}
-                else {Composition::with_crop(area, self.roll_orientation, self.photo_orientation, crop)}
-                .expect("accepted crop belongs to the loaded source");
-            let inset = 20_f32.min((canvas.width().min(canvas.height())-1.).max(0.)*0.5);
-            let layout_canvas = if self.crop_edit.is_some() { canvas.shrink(inset) } else { canvas };
+            let canvas_input = self.canvas_input_allowed(ui, canvas);
+            let crop = if matches!(self.pick, Some(Pick::Dmin | Pick::Dmax | Pick::Flat)) {
+                None
+            } else {
+                self.crop_edit.as_ref().map(|edit| edit.draft).or(self.crop)
+            };
+            let composition = if self.pick == Some(Pick::Flat) {
+                Composition::new(
+                    area,
+                    RollOrientation::default(),
+                    PhotoOrientation::default(),
+                )
+            } else {
+                Composition::with_crop(area, self.roll_orientation, self.photo_orientation, crop)
+            }
+            .expect("accepted crop belongs to the loaded source");
+            let inset = 20_f32.min((canvas.width().min(canvas.height()) - 1.).max(0.) * 0.5);
+            let layout_canvas = if self.crop_edit.is_some() {
+                canvas.shrink(inset)
+            } else {
+                canvas
+            };
             let cropping = self.crop_edit.is_some();
-            let mut geometry = if cropping { self.viewport.layout_crop(layout_canvas,composition,pixels_per_point) }
-                else { self.viewport.layout_composition(layout_canvas,composition,pixels_per_point) };
+            let mut geometry = if cropping {
+                self.viewport
+                    .layout_crop(layout_canvas, composition, pixels_per_point)
+            } else {
+                self.viewport
+                    .layout_composition(layout_canvas, composition, pixels_per_point)
+            };
             if let Some(zoom) = zoom_action {
                 self.viewport.zoom_at(
                     geometry,
@@ -1803,29 +1774,48 @@ impl host::App for Editor {
                     canvas.center(),
                 );
             }
-            geometry = if cropping { self.viewport.layout_crop(layout_canvas,composition,pixels_per_point) }
-                else { self.viewport.layout_composition(layout_canvas,composition,pixels_per_point) };
+            geometry = if cropping {
+                self.viewport
+                    .layout_crop(layout_canvas, composition, pixels_per_point)
+            } else {
+                self.viewport
+                    .layout_composition(layout_canvas, composition, pixels_per_point)
+            };
             geometry.canvas = canvas;
-            if response.drag_started_by(egui::PointerButton::Primary) { self.pick_drag = None; }
-            let (geometry, panning) = if self.crop_edit.is_some() {
+            if response.drag_started_by(egui::PointerButton::Primary) {
+                self.pick_drag = None;
+            }
+            let (geometry, panning) = if !canvas_input {
+                (geometry, false)
+            } else if self.crop_edit.is_some() {
                 (self.crop_interaction(ui, &response, geometry), false)
             } else {
                 self.navigate(ui, &response, geometry, pixels_per_point)
             };
-            if self.crop_edit.is_none() { self.last_layout = Some((geometry, pixels_per_point)); }
+            if self.crop_edit.is_none() {
+                self.last_layout = Some((geometry, pixels_per_point));
+            }
             let composition = geometry.composition;
             let rect = geometry.image.intersect(canvas);
             // An editing frame may be offscreen at explicit zoom; no refinement raster is requested.
-            let view = (!cropping).then(||ViewRequest {
+            let view = (!cropping).then(|| ViewRequest {
                 area: geometry.visible_area(),
-                output: if composition.is_exact() { geometry.output_size(geometry.visible_area(),pixels_per_point) } else { geometry.frame_raster(pixels_per_point).output },
-                frame: (!composition.is_exact()).then(||geometry.frame_raster(pixels_per_point)),
+                output: if composition.is_exact() {
+                    geometry.output_size(geometry.visible_area(), pixels_per_point)
+                } else {
+                    geometry.frame_raster(pixels_per_point).output
+                },
+                frame: (!composition.is_exact()).then(|| geometry.frame_raster(pixels_per_point)),
             });
             let parameters = if self.source {
-                let source_parameters=ProcessingParameters::source_inspection(self.source_exposure);
+                let source_parameters =
+                    ProcessingParameters::source_inspection(self.source_exposure);
                 match source_parameters {
                     Ok(parameters) => parameters,
-                    Err(error) => { ui.label(format!("Source inspection unavailable: {error}")); return; }
+                    Err(error) => {
+                        ui.label(format!("Source inspection unavailable: {error}"));
+                        return;
+                    }
                 }
             } else {
                 let Some(cal) = self.calibration() else {
@@ -1887,11 +1877,17 @@ impl host::App for Editor {
             }
             let draw = if cropping { canvas } else { rect };
             let (image, parameters, mapping) = match &self.settled {
-                Some((settled_revision, settled_view, image)) if *settled_revision == revision && !cropping => {
-                    let mapping = if settled_view.frame.is_some() { crate::geometry::TextureMapping::IDENTITY } else { geometry.uv(draw,settled_view.area) };
-                    (image.clone(),None,mapping)
+                Some((settled_revision, settled_view, image))
+                    if *settled_revision == revision && !cropping =>
+                {
+                    let mapping = if settled_view.frame.is_some() {
+                        crate::geometry::TextureMapping::IDENTITY
+                    } else {
+                        geometry.uv(draw, settled_view.area)
+                    };
+                    (image.clone(), None, mapping)
                 }
-                _ => (provisional,Some(parameters),geometry.uv(draw,area)),
+                _ => (provisional, Some(parameters), geometry.uv(draw, area)),
             };
             ui.painter()
                 .with_clip_rect(canvas)
@@ -1899,9 +1895,12 @@ impl host::App for Editor {
                     draw,
                     ImagePaint::new(image, parameters, mapping),
                 ));
-            if cropping { self.paint_crop(ui, geometry); }
+            if cropping {
+                self.paint_crop(ui, geometry);
+            }
             if self.pick.is_some()
                 && !self.busy
+                && canvas_input
                 && !panning
                 && !ui.input(|input| input.key_down(egui::Key::Space))
             {
@@ -1923,47 +1922,35 @@ impl host::App for Editor {
                 {
                     self.region = Some(drag.update(geometry, end));
                 }
-                if let Some(region) = self.region {
-                    ui.painter().with_clip_rect(canvas).rect_stroke(
-                        geometry.screen_coverage(region),
+            }
+            if let Some(region) = self.region {
+                ui.painter().with_clip_rect(canvas).rect_stroke(
+                    geometry.screen_coverage(region),
+                    0.,
+                    egui::Stroke::new(1., egui::Color32::WHITE),
+                    egui::StrokeKind::Inside,
+                );
+                let screen = geometry.screen_coverage(region);
+                for point in [
+                    screen.min,
+                    screen.max,
+                    screen.left_bottom(),
+                    screen.right_top(),
+                ] {
+                    ui.painter().with_clip_rect(canvas).rect_filled(
+                        egui::Rect::from_center_size(point, egui::vec2(6., 6.)),
                         0.,
-                        egui::Stroke::new(1., egui::Color32::WHITE),
-                        egui::StrokeKind::Inside,
+                        egui::Color32::WHITE,
                     );
-                    let screen = geometry.screen_coverage(region);
-                    for point in [
-                        screen.min,
-                        screen.max,
-                        screen.left_bottom(),
-                        screen.right_top(),
-                    ] {
-                        ui.painter().with_clip_rect(canvas).rect_filled(
-                            egui::Rect::from_center_size(point, egui::vec2(6., 6.)),
-                            0.,
-                            egui::Color32::WHITE,
-                        );
-                    }
-                    ui.horizontal(|ui| {
-                        ui.label(if self.pick==Some(Pick::Flat) {"Source rectangle"} else {"Frame rectangle"});
-                        let (mut min,max) = geometry.frame_bounds(region);
-                        let mut extent: [f64;2] = std::array::from_fn(|i|max.0[i]-min.0[i]);
-                        let size = composition.size().map(f64::from);
-                        let origin=if self.pick==Some(Pick::Flat) {[f64::from(area.x),f64::from(area.y)]} else {[0.,0.]};
-                        let mut changed = false;
-                        for (i,label) in [(0,"x "),(1,"y ")] {
-                            let mut position=min.0[i]+origin[i];
-                            if ui.add(egui::DragValue::new(&mut position).range(origin[i]..=origin[i]+size[i]-extent[i]).max_decimals(0).prefix(label)).changed() {min.0[i]=position-origin[i];changed=true;}
-                        }
-                        for (i,label) in [(0,"w "),(1,"h ")] { changed |= ui.add(egui::DragValue::new(&mut extent[i]).range(1.0..=size[i]-min.0[i]).max_decimals(0).prefix(label)).changed(); }
-                        if changed { self.region = Some(geometry.frame_selection(min,crate::geometry::FramePoint(std::array::from_fn(|i|min.0[i]+extent[i])))); }
-                        if ui.button(if self.pick==Some(Pick::Flat){"Apply correction"}else{"Apply pick"}).clicked() {
-                            self.apply_pick();
-                        }
-                    });
                 }
             }
-            if response.drag_stopped_by(egui::PointerButton::Primary) { self.pick_drag = None; }
+            if response.drag_stopped_by(egui::PointerButton::Primary) {
+                self.pick_drag = None;
+            }
         });
+        let text_focused = ui.ctx().text_edit_focused();
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(ui.id().with("editor-text-focus"), text_focused));
         self.paint_scope(scope_slot);
         self.sync_document();
         if self.document.dirty() != was_dirty {

@@ -42,7 +42,7 @@ output: ocio-2.6.0-aces2-100nit-antitone-srgb-displayp3-v2
 
 `load()` bounds input and validates the resulting state. `save()` validates before writing a same-directory temporary file, syncs it, then persists with New/no-clobber or Replace semantics. Failure preserves an existing document; this is not a complete crash/power-loss durability claim.
 
-The editor's source records own photo settings by stable ID, not path. New documents fix development WB on first successful source development; Open restores recorded WB. Imports capture headers/fingerprints without developing the whole filmstrip. Unregistered picker-only sources remain transient.
+The editor's source records own photo settings by stable ID, not path. New documents fix development WB on first successful source development; Open restores recorded WB. Imports capture headers/fingerprints without developing the whole filmstrip. Dmin/Dmax sampling uses ordered roll sources only; selecting another filmstrip image is transient and retains the working-photo return context. Flat-field references keep their separate bare-light/reference-only registration workflow.
 
 File New/Open/Add RAWs/Save/Save As and Export TIFF/EXR half/full occupy the existing header row. `.antitone.json` is the default naming convention; Save accepts JSON filenames and compatibility is validated from content, not naming alone. Save As rebases relative locators against the new directory. Input RAWs cannot be project destinations, and Export cannot replace the currently open project.
 

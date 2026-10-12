@@ -1,0 +1,60 @@
+Antitone UI polish — shared viewer-bar tool group
+================================================
+
+Scope
+-----
+Supersedes the picker-overlay exception in ui-polish-geometry-tools.txt.
+All image tools now share icon/name/Cancel/Apply on one tinted trailing viewer-bar
+surface. No floating title box, tool placement chevron/state or artificial canvas
+hit exclusion remains. Crop and flat-field keep inspector-owned settings; canvas
+selection/frame, numeric precedence, Apply/Cancel, busy guards and exact return
+transactions remain. At constrained widths zoom ±/inline source EV yield to the
+mode group; Fit/100%, inspection and help remain. Busy work replaces the icon with
+a spinner and accessibility reports the active tool / working state.
+
+Verification snapshot
+---------------------
+Apple M5 Pro / Metal, macOS 26.6.2, checkout-local Rust 1.99.0, Apple Clang;
+pinned LibRaw 0.22.0 and OCIO 2.6.0. Worktree .worktrees/ui-polish.
+Commands from worktree root:
+
+CARGO_HOME="$PWD/.cache/cargo" CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --features editor --lib editor::
+CARGO_HOME="$PWD/.cache/cargo" CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh clippy --offline --features editor --lib --tests -- -D warnings
+./scripts/cargo.sh fmt --all -- --check
+CARGO_HOME="$PWD/.cache/cargo" CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh build --offline --features editor --bin antitone
+
+130 tests passed, 0 failed, one intentionally ignored real-RAW integration test;
+46 non-editor tests filtered. Strict Clippy, formatting and debug build passed.
+Normal/800x600/700x600 tests cover single action pair, visible/tinted mode identity,
+actual accessibility/hit bounds, all tabs/tools, stable canvas, popup/bar/inspector
+input ownership, numeric cancellation, missing proposals, worker requests, busy
+guards, project neutrality and precise view restoration.
+Private logs: .cache/probes/ui-polish/tool-bar-{tests,clippy,build}.txt.
+Also checked 192 local links/anchors in 12 modified Markdown files, SVG XML,
+capture-helper Python AST, new-file whitespace and git diff --check. Processing,
+viewport, output, schema and dependency files remain untouched.
+
+Native capture evidence / limitations
+------------------------------------
+python3 docs/research/tools/capture-viewer-tools.py --samples ../../samples --output .cache/probes/ui-polish/tool-bar-final
+python3 docs/research/tools/capture-viewer-tools.py --flat-only --samples ../../samples --output .cache/probes/ui-polish/tool-bar-flat-final
+
+Six-hold route: NONZERO EXIT / 4 OF 6 captured. Crop normal, Dmin normal, WB normal
+and crop narrow were captured and inspected. Timeout after crop-narrow reports the
+script's intentional "Crop cancelled; composition unchanged". Narrow Dmin/WB were
+NOT captured and the six-hold route is NOT accepted. Prior shared-tool-actions-
+final/retry failures logged occlusion; this latest log has no occluded=true event,
+so attribution of its repeated timeout remains unestablished. Earlier passing geometry captures show older chrome,
+not this final mode group. Original 45-second deadline, host occlusion policy,
+visible-frame and geometry gates are unchanged; no masking fix was introduced.
+
+Flat-only route: exit 0, 2 of 2 captured/inspected. Actual DSC01737 reference and
+DSC01739 support, normal/narrow Fit; cancellation preserved project. 1,773 submitted
+frames / 29.73 seconds are this local snapshot, not a performance requirement.
+No correction acceptance, project save or export in this layout route.
+
+Captures are private/ignored app-window-only outputs, not committed photographs.
+Gamma/Dmax/busy states are event-tested, not newly photographed. Physical
+pointer/trackpad/keyboard/VoiceOver, normal-app preference relaunch, macOS 14/other
+hardware/monitor and composed export/reopen remain unperformed. User visual
+acceptance remains pending; slice 3 remains uncommitted.

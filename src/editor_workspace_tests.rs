@@ -342,7 +342,7 @@ fn all_three_stage_controls_are_reachable_at_normal_and_narrow_inspector_sizes()
 }
 
 #[test]
-fn crop_transaction_controls_remain_reachable_in_the_inspector_scroll_area() {
+fn crop_inspector_retains_composition_actions_without_owning_transaction_controls() {
     let (mut editor, _send, _receiver) = fixture();
     add_ready_fixture(&mut editor);
     editor.tab = 1;
@@ -350,56 +350,18 @@ fn crop_transaction_controls_remain_reachable_in_the_inspector_scroll_area() {
     let draft = editor.crop_edit.as_ref().unwrap().draft;
     for (width, height) in [(315., 800.), (270., 600.)] {
         let context = egui::Context::default();
-        let mut seen = std::collections::HashSet::new();
-        let mut top = 0.;
-        for frame in 0..90 {
-            let events = if frame > 0 && frame % 10 == 0 {
-                vec![
-                    egui::Event::PointerMoved(egui::pos2(width * 0.5, height - 40.)),
-                    egui::Event::MouseWheel {
-                        unit: egui::MouseWheelUnit::Point,
-                        phase: egui::TouchPhase::Move,
-                        delta: egui::vec2(0., -100.),
-                        modifiers: egui::Modifiers::NONE,
-                    },
-                ]
-            } else {
-                vec![]
-            };
-            let labels = controls_frame_sized(&mut editor, &context, width, height, events);
-            if frame == 0 {
-                top = labels
-                    .iter()
-                    .find(|(s, _)| s == "Photo")
-                    .unwrap()
-                    .1
-                    .bottom();
-            }
-            for (name, rect) in labels {
-                if rect.top() > top
-                    && rect.bottom() < height - 8.
-                    && rect.left() >= 0.
-                    && rect.right() <= width
-                {
-                    seen.insert(name);
-                }
-            }
-        }
-        for name in [
-            "Composition",
-            "Crop & straighten",
-            "Aspect",
-            "Angle",
-            "Thirds guides",
-            "Reset",
-            "Cancel",
-            "Apply",
+        let labels = controls_frame_sized(&mut editor, &context, width, height, vec![]);
+        assert!(labels.iter().any(|(s, _)| s == "Composition"));
+        for action in [
+            "Turn left",
+            "Turn right",
+            "Flip horizontal",
+            "Flip vertical",
+            "Crop…",
         ] {
-            assert!(
-                seen.contains(name),
-                "unreachable crop control {name}: {width} {seen:?}"
-            );
+            assert!(labels.iter().any(|(s, _)| s == action));
         }
+        assert!(!labels.iter().any(|(s, _)| s == "Apply" || s == "Cancel"));
         assert_eq!(editor.crop_edit.as_ref().unwrap().draft, draft);
     }
 }

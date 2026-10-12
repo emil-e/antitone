@@ -4,7 +4,7 @@
 
 ## Active packages
 
-- [UI polish and interaction language](ui-polish.md): agreed workspace/UX direction; shared controls and workspace/preferences slices implemented and locally verified, acceptance partial; remaining slices unselected.
+- [UI polish and interaction language](ui-polish.md): agreed workspace/UX direction; shared controls, workspace/preferences and viewer/tools slices implemented and locally verified, shared viewer-bar tool identity/actions and inspector-owned geometry settings awaiting visual acceptance; remaining slices unselected.
 - [Source inspection and interaction follow-up](inspection-and-interaction.md): remaining cursor/New-tab/roll-workflow/layout/colour questions; the initial navigation/source-inspection slice is implemented.
 - [Thumbnail follow-up](visual-feedback.md): reported clipping/invalidation/latency concerns; bounded thumbnails and responsive scopes are implemented.
 - [Durable projects](durable-projects.md): recovery, source-change/relink UI and undo/redo; basic Save/Open is complete.

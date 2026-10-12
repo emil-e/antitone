@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1100" height="800" viewBox="0 0 1100 800" role="img" aria-labelledby="title description">
   <title id="title">Antitone proposed workspace — illustrative crop mode</title>
-  <desc id="description">Synthetic, nonfunctional design sketch: distinct scopes and inspector on the right, workflow tabs, collapsible sections, a contextual crop toolbar over the photo, permanent bottom viewer controls, filmstrip and deliberate status footer. Not a screenshot or final icon design.</desc>
+  <desc id="description">Synthetic, nonfunctional design sketch: distinct scopes and inspector on the right, workflow tabs, collapsible sections, crop settings in Composition, permanent bottom viewer controls with geometry Apply/Cancel, filmstrip and deliberate status footer. Not a screenshot or final icon design.</desc>
   <defs>
     <linearGradient id="photo" x2="0" y2="1"><stop stop-color="#535e66"/><stop offset="1" stop-color="#252e33"/></linearGradient>
     <g id="reset" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4a6 6 0 1 1-2 5M5 1v4H1"/></g>
@@ -43,11 +43,13 @@
   <text x="802" y="409" class="heading">▾ Composition</text><use href="#reset" transform="translate(1067 397)" class="icon"/>
   <g class="icon"><use href="#reset" transform="translate(811 430)"/><use href="#reset" transform="translate(846 430) scale(-1 1) translate(-16 0)"/><use href="#flip" transform="translate(881 430)"/><use href="#flip" transform="translate(916 430) rotate(90 8 8)"/><use href="#crop" transform="translate(952 430)"/></g>
   <rect x="946" y="424" width="28" height="28" rx="5" fill="#78afd5" opacity="0.15"/>
-  <text x="802" y="476" class="heading">▸ White balance</text><text x="987" y="476" class="muted">Adjusted</text><use href="#reset" transform="translate(1067 464)" class="icon"/>
-  <path d="M800 490h286" class="line"/>
-  <text x="802" y="517" class="heading">▾ Exposure</text><use href="#reset" transform="translate(1067 505)" class="icon"/>
-  <text x="804" y="550">Exposure</text><text x="1069" y="550" text-anchor="end">+0.35 EV</text>
-  <path d="M805 574h271" stroke="#515b66" stroke-width="3"/><path d="M805 574h151" stroke="#78afd5" stroke-width="3"/><circle cx="956" cy="574" r="5" fill="#d4dce5"/>
+  <rect x="800" y="455" width="286" height="137" fill="#1f3038"/>
+  <use href="#crop" transform="translate(811 467)" class="icon"/><text x="838" y="481" class="heading">Crop &amp; straighten</text><use href="#reset" transform="translate(1067 467)" class="icon"/>
+  <text x="811" y="512">Aspect</text><rect x="879" y="493" width="115" height="28" class="button"/><text x="891" y="512">3:2 ▾</text><text x="1058" y="512">↔</text>
+  <text x="811" y="548">Angle</text><rect x="879" y="529" width="115" height="28" class="button"/><text x="904" y="548">−1.20°</text><use href="#reset" transform="translate(1067 536)" class="icon"/>
+  <text x="811" y="582">Guides</text><use href="#guide" transform="translate(887 568)" class="icon"/>
+  <text x="802" y="618" class="heading">▸ White balance</text><text x="987" y="618" class="muted">Adjusted</text><use href="#reset" transform="translate(1067 606)" class="icon"/>
+  <path d="M800 630h286" class="line"/><text x="802" y="653" class="heading">▸ Exposure</text><use href="#reset" transform="translate(1067 641)" class="icon"/>
   <rect x="22" y="94" width="742" height="506" fill="url(#photo)"/>
   <path d="M22 394 123 293 228 344 335 230 455 364 563 316 764 441V600H22Z" fill="#687174" opacity="0.6"/>
   <path d="M22 465 174 409 301 470 437 384 602 459 764 413V600H22Z" fill="#414f4d"/>
@@ -55,18 +57,12 @@
   <rect x="77" y="127" width="632" height="422" fill="none" stroke="#e8e9e5" stroke-width="1"/>
   <g stroke="#e8e9e5" opacity="0.4" stroke-width="0.7"><path d="M288 127v422M499 127v422M77 268h632M77 408h632"/></g>
   <g stroke="#fff" stroke-width="3" fill="none"><path d="M77 145v-18h18M691 127h18v18M77 531v18h18M691 549h18v-18"/></g>
-  <rect x="43" y="573" width="700" height="44" rx="8" fill="#171c22" stroke="#58626e"/>
-  <text x="58" y="600" class="heading">Crop</text>
-  <rect x="105" y="581" width="83" height="28" class="button"/><text x="117" y="600">3:2 ▾</text>
-  <text x="201" y="600">↔</text><text x="238" y="600">Angle</text><rect x="283" y="581" width="64" height="28" class="button"/><text x="295" y="600">−1.20°</text>
-  <use href="#guide" transform="translate(366 587)" class="icon"/><use href="#reset" transform="translate(403 587)" class="icon"/>
-  <text x="443" y="600" class="muted">Details ▾</text>
-  <rect x="568" y="581" width="73" height="28" class="button"/><text x="582" y="600">Cancel</text>
-  <rect x="652" y="581" width="76" height="28" rx="5" fill="#547e9b"/><text x="671" y="600" class="heading">Apply</text>
-  <rect x="0" y="630" width="786" height="36" fill="#272c32"/>
-  <use href="#fit" transform="translate(17 640)" class="icon"/><text x="51" y="653">Fit ▾</text><text x="118" y="653">−</text><text x="151" y="653">+</text><path d="M188 639v18" class="line"/>
-  <use href="#eye" transform="translate(204 640)" class="icon"/><text x="235" y="653" class="muted">Inspection</text>
-  <text x="628" y="653" class="muted">Approximate</text><text x="755" y="653" text-anchor="end">P3</text>
+  <rect x="0" y="626" width="786" height="40" fill="#101010"/>
+  <use href="#fit" transform="translate(17 640)" class="icon"/><text x="51" y="653">16%</text><text x="118" y="653">−</text><text x="151" y="653">+</text><path d="M188 639v18" class="line"/>
+  <text x="204" y="653" class="muted">Help</text>
+  <rect x="523" y="632" width="250" height="28" fill="#1f3038"/><use href="#crop" transform="translate(535 638)" class="icon"/><text x="559" y="651" class="heading">Crop</text>
+  <rect x="607" y="632" width="73" height="28" class="button"/><text x="621" y="651">Cancel</text>
+  <rect x="691" y="632" width="76" height="28" rx="5" fill="#547e9b"/><text x="710" y="651" class="heading">Apply</text>
   <rect y="666" width="1100" height="106" fill="#20252b"/><path d="M0 666h1100" class="line"/>
   <g fill="#39444c"><rect x="16" y="679" width="112" height="65" rx="3"/><rect x="148" y="679" width="112" height="65" rx="3"/><rect x="280" y="679" width="112" height="65" rx="3"/></g>
   <rect x="144" y="675" width="120" height="89" rx="4" fill="none" stroke="#78afd5" stroke-width="2"/>

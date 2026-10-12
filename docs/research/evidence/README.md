@@ -8,6 +8,11 @@ Compact text logs promoted from `.cache/probes` during the documentation reorgan
 
 - [Workspace hierarchy and UI preferences](ui-polish-workspace.txt): three-tab/control reachability, New behavior, separate preference storage, six-hold real-window smoke and captures. [Active checkpoint/limits](../../plans/ui-polish.md#slice-2-checkpoint).
 
+- [Initial viewer and contextual tools](ui-polish-viewer.txt): fixed geometry/input ownership/docking and guarded smoke; the Details-based presentation was subsequently rejected, not visually accepted.
+- [Compact viewer revision](ui-polish-viewer-revision.txt): removed Details/selection fields/external calibration chooser, roll-only sampling, source-only inspection, retained Composition actions and clarified viewer/filmstrip surfaces; focused checks and six revised captures. Pickers subsequently user-accepted; crop/flat-field overlays rejected and superseded.
+- [Inspector/viewer-bar geometry revision](ui-polish-geometry-tools.txt): crop in Photo Composition, flat-field in Roll, trailing bar actions, unchanged compact pickers; fresh event checks and eight window captures. Historical geometry placement; picker actions/identity subsequently unified below.
+- [Shared viewer-bar tool group](ui-polish-tool-bar.txt): all image-tool icon/name/Cancel/Apply on one tinted surface, no floating tool boxes, responsive navigation and unchanged transactions; focused checks and partial native captures. [Active checkpoint/limits](../../plans/ui-polish.md#slice-3-shared-tool-bar).
+
 ## Native-camera replacement checkpoint
 
 - [Model-4 numerical/source/editor/output snapshot](camera-inversion.txt): isolated flat-field baseline, unchanged tolerances, independent review fixes, real train/flat-field regressions and release build. No new onscreen or calibrated-colour acceptance. [Implementation closure](../../plans/completed/camera-inversion.md).

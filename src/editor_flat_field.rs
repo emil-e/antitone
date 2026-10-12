@@ -63,6 +63,7 @@ pub(super) struct FlatPreview {
 
 impl Editor {
     pub(super) fn flat_controls(&mut self, ui: &mut egui::Ui) {
+        let editing = self.pick == Some(Pick::Flat);
         let settings = self.document.project.flat_field.as_ref();
         let summary = match settings {
             Some(settings) if settings.enabled => "Enabled · check calibration after changes",
@@ -77,9 +78,26 @@ impl Editor {
                 summary,
                 changed: settings.is_some(),
                 reset: None,
-                default_open: Some(false),
+                default_open: if editing { None } else { Some(false) },
             },
             |ui| {
+                if editing {
+                    controls::active_tool(
+                        ui,
+                        icons::Icon::Crop,
+                        "Flat-field area",
+                        None,
+                        |ui, _| {
+                            if self.busy {
+                                ui.small(if self.ready.is_none() {
+                                    "Preparing reference…"
+                                } else {
+                                    "Applying correction…"
+                                });
+                            }
+                        },
+                    );
+                }
                 ui.add_enabled_ui(
                     !self.busy && self.pick.is_none() && self.crop_edit.is_none(),
                     |ui| {

@@ -1,0 +1,75 @@
+UI polish slice 3 — compact presentation revision
+
+Historical checkpoint on plan/ui-polish after a2dddd5; uncommitted.
+The user subsequently accepted the compact pickers but rejected crop/flat-field
+overlays. Geometry placement is superseded by ui-polish-geometry-tools.txt;
+results below remain historical, not acceptance of the rejected geometry layout.
+Supersedes the Details-based presentation in ui-polish-viewer.txt, not its historical
+verification outcomes. Environment: Apple M5 Pro / Metal, macOS 26.6.2,
+checkout-local Rust 1.99.0, Apple Clang, egui/egui-winit/egui-wgpu 0.36.2.
+
+Commands from .worktrees/ui-polish:
+  CARGO_HOME="$PWD/.cache/cargo" CC=/usr/bin/clang CXX=/usr/bin/clang++ \
+    ./scripts/cargo.sh test --offline --features editor --lib editor::
+  CARGO_HOME="$PWD/.cache/cargo" CC=/usr/bin/clang CXX=/usr/bin/clang++ \
+    ./scripts/cargo.sh clippy --offline --features editor --lib --tests -- -D warnings
+  ./scripts/cargo.sh fmt --all -- --check
+  CARGO_HOME="$PWD/.cache/cargo" CC=/usr/bin/clang CXX=/usr/bin/clang++ \
+    ./scripts/cargo.sh build --offline --features editor --bin antitone
+  python3 docs/research/tools/capture-viewer-tools.py --samples ../../samples \
+    --output .cache/probes/ui-polish/viewer-tools-revised-final
+  Window helper build, if absent: see ui-polish-viewer.txt and the runbook.
+
+Focused editor snapshot: 125 passed, 0 failed, 1 intentionally ignored real-RAW
+integration test; 46 non-editor tests filtered. Strict Clippy, formatting and
+editor debug build pass. Existing crop Fit tolerance and numerical gates unchanged.
+Diff/new-file whitespace, helper Python AST, wireframe SVG XML and 188 local
+links/anchors in 12 modified Markdown files checked.
+
+Coverage: all modes/tabs at normal and 800x600 sizes, additional 700x600 reachability
+with explicit crop wrapping; no tool Details, filename or precise selection fields;
+source inspection hidden outside source view without losing EV or retaining its
+popover; uncalibrated viewing remains source-only with the positive toggle disabled; nonordered/unknown calibration source IDs rejected without changing the
+pick or submitting work; registered roll sampling restores working photo, selection,
+orientation and precise viewport; Composition actions remain visible but disabled
+in a draft. Existing popup/drag/wheel, numeric Enter/Escape, docking, busy controls,
+scopes/thumbnails/files/measurement/view tests remain green.
+
+Inline numeric testing exposed egui 0.36 clearing focus at pass start on Escape
+and retaining cancelled DragValue text for its second lost-focus pass. The editor
+retains prior text-focus ownership for Escape, and inline angle cancellation rejects
+that delayed commit. Pending and cancelled angle text change no geometry and do not
+exit the draft. No processing fallback, tolerance change or new project field.
+
+Guarded real-source tool/window smoke:
+  tools_layout stage=crop-normal
+  tools_layout stage=dmin-normal
+  tools_layout stage=wb-normal
+  tools_layout stage=crop-narrow
+  tools_layout stage=dmin-narrow
+  tools_layout stage=wb-narrow
+  editor_smoke passed; elapsed_seconds=39.59
+  editor submitted_frames=1905
+  helper exit=0; all six app-window captures saved and inspected
+
+Private logs/captures: .cache/probes/ui-polish/viewer-tools-revised-final/.
+1100x800 / 800x600 logical, Retina 2x, inspector 315/270 points. Compact single-row
+Dmin/WB tools; crop controls directly visible without a duplicated popover; source
++2 EV/inspection appears for Dmin but not positive WB; common dark viewer surround
+and bar, lighter filmstrip/top boundary. Tools remain on Roll/Rendering as expected.
+Final explicit wrapping at smaller headless canvas widths, collapsed Composition
+copy and the uncalibrated source-only guard followed capture; they do not affect these captured idle layouts and were
+followed by fresh focused tests/Clippy/build.
+
+The first revision smoke stopped before captures at a relative-versus-resolved
+locator assertion after roll-ID selection. The corrected assertion checks locator
+equivalence plus registered source identity. The retry above passed; original
+45-second deadline, nonzero-visible-frame gate and host occlusion policy unchanged.
+
+Limits: physical pointer/trackpad/keyboard/VoiceOver, manual normal-app preference
+relaunch, macOS-14/other hardware/monitor, composed export/reopen and broader
+photographic scope acceptance remain open. Composition-during-crop, Gamma/Dmax/
+flat-field, docking and specific popover states are headless/event-covered, not new
+native-window captures. Screenshots are diagnostic grades, not photographic quality
+acceptance. Flat-field's separate bare-light chooser/identity/acceptance remains.
+No processing/output/project-schema/dependency changes, commit, main integration or push.

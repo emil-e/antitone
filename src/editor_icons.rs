@@ -4,6 +4,12 @@ use egui::{Rect, Response, Stroke, Ui, Vec2};
 #[derive(Clone, Copy)]
 pub(super) enum Icon {
     Reset,
+    Fit,
+    ZoomOut,
+    ZoomIn,
+    Source,
+    Inspection,
+    Help,
     TurnLeft,
     TurnRight,
     FlipHorizontal,
@@ -36,6 +42,64 @@ impl Icon {
                     .collect();
                 ui.painter().add(egui::Shape::line(arc, stroke));
                 line(&[[3.5, 1.5], [3.5, 5.5], [7.5, 5.5]]);
+            }
+            Self::Fit => {
+                for points in [
+                    [[6., 2.], [2., 2.], [2., 6.]],
+                    [[10., 2.], [14., 2.], [14., 6.]],
+                    [[2., 10.], [2., 14.], [6., 14.]],
+                    [[14., 10.], [14., 14.], [10., 14.]],
+                ] {
+                    line(&points);
+                }
+            }
+            Self::ZoomOut | Self::ZoomIn => {
+                line(&[[3., 8.], [13., 8.]]);
+                if matches!(self, Self::ZoomIn) {
+                    line(&[[8., 3.], [8., 13.]]);
+                }
+            }
+            Self::Source => {
+                line(&[
+                    [1., 8.],
+                    [4., 4.],
+                    [8., 2.],
+                    [12., 4.],
+                    [15., 8.],
+                    [12., 12.],
+                    [8., 14.],
+                    [4., 12.],
+                    [1., 8.],
+                ]);
+                ui.painter().circle_stroke(point(8., 8.), 2.5, stroke);
+            }
+            Self::Inspection => {
+                for (x, y) in [(3., 5.), (8., 11.), (13., 6.)] {
+                    line(&[
+                        [x, 1.],
+                        [x, y - 2.],
+                        [x - 2., y - 2.],
+                        [x - 2., y + 2.],
+                        [x + 2., y + 2.],
+                        [x + 2., y - 2.],
+                        [x, y - 2.],
+                    ]);
+                    line(&[[x, y + 2.], [x, 15.]]);
+                }
+            }
+            Self::Help => {
+                ui.painter().circle_stroke(point(8., 8.), 7., stroke);
+                line(&[
+                    [5., 5.],
+                    [6., 3.5],
+                    [10., 3.5],
+                    [11., 5.],
+                    [11., 6.],
+                    [8., 8.],
+                    [8., 10.],
+                ]);
+                ui.painter()
+                    .circle_filled(point(8., 12.5), 0.8, stroke.color);
             }
             Self::TurnLeft | Self::TurnRight => {
                 let mirror = matches!(self, Self::TurnRight);

@@ -1,4 +1,6 @@
 use super::*;
+#[path = "editor_viewer_tests.rs"]
+mod viewer;
 #[path = "editor_workspace_tests.rs"]
 mod workspace;
 
@@ -92,6 +94,7 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                     development: editor.document.project.development.clone().unwrap(),
                 });
                 let context = egui::Context::default();
+                context.enable_accesskit();
                 context.set_pixels_per_point(ppp);
                 let mut fit_point = None;
                 for frame in 0..5 {
@@ -124,6 +127,11 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                         |ui| host::App::ui(&mut editor, ui),
                     );
                     output.textures_delta.clear();
+                    let labels = ui_labels(output.clone());
+                    fit_point = labels
+                        .iter()
+                        .find(|(name, _)| name == "Fit")
+                        .map(|(_, rect)| rect.center());
                     let mut image = false;
                     let mut rectangle = false;
                     let mut cancel = false;
@@ -163,7 +171,7 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                                         .center(),
                                 );
                             }
-                            egui::Shape::Text(text) if text.galley.job.text == "Cancel pick" => {
+                            egui::Shape::Text(text) if text.galley.job.text == "Cancel" => {
                                 cancel = true;
                                 let rect = egui::Rect::from_min_size(text.pos, text.galley.size());
                                 assert!(
@@ -174,7 +182,11 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                             _ => {}
                         }
                     }
-                    assert!(image && rectangle && cancel);
+                    if frame > 0 {
+                        assert!(image && rectangle && cancel);
+                    } else {
+                        assert!(image && rectangle);
+                    }
                     assert!(editor.viewport.zoom.is_none());
                 }
             }
@@ -469,7 +481,7 @@ fn ui_labels(output: egui::FullOutput) -> Vec<(String, egui::Rect)> {
             if let egui::Shape::Text(text) = shape.shape {
                 Some((
                     text.galley.job.text.clone(),
-                    egui::Rect::from_min_size(text.pos, text.galley.size()),
+                    text.galley.rect.translate(text.pos.to_vec2()),
                 ))
             } else {
                 None
@@ -496,7 +508,7 @@ fn ui_labels(output: egui::FullOutput) -> Vec<(String, egui::Rect)> {
     labels
 }
 #[test]
-fn crop_controls_remain_photo_only_and_survive_tab_changes_at_narrow_widths() {
+fn crop_inspector_settings_remain_photo_only_without_transaction_buttons() {
     let (mut editor, _send, _receiver) = fixture();
     add_ready_fixture(&mut editor);
     let saved = (
@@ -530,24 +542,18 @@ fn crop_controls_remain_photo_only_and_survive_tab_changes_at_narrow_widths() {
             let tabs = text.iter().find(|(s, _)| s == "Roll").unwrap().1;
             assert!(title.top() > tabs.bottom());
             assert!(!text.iter().any(|(s, _)| s == hidden));
-            for label in [
-                "Aspect",
-                "Angle",
-                "Thirds guides",
-                "Reset",
-                "Cancel",
-                "Apply",
-            ] {
-                let rect = text.iter().find(|(s, _)| s == label);
-                if tab == 0 {
-                    assert!(rect.is_none(), "photo-only control {label} on Roll");
-                } else {
-                    let rect = rect
-                        .unwrap_or_else(|| panic!("missing {label}: {text:?}"))
-                        .1;
-                    assert!(rect.left() >= 0. && rect.right() <= width + 1.);
-                    assert!(rect.top() > title.bottom());
-                }
+            for label in ["Aspect", "Angle", "Thirds guides", "Reset draft"] {
+                assert_eq!(
+                    text.iter().any(|(s, _)| s == label),
+                    tab == 1,
+                    "{label} belongs only to Photo Composition"
+                );
+            }
+            for label in ["Cancel", "Apply"] {
+                assert!(
+                    !text.iter().any(|(s, _)| s == label),
+                    "{label} belongs to the viewer bar"
+                );
             }
             let tabs_before = tabs;
             controls_frame_sized(
@@ -877,7 +883,7 @@ fn picker_toolbar_layout_does_not_rescale_a_fitted_composition() {
         editor.begin_pick(kind);
         app_frame(&mut editor, &context, vec![]);
         let (after, _) = editor.last_layout.unwrap();
-        assert_ne!(after.canvas.size(), before.canvas.size());
+        assert_eq!(after.canvas, before.canvas);
         assert_eq!(after.scale, before.scale);
         assert!((after.source_point(after.canvas.center()) - source).length() < 0.002);
         editor.finish_pick();
@@ -1158,7 +1164,7 @@ fn cropped_export_snapshot_survives_later_crop_and_orientation_edits() {
     assert_eq!(composition.source_pixel([0, 0]).unwrap(), [326, 218]);
 }
 #[test]
-fn temporary_reference_source_restores_working_orientation_and_precise_viewport() {
+fn roll_reference_source_restores_working_orientation_and_precise_viewport() {
     let (mut editor, _send, receiver) = fixture();
     editor.photo_orientation.turn_clockwise();
     editor.roll_orientation.horizontal = true;
@@ -1180,13 +1186,22 @@ fn temporary_reference_source_restores_working_orientation_and_precise_viewport(
     let source_id = editor.current_source;
     editor.begin_pick(Pick::Dmin);
     assert_eq!(editor.viewport, viewport);
-    editor.pick_source("temporary.ARW".into());
+    let mut reference = editor.ready.as_ref().unwrap().record.clone();
+    reference.path = "reference.ARW".into();
+    reference.orientation = PhotoOrientation::default();
+    let development = editor.ready.as_ref().unwrap().development.clone();
+    let reference_id = editor.document.register(reference, development).unwrap();
+    editor.pick_roll_source(reference_id);
+    assert_eq!(editor.selected, 1);
+    assert_eq!(editor.current_source, Some(reference_id));
     assert_eq!(editor.photo_orientation, PhotoOrientation::default());
     assert_eq!(editor.roll_orientation, roll_orientation);
     assert!(matches!(receiver.try_recv().unwrap(), Command::Load(..)));
     editor.finish_pick();
     assert!(matches!(receiver.try_recv().unwrap(), Command::Load(..)));
     assert_eq!(editor.current_source, source_id);
+    assert_eq!(editor.selected, 0);
+    assert_eq!(editor.document.project.order.len(), 2);
     assert_eq!(editor.roll_orientation, roll_orientation);
     assert_eq!(editor.photo_orientation, photo_orientation);
     assert_eq!(editor.viewport, viewport);
@@ -2013,7 +2028,10 @@ fn crop_draft_controls_stay_visible_when_composition_was_collapsed() {
         editor.photo,
     );
     editor.begin_crop();
-    let text = controls_frame(&mut editor, &context, 315., vec![]);
+    for _ in 0..3 {
+        app_frame(&mut editor, &context, vec![]);
+    }
+    let text = app_frame(&mut editor, &context, vec![]);
     for label in ["Aspect", "Angle", "Apply", "Cancel", "Thirds guides"] {
         assert!(
             text.iter().any(|(s, _)| s == label),

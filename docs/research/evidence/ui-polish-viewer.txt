@@ -1,0 +1,67 @@
+UI polish slice 3 — stable viewer and contextual tools
+
+Checkpoint on plan/ui-polish after a2dddd5 (slice 3 remains uncommitted).
+Environment: Apple M5 Pro / Metal, macOS 26.6.2, checkout-local Rust 1.99.0,
+Apple Clang; egui/egui-winit/egui-wgpu 0.36.2. This is not macOS-14,
+other-hardware, physical-monitor or native VoiceOver acceptance.
+
+Commands from .worktrees/ui-polish:
+  CARGO_HOME="$PWD/.cache/cargo" CC=/usr/bin/clang CXX=/usr/bin/clang++ \
+    ./scripts/cargo.sh test --offline --features editor --lib editor::
+  CARGO_HOME="$PWD/.cache/cargo" CC=/usr/bin/clang CXX=/usr/bin/clang++ \
+    ./scripts/cargo.sh clippy --offline --features editor --lib --tests -- -D warnings
+  ./scripts/cargo.sh fmt --all -- --check
+  CARGO_HOME="$PWD/.cache/cargo" CC=/usr/bin/clang CXX=/usr/bin/clang++ \
+    ./scripts/cargo.sh build --offline --features editor --bin antitone
+  /usr/bin/clang -fobjc-arc docs/research/tools/controls-window-id.m \
+    -framework Foundation -framework CoreGraphics -o .cache/probes/controls-window-id
+  python3 docs/research/tools/capture-viewer-tools.py --samples ../../samples \
+    --output .cache/probes/ui-polish/viewer-tools-guarded
+
+Focused editor snapshot: 121 passed, 0 failed, 1 intentionally ignored real-RAW
+integration test; 46 non-editor tests filtered. Strict Clippy, formatting and
+debug editor build pass. Existing crop Fit tolerance was not weakened.
+Diff whitespace, new-file whitespace, capture-helper Python AST and 180 local
+Markdown links/anchors in 11 modified documents checked.
+
+Coverage: fixed 40-point viewer-width bar and unchanged canvas rectangle across
+source/positive, picker/crop, empty/loading and error status; all mode/tab actions
+reachable at normal/narrow sizes; Details owns pointer/drag/wheel input; crop angle
+and picker coordinate numeric Enter/Escape precede tool shortcuts; Apply remains
+present but disabled without a selection, and Cancel/Apply are disabled during
+measurement. Explicit toolbar edge docking preserves draft/view/canvas and allows
+a bottom-edge crop resize. Existing navigation, source/flat-field return, scope,
+thumbnail, file, measurement and geometry transaction tests remain green.
+
+Guarded real-source tool/window smoke:
+  tools_layout stage=crop-normal
+  tools_layout stage=dmin-normal
+  tools_layout stage=wb-normal
+  tools_layout stage=crop-narrow
+  tools_layout stage=dmin-narrow
+  tools_layout stage=wb-narrow
+  editor_smoke passed; elapsed_seconds=38.97
+  editor submitted_frames=1755
+  helper exit=0; all six application-window captures saved and inspected
+
+Private logs/captures: .cache/probes/ui-polish/viewer-tools-guarded/.
+Normal/narrow logical sizes: 1100x800 / 800x600, 315/270-point inspector,
+Retina 2x. Crop overlay remains visible on Roll, picks on Rendering; Source +2 EV
+and target/quality are visible. Holds use diagnostic calibration/grades and cancel
+tool proposals; no sample files or photographic outputs are committed.
+
+An earlier unguarded attempt under viewer-tools-final/ showed an unexpectedly
+applied crop at crop-narrow, despite an overall smoke exit of zero. That capture
+is not acceptance. External input is a plausible explanation (Apply/Enter can
+exit the draft); attribution is not established. The tool smoke now fails if its
+expected mode exits during a hold. A final busy-overlay hit-region correction followed these captures; it affects
+none of the captured idle tool states and was followed by fresh tests/Clippy/build.
+The guarded retry above passed without changing
+the existing 45-second deadline, nonzero-visible-frame gate or host occlusion policy.
+
+Limits: no new native-window Details/docked capture or real Gamma/Dmax/flat-field
+reference overlay capture (these states are event/headless-covered). No physical
+pointer/trackpad/keyboard/VoiceOver, manual normal-app preference relaunch, broader
+hardware/monitor, full photographic scope or export/reopen acceptance is inferred.
+Feedback/footer lifecycle and native menus remain later, separately selected work.
+No processing/project schema/output/dependency changes, main integration or push.

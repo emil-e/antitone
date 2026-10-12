@@ -1,6 +1,6 @@
 # UI polish and interaction language
 
-Status: **slices 1–2 implemented; acceptance partial**. The user agreed the UX direction/product choices, authorized the shared-control slice, then requested its commit and continuation into workspace hierarchy/application preferences. Slice 1 is committed as `d1cd936`; the user visually accepted slice 2 and requested its commit. Slice 3 (viewer/tools) is now authorized, not implemented. Feedback/native-shell slices are not implemented or selected. Exact visual details remain subject to validation; authorization does not cover the entire package.
+Status: **slices 1–3 implemented; acceptance partial**. The user agreed the UX direction/product choices, authorized the shared-control slice, then requested its commit and continuation into workspace hierarchy/application preferences. Slice 1 is committed as `d1cd936`; the user visually accepted slice 2, committed as `a2dddd5`, and authorized continuation. Slice 3 (viewer/tools) is implemented and locally verified, uncommitted. Its initial Details-based presentation was rejected. The user accepted the compact pickers, rejected crop/flat-field overlays and authorized the inspector/viewer-bar placement revision below. That placement revision is implemented. The user's later consistency clarification supersedes picker overlays too: every image tool now shares a distinct viewer-bar identity/Apply/Cancel group, with no floating tool box. Latest grouping is locally verified and awaits visual acceptance. Feedback/native-shell slices are not implemented or selected. Exact visual details remain subject to validation; authorization does not cover the entire package.
 
 Worktree: `.worktrees/ui-polish`, branch `plan/ui-polish`, baseline `0beee3e`. [Audit and sources](../research/ui-polish-audit.md). [Roadmap](../../PLAN.md) owns cross-package priority.
 
@@ -23,10 +23,10 @@ window title: project name + unsaved indicator
 │                                       ├──── draggable divider ────┤
 │                                       │ Roll → Photo → Rendering  │
 │                                       │ ━━━ selected tab ━━━      │
-│    [contextual tool overlay]          │ ▾ section title     reset │
+│    [selection/frame only]            │ ▾ section title     reset │
 │                                       │ parameter controls        │
 ├───────────────────────────────────────┤ ▸ collapsed section       │
-│ fit / zoom | source / inspection | P3 │                           │
+│ fit / zoom | tool · Cancel / Apply   │ crop settings when active │
 ├───────────────────────────────────────┴───────────────────────────┤
 │ resizable filmstrip                                               │
 ├───────────────────────────────────────────────────────────────────┤
@@ -34,7 +34,7 @@ window title: project name + unsaved indicator
 └───────────────────────────────────────────────────────────────────┘
 ```
 
-[Illustrative wireframe](ui-polish-wireframe.svg) uses synthetic artwork, not a user photograph. It illustrates zones and the crop overlay, not final pixel-perfect assets or verified app behavior.
+[Illustrative wireframe](ui-polish-wireframe.svg) uses synthetic artwork, not a user photograph. It illustrates zones and inspector-owned crop settings/viewer-bar actions, not final pixel-perfect assets or verified app behavior.
 
 - The bottom viewer bar belongs to the **viewer width**, immediately above the filmstrip. It is not the global status bar and does not extend under the inspector.
 - Its height is fixed across positive/source view, pick/crop entry, loading and errors. Moving existing rows will change the normal Fit canvas once; temporary tool entry must not change it again.
@@ -82,7 +82,7 @@ Use a single licensed, reproducible outline icon vocabulary, consistent stroke/s
 | Fit, zoom −/+, source-view toggle, inspection settings, help | Zoom percentage; target name |
 | Rotate left/right, flip horizontal/vertical, crop | Roll/Photo/Rendering tabs and section names |
 | Pick/eyedropper, reset, disclosure, aspect swap, guides | Dmin, Dmax, Gamma, WB, Exposure and their values/units |
-| Scope visibility, details/info | Choose reference RAW, Apply, Cancel, Save, Discard, Replace |
+| Scope visibility, help/info | Flat-field reference chooser, Apply, Cancel, Save, Discard, Replace |
 
 An eyedropper next to Dmin/Dmax or White balance inherits that labelled context; its tooltip says precisely what it measures. A standalone mystery icon does not. Use different icons for rotate, aspect swap and reset; mirror/axis symbols must remain distinguishable. Flips remain momentary actions, not checked canonical flags. Crop is selected while its draft is active; source inspection and guide icons are actual toggles.
 
@@ -92,28 +92,26 @@ Tooltips name the action, scope and shortcut; longer technical explanation belon
 
 ### Viewer bar
 
-Three compact groups: **navigation** (Fit icon, zoom percentage/100% action, −/+); **inspection** (source toggle and source-only exposure popup); **state** (rendering target and compact preview quality/activity). Keep 100% numeric rather than replacing it with an obscure icon. A precise menu can offer Fit/100%; do not add new arbitrary zoom behavior.
+Leading **navigation** (Fit icon, zoom percentage/100% action, −/+) and adjacent **inspection/help**; flexible space; trailing **state/actions**. Normally the trailing group shows rendering target and compact preview quality. During any image tool, target/quality yield to one tinted icon/name/Cancel/Apply group, with primary Apply at the far right. The unavailable source toggle is omitted during all tools. Target identity remains in Rendering/scopes. This is one fixed-height row, not equal thirds or independently centered groups. Keep 100% numeric rather than replacing it with an obscure icon. A precise menu can offer Fit/100%; do not add new arbitrary zoom behavior.
 
-The source toggle tooltip says “Show developed source”, not “undeveloped”: LibRaw has already developed it. When active, show a short **Source** state label and **Inspection EV** value in the reserved bar space so changed view brightness is not mistaken for a grade. Positive view ignores inspection EV. No hidden adjustment to exports/calibration.
+The source toggle tooltip says “Show developed source”, not “undeveloped”: LibRaw has already developed it. When active, show a short **Source** state label, **Inspection EV** value and specifically named inspection control inside the fixed-height bar so changed view brightness is not mistaken for a grade. Hide the inspection control/value entirely in positive view, retaining the value for later source viewing. At constrained widths zoom ± and inline EV copy may yield to the active group; Fit/100%, inspection and help remain available, and EV stays in its tooltip/popup. No hidden adjustment to exports/calibration. The bar and viewer surround share a darker surface without an intervening divider; the lighter filmstrip has its own top boundary.
 
 Remove the always-visible “Preview ready” row. Incomplete quality remains discoverable as **Approximate**, with a spinner only while refinement is actually running. Ready is a quiet state/tooltip, not a persistent success message. Keep navigation help keyboard-accessible, not just a hover-only `?` label.
 
-### One contextual tool overlay
+### Contextual tools, with separate homes
 
-Pick Dmin/Dmax, neutral pick, flat-field support and crop use the same **nonmodal contextual toolbar** inside the viewer, anchored near its lower edge above the permanent viewer bar. A contrasting neutral surface, one tool title, tool-specific controls, optional details, Cancel and one primary Apply. No inserted header/footer rows or floating buttons scattered around the photo.
+Every image tool shares one **viewer-bar transaction group**: recognizable icon and explicit name, then Cancel / primary Apply on a common light tint. This distinguishes a pending tool from loose status text. Busy work replaces the icon with a spinner and disables unsupported actions. Nothing floats over the image except its selection/frame.
 
-| Mode | Primary controls | Secondary detail |
+| Mode | Settings / selection home | Identity and Cancel / Apply |
 | --- | --- | --- |
-| Dmin / Dmax | Pick title, reference filename, Choose reference RAW, Cancel / Apply | Patch/rectangle instructions and coordinates |
-| Gamma / WB neutral | Labelled neutral-pick mode, Cancel / Apply | Selected coverage and measurement details |
-| Flat-field support | Reference identity, Cancel / Apply correction | Source x/y/w/h and setup requirements |
-| Crop & straighten | Aspect, swap icon, angle, guides icon, reset, Cancel / Apply | Dimensions and extended help |
+| Dmin / Dmax | Canvas selection and filmstrip roll choice; no external chooser | Shared viewer-bar group |
+| Gamma / WB neutral | Canvas selection | Shared viewer-bar group |
+| Flat-field support | Existing Roll section and separate bare-light workflow | Shared viewer-bar group |
+| Crop & straighten | Existing Photo Composition: aligned rows and scoped draft reset | Shared viewer-bar group |
 
-Keep Apply/Cancel words visible and in the same trailing order/position in every mode. Apply is disabled until a valid proposal exists, not absent. Enter applies where not consumed by text entry; Escape cancels the mode after any pending field edit is handled. Audit numeric-focus precedence before adding picker Enter-to-apply (crop already has shortcuts). During non-cancellable measurement/acceptance, show busy state and disable unsupported actions; do not add a false Cancel affordance.
+No tool overlay, generic Details, filename/coordinate panel or placement chevron remains. Active geometry sections temporarily expose their bodies without overwriting expansion preferences; ordinary orientation actions stay visible/disabled. No orientation-in-draft behavior is added.
 
-Only one image-editing mode is active, using existing exclusions. Switching inspector tabs does not hide the overlay or abandon the draft; this fixes the current crop-controls-disappear-on-Roll problem without changing draft semantics. No automatic apply on click elsewhere. Preserve current file/export/grade prohibitions during crop editing.
-
-At small viewer widths use the **same overlay with a compact summary and a Details popover**, not wrapping it into layout-consuming rows. Always keep the title and Apply/Cancel reachable. Clamp it inside the canvas; long filenames truncate with full identity in details. Overlay pointer/scroll input must not fall through to crop, picking, panning or zoom. Do not auto-hide it or move it unpredictably while selecting. Details allow precise coordinates without permanent clutter. The overlay may obscure pixels; test bottom-edge handles and offer a consistent compact state if needed before adding draggable-toolbar machinery.
+Tabs may hide geometry settings, but retain draft/frame, view and the shared bar group. No implicit Apply/Cancel on tabs or outside clicks. Apply remains present but disabled without a proposal; non-cancellable measurement/acceptance never offers false cancellation. Numeric/popover precedence, view restoration and existing transaction boundaries remain unchanged. Viewer-bar, inspector and specific-popover interactions cannot also manipulate the canvas; gestures remain in help/tooltips.
 
 **Viewport stability is not “crop never changes scale”.** Crop deliberately Fits the full source with handles on entry; Apply Fits the accepted composition; Cancel restores the prior viewport. Dmin/Dmax reveal uncropped oriented source; flat-field shows an untransformed reference. Preserve those semantics. The proposal removes incidental scale/size changes caused by UI rows only. Gamma/WB retain current grading and deliberate in-picker navigation. Invalid/cancelled picks change no processing state.
 
@@ -143,7 +141,7 @@ Feedback belongs to its owner. The global footer is not a log and not an instruc
 | Thumbnail developing | Spinner in that cell; retain filename/selection; errors replace spinner with marker/details |
 | Settled preview refining | Quiet viewer-bar spinner/quality state; no global “ready” announcements |
 | Scopes updating/suspended | Scope header/caption; retain approximation and target identity; never show stale incompatible bins |
-| Pick/crop instructions | Context overlay/details, not global footer paragraphs |
+| Pick/crop instructions | Viewer help/tooltips, not another tool panel or global footer paragraphs |
 | Rejected value/pick | Visible near the owning control/tool with concise cause + details; keep draft/accepted state rules |
 | Save/Open/export | Global operation/issue slot with concise phase; determinate only if measured |
 | Saved/exported | Brief completion acknowledgement; don't erase an unresolved failure |
@@ -163,13 +161,13 @@ Use user-facing picker names instead of Rust debug enum labels (`Wb`, `Flat`), c
 
 ## Implementation slices and acceptance
 
-Slices 1–2 were implemented and slice 3 is now selected/authorized; checkpoints are below. Remaining priorities are proposed, not approval to execute the whole package.
+Slices 1–3 are implemented; checkpoints are below. Remaining priorities are proposed, not approval to execute the whole package.
 
 | Slice | Focus / likely files | Acceptance |
 | --- | --- | --- |
 | 1 — Shared visual primitives | Icon asset/license, sections, headers, flatten nested color card; `editor_controls`, crop/orientation call sites | Consistent focus/hit areas; disclosure/reset independence; hidden edits unchanged; all numeric/reset/default tests retained |
 | 2 — Workspace hierarchy | True Roll/Photo/Rendering tabs, Output relocation, separate scopes chrome, application UI preferences; `editor`, `editor_scopes`, preference storage boundary | All controls reachable at 315×800 / 270×600 inspector sizes; tab changes never mutate grades/drafts; target still matches preview/TIFF/scopes; preferences round-trip without project changes; New from Photo/Rendering always selects Roll |
-| 3 — Stable viewer and tools | Bottom viewer bar + shared contextual overlay together; `editor`, `editor_crop`, `editor_flat_field`, navigation | Same canvas rectangle before/after mode UI; intended crop/source transforms retained; no overlay input fall-through; narrow mode controls stay reachable |
+| 3 — Stable viewer and tools | Bottom viewer bar + unified tool identity/actions and inspector-owned geometry settings; `editor`, `editor_crop`, `editor_flat_field`, navigation | Same canvas rectangle before/after mode UI; intended crop/source transforms retained; no overlay input fall-through; narrow mode controls stay reachable |
 | 4 — Feedback | Visible loading spinners, local preview/scope state, deliberate footer/issues; worker/UI event boundaries | Queued/running/error distinct; no orphan/perpetual spinner; foreground errors survive background completion; no fictitious progress/cancel |
 | 5 — Native shell | Menu adapter + title + centered/modal guard dialogs; `platform/host`, `editor_files`, `editor` | Main-thread lifecycle/wake-up; command once; field focus; menu enabled/check parity; dirty Close/Quit and overwrite guards verified |
 | 6 — Copy and coherence closure | All tabs/modes/dialogs/strip; relevant contracts + architecture | Compare normal/narrow screenshots, tab/focus order, tooltips, source/target states and physical pointer/trackpad/VoiceOver limitations |
@@ -245,8 +243,68 @@ The first six-hold attempt kept four seconds per hold and exceeded the existing 
 
 Limits: no physical keyboard/trackpad/VoiceOver, macOS-14/other-hardware/monitor acceptance, fresh crop/picker window captures, or normal-app manual relaunch acceptance. Preference round-trip/shutdown wiring is verified with temporary stores/headless editor contexts, not by changing the user's settings. The optional combined scope-readback smoke was not repeated; visible vectorscopes are not full photographic/numerical scope acceptance.
 
-The user visually accepted slice 2 and requested its commit. Next action is the authorized **slice 3 — stable viewer bar and common contextual tool overlay**, retaining the outstanding acceptance above. No push/main integration or native-menu work was performed.
+The user visually accepted slice 2, committed as `a2dddd5`, and authorized **slice 3 — stable viewer bar and common contextual tool overlay**, implemented below with the outstanding acceptance retained. No push/main integration or native-menu work was performed.
 
-### Slice 3 authorization / next action
+### Slice 3 checkpoint
 
-The user requested continuation after accepting the workspace and asked that scopes be collapsible/hideable (timing flexible). The scope presentation follow-up is recorded above for slice 6; checkbox hiding/persistence already works. Slice 3 will reserve the fixed viewer-width bottom bar, relocate crop/picker/flat-field controls into one in-canvas contextual overlay independent of inspector tabs, and verify numeric precedence, input ownership, narrow layout and intentional viewed-domain transforms. Processing, worker/resource contracts, native menus and broader feedback remain outside this slice.
+The user requested continuation after accepting the workspace and asked that scopes be collapsible/hideable (timing flexible). The scope presentation follow-up remains recorded for slice 6; checkbox hiding/persistence already works.
+
+**Initial presentation (superseded by the revision below):** the following implementation/checks predate the user's rejection of the generic Details and bulky picker layout. They are not current visual acceptance.
+
+Implemented in `src/editor_viewer.rs`, with focused editor/crop/icon integration:
+
+- Fixed 40-point viewer-width bottom bar above the filmstrip: named Fit/zoom/source/inspection/help icons, displayed zoom percentage with physical 100% action, visible Source ±EV, target and quiet Approximate/Refining quality. Empty/loading/error, positive/source and tool states retain the same canvas rectangle. Removed ad hoc picker/header/coordinate height subtraction and the permanent preview-ready row.
+- One nonmodal in-canvas overlay for crop, Dmin/Dmax, Gamma/WB neutral and flat-field support, independent of inspector tabs. Named title/reference identity, Details and consistent Cancel/primary Apply; unselected proposals cannot apply, and non-cancellable measurement/acceptance disables unsupported actions. Wide crop controls are inline; narrow controls, angle slider/dimensions, coordinates, reference selection and instructions remain in Details. Long identity truncates without enlarging the canvas.
+- Explicit chevron moves the toolbar between bottom/top edges to expose covered source pixels and handles without reframing. This is session state, not a durable preference or project field. Normal inspector Composition retains an active-draft summary, not a second transaction toolbar.
+- Overlay/popovers own pointer/drag/wheel/touch regions, including gestures begun there. Enter/Escape retain numeric priority; popovers remain open during control clicks. Crop angle and picker coordinate text now commit only on Enter/focus loss and cancel on Escape, with value comparisons preventing egui's pending-text changed flag from reconstructing/re-rounding geometry. Existing crop/source transforms, exact view restoration and worker/processing/resource guards remain intact.
+
+Verification snapshot: **121 focused editor tests passed, one real-RAW integration test intentionally ignored**; strict library/test Clippy, formatting and debug build passed. Tests retain existing crop Fit tolerance and navigation/measurement/return invariants, and add canvas/bar stability, every mode/tab normal/narrow reachability, popup input exclusion, numeric precedence, disabled Apply/Cancel, explicit docking and bottom-handle resize. [Environment/reproduction/evidence](../research/evidence/ui-polish-viewer.txt).
+
+The guarded real-source tool/window smoke passed: **1,755 submitted frames**, **38.97 s** reported elapsed, six normal/narrow crop/Dmin/WB app-window captures inspected. Crop remained active on Roll, picks on Rendering, source +2 EV was visible, and controls stayed above the viewer bar. An earlier unguarded capture showed an unexpected applied crop during the narrow hold (consistent with external input, not conclusively attributed); it is not acceptance. The smoke now fails if the expected tool mode exits during a hold, rather than masking that interference or relaxing its existing timeout/visible-frame gates. Private photographs/captures/logs remain ignored.
+
+Limits: Details/docked position are event-tested, not freshly captured in a native window; Gamma/Dmax/flat-field overlay states are headless-covered, not new real-reference photographic acceptance. Physical keyboard/pointer/trackpad/VoiceOver, broader hardware/macOS-14/monitor, manual preference relaunch and existing composed-export/photographic acceptance remain open. Native menus, broader feedback/footer policy and disclosure-style scopes refinement are not implemented here.
+
+### Slice 3 presentation revision
+
+The user rejected the generic Details approach, duplicated crop popover and bulky simple-pick overlay. This is historical geometry presentation: the user subsequently accepted its pickers but rejected crop/flat-field overlays, superseded below. The user approved removing precise selection fields and tool filenames, removing external calibration-reference selection in favour of roll selection, hiding source inspection outside source view, retaining Composition controls, and clarifying viewer/bar ownership; background treatment was left to UX judgment.
+
+Implemented the agreed revision:
+
+- Compact content-sized pick rows; no Details, tool filename or x/y/w/h entry. Crop aspect/angle/guides/reset stay visible; a second controls row handles narrower canvases. Specific popovers/help remain, with no duplicated crop controls.
+- Dmin/Dmax switch only by registered ordered roll ID through the filmstrip. Removed the external chooser and unregistered temporary-load branch; exact working-photo/selection/view return remains. Flat-field's independent bare-light chooser and reference-only registration are unchanged.
+- Source inspection control/value disappear in positive view while retaining EV. Viewer surround/bar share a dark surface; lighter filmstrip/top divider distinguish roll ownership without changing canvas dimensions.
+- Composition retains its ordinary actions and expansion during crop editing, with disabled incompatible actions and active Crop indication. No orientation-in-draft behavior was added.
+- Inline numeric precedence now handles egui 0.36 clearing text focus before Escape dispatch and its retained second lost-focus commit; cancelled angle text neither exits the mode nor alters geometry. Tool/popup drag, scroll, touch and keyboard ownership remain guarded.
+
+Revision verification snapshot: **125 focused editor tests passed, 0 failed, one real-RAW integration test intentionally ignored**, strict Clippy/formatting/debug build passed. Guarded real-source smoke: **1,905 submitted frames**, **39.59 s**, all six normal/narrow crop/Dmin/WB app-window captures inspected. Added headless reachability at 700×600, including explicit crop wrapping. [Revision evidence/reproduction](../research/evidence/ui-polish-viewer-revision.txt). The first revision smoke stopped at a relative-versus-resolved locator assertion; its corrected check verifies path equivalence and registered source identity, without relaxing measurement/view gates.
+
+Limits remain: user visual acceptance pending; physical pointer/trackpad/keyboard/VoiceOver, manual normal-app preference relaunch, broader hardware/monitor and composed export/reopen acceptance are not inferred. Composition-during-crop, Gamma/Dmax/flat-field, docking and specific popover states are headless/event-covered, not new native-window captures.
+
+### Slice 3 geometry placement revision
+
+Historical picker presentation, superseded by the shared tool bar below; geometry settings retain these homes.
+
+The user said “Pickers are good now”, rejected crop/flat-field boundary obstruction and stair-stepped crop controls, agreed on their existing inspector homes plus viewer-bar Apply/Cancel, then authorized implementation (“Do it”).
+
+Implemented:
+- Crop controls in Photo → Composition, with light active-mode tint/title, aligned Aspect/Angle/Guides rows and a scoped draft reset in the mode heading. Ordinary orientation actions remain visible/disabled.
+- Flat-field area identity/progress in its existing Roll section; separate bare-light selection/support/acceptance unchanged.
+- Geometry Cancel then primary Apply at the far right of the fixed 40-point viewer bar, available on every tab. No geometry overlay or docking action. Navigation/inspection/help lead; target/quality or geometry actions trail with flexible space.
+- Geometry sections temporarily expose their bodies without changing saved expansion. Tabs may hide settings but preserve draft/frame, view and actions. Accepted pick overlays are unchanged.
+- Regressions cover all modes/tabs at 1100×800, 800×600 and 700×600, actual bar hit bounds, aligned rows, draft/preference neutrality, busy/unselected guards, Apply/Cancel dispatch and numeric cancellation across hidden/reopened Composition. Painted-label test bounds now include egui's aligned-galley offset; no geometry/numerical tolerance was relaxed.
+
+Verification snapshot: **129 focused editor tests passed, 0 failed, one real-RAW integration test intentionally ignored**; strict Clippy, formatting and debug build passed. Fresh six-hold crop/Dmin/WB smoke and two real flat-reference layout holds passed; window-only captures inspected. [Exact commands/results and limits](../research/evidence/ui-polish-geometry-tools.txt). Geometry captures explicitly hide scopes to expose inspector settings; this is diagnostic capture setup, not automatic app behavior. Flat-reference layout capture cancels without accepting a map/exporting.
+
+Limits: user visual acceptance of geometry placement pending. Physical keyboard/pointer/trackpad/VoiceOver, normal-app preference relaunch, broader hardware/monitor and composed export/reopen remain open. Gamma/Dmax and specific popup states remain event-covered rather than freshly captured. Native shell, broader feedback and disclosure-style scopes remain unselected.
+
+### Slice 3 shared tool bar
+
+The user clarified that every image tool should have the same “accept what you're seeing” Apply/Cancel UX. After actions moved into the bar, they rejected the remaining floating title box and explicitly authorized removing it, with visually coherent active-tool identity.
+
+Implemented one trailing tinted group with recognizable icon, tool name, Cancel and primary Apply for crop, Dmin/Dmax, Gamma/WB and flat-field. A real busy spinner replaces the icon; existing numeric/proposal/busy/return guards remain. Removed floating area, chevron/placement state and artificial overlay hit exclusion. At constrained widths auxiliary zoom ±/inline EV yield to identity/actions; Fit/100%, inspection and help stay reachable. Crop/flat-field settings keep their inspector homes. Normal target/quality return after exit. The latest requested padding trial increases the name→Cancel gap from 4 to 12 points, retaining tight button spacing, right alignment and bar height. Its 15 focused viewer tests, debug build, formatting/diff checks and fresh normal/narrow flat-field captures passed; both captures were inspected (`.cache/probes/ui-polish/tool-bar-padding-flat/`). The six-hold capture limitation below remains open.
+
+Fresh focused snapshot: **130 editor tests passed, 0 failed, one intentionally ignored integration test**; strict Clippy, formatting and debug build passed. Tests cover tinted identity/action ownership, accessibility, all modes/tabs and narrow hit bounds, input ownership, numeric cancellation and actual worker/return transactions. [Reproduction/results](../research/evidence/ui-polish-tool-bar.txt).
+
+Native capture limits: crop normal/narrow and Dmin/WB normal captured/inspected; six-hold run timed out after crop-narrow, so remaining narrow picker holds are not acceptance. Earlier attempts logged occlusion; this latest log did not, so its cause remains unestablished. The separate real flat-reference layout route passed and both captures were inspected. No timeout/visibility/numerical gate was relaxed. Physical input/VoiceOver, normal-app preference relaunch and broader photographic/hardware checks remain open.
+
+**Next action:** user visual review of the shared tool group; diagnose/complete the remaining narrow picker native captures before packaging. Slice 3 remains uncommitted; no push/main integration or automatic continuation into later slices.

@@ -227,6 +227,40 @@ pub fn section<R>(
     .inner
 }
 
+pub(super) fn active_tool<R>(
+    ui: &mut Ui,
+    icon: Icon,
+    title: &str,
+    reset: Option<bool>,
+    contents: impl FnOnce(&mut Ui, bool) -> R,
+) -> R {
+    let mut reset_clicked = false;
+    egui::Frame::NONE
+        .fill(ui.visuals().selection.bg_fill.linear_multiply(0.15))
+        .inner_margin(6.)
+        .show(ui, |ui| {
+            icons::row(ui, |ui| {
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(16., 16.), egui::Sense::hover());
+                icon.paint(ui, rect, ui.visuals().selection.stroke);
+                ui.strong(title);
+                if let Some(enabled) = reset {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        reset_clicked = icons::button(
+                            ui,
+                            Icon::Reset,
+                            enabled,
+                            "Reset draft",
+                            "Reset draft crop and angle; keeps orientation and colour.",
+                        )
+                        .clicked();
+                    });
+                }
+            });
+            contents(ui, reset_clicked)
+        })
+        .inner
+}
+
 fn reset_button(ui: &mut Ui, enabled: bool, name: &str) -> Response {
     let name = format!("Reset {name}");
     icons::button(ui, Icon::Reset, enabled, &name, &name)

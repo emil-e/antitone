@@ -13,7 +13,7 @@ Authored research source was promoted here from ignored `.cache/probes` during t
 | `film/src/bin/camera-u16-precision.rs` | Initial compact-input prototype; preserves expected original-formula extreme-EV failures, not the final production gate |
 | Other `film/src/` bins | Historical Dmin/DRT/toe/image experiments. Several predate current source/export APIs and do not compile unchanged; preserved for evidence, not automatically modernized |
 | `film-response-docs/{extract-curves.py,fit-curves.py,read.swift,plot-fits.swift}` | Owned manufacturer-drawing extraction/fitting/inspection; local downloaded PDFs and derived data, not independent film measurements |
-| `capture-response-controls.py`, `capture-controls.py`, `controls-window-id.m` | macOS window-only layout capture; response harness uses current smoke, old harness is historical. Requires desktop/screen-capture permission, built app/helper and local RAWs |
+| `capture-viewer-tools.py`, `capture-response-controls.py`, `capture-controls.py`, `controls-window-id.m` | macOS window-only layout capture; response harness uses current smoke, old harness is historical. Requires desktop/screen-capture permission, built app/helper and local RAWs |
 | `{dmin-trace,drt-lift,film-model-images}/*.swift`, `film-identification.swift`, `read-kodak.swift` | Historical inspection/compositing helpers with fixed local input/output paths; not application automation/presentation references |
 | `native/*.cpp`, `native/build-internals.py` | Historical public/internal OCIO, clipping, profile-generation and image-identification diagnostics; native include/library/build paths and source versions matter |
 
@@ -51,6 +51,15 @@ For current response layout capture, first build the release editor per [the run
   -o .cache/probes/controls-window-id
 python3 docs/research/tools/capture-response-controls.py
 ```
+
+For current viewer/tool capture, build the debug editor and the same window-ID helper, then run:
+
+```sh
+python3 docs/research/tools/capture-viewer-tools.py --samples samples
+# From the UI-polish worktree, use --samples ../../samples.
+```
+
+The helper accepts `--binary`/`--output` overrides, sets `ANTITONE_SMOKE_TOOLS=1` and requires all six crop/Dmin/WB normal/narrow captures. Crop holds select Photo/hide scopes to expose inspector settings; picker holds select Rendering/show scopes. Add `--flat-only` for two real bare-light reference layout holds (`DSC01737`/`DSC01739`, `ANTITONE_SMOKE_FLAT_LAYOUT=1`), with scopes hidden and cancellation preserving the project. That route accepts no correction map and exports nothing. Avoid interacting with the focused smoke window; unexpected tool exit fails the hold. [Current checkpoint/evidence](../evidence/ui-polish-tool-bar.txt).
 
 This captures only the application window during timed smoke holds; it does not automate Lightroom/Resolve. Output images/logs remain private/regenerable. UI/screen-capture work requires an available unlocked desktop and normal permissions.
 

@@ -16,6 +16,8 @@ pub struct FlatFieldSmoke {
     anchors: Option<[(Rect, DVec3); 2]>,
     balance: Option<Balance>,
     viewport: Option<Viewport>,
+    layout_capture: bool,
+    layout_announced: bool,
     pub result: Arc<std::sync::Mutex<Option<Result<(), String>>>>,
 }
 impl FlatFieldSmoke {
@@ -46,6 +48,8 @@ impl FlatFieldSmoke {
             anchors: None,
             balance: None,
             viewport: None,
+            layout_capture: std::env::var_os("ANTITONE_SMOKE_FLAT_LAYOUT").is_some(),
+            layout_announced: false,
             result: Arc::new(std::sync::Mutex::new(None)),
         })
     }
@@ -152,7 +156,7 @@ impl FlatFieldSmoke {
         Ok(())
     }
     fn advance(&mut self, ui: &egui::Ui) -> Result<(), Box<dyn std::error::Error>> {
-        if self.start.elapsed() > Duration::from_secs(150) {
+        if self.start.elapsed() > Duration::from_secs(if self.layout_capture { 45 } else { 150 }) {
             return Err(format!(
                 "flat-field smoke timed out in phase {}: {}",
                 self.phase, self.editor.status
@@ -170,6 +174,73 @@ impl FlatFieldSmoke {
                 self.before = Some(self.editor.document.project.clone());
                 self.editor.begin_flat_edit(self.reference.clone(), None);
                 self.next();
+                if self.layout_capture {
+                    self.editor.tab = 0;
+                    self.editor.scopes.visible = false;
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                            1100., 800.,
+                        )));
+                    self.phase = 20;
+                }
+            }
+            20..=21 if self.settled() => {
+                if self.editor.pick != Some(Pick::Flat) || self.editor.flat_edit.is_none() {
+                    return Err(format!(
+                        "flat-field layout smoke interrupted: {}",
+                        self.editor.status
+                    )
+                    .into());
+                }
+                let geometry = self.geometry(ui)?;
+                if !geometry.canvas.expand(0.1).contains_rect(
+                    geometry.screen_coverage(self.editor.region.ok_or("missing support")?),
+                ) {
+                    return Err("layout capture clipped support".into());
+                }
+                if !self.layout_announced {
+                    println!(
+                        "tools_layout stage=flat-{}",
+                        if self.phase == 20 { "normal" } else { "narrow" }
+                    );
+                    self.layout_announced = true;
+                    self.hold = std::time::Instant::now();
+                }
+                if self.hold.elapsed() > Duration::from_millis(2500) {
+                    if self.phase == 20 {
+                        ui.ctx()
+                            .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                                800., 600.,
+                            )));
+                        if let Some(mut panel) = egui::containers::panel::PanelState::load(
+                            ui.ctx(),
+                            egui::Id::new("controls"),
+                        ) {
+                            panel.outer_rect.min.x = panel.outer_rect.max.x - 270.;
+                            ui.ctx().data_mut(|data| {
+                                data.insert_persisted(egui::Id::new("controls"), panel)
+                            });
+                        }
+                        self.editor.viewport.fit();
+                        self.phase = 21;
+                        self.layout_announced = false;
+                        self.hold = std::time::Instant::now();
+                    } else {
+                        self.editor.finish_pick();
+                        if self.editor.document.project != *self.before.as_ref().unwrap() {
+                            return Err("layout capture cancel changed accepted project".into());
+                        }
+                        println!(
+                            "flat_layout passed: real-reference Fit/support, normal/narrow windows, cancel preserved project; elapsed_seconds={:.2}",
+                            self.start.elapsed().as_secs_f64()
+                        );
+                        *self.result.lock().unwrap() = Some(Ok(()));
+                        self.editor.allow_close = true;
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        self.phase = 22;
+                    }
+                }
             }
             1 if self.settled() => {
                 let geometry = self.geometry(ui)?;

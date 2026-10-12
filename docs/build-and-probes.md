@@ -51,6 +51,8 @@ ANTITONE_SMOKE_CONTROLS=1 target/release/antitone --smoke \
   samples/DSC04378.ARW 4000 2600 128 128 samples/DSC04416.ARW
 ```
 
+For six normal/narrow crop/Dmin/WB holds instead, set `ANTITONE_SMOKE_TOOLS=1` with the same `--smoke` arguments. Tool-mode exit during a hold fails; do not interact with the focused window. The [window capture helper](research/tools/README.md#manufacturer-study--capture) supports debug/release binaries and private output directories. Crop holds select Photo and hide scopes to expose settings; picker holds retain Rendering/visible scopes. For two real-reference flat-field layout holds without map acceptance/export, set `ANTITONE_SMOKE_FLAT_LAYOUT=1` with `--smoke-flat-field` below, or use the helper's `--flat-only` option. [Viewer/tool checkpoint](plans/ui-polish.md#slice-3-shared-tool-bar).
+
 The editor supports explicit Save/Open, stable-ID photo state and dirty New/Open/Close protection; recovery/relink/undo remain unwired. Launch a document with `target/release/antitone /path/to/grade.antitone.json`. The same-row File and Export menus replace action buttons. Fit, physical-pixel 100%, source bypass, picker return and full-source regional refinement are implemented. New grades use camera model 4/toe 2.5; classic-curve diagnostics also use model 4. Old AP0 projects reject rather than migrate. The current smoke verifies actual GPU/worker/layout paths, not photographic calibration or broader-device performance.
 
 For Save/Open, append one additional unvisited source:
