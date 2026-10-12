@@ -4,8 +4,6 @@
 
 ## Active packages
 
-- [Responsive rendering and thumbnail caching](rendering-performance.md): shared GPU resources, pressure-responsive caches and bounded native development; semantic integration onto accepted-composition scopes and local delivery.
-
 - [Source inspection and interaction follow-up](inspection-and-interaction.md): remaining cursor/New-tab/roll-workflow/layout/colour questions; the initial navigation/source-inspection slice is implemented.
 - [Thumbnail follow-up](visual-feedback.md): reported clipping/invalidation/latency concerns; bounded thumbnails and responsive scopes are implemented.
 - [Durable projects](durable-projects.md): recovery, source-change/relink UI and undo/redo; basic Save/Open is complete.
@@ -13,6 +11,7 @@
 
 ## Completed implementations
 
+- [Responsive rendering and thumbnail caching](completed/rendering-performance.md): shared GPU resources, pressure-responsive/persistent caches, bounded OpenMP/lazy diagnostics and combined geometry/scope integration; further acceptance and cache/fingerprint proposals are separate.
 - [Documentation structure](completed/documentation-structure.md): workflow/cache reorganization and deliberate historical/private-input boundaries.
 - [Settled-preview buffer limits](completed/preview-stability.md): adapter-supported limits and large-Fit regression; no speculative minimum chip/RAM target.
 - [Basic editor Save/Open](completed/save-open.md): stable-ID ownership, transactional Open, atomic Save, File/Export menus and dirty protection.

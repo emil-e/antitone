@@ -24,6 +24,17 @@ Next action when selected: agree the photographic acceptance exercise or the sma
 
 Next action when selected: agree an unoccluded real-photo acceptance exercise. No further scope implementation is selected.
 
+## Rendering and thumbnail performance
+
+[Rendering/cache/native-development implementation](completed/rendering-performance.md) is closed and integrated with accepted-composition scopes and geometry. [The output contract](../contracts/output.md#responsiveness-and-optional-caches) owns current cache/pressure policy; do not resume historical performance experiments as implementation steps.
+
+- **Real-use/resource acceptance:** continue release-build feedback, physical rapid forward/reverse scrolling and control use; exercise actual OS-pressure transitions and assess aggregate worker/cache/buffer memory on available devices. Headless warm-roll, cancellation and Metal/onscreen lifecycle checks do not establish these acceptance gates.
+- **Higher-resolution switching caches:** assessed, not implemented. Measure actual switching cost/retention before selecting a tier; keep any cached pending preview distinct from a verified selected Scan, with picks/refinement/analysis unavailable until complete identity/development acceptance. No whole-roll developed RAW cache.
+- **Import fingerprint optimization:** assessed, not implemented. Investigate hash/read counts, repeated import/selected preparation, cold versus warm storage and UI blocking. Preserve complete-byte identity and pathname-replacement/development race protection; no timestamp substitution or skipped verification.
+- Full-source scopes stay in [scope follow-up](#scopes); native bundling, actual macOS-14 execution and broader hardware/monitor checks stay in [release work](#export-and-release-work).
+
+Next action when selected: reproduce an observed responsiveness issue or agree the smallest measurement/acceptance exercise. No new cache tier, fingerprint policy or scheduler redesign is approved.
+
 ## Inversion bases and roll assistance
 
 The earlier selectable-inversion-bases proposal is superseded by the [accepted native-camera replacement](../decisions/native-camera-inversion.md). Current grades use one native-camera basis with explicit camera identity; no alternate AP0 path or calibration reinterpretation is planned. Any future alternative requires new approval, a versioned processing/compatibility decision and fresh floor/domain/fitting/CPU-GPU gates.
@@ -62,7 +73,7 @@ Next action when selected: propose the source scope, language tooling, slice ord
 
 - Shared progress/cancellation follows [operation feedback](#operation-feedback); batch settings snapshots, reference-only exclusions, destination collisions/per-photo failures and source metadata propagation remain export-specific work.
 - Aggregate worker/cache/buffer memory and latency on available devices, prioritizing observed problems rather than a speculative minimum chip/RAM target; macOS-14 compatibility, monitor/reference matching and transitions; broader camera/metadata/domain tests.
-- Bundle native dependencies, review dependency licenses/notices and distribution layout. Checkout-local rpaths are not deployable packaging.
+- Bundle native dependencies, including pinned `libomp.dylib`, with bundle-relative loading; include Apache 2.0 with LLVM exceptions notices, review other dependency licenses/distribution layout, sign/notarize and test clean-machine/macOS-14 execution. Checkout-local rpaths and deployment-target inspection are not deployable packaging or OS acceptance.
 - Lightroom/Resolve interoperability remains deferred; no application automation is authorized.
 
 [Flat-field correction](completed/flat-field-correction.md) is completed and user-accepted, not folded into calibration/toe or these later requests. The [completed geometry integration](completed/flip-crop-rotate.md#baseline-and-integration-boundary) preserves its original-source coordinates and main's native-camera model. Windows/HDR output, custom RAW development and dust/catalog features are outside the current pass.

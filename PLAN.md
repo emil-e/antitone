@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Responsive rendering/thumbnail caching and bounded OpenMP/lazy diagnostics are rebased and semantically integrated onto main's accepted-composition scopes at `0beee3e`, in `.worktrees/rendering-performance`. Geometry and scopes remain implemented; the user reports improved responsiveness from the earlier performance release build. Main's uncommitted documentation and other worktrees stay untouched; no main delivery or push is authorized. [Performance integration/checks and next action](docs/plans/rendering-performance.md).
+Native-camera inversion, geometry, responsive scopes and rendering/thumbnail performance are implemented and integrated on main; their implementation plans are closed. The user reports improved responsiveness from the earlier performance release build. Remaining photographic, real-use and release acceptance is separately scoped; no next implementation is selected. [Performance closure/checks](docs/plans/completed/rendering-performance.md), [active follow-up](docs/plans/completion.md).
 
 Start here, then use [the documentation map](docs/README.md), [architecture](docs/architecture.md) and [repository workflow](AGENTS.md). This is the current cross-package status/order record; details live in contracts, plans and evidence.
 
@@ -16,13 +16,13 @@ The saveable editor develops RAWs with fixed LibRaw settings, offers full-resolu
 - Roll-level flat-field correction is implemented and user-accepted: editable rectangular support, native-camera gains, corrected processing/picks/thumbnails/exports and durable map state. [Closure/evidence limits](docs/plans/completed/flat-field-correction.md).
 - Responsive positive-grade scopes reuse the bounded whole-source proxy through accepted composition, independently of viewer navigation. [Scope contract](docs/contracts/scopes.md), [implementation/checks](docs/plans/completed/vectorscope-and-waveform.md); full-source analysis is deferred.
 - Shared roll/photo turns/flips, source-anchored crop/straightening, actual-coverage picks, bounded rotated reconstruction and composed exports are implemented. Tab-scoped Scan orientation/Composition panels, action flips, stable-source crop UX and thirds guides are user-accepted for now. [Geometry contract](docs/contracts/geometry.md), [implementation closure](docs/plans/completed/flip-crop-rotate.md).
-- Shared/prewarmed renderer resources, restricted rectangular averaging, selected proxy reuse, pressure-responsive/persistent caches and bounded parallel development are implemented on the performance branch. Combined scope integration checks pass; prior checkpoints and physical/release acceptance remain separate. [Performance plan](docs/plans/rendering-performance.md).
+- Shared/prewarmed renderer resources, restricted rectangular averaging, selected proxy reuse, pressure-responsive/persistent caches and bounded parallel development/lazy diagnostics are implemented on main, preserving accepted-composition scopes and original-source correction. [Performance closure/evidence limits](docs/plans/completed/rendering-performance.md).
 
 ## Remaining work
 
 Recovery/relink/undo is recorded but is not the user's highest priority.
 
-1. **Rendering/scopes user feedback and local delivery** — shared-resource ownership, source revision/whole-frame scope reuse and independent thumbnail/refinement checks pass; branch delivery to main awaits authorization. Higher-resolution switching caching and import fingerprinting remain follow-ups, not implementations. [Plan](docs/plans/rendering-performance.md).
+1. **Rendering/scopes real-use feedback** — shared-resource ownership, source revision/whole-frame scope reuse and independent thumbnail/refinement checks pass. Physical scrolling/resource acceptance, higher-resolution switching caches and import fingerprint optimization remain separately selected follow-ups. [Scope](docs/plans/completion.md#rendering-and-thumbnail-performance).
 2. **Camera/geometry photographic acceptance** — native/settled straightening agreement, rotated Gamma/WB picks, Save/Open and TIFF/EXR reopen on real photographs; synthetic combined checks pass. Dense guides remain separate. [Active acceptance/follow-up](docs/plans/completion.md#geometry).
 3. **Scope acceptance and inspection/interaction polish** — fresh scope-guide/composed-photo visual checks, physical trackpad exercise and remaining viewer-intrusion/layout complaints remain open. [Scope acceptance](docs/plans/completion.md#scopes). Dark-red/cold-toe appearance is a reproducible investigation, not an assumed processing fix. [Interaction](docs/plans/inspection-and-interaction.md), [visual feedback](docs/plans/visual-feedback.md).
 4. **Larger completion work** — explicitly accepted/cancellable roll estimates, photographic controls/B&W design, general operation feedback and separately scoped readability work. [Package](docs/plans/completion.md).
@@ -36,4 +36,4 @@ Recovery/relink/undo is recorded but is not the user's highest priority.
 - Lightroom/Resolve interoperability remains deferred; no application automation. Exact historical dog Photo/session settings are unknown.
 - Native dependencies use checkout-local builds/rpaths; distribution and universal numerical-domain coverage are not established. Windows/HDR and custom RAW development are outside this pass.
 
-Current commands: [runbook](docs/build-and-probes.md). Old checkpoints are [history](docs/research/history/README.md), not active queues. Samples remain read-only. Local performance commits/rebase are authorized; main delivery, pushes and global installation are not.
+Current commands: [runbook](docs/build-and-probes.md). Old checkpoints are [history](docs/research/history/README.md), not active queues. Samples remain read-only. The requested performance wrap-up includes local main delivery; pushes and global installation are not authorized.

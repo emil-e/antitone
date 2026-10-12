@@ -253,3 +253,19 @@ layout holds, scope modes/amplification, four-source isolation, settled previews
 WB/model4/working+sRGB+P3 reproduction and RAW-error atomicity passed.
 No photographic guide/composed-photo appearance, physical gesture/monitor, actual OS pressure,
 macOS14 or broader-device/distribution acceptance is claimed. Deferred optimizations unchanged.
+
+User-requested local wrap-up checkpoint, following AGENTS.md:
+Main remained 0beee3e, already an ancestor of the verified performance branch; no new
+main semantics or additional code rebase was needed. Implementation plan closed/moved to
+docs/plans/completed/rendering-performance.md; roadmap, affected links and separate
+completion/resource/release follow-ups updated. Source code unchanged during closure.
+Fresh closure checks on the same local environment:
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --features editor --lib --test scopes --test viewer
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh clippy --offline --features editor --all-targets -- -D warnings
+158 library passed/7 ignored, 9 scope GPU passed/1 ignored, 7 viewer passed;
+strict Clippy, formatting, shell syntax and diff checks passed. Moved-plan/changed-document
+local links and heading anchors checked before delivery.
+Private transcripts: .cache/wrap-up/{combined-tests,clippy}.txt.
+The preceding release/RAW/onscreen results were not rerun for documentation-only closure.
+Local main fast-forward authorized; unrelated docs/feedback.md and untracked .pi/ preserved.
+No push, sample edit, global install or new deferred implementation. Acceptance limits above remain.

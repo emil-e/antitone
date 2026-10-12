@@ -22,6 +22,6 @@ The checkout links a local dynamic runtime, not a shipped application bundle. Pa
 
 ## Evidence
 
-- [Performance plan/checkpoint](../plans/rendering-performance.md), [selected measurements](../research/evidence/rendering-performance.txt).
+- [Performance closure/checkpoints](../plans/completed/rendering-performance.md), [selected measurements](../research/evidence/rendering-performance.txt).
 - [Reproduction/compatibility probe](../research/tools/raw-development.md), [runbook](../build-and-probes.md).
 - [Established development](established-raw-development.md), [source/picker contract](../contracts/processing-model.md#camera-source-representation).

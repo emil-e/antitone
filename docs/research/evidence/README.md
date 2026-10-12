@@ -8,7 +8,7 @@ Compact text logs promoted from `.cache/probes` during the documentation reorgan
 
 ## Rendering-performance checkpoint
 
-- [Import, renderer, thumbnail and bounded-overlap measurements](rendering-performance.txt): local model-4 snapshot, unchanged numerical gates and visible Save/Open smoke. [Implementation/integration plan](../../plans/rendering-performance.md). Not physical memory-pressure, input-latency or broader-device acceptance.
+- [Import, renderer, thumbnail and bounded-overlap measurements](rendering-performance.txt): local model-4 snapshot, unchanged numerical gates and visible Save/Open smoke. [Implementation/integration closure](../../plans/completed/rendering-performance.md). Not physical memory-pressure, input-latency or broader-device acceptance.
 
 ## Response-integration checkpoint (historical AP0 models)
 

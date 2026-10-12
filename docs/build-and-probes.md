@@ -135,7 +135,7 @@ CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --relea
 
 [Native complete-RGB/metadata/diagnostics comparison and build guide](research/tools/raw-development.md). Native thread stress excludes physical input/layout/surface latency, as with tile stress; scoped CPU policy and lazy decoding do not change source/development identity. `raw_development` logs include priority/requested thread count.
 
-Runtime `source_registration`, `raw_import`, `raw_development`, `selected_source`, `thumbnail` and `settled_preview` logs identify phases. Thumbnail logs include memory/disk hits, cancellation and failure; source verification uses full-byte fingerprints, not timestamps. Settled `gpu_seconds` includes encoding/upload/submission/wait wall time, not hardware timestamps. [Selected results/limits](research/evidence/rendering-performance.txt); [worktree integration boundaries](plans/rendering-performance.md).
+Runtime `source_registration`, `raw_import`, `raw_development`, `selected_source`, `thumbnail` and `settled_preview` logs identify phases. Thumbnail logs include memory/disk hits, cancellation and failure; source verification uses full-byte fingerprints, not timestamps. Settled `gpu_seconds` includes encoding/upload/submission/wait wall time, not hardware timestamps. [Selected results/limits](research/evidence/rendering-performance.txt); [completed integration boundaries](plans/completed/rendering-performance.md).
 
 ## RAW and complete GPU chain
 
