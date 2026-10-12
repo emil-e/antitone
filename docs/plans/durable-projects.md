@@ -1,30 +1,18 @@
-# Durable editor projects
+# Recovery, source-change UI and undo
 
-Status: active recovery/relink/undo package; not a pending basic Save/Open implementation. Scope basis: retained product work. [Roadmap](../../PLAN.md) owns order/status. [Basic Save/Open](completed/save-open.md) and stable-ID editor ownership are implemented. Recovery/relink/undo remain separate slices, not automatically authorized by this package.
+Status: unfinished persistence work. [Roadmap](../../PLAN.md) owns priority. Save/Open, stable-ID settings, explicit development WB and dirty-transition guards are available; [project-state contract](../contracts/project-state.md) defines the supported document.
 
-## Goal and non-goals
+## Goal and boundaries
 
-Extend the saveable stable-ID editor with recovery, source-change UI and undo/redo, preserving supported current grades, full-resolution fitting and RGB-only references. No catalog, automatic migration, reference provenance revival, derived images in JSON or silently overwritten explicit saves.
+Add recovery, source-change UI and undo/redo without reinterpreting grades or resampling RGB calibration. No catalog, automatic migration, derived images in JSON or silently overwritten explicit saves. `load()` structural validation and `require_runtime()` are distinct gates.
 
-## Existing contracts and gaps
+## Work and acceptance
 
-Read [project-state contract](../contracts/project-state.md), [architecture](../architecture.md#persistence-boundary-and-known-gaps) and `src/project.rs`/tests. Current schema 5/model 4 stores native-camera development, explicit classic/Film response, accepted composition and optional flat-field state, with no RAW fingerprints. Earlier schemas/AP0 models reject without migration; future recovery/undo must not reinterpret them. [Camera implementation closure](completed/camera-inversion.md). `load()` structural validation is not the same as `require_runtime()`.
+1. Design missing-source/relink and explicit source-change UI without assuming byte immutability or a capture-identity scheme. Settle matching/candidate/acceptance policy from workflow needs before adding primitives. Relinking retains IDs/photo edits; source changes/removal never resample stored calibration RGB.
+2. Add separate recovery/autosave with explicit saved-document identity and stale/recovery handling. Preserve the last explicit save; test interrupted/failed writes and corrupt/incompatible records. Do not claim complete power-loss durability without evidence.
+3. Add undo/redo for shared/photo edits, reset and successful picks, coalescing one gesture into one operation. Include accepted orientation, framing and flat-field changes in the selected scope. Invalid/cancelled picks create no entry; drafts, view/navigation and derived caches stay transient.
+4. Verify exact settings/output reopen, worker-active document transitions, stale-result rejection, recovery decisions and independent undo scopes. Legal out-of-slider values must survive. Use narrow state tests before an editor Save/Open smoke.
 
-The editor owns photo edits by stable source ID and passes document WB explicitly to loads. Save/Open restores recorded development policy and accepted settings; dirty transitions are guarded. Recovery, relink/source-change UI and undo are not implemented.
+Likely boundaries: `src/{editor,editor_document,editor_files,project}.rs`, worker commands, close/dialog handling and focused project/recovery/undo tests. [Architecture](../architecture.md#persistence-boundary-and-known-gaps).
 
-## Proposed incremental sequence and acceptance
-
-1. **Complete:** map authoritative editor roll/photo/output/source state to `Project` with stable IDs/order, and keep transient picker/view/worker state separate. Specify dirty transitions and unsaved-open/close behavior before wiring dialogs.
-2. **Complete:** wire explicit Save/Open with runtime and GPU-domain checks before committing a replacement document. Preserve current state after failed/cancelled load/save. Current model-4 settings, accepted geometry/flat-field state and rendered output must remain exact after reopen, including legal out-of-slider values; the original schema-3 checks are historical, not a compatibility requirement.
-3. Design missing-source/relink UI from an actual workflow need, retaining stable IDs/photo edits and development compatibility. No capture identity or candidate-selection policy is established; hash-based primitives were removed. Source changes/removal never invalidate or resample stored calibration RGB. [Hash-removal decision](../decisions/no-raw-content-hashing.md).
-4. Add separate recovery/autosave with explicit saved-document identity and stale/recovery handling. Never silently overwrite the last explicit save; test interrupted/failed writes and corrupt/incompatible records. Do not claim complete power-loss durability without evidence.
-5. Add undo/redo for shared/photo edits, reset and successful picks, coalescing one drag/gesture into one operation. Invalid/cancelled picks create no undo entry; view/navigation and derived resources do not dirty processing state unless deliberately specified.
-6. Verify state/output reopen, document transitions while workers are active, stale-result rejection, recovery decisions and independent undo scopes. Retain narrower state tests before a real editor Save/Open smoke.
-
-Likely files: `src/{editor,editor_tests,project}.rs`, worker commands, dialogs/host close behavior, `tests/{project,film_project}.rs`, new focused recovery/undo tests. Include already-implemented shared/photo orientation, accepted framing and roll flat-field changes in any agreed undo/recovery scope; picker/crop drafts and derived caches remain transient. Future scopes do not belong in saved processing state.
-
-## Implementation status
-
-Basic Save/Open is complete: stable-ID ownership, background registration, explicit WB, atomic snapshots, staged transitions and File/Export menus. [Closure and verification limits](completed/save-open.md) link the original state/data-loss and real-source checks. Camera/geometry integration established the current schema and persistence paths; recovery/relink/undo are the remaining implementation scope.
-
-Next action: select/design one missing-source/relink, recovery or undo slice with the user before implementation.
+Next: select and design one missing-source/relink, recovery or undo slice.

@@ -8,9 +8,7 @@
 #include <cstring>
 #include <memory>
 #include <vector>
-#ifndef ANTITONE_BASELINE_BRIDGE
 #include <omp.h>
-#endif
 
 using Clock = std::chrono::steady_clock;
 static double seconds(Clock::time_point start) {
@@ -42,15 +40,9 @@ int main(int argc, char **argv) {
     double open = seconds(start);
     start = Clock::now();
     AntitoneRawDiagnostics full = {}, region = {};
-#ifdef ANTITONE_BASELINE_BRIDGE
-    (void)threads;
-    (void)decode_only;
-    int code = antitone_raw_unpack(raw.get(), &full, error, sizeof(error));
-#else
     const int previous_threads = omp_get_max_threads(), previous_dynamic = omp_get_dynamic(), previous_blocktime = kmp_get_blocktime();
     int code = antitone_raw_unpack(raw.get(), threads, error, sizeof(error));
     if (!code && !decode_only) code = antitone_raw_sensor_diagnostics(raw.get(), &full, error, sizeof(error));
-#endif
     if (code) { std::fprintf(stderr, "%s\n", error); return 1; }
     double unpack = seconds(start);
     if (antitone_raw_region_diagnostics(raw.get(), 4000, 2600, 128, 128, &region, error, sizeof(error))) {
@@ -58,27 +50,21 @@ int main(int argc, char **argv) {
     }
     start = Clock::now();
     AntitoneRawView view = {};
-#ifdef ANTITONE_BASELINE_BRIDGE
-    code = antitone_raw_develop(raw.get(), reference.cam_mul, 0, &view, error, sizeof(error));
-#else
     code = antitone_raw_develop(raw.get(), reference.cam_mul, 0, threads, &view, error, sizeof(error));
     if (omp_get_max_threads() != previous_threads || omp_get_dynamic() != previous_dynamic || kmp_get_blocktime() != previous_blocktime) {
         std::fprintf(stderr, "OpenMP task policy was not restored\n"); return 1;
     }
-#endif
     if (code) { std::fprintf(stderr, "%s\n", error); return 1; }
     double process = seconds(start);
     AntitoneRawDiagnostics after = {};
     if (antitone_raw_region_diagnostics(raw.get(), 4000, 2600, 128, 128, &after, error, sizeof(error)) || std::memcmp(&region, &after, sizeof(region))) {
         std::fprintf(stderr, "Immutable regional diagnostics changed after development: %s\n", error); return 1;
     }
-#ifndef ANTITONE_BASELINE_BRIDGE
     after = {};
     if (antitone_raw_sensor_diagnostics(raw.get(), &after, error, sizeof(error)) || (!decode_only && std::memcmp(&full, &after, sizeof(full)))) {
         std::fprintf(stderr, "Immutable whole-frame diagnostics changed: %s\n", error); return 1;
     }
     full = after;
-#endif
     // Every RGB code is hashed; the explicitly ignored fourth slot is excluded.
     CC_SHA256_CTX hash;
     CC_SHA256_Init(&hash);

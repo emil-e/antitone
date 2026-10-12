@@ -40,6 +40,6 @@ These tests do not require private RAWs by default; sample/hardware acceptance c
 
 ## Specialist verification
 
-[Build and probes](build-and-probes.md) covers numerical/reference probes, ignored RAW tests, export reopening and scripted presentation checks. [Research tools](research/tools/README.md) distinguishes current helpers from historical experiments. These guides are useful to developers and reviewers, but are not prerequisites for an ordinary build.
+[Build and probes](build-and-probes.md) covers numerical/reference probes, ignored RAW tests, export reopening and scripted presentation checks. These are optional specialist checks, not prerequisites for an ordinary build.
 
-Automated agreement does not establish photographic appearance, physical gestures, monitor matching, actual macOS-14 execution or broader-device acceptance. Current behavior/tolerances are defined in [the contracts](README.md#current-contracts); [the roadmap](../PLAN.md) tracks remaining acceptance.
+Automated agreement does not establish photographic appearance, physical gestures, monitor matching, actual macOS-14 execution or broader-device acceptance. Current behavior/tolerances are defined in [the contracts](README.md#contracts); [the roadmap](../PLAN.md) tracks remaining acceptance.

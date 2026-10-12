@@ -1,21 +1,21 @@
-# Reuse established LibRaw development
+# LibRaw development and bounded parallelism
 
-Status: accepted; recorded from the established implementation agreement.
+Status: accepted.
 
-## Context
+## Choice and rationale
 
-Camera-scanned negatives need controlled linear development without opaque per-image looks. Sony ILCE-1M2 compressed ARW is the initial source. A custom demosaicer/camera repair adds complexity without a demonstrated need; Apple RAW development was investigated but not selected.
+Use pinned LibRaw 0.22.0 black subtraction, one roll-fixed WB tuple and AHD development. Retrieve linear developed camera RGB16 before standard-space output matrix/curve clipping. A mature decoder/developer avoids the cost and uncertainty of a custom demosaicer or camera-specific repair. Automatic brightness and per-photo WB substitution would make shared calibration inconsistent.
 
-## Decision
+Enable upstream OpenMP with checksum-pinned, source-built LLVM OpenMP 22.1.8 in checkout-local storage. Building arm64 for macOS 14 makes the runtime reproducible without relying on a system/Homebrew library. The dynamic runtime and license notices must be bundled for distribution.
 
-Use pinned LibRaw 0.22.0 black subtraction, one roll-fixed WB tuple and AHD development. Retrieve linear developed camera RGB16 before standard-space output matrix/curve clipping, then apply the documented camera conversion. No automatic brightness, per-photo as-shot WB substitution or camera-specific hack. The approved [parallel implementation](parallel-libraw.md) enables upstream OpenMP with bounded per-job resources and lazy diagnostics, without replacing this algorithm/settings/source contract.
+Bound decode/process calls by priority, CPU availability and memory pressure; scope/restore OpenMP task settings and let idle workers sleep. Foreground/background caps are eight/two threads, reserving two logical CPUs where possible. These are job budgets, not a whole-roll RAW cache.
 
-## Consequences
+Decode once and compute whole-sensor statistics only on explicit request. Regional diagnostics use original CFA, margins and black/white levels after development; developed-RGB clipping is not a substitute.
 
-Reuse a mature decoder/developer behind a narrow owned bridge, while taking responsibility for matrix/WB conventions, normalization, quantization, clipping diagnostics and reproducibility. Integer-developed samples are the source contract—not a promise of float RAW intermediates or calibrated scene radiometry. Changing the backend/development policy requires new validation and explicit compatibility handling. Native bundling/licensing remains distribution work.
+## Constraints
 
-## Evidence
+Thread policy must preserve complete RGB16 output, metadata and immutable diagnostics. Differing pixels cannot silently share development/cache identity. Changes to source support or development settings require compatibility and numerical validation. LibRaw calls cannot be interrupted mid-phase; native deployment targets do not establish actual macOS-14 acceptance.
 
-- [Architecture](../architecture.md#data-and-colour-flow), [processing contract](../contracts/processing-model.md#camera-source-representation).
-- [Historical investigation and alternatives](../research/history/product-plan.md#raw-development-options-and-probe), [execution evidence](../research/history/execution-plan.md#progress-evidence).
-- `native/raw_bridge.cpp`, `src/raw.rs`, `src/scan.rs`; [RAW reproduction](../build-and-probes.md#raw-and-complete-gpu-chain).
+[Source contract](../contracts/processing-model.md#camera-source-representation) · [Diagnostic guide](../native-development.md)
+
+Implementation: `native/raw_bridge.cpp`, `src/raw.rs`, `src/scan.rs`.

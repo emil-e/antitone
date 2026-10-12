@@ -1,12 +1,12 @@
 # Editor control contract
 
-Current UI/control behavior. Remaining work is scheduled in [the roadmap](../../PLAN.md), not in the verification snapshot below.
+Current UI/control behavior. Remaining work is scheduled in [the roadmap](../../PLAN.md).
 
-The editor uses `src/editor_controls.rs` for a small shared hierarchy: **section → parameter row → specialized input**. `Editor::controls` owns roll/photo grouping and reset scope; the helpers own spacing, entry, range, focus and presentation. New grades use adjustable film response in native-camera model 4; old AP0 projects reject. Project schema/development identity are versioned accordingly; the output contract is unchanged.
+The editor uses `src/editor_controls.rs` for a small shared hierarchy: **section → parameter row → specialized input**. `Editor::controls` owns roll/photo grouping and reset scope; the helpers own spacing, entry, range, focus and presentation. New grades use adjustable film response in native-camera model 4; old AP0 projects reject. [Project state](project-state.md) and [output](output.md) define compatibility.
 
 ## Layout and actions
 
-- File (New, Open, Add RAWs, Save, Save As) and Export (TIFF, EXR half/full) menus replace action buttons within the existing header row; document name/Modified status stays single-line. No added toolbar row. Cmd-N/O/S and Cmd-Shift-S trigger file actions after accepted numeric/control edits; New/Open/Close share Save/Discard/Cancel protection.
+- File (New, Open, Add RAWs, Save, Save As) and Export (TIFF, EXR half/full) menus occupy the header row; document name/Modified status stays single-line. No added toolbar row. Cmd-N/O/S and Cmd-Shift-S trigger file actions after accepted numeric/control edits; New/Open/Close share Save/Discard/Cancel protection.
 - Roll/Photo tabs precede the controls. Only the selected scope's top panel is shown, pinned outside the edit scroll area: **Scan orientation** on Roll, **Composition** on Photo. They never appear together.
 - **Composition** combines photo orientation and crop/straighten. It offers Turn left/right, Flip horizontal/vertical, Crop and crop-only reset. Crop editing replaces the action rows with Aspect/preset/swap, Angle numeric/slider/reset, optional thirds, dimensions and Reset / Cancel / Apply. Switching to Roll hides these controls without changing/cancelling the draft or viewport; return to Photo to resume, or use Enter/Escape.
 - Roll: **Scan orientation** (shared Turn left/right and Flip horizontal/vertical) → Flat-field correction → Calibration (RGB-only Dmin/Dmax) → Gamma & balance → Toe & shoulder → Exposure.
@@ -19,7 +19,7 @@ The editor uses `src/editor_controls.rs` for a small shared hierarchy: **section
 - Gamma & balance reset changes gamma/balance only; Toe & shoulder reset restores shared toe **2.5** / shoulder **0** without changing other edits; exposure resets affect their own scope only; color reset restores the actual zero-coordinate identity. Calibration is never erased by an edit-section reset. Gamma resets to **0.65**, not 1.
 - A model-4 classic-curve diagnostic state shows “Classic curve · camera model 4” and an explicit **Use adjustable response** action. Drawing controls never opts in; the action preserves calibration/gamma/balance/exposure and changes only response. A reset does not convert an original grade.
 - Shoulder **0 = off**. Both linked numeric/slider parameters share actual processing/fitting state; inverse poles and unsupported GPU range/precision are rejected atomically.
-- Implementation details live in tooltips. Unsaved state, approximation/refinement and actionable errors remain visible. Successful refinement no longer overwrites an earlier pick/edit error in the status line.
+- Implementation details live in tooltips. Unsaved state, approximation/refinement and actionable errors remain visible. Successful refinement must preserve a pending pick/edit error in the status line.
 
 ## Flat-field workflow
 
@@ -63,7 +63,7 @@ A collapsible slot above Roll/Photo controls switches waveform/vectorscope witho
 
 ## Resolve-style wheel orientation and mapping
 
-Both wheels use the user's requested **blue at 3 o'clock, yellow at 9 o'clock**, with RGB/CMY proceeding clockwise. The displayed six sectors are equally spaced: R at 11, M at 1, B at 3, C at 5, G at 7, Y at 9. Artwork, labels, pointer input and marker positioning share the same orientation transform. This is a UI direction convention, not a claim about exact Resolve processing or the vectorscope's target-native luma/chroma measurement basis.
+Both wheels use **blue at 3 o'clock, yellow at 9 o'clock**, with RGB/CMY proceeding clockwise. The displayed six sectors are equally spaced: R at 11, M at 1, B at 3, C at 5, G at 7, Y at 9. Artwork, labels, pointer input and marker positioning share the same orientation transform. This is a UI direction convention, not a claim about exact Resolve processing or the vectorscope's target-native luma/chroma measurement basis.
 
 In a right/up plane, the existing opponent coordinates are projected with:
 
@@ -82,4 +82,4 @@ Each matrix is normalized by the maximum mapped corner length of the legal warmt
 
 Headless event/layout checks cover numeric precision and range, keyboard/mouse entry, Enter/Escape, pending-edit disable transitions, wheel mapping and disabled behavior, true scoped defaults/resets, section order and control reachability at normal/narrow widths. Wheel adapters are checked independently for full-square round-trips, local WB response and blue/yellow orientation.
 
-Scripted real-image layout checks use diagnostic settings, not a recovered photographic grade. [Specialist verification](../build-and-probes.md#editor-and-layout-smoke) provides current commands; [response-layout evidence](../research/evidence/film-model-images/response-controls-smoke.txt) and [interaction checkpoints](../research/history/implementation/inspection-and-interaction.txt) retain historical counts/timings and their limitations. Headless events and scripted visible frames do not establish physical trackpad feel, photographic correctness or device/monitor acceptance.
+[Specialist verification](../build-and-probes.md#editor-and-layout-smoke) provides real-image layout commands with diagnostic settings. Headless events and scripted visible frames do not establish physical trackpad feel, photographic correctness or device/monitor acceptance.

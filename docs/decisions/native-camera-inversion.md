@@ -1,32 +1,21 @@
-# Invert in native-camera RGB, then map positives to AP1
+# Invert native-camera RGB, then map positives to AP1
 
-Status: accepted by the user; outright replacement, no old-grade preservation/migration required. Supersedes the inversion choice in [colour-space boundaries](colour-space-boundaries.md), and the grade-compatibility/version clauses of [adjustable response](versioned-film-response.md) and [compact source](rgb16-gpu-source.md). Their earlier rationale is retained.
+Status: accepted.
 
-The original project schema-4 storage choice below is superseded by [hash-free schema 5](no-raw-content-hashing.md). Native-camera processing model 4 and the inversion/development rationale remain unchanged.
+## Choice and rationale
 
-## Context
+Calibrate, floor, fit gamma and invert developed native-camera RGB, with optional flat-field gains applied first. Channel-wise nonlinear inversion does not commute with a colour matrix. Camera channels are the most direct available measurements of the negative; colour-mixed working-space coordinates are not physical film-dye measurements.
 
-Colour matrices and channel-wise nonlinear negative inversion do not commute. AP0 channels are colour-mixed coordinates, not physical film-dye measurements. Train-red comparisons established basis-dependent brightness before ACES, not that the brighter rendering is more accurate. Native developed camera channels are the most direct available measurements of the negative, although Bayer spectral overlap and film/scene information loss remain.
+Map inverted positives through the metadata-derived camera→AP1 matrix, then apply exposure and photographic Bradford WB. AP1 supplies a standard photographic working space; AP0 belongs only to EXR interchange and unchanged ACES internals. Preserve signed/HDR values throughout working processing.
 
-A generic baseline is preferable to requiring stock-by-stock user calibration. Shared printing compatibility motivates that direction but does not identify independent dye spectra or prove a universal reconstruction. Roll-density PCA was descriptive, not an inversion transform; the user stopped that research angle.
+Neutral fitting targets `inverse(camera_to_AP1) * [1,1,1]`, not equal camera channels. Retain camera model/matrix identity with the roll: incompatible native bases cannot share calibration anchors.
 
-## Decision
+Use explicit processing model 4 and project schema 5, one RGB16 source path and accurate shader temporaries. New grades use a shared toe of 2.5 and shoulder off; the classic toe-1 curve uses the same camera model. Adjustable toe separates near-base response shape from display rendering. Signed-root continuation provides defined above-base noise behavior without a hidden pedestal.
 
-Calibrate, floor, fit channel gamma and invert developed native-camera RGB. Apply optional flat-field gains there first. Map inverted positives through the metadata-derived camera→AP1 matrix, then keep AP1 photographic exposure/Bradford WB and unchanged rendering/output processing. AP0 is retained for EXR interchange and internally in ACES only.
+## Limits
 
-Roll neutrality must correspond to AP1 white, not equal native channels: target the positive camera direction `inverse(camera_to_AP1) * [1,1,1]` while evaluating the actual response. Keep existing response mathematics and new-grade toe 2.5/shoulder off. Keep one retained RGB16 source and accurate shader temporaries; no alternate AP0 inversion path.
+Spectral overlap and film/scene information loss remain. The positive camera matrix is a pragmatic baseline, not calibrated scene radiometry, dye unmixing or stock identification. Toe defaults are generic, not a calibrated film profile. Working-space brightness is not a colour-accuracy criterion. These limits do not justify stock-specific repair, source clamps or altered ACES mathematics.
 
-Replace processing/project identities with model/schema 4 and a camera-inversion development contract. Old AP0 projects reject explicitly; missing response rejects. Retain camera model/matrix identity with the roll and reject different native-camera source/reference bases rather than share incompatible anchors. Persisted base floors must equal one normalized code; corrected bounds remain derived, not separately authored values. The user does not need personal-grade preservation, so migration machinery would introduce misleading calibration interpretation without a present need. No commits/pushes are implied by approval.
+[Processing contract](../contracts/processing-model.md) · [Project identity](../contracts/project-state.md) · [Output](../contracts/output.md)
 
-## Consequences and limits
-
-Native coordinates avoid colour mixing before nonlinear inversion; they do not make the response physically calibrated or undo spectral overlap. Post-inversion use of the positive camera matrix is pragmatic and replaceable only with evidence/new approval. No brightness maximization, PCA primaries, hidden pedestal, demosaicer change, per-stock repair or approximate ACES.
-
-Flat-field's physical neutral/centre-luminance target is unchanged, expressed directly through camera→AP1→XYZ. Its inversion precision policy becomes one native code amplified by maximum gain, not an AP0 row-sum bound. Output formats/targets, signed/HDR working data and numerical tolerances remain unchanged.
-
-## Evidence and implementation
-
-- [Processing contract](../contracts/processing-model.md), [project identity](../contracts/project-state.md), [unchanged output](../contracts/output.md).
-- `src/{raw,scan,processing,sampling,gpu}.rs` and owned shaders.
-- `tests/camera_inversion.rs`: noncommuting order, AP1-neutral camera direction, actual-response fitting and camera-channel floor flags.
-- [Implementation closure/checks/limits](../plans/completed/camera-inversion.md). Finite numerical checks are not stock colour calibration or photographic/physical-monitor acceptance.
+Implementation: `src/{raw,scan,processing,sampling,gpu}.rs`, owned shaders and `tests/camera_inversion.rs`.

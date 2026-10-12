@@ -1,41 +1,13 @@
-# Architectural decisions
+# Decision rationale
 
-Rationale for consequential choices and their tradeoffs. The records below document accepted decisions; current behavior is specified in [the contracts](../README.md#current-contracts).
+These records explain current choices and tradeoffs. [Contracts](../README.md#contracts) define exact behavior.
 
-| Decision | Status |
-| --- | --- |
-| [Established LibRaw development](established-raw-development.md) | Accepted |
-| [Bounded upstream parallel LibRaw](parallel-libraw.md) | Accepted; same development/pixels, pinned local OpenMP and lazy immutable diagnostics |
-| [Separate inversion, photography and interchange spaces](colour-space-boundaries.md) | AP0 inversion choice superseded; downstream role separation retained |
-| [Native-camera inversion](native-camera-inversion.md) | Accepted; processing model 4, no AP0-grade migration; original project schema superseded by schema 5 |
-| [No RAW content hashing](no-raw-content-hashing.md) | Accepted; schema 5 without fingerprints, cache-only path/stat freshness; identity/relink design deferred |
-| [Unchanged ACES, matching SDR outputs and managed presentation](sdr-output-and-presentation.md) | Accepted |
-| [Output-native scopes and independent magnification](output-native-scopes.md) | Accepted; responsive accepted-frame proxy slice implemented |
-| [RGB-only calibration references](rgb-only-calibration.md) | Accepted; replaces original provenance-bearing design |
-| [Compact RGB16 GPU source](rgb16-gpu-source.md) | Accepted; replaces float-AP0 upload |
-| [Versioned adjustable film response](versioned-film-response.md) | Response mathematics retained; compatibility/version clauses superseded |
+- [LibRaw development and bounded parallelism](established-raw-development.md)
+- [Native-camera inversion](native-camera-inversion.md)
+- [Compact RGB16 GPU source](rgb16-gpu-source.md)
+- [RGB-only calibration](rgb-only-calibration.md)
+- [RAW loading and cache-only file revisions](no-raw-content-hashing.md)
+- [Matching SDR outputs and managed presentation](sdr-output-and-presentation.md)
+- [Output-native scopes and independent magnification](output-native-scopes.md)
 
-## When to add a record
-
-Write an ADR when a choice constrains future changes, has meaningful alternatives/tradeoffs, or is likely to be reopened after context loss. Link contracts and evidence rather than duplicating them. Ordinary local implementation details do not need ADRs.
-
-Use a descriptive filename and this small shape; dates are optional when known, never invented retrospectively:
-
-```markdown
-# Decision title
-Status: proposed / accepted / superseded (link replacement)
-
-## Context
-Problem, constraints and relevant alternatives.
-
-## Decision
-Choice and rationale actually supported by the agreement/evidence.
-
-## Consequences
-Tradeoffs, limits and conditions for revisiting.
-
-## Evidence
-Links to contracts, research, tests or historical approval records.
-```
-
-Proposed decisions require explicit acceptance before they describe project policy. Preserve accepted rationale; supersede explicitly if an approved later decision replaces it. Research may explore alternatives without altering any accepted decision.
+Keep a record only when its rationale helps maintain a consequential choice. Link contracts and implementation rather than repeating specifications. Proposed designs belong in work plans, not in this index.

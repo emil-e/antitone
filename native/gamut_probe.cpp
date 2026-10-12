@@ -3,13 +3,12 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
-#include <string>
+#include <stdexcept>
 
 namespace OCIO = OCIO_NAMESPACE;
 
-int main(int argc, char **argv) try {
-    const bool compare = argc == 2 && std::string(argv[1]) == "--compare-rec2020";
-    if (argc != 1 && !compare) throw std::invalid_argument("usage: gamut-probe [--compare-rec2020]");
+int main(int argc, char **) try {
+    if (argc != 1) throw std::invalid_argument("usage: gamut-probe");
     struct Target {
         const char *name;
         std::array<double, 9> parameters;
@@ -17,14 +16,11 @@ int main(int argc, char **argv) try {
     const Target targets[] {
         {"sRGB-100nit", antitone::output_parameters(0)},
         {"Display-P3-100nit", antitone::output_parameters(1)},
-        {"Rec2020-D65-100nit", {100., .708, .292, .170, .797, .131, .046, .3127, .3290}},
-        {"Rec2020-D65-500nit", {500., .708, .292, .170, .797, .131, .046, .3127, .3290}},
     };
     const float levels[] {0.f, .01f, .05f, .1f, .18f, .2f, .4f, .5f, .75f, 1.f};
     unsigned failures = 0;
     std::printf("OCIO %s / direct ACES2 fixed-function / AP1 input / no inversion or presentation\n", OCIO::GetVersion());
-    for (unsigned index = 0; index < (compare ? 4u : 2u); ++index) {
-        const auto &target = targets[index];
+    for (const auto &target : targets) {
         auto group = OCIO::GroupTransform::Create();
         auto basis = OCIO::BuiltinTransform::Create();
         basis->setStyle("ACEScg_to_ACES2065-1");

@@ -8,7 +8,7 @@ Active targets are **100-nit sRGB/D65 and Display P3/D65**. Rendering/limiting p
 
 `assets/ocio/` contains pinned generated AP1 algorithms plus two 363-entry 2D parameter tables per target, not a baked 3D LUT. `assets/profiles/` contains original pinned ICC matrix-shaper profiles with explicit D50 PCS adaptation and checksum provenance. Native definitions drive generation/validation; never hand-edit only a GPU ACES equation or embed a monitor profile.
 
-ProPhoto and 100-nit SDR Rec.2020 were rejected after colour-collapse gates. [Decision and rationale](../decisions/sdr-output-and-presentation.md); [research](../research/aces-yellow-collapse.md).
+[Target and presentation rationale](../decisions/sdr-output-and-presentation.md).
 
 ## Managed presentation
 
@@ -24,7 +24,7 @@ Normal thumbnail budgets follow physical RAM: RGB16 proxy storage is RAM/1024 cl
 
 These limits exclude the selected Scan, one temporary development, active/refining outputs/scratch, [scope bins/totals/readback](scopes.md#gpu-lifecycle-and-resources), driver/runtime overhead and in-flight callbacks; they are not an aggregate application or universal OOM guarantee. A normal ≤36-image roll is the retention/use case, not a maximum supported source count.
 
-Disk RGB16 proxies are disposable, versioned/checksummed and atomically installed under `~/.cache/antitone/thumbnails-v2`, with a 128 MiB pruning budget. Cache keys include resolved/canonical source path, length/mtime (also device/inode/ctime on Unix), source development and fixed roll development. Document IDs, grades, targets and correction maps do not key disk proxies. Unavailable source stats disable disk reuse; changed stats quietly miss/reject stale results, never declare the grade incompatible. Stats are cache freshness, not photograph identity or immutable-byte proof. No RAW contents are hashed; corruption checksums cover generated RGB16 pixels only. Old hash-keyed cache entries are not interpreted by this version. Corrupt/unavailable cache data is a reported miss; development still reports missing/unloadable/incompatible RAWs. Selected proxies retain their pre-open/development file key rather than acquire later stats. Uncorrected RGB16 proxies are transformed by the current grade/correction, never reinterpreted as baked display photographs. [Decision](../decisions/no-raw-content-hashing.md).
+Disk RGB16 proxies are disposable, versioned/checksummed and atomically installed under `~/.cache/antitone/thumbnails-v2`, with a 128 MiB pruning budget. Cache keys include resolved/canonical source path, length/mtime (also device/inode/ctime on Unix), source development and fixed roll development. Document IDs, grades, targets and correction maps do not key disk proxies. Unavailable source stats disable disk reuse; changed stats quietly miss/reject stale results, never declare the grade incompatible. Stats are cache freshness, not photograph identity or immutable-byte proof. No RAW contents are hashed; corruption checksums cover generated RGB16 pixels only. Corrupt/unavailable cache data is a reported miss; development still reports missing/unloadable/incompatible RAWs. Selected proxies retain their pre-open/development file key rather than acquire later stats. Uncorrected RGB16 proxies are transformed by the current grade/correction, never reinterpreted as baked display photographs. [Decision](../decisions/no-raw-content-hashing.md).
 
 ## TIFF
 
@@ -46,4 +46,4 @@ Recompute from full-resolution source, never preview buffers. Write same-directo
 
 TIFF/EXR sample buffers each have a current 1 GiB cap (~306 MiB RGB16/half or ~612 MiB full for the supplied full developed frame, excluding RAW/runtime). Batch snapshots, progress/cancellation, metadata propagation and aggregate memory validation remain scheduled work. Editor export uses the accepted composition within the active metadata image area; the diagnostic CLI intentionally uses full developed dimensions.
 
-Software checks include ICC/transfer exhaustion, ColorSync/Core Image, compressed numerical reopen and full TIFF/ImageIO decode. Lightroom/Resolve interoperability remains unverified/deferred. Use [the runbook](../build-and-probes.md) for reproduction and [recorded evidence](../research/evidence/README.md) for past outcomes.
+Software checks include ICC/transfer exhaustion, ColorSync/Core Image, compressed numerical reopen and full TIFF/ImageIO decode. Lightroom/Resolve interoperability remains unverified/deferred. Use [the runbook](../build-and-probes.md) for checks.
