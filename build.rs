@@ -6,14 +6,33 @@ fn main() {
     {
         let root = std::env::var_os("LIBRAW_SOURCE")
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| std::path::PathBuf::from(".cache/deps/LibRaw-0.22.0"));
+            .unwrap_or_else(|| std::path::PathBuf::from(".cache/native-deps/LibRaw-0.22.0-openmp"));
         assert!(
             root.join("lib/libraw_r.a").exists(),
             "Run scripts/build-libraw.sh before building with --features raw"
         );
+        let openmp = std::path::PathBuf::from(".cache/native-deps/openmp-22.1.8-install")
+            .canonicalize()
+            .expect("Run scripts/build-openmp.sh before building with --features raw");
+        assert!(
+            openmp.join("include/omp.h").exists() && openmp.join("lib/libomp.dylib").exists(),
+            "Incomplete checkout-local OpenMP runtime"
+        );
+        println!(
+            "cargo:rerun-if-changed={}",
+            root.join("lib/libraw_r.a").display()
+        );
+        println!(
+            "cargo:rerun-if-changed={}",
+            openmp.join("lib/libomp.dylib").display()
+        );
         cc::Build::new()
             .cpp(true)
             .std("c++17")
+            .flag("-mmacosx-version-min=14.0")
+            .flag("-Xclang")
+            .flag("-fopenmp")
+            .include(openmp.join("include"))
             .include(&root)
             .file("native/raw_bridge.cpp")
             .compile("antitone_raw_bridge");
@@ -23,6 +42,16 @@ fn main() {
         );
         println!("cargo:rustc-link-lib=static=raw_r");
         println!("cargo:rustc-link-lib=z");
+        println!(
+            "cargo:rustc-link-search=native={}",
+            openmp.join("lib").display()
+        );
+        println!("cargo:rustc-link-lib=omp");
+        println!(
+            "cargo:rustc-link-arg=-Wl,-rpath,{}",
+            openmp.join("lib").display()
+        );
+        println!("cargo:rustc-link-arg=-mmacosx-version-min=14.0");
     }
     #[cfg(feature = "render")]
     {

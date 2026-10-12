@@ -23,6 +23,8 @@ pub mod raw;
 mod refinement;
 #[cfg(feature = "render")]
 pub mod rendering;
+#[cfg(feature = "raw")]
+mod resources;
 pub mod sampling;
 #[cfg(feature = "raw")]
 pub mod scan;

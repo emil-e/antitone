@@ -35,7 +35,7 @@ objc2-quartz-core = { version = "=0.3.2", optional = true, default-features = fa
 editor = ["ui", "raw", "export", "project", "dep:rfd"]
 project = ["dep:serde", "dep:serde_json", "dep:blake3", "dep:tempfile", "glam/serde"]
 ui = ["gpu", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:winit", "dep:half", "dep:objc2-core-foundation", "dep:objc2-core-graphics", "dep:objc2-quartz-core"]
-raw = ["dep:cc"]
+raw = ["dep:cc", "dep:libc"]
 render = ["dep:cc", "dep:lcms2"]
 export = ["render", "dep:tiff", "dep:exr", "dep:tempfile", "dep:libc", "dep:half"]
 gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck", "glam/bytemuck"]

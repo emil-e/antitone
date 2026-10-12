@@ -14,6 +14,29 @@ int check(int code, char *error, size_t size) {
     return code;
 }
 
+// OpenMP ICVs belong to the calling task; restore them rather than changing process policy.
+class ThreadBudget {
+    int threads = omp_get_max_threads();
+    int dynamic = omp_get_dynamic();
+    int blocktime = kmp_get_blocktime();
+public:
+    explicit ThreadBudget(int count) {
+        omp_set_dynamic(0);
+        omp_set_num_threads(count);
+        kmp_set_blocktime(0); // Sleeping workers must not compete with UI work after a tile/job.
+    }
+    ~ThreadBudget() {
+        kmp_set_blocktime(blocktime);
+        omp_set_num_threads(threads);
+        omp_set_dynamic(dynamic);
+    }
+};
+int check_threads(int threads, char *error, size_t size) {
+    if (threads >= 1 && threads <= 8) return 0;
+    std::snprintf(error, size, "RAW thread budget must be between 1 and 8");
+    return -1;
+}
+
 void metadata(LibRaw &raw, AntitoneRawMetadata &out) {
     const auto &d = raw.imgdata;
     const auto &s = d.sizes;
@@ -73,31 +96,23 @@ extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out, c
     return nullptr;
 }
 
-extern "C" int antitone_raw_unpack(void *handle, AntitoneRawDiagnostics *out, char *error, size_t size) {
+extern "C" int antitone_raw_unpack(void *handle, int threads, char *error, size_t size) {
+    if (check_threads(threads, error, size)) return -1;
+    ThreadBudget budget(threads);
     auto &raw = *static_cast<LibRaw *>(handle);
     int code = raw.unpack();
     if (check(code, error, size)) return code;
-    const auto &d = raw.imgdata;
-    const auto &s = d.sizes;
-    const auto &c = d.color;
-    if (!d.rawdata.raw_image || c.cblack[4] || c.cblack[5]) {
+    const auto &d = raw.imgdata.rawdata;
+    if (!d.raw_image || d.color.cblack[4] || d.color.cblack[5]) {
         std::snprintf(error, size, "Probe requires integer Bayer data without a repeated black pattern");
         return -1;
     }
-    const auto pitch = s.raw_pitch / sizeof(uint16_t);
-    for (unsigned y = 0; y < s.height; ++y) {
-        for (unsigned x = 0; x < s.width; ++x) {
-            const unsigned color = raw.COLOR(y, x);
-            const auto value = d.rawdata.raw_image[(y + s.top_margin) * pitch + x + s.left_margin];
-            const auto black = c.black + c.cblack[color];
-            const auto white = c.linear_max[color] ? c.linear_max[color] : c.maximum;
-            ++out->sites[color];
-            out->below_black[color] += value <= black;
-            out->at_white[color] += value >= white;
-            out->peak[color] = std::max(out->peak[color], static_cast<uint32_t>(value));
-        }
-    }
     return 0;
+}
+
+extern "C" int antitone_raw_sensor_diagnostics(void *handle, AntitoneRawDiagnostics *out, char *error, size_t size) {
+    const auto &s = static_cast<LibRaw *>(handle)->imgdata.rawdata.sizes;
+    return antitone_raw_region_diagnostics(handle, 0, 0, s.width, s.height, out, error, size);
 }
 
 extern "C" int antitone_raw_region_diagnostics(void *handle, uint32_t x0, uint32_t y0, uint32_t width, uint32_t height,
@@ -126,8 +141,10 @@ extern "C" int antitone_raw_region_diagnostics(void *handle, uint32_t x0, uint32
     return 0;
 }
 
-extern "C" int antitone_raw_develop(void *handle, const double *wb, int output_color,
+extern "C" int antitone_raw_develop(void *handle, const double *wb, int output_color, int threads,
     AntitoneRawView *view, char *error, size_t size) {
+    if (check_threads(threads, error, size)) return -1;
+    ThreadBudget budget(threads);
     auto &raw = *static_cast<LibRaw *>(handle);
     auto &p = raw.imgdata.params;
     for (int c = 0; c < 4; ++c) p.user_mul[c] = static_cast<float>(wb[c]);
