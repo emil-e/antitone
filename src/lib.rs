@@ -34,6 +34,8 @@ pub mod viewport;
 #[cfg(all(feature = "ui", feature = "render"))]
 pub mod gpu_scopes;
 #[cfg(all(feature = "ui", feature = "render"))]
+pub mod renderer;
+#[cfg(all(feature = "ui", feature = "render"))]
 pub mod resample;
 #[cfg(feature = "render")]
 pub mod scopes;

@@ -43,6 +43,8 @@ use flat::{Correction, FlatEdit, FlatPreview};
 #[path = "editor_crop.rs"]
 mod crop_editor;
 use crop_editor::CropEdit;
+#[path = "editor_memory.rs"]
+mod memory;
 #[path = "editor_navigation.rs"]
 mod navigation;
 #[path = "editor_smoke.rs"]
@@ -74,6 +76,7 @@ struct PickView {
     anchored: Viewport,
 }
 struct Ready {
+    thumbnail: Option<Arc<thumbnails::Proxy>>,
     path: PathBuf,
     area: Rect,
     floor: f64,
@@ -154,7 +157,9 @@ enum Message {
     FlatPreview(u64, Result<Box<FlatPreview>, String>),
 }
 
+#[allow(clippy::too_many_arguments)]
 fn prepare_source(
+    renderers: &crate::renderer::RendererCache,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     path: PathBuf,
@@ -163,24 +168,37 @@ fn prepare_source(
     correction: Option<&Arc<Correction>>,
     basis: Option<&crate::project::CameraBasis>,
 ) -> Result<(Ready, Scan), Error> {
-    let (record, _) = document::read_source(&path)?;
+    let started = std::time::Instant::now();
+    let (record, raw) = document::open_source(&path)?;
+    let registration_seconds = started.elapsed().as_secs_f64();
     if let Some(basis) = basis {
         basis.require_source(&record.development)?;
     }
     if let Some(expected) = expected {
         document::verify_source(expected, &record)?;
     }
-    let mut scan = Scan::open(&path, wb)?;
+    let tick = std::time::Instant::now();
+    let mut scan = Scan::from_raw(raw, wb)?;
+    let development_seconds = tick.elapsed().as_secs_f64();
+    let tick = std::time::Instant::now();
     document::verify_scan(&record, &scan)?;
+    let verification_seconds = tick.elapsed().as_secs_f64();
     if let Some(correction) = correction {
         correction.settings.require_source(&record.development)?;
         scan.set_flat_field(Some(correction.settings.map.clone()))?;
     }
+    let tick = std::time::Instant::now();
     let (width, height, pixels) = scan.preview_source(1024)?;
+    let thumbnail = Some(Arc::new(thumbnails::Proxy::from_scan(&scan)?));
+    let proxy_seconds = tick.elapsed().as_secs_f64();
+    let tick = std::time::Instant::now();
+    let renderer = renderers.get(device, queue)?;
+    let renderer_seconds = tick.elapsed().as_secs_f64();
+    let tick = std::time::Instant::now();
     let make_image = |target| -> Result<Arc<GpuImage>, Error> {
-        let mut image = pollster::block_on(GpuImage::new(
+        let mut image = pollster::block_on(GpuImage::new_shared(
+            &renderer,
             device,
-            queue,
             width,
             height,
             &pixels,
@@ -200,7 +218,13 @@ fn prepare_source(
         make_image(OutputTarget::Srgb)?,
         make_image(OutputTarget::DisplayP3)?,
     ];
+    println!(
+        "selected_source seconds={:.6} registration_seconds={registration_seconds:.6} development_seconds={development_seconds:.6} verification_seconds={verification_seconds:.6} proxy_seconds={proxy_seconds:.6} renderer_seconds={renderer_seconds:.6} images_seconds={:.6}",
+        started.elapsed().as_secs_f64(),
+        tick.elapsed().as_secs_f64()
+    );
     let ready = Ready {
+        thumbnail,
         path,
         area: scan.area,
         floor: scan.input_floor,
@@ -210,7 +234,9 @@ fn prepare_source(
     };
     Ok((ready, scan))
 }
+#[allow(clippy::too_many_arguments)]
 fn prepare_document(
+    renderers: &crate::renderer::RendererCache,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     source: &mut Option<(u64, Scan)>,
@@ -265,6 +291,7 @@ fn prepare_document(
             .as_ref()
             .map(|value| value.fixed_wb);
         let (ready, scan) = prepare_source(
+            renderers,
             device,
             queue,
             path,
@@ -298,6 +325,7 @@ fn prepare_document(
 }
 
 fn backend(
+    renderers: Arc<crate::renderer::RendererCache>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     commands: mpsc::Receiver<Command>,
@@ -318,16 +346,21 @@ fn backend(
                         .map(|(_, scan)| (scan, correction.as_ref().map(|c| c.gpu.clone()))),
                 };
                 let result = match active {
-                    Some(context) => crate::refinement::refine(
-                        &device,
-                        &queue,
-                        context,
-                        parameters,
-                        target,
-                        (&generation, revision),
-                        view,
-                    )
-                    .map_err(|e| e.to_string()),
+                    Some(context) => renderers
+                        .get(&device, &queue)
+                        .and_then(|renderer| {
+                            crate::refinement::refine(
+                                &renderer,
+                                &device,
+                                &queue,
+                                context,
+                                parameters,
+                                target,
+                                (&generation, revision),
+                                view,
+                            )
+                        })
+                        .map_err(|e| e.to_string()),
                     _ => Ok(None),
                 };
                 if messages.send(Message::Refined(revision, result)).is_err() {
@@ -336,6 +369,7 @@ fn backend(
             }
             Command::Load(id, path, wb, expected, field, basis) => {
                 let result = prepare_source(
+                    &renderers,
                     &device,
                     &queue,
                     path,
@@ -356,6 +390,7 @@ fn backend(
             }
             Command::FlatPreview(id, path, wb, expected, basis) => {
                 let result = prepare_source(
+                    &renderers,
                     &device,
                     &queue,
                     path,
@@ -410,6 +445,7 @@ fn backend(
                     settings.enabled = enabled;
                     document.project.flat_field = Some(settings);
                     let prepared = prepare_document(
+                        &renderers,
                         &device,
                         &queue,
                         &mut source,
@@ -438,6 +474,7 @@ fn backend(
                     work => Message::Prepared(
                         id,
                         prepare_document(
+                            &renderers,
                             &device,
                             &queue,
                             &mut source,
@@ -607,13 +644,17 @@ impl Editor {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, initial: Option<PathBuf>) -> Self {
         let (commands, receiver) = mpsc::channel();
         let (send, messages) = mpsc::channel();
-        let thumbnails = Thumbnails::new(device.clone(), queue.clone());
+        let renderers = Arc::new(crate::renderer::RendererCache::default());
+        renderers.prewarm(device.clone(), queue.clone());
+        let thumbnails = Thumbnails::new(device.clone(), queue.clone(), renderers.clone());
         let scopes = Scopes::new(device);
         let device = device.clone();
         let queue = queue.clone();
         let generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let worker_generation = generation.clone();
-        std::thread::spawn(move || backend(device, queue, receiver, send, worker_generation));
+        std::thread::spawn(move || {
+            backend(renderers, device, queue, receiver, send, worker_generation)
+        });
         let mut editor = Self::state(commands, messages, generation);
         editor.thumbnails = thumbnails;
         editor.scopes = scopes;
@@ -695,6 +736,25 @@ impl Editor {
         }
         .validate()
         .ok()
+    }
+    fn seed_thumbnail(&mut self) {
+        let Some(ready) = &mut self.ready else {
+            return;
+        };
+        let Some(proxy) = ready.thumbnail.take() else {
+            return;
+        };
+        let Some(id) = self.current_source else {
+            return;
+        };
+        let source = self.document.project.source(id).expect("accepted source");
+        // Flat-field editing displays a reference while retaining the working source ID.
+        if source.fingerprint == ready.record.fingerprint
+            && source.development == ready.record.development
+            && self.document.project.development.as_ref() == Some(&ready.development)
+        {
+            self.thumbnails.seed(source, &ready.development, proxy);
+        }
     }
     fn sync_document(&mut self) {
         let project = &mut self.document.project;
@@ -1435,6 +1495,7 @@ impl host::App for Editor {
                 .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1100., 800.)));
         }
         self.receive();
+        self.seed_thumbnail();
         self.thumbnails.receive(&self.document);
         let available = !self.busy
             && self.pick.is_none()
@@ -1786,7 +1847,6 @@ impl host::App for Editor {
                 composition,
             );
             if self.signature != Some(signature) {
-                self.thumbnails.cancel();
                 self.signature = Some(signature);
                 self.generation
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

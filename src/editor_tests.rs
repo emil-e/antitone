@@ -63,6 +63,7 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                     "a-long-scanning-session-directory/".repeat(12)
                 ));
                 editor.ready = Some(Ready {
+                    thumbnail: None,
                     path: path.clone(),
                     area,
                     floor: editor.floor,
@@ -427,6 +428,7 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
             .unwrap(),
     );
     editor.ready = Some(Ready {
+        thumbnail: None,
         path: record.path.clone(),
         area: record.development.active_area.into(),
         floor: editor.floor,
@@ -1494,6 +1496,7 @@ fn shared_roll_turns_apply_to_new_photos_and_export_snapshots() {
     send.send(Message::Ready(
         editor.id,
         Ok(Box::new(Ready {
+            thumbnail: None,
             path: record.path.clone(),
             area: ready.area,
             floor: ready.floor,

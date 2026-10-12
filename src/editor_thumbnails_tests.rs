@@ -44,7 +44,8 @@ fn key(document: &Document, id: SourceId) -> ImageKey {
 }
 #[test]
 fn cache_is_bounded_lru_and_replacement_does_not_grow_it() {
-    let mut cache = Cache::default();
+    const CAPACITY: usize = 16;
+    let mut cache = Cache::new(CAPACITY, |_| 1);
     for index in 0..CAPACITY {
         cache.insert(index, index);
     }
@@ -385,4 +386,430 @@ fn thumbnail_parameters_follow_actual_roll_and_each_photo_without_inspection_gai
         ),
         bytemuck::bytes_of(&expected)
     );
+}
+
+#[test]
+fn critical_pressure_cancels_work_once_and_drops_optional_images() {
+    let document = fixture();
+    let id = document.project.order[0];
+    let (commands, receiver) = mpsc::channel();
+    let mut thumbnails = Thumbnails {
+        commands: Some(commands),
+        ..Default::default()
+    };
+    thumbnails.apply_budgets(memory::CacheBudgets::for_memory(
+        48 << 30,
+        memory::Pressure::Normal,
+    ));
+    thumbnails
+        .cache
+        .insert(key(&document, id), Err("cached error".into()));
+    thumbnails.request(
+        key(&document, document.project.order[1]),
+        document.source_path(id).unwrap(),
+        document.project.source(id).unwrap().clone(),
+        None,
+    );
+    receiver.try_recv().unwrap();
+    let generation = thumbnails
+        .generation
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let critical = memory::CacheBudgets::for_memory(48 << 30, memory::Pressure::Critical);
+    thumbnails.apply_budgets(critical);
+    assert!(thumbnails.cache.entries.is_empty());
+    assert_eq!(
+        thumbnails
+            .generation
+            .load(std::sync::atomic::Ordering::Relaxed),
+        generation + 1
+    );
+    thumbnails.apply_budgets(critical);
+    assert_eq!(
+        thumbnails
+            .generation
+            .load(std::sync::atomic::Ordering::Relaxed),
+        generation + 1
+    );
+}
+
+#[test]
+fn idle_roll_prefetch_reaches_unshown_photos_after_visible_work() {
+    let (commands, _) = mpsc::channel();
+    let (_, messages) = mpsc::channel();
+    let mut editor = Editor::state(
+        commands,
+        messages,
+        Arc::new(std::sync::atomic::AtomicU64::new(0)),
+    );
+    editor.document = fixture();
+    let last = *editor.document.project.order.last().unwrap();
+    for id in editor
+        .document
+        .project
+        .order
+        .clone()
+        .into_iter()
+        .filter(|id| *id != last)
+    {
+        editor
+            .thumbnails
+            .cache
+            .insert(key(&editor.document, id), Err("already visited".into()));
+    }
+    let (commands, jobs) = mpsc::channel();
+    let (completed, outcomes) = mpsc::channel();
+    editor.thumbnails.commands = Some(commands);
+    editor.thumbnails.messages = Some(outcomes);
+    editor.refinement_error = Some(0);
+    editor.last_edit = std::time::Instant::now() - Duration::from_secs(1);
+    let context = egui::Context::default();
+    let input = || egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1100., 800.),
+        )),
+        ..Default::default()
+    };
+    let mut output = context.run_ui(input(), |ui| editor.filmstrip(ui));
+    output.textures_delta.clear();
+    let job = jobs.try_recv().unwrap();
+    assert_eq!(
+        job.key.source.id, last,
+        "should prefetch even the unshown far end of the roll"
+    );
+    editor.last_edit = std::time::Instant::now();
+    let generation = editor
+        .thumbnails
+        .generation
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let mut output = context.run_ui(input(), |ui| editor.filmstrip(ui));
+    output.textures_delta.clear();
+    assert_eq!(
+        editor
+            .thumbnails
+            .generation
+            .load(std::sync::atomic::Ordering::Relaxed),
+        generation + 1,
+        "resumed foreground work cancels far idle prefetch"
+    );
+    assert!(jobs.try_recv().is_err());
+    completed
+        .send(Outcome {
+            ticket: job.ticket,
+            key: job.key,
+            image: Ok(None),
+        })
+        .unwrap();
+    editor.thumbnails.receive(&editor.document);
+    editor.last_edit = std::time::Instant::now() - Duration::from_secs(1);
+    let mut output = context.run_ui(input(), |ui| editor.filmstrip(ui));
+    output.textures_delta.clear();
+    assert_eq!(jobs.try_recv().unwrap().key.source.id, last);
+    let first = editor.document.project.order[0];
+    editor
+        .thumbnails
+        .cache
+        .retain(|key, _| key.source.id != first);
+    let before = editor
+        .thumbnails
+        .generation
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let mut output = context.run_ui(input(), |ui| editor.filmstrip(ui));
+    output.textures_delta.clear();
+    assert_eq!(
+        editor
+            .thumbnails
+            .generation
+            .load(std::sync::atomic::Ordering::Relaxed),
+        before + 1,
+        "missing visible work preempts idle far prefetch"
+    );
+    assert!(
+        jobs.try_recv().is_err(),
+        "cancellation must not create an unbounded backlog"
+    );
+}
+
+#[test]
+fn crop_draft_cancels_offscreen_prefetch_and_suspends_idle_admission() {
+    let (commands, _) = mpsc::channel();
+    let (_, messages) = mpsc::channel();
+    let mut editor = Editor::state(
+        commands,
+        messages,
+        Arc::new(std::sync::atomic::AtomicU64::new(0)),
+    );
+    editor.document = fixture();
+    editor.floor = editor.document.project.input_floor.unwrap();
+    super::super::tests::add_ready_fixture(&mut editor);
+    let last = *editor.document.project.order.last().unwrap();
+    let image_key = key(&editor.document, last);
+    let (commands, jobs) = mpsc::channel();
+    let (completed, outcomes) = mpsc::channel();
+    editor.thumbnails.commands = Some(commands);
+    editor.thumbnails.messages = Some(outcomes);
+    editor.thumbnails.request(
+        image_key.clone(),
+        editor.document.source_path(last).unwrap(),
+        editor.document.project.source(last).unwrap().clone(),
+        None,
+    );
+    let job = jobs.try_recv().unwrap();
+    editor.begin_crop();
+    assert!(editor.crop_edit.is_some());
+    editor.refinement_error = Some(editor.generation.load(std::sync::atomic::Ordering::Relaxed));
+    editor.last_edit = std::time::Instant::now() - Duration::from_secs(1);
+    let before = editor
+        .thumbnails
+        .generation
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let context = egui::Context::default();
+    let frame = |editor: &mut Editor| {
+        let mut output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1100., 800.),
+                )),
+                ..Default::default()
+            },
+            |ui| editor.filmstrip(ui),
+        );
+        output.textures_delta.clear();
+    };
+    frame(&mut editor);
+    completed
+        .send(Outcome {
+            ticket: job.ticket,
+            key: image_key,
+            image: Ok(None),
+        })
+        .unwrap();
+    // Release the cancelled request before checking that the draft admits no replacement.
+    editor.thumbnails.receive(&editor.document);
+    frame(&mut editor);
+    assert_eq!(
+        editor
+            .thumbnails
+            .generation
+            .load(std::sync::atomic::Ordering::Relaxed),
+        before + 1
+    );
+    assert!(editor.thumbnails.pending.is_none());
+    assert!(jobs.try_recv().is_err());
+}
+
+#[test]
+fn warm_normal_roll_survives_rapid_forward_and_reverse_scrolling() {
+    pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let renderer = crate::renderer::GpuRenderer::new(&device, &queue)
+            .await
+            .unwrap();
+        let (commands, _) = mpsc::channel();
+        let (_, messages) = mpsc::channel();
+        let mut editor = Editor::state(
+            commands,
+            messages,
+            Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        );
+        editor.document = fixture();
+        editor.document.project.order.truncate(36);
+        for id in editor.document.project.order.clone() {
+            let image = Arc::new(
+                GpuImage::new_shared(
+                    &renderer,
+                    &device,
+                    8,
+                    8,
+                    &[[0; 4]; 64],
+                    glam::DMat3::IDENTITY,
+                    OutputTarget::DisplayP3,
+                )
+                .await
+                .unwrap(),
+            );
+            editor
+                .thumbnails
+                .cache
+                .insert(key(&editor.document, id), Ok(image));
+        }
+        let context = egui::Context::default();
+        let mut names = std::collections::HashSet::new();
+        for delta in [0., -4000., -4000., 4000., 4000., -4000., 4000.] {
+            for frame in 0..12 {
+                let mut output = context.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(1100., 800.),
+                        )),
+                        events: if frame == 0 {
+                            vec![
+                                egui::Event::PointerMoved(egui::pos2(550., 750.)),
+                                egui::Event::MouseWheel {
+                                    unit: egui::MouseWheelUnit::Point,
+                                    phase: egui::TouchPhase::Move,
+                                    delta: egui::vec2(delta, 0.),
+                                    modifiers: egui::Modifiers::NONE,
+                                },
+                            ]
+                        } else {
+                            vec![]
+                        },
+                        ..Default::default()
+                    },
+                    |ui| editor.filmstrip(ui),
+                );
+                output.textures_delta.clear();
+                for shape in output.shapes {
+                    if let egui::Shape::Text(text) = shape.shape {
+                        assert_ne!(text.galley.job.text, "…", "warm thumbnail was evicted");
+                        if text.galley.job.text.starts_with("photo-") {
+                            names.insert(text.galley.job.text.clone());
+                        }
+                    }
+                }
+            }
+        }
+        assert!(names.contains("photo-0.ARW") && names.contains("photo-35.ARW"));
+        assert_eq!(editor.thumbnails.cache.entries.len(), 36);
+    });
+}
+
+#[test]
+fn critical_pressure_releases_the_seed_when_the_working_source_is_gone() {
+    let document = fixture();
+    let source = document.project.source(document.project.order[0]).unwrap();
+    let mut thumbnails = Thumbnails::default();
+    thumbnails.sources.lock().unwrap().set_budget(0);
+    thumbnails.seed(
+        source,
+        document.project.development.as_ref().unwrap(),
+        Arc::new(Proxy {
+            width: 1,
+            height: 1,
+            pixels: vec![[0; 4]],
+            matrix: glam::DMat3::IDENTITY,
+        }),
+    );
+    assert_eq!(thumbnails.sources.lock().unwrap().entries.len(), 1);
+    thumbnails.release_selected();
+    assert!(thumbnails.sources.lock().unwrap().entries.is_empty());
+}
+
+#[test]
+fn obsolete_scroll_work_is_cancelled_once_without_dropping_valid_source_seeds() {
+    let document = fixture();
+    let id = document.project.order[0];
+    let (commands, receiver) = mpsc::channel();
+    let mut thumbnails = Thumbnails {
+        commands: Some(commands),
+        ..Default::default()
+    };
+    let source = document.project.source(id).unwrap();
+    let proxy = Arc::new(Proxy {
+        width: 1,
+        height: 1,
+        pixels: vec![[1; 4]],
+        matrix: glam::DMat3::IDENTITY,
+    });
+    thumbnails.seed(
+        source,
+        document.project.development.as_ref().unwrap(),
+        proxy,
+    );
+    let old = key(&document, id);
+    thumbnails.request(old.clone(), source.path.clone(), source.clone(), None);
+    receiver.try_recv().unwrap();
+    thumbnails.cancel_offscreen(&[old]);
+    let before = thumbnails
+        .generation
+        .load(std::sync::atomic::Ordering::Relaxed);
+    thumbnails.cancel_offscreen(&[]);
+    assert_eq!(
+        thumbnails
+            .generation
+            .load(std::sync::atomic::Ordering::Relaxed),
+        before + 1
+    );
+    thumbnails.cancel_offscreen(&[]);
+    assert_eq!(
+        thumbnails
+            .generation
+            .load(std::sync::atomic::Ordering::Relaxed),
+        before + 1
+    );
+    assert!(thumbnails.pending.is_some());
+    assert_eq!(thumbnails.sources.lock().unwrap().entries.len(), 1);
+}
+
+#[test]
+fn disk_worker_reuses_verified_pixels_without_raw_development_and_rejects_changed_bytes() {
+    pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("not-a-raw.ARW");
+        std::fs::write(&path, b"These bytes cannot be developed by LibRaw").unwrap();
+        let mut document = Document::default();
+        let mut source = fixture().project.sources.remove(0);
+        source.path = path.clone();
+        source.fingerprint = Fingerprint::read(&path).unwrap();
+        source.development.dimensions = [2, 1];
+        source.development.active_area = [0, 0, 2, 1];
+        let development = Development::new(crate::raw::version(), [1.; 4]);
+        let id = document.register(source, development.clone()).unwrap();
+        let source = document.project.source(id).unwrap().clone();
+        let disk = disk::DiskCache::at(directory.path().join("cache"));
+        disk.store(
+            &SourceKey::new(&source, &development),
+            &Proxy {
+                width: 2,
+                height: 1,
+                pixels: vec![[1, 2, 3, 0]; 2],
+                matrix: glam::DMat3::IDENTITY,
+            },
+        )
+        .unwrap();
+        let renderers = Arc::new(crate::renderer::RendererCache::default());
+        let mut thumbnails =
+            Thumbnails::with_disk(device.clone(), queue.clone(), renderers.clone(), Some(disk));
+        thumbnails.request(key(&document, id), path.clone(), source.clone(), None);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while thumbnails.pending.is_some() {
+            thumbnails.receive(&document);
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            thumbnails.ready_count(&document, OutputTarget::DisplayP3),
+            1
+        );
+        std::fs::write(&path, b"changed").unwrap();
+        let mut restarted = Thumbnails::with_disk(
+            device,
+            queue,
+            renderers,
+            Some(disk::DiskCache::at(directory.path().join("cache"))),
+        );
+        restarted.request(key(&document, id), path, source, None);
+        while restarted.pending.is_some() {
+            restarted.receive(&document);
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(
+            matches!(restarted.cache.get(&key(&document, id)).unwrap(), Err(error) if error.contains("RAW content changed"))
+        );
+    });
 }

@@ -85,6 +85,7 @@ impl Document {
         Ok(document)
     }
     pub fn import(&mut self, paths: &[PathBuf]) -> Result<()> {
+        let started = std::time::Instant::now();
         for path in paths {
             let (source, wb) = read_source(path)?;
             if let Some(id) = self.find_source(&source.path) {
@@ -97,7 +98,13 @@ impl Document {
             }
             self.register(source, Development::new(crate::raw::version(), wb))?;
         }
-        self.validate()
+        self.validate()?;
+        println!(
+            "raw_import sources={} seconds={:.6}",
+            paths.len(),
+            started.elapsed().as_secs_f64()
+        );
+        Ok(())
     }
     pub fn register(&mut self, source: Source, development: Development) -> Result<SourceId> {
         if self.project.development.is_none() {
@@ -215,11 +222,24 @@ fn metadata_development(metadata: &Metadata) -> Result<SourceDevelopment> {
     })
 }
 pub(super) fn read_source(path: &Path) -> Result<(Source, [f64; 4])> {
+    let (source, raw) = open_source(path)?;
+    Ok((source, raw.metadata.cam_mul))
+}
+pub(super) fn open_source(path: &Path) -> Result<(Source, RawFile)> {
     let path = absolute(path)?;
-    let raw =
-        RawFile::open(&path).map_err(|error| failure(format!("{}: {error}", path.display())))?;
+    let started = std::time::Instant::now();
+    // Hash before opening the handle for development: pathname replacement must not
+    // associate an older open RAW with the new file's fingerprint.
     let fingerprint = Fingerprint::read(&path)
         .map_err(|error| failure(format!("{}: {error}", path.display())))?;
+    let fingerprint_seconds = started.elapsed().as_secs_f64();
+    let tick = std::time::Instant::now();
+    let raw =
+        RawFile::open(&path).map_err(|error| failure(format!("{}: {error}", path.display())))?;
+    println!(
+        "source_registration header_seconds={:.6} fingerprint_seconds={fingerprint_seconds:.6}",
+        tick.elapsed().as_secs_f64()
+    );
     Ok((
         Source {
             id: SourceId(0),
@@ -231,7 +251,7 @@ pub(super) fn read_source(path: &Path) -> Result<(Source, [f64; 4])> {
             orientation: Default::default(),
             crop: None,
         },
-        raw.metadata.cam_mul,
+        raw,
     ))
 }
 pub(super) fn verify_source(expected: &Source, actual: &Source) -> Result<()> {

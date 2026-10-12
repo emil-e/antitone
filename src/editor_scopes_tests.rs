@@ -390,11 +390,14 @@ fn whole_proxy_scopes_are_independent_of_viewport_and_do_not_resize_the_viewer()
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let matrix = glam::DMat3::from_cols_array(&[0.9, 0.02, 0., 0.05, 1.1, 0., 0., 0.03, 0.8]);
+        let shared_renderer = crate::renderer::GpuRenderer::new(&device, &queue)
+            .await
+            .unwrap();
         let images = [OutputTarget::Srgb, OutputTarget::DisplayP3].map(|target| {
             Arc::new(
-                pollster::block_on(GpuImage::new(
+                pollster::block_on(GpuImage::new_shared(
+                    &shared_renderer,
                     &device,
-                    &queue,
                     7,
                     3,
                     &[[4000, 3000, 2000, 0]; 21],
@@ -412,6 +415,7 @@ fn whole_proxy_scopes_are_independent_of_viewport_and_do_not_resize_the_viewer()
         };
         let path = PathBuf::from("scope-fixture.ARW");
         let ready = Ready {
+            thumbnail: None,
             path: path.clone(),
             area,
             floor: crate::processing::CAMERA_INPUT_FLOOR,

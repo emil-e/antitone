@@ -14,6 +14,8 @@ use std::sync::Arc;
 
 #[path = "scopes/geometry.rs"]
 mod geometry;
+#[path = "scopes/shared_renderer.rs"]
+mod shared_renderer;
 
 fn full_frame(size: [u32; 2]) -> FrameRaster {
     FrameRaster::full(
@@ -445,11 +447,14 @@ fn gpu_vector_projection_amplification_and_boundary_tolerance_match_scalar() {
 fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics() {
     pollster::block_on(async {
         let (device, queue) = device().await;
+        let renderer = antitone::renderer::GpuRenderer::new(&device, &queue)
+            .await
+            .unwrap();
         let gpu = Arc::new(GpuScopes::new(&device).await.unwrap());
         let image = Arc::new(
-            GpuImage::new(
+            GpuImage::new_shared(
+                &renderer,
                 &device,
-                &queue,
                 7,
                 3,
                 &[[2000, 3000, 4000, 0]; 21],
@@ -529,9 +534,9 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         assert_eq!(gpu.reduction_count(), 3);
         let other = Arc::new(
-            GpuImage::new(
+            GpuImage::new_shared(
+                &renderer,
                 &device,
-                &queue,
                 7,
                 3,
                 &[[2000, 3000, 4000, 0]; 21],
