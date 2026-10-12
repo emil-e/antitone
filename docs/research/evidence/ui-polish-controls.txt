@@ -1,0 +1,53 @@
+UI polish — shared icons/sections checkpoint
+
+Worktree: .worktrees/ui-polish; branch plan/ui-polish; baseline 0beee3e.
+Environment snapshot: Apple M5 Pro / Metal, macOS 26.6.2;
+  rustc 1.99.0 (b940084d7 2026-09-28), Apple Clang, debug/test profiles.
+These results do not establish macOS 14, other hardware, physical monitor,
+trackpad or native VoiceOver acceptance.
+
+Commands from the worktree root (no downloads/global installs):
+  CARGO_HOME="$PWD/.cache/cargo" CC=/usr/bin/clang CXX=/usr/bin/clang++ \
+    ./scripts/cargo.sh test --offline --features editor --lib editor:: -- --nocapture
+  CARGO_HOME="$PWD/.cache/cargo" CC=/usr/bin/clang CXX=/usr/bin/clang++ \
+    ./scripts/cargo.sh clippy --offline --features editor --lib --tests -- -D warnings
+  CARGO_HOME="$PWD/.cache/cargo" ./scripts/cargo.sh fmt --all -- --check
+  CARGO_HOME="$PWD/.cache/cargo" CC=/usr/bin/clang CXX=/usr/bin/clang++ \
+    ./scripts/cargo.sh build --offline --features editor --bin antitone
+
+Outcomes: 102 editor tests passed, 0 failed, 1 intentionally ignored real-RAW
+integration test, 46 non-editor tests filtered; strict Clippy, formatting and
+debug editor build passed. New coverage includes independent disclosure/reset,
+collapsed adjustment summaries, precision/ID retention, numeric pending-edit
+cancellation and reopen, keyboard and semantic metadata, scope-specific state,
+project/dirty neutrality, missing calibration, crop-draft visibility and
+properly dimmed/non-activating disabled artwork.
+
+Onscreen controls smoke (app-window-only capture attempt):
+  ANTITONE_SMOKE_CONTROLS=1 target/debug/antitone --smoke \
+    ../../samples/DSC04397.ARW 4000 5644 128 32 \
+    ../../samples/DSC04378.ARW 4000 2600 128 128 ../../samples/DSC04416.ARW
+  ANTITONE_SMOKE_SCOPES was unset for this controls-only run.
+  Smoke passed; app reported elapsed_seconds=39.02, submitted_frames=378.
+  Four normal/narrow Roll/Photo holds ran. The existing nonzero-visible-frame
+  gate was retained. RAWs were read-only diagnostic inputs, not recovered grades.
+  One Roll-normal window capture succeeded and was inspected. Other stages
+  could not retrieve window metadata after visibility/occlusion changed.
+  That capture exposed bright disabled icon strokes; painting artwork within
+  the disabled UI scope plus a headless shape regression fixed it afterward.
+  The final disabled-state correction was not freshly recaptured.
+
+Earlier combined smoke with ANTITONE_SMOKE_SCOPES=1 stalled under occlusion,
+before layout holds; an external 120-second timeout stopped the process.
+Unmodified optional scope-readback waiting can return before the smoke's final
+repaint request while the occluded surface submits no scope callback. No host,
+smoke gate or cancellation policy was patched to obtain a pass. This attempt
+is not successful scope/window acceptance. The narrower controls retry omits
+that optional wait, not its visible-frame requirement.
+
+Private captures/full logs remain ignored in .cache/probes/ui-polish/:
+  editor-tests.txt, clippy.txt, controls-smoke.txt,
+  controls-only-smoke.txt, roll-normal.png.
+Full Photo/narrow/crop visual checks, interactive icon/focus usability and
+combined scope/window acceptance remain open. No full numerical/export suite
+or sample edits were performed for this presentation-only slice.

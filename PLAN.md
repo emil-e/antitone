@@ -2,7 +2,9 @@
 
 ## Current focus
 
-Native-camera inversion, orientation/crop/straightening and responsive output-native waveform/vectorscope are implemented and integrated on main; their implementation plans are closed. The crop UX is user-accepted for now. Remaining photographic acceptance and feedback are separately scoped; no next implementation is selected. [Completed geometry/checks](docs/plans/completed/flip-crop-rotate.md), [active acceptance/follow-up](docs/plans/completion.md#geometry).
+The selected [UI polish package](docs/plans/ui-polish.md) is isolated on `plan/ui-polish`. Slice 1 (shared icons, collapsible sections, flatter hierarchy) is implemented and locally verified; visual acceptance is partial. The UX direction/product choices are agreed; selecting/authorizing workspace hierarchy and durable UI preferences is next. [Checkpoint/remaining visual checks](docs/plans/ui-polish.md#slice-1-checkpoint).
+
+Native-camera inversion, orientation/crop/straightening and responsive output-native waveform/vectorscope are implemented and integrated on main; their implementation plans are closed. The proposed polish changes presentation, not their processing contracts. [Completed geometry/checks](docs/plans/completed/flip-crop-rotate.md), [active photographic acceptance/follow-up](docs/plans/completion.md#geometry).
 
 Start here, then use [the documentation map](docs/README.md), [architecture](docs/architecture.md) and [repository workflow](AGENTS.md). This is the current cross-package status/order record; details live in contracts, plans and evidence.
 
@@ -22,7 +24,7 @@ The saveable editor develops RAWs with fixed LibRaw settings, offers full-resolu
 Recovery/relink/undo is recorded but is not the user's highest priority.
 
 1. **Camera/geometry photographic acceptance** — native/settled straightening agreement, rotated Gamma/WB picks, Save/Open and TIFF/EXR reopen on real photographs; synthetic combined checks pass. Dense guides remain separate. [Active acceptance/follow-up](docs/plans/completion.md#geometry).
-2. **Scope acceptance and inspection/interaction polish** — fresh scope-guide/composed-photo visual checks, physical trackpad exercise and remaining viewer-intrusion/layout complaints remain open. [Scope acceptance](docs/plans/completion.md#scopes). Dark-red/cold-toe appearance is a reproducible investigation, not an assumed processing fix. [Interaction](docs/plans/inspection-and-interaction.md), [visual feedback](docs/plans/visual-feedback.md).
+2. **Scope acceptance and inspection/interaction polish** — the selected [UI design proposal](docs/plans/ui-polish.md) addresses layout/coherence and shared feedback language; the first control-primitives slice is implemented on its worktree, while remaining slices await selection. Fresh scope-guide/composed-photo visual checks and physical trackpad exercise remain separate. [Scope acceptance](docs/plans/completion.md#scopes). Dark-red/cold-toe appearance is a reproducible investigation, not an assumed processing fix. [Interaction](docs/plans/inspection-and-interaction.md), [visual feedback](docs/plans/visual-feedback.md).
 3. **Larger completion work** — explicitly accepted/cancellable roll estimates, photographic controls/B&W design, general operation feedback and separately scoped readability work. [Package](docs/plans/completion.md).
 4. **Export/release acceptance** — progress/cancellation/batch snapshots/metadata, observed aggregate-resource needs, packaging/licensing and broader device/monitor/interoperability checks. [Scope](docs/plans/completion.md#export-and-release-work).
 5. **Later persistence** — recovery, relink/source-change UI and undo/redo. Never silently overwrite explicit saves or resample reference RGB. [Package](docs/plans/durable-projects.md).

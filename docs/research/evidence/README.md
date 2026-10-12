@@ -2,6 +2,10 @@
 
 Compact text logs promoted from `.cache/probes` during the documentation reorganization. They retain their original contents/paths and are **captured checkpoint outcomes, not a fresh run or CI/device certification**. Reproduction writes new outputs to cache; do not overwrite archived evidence in place.
 
+## UI-polish control-primitives checkpoint
+
+- [Shared icons and collapsible sections](ui-polish-controls.txt): focused editor checks, debug build, controls-only real-window smoke and partial capture; remaining visual/physical acceptance and the occluded scope-wait attempt are explicit. [Active package](../../plans/ui-polish.md#slice-1-checkpoint).
+
 ## Native-camera replacement checkpoint
 
 - [Model-4 numerical/source/editor/output snapshot](camera-inversion.txt): isolated flat-field baseline, unchanged tolerances, independent review fixes, real train/flat-field regressions and release build. No new onscreen or calibrated-colour acceptance. [Implementation closure](../../plans/completed/camera-inversion.md).

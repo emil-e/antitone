@@ -139,6 +139,7 @@ impl Editor {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
     pub(super) fn composition_controls(&mut self, ui: &mut egui::Ui) {
+        use icons::Icon;
         if self.crop_edit.is_none() {
             let editable = !self.busy && self.ready.is_some() && self.pick.is_none();
             let mut begin = false;
@@ -149,42 +150,79 @@ impl Editor {
                     ui,
                     "composition",
                     "Composition",
-                    Some(!self.photo_orientation.is_identity() || self.crop.is_some()),
+                    controls::SectionHeader {
+                        summary: if self.crop.is_some() {
+                            "Cropped"
+                        } else {
+                            "Full frame"
+                        },
+                        changed: !self.photo_orientation.is_identity() || self.crop.is_some(),
+                        reset: Some(!self.photo_orientation.is_identity() || self.crop.is_some()),
+                        default_open: Some(true),
+                    },
                     |ui| {
                         ui.horizontal(|ui| {
-                            if ui.button("Turn left").clicked() {
+                            if icons::button(
+                                ui,
+                                Icon::TurnLeft,
+                                true,
+                                "Turn left",
+                                "Turn the displayed photo 90° left.",
+                            )
+                            .clicked()
+                            {
                                 self.photo_orientation.turn_counterclockwise();
                             }
-                            if ui.button("Turn right").clicked() {
+                            if icons::button(
+                                ui,
+                                Icon::TurnRight,
+                                true,
+                                "Turn right",
+                                "Turn the displayed photo 90° right.",
+                            )
+                            .clicked()
+                            {
                                 self.photo_orientation.turn_clockwise();
                             }
-                        });
-                        ui.horizontal(|ui| {
-                            if ui
-                                .button("Flip horizontal")
-                                .on_hover_text("Flip the displayed photo left/right.")
-                                .clicked()
+                            if icons::button(
+                                ui,
+                                Icon::FlipHorizontal,
+                                true,
+                                "Flip horizontal",
+                                "Flip the displayed photo left/right.",
+                            )
+                            .clicked()
                             {
                                 self.photo_orientation.flips.horizontal ^= true;
                             }
-                            if ui
-                                .button("Flip vertical")
-                                .on_hover_text("Flip the displayed photo top/bottom.")
-                                .clicked()
+                            if icons::button(
+                                ui,
+                                Icon::FlipVertical,
+                                true,
+                                "Flip vertical",
+                                "Flip the displayed photo top/bottom.",
+                            )
+                            .clicked()
                             {
                                 self.photo_orientation.flips.vertical ^= true;
                             }
-                        });
-                        ui.horizontal(|ui| {
-                            begin = ui
-                                .button("Crop…")
-                                .on_hover_text("Edit this photo's crop and straighten.")
-                                .clicked();
+                            begin = icons::button(
+                                ui,
+                                Icon::Crop,
+                                true,
+                                "Crop…",
+                                "Edit this photo's crop and straighten.",
+                            )
+                            .clicked();
                             if self.crop.is_some() {
-                                reset_crop = ui
-                                    .button("Reset crop")
-                                    .on_hover_text("Reset framing; keeps orientation and colour.")
-                                    .clicked();
+                                reset_crop = icons::button(
+                                    ui,
+                                    Icon::Reset,
+                                    true,
+                                    "Reset crop",
+                                    "Reset framing; keeps orientation and colour.",
+                                )
+                                .clicked();
                             }
                         });
                     },
@@ -217,120 +255,148 @@ impl Editor {
         let mut apply = false;
         let mut cancel = false;
         let mut reset = false;
-        controls::section(ui, "composition", "Composition", None, |ui| {
-            ui.strong("Crop & straighten");
-            let previous_ratio = edit.ratio;
-            ui.horizontal(|ui| {
-                ui.label("Aspect");
-                egui::ComboBox::from_id_salt("crop-aspect")
-                    .width(115.)
-                    .selected_text(aspect_label(edit.ratio))
-                    .show_ui(ui, |ui| {
-                        for (label, ratio) in [
-                            ("Free", None),
-                            ("Current", Some(f64::from(size[0]) / f64::from(size[1]))),
-                            (
-                                "Original",
-                                Some(f64::from(full.size()[0]) / f64::from(full.size()[1])),
-                            ),
-                            ("1:1", Some(1.)),
-                            ("3:2", Some(1.5)),
-                            ("4:3", Some(4. / 3.)),
-                            ("5:4", Some(1.25)),
-                            ("16:9", Some(16. / 9.)),
-                        ] {
-                            ui.selectable_value(&mut edit.ratio, ratio, label);
-                        }
-                    });
-                if ui
-                    .add_enabled(edit.ratio.is_some(), egui::Button::new("↔"))
-                    .on_hover_text("Swap portrait / landscape")
+        controls::section(
+            ui,
+            "composition",
+            "Composition",
+            controls::SectionHeader {
+                summary: "",
+                changed: false,
+                reset: None,
+                default_open: None,
+            },
+            |ui| {
+                ui.strong("Crop & straighten");
+                let previous_ratio = edit.ratio;
+                ui.horizontal(|ui| {
+                    ui.label("Aspect");
+                    egui::ComboBox::from_id_salt("crop-aspect")
+                        .width(115.)
+                        .selected_text(aspect_label(edit.ratio))
+                        .show_ui(ui, |ui| {
+                            for (label, ratio) in [
+                                ("Free", None),
+                                ("Current", Some(f64::from(size[0]) / f64::from(size[1]))),
+                                (
+                                    "Original",
+                                    Some(f64::from(full.size()[0]) / f64::from(full.size()[1])),
+                                ),
+                                ("1:1", Some(1.)),
+                                ("3:2", Some(1.5)),
+                                ("4:3", Some(4. / 3.)),
+                                ("5:4", Some(1.25)),
+                                ("16:9", Some(16. / 9.)),
+                            ] {
+                                ui.selectable_value(&mut edit.ratio, ratio, label);
+                            }
+                        });
+                    if icons::button(
+                        ui,
+                        Icon::Swap,
+                        edit.ratio.is_some(),
+                        "Swap portrait / landscape",
+                        "Swap portrait / landscape",
+                    )
                     .clicked()
-                {
-                    edit.ratio = edit.ratio.map(|r| 1. / r);
-                }
-            });
-            if edit.ratio != previous_ratio
-                && let Some(ratio) = edit.ratio
-            {
-                let extent = [f64::from(size[0]), f64::from(size[0]) / ratio];
-                let min = [
-                    (f64::from(size[0]) - extent[0]) * 0.5,
-                    (f64::from(size[1]) - extent[1]) * 0.5,
-                ];
-                edit.draft = composition.crop_from_frame(
-                    FramePoint(min),
-                    FramePoint([min[0] + extent[0], min[1] + extent[1]]),
-                );
-            }
-            let mut degrees = -edit.draft.angle.to_degrees() * composition.handedness();
-            let mut changed = false;
-            let mut reset_angle = false;
-            ui.horizontal(|ui| {
-                ui.label("Angle");
-                changed = ui
-                    .add(
-                        egui::DragValue::new(&mut degrees)
-                            .range(-180.0..=180.0)
-                            .speed(0.1)
-                            .fixed_decimals(2)
-                            .suffix("°"),
-                    )
-                    .changed();
-                reset_angle = ui
-                    .add_enabled(degrees != 0., egui::Button::new("↺").small())
-                    .on_hover_text("Reset straighten")
-                    .clicked();
-            });
-            changed |= ui
-                .scope(|ui| {
-                    ui.spacing_mut().slider_width = ui.available_width();
-                    ui.add(
-                        egui::Slider::new(&mut degrees, -180.0..=180.0)
-                            .show_value(false)
-                            .step_by(0.1)
-                            .clamping(egui::SliderClamping::Never),
-                    )
-                    .changed()
-                })
-                .inner;
-            if changed || reset_angle {
-                let angle = if reset_angle {
-                    0.
-                } else {
-                    -degrees.to_radians() * composition.handedness()
-                };
-                match edit.draft.straightened(area, angle) {
-                    Ok(crop) => edit.draft = crop,
-                    Err(error) => self.status = format!("Straighten rejected: {error}"),
-                }
-            }
-            ui.checkbox(&mut edit.guides, "Thirds guides")
-                .on_hover_text("Composition aid only; never affects measurements or exports.");
-            let current = Composition::with_crop(
-                area,
-                self.roll_orientation,
-                self.photo_orientation,
-                Some(edit.draft),
-            )
-            .unwrap()
-            .size();
-            ui.small(format!("{} × {} pixels", current[0], current[1]));
-            ui.separator();
-            ui.horizontal(|ui| {
-                reset = ui
-                    .button("Reset")
-                    .on_hover_text("Reset draft crop and angle; keeps orientation and colour.")
-                    .clicked();
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    apply = ui
-                        .add(egui::Button::new("Apply").fill(ui.visuals().selection.bg_fill))
-                        .on_hover_text("Enter")
-                        .clicked();
-                    cancel = ui.button("Cancel").on_hover_text("Escape").clicked();
+                    {
+                        edit.ratio = edit.ratio.map(|r| 1. / r);
+                    }
                 });
-            });
-        });
+                if edit.ratio != previous_ratio
+                    && let Some(ratio) = edit.ratio
+                {
+                    let extent = [f64::from(size[0]), f64::from(size[0]) / ratio];
+                    let min = [
+                        (f64::from(size[0]) - extent[0]) * 0.5,
+                        (f64::from(size[1]) - extent[1]) * 0.5,
+                    ];
+                    edit.draft = composition.crop_from_frame(
+                        FramePoint(min),
+                        FramePoint([min[0] + extent[0], min[1] + extent[1]]),
+                    );
+                }
+                let mut degrees = -edit.draft.angle.to_degrees() * composition.handedness();
+                let mut changed = false;
+                let mut reset_angle = false;
+                icons::row(ui, |ui| {
+                    ui.label("Angle");
+                    changed = ui
+                        .add(
+                            egui::DragValue::new(&mut degrees)
+                                .range(-180.0..=180.0)
+                                .speed(0.1)
+                                .fixed_decimals(2)
+                                .suffix("°"),
+                        )
+                        .changed();
+                    reset_angle = icons::button(
+                        ui,
+                        Icon::Reset,
+                        degrees != 0.,
+                        "Reset straighten",
+                        "Reset straighten",
+                    )
+                    .clicked();
+                });
+                changed |= ui
+                    .scope(|ui| {
+                        ui.spacing_mut().slider_width = ui.available_width();
+                        ui.add(
+                            egui::Slider::new(&mut degrees, -180.0..=180.0)
+                                .show_value(false)
+                                .step_by(0.1)
+                                .clamping(egui::SliderClamping::Never),
+                        )
+                        .changed()
+                    })
+                    .inner;
+                if changed || reset_angle {
+                    let angle = if reset_angle {
+                        0.
+                    } else {
+                        -degrees.to_radians() * composition.handedness()
+                    };
+                    match edit.draft.straightened(area, angle) {
+                        Ok(crop) => edit.draft = crop,
+                        Err(error) => self.status = format!("Straighten rejected: {error}"),
+                    }
+                }
+                icons::toggle(
+                    ui,
+                    Icon::Guides,
+                    &mut edit.guides,
+                    "Thirds guides",
+                    "Show thirds guides. Composition aid only; never affects measurements or exports.",
+                );
+                let current = Composition::with_crop(
+                    area,
+                    self.roll_orientation,
+                    self.photo_orientation,
+                    Some(edit.draft),
+                )
+                .unwrap()
+                .size();
+                ui.small(format!("{} × {} pixels", current[0], current[1]));
+                ui.separator();
+                icons::row(ui, |ui| {
+                    reset = icons::button(
+                        ui,
+                        Icon::Reset,
+                        true,
+                        "Reset",
+                        "Reset draft crop and angle; keeps orientation and colour.",
+                    )
+                    .clicked();
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        apply = ui
+                            .add(egui::Button::new("Apply").fill(ui.visuals().selection.bg_fill))
+                            .on_hover_text("Enter")
+                            .clicked();
+                        cancel = ui.button("Cancel").on_hover_text("Escape").clicked();
+                    });
+                });
+            },
+        );
         if reset {
             edit.draft = Crop::from_region(area);
             edit.ratio = None;

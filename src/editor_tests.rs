@@ -440,6 +440,7 @@ fn app_frame(
     context: &egui::Context,
     events: Vec<egui::Event>,
 ) -> Vec<(String, egui::Rect)> {
+    context.enable_accesskit();
     let mut output = context.run_ui(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -454,7 +455,11 @@ fn app_frame(
         },
     );
     output.textures_delta.clear();
-    output
+    ui_labels(output)
+}
+
+fn ui_labels(output: egui::FullOutput) -> Vec<(String, egui::Rect)> {
+    let mut labels: Vec<_> = output
         .shapes
         .into_iter()
         .filter_map(|shape| {
@@ -467,7 +472,25 @@ fn app_frame(
                 None
             }
         })
-        .collect()
+        .collect();
+    let painted: std::collections::HashSet<_> =
+        labels.iter().map(|(label, _)| label.clone()).collect();
+    if let Some(update) = output.platform_output.accesskit_update {
+        for (_, node) in update.nodes {
+            if let (Some(label), Some(bounds)) = (node.label(), node.bounds())
+                && !painted.contains(label)
+            {
+                labels.push((
+                    label.into(),
+                    egui::Rect::from_min_max(
+                        egui::pos2(bounds.x0 as f32, bounds.y0 as f32),
+                        egui::pos2(bounds.x1 as f32, bounds.y1 as f32),
+                    ),
+                ));
+            }
+        }
+    }
+    labels
 }
 #[test]
 fn crop_panel_is_photo_only_pinned_and_survives_tab_changes_at_narrow_widths() {
@@ -1321,6 +1344,11 @@ fn flip_buttons_are_repeatable_scoped_actions_and_disabled_when_busy_or_picking(
             click_section_button(&mut editor, &context, section, label);
             assert_eq!((editor.roll_orientation, editor.photo_orientation), before);
         }
+        if section == "Composition" {
+            editor.tab = 0;
+            click_section_header(&mut editor, &context, "Scan orientation");
+            editor.tab = 1;
+        }
         editor.begin_crop();
         let text = controls_frame(&mut editor, &context, 315., vec![]);
         let tabs = text.iter().find(|(label, _)| label == "Roll").unwrap().1;
@@ -1371,6 +1399,28 @@ fn roll_turn_controls_preserve_photo_crop_and_grade_and_are_disabled_during_pick
     let context = egui::Context::default();
     for _ in 0..3 {
         app_frame(&mut editor, &context, vec![]);
+    }
+    let labels = app_frame(&mut editor, &context, vec![]);
+    let header = labels
+        .iter()
+        .find(|(label, _)| label == "Scan orientation")
+        .unwrap()
+        .1
+        .center();
+    for pressed in [true, false] {
+        app_frame(
+            &mut editor,
+            &context,
+            vec![
+                egui::Event::PointerMoved(header),
+                egui::Event::PointerButton {
+                    pos: header,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
     }
     let labels = app_frame(&mut editor, &context, vec![]);
     let title = labels
@@ -1444,7 +1494,7 @@ fn roll_turn_controls_preserve_photo_crop_and_grade_and_are_disabled_during_pick
     let reset = labels
         .iter()
         .find(|(label, rect)| {
-            label == "↺"
+            label == "Reset Scan orientation"
                 && (rect.center().y - title.center().y).abs() < 3.
                 && rect.left() > title.right()
         })
@@ -1667,6 +1717,7 @@ fn controls_frame_sized(
     height: f32,
     events: Vec<egui::Event>,
 ) -> Vec<(String, egui::Rect)> {
+    context.enable_accesskit();
     let mut output = context.run_ui(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -1681,27 +1732,49 @@ fn controls_frame_sized(
         },
     );
     output.textures_delta.clear();
-    output
-        .shapes
-        .into_iter()
-        .filter_map(|shape| {
-            if let egui::Shape::Text(text) = shape.shape {
-                Some((
-                    text.galley.job.text.clone(),
-                    egui::Rect::from_min_size(text.pos, text.galley.size()),
-                ))
-            } else {
-                None
-            }
-        })
-        .collect()
+    ui_labels(output)
 }
+
+fn click_section_header(editor: &mut Editor, context: &egui::Context, section: &str) {
+    let text = controls_frame(editor, context, 315., vec![]);
+    let position = text
+        .iter()
+        .find(|(label, _)| label == section)
+        .unwrap()
+        .1
+        .center();
+    for pressed in [true, false] {
+        controls_frame(
+            editor,
+            context,
+            315.,
+            vec![
+                egui::Event::PointerMoved(position),
+                egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+    }
+}
+
 fn click_section_button(editor: &mut Editor, context: &egui::Context, section: &str, label: &str) {
     for _ in 0..3 {
         controls_frame(editor, context, 315., vec![]);
     }
-    let text = controls_frame(editor, context, 315., vec![]);
-    let title = text.iter().find(|(s, _)| s == section).unwrap().1;
+    let mut text = controls_frame(editor, context, 315., vec![]);
+    let mut title = text.iter().find(|(s, _)| s == section).unwrap().1;
+    if !text
+        .iter()
+        .any(|(s, r)| s == label && r.top() > title.bottom())
+    {
+        click_section_header(editor, context, section);
+        text = controls_frame(editor, context, 315., vec![]);
+        title = text.iter().find(|(s, _)| s == section).unwrap().1;
+    }
     let button = text
         .iter()
         .find(|(s, r)| s == label && r.top() > title.bottom())
@@ -1727,15 +1800,26 @@ fn click_section_button(editor: &mut Editor, context: &egui::Context, section: &
 }
 fn click_section_reset(editor: &mut Editor, context: &egui::Context, name: &str) {
     let text = controls_frame(editor, context, 315., vec![]);
-    let title = text.iter().find(|(label, _)| label == name).unwrap().1;
+    let title = text
+        .iter()
+        .find(|(label, _)| {
+            label
+                == if name == "Gamma balance" {
+                    "Balance"
+                } else {
+                    name
+                }
+        })
+        .unwrap()
+        .1;
     let reset = text
         .iter()
         .find(|(label, rect)| {
-            label == "↺"
-                && (rect.center().y - title.center().y).abs() < 3.
+            label == &format!("Reset {name}")
+                && rect.y_range().contains(title.center().y)
                 && rect.left() > title.right()
         })
-        .unwrap()
+        .unwrap_or_else(|| panic!("missing reset {name}: {text:?}"))
         .1
         .center();
     for pressed in [true, false] {
@@ -1769,10 +1853,8 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
                     "Scan orientation",
                     "Calibration",
                     "Gamma & balance",
-                    "Gamma balance",
+                    "Balance",
                     "Toe & shoulder",
-                    "Toe",
-                    "Shoulder",
                     "Exposure",
                     "Output",
                 ]
@@ -1781,6 +1863,10 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
             };
             for label in &required {
                 assert!(labels.contains(label), "missing {label}");
+            }
+            if tab == 0 {
+                assert!(!labels.contains(&"Gamma balance"));
+                assert!(!labels.contains(&"Toe") && !labels.contains(&"Shoulder"));
             }
             assert!(!labels.contains(&if tab == 0 {
                 "Composition"
@@ -1838,6 +1924,107 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
         }
     }
 }
+#[test]
+fn section_expansion_is_scope_specific_and_does_not_change_project_state() {
+    let context = egui::Context::default();
+    let (mut editor, _send, _receiver) = fixture();
+    editor.roll.exposure = 1.23456789;
+    editor.photo.exposure = -2.3456789;
+    editor.sync_document();
+    let before = editor.document.project.clone();
+    let dirty = editor.document.dirty();
+    let first = controls_frame(&mut editor, &context, 315., vec![]);
+    assert!(
+        first
+            .iter()
+            .any(|(label, _)| label == "Adjusted · +1.23 EV")
+    );
+    click_section_header(&mut editor, &context, "Exposure");
+    let roll = controls_frame(&mut editor, &context, 315., vec![]);
+    assert!(roll.iter().any(|(label, _)| label == "EV"));
+    editor.tab = 1;
+    click_section_header(&mut editor, &context, "Exposure");
+    let photo = controls_frame(&mut editor, &context, 315., vec![]);
+    assert!(
+        photo
+            .iter()
+            .any(|(label, _)| label == "Adjusted · -2.35 EV")
+    );
+    editor.tab = 0;
+    assert!(
+        controls_frame(&mut editor, &context, 315., vec![])
+            .iter()
+            .any(|(label, _)| label == "EV")
+    );
+    editor.sync_document();
+    assert_eq!(editor.document.project, before);
+    assert_eq!(editor.document.dirty(), dirty);
+    assert_eq!(editor.roll.exposure, 1.23456789);
+    assert_eq!(editor.photo.exposure, -2.3456789);
+}
+
+#[test]
+fn collapsed_calibration_keeps_missing_measurements_visible() {
+    let context = egui::Context::default();
+    let (mut editor, _send, _receiver) = fixture();
+    editor.dmin = None;
+    editor.dmax = None;
+    click_section_header(&mut editor, &context, "Calibration");
+    let text = controls_frame(&mut editor, &context, 315., vec![]);
+    assert!(
+        text.iter()
+            .any(|(label, _)| label == "Dmin + Dmax not measured")
+    );
+    assert!(!text.iter().any(|(label, _)| label == "Pick Dmax"));
+    editor.dmin = Some(glam::DVec3::splat(0.2));
+    let text = controls_frame(&mut editor, &context, 315., vec![]);
+    assert!(text.iter().any(|(label, _)| label == "Dmax not measured"));
+    assert!(!text.iter().any(|(label, _)| label == "Pick Dmax"));
+}
+
+#[test]
+fn crop_draft_controls_stay_visible_when_composition_was_collapsed() {
+    let context = egui::Context::default();
+    let (mut editor, _send, _receiver) = fixture();
+    add_ready_fixture(&mut editor);
+    editor.tab = 1;
+    click_section_header(&mut editor, &context, "Composition");
+    assert!(
+        !controls_frame(&mut editor, &context, 315., vec![])
+            .iter()
+            .any(|(label, _)| label == "Crop…")
+    );
+    let before = (
+        editor.crop,
+        editor.photo_orientation,
+        editor.roll,
+        editor.photo,
+    );
+    editor.begin_crop();
+    let text = controls_frame(&mut editor, &context, 315., vec![]);
+    for label in ["Aspect", "Angle", "Apply", "Cancel", "Thirds guides"] {
+        assert!(
+            text.iter().any(|(s, _)| s == label),
+            "missing draft control {label}"
+        );
+    }
+    editor.finish_crop(false);
+    assert!(
+        !controls_frame(&mut editor, &context, 315., vec![])
+            .iter()
+            .any(|(label, _)| label == "Crop…")
+    );
+    assert_eq!(
+        (
+            editor.crop,
+            editor.photo_orientation,
+            editor.roll,
+            editor.photo
+        ),
+        before
+    );
+}
+
 #[test]
 fn section_and_color_resets_preserve_calibration_and_other_edit_scopes() {
     let context = egui::Context::default();
@@ -1902,6 +2089,7 @@ fn response_section_is_reachable_by_scrolling_and_output_stays_pinned() {
     for (width, height) in [(315., 800.), (270., 600.)] {
         let context = egui::Context::default();
         let (mut editor, _send, _receiver) = fixture();
+        click_section_header(&mut editor, &context, "Toe & shoulder");
         for _ in 0..3 {
             controls_frame_sized(&mut editor, &context, width, height, vec![]);
         }
@@ -1964,6 +2152,7 @@ fn original_grade_requires_explicit_response_opt_in_and_drawing_never_regrades_i
     let before = editor.roll;
     let references = (editor.dmin, editor.dmax);
     let photo = editor.photo;
+    click_section_header(&mut editor, &context, "Toe & shoulder");
     let text = controls_frame(&mut editor, &context, 315., vec![]);
     assert_eq!(editor.roll, before);
     assert!(

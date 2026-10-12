@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="800" viewBox="0 0 1100 800" role="img" aria-labelledby="title description">
+  <title id="title">Antitone proposed workspace — illustrative crop mode</title>
+  <desc id="description">Synthetic, nonfunctional design sketch: distinct scopes and inspector on the right, workflow tabs, collapsible sections, a contextual crop toolbar over the photo, permanent bottom viewer controls, filmstrip and deliberate status footer. Not a screenshot or final icon design.</desc>
+  <defs>
+    <linearGradient id="photo" x2="0" y2="1"><stop stop-color="#535e66"/><stop offset="1" stop-color="#252e33"/></linearGradient>
+    <g id="reset" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4a6 6 0 1 1-2 5M5 1v4H1"/></g>
+    <g id="fit" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 6V1h5m4 0h5v5m0 4v5h-5m-4 0H1v-5"/></g>
+    <g id="eye" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 8q7-10 14 0-7 10-14 0Z"/><circle cx="8" cy="8" r="2.5"/></g>
+    <g id="flip" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 0v16M5 3 1 13h4Zm6 0 4 10h-4Z"/></g>
+    <g id="crop" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 0v12h12M0 4h12v12"/></g>
+    <g id="guide" fill="none" stroke="currentColor" stroke-width="1"><rect x="1" y="1" width="14" height="14"/><path d="M6 1v14M10 1v14M1 6h14M1 10h14"/></g>
+  </defs>
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 13px; fill: #d8dce0; }
+    .muted { fill: #969da5; font-size: 11px; }
+    .heading { font-weight: 600; }
+    .line { stroke: #42474e; stroke-width: 1; }
+    .icon { color: #d8dce0; }
+    .button { fill: #363c43; rx: 5; }
+  </style>
+  <rect width="1100" height="800" fill="#1c2025"/>
+  <rect width="1100" height="24" fill="#252a30"/>
+  <text x="16" y="16" class="heading" style="font-size:11px">Antitone</text><text x="89" y="16" style="font-size:11px">File</text><text x="125" y="16" style="font-size:11px">Edit</text><text x="162" y="16" style="font-size:11px">View</text><text x="205" y="16" style="font-size:11px">Window</text><text x="269" y="16" style="font-size:11px">Help</text>
+  <rect y="24" width="1100" height="38" fill="#292e34"/>
+  <circle cx="20" cy="43" r="5" fill="#737980"/><circle cx="39" cy="43" r="5" fill="#737980"/><circle cx="58" cy="43" r="5" fill="#737980"/>
+  <text x="550" y="47" text-anchor="middle" class="heading">Untitled · Modified</text>
+  <rect x="786" y="62" width="314" height="604" fill="#272c32"/>
+  <path d="M786 62v604" class="line"/>
+  <text x="800" y="86" class="heading">▾ Scopes</text><text x="1028" y="86" class="muted">Waveform ▾</text>
+  <text x="802" y="109" fill="#83b2d5">RGB</text><text x="836" y="109" class="muted">Luma</text>
+  <rect x="800" y="120" width="286" height="173" rx="4" fill="#16191d"/>
+  <g stroke="#3d444d" stroke-width="0.7"><path d="M820 136h254M820 178h254M820 220h254M820 277h254"/></g>
+  <g class="muted" style="font-size:9px"><text x="803" y="139">100</text><text x="807" y="223">50</text><text x="811" y="280">0</text></g>
+  <path d="M824 252 840 239 865 256 894 210 916 225 938 190 963 237 988 172 1006 185 1034 230 1070 240" fill="none" stroke="#a3b08a" stroke-width="3" opacity="0.7"/>
+  <path d="M824 245 850 220 877 239 898 199 932 211 961 190 987 205 1021 196 1047 241 1070 225" fill="none" stroke="#7f9db8" stroke-width="3" opacity="0.6"/>
+  <rect x="800" y="120" width="286" height="173" rx="4" fill="#16191d" opacity="0.8"/>
+  <text x="943" y="210" text-anchor="middle">Apply crop to update scopes</text>
+  <text x="943" y="313" text-anchor="middle" class="muted">Display P3 · Approximate · Paused</text>
+  <path d="M786 330h314" class="line"/><path d="M929 330h28" stroke="#757d87" stroke-width="3"/>
+  <rect x="786" y="339" width="314" height="42" fill="#24292f"/>
+  <text x="832" y="364" text-anchor="middle">Roll</text><text x="881" y="364" class="muted">→</text><text x="925" y="364" text-anchor="middle" class="heading">Photo</text><text x="975" y="364" class="muted">→</text><text x="1038" y="364" text-anchor="middle">Rendering</text>
+  <path d="M889 380h73" stroke="#78afd5" stroke-width="3"/>
+  <text x="802" y="409" class="heading">▾ Composition</text><use href="#reset" transform="translate(1067 397)" class="icon"/>
+  <g class="icon"><use href="#reset" transform="translate(811 430)"/><use href="#reset" transform="translate(846 430) scale(-1 1) translate(-16 0)"/><use href="#flip" transform="translate(881 430)"/><use href="#flip" transform="translate(916 430) rotate(90 8 8)"/><use href="#crop" transform="translate(952 430)"/></g>
+  <rect x="946" y="424" width="28" height="28" rx="5" fill="#78afd5" opacity="0.15"/>
+  <text x="802" y="476" class="heading">▸ White balance</text><text x="987" y="476" class="muted">Adjusted</text><use href="#reset" transform="translate(1067 464)" class="icon"/>
+  <path d="M800 490h286" class="line"/>
+  <text x="802" y="517" class="heading">▾ Exposure</text><use href="#reset" transform="translate(1067 505)" class="icon"/>
+  <text x="804" y="550">Exposure</text><text x="1069" y="550" text-anchor="end">+0.35 EV</text>
+  <path d="M805 574h271" stroke="#515b66" stroke-width="3"/><path d="M805 574h151" stroke="#78afd5" stroke-width="3"/><circle cx="956" cy="574" r="5" fill="#d4dce5"/>
+  <rect x="22" y="94" width="742" height="506" fill="url(#photo)"/>
+  <path d="M22 394 123 293 228 344 335 230 455 364 563 316 764 441V600H22Z" fill="#687174" opacity="0.6"/>
+  <path d="M22 465 174 409 301 470 437 384 602 459 764 413V600H22Z" fill="#414f4d"/>
+  <path d="M22 567 281 491 463 538 764 483V600H22Z" fill="#7c8277" opacity="0.4"/>
+  <rect x="77" y="127" width="632" height="422" fill="none" stroke="#e8e9e5" stroke-width="1"/>
+  <g stroke="#e8e9e5" opacity="0.4" stroke-width="0.7"><path d="M288 127v422M499 127v422M77 268h632M77 408h632"/></g>
+  <g stroke="#fff" stroke-width="3" fill="none"><path d="M77 145v-18h18M691 127h18v18M77 531v18h18M691 549h18v-18"/></g>
+  <rect x="43" y="573" width="700" height="44" rx="8" fill="#171c22" stroke="#58626e"/>
+  <text x="58" y="600" class="heading">Crop</text>
+  <rect x="105" y="581" width="83" height="28" class="button"/><text x="117" y="600">3:2 ▾</text>
+  <text x="201" y="600">↔</text><text x="238" y="600">Angle</text><rect x="283" y="581" width="64" height="28" class="button"/><text x="295" y="600">−1.20°</text>
+  <use href="#guide" transform="translate(366 587)" class="icon"/><use href="#reset" transform="translate(403 587)" class="icon"/>
+  <text x="443" y="600" class="muted">Details ▾</text>
+  <rect x="568" y="581" width="73" height="28" class="button"/><text x="582" y="600">Cancel</text>
+  <rect x="652" y="581" width="76" height="28" rx="5" fill="#547e9b"/><text x="671" y="600" class="heading">Apply</text>
+  <rect x="0" y="630" width="786" height="36" fill="#272c32"/>
+  <use href="#fit" transform="translate(17 640)" class="icon"/><text x="51" y="653">Fit ▾</text><text x="118" y="653">−</text><text x="151" y="653">+</text><path d="M188 639v18" class="line"/>
+  <use href="#eye" transform="translate(204 640)" class="icon"/><text x="235" y="653" class="muted">Inspection</text>
+  <text x="628" y="653" class="muted">Approximate</text><text x="755" y="653" text-anchor="end">P3</text>
+  <rect y="666" width="1100" height="106" fill="#20252b"/><path d="M0 666h1100" class="line"/>
+  <g fill="#39444c"><rect x="16" y="679" width="112" height="65" rx="3"/><rect x="148" y="679" width="112" height="65" rx="3"/><rect x="280" y="679" width="112" height="65" rx="3"/></g>
+  <rect x="144" y="675" width="120" height="89" rx="4" fill="none" stroke="#78afd5" stroke-width="2"/>
+  <text x="17" y="760" class="muted">Frame 01.ARW</text><text x="149" y="760" class="muted">Frame 02.ARW</text><text x="281" y="760" class="muted">Frame 03.ARW</text>
+  <rect y="773" width="1100" height="27" fill="#272c32"/><text x="16" y="791" class="muted">Frame 02.ARW · 2 / 3 · 5400 × 3600</text><text x="1084" y="791" text-anchor="end" class="muted">Illustrative proposal — synthetic image and scope, not app output</text>
+</svg>

@@ -63,66 +63,83 @@ pub(super) struct FlatPreview {
 
 impl Editor {
     pub(super) fn flat_controls(&mut self, ui: &mut egui::Ui) {
-        controls::section(ui, "flat-field", "Flat-field correction", None, |ui| {
-            ui.add_enabled_ui(
-                !self.busy && self.pick.is_none() && self.crop_edit.is_none(),
-                |ui| {
-                    if ui.button("Choose reference RAW…").clicked()
-                        && let Some(path) = rfd::FileDialog::new()
-                            .set_title("Bare light source · same setup, without film")
-                            .add_filter("Camera RAW", &["arw"])
-                            .pick_file()
-                    {
-                        self.begin_flat_edit(path, None);
-                    }
-                    if let Some(settings) = self.document.project.flat_field.clone() {
-                        let path = self.document.source_path(settings.reference).ok();
-                        ui.label(
-                            path.as_ref()
-                                .and_then(|p| p.file_name())
-                                .map(|name| name.to_string_lossy().into_owned())
-                                .unwrap_or_else(|| "Reference RAW".into()),
-                        );
-                        let mut enabled = settings.enabled;
-                        if ui.checkbox(&mut enabled, "Enabled").changed() {
-                            self.sync_document();
-                            let mut candidate = self.document.clone();
-                            candidate.project.flat_field.as_mut().unwrap().enabled = enabled;
-                            self.start_document(DocumentWork::Correction(
-                                candidate,
-                                self.current_source,
-                            ));
+        let settings = self.document.project.flat_field.as_ref();
+        let summary = match settings {
+            Some(settings) if settings.enabled => "Enabled · check calibration after changes",
+            Some(_) => "Disabled",
+            None => "Not configured",
+        };
+        controls::section(
+            ui,
+            "flat-field",
+            "Flat-field correction",
+            controls::SectionHeader {
+                summary,
+                changed: settings.is_some(),
+                reset: None,
+                default_open: Some(false),
+            },
+            |ui| {
+                ui.add_enabled_ui(
+                    !self.busy && self.pick.is_none() && self.crop_edit.is_none(),
+                    |ui| {
+                        if ui.button("Choose reference RAW…").clicked()
+                            && let Some(path) = rfd::FileDialog::new()
+                                .set_title("Bare light source · same setup, without film")
+                                .add_filter("Camera RAW", &["arw"])
+                                .pick_file()
+                        {
+                            self.begin_flat_edit(path, None);
                         }
-                        ui.horizontal(|ui| {
-                            if ui.button("Edit area…").clicked()
-                                && let Some(path) = path
-                            {
-                                let [x, y, width, height] = settings.map.area();
-                                self.begin_flat_edit(
-                                    path,
-                                    Some(Rect {
-                                        x,
-                                        y,
-                                        width,
-                                        height,
-                                    }),
-                                );
-                            }
-                            if ui.button("Clear").clicked() {
+                        if let Some(settings) = self.document.project.flat_field.clone() {
+                            let path = self.document.source_path(settings.reference).ok();
+                            ui.label(
+                                path.as_ref()
+                                    .and_then(|p| p.file_name())
+                                    .map(|name| name.to_string_lossy().into_owned())
+                                    .unwrap_or_else(|| "Reference RAW".into()),
+                            );
+                            let mut enabled = settings.enabled;
+                            if ui.checkbox(&mut enabled, "Enabled").changed() {
                                 self.sync_document();
                                 let mut candidate = self.document.clone();
-                                candidate.project.flat_field = None;
+                                candidate.project.flat_field.as_mut().unwrap().enabled = enabled;
                                 self.start_document(DocumentWork::Correction(
                                     candidate,
                                     self.current_source,
                                 ));
                             }
-                        });
-                    }
-                },
-            );
-            ui.small("Bare light source, same lens/focus/aperture/light. Set this before calibration. Existing Dmin/Dmax stay unchanged; re-pick them after changing correction.");
-        });
+                            ui.horizontal(|ui| {
+                                if ui.button("Edit area…").clicked()
+                                    && let Some(path) = path
+                                {
+                                    let [x, y, width, height] = settings.map.area();
+                                    self.begin_flat_edit(
+                                        path,
+                                        Some(Rect {
+                                            x,
+                                            y,
+                                            width,
+                                            height,
+                                        }),
+                                    );
+                                }
+                                if ui.button("Clear").clicked() {
+                                    self.sync_document();
+                                    let mut candidate = self.document.clone();
+                                    candidate.project.flat_field = None;
+                                    self.start_document(DocumentWork::Correction(
+                                        candidate,
+                                        self.current_source,
+                                    ));
+                                }
+                            });
+                        }
+                    },
+                );
+                ui.small("Bare light source, same lens/focus/aperture/light. Set this before calibration. Existing Dmin/Dmax stay unchanged; re-pick them after changing correction.");
+            },
+        );
     }
     pub(super) fn begin_flat_edit(&mut self, path: PathBuf, region: Option<Rect>) {
         if self.busy || self.pick.is_some() || self.crop_edit.is_some() {

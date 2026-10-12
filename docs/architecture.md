@@ -17,7 +17,7 @@ Antitone is a single Rust package with narrow native bridges. The numerical core
 | Viewer/refinement | `src/{viewer,refinement,resample,viewport}.rs` | Provisional GPU images, bounded tiled settled rendering/rectangular or affine footprint averaging and transient frame/canvas layout |
 | Image scopes | `src/{scopes,gpu_scopes,editor_scopes}.rs`, `src/shaders/{scopes,scope_display}.wgsl` | Target-native waveform/vector bins, accepted-frame proxy sampling, bounded scheduling and transient controls |
 | Desktop host | `src/platform/{host,macos}.rs` | winit events, egui integration, owned wgpu surface, native SDR tagging, repaint/surface lifecycle |
-| Editor | `src/{editor,editor_controls,editor_crop,editor_navigation,editor_document,editor_files,editor_flat_field}.rs` | Stable-ID document state, live edits, crop/picker/reference workflows, file menus, staged worker transitions and GPU preflight |
+| Editor | `src/{editor,editor_controls,editor_icons,editor_crop,editor_navigation,editor_document,editor_files,editor_flat_field}.rs` | Stable-ID document state, live edits, crop/picker/reference workflows, file menus, staged worker transitions and GPU preflight |
 | Output files | `src/{export,profiles}.rs` | Full-source TIFF/AP0 EXR, encoding/ICC/metadata, bounded buffers and safe destination replacement |
 | Project state | `src/project.rs` | Schema-4 camera-model documents, stable source IDs/order, identity/compatibility and atomic save/load; relink primitives have no editor UI yet |
 

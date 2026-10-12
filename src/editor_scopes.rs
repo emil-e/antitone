@@ -68,16 +68,20 @@ impl Scopes {
         if !self.visible {
             return None;
         }
-        ui.horizontal(|ui| {
+        icons::row(ui, |ui| {
             if self.vector {
                 ui.small("Scale");
                 for gain in [1, 2, 4, 8] {
                     ui.selectable_value(&mut self.amplification, gain, format!("{gain}×"));
                 }
-                if ui
-                    .small_button("↺")
-                    .on_hover_text("Reset vectorscope scale to 1×")
-                    .clicked()
+                if icons::button(
+                    ui,
+                    icons::Icon::Reset,
+                    self.amplification != 1,
+                    "Reset vectorscope scale",
+                    "Reset vectorscope scale to 1×",
+                )
+                .clicked()
                 {
                     self.amplification = 1;
                 }

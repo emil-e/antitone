@@ -37,6 +37,8 @@ Start roll assistance with a cancellable proposed Dmax estimate: robust full-sou
 
 ## Operation feedback
 
+The [UI polish proposal](ui-polish.md#feedback-and-status-policy) defines the agreed owner/location/lifetime direction for feedback; implementation is not started. This section retains broader worker/progress/cancellation scope rather than duplicating those presentation rules.
+
 The user requests a **general progress framework**, most visibly for RAW opening and export, plus spinners while the main view and thumbnails develop. Current workers expose busy/status text; thumbnails use a static ellipsis. This is broader than export-only feedback and needs a focused design before implementation.
 
 - Inventory RAW import/development, project Open/Save, reference processing, preview refinement, thumbnails and exports. Declare operation ownership, phase/completion/error messages, foreground versus background visibility and stale-result handling using existing worker boundaries.

@@ -1,3 +1,4 @@
+use super::icons::{self, Icon};
 use crate::{
     color::{Balance, ap1_to_cones, opponent, opponent_coordinates},
     processing::{
@@ -9,39 +10,154 @@ use egui::{Color32, Response, Ui};
 use glam::{DMat2, DMat3, DVec2, DVec3};
 use std::ops::RangeInclusive;
 
+pub struct SectionHeader<'a> {
+    pub summary: &'a str,
+    pub changed: bool,
+    pub reset: Option<bool>,
+    /// None keeps transactional/pinned controls visible without a disclosure.
+    pub default_open: Option<bool>,
+}
+
 pub fn section<R>(
     ui: &mut Ui,
     id: &str,
     title: &str,
-    reset_enabled: Option<bool>,
+    header: SectionHeader<'_>,
     contents: impl FnOnce(&mut Ui) -> R,
-) -> (R, bool) {
+) -> (Option<R>, bool) {
+    let SectionHeader {
+        summary,
+        changed,
+        reset: reset_enabled,
+        default_open,
+    } = header;
     ui.push_id(id, |ui| {
         ui.add_space(8.);
-        egui::Frame::group(ui.style())
-            .inner_margin(10)
-            .show(ui, |ui| {
-                ui.set_min_width(ui.available_width());
-                let mut reset = false;
-                ui.horizontal(|ui| {
-                    ui.strong(title);
-                    if let Some(enabled) = reset_enabled {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            reset = reset_button(ui, enabled, title).clicked();
-                        });
-                    }
+        ui.separator();
+        let state_id = ui.make_persistent_id("expanded");
+        let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
+            ui.ctx(),
+            state_id,
+            default_open.unwrap_or(true),
+        );
+        let open = default_open.is_none() || state.is_open();
+        let mut reset = false;
+        let header = icons::row(ui, |ui| {
+            let reset_width = if reset_enabled.is_some() {
+                28. + ui.spacing().item_spacing.x
+            } else {
+                0.
+            };
+            let width = (ui.available_width() - reset_width).max(1.);
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 28.), egui::Sense::hover());
+            let response = ui.interact(
+                rect,
+                ui.make_persistent_id("disclosure"),
+                if default_open.is_some() {
+                    egui::Sense::click()
+                } else {
+                    egui::Sense::hover()
+                },
+            );
+            if default_open.is_some() {
+                if response.hovered()
+                    || response.has_focus()
+                    || response.is_pointer_button_down_on()
+                {
+                    let visuals = ui.style().interact(&response);
+                    ui.painter().rect(
+                        rect,
+                        4.,
+                        visuals.weak_bg_fill,
+                        visuals.bg_stroke,
+                        egui::StrokeKind::Inside,
+                    );
+                }
+                let icon = if open {
+                    Icon::ChevronDown
+                } else {
+                    Icon::ChevronRight
+                };
+                icon.paint(
+                    ui,
+                    egui::Rect::from_center_size(
+                        rect.left_center() + egui::vec2(10., 0.),
+                        egui::vec2(16., 16.),
+                    ),
+                    ui.style().interact(&response).fg_stroke,
+                );
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::CollapsingHeader,
+                        response.enabled(),
+                        title,
+                    )
                 });
-                ui.add_space(6.);
-                (contents(ui), reset)
-            })
-            .inner
+            }
+            let left = rect.left() + if default_open.is_some() { 24. } else { 0. };
+            let marker_width = if changed { 12. } else { 0. };
+            let text = ui.painter().layout_no_wrap(
+                title.into(),
+                egui::TextStyle::Button.resolve(ui.style()),
+                ui.visuals().strong_text_color(),
+            );
+            let mut clip = rect;
+            clip.max.x -= marker_width;
+            ui.painter().with_clip_rect(clip).galley(
+                egui::pos2(left, rect.center().y - text.size().y * 0.5),
+                text,
+                ui.visuals().strong_text_color(),
+            );
+            if changed {
+                ui.painter().circle_filled(
+                    rect.right_center() - egui::vec2(5., 0.),
+                    2.5,
+                    ui.visuals().selection.stroke.color,
+                );
+            }
+            if let Some(enabled) = reset_enabled {
+                reset = reset_button(ui, enabled, title).clicked();
+            }
+            response
+        })
+        .inner;
+        if header.clicked() {
+            state.toggle(ui);
+        }
+        state.store(ui.ctx());
+        let open = default_open.is_none() || state.is_open();
+        if default_open.is_some() {
+            ui.ctx()
+                .accesskit_node_builder(header.id, |node| node.set_expanded(open));
+        }
+        let body = if open {
+            ui.add_space(6.);
+            // A disclosure press steals numeric focus before its release toggles the section.
+            // Disabled parameter snapshots absorb that pending commit without editing the grade.
+            Some(
+                ui.add_enabled_ui(!header.is_pointer_button_down_on(), contents)
+                    .inner,
+            )
+        } else {
+            if !summary.is_empty() {
+                let summary = if changed {
+                    format!("Adjusted · {summary}")
+                } else {
+                    summary.into()
+                };
+                ui.add(egui::Label::new(egui::RichText::new(&summary).small().weak()).truncate())
+                    .on_hover_text(summary);
+            }
+            None
+        };
+        (body, reset)
     })
     .inner
 }
 
 fn reset_button(ui: &mut Ui, enabled: bool, name: &str) -> Response {
-    ui.add_enabled(enabled, egui::Button::new("↺").small())
-        .on_hover_text(format!("Reset {name}"))
+    let name = format!("Reset {name}");
+    icons::button(ui, Icon::Reset, enabled, &name, &name)
 }
 
 #[derive(Clone, Copy)]
@@ -105,7 +221,7 @@ pub fn parameter(ui: &mut Ui, kind: Parameter, value: &mut f64) -> (Response, Re
         &mut disabled_value
     };
     ui.push_id(kind.label(), |ui| {
-        let (numeric, reset) = ui.horizontal(|ui| {
+        let (numeric, reset) = icons::row(ui, |ui| {
             ui.label(kind.label());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let reset = reset_button(ui, *value != kind.default(), kind.label());
@@ -162,12 +278,11 @@ pub fn calibration(
 ) -> bool {
     ui.push_id(id, |ui| {
         let mut pick = false;
-        ui.horizontal(|ui| {
+        icons::row(ui, |ui| {
             ui.label(label).on_hover_text(meaning);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                pick = ui
-                    .add_enabled(enabled, egui::Button::new("Pick…").small())
-                    .clicked();
+                let name = format!("Pick {label}");
+                pick = icons::button(ui, Icon::Pick, enabled, &name, meaning).clicked();
             });
         });
         if let Some(rgb) = rgb {
@@ -242,24 +357,52 @@ impl ColorControl {
 }
 
 pub fn color(ui: &mut Ui, kind: ColorControl, value: &mut Balance, can_pick: bool) -> bool {
-    let title = match kind {
-        ColorControl::GammaBalance => "Gamma balance",
-        ColorControl::WhiteBalance => "White balance",
+    let changed = *value != Balance::default();
+    let (pick, reset) = match kind {
+        ColorControl::GammaBalance => {
+            ui.push_id("Gamma balance", |ui| {
+                let reset = icons::row(ui, |ui| {
+                    ui.strong("Balance");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        reset_button(ui, changed, "Gamma balance").clicked()
+                    })
+                    .inner
+                })
+                .inner;
+                (Some(color_inputs(ui, kind, value, can_pick)), reset)
+            })
+            .inner
+        }
+        ColorControl::WhiteBalance => section(
+            ui,
+            "White balance",
+            "White balance",
+            SectionHeader {
+                summary: &format!("Warmth {:+.2} · Tint {:+.2}", value.warmth, value.tint),
+                changed,
+                reset: Some(changed),
+                default_open: Some(true),
+            },
+            |ui| color_inputs(ui, kind, value, can_pick),
+        ),
     };
-    let (pick, reset) = section(ui, title, title, Some(*value != Balance::default()), |ui| {
-        ui.horizontal(|ui| {
-            ui.add_space((ui.available_width() - 140.).max(0.) / 2.);
-            wheel(ui, kind, value);
-        });
-        parameter(ui, Parameter::Warmth, &mut value.warmth);
-        parameter(ui, Parameter::Tint, &mut value.tint);
-        ui.add_enabled(can_pick, egui::Button::new("Pick neutral…"))
-            .on_hover_text("Measure one full-resolution patch. The fitted correction replaces these same warmth/tint values.").clicked()
-    });
     if reset {
         *value = Balance::default();
     }
-    pick
+    pick.unwrap_or(false)
+}
+
+fn color_inputs(ui: &mut Ui, kind: ColorControl, value: &mut Balance, can_pick: bool) -> bool {
+    ui.horizontal(|ui| {
+        ui.add_space((ui.available_width() - 140.).max(0.) / 2.);
+        wheel(ui, kind, value);
+    });
+    parameter(ui, Parameter::Warmth, &mut value.warmth);
+    parameter(ui, Parameter::Tint, &mut value.tint);
+    icons::row(ui, |ui| {
+        ui.label("Neutral reference");
+        icons::button(ui, Icon::Pick, can_pick, "Pick neutral…", "Measure one full-resolution patch. The fitted correction replaces these same warmth/tint values.").clicked()
+    }).inner
 }
 
 fn wheel(ui: &mut Ui, kind: ColorControl, value: &mut Balance) -> Response {

@@ -18,6 +18,8 @@ Flexible notes, studies, experiments and supporting evidence. No mandatory templ
 
 ## Product observations and reproduction
 
+- [UI polish audit](ui-polish-audit.md): current-code/historical-layout findings, verified darktable/Affinity/Apple patterns and native-menu feasibility; recommendations live in the linked proposal.
+
 - [Feedback inbox](../feedback.md): new user observations awaiting triage. Completed or already-planned items are removed; remaining symptoms and uncertainties move into the relevant [work plan](../plans/README.md). The inbox is not the persistent requirement record or execution queue.
 - [Historical records](history/README.md): earlier product/execution/feedback plans and mockup.
 - [Authored tools](tools/README.md): durable source outside `.cache`, with compatibility status.

@@ -1,6 +1,6 @@
 # Source inspection and interaction feedback
 
-Status: active follow-up, not an unfinished navigation/source-inspection implementation. The selected navigation, source-inspection and thumbnail slices are implemented on main; their historical checks are retained below and in [visual feedback](visual-feedback.md#progress--handoff). The [preview buffer-limit fix](completed/preview-stability.md) is complete. Remaining interaction/layout/colour reports still need selection, reproduction or design. [Roadmap](../../PLAN.md) owns order; this audit approves no new feature fixes.
+Status: active follow-up, not an unfinished navigation/source-inspection implementation. The selected layout/coherence design work now lives in the [UI polish proposal](ui-polish.md); its direction/product choices are agreed but do not yet replace implemented behavior contracts. The selected navigation, source-inspection and thumbnail slices are implemented on main; their historical checks are retained below and in [visual feedback](visual-feedback.md#progress--handoff). The [preview buffer-limit fix](completed/preview-stability.md) is complete. Remaining interaction/layout/colour reports still need selection, reproduction or design. [Roadmap](../../PLAN.md) owns order; this audit approves no new feature fixes.
 
 ## Goal and boundaries
 
@@ -64,6 +64,6 @@ Historical navigation/source-inspection verification snapshot, before native-cam
 
 Bounded thumbnails are implemented in the existing bottom strip; the user approved enlargement and requested adjustable size. Drag its top edge to resize (52…240 points, also window-limited); image display follows height, while source/GPU caches stay bounded. Remaining layout/colour investigations, physical interaction exercise and scopes remain open; no further slice is automatically authorized.
 
-Next action: select one remaining interaction/UX slice and agree its scope before implementation. Camera/geometry photographic checks and dense guides are tracked in [completion work](completion.md#geometry), not reopened navigation work.
+Next action for layout/UX: select/authorize the workspace/preferences slice following the implemented [shared-icon/section checkpoint](ui-polish.md#slice-1-checkpoint). Other interaction/colour follow-ups still require separate selection. Camera/geometry photographic checks and dense guides are tracked in [completion work](completion.md#geometry), not reopened navigation work.
 
 Evidence/context: remaining symptoms were consolidated from `docs/feedback.md`; it is now an inbox, not the persistent requirement record. See [historical approved pass](../research/history/feedback-plan.md), [architecture](../architecture.md) and [control contract](../contracts/editor-controls.md).

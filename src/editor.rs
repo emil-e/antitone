@@ -26,6 +26,8 @@ use std::{
 mod controls;
 #[path = "editor_document.rs"]
 mod document;
+#[path = "editor_icons.rs"]
+mod icons;
 use crate::project::{Development, Source, SourceId};
 use document::Document;
 #[path = "editor_files.rs"]
@@ -1235,7 +1237,8 @@ impl Editor {
         }
     }
     fn controls(&mut self, ui: &mut egui::Ui) -> Option<ScopeSlot> {
-        use controls::{ColorControl, Parameter};
+        use controls::{ColorControl, Parameter, SectionHeader};
+        use icons::Icon;
         let previous_orientation = (self.roll_orientation, self.photo_orientation);
         // Reserve four rows plus section chrome before the panel has a cached size.
         let output_height =
@@ -1247,7 +1250,7 @@ impl Editor {
             .show(ui, |ui| {
                 if self.crop_edit.is_some() || self.flat_edit.is_some() { ui.disable(); }
                 let (_, reset) = controls::section(
-                    ui, "output", "Output", Some(self.target != OutputTarget::DisplayP3),
+                    ui, "output", "Output", SectionHeader { summary: "", changed: self.target != OutputTarget::DisplayP3, reset: Some(self.target != OutputTarget::DisplayP3), default_open: None },
                     |ui| {
                         ui.label("Preview / TIFF").on_hover_text(
                             "100-nit ACES 2 SDR rendering with matching TIFF encoding/ICC. Preview is converted to tagged extended sRGB for OS monitor management. EXR remains scene-linear AP0.",
@@ -1274,16 +1277,14 @@ impl Editor {
                 && self.pick.is_none();
             ui.push_id("roll", |ui| {
                 ui.add_enabled_ui(geometry_editable, |ui| {
-                    let (_, reset) = controls::section(ui, "orientation", "Scan orientation", Some(!self.roll_orientation.is_identity()), |ui| {
+                    let changed = !self.roll_orientation.is_identity();
+                    let (_, reset) = controls::section(ui, "orientation", "Scan orientation", SectionHeader { summary: "Shared scanning baseline", changed, reset: Some(changed), default_open: Some(false) }, |ui| {
                         ui.horizontal(|ui| {
-                            if ui.button("Turn left").clicked() { self.roll_orientation.turn_counterclockwise(); }
-                            if ui.button("Turn right").clicked() { self.roll_orientation.turn_clockwise(); }
+                            if icons::button(ui, Icon::TurnLeft, true, "Turn left", "Turn the shared scan baseline 90° left.").clicked() { self.roll_orientation.turn_counterclockwise(); }
+                            if icons::button(ui, Icon::TurnRight, true, "Turn right", "Turn the shared scan baseline 90° right.").clicked() { self.roll_orientation.turn_clockwise(); }
+                            if icons::button(ui, Icon::FlipHorizontal, true, "Flip horizontal", "Flip the shared scan baseline left/right; photo exceptions apply afterward.").clicked() { self.roll_orientation.horizontal ^= true; }
+                            if icons::button(ui, Icon::FlipVertical, true, "Flip vertical", "Flip the shared scan baseline top/bottom; photo exceptions apply afterward.").clicked() { self.roll_orientation.vertical ^= true; }
                         });
-                        ui.horizontal(|ui| {
-                            if ui.button("Flip horizontal").on_hover_text("Flip the shared scan baseline left/right; photo exceptions apply afterward.").clicked() { self.roll_orientation.horizontal ^= true; }
-                            if ui.button("Flip vertical").on_hover_text("Flip the shared scan baseline top/bottom; photo exceptions apply afterward.").clicked() { self.roll_orientation.vertical ^= true; }
-                        });
-                        ui.small("Shared scanning baseline; photo exceptions apply afterward.");
                     });
                     if reset { self.roll_orientation = RollOrientation::default(); }
                 });
@@ -1303,7 +1304,13 @@ impl Editor {
             if self.tab == 0 {
                 ui.push_id("roll", |ui| {
                     self.flat_controls(ui);
-                    controls::section(ui, "calibration", "Calibration", None, |ui| {
+                    let calibration_summary = match (self.dmin.is_some(), self.dmax.is_some()) {
+                        (true, true) => "Dmin + Dmax measured",
+                        (false, false) => "Dmin + Dmax not measured",
+                        (false, true) => "Dmin not measured",
+                        (true, false) => "Dmax not measured",
+                    };
+                    controls::section(ui, "calibration", "Calibration", SectionHeader { summary: calibration_summary, changed: false, reset: None, default_open: Some(true) }, |ui| {
                         if controls::calibration(
                             ui, "dmin", "Dmin (film base)", self.dmin, can_pick,
                             "Minimum-density film base. Linear native-camera RGB, not optical-density numbers.",
@@ -1321,7 +1328,11 @@ impl Editor {
                         let inversion_changed = self.roll.gamma != crate::processing::DEFAULT_GAMMA
                             || self.roll.balance != Balance::default();
                         let (_, reset) = controls::section(
-                            ui, "gamma-balance", "Gamma & balance", Some(inversion_changed),
+                            ui, "gamma-balance", "Gamma & balance",
+                            SectionHeader {
+                                summary: &format!("Gamma {:.2} · Balance {}", self.roll.gamma, if self.roll.balance == Balance::default() { "neutral" } else { "adjusted" }),
+                                changed: inversion_changed, reset: Some(inversion_changed), default_open: Some(true),
+                            },
                             |ui| {
                                 controls::parameter(ui, Parameter::Gamma, &mut self.roll.gamma);
                                 if controls::color(
@@ -1335,9 +1346,17 @@ impl Editor {
                             self.roll.gamma = crate::processing::DEFAULT_GAMMA;
                             self.roll.balance = Balance::default();
                         }
+                        let response_summary = match self.roll.response {
+                            crate::processing::Response::Original => "Classic curve".into(),
+                            crate::processing::Response::Film { toe, shoulder } => format!("Toe {toe:.2} · Shoulder {shoulder:.4}"),
+                        };
                         let (_, reset) = controls::section(
-                            ui, "response", "Toe & shoulder",
-                            Some(!self.roll.response.is_original() && self.roll.response != crate::processing::Response::film()),
+                            ui, "response", "Toe & shoulder", SectionHeader {
+                                summary: &response_summary,
+                                changed: self.roll.response != crate::processing::Response::film(),
+                                reset: Some(!self.roll.response.is_original() && self.roll.response != crate::processing::Response::film()),
+                                default_open: Some(false),
+                            },
                             |ui| {
                                 match &mut self.roll.response {
                                     crate::processing::Response::Original => {
@@ -1360,7 +1379,7 @@ impl Editor {
                         );
                         if reset { self.roll.response = crate::processing::Response::film(); }
                         let (_, reset) = controls::section(
-                            ui, "exposure", "Exposure", Some(self.roll.exposure != 0.),
+                            ui, "exposure", "Exposure", SectionHeader { summary: &format!("{:+.2} EV", self.roll.exposure), changed: self.roll.exposure != 0., reset: Some(self.roll.exposure != 0.), default_open: Some(false) },
                             |ui| {
                                 controls::parameter(ui, Parameter::Exposure, &mut self.roll.exposure);
                             },
@@ -1379,7 +1398,7 @@ impl Editor {
                             start_pick = Some(Pick::Wb);
                         }
                         let (_, reset) = controls::section(
-                            ui, "exposure", "Exposure", Some(self.photo.exposure != 0.),
+                            ui, "exposure", "Exposure", SectionHeader { summary: &format!("{:+.2} EV", self.photo.exposure), changed: self.photo.exposure != 0., reset: Some(self.photo.exposure != 0.), default_open: Some(true) },
                             |ui| {
                                 controls::parameter(ui, Parameter::Exposure, &mut self.photo.exposure);
                             },

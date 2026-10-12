@@ -524,3 +524,313 @@ fn wb_wheel_directions_match_local_neutral_response_not_rgb_channel_gains() {
     assert!(offsets.x > offsets.y && offsets.x > offsets.z);
     assert!((offsets.y - offsets.z).abs() < 1e-12);
 }
+
+struct SectionFrame {
+    numeric: Option<Response>,
+    other: Option<Response>,
+    output: egui::FullOutput,
+}
+
+fn section_frame(
+    context: &egui::Context,
+    value: &mut f64,
+    events: Vec<egui::Event>,
+) -> SectionFrame {
+    context.enable_accesskit();
+    let mut numeric = None;
+    let mut other = None;
+    let mut output = context.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(315., 800.),
+            )),
+            events,
+            ..Default::default()
+        },
+        |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let changed = *value != 0.;
+                let (_, reset) = section(
+                    ui,
+                    "grade",
+                    "Grade",
+                    SectionHeader {
+                        summary: &format!("{:+.2} EV", value),
+                        changed,
+                        reset: Some(changed),
+                        default_open: Some(true),
+                    },
+                    |ui| {
+                        numeric = Some(parameter(ui, Parameter::Exposure, value).1);
+                    },
+                );
+                if reset {
+                    *value = 0.;
+                }
+                section(
+                    ui,
+                    "other",
+                    "Other",
+                    SectionHeader {
+                        summary: "Independent section",
+                        changed: false,
+                        reset: None,
+                        default_open: Some(true),
+                    },
+                    |ui| {
+                        other = Some(ui.button("Other body"));
+                    },
+                );
+            });
+        },
+    );
+    output.textures_delta.clear();
+    SectionFrame {
+        numeric,
+        other,
+        output,
+    }
+}
+
+fn named_rect(output: &egui::FullOutput, name: &str) -> egui::Rect {
+    let node = &output
+        .platform_output
+        .accesskit_update
+        .as_ref()
+        .unwrap()
+        .nodes
+        .iter()
+        .find(|(_, node)| node.label() == Some(name))
+        .unwrap()
+        .1;
+    let rect = node.bounds().unwrap();
+    egui::Rect::from_min_max(
+        egui::pos2(rect.x0 as f32, rect.y0 as f32),
+        egui::pos2(rect.x1 as f32, rect.y1 as f32),
+    )
+}
+
+#[test]
+fn collapsed_sections_keep_adjustments_summaries_and_independent_resets() {
+    let context = egui::Context::default();
+    let mut value = 1.23456789;
+    let first = section_frame(&context, &mut value, vec![]);
+    let numeric_id = first.numeric.as_ref().unwrap().id;
+    let other_id = first.other.as_ref().unwrap().id;
+    let header = named_rect(&first.output, "Grade").center();
+    for pressed in [true, false] {
+        section_frame(&context, &mut value, pointer(header, pressed));
+    }
+    let collapsed = section_frame(&context, &mut value, vec![]);
+    assert!(collapsed.numeric.is_none());
+    assert_eq!(collapsed.other.as_ref().unwrap().id, other_id);
+    assert_eq!(value, 1.23456789);
+    assert!(collapsed.output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == "Adjusted · +1.23 EV")));
+    assert!(
+        collapsed.output.shapes.iter().any(
+            |shape| matches!(&shape.shape, egui::Shape::Circle(circle) if circle.radius == 2.5)
+        )
+    );
+    value = 2.;
+    assert!(
+        section_frame(&context, &mut value, vec![])
+            .numeric
+            .is_none()
+    );
+    let reset = named_rect(&collapsed.output, "Reset Grade").center();
+    for pressed in [true, false] {
+        section_frame(&context, &mut value, pointer(reset, pressed));
+    }
+    let reset = section_frame(&context, &mut value, vec![]);
+    assert_eq!(value, 0.);
+    assert!(reset.numeric.is_none());
+    assert!(
+        !reset.output.shapes.iter().any(
+            |shape| matches!(&shape.shape, egui::Shape::Circle(circle) if circle.radius == 2.5)
+        )
+    );
+    for pressed in [true, false] {
+        section_frame(&context, &mut value, pointer(header, pressed));
+    }
+    let reopened = section_frame(&context, &mut value, vec![]);
+    assert_eq!(reopened.numeric.as_ref().unwrap().id, numeric_id);
+    assert!(reopened.other.is_some());
+}
+
+#[test]
+fn collapsing_a_pending_numeric_edit_cancels_without_committing_on_reopen() {
+    let context = egui::Context::default();
+    let mut value = 0.123456789;
+    let first = section_frame(&context, &mut value, vec![]);
+    let numeric = first.numeric.unwrap().rect.center();
+    let header = named_rect(&first.output, "Grade").center();
+    for pressed in [true, false] {
+        section_frame(&context, &mut value, pointer(numeric, pressed));
+    }
+    section_frame(&context, &mut value, vec![egui::Event::Text("5".into())]);
+    assert_eq!(value, 0.123456789);
+    for pressed in [true, false] {
+        section_frame(&context, &mut value, pointer(header, pressed));
+    }
+    for _ in 0..3 {
+        assert!(
+            section_frame(&context, &mut value, vec![])
+                .numeric
+                .is_none()
+        );
+        assert_eq!(value, 0.123456789);
+    }
+    for pressed in [true, false] {
+        section_frame(&context, &mut value, pointer(header, pressed));
+    }
+    let reopened = section_frame(&context, &mut value, vec![]);
+    assert!(reopened.numeric.is_some());
+    assert_eq!(value, 0.123456789);
+    for pressed in [true, false] {
+        section_frame(
+            &context,
+            &mut value,
+            pointer(reopened.numeric.as_ref().unwrap().rect.center(), pressed),
+        );
+    }
+    section_frame(
+        &context,
+        &mut value,
+        vec![
+            egui::Event::Text("-2".into()),
+            key(egui::Key::Enter, egui::Modifiers::NONE),
+        ],
+    );
+    section_frame(&context, &mut value, vec![]);
+    assert_eq!(value, -2.);
+}
+
+#[test]
+fn disclosure_supports_keyboard_activation_and_reports_expansion() {
+    let context = egui::Context::default();
+    let mut value = 0.;
+    let first = section_frame(&context, &mut value, vec![]);
+    let header = named_rect(&first.output, "Grade").center();
+    for pressed in [true, false] {
+        section_frame(&context, &mut value, pointer(header, pressed));
+    }
+    assert!(
+        section_frame(&context, &mut value, vec![])
+            .numeric
+            .is_none()
+    );
+    section_frame(
+        &context,
+        &mut value,
+        vec![key(egui::Key::Tab, egui::Modifiers::NONE)],
+    );
+    section_frame(
+        &context,
+        &mut value,
+        vec![key(egui::Key::Space, egui::Modifiers::NONE)],
+    );
+    let expanded = section_frame(&context, &mut value, vec![]);
+    assert!(expanded.numeric.is_some());
+    let node = &expanded
+        .output
+        .platform_output
+        .accesskit_update
+        .as_ref()
+        .unwrap()
+        .nodes
+        .iter()
+        .find(|(_, node)| node.label() == Some("Grade"))
+        .unwrap()
+        .1;
+    assert_eq!(node.is_expanded(), Some(true));
+}
+
+#[test]
+fn outline_icon_buttons_have_named_hit_targets_and_keyboard_actions() {
+    let context = egui::Context::default();
+    context.enable_accesskit();
+    let mut selected = false;
+    let mut render = |events| {
+        let mut response = None;
+        let mut output = context.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                response = Some(icons::toggle(
+                    ui,
+                    Icon::Guides,
+                    &mut selected,
+                    "Guides",
+                    "Show composition guides",
+                ));
+            },
+        );
+        output.textures_delta.clear();
+        (response.unwrap(), output)
+    };
+    let (response, output) = render(vec![]);
+    assert_eq!(response.rect.size(), egui::Vec2::splat(28.));
+    assert_eq!(named_rect(&output, "Guides"), response.rect);
+    assert!(
+        output
+            .shapes
+            .iter()
+            .any(|shape| matches!(&shape.shape, egui::Shape::Path(_)))
+    );
+    context.memory_mut(|memory| memory.request_focus(response.id));
+    render(vec![key(egui::Key::Space, egui::Modifiers::NONE)]);
+    drop(render);
+    assert!(selected);
+}
+
+#[test]
+fn disabled_outline_icons_are_dimmed_and_cannot_activate() {
+    let context = egui::Context::default();
+    let render = |enabled, events| {
+        let mut response = None;
+        let mut output = context.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                response = Some(icons::button(
+                    ui,
+                    Icon::Reset,
+                    enabled,
+                    "Reset",
+                    "Reset value",
+                ));
+            },
+        );
+        output.textures_delta.clear();
+        let stroke = output
+            .shapes
+            .into_iter()
+            .find_map(|shape| {
+                if let egui::Shape::Path(path) = shape.shape {
+                    Some(path.stroke.color)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+        (response.unwrap(), stroke)
+    };
+    let (enabled, normal) = render(true, vec![]);
+    let (disabled, dimmed) = render(false, vec![]);
+    assert_eq!(enabled.id, disabled.id);
+    assert_eq!(enabled.rect, disabled.rect);
+    assert_ne!(normal, dimmed);
+    assert!(!disabled.enabled());
+    for pressed in [true, false] {
+        assert!(
+            !render(false, pointer(disabled.rect.center(), pressed))
+                .0
+                .clicked()
+        );
+    }
+}
