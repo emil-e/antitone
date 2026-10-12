@@ -4,11 +4,19 @@ Scope basis: product goals/remaining work, not one approved implementation chang
 
 ## Geometry
 
-Selected in the focused [flip/crop/rotate plan](flip-crop-rotate.md). It owns the agreed shared mappings/interaction, implementation checkpoints, straightening/coverage verification and remaining acceptance. This is a persistent composition across viewer/pickers/thumbnails/exports, not a viewer-only cosmetic transform. Scopes and undo remain separate integration dependencies; no implementation is approved by this split.
+[Flip/crop/rotate implementation](completed/flip-crop-rotate.md) is completed, user-accepted for now and integrated onto main. [Native-camera inversion](completed/camera-inversion.md) is also implemented and closed. Do not resume either package's historical steps.
+
+Remaining work is separate from those implementation closures:
+
+- **Photographic/native-diagnostic acceptance:** agree an unlocked-desktop real-photo exercise of straightening and native/settled agreement, rotated Gamma/WB picks, invalid/cancelled selections, Save/Open and TIFF/AP0 EXR reopen, including corrected and uncorrected sources. Synthetic/Metal/file checks already pass; the photographic exercise is not claimed as performed. Camera-model visual review is not calibrated stock/scene-colour acceptance.
+- **Dense alignment guides:** optional visual-only follow-up; thirds are already implemented. Settle the overlay/control design before implementation; guides must not affect framing, measurements, processing or exports.
+- Future scopes and undo must follow accepted composition, but remain owned by [visual feedback](visual-feedback.md#scope-design-to-settle-later) and [durable projects](durable-projects.md), not missing geometry implementation.
+
+Next action when selected: agree the photographic acceptance exercise or the smallest guide-design slice. Broader device/monitor/interoperability checks stay in [release work](#export-and-release-work).
 
 ## Inversion bases and roll assistance
 
-Selectable linear inversion bases are independent of AP1 photography/AP0 EXR. Declare/version reference units/conversion and gamma-fit behavior; recompute floor/domain checks and verify anchors/fitting/CPU-GPU agreement. Reject unusable combinations rather than silently reinterpreting calibration or clipping it.
+The earlier selectable-inversion-bases proposal is superseded by the [accepted native-camera replacement](../decisions/native-camera-inversion.md). Current grades use one native-camera basis with explicit camera identity; no alternate AP0 path or calibration reinterpretation is planned. Any future alternative requires new approval, a versioned processing/compatibility decision and fresh floor/domain/fitting/CPU-GPU gates.
 
 Start roll assistance with a cancellable proposed Dmax estimate: robust full-source confirmation after bounded candidate discovery, clipping/floor masks and outlier handling. Show uncertainty/coverage and require explicit acceptance; insufficient exposure evidence must be reportable rather than labelled true Dmax. Later gamma/WB suggestions are model/scene-dependent proposals, not physically known automatic calibration.
 
@@ -47,8 +55,8 @@ Next action when selected: propose the source scope, language tooling, slice ord
 - Bundle native dependencies, review dependency licenses/notices and distribution layout. Checkout-local rpaths are not deployable packaging.
 - Lightroom/Resolve interoperability remains deferred; no application automation is authorized.
 
-[Flat-field correction](completed/flat-field-correction.md) is completed and user-accepted, not folded into calibration/toe or these later requests. The [geometry integration](flip-crop-rotate.md#baseline-and-integration-boundary) preserves its original-source coordinates and main's native-camera model. Windows/HDR output, custom RAW development and dust/catalog features are outside the current pass.
+[Flat-field correction](completed/flat-field-correction.md) is completed and user-accepted, not folded into calibration/toe or these later requests. The [completed geometry integration](completed/flip-crop-rotate.md#baseline-and-integration-boundary) preserves its original-source coordinates and main's native-camera model. Windows/HDR output, custom RAW development and dust/catalog features are outside the current pass.
 
 ## Handoff
 
-No implementation in this package. New feedback has been classified through read-only code/plan inspection, not runtime testing or design approval. Geometry implementation/progress is owned by the [focused plan](flip-crop-rotate.md); other items still need selection through the roadmap and design of their smallest verifiable slice. Original requirements/approval context: [historical feedback amendment](../research/history/feedback-plan.md), [historical product plan](../research/history/product-plan.md). The feedback inbox is triaged; the remaining requirements above are the persistent record.
+This package retains unfinished requirements, deferred guides and post-implementation acceptance; no new implementation is authorized by this documentation audit. Completed camera/geometry work is archived above. Select remaining items through the roadmap and design their smallest verifiable slice. Original requirements/approval context: [historical feedback amendment](../research/history/feedback-plan.md), [historical product plan](../research/history/product-plan.md). Additional observations may remain in the feedback inbox; this audit does not edit or silently triage the user's unrelated inbox changes.

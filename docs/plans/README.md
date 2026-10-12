@@ -2,16 +2,21 @@
 
 [The root roadmap](../../PLAN.md) owns current status/order. These files hold scope, acceptance and handoff details—not independent competing queues.
 
-- [Completed documentation structure](completed/documentation-structure.md): workflow/cache reorganization, verification and deliberate historical/private-input boundaries.
-- [Completed settled-preview buffer limits](completed/preview-stability.md): adapter-supported limits, large Fit regression and editor/presentation checks; no speculative minimum chip/RAM target.
-- [Native-camera inversion replacement](camera-inversion.md): isolated implementation integrated onto the finalized flat-field baseline; model/schema replacement, numerical/source/editor/output checks and handoff.
-- [Completed roll-level flat-field correction](completed/flat-field-correction.md): user-accepted source correction with editable support, shared CPU/GPU map, corrected picks/thumbnails/exports and persistence; verification limits retained.
-- [Source inspection and interaction feedback](inspection-and-interaction.md): remaining focused feedback; the roadmap selects the next slice.
-- [Thumbnails and whole-image scopes](visual-feedback.md): bounded visual feedback; scope basis/design still to be specified.
-- [Completed basic editor Save/Open](completed/save-open.md): stable-ID ownership, transactional Open, atomic Save, File/Export menus, dirty protection and checks/limits.
-- [Durable projects](durable-projects.md): broader persistence sequence, then recovery/relink/undo.
-- [Flip, crop and rotation](flip-crop-rotate.md): shared coordinates, exact orientation and crop/straightening with coverage-aware sampling implemented; crop UX/thirds implemented; native-camera/flat-field coordinate integration and combined checks pass; photographic acceptance and dense guides remain.
-- [Later completion work](completion.md): inversion bases, roll assistance and remaining release/export work; selected geometry planning is split out above.
-- [Completed film-response integration](completed/film-response.md): compact closure record with links to numerical evidence/history.
+## Active packages
 
-For a substantial selected task, use a short plan with goal, scope/non-goals, approved decisions/open questions, steps, acceptance, progress/verification and exact next action. Do not create tickets, IDs, estimates, a file per tiny action or duplicate the roadmap. Small local changes need no plan file. Archive completed plans under `completed/` and leave evidence linked rather than copying every log into progress.
+- [Source inspection and interaction follow-up](inspection-and-interaction.md): remaining cursor/New-tab/roll-workflow/layout/colour questions; the initial navigation/source-inspection slice is implemented.
+- [Thumbnail follow-up and whole-image scopes](visual-feedback.md): reported clipping/invalidation/latency concerns and unimplemented scope design; bounded/resizable thumbnails are implemented.
+- [Durable projects](durable-projects.md): recovery, source-change/relink UI and undo/redo; basic Save/Open is complete.
+- [Later completion work](completion.md): post-implementation photographic acceptance, deferred dense guides, roll assistance, photographic controls/B&W, operation feedback, readability and release/export work. Alternate inversion bases are superseded, not an active implementation choice.
+
+## Completed implementations
+
+- [Documentation structure](completed/documentation-structure.md): workflow/cache reorganization and deliberate historical/private-input boundaries.
+- [Settled-preview buffer limits](completed/preview-stability.md): adapter-supported limits and large-Fit regression; no speculative minimum chip/RAM target.
+- [Basic editor Save/Open](completed/save-open.md): stable-ID ownership, transactional Open, atomic Save, File/Export menus and dirty protection.
+- [Film-response integration](completed/film-response.md): historical response/source closure; model/compatibility clauses subsequently superseded by native-camera processing.
+- [Roll-level flat-field correction](completed/flat-field-correction.md): user-accepted source correction, editable support, shared CPU/GPU map, corrected picks/thumbnails/exports and persistence.
+- [Native-camera inversion replacement](completed/camera-inversion.md): model/schema 4 delivered on main, unchanged response/output mathematics and explicit camera identity; photographic limits retained.
+- [Flip, crop and rotation](completed/flip-crop-rotate.md): shared geometry, constrained framing, coverage-aware measurements/reconstruction/exports and accepted crop UX; native-camera/flat-field integration delivered on main. Deferred acceptance/guides live in completion work.
+
+For a substantial selected task, use a short plan with goal, scope/non-goals, approved decisions/open questions, steps, acceptance, progress/verification and exact next action. Small local changes need no plan file. Archive completed implementations under `completed/`; retain verification limits without turning them into stale implementation queues. Mixed packages stay active only for their unfinished work. Do not create tickets, estimates or a file per tiny action, or duplicate the roadmap.

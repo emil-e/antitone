@@ -33,6 +33,6 @@ Production scope is `src/platform/{host,mod}.rs`; the averaging kernel, refineme
 
 ## Handoff
 
-Next action: basic editor Save/Open in [the durable-projects plan](../durable-projects.md). No implementation of that feature or commit/push in this slice. Record actual resource/performance problems before considering strip machinery.
+At this checkpoint, basic Save/Open was next; it has since been [implemented and closed](save-open.md). No active implementation remains in this preview-limit package. Record actual resource/performance problems before considering strip machinery; [the roadmap](../../../PLAN.md) owns current priority.
 
 Large output was verified offscreen; real-source editor smoke used its normal window, not a physical large-display scenario. No fresh full suite, aggregate peak-memory benchmark or universal device claim. Broader device/macOS-14/physical-monitor checks remain separate work, not a fixed M1 release gate. An initial viewport command inherited an unavailable GCC path; rerunning with the documented Apple-Clang environment passed, without global environment/toolchain changes.

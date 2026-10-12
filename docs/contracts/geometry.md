@@ -1,6 +1,6 @@
 # Image geometry and coordinate contract
 
-This defines the shared coordinate vocabulary and the agreed interaction requirements. Implementation coverage and remaining design questions live in the [geometry plan](../plans/flip-crop-rotate.md), not here. Exact orientation, integer cropping, arbitrary-angle straightening and coverage-aware reconstruction/measurement are implemented in this worktree.
+This defines the shared coordinate vocabulary and the agreed interaction requirements. Implementation coverage/checks live in the [completed geometry plan](../plans/completed/flip-crop-rotate.md), with deferred guides/photographic acceptance in [completion work](../plans/completion.md#geometry). Exact orientation, integer cropping, arbitrary-angle straightening and coverage-aware reconstruction/measurement are integrated on main.
 
 ## Coordinate spaces
 

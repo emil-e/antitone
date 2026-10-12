@@ -27,4 +27,4 @@ Flat-field's physical neutral/centre-luminance target is unchanged, expressed di
 - [Processing contract](../contracts/processing-model.md), [project identity](../contracts/project-state.md), [unchanged output](../contracts/output.md).
 - `src/{raw,scan,processing,sampling,gpu}.rs` and owned shaders.
 - `tests/camera_inversion.rs`: noncommuting order, AP1-neutral camera direction, actual-response fitting and camera-channel floor flags.
-- [Implementation plan/checks/limits](../plans/camera-inversion.md). Finite numerical checks are not stock colour calibration or photographic/physical-monitor acceptance.
+- [Implementation closure/checks/limits](../plans/completed/camera-inversion.md). Finite numerical checks are not stock colour calibration or photographic/physical-monitor acceptance.

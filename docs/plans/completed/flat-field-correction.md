@@ -4,7 +4,7 @@
 
 ## Goal and approved scope
 
-The [camera-inversion replacement](../camera-inversion.md) is integrated onto the finalized flat-field commit. It moves inversion/calibration/floor to native-camera RGB and expresses the same physical neutral target through camera→AP1→XYZ. Historical AP0/model-2/3 checkpoints below describe the accepted flat-field baseline, not fresh replacement-model acceptance.
+The [completed camera-inversion replacement](camera-inversion.md) is integrated on main and moves inversion/calibration/floor to native-camera RGB, expressing the same physical neutral target through camera→AP1→XYZ. The [completed geometry integration](flip-crop-rotate.md#integrated-native-camera--flat-field-checkpoint) retains original-source support/gain coordinates across composed views, picks and exports. Historical AP0/model-2/3 checkpoints below describe the accepted flat-field baseline, not fresh current-model acceptance.
 
 Correct lens/light-source spatial exposure variation using a separate unclipped RAW of the same scanning setup without film. The user selected this work after the editor commit and approved **rectangles only**, with automatic detection where simple and an editable result. No holder-specific geometry, polygons, ML segmentation, dust-removal feature, changed RAW development or ACES changes.
 

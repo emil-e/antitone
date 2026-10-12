@@ -1,12 +1,14 @@
-# Non-destructive flip, crop and rotation
+# Non-destructive flip, crop and rotation — completed
 
-Status: geometry and crop UX are user-accepted for now. Native-camera/model-4 and flat-field coordinate integration is implemented and combined tests pass. Photographic/onscreen acceptance and dense alignment guides remain separate. The user now authorizes local checkpoint commits, rebase onto main and integration/commit to main; pushes remain unauthorized. [The roadmap](../../PLAN.md) owns cross-package priority.
+Status: completed implementation; geometry and crop UX are user-accepted for now. Native-camera/model-4 and flat-field coordinate integration was verified and delivered locally on `main` in `f8969c1`, following `5efb302`. No push was made. This is a closure record, not an active implementation queue. [The roadmap](../../../PLAN.md) owns current priority.
+
+Photographic/native-diagnostic acceptance and deferred dense alignment guides are tracked separately in [completion work](../completion.md#geometry); broader device/monitor checks remain [release work](../completion.md#export-and-release-work). Closing this implementation does not claim those checks passed.
 
 ## Goal and scope
 
 Give each photo a durable composition that agrees across the main viewer, full-resolution pickers, thumbnails and TIFF/AP0 EXR exports, without modifying its RAW or changing its grade.
 
-The existing [completion requirements](completion.md#geometry) establish the feature scope, not the detailed design:
+The existing [completion requirements](../completion.md#geometry) establish the feature scope, not the detailed design:
 
 1. Independent roll/photo quarter-turns and horizontal/vertical flips. Shared roll turns were explicitly added for Hasselblad scanning after the integer-crop checkpoint.
 2. Photo crop and arbitrary rotation/straightening, built on the same geometry model.
@@ -38,11 +40,11 @@ This table records the pre-change investigation at `ace5628`; the implementation
 
 `raw::Rect` is an integer source region, not a sufficient arbitrary-rotation/crop representation. Avoid teaching each consumer a separate flip/rotation formula. A small shared geometry module is proposed; it should not depend on egui or introduce an alternative RAW/development path.
 
-## Agreed foundation and remaining proposals
+## Agreed foundation
 
 ### Coordinate and orientation contract
 
-The user approved the central coordinate vocabulary/utilities and requested implementation plus a final audit of existing mappings. Canonical terminology, pixel conventions, ownership and picker-view requirements live in the [geometry contract](../contracts/geometry.md), not duplicated here.
+The user approved the central coordinate vocabulary/utilities and requested implementation plus a final audit of existing mappings. Canonical terminology, pixel conventions, ownership and picker-view requirements live in the [geometry contract](../../contracts/geometry.md), not duplicated here.
 
 The discrete order is agreed: **active source → roll quarter-turn → roll flips → photo quarter-turn → photo flips**, with flips in each stage's resulting axes. The user explicitly approved shared roll turns for Hasselblad rolls. Roll orientation corrects scanning setup; unchanged individual photo orientation is applied afterward as an exception. Turn actions advance/decrement turns and swap that stage's flip flags: roll buttons turn the scanning baseline, photo buttons turn the final displayed result.
 
@@ -54,7 +56,7 @@ Implemented ownership: a separate roll orientation value in the project and phot
 
 Store crop intent in declared original-source coordinates, never screen pixels or a proxy's dimensions. Keep the original active area immutable and preserve hidden pixels for later crop changes and measurements.
 
-The user accepted a rectangular, no-padding frame, constrained to actual image coverage. They chose turn/flip actions that transform the finished composition and preserve selected content; straighten instead turns the image beneath the frame. They rejected source-aligned picker outlines: selections must stay canvas-aligned and average their actual inverse-mapped coverage, not a larger source bounding box. Only measured values persist. These decisions live in the [geometry contract](../contracts/geometry.md).
+The user accepted a rectangular, no-padding frame, constrained to actual image coverage. They chose turn/flip actions that transform the finished composition and preserve selected content; straighten instead turns the image beneath the frame. They rejected source-aligned picker outlines: selections must stay canvas-aligned and average their actual inverse-mapped coverage, not a larger source bounding box. Only measured values persist. These decisions live in the [geometry contract](../../contracts/geometry.md).
 
 Lightroom-style interaction is agreed: image-under-frame dragging inside, edge/corner resize, outside-frame drag to straighten, aspect lock, Enter Apply and Escape restore. The subsequent approved UX redesign pins crop controls at the top, Fits full source on entry and keeps the editing magnification/placement steady through resizing/release. Rule-of-thirds guides are now implemented; dense guides remain deferred. Both affect neither sampling nor exports. Reference: [Julieanne Kost's Lightroom Classic crop/straighten guidance](https://jkost.com/blog/2024/08/crop-and-straighten-images-in-lightroom-classic.html); no Lightroom/Resolve automation was performed.
 
@@ -79,7 +81,7 @@ Geometry changes must invalidate affected settled work and prevent old generatio
 
 Current persistence uses main's schema/model 4. Optional roll/source orientation and crop default to identity/full source and are omitted when identity; supported pre-geometry camera documents retain their numerical state. Strict unknown fields/noncanonical turns reject. AP0/model-2/3 documents remain incompatible, without migration. Geometry does not redefine numerical/development/output identities. The schema-3 behavior recorded in historical checkpoints below is superseded by this integration.
 
-## Remaining engineering choices
+## Resolved engineering choices and limits
 
 | Decision | Recommendation / tradeoff |
 | --- | --- |
@@ -92,16 +94,16 @@ Current persistence uses main's schema/model 4. Optional roll/source orientation
 
 ## Implementation sequence
 
-1. **Settle the exact-orientation slice.** Recheck the baseline and agree order, control semantics and persistence compatibility. Add the agreed geometry contract; add an ADR only for consequential choices needing durable rationale.
-2. **Pure state and mapping.** Implement identity/defaults, dimensions, exact pixel-centre forward/inverse mapping and persistence validation. Test independently of RAW/native/UI dependencies. Keep viewport/picker context transient.
-3. **Deliver flips/quarter-turns end to end.** Wire Roll/Photo controls, viewer/navigation, transformed picker overlays, provisional/settled rendering, thumbnails and snapshot-based TIFF/EXR export. Existing regional area averaging can be reused in source orientation for exact permutations, provided destination dimensions/order are explicit and equivalent. Stop for a verified checkpoint; a viewer-only implementation is not completion.
-4. **Settle crop/straightening design.** Resolve the remaining storage/order/pivot, picker, valid-coverage and filter questions against the working discrete model. Integer crop can be a small checkpoint, but must not lock in an incompatible arbitrary-rotation representation.
-5. **Deliver crop/straightening.** Add draft interaction/validation, transform-aware coverage and bounded resampling; integrate every existing consumer, Save/Open and export. Add scopes/undo hooks only to actual existing APIs, otherwise record the outstanding dependencies.
-6. **Verify, audit and document.** Inspect every existing spatial transformation against the shared geometry system, including source/proxy/tile/flat-field, viewport/picker, presentation/refinement, thumbnail and export mappings. Consolidate duplicate definitions; record intentional boundary exceptions and outstanding integration rather than masking differences. Update contracts/architecture, record focused checks and acceptance limits here, and move this plan to `completed/` only when the agreed scope is accepted.
+1. [x] **Settle the exact-orientation slice.** Recheck the baseline and agree order, control semantics and persistence compatibility. Add the agreed geometry contract; add an ADR only for consequential choices needing durable rationale.
+2. [x] **Pure state and mapping.** Implement identity/defaults, dimensions, exact pixel-centre forward/inverse mapping and persistence validation. Test independently of RAW/native/UI dependencies. Keep viewport/picker context transient.
+3. [x] **Deliver flips/quarter-turns end to end.** Wire Roll/Photo controls, viewer/navigation, transformed picker overlays, provisional/settled rendering, thumbnails and snapshot-based TIFF/EXR export. Existing regional area averaging can be reused in source orientation for exact permutations, provided destination dimensions/order are explicit and equivalent. Stop for a verified checkpoint; a viewer-only implementation is not completion.
+4. [x] **Settle crop/straightening design.** Resolve the remaining storage/order/pivot, picker, valid-coverage and filter questions against the working discrete model. Integer crop can be a small checkpoint, but must not lock in an incompatible arbitrary-rotation representation.
+5. [x] **Deliver crop/straightening.** Add draft interaction/validation, transform-aware coverage and bounded resampling; integrate every existing consumer, Save/Open and export. Add scopes/undo hooks only to actual existing APIs, otherwise record the outstanding dependencies.
+6. [x] **Verify, audit and document.** Inspect every existing spatial transformation against the shared geometry system, including source/proxy/tile/flat-field, viewport/picker, presentation/refinement, thumbnail and export mappings. Consolidate duplicate definitions; record intentional boundary exceptions and outstanding integration rather than masking differences. Update contracts/architecture, record focused checks and acceptance limits here, and close the implementation plan with unperformed acceptance/deferred work tracked separately.
 
 ## Acceptance and verification plan
 
-Use small synthetic asymmetric images: distinct labelled corners, off-centre markers, odd/non-square dimensions, one-pixel edges and nonzero active-area origins. Samples stay read-only and photographic outputs stay ignored. Run checks from this worktree root through `./scripts/cargo.sh`; use [the runbook](../build-and-probes.md), not historical test totals.
+Use small synthetic asymmetric images: distinct labelled corners, off-centre markers, odd/non-square dimensions, one-pixel edges and nonzero active-area origins. Samples stay read-only and photographic outputs stay ignored. Run checks from this worktree root through `./scripts/cargo.sh`; use [the runbook](../../build-and-probes.md), not historical test totals.
 
 - **Mapping:** all roll/photo flip combinations × four quarter-turns, including equivalent effective orientations; dimensions, every pixel mapping, forward/inverse round-trips, repeat/reset operations and action order. Exact orientations must have zero sample-selection error.
 - **Picking/navigation:** same original source pixels/RGB at Fit, Retina 100%, zoom and pan; transformed corner handles/cursors, move/resize, active-area edges and source bypass. Empty-area/rejected/cancelled picks change no processing state. Crop cannot make film-base calibration impossible.
@@ -113,9 +115,11 @@ Use small synthetic asymmetric images: distinct labelled corners, off-centre mar
 
 ## Progress and handoff
 
+The following checkpoints preserve their original scope, environment, failures and verification limits. They are historical snapshots, not fresh runs or instructions to resume superseded steps. The integrated checkpoint at the end is the implementation closure; active follow-up lives in [completion work](../completion.md#geometry).
+
 ### Historical exact-orientation checkpoint
 
-- Added the [geometry contract](../contracts/geometry.md) and dependency-free `src/geometry.rs`: source/oriented/frame/raster point types, half-open source regions, exact nearest-centre source-raster mapping, independently editable orientation, exact composition/pixel permutation and affine texture adapters.
+- Added the [geometry contract](../../contracts/geometry.md) and dependency-free `src/geometry.rs`: source/oriented/frame/raster point types, half-open source regions, exact nearest-centre source-raster mapping, independently editable orientation, exact composition/pixel permutation and affine texture adapters.
 - `raw::Rect` now aliases the canonical source-region type. Source previews and project region validation use shared utilities. `viewport::CanvasLayout` names the UI boundary explicitly, stores its centre as a frame point, maps through composition, and keeps drag constraints/UI f32 boundary snapping separate from coordinate conversion. Picker resize cursors use canvas direction, not transformed source direction.
 - Optional durable roll/photo orientation, independent controls/reset, load/New/Open/Save synchronization, working-photo return and immutable export snapshots are wired. Geometry controls are disabled while picking/measuring; accepted orientation controls Fit the new composition. Picker entry itself never Fits or resets navigation.
 - Provisional and settled textures remain in source orientation; shared affine presentation maps either to the composed frame. Source-space tiled area averaging therefore stays unchanged for exact permutations; composition participates in settled generation/signature invalidation. Thumbnails reuse source/processed texture caches and apply current roll/per-source composition at paint time. TIFF/AP0 EXR callbacks permute full-resolution source pixels and swap output dimensions.
@@ -252,7 +256,7 @@ Integration must retain main's accepted native-camera processing and camera basi
 - Flat-field support editing temporarily uses untransformed full-source composition and integer source rectangles through the shared canvas mapping. It cannot start during a crop draft; invalid nonrectangular support is rejected before a worker command. Failure/Cancel restores accepted composition, working view and inspection state and clears the temporary canvas layout. The wrapped picker header from main is preserved.
 - Preview/refinement, thumbnail field/camera identities and export snapshots retain native-camera model/schema 4 and accepted correction. Composed exports correct/process each original pixel before filtering; TIFF filters after unchanged ACES, EXR retains signed/HDR AP1→AP0. Persistence round-trip covers rotated composition and an unchanged accepted field/map snapshot together. Old AP0 schemas/models still reject, without migration.
 
-Fresh local Apple Silicon/macOS/Metal snapshot from this worktree through `./scripts/cargo.sh`, with `CC=/usr/bin/clang CXX=/usr/bin/clang++`:
+Recorded integration snapshot on local Apple Silicon/macOS/Metal from the geometry worktree through `./scripts/cargo.sh`, with `CC=/usr/bin/clang CXX=/usr/bin/clang++`:
 
 - `test --offline --all-features`: **205 passed, 3 explicitly ignored**; the library subset is 126 passed/1 ignored. New nonuniform corrected/uncorrected rotated-tile tests cover nonzero origins, fractional pivots, reflections/turns, native/reduced/one-pixel outputs, tile seams/padded tails and both targets within the unchanged `2e-5` gate. Synthetic TIFF/AP0 EXR reopen tests cover exact/rotated corrected and uncorrected native-camera processing. Weighted fitting verifies unequal native camera white. Existing native-camera, project, response/GPU, presentation and large-Retina buffer tests pass.
 - `test --offline --lib`: **22 passed** without desktop features. Formatting, strict `clippy --offline --all-features --all-targets -- -D warnings` and debug editor binary build pass. Final diff/whitespace inspection passes; Markdown relative links/anchors pass across 10 changed documents and 91 links.
@@ -262,4 +266,4 @@ This closes the existing-feature spatial audit: metadata/CFA indexing intentiona
 
 Ignored real-RAW/train/editor/full-size export acceptance was not run. No new photographic/onscreen, physical-input/monitor, broader-device/memory-pressure or release-build acceptance is claimed. Dense guides remain deferred; samples and unrelated worktrees are unchanged. No push.
 
-**Delivery:** local checkpoint/rebase/main integration is authorized; preserve unrelated `docs/feedback.md` and `.pi/` changes and do not push. **Next action after delivery:** agree the photographic straightening/native-diagnostic acceptance exercise. This is a separate check, not an automatic new implementation request.
+**Delivery:** checkpointed, rebased and fast-forwarded onto local `main` as `f8969c1`; the main-checkout debug editor build passed. Unrelated `docs/feedback.md` and `.pi/` changes were preserved. No push. No active implementation remains in this package; photographic acceptance and optional dense guides are owned by [completion work](../completion.md#geometry), not these archived steps.

@@ -4,7 +4,7 @@ Compact text logs promoted from `.cache/probes` during the documentation reorgan
 
 ## Native-camera replacement checkpoint
 
-- [Model-4 numerical/source/editor/output snapshot](camera-inversion.txt): isolated flat-field baseline, unchanged tolerances, independent review fixes, real train/flat-field regressions and release build. No new onscreen or calibrated-colour acceptance. [Integration/handoff plan](../../plans/camera-inversion.md).
+- [Model-4 numerical/source/editor/output snapshot](camera-inversion.txt): isolated flat-field baseline, unchanged tolerances, independent review fixes, real train/flat-field regressions and release build. No new onscreen or calibrated-colour acceptance. [Implementation closure](../../plans/completed/camera-inversion.md).
 
 ## Response-integration checkpoint (historical AP0 models)
 

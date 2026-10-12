@@ -1,6 +1,6 @@
 # Basic editor Save/Open — completed
 
-Status: approved slice implemented. [Roadmap](../../../PLAN.md) owns next priority; [durable projects](../durable-projects.md) holds separately scoped recovery/relink/undo. Preview work and this slice remain uncommitted; no commit/push was authorized.
+Status: completed and integrated on main. [Roadmap](../../../PLAN.md) owns next priority; [durable projects](../durable-projects.md) holds separately scoped recovery/relink/undo. The implementation/verification below records the original schema-3 checkpoint, not current compatibility: [native-camera replacement](camera-inversion.md) superseded it with schema/model 4, and [geometry integration](flip-crop-rotate.md) added accepted composition. The old uncommitted handoff is obsolete.
 
 ## Scope and decisions
 
@@ -23,6 +23,8 @@ Initial availability policy: missing/changed/incompatible **ordered** RAWs rejec
 - Picker rectangles/source return, viewport/selection, bypass, worker IDs and derived GPU resources remain transient. Source-only picker navigation does not register reference provenance.
 
 ## Verification
+
+Historical original-slice results, not a fresh run during this plan audit:
 
 - **63 focused tests passed:** 49 library tests, 7 project, 3 film-project and 4 viewer tests. This includes 37 editor/control/document/file tests, source/RAW/viewport checks and existing compact-source/large-Fit regressions. No fresh full integration/export suite claim.
 - New coverage: stable-ID edits/order/locators; exact settings and legal out-of-slider values; relative Save As and symlink directory bases; failed-write preservation; JSON-named RAW destination protection; unavailable nonordered records/runtime rejection; save snapshot flushing; dirty guards; stale/failed results; New resetting WB; clean view/navigation; actual Cancel/Discard clicks; viewport-close veto; header menus; Cmd-S after pending numeric text; current-project export protection.
