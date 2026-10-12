@@ -25,6 +25,16 @@ Update the active plan at meaningful verified checkpoints and before handoff/con
 
 Verification is proportional: run the narrow relevant checks, inspect the change and repair affected documentation links. Label recorded test counts/timings as snapshots, with environment and reproduction; do not claim a fresh test run or hardware acceptance from an old log. Use [the runbook](docs/build-and-probes.md), not historical command collections.
 
+## Wrap-up procedure
+
+When the user requests wrap-up of agreed work, that request authorizes the following local delivery procedure. An ordinary implementation request does not automatically authorize commits or main integration; this procedure never authorizes a push.
+
+1. **Rebase and integrate onto current main.** Checkpoint-commit the agreed work first if needed, preserving unrelated working changes and other worktrees. Inspect new main changes and their relevant code, contracts and tests. Integrate their behavior and boundaries with the feature, including interactions that Git merges without conflicts; merely resolving conflict markers or making the code compile is insufficient. Preserve main's accepted semantics and verify that existing and new features work together. Discuss material new scope/design decisions before expanding the work.
+2. **Close and update documentation before the final commit.** Update affected contracts, architecture, roadmap and plans; move completed implementation plans to `docs/plans/completed/` and repair links. Track deferred work and unperformed acceptance separately without claiming it passed. Keep mixed packages active only for genuinely unfinished work.
+3. **Verify the integrated result.** Run proportional checks after rebase, including relevant combined-behavior regressions, and inspect the final code/documentation diff. Report unresolved failures and verification limits rather than masking them.
+4. **Commit and deliver locally to main.** Commit only the agreed changes and fast-forward main to the verified result, preserving unrelated local changes. If the work is already on main, commit there; do not rewrite unrelated history.
+5. **Report delivery.** State the main commit, checks actually run and remaining limits. Do not push unless separately requested.
+
 ## Engineering boundaries
 
 - macOS/Apple Silicon first; no minimum chip/RAM requirement is established. M1 Pro/16 GB was a provisional example, not a mandatory target or acceptance gate. Resource policy should follow observed problems, not speculative hardware constraints. macOS 14 and physical-monitor acceptance remain separate checks.
@@ -39,4 +49,4 @@ Verification is proportional: run the narrow relevant checks, inspect the change
 
 `.cache/` is disposable storage, not the only home for authored source, decisions or irreplaceable evidence. Keep reusable tools in `scripts/`/`native/` or research tools alongside their guide; preserve selected compact results in research evidence. Put dependencies, build products, generated/private photographic outputs and downloaded third-party inputs in ignored local storage. Never automatically promote user photographs, copied upstream code or copyrighted documents. See [research tools/cache policy](docs/research/tools/README.md).
 
-Run commands from the repository root through `./scripts/cargo.sh`. No system/Homebrew installations, sample edits, commits or pushes are authorized by this file.
+Run commands from the repository root through `./scripts/cargo.sh`. No system/Homebrew installations or sample edits are authorized by this file. Local commits/main integration require a user request, including an explicit wrap-up request as defined above; pushes require separate authorization.
