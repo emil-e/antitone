@@ -4,6 +4,8 @@
 
 ## Active packages
 
+- [Responsive rendering and thumbnail caching](rendering-performance.md): shared GPU resources, pressure-responsive caches and bounded native development; semantic integration onto accepted-composition scopes and local delivery.
+
 - [Source inspection and interaction follow-up](inspection-and-interaction.md): remaining cursor/New-tab/roll-workflow/layout/colour questions; the initial navigation/source-inspection slice is implemented.
 - [Thumbnail follow-up](visual-feedback.md): reported clipping/invalidation/latency concerns; bounded thumbnails and responsive scopes are implemented.
 - [Durable projects](durable-projects.md): recovery, source-change/relink UI and undo/redo; basic Save/Open is complete.

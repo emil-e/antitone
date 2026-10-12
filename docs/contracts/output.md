@@ -16,6 +16,16 @@ Convert linear target RGB into extended-sRGB, then encode once into `RGBA16Float
 
 Layer tagging and offscreen reference/readback do not establish physical calibration, 100-nit monitor luminance, monitor-transition correctness or broader-device/macOS-14 acceptance. Zero submitted frames is a failed onscreen check, not success via an occlusion bypass.
 
+## Responsiveness and optional caches
+
+Use available resources to avoid repeated development/render setup, while shrinking optional storage/work under pressure; no minimum chip/RAM target is established. Immutable GPU pipelines/tables are device-shared. Proxies never supply measurements/exports, and cache pressure never changes development, inversion precision, ACES or settled output resolution.
+
+Normal thumbnail budgets follow physical RAM: RGB16 proxy storage is RAM/1024 clamped to 16…64 MiB; GPU image pixel/storage plus small entry overhead is RAM/256 clamped to 32…256 MiB. Normal-pressure idle prefetch may visit the entire roll, prioritizing visible/nearby cells and admitting only spare-budget entries without eviction. Resumed foreground work cancels offscreen prefetch. Warning pressure quarters optional budgets and disables prefetch; critical pressure zeroes optional budgets and cancels/suspends new thumbnail work. Current visible GPU images and the current selected proxy are essential working sets and may exceed an optional budget. Source protection is released when the working view is gone. Inactive correction generations leave the GPU cache; the active shared CPU/GPU gain map remains document/image-owned storage outside pixel budgets.
+
+These limits exclude the selected Scan, one temporary development, active/refining outputs/scratch, [scope bins/totals/readback](scopes.md#gpu-lifecycle-and-resources), driver/runtime overhead and in-flight callbacks; they are not an aggregate application or universal OOM guarantee. A normal ≤36-image roll is the retention/use case, not a maximum supported source count.
+
+Disk RGB16 proxies are disposable, versioned/checksummed and atomically installed under `~/.cache/antitone/thumbnails-v1`, with a 128 MiB pruning budget. Source bytes and pinned development/header identity must match before cold disk reuse. Cached locators/document source IDs, grades, output targets and correction maps cannot substitute for that identity. Corrupt/unavailable cache data is a reported miss; changed/missing RAWs remain errors. Uncorrected RGB16 proxies are transformed by the current grade/correction, never reinterpreted as baked display photographs.
+
 ## TIFF
 
 Full-resolution pipeline → OCIO CPU rendering → matching transfer → round-to-nearest RGB16. Write lossless LZW with horizontal prediction and the exact matching ICC payload as an UNDEFINED tag. Reject non-finite/out-of-range encoded values rather than repairing them at quantization. TIFF compression uses the tested whole-image `write_data` API, retaining a bounded RGB16 frame.

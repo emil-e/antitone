@@ -4,14 +4,14 @@ Run from the repository root. macOS/Apple Silicon is the current supported check
 
 ## Toolchain and native dependencies
 
-Use `./scripts/cargo.sh`: checkout-local Rust 1.99.0 under `.cache/rustup`, package MSRV 1.95. Global default/toolchain selection is not changed. Native dependencies are pinned LibRaw 0.22.0 and OCIO 2.6.0:
+Use `./scripts/cargo.sh`: checkout-local Rust 1.99.0 under `.cache/rustup`, package MSRV 1.95. Global default/toolchain selection is not changed. Native dependencies are pinned LibRaw 0.22.0, LLVM OpenMP 22.1.8 and OCIO 2.6.0:
 
 ```sh
 ./scripts/build-libraw.sh
 ./scripts/build-ocio.sh
 ```
 
-Bootstrap/downloads require network and populate ignored `.cache/deps`; do not install global/Homebrew packages. `LIBRAW_SOURCE` and `OCIO_PREFIX` override native source/prefix defaults. The current OCIO library rpath is checkout-local, not distributable packaging. Little CMS is built statically through the pinned Rust dependency; do not set `LCMS2_LIB_DIR` to override that choice. Cargo/native commands below use Apple Clang.
+Bootstrap/downloads require network; do not install global/Homebrew packages. LibRaw/OpenMP use private ignored `.cache/native-deps` (LibRaw script builds OpenMP first); OCIO uses `.cache/deps`. OpenMP's LLVM release archive is SHA256-pinned and extracted selectively, source-built arm64/macOS-14 with `@rpath/libomp.dylib`. Licenses remain beside local products. `LIBRAW_SOURCE` and `OCIO_PREFIX` override native source/prefix defaults; OpenMP has no inherited runtime override. Existing serial LibRaw builds in `.cache/deps` are not the production default. Rpaths remain checkout-local, not distributable packaging. Little CMS is built statically through the pinned Rust dependency; do not set `LCMS2_LIB_DIR` to override that choice. Cargo/native commands below use Apple Clang.
 
 ## Focused checks
 
@@ -107,6 +107,35 @@ ANTITONE_SMOKE_SCOPES=1 ANTITONE_SMOKE_CONTROLS=1 target/release/antitone --smok
 The latency probe times encode/submit/wait for reductions only, not RAW/ACES processing or end-to-end gesture latency. GPU-bin/pixel readbacks are test-only; the live UI maps just 16 diagnostic bytes asynchronously with one outstanding job. Smoke retains nonzero-visible-frame acceptance and uses diagnostic calibration, not the user's grade. Capture only the application window during layout holds with the existing [helper](research/tools/README.md#manufacturer-study--capture); photographic screenshots remain ignored/private.
 
 In `.worktrees/scopes`, ignored `.cache/{rustup,deps}` reuse existing inputs, `.cache/samples` is read-only sample access, Cargo runs with `CARGO_HOME="$PWD/.cache/cargo"` and separate target products. Substitute `.cache/samples/…` in the smoke command there. Do not bootstrap/download or install globally when checkout-local inputs are absent.
+
+## Rendering/import performance probes
+
+The ignored editor probes leave samples unchanged and use local Metal. `import_and_refinement_latency` compares bounded queue depths 1/2/3 with and without simulated foreground GPU submissions and checks bitwise reconstruction agreement; it takes about 34 seconds on the recorded M5 snapshot. This is not physical control/presentation latency. `initial_import_with_renderer_prewarm` separates header/hash/unpack/process/resource phases, then verifies whole-frame scope processing/diagnostics remain coherent during seeded-thumbnail creation and disk restart. `project_relative_locator_cold_thumbnail` uses an ignored temporary symlink/project/cache to verify cold development against a resolved locator.
+
+```sh
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --release --features editor --lib import_and_refinement_latency -- --ignored --nocapture
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --release --features editor --lib initial_import_with_renderer_prewarm -- --ignored --nocapture
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --release --features editor --lib project_relative_locator_cold_thumbnail -- --ignored --nocapture
+```
+
+Combined geometry integration (corrected real RAW, shared affine refinement, tile seams, both targets and independent scalar coverage; no sample edits):
+
+```sh
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --features editor --lib --test scopes --test viewer --test affine_resample --test geometry_export --test camera_inversion --test gpu_film_response
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --release --features editor --lib corrected_affine_refinement_matches_scalar_coverage -- --ignored --nocapture
+```
+
+Additional ignored native follow-up checks:
+
+```sh
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --release --features editor --lib development_and_region_picks -- --ignored --nocapture
+# Build .cache/native-deps/probe per the linked guide before the contention probe:
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --release --features editor --lib native_development_foreground_contention -- --ignored --nocapture
+```
+
+[Native complete-RGB/metadata/diagnostics comparison and build guide](research/tools/raw-development.md). Native thread stress excludes physical input/layout/surface latency, as with tile stress; scoped CPU policy and lazy decoding do not change source/development identity. `raw_development` logs include priority/requested thread count.
+
+Runtime `source_registration`, `raw_import`, `raw_development`, `selected_source`, `thumbnail` and `settled_preview` logs identify phases. Thumbnail logs include memory/disk hits, cancellation and failure; source verification uses full-byte fingerprints, not timestamps. Settled `gpu_seconds` includes encoding/upload/submission/wait wall time, not hardware timestamps. [Selected results/limits](research/evidence/rendering-performance.txt); [worktree integration boundaries](plans/rendering-performance.md).
 
 ## RAW and complete GPU chain
 

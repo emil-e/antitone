@@ -16,7 +16,7 @@ AP0 remains only at interchange/rendering boundaries: signed AP1→AP0 EXR, and 
 
 ## Camera source representation
 
-One production GPU source: developed RGB16 in four u16 slots, **8 bytes/pixel**, fourth ignored. Sensor bit depth is separate from this interface's unsigned 16-bit development output. No float-AP0 upload, retained wide converted source or CPU interactive fallback.
+One production GPU source: developed RGB16 in four u16 slots, **8 bytes/pixel**, fourth ignored. Sensor bit depth is separate from this interface's unsigned 16-bit development output. Upstream AHD uses a pinned checkout-local OpenMP runtime with bounded foreground/background CPU budgets; thread policy changes no development identity/settings or pixels. RAW decoding is independent of lazy whole-sensor statistics. Explicit `RawFile::unpack` still returns cached full diagnostics; development/regional picks decode without that global pass, and regional statistics retain original CFA/RAW/black/white/margins after processing. Diagnostic calls preserve cached camera pixels and invalid picks change no state. [Rationale/limits](../decisions/parallel-libraw.md). No float-AP0 upload, retained wide converted source or CPU interactive fallback.
 
 `Scan::pixel`, `patch` and `reference` return normalized camera RGB, optionally corrected in camera coordinates. Full-resolution CPU sampling/fitting/export use f64. Dmin/Dmax are compensated linear means before inversion; roll fitting processes every positive sample rather than inverting the mean scan.
 

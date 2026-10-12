@@ -8,7 +8,7 @@ Camera-scanned negatives need controlled linear development without opaque per-i
 
 ## Decision
 
-Use pinned LibRaw 0.22.0 black subtraction, one roll-fixed WB tuple and AHD development. Retrieve linear developed camera RGB16 before standard-space output matrix/curve clipping, then apply the documented camera conversion. No automatic brightness, per-photo as-shot WB substitution or camera-specific hack.
+Use pinned LibRaw 0.22.0 black subtraction, one roll-fixed WB tuple and AHD development. Retrieve linear developed camera RGB16 before standard-space output matrix/curve clipping, then apply the documented camera conversion. No automatic brightness, per-photo as-shot WB substitution or camera-specific hack. The approved [parallel implementation](parallel-libraw.md) enables upstream OpenMP with bounded per-job resources and lazy diagnostics, without replacing this algorithm/settings/source contract.
 
 ## Consequences
 

@@ -6,6 +6,10 @@ Compact text logs promoted from `.cache/probes` during the documentation reorgan
 
 - [Model-4 numerical/source/editor/output snapshot](camera-inversion.txt): isolated flat-field baseline, unchanged tolerances, independent review fixes, real train/flat-field regressions and release build. No new onscreen or calibrated-colour acceptance. [Implementation closure](../../plans/completed/camera-inversion.md).
 
+## Rendering-performance checkpoint
+
+- [Import, renderer, thumbnail and bounded-overlap measurements](rendering-performance.txt): local model-4 snapshot, unchanged numerical gates and visible Save/Open smoke. [Implementation/integration plan](../../plans/rendering-performance.md). Not physical memory-pressure, input-latency or broader-device acceptance.
+
 ## Response-integration checkpoint (historical AP0 models)
 
 Environment recorded by the runbook/history: Apple M5 Pro / `Mac17,9`, 48 GiB, macOS 26.6.2, checkout-local Rust 1.99.0, LibRaw 0.22.0, OCIO 2.6.0, Metal/wgpu 30.0.1. This is not M1 Pro/16 GB, macOS-14 or physical-monitor acceptance.

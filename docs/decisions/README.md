@@ -5,6 +5,7 @@ Selective rationale for consequential choices—not a second specification or ta
 | Decision | Status |
 | --- | --- |
 | [Established LibRaw development](established-raw-development.md) | Accepted |
+| [Bounded upstream parallel LibRaw](parallel-libraw.md) | Accepted; same development/pixels, pinned local OpenMP and lazy immutable diagnostics |
 | [Separate inversion, photography and interchange spaces](colour-space-boundaries.md) | AP0 inversion choice superseded; downstream role separation retained |
 | [Native-camera inversion](native-camera-inversion.md) | Accepted; outright replacement, schema/model 4, no AP0-grade migration |
 | [Unchanged ACES, matching SDR outputs and managed presentation](sdr-output-and-presentation.md) | Accepted |

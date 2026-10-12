@@ -1,0 +1,255 @@
+Rendering performance implementation checkpoint (local snapshot, not device certification)
+Initial base: main 5efb302, impl/rendering-performance worktree, uncommitted implementation.
+Combined geometry-base f8969c1 checkpoint follows at the end; earlier counts are historical.
+Initial timing/smoke snapshots preceded the final pressure/path guard polish; final tests and
+prewarm/disk restart measurement below ran after it. Single trials are not statistical gates.
+Environment: Apple M5 Pro / Mac17,9, 48 GiB unified RAM; macOS 26.6.2 (25G83);
+Rust/Cargo 1.99.0; Metal/wgpu 30.0.1; pinned LibRaw 0.22.0 / OCIO 2.6.0; Apple Clang.
+Samples were read-only. No photographic outputs or RGB16 cache entries are promoted here.
+
+Reproduction from worktree root (offline):
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --release --features editor --lib editor::thumbnails::performance::import_and_refinement_latency -- --ignored --nocapture
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --release --features editor --lib initial_import_with_renderer_prewarm -- --ignored --nocapture
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --release --features editor --lib project_relative_locator_cold_thumbnail -- --ignored --nocapture
+Raw transcripts are disposable .cache/{performance-probe,import-prewarm,relative-thumbnail}.txt.
+
+Four-source registration: 0.127479 s; headers about 1.2–1.9 ms, full fingerprints 26–33 ms/source.
+Selected 8704x6144 development: unpack 0.532730 s, dcraw processing 0.827831 s.
+Selected ready preparation, lazy shared renderer: 2.135375 s;
+  registration 0.030943, development 1.360603, verification 0.030985,
+  proxy extraction 0.001419, renderer initialization 0.710130, image creation 0.001294 s.
+Seeded selected thumbnail: 0.000705 s; zero additional development.
+
+Separate prewarming trial:
+  four-source registration 0.142366 s; unpack 0.583775, dcraw 0.984917 s;
+  selected preparation 1.643100 s, renderer wait 0.000000 s;
+  total registration + selected readiness 1.785707 s.
+The lazy trial's registration + readiness was approximately 2.263 s.
+These are separate single trials, not a statistically established 21% universal improvement.
+Prewarming overlapped CPU work and RAW development ran slower in that trial, but wall time improved.
+
+Refinement: source 8640x5760, output 1538x1026, Display P3, diagnostic model-4 new-grade
+parameters (not the user's photographic grade). All depth outputs were bitwise identical.
+Each depth bounds upload staging; queue order reuses the same tile buffers.
+                    depth 1        depth 2        depth 3       repeat depth 1
+idle seconds        2.098415       1.969972       1.958096       2.086068
+contended seconds   7.194775       4.590012       4.227995       7.142956
+foreground p95 ms  36.782         50.838         52.408         35.616
+foreground max ms  39.989         58.860         55.395         42.364
+Foreground stress reprocessed the 1024 proxy, submitted and waited for GPU completion at
+an attempted 16 ms cadence. It excludes input/layout/surface presentation and is not physical
+control latency. Ordinary edits cancel refinement, unlike this sustained contention stress.
+Conclusion: retain one outstanding tile. ~6% idle gain doesn't justify worse stress latency;
+wait for the specific tile submission instead of a later shared-queue UI submission.
+
+Dispatch workload (calculated, not timing): 207 source tiles. Old whole-output averaging
+launched ~3.62 billion threads for 5120x3414; overlap-bound regression requires <20 million.
+This removes rejected averaging work, not the required 49.8 million per-pixel inversions/ACES.
+
+Relative-project cold thumbnail regression: 2.171171 s with a cold renderer;
+  pre-hash 0.027347, development 1.391323, post-verification 0.027450,
+  proxy 0.000273, renderer 0.723865, image 0.000191 s.
+It uses an ignored temporary project-relative symlink to an untouched sample, and a private
+empty disk cache, verifying the resolved locator is used in both source checks.
+
+Onscreen Save/Open smoke (four sources): passed project/model-4/WB/target reproduction,
+background thumbnail isolation and all-four completion; 821 submitted visible frames.
+Cold thumbnail with warm renderer: 1.402862 s, development 1.346625 s;
+seeded thumbnails approximately 0.000198–0.000215 s.
+No full export, actual OS pressure forcing, physical scroll/trackpad exercise, broader-device,
+macOS-14 or physical-monitor acceptance is claimed. GPU correctness uses unchanged tolerances.
+
+Final prewarm + real-source disk restart probe:
+  four-source registration 0.126865 s; selected preparation 1.630983 s;
+  total initial readiness 1.758116 s; renderer wait zero;
+  unpack 0.545676, process 1.013637 s.
+  seeded thumbnail including first atomic disk installation: 0.001192 s.
+  new worker with empty memory cache: disk hit, 0.036837 s;
+  full RAW-byte verification 0.036310 s, disk read 0.000395 s, image 0.000125 s;
+  zero additional RAW development. Temporary cache was private and discarded.
+Final focused check: 96 library tests passed/4 ignored + 5 viewer/Metal tests passed;
+strict editor-feature all-target Clippy and release editor build passed. Five camera-inversion
+and two full-f64 GPU film-response tests passed. Ignored release real-train RAW gate passed:
+174,592 RGB16 samples, worst unchanged-tolerance multiple 2.771745091e-4 (bound 1).
+Injected pressure transitions, protected visible
+working sets and a complete warm 36-image rapid forward/reverse scrolling case are regressions.
+
+Historical read-only native investigation (installed-runtime trial NOT adopted; source-built adoption below):
+The pinned Makefile.devel build enables reentrant libraw_r, not upstream LIBRAW_USE_OPENMP.
+AHD's top-row tile loop can run in parallel; existing LLVM 22.1.8 OpenMP runtime was reused,
+with a private clone of pinned LibRaw 0.22.0, Apple Clang 21 and unchanged bridge settings.
+No installs, source-sample edits or shared dependency rebuilds. Native probe source lives in
+native/raw_development_probe.cpp; products/transcripts live in .cache/raw-parallel/.
+First attempt incorrectly put all LLVM resource headers ahead of Apple's SDK and failed on
+stdint types. -idirafter preserved native SDK/resource precedence while finding omp.h.
+An unrelated existing stale GCC library search-path warning remained; it did not prevent linking.
+
+Selected source, full sensor statistics included:
+  baseline unpack 0.498691 / process 0.861274 / combined 1.359966 s.
+  OpenMP threads=1: 1.392471 s; threads=2: 1.003502 s;
+  threads=4: 0.810490 s; threads=8: 0.766393 s.
+  Every developed RGB16 code matched baseline SHA256 across all four thread counts.
+
+Follow-up four-source trial with roll WB from the first source, full RGB-code hashes:
+source       baseline s   decode-only s   OpenMP4 + decode-only s   SHA256
+DSC04393     1.384413     1.298285        0.726026                  c1b5df211fb87e598b77cf41282e6f865ce030e3d11e96584d20b32788909165
+DSC04397     1.361427     1.302288        0.735732                  c09aaee84ded92c2cb433d966dbbbcf36ae4068397ea43609804d7108f5cc594
+DSC04378     1.374448     1.300125        0.785043                  85094d2e455dc947a934006f767f36beb923a8c7c9704876b6100a9629cc05d8
+DSC04416     1.407049     1.325776        0.787005                  ae0a0c158b68b85a673ea043666e14ddc2a09cc6f892c05a86c4d697b4b5593e
+Within each row all three hashes were identical. The fourth ignored slot is not hashed;
+all 160 million RGB codes per developed 8704x6144 image are. decode-only bypasses the global
+sensor-statistics loop for diagnosis, NOT the production path or numerical/RAW acceptance gates.
+That read-only statistics pass cost approximately 60–86 ms (~4–6% of development).
+OpenMP4 + no whole-frame statistics roughly halved development in these single local trials.
+
+This installed-runtime experiment was followed by explicit user approval for source-built local
+OpenMP, bounded CPU/pressure policy and lazy diagnostics. Broader hardware/camera/physical and
+release packaging acceptance remains separate; final adopted implementation follows.
+
+Adopted native follow-up (local snapshot, same environment; source-built runtime SDK 27.0):
+LLVM OpenMP 22.1.8 source archive SHA256:
+922f1817a0df7b1489272d18134ee0087a8b068828f87ac63b9861b1a9965888
+https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/llvm-project-22.1.8.src.tar.xz
+Private .cache/native-deps only; arm64/macOS14.0, @rpath/libomp.dylib, only libSystem dependency.
+No global installs, Homebrew runtime linkage or shared-dependency mutation. Final editor Mach-O
+minimum 14.0 and local OpenMP rpath verified; actual macOS14 execution is NOT established.
+
+Complete-source compatibility (native/raw_development_probe.cpp; guide has compile commands):
+Baseline bridge/header snapshot from committed 5efb302 + untouched serial LibRaw archive;
+source-built parallel bridge + scoped thread budgets + lazy validated decode. All 16 variants
+(4 original sources x1/2/4/8) exactly matched baseline version/dimensions/maxima/warnings,
+RGB16 SHA256, camera metadata SHA256, pre-multipliers SHA256, full and regional sensor SHA256.
+The regional sensor data matched before/after processing; full statistics lazily computed after
+processing matched old eager counts. Native probe asserts thread/dynamic/blocktime ICV restoration.
+A fifth real train source with two WB-reference tuples also matched all fields at 2/8 threads.
+Full transcripts: .cache/native-deps/{compatibility,train-compatibility}.txt.
+
+Native complete development seconds (decode only in timing, diagnostics/hash compared afterward):
+source       old serial+stats   1 thread   2 threads   4 threads   8 threads
+DSC04393     1.439683           1.351157   0.924043    0.721836    0.650768
+DSC04397     1.335733           1.271492   0.932565    0.729397    0.663395
+DSC04378     1.380085           1.320362   0.926660    0.724693    0.676010
+DSC04416     1.376937           1.313508   0.939924    0.749629    0.682890
+
+Native/GPU sustained-contention trial (simulated 1024 proxy reprocessing/submission/completion;
+not physical input/presentation latency; process also performs untimed equality/hash reads):
+requested threads     1          2          4          8          repeat 2
+native seconds        1.495921   1.092232   0.872627   0.790474   1.103261
+foreground p95 ms     27.902     27.849     30.973     30.788     27.742
+foreground max ms     37.348     28.211     31.786     33.090     29.198
+Production caps: foreground 8/background 2, leaving two logical CPUs when possible;
+warning 2/1, critical 1/1. OpenMP idle worker blocktime zero within scoped native calls.
+
+Import/prewarm + selected readiness: 0.902877 s (4-source registration 0.123841,
+selected preparation 0.778937; unpack 0.481512, process 0.231539, renderer wait zero).
+Earlier corresponding prewarm trial was 1.758116 s: ~49% lower in this separate single trial,
+not a statistically established universal gain. Seed thumbnail 0.000684 s;
+new-worker disk reuse 0.032298 s, including 0.031770 s full-byte RAW verification, no development.
+
+Final source-built checks: 99 editor library tests passed/6 ignored + all 5 viewer/Metal tests;
+raw-only library 16 passed/1 ignored; strict all-target editor Clippy; release editor build.
+Explicit ignored lazy/full/region/cached-pointer RAW regression passed. Real train model-4
+RGB16/scalar/GPU gate passed with the same worst tolerance multiple 2.771745091e-4, bound 1.
+Fresh onscreen project smoke passed four-source/model4/custom-WB/working+sRGB+P3 reproduction,
+missing/changed/incompatible RAW atomicity, settled GPU preview and worker isolation; 686 frames.
+
+Independent native-only review found two issues: inherited runtime prefix could pick macOS26
+Homebrew runtime (override removed), and offscreen idle prefetch survived resumed foreground
+work (shared idle admission/cancellation predicate + regression added). No repeat review.
+Idle full-roll prefetch reaches unshown photos with spare retention budget, does not touch LRU
+for membership or evict recent entries to add optional work, and visible/foreground work preempts it.
+
+Retained limits: no forced actual OS pressure, physical trackpad/input acceptance, broader-camera/
+device or actual macOS14/monitor proof, application bundling/codesigning remains future work.
+Import fingerprinting costs/repeated reads are recorded as a potential next bottleneck, NOT optimized.
+
+Combined geometry-base checkpoint: f8969c1fd72cd024e99d364711ad9cd942c95471.
+Same local environment above; source-built OpenMP/LibRaw unchanged. No performance commits/pushes.
+Reproduction from worktree root:
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --features editor --lib --test viewer --test affine_resample --test geometry_export --test camera_inversion --test gpu_film_response
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --release --features editor --lib corrected_affine_refinement_matches_scalar_coverage -- --ignored --nocapture
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh clippy --offline --features editor --all-targets -- -D warnings
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh build --offline --release --features editor --bin antitone
+Explicit ignored prewarm, lazy diagnostics and camera_raw commands are in the runbook above.
+Onscreen:
+target/release/antitone --smoke-project samples/DSC04397.ARW 4000 5644 128 32 samples/DSC04378.ARW 4000 2600 128 128 samples/DSC04416.ARW samples/DSC04393.ARW
+Transcripts: .cache/geometry-integration/{combined-tests,affine-raw,clippy,release,prewarm,lazy,raw-gate,editor-smoke}.txt.
+
+Results: 144 editor library passed/7 ignored; 7 viewer, 1 affine reconstruction,
+3 composed export/reopen, 5 camera inversion and 2 full-f64 GPU response tests passed.
+Shared images retain source-coordinate flat-field lookup and composition-on-paint reuse.
+New crop-draft regression verifies offscreen cancellation and no idle replacement admission.
+Rectangular views alone use overlap dispatch; affine shader/uniform/full-output coverage unchanged.
+
+Real-RAW shared affine refinement uses 1024x256 padded tiles, two straightening angles,
+roll turn/flips, source-coordinate correction and independent scalar pixel-cell/ACES reference.
+source bounds      angle    sRGB worst absolute error    P3 worst absolute error
+1129x718           -23.7    2.229667639e-7                2.886131340e-7
+1097x827            31.2    2.894113546e-7                2.852713838e-7
+Existing absolute tolerance remains 2e-5. Both targets have no source/working buffers in the
+settled image; stale-generation cancellation and inconsistent-frame rejection passed.
+Native baseline full-code comparisons were not rerun; native inputs did not change in integration.
+Lazy/full/region/cached-pointer probe and real-train numerical gate were rerun and passed;
+train 174,592 samples, worst tolerance multiple still 2.771745091e-4 (bound 1).
+
+Fresh prewarm: four-source registration 0.124321 s, selected preparation 0.768071 s;
+total readiness 0.892535 s, renderer wait zero. Seed 0.000642 s; restarted-worker disk
+reuse 0.032759 s, including compulsory full-byte verification 0.032286583 s, no development.
+These are single local trials, not statistical acceptance or a new universal speedup claim.
+Strict Clippy, release editor build, formatting/diff/shell syntax and changed-doc links passed.
+Fresh onscreen project smoke: model4/custom-WB/working+sRGB+P3 reproduction, four-source
+thumbnail/selected-worker isolation, failed RAW Open atomicity and settled preview passed;
+633 submitted visible frames. No physical gestures or rotated photographic acceptance claimed.
+Main later advanced through docs-only a66e2ae/bbc9afd; those later plan closures/workflow changes
+are not included in this geometry-base checkpoint. Main's dirty docs/other worktrees untouched.
+All previously recorded hardware, OS-pressure, monitor and packaging acceptance limits remain.
+
+Local commit packaging checkpoint (same sources/environment; not a fresh onscreen gate):
+8f6cfd2 — bounded OpenMP RAW development and lazy sensor diagnostics.
+c9fd35c — shared GPU renderer and responsive thumbnail caches/integration.
+Fresh raw-feature library: 29 passed/1 ignored; combined editor/GPU/export checks passed
+with counts above; strict editor all-target Clippy, formatting/diff checks passed.
+Reproduction:
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --features raw --lib
+Combined test/Clippy commands are unchanged from the preceding geometry checkpoint.
+Transcripts: .cache/geometry-integration/{commit-raw-tests,commit-editor-tests,commit-clippy}.txt.
+No code changed while splitting commits; documentation packaged separately. No push or main update.
+
+Accepted-composition scopes rebase checkpoint: main 0beee3e (813d469 + integration).
+Same M5 Pro/48 GiB/macOS26.6.2/Rust1.99/Metal environment; offline Apple Clang.
+Original logical commits 8f6cfd2/c9fd35c become f3109a2/8584163, plus documentation commit.
+Main's uncommitted docs/other worktrees untouched; no push or main delivery.
+Source/working/output/signatures/revisions remain image-owned; immutable renderer resources
+alone are shared. Scope bins/readback/cache identity remain scope-owned. Canonical accepted
+whole-frame composition remains independent of viewer navigation, thumbnails and refinement.
+Both callback orders and targets, source-coordinate correction, different background source/
+matrix/parameters, rejected/accepted writes and same-renderer distinct-image identity verified.
+Existing retained-trace, readback coalescing, crop/reference suspension and layout gates pass.
+
+Reproduction from performance worktree root:
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --features editor --lib --test scopes --test viewer --test affine_resample --test geometry_export --test camera_inversion --test gpu_film_response
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --release --features editor --lib initial_import_with_renderer_prewarm -- --ignored --nocapture
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --release --features editor --lib corrected_affine_refinement_matches_scalar_coverage -- --ignored --nocapture
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --release --features editor --test camera_raw -- --ignored --nocapture
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh clippy --offline --features editor --all-targets -- -D warnings
+CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh build --offline --release --features editor --bin antitone
+ANTITONE_SMOKE_SCOPES=1 ANTITONE_SMOKE_CONTROLS=1 target/release/antitone --smoke-project samples/DSC04397.ARW 4000 5644 128 32 samples/DSC04378.ARW 4000 2600 128 128 samples/DSC04416.ARW samples/DSC04393.ARW
+Transcripts: .cache/scopes-integration/{combined-tests,clippy,prewarm,affine-raw,raw-gate,release,editor-smoke}.txt.
+
+Results: 158 editor library passed/7 ignored; 9 scope GPU passed/1 ignored; 7 viewer,
+1 affine reconstruction, 3 composed export, 5 camera inversion, 2 full-f64 GPU response passed.
+Prewarm initial readiness 0.947191 s; registration 0.128164, selected 0.818879 s;
+renderer wait zero. Seed 0.000891 s; restarted-worker disk reuse 0.034504 s, hash 0.033815584 s,
+zero development. Selected whole-frame scope: 699,392 valid/0 invalid/0 outside, one reduction
+before/after seeded/restarted thumbnail jobs; selected preparation reused. Single-trial snapshots.
+Corrected affine RAW worst absolute error still 2.894113546e-7, unchanged bound 2e-5.
+Real train 174,592 samples, worst tolerance multiple still 2.771745091e-4, bound 1.
+Native/dependency inputs unchanged; previous complete-source comparisons not rerun.
+Strict Clippy, release build, formatting/diff/shell and changed-doc file links passed.
+One new-integration-only independent review found no actionable issue; no repeat original review.
+Fresh combined onscreen scope/controls/project smoke: 1,592 submitted visible frames;
+P3 whole-frame 699,392 samples, 8 reductions, invalid=0; all four normal/narrow Roll/Photo
+layout holds, scope modes/amplification, four-source isolation, settled previews, saved custom
+WB/model4/working+sRGB+P3 reproduction and RAW-error atomicity passed.
+No photographic guide/composed-photo appearance, physical gesture/monitor, actual OS pressure,
+macOS14 or broader-device/distribution acceptance is claimed. Deferred optimizations unchanged.
