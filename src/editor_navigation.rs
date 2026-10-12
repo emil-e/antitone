@@ -1,14 +1,14 @@
 use super::*;
-use crate::viewport::Geometry;
+use crate::viewport::CanvasLayout;
 
 impl Editor {
     pub(super) fn navigate(
         &mut self,
         ui: &egui::Ui,
         response: &egui::Response,
-        mut geometry: Geometry,
+        mut geometry: CanvasLayout,
         pixels_per_point: f32,
-    ) -> (Geometry, bool) {
+    ) -> (CanvasLayout, bool) {
         if !ui.is_enabled() {
             return (geometry, false);
         }
@@ -35,16 +35,20 @@ impl Editor {
                     geometry.scale * pixels_per_point * zoom,
                     anchor,
                 );
-                geometry = self
-                    .viewport
-                    .layout(geometry.canvas, geometry.area, pixels_per_point);
+                geometry = self.viewport.layout_composition(
+                    geometry.canvas,
+                    geometry.composition,
+                    pixels_per_point,
+                );
             }
             if translation != egui::Vec2::ZERO && self.viewport.zoom.is_some() && can_pan(geometry)
             {
                 self.viewport.pan(geometry, pixels_per_point, translation);
-                geometry = self
-                    .viewport
-                    .layout(geometry.canvas, geometry.area, pixels_per_point);
+                geometry = self.viewport.layout_composition(
+                    geometry.canvas,
+                    geometry.composition,
+                    pixels_per_point,
+                );
             }
         }
         let panning = response.dragged_by(egui::PointerButton::Middle)
@@ -54,9 +58,11 @@ impl Editor {
         if panning && can_pan(geometry) {
             self.viewport
                 .pan(geometry, pixels_per_point, response.drag_delta());
-            geometry = self
-                .viewport
-                .layout(geometry.canvas, geometry.area, pixels_per_point);
+            geometry = self.viewport.layout_composition(
+                geometry.canvas,
+                geometry.composition,
+                pixels_per_point,
+            );
         }
         if self.pick.is_none()
             && !space
@@ -70,9 +76,11 @@ impl Editor {
             } else {
                 self.viewport.fit();
             }
-            geometry = self
-                .viewport
-                .layout(geometry.canvas, geometry.area, pixels_per_point);
+            geometry = self.viewport.layout_composition(
+                geometry.canvas,
+                geometry.composition,
+                pixels_per_point,
+            );
         }
         if response.hovered() || response.dragged() {
             let cursor = if panning {
@@ -107,14 +115,14 @@ impl Editor {
         (geometry, panning)
     }
 }
-fn can_pan(geometry: Geometry) -> bool {
+fn can_pan(geometry: CanvasLayout) -> bool {
     geometry.image.width() > geometry.canvas.width()
         || geometry.image.height() > geometry.canvas.height()
 }
 fn picker_cursor(
-    geometry: Geometry,
+    geometry: CanvasLayout,
     point: egui::Pos2,
-    region: Option<Rect>,
+    region: Option<Coverage>,
     active: Option<PickDrag>,
     dragging: bool,
 ) -> egui::CursorIcon {
@@ -133,7 +141,7 @@ fn picker_cursor(
             }
         }
         PickDrag::Resize { fixed } => {
-            let delta = geometry.source_point(point) - fixed;
+            let delta = point - geometry.screen_frame_point(fixed);
             if delta.x * delta.y >= 0. {
                 egui::CursorIcon::ResizeNwSe
             } else {

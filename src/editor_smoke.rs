@@ -100,7 +100,7 @@ impl SmokeEditor {
             .send(Command::Pick(
                 self.editor.id,
                 kind,
-                region,
+                Coverage::rectangle(region),
                 self.editor.calibration(),
                 self.editor.roll,
                 self.editor.photo,

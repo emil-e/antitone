@@ -35,6 +35,52 @@ pub fn mean(pixels: &[DVec3]) -> Result<DVec3, Error> {
     Ok(result)
 }
 
+pub fn weighted_mean(pixels: &[(DVec3, f64)]) -> Result<DVec3, Error> {
+    weighted_mean_iter(pixels.iter().copied().map(Ok))
+}
+pub fn weighted_mean_iter(
+    pixels: impl IntoIterator<Item = Result<(DVec3, f64), Error>>,
+) -> Result<DVec3, Error> {
+    let mut sum = DVec3::ZERO;
+    let mut compensation = DVec3::ZERO;
+    let mut total = 0.;
+    let mut weight_compensation = 0.;
+    for sample in pixels {
+        let (pixel, weight) = sample?;
+        if !pixel.is_finite() {
+            let channel = pixel
+                .to_array()
+                .iter()
+                .position(|v| !v.is_finite())
+                .unwrap();
+            return Err(Error::NonFinitePixel { channel });
+        }
+        if !weight.is_finite() || weight <= 0. {
+            return Err(Error::UnusableSample("invalid coverage weight"));
+        }
+        let value = pixel * weight - compensation;
+        let next = sum + value;
+        compensation = (next - sum) - value;
+        sum = next;
+        let value = weight - weight_compensation;
+        let next = total + value;
+        weight_compensation = (next - total) - value;
+        total = next;
+    }
+    if total == 0. {
+        return Err(Error::UnusableSample("empty patch"));
+    }
+    let result = sum / total;
+    if !result.is_finite() {
+        return Err(Error::NumericalOverflow);
+    }
+    Ok(result)
+}
+
+pub fn photo_neutral_weighted(pixels: &[(DVec3, f64)]) -> Result<Balance, Error> {
+    neutral_wb(weighted_mean(pixels)?)
+}
+
 /// Samples are positive-image AP1 working RGB before the existing photo WB.
 pub fn photo_neutral(pixels_before_wb: &[DVec3]) -> Result<Balance, Error> {
     neutral_wb(mean(pixels_before_wb)?)
@@ -46,6 +92,28 @@ pub fn roll_neutral(
     scan_patch: &[DVec3],
     camera_to_ap1: DMat3,
 ) -> Result<Balance, Error> {
+    fit_roll_neutral(
+        calibration,
+        roll,
+        scan_patch.iter().map(|&p| (p, 1.)),
+        camera_to_ap1,
+    )
+}
+
+pub fn roll_neutral_weighted(
+    calibration: Calibration,
+    roll: RollSettings,
+    scan_patch: &[(DVec3, f64)],
+    camera_to_ap1: DMat3,
+) -> Result<Balance, Error> {
+    fit_roll_neutral(calibration, roll, scan_patch.iter().copied(), camera_to_ap1)
+}
+fn fit_roll_neutral(
+    calibration: Calibration,
+    roll: RollSettings,
+    scan_patch: impl Iterator<Item = (DVec3, f64)> + Clone,
+    camera_to_ap1: DMat3,
+) -> Result<Balance, Error> {
     crate::processing::validate_camera_matrix(camera_to_ap1)?;
     let target = camera_to_ap1.inverse() * DVec3::ONE;
     if !target.is_finite() || target.min_element() <= 0. {
@@ -55,10 +123,11 @@ pub fn roll_neutral(
     }
     calibration.validate()?;
     roll.channel_gammas()?;
-    mean(scan_patch)?;
+    weighted_mean_iter(scan_patch.clone().map(Ok))?;
+    let total = scan_patch.clone().map(|(_, w)| w).sum::<f64>();
     if scan_patch
-        .iter()
-        .any(|p| p.min_element() < calibration.input_floor)
+        .clone()
+        .any(|(p, _)| p.min_element() < calibration.input_floor)
     {
         return Err(Error::UnusableSample(
             "gamma patch contains floored scan inputs",
@@ -72,13 +141,13 @@ pub fn roll_neutral(
         let inversion = Inversion::new(calibration, RollSettings { balance, ..roll })?;
         let mut sum = DVec3::ZERO;
         let mut compensation = DVec3::ZERO;
-        for &scan in scan_patch {
-            let y = inversion.apply(scan)?.rgb - compensation;
+        for (scan, weight) in scan_patch.clone() {
+            let y = inversion.apply(scan)?.rgb * weight - compensation;
             let t = sum + y;
             compensation = (t - sum) - y;
             sum = t;
         }
-        let positive = sum / scan_patch.len() as f64;
+        let positive = sum / total;
         if !positive.is_finite() || positive.min_element() <= 1e-8 {
             return Err(Error::UnusableSample(
                 "gamma patch is too near Dmin or has nonpositive mean RGB",

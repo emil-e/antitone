@@ -41,6 +41,7 @@ pub struct AreaAverage {
     finish: wgpu::RenderPipeline,
     sums: wgpu::Buffer,
     dimensions: [u32; 4],
+    affine: Option<[[f32; 2]; 3]>,
 }
 impl AreaAverage {
     pub async fn new(
@@ -48,11 +49,33 @@ impl AreaAverage {
         source: [u32; 2],
         output: [u32; 2],
     ) -> Result<Self, crate::Error> {
-        let size = u64::from(output[0]) * u64::from(output[1]) * 16;
+        Self::create(device, source, output, None).await
+    }
+    pub async fn new_affine(
+        device: &wgpu::Device,
+        raster: crate::frame_raster::FrameRaster,
+    ) -> Result<Self, crate::Error> {
+        let area = raster.bounds()?;
+        Self::create(
+            device,
+            [area.width, area.height],
+            raster.output,
+            Some(raster.affine()?),
+        )
+        .await
+    }
+    async fn create(
+        device: &wgpu::Device,
+        source: [u32; 2],
+        output: [u32; 2],
+        affine: Option<[[f32; 2]; 3]>,
+    ) -> Result<Self, crate::Error> {
+        let size = (u64::from(output[0]) * u64::from(output[1]))
+            .checked_mul(16)
+            .ok_or_else(|| crate::Error::Gpu("area-average size overflow".into()))?;
         if source.contains(&0)
             || output.contains(&0)
-            || output[0] > source[0]
-            || output[1] > source[1]
+            || (affine.is_none() && (output[0] > source[0] || output[1] > source[1]))
             || size > device.limits().max_storage_buffer_binding_size
         {
             return Err(crate::Error::Gpu(
@@ -62,7 +85,14 @@ impl AreaAverage {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("post-render exact-area averaging"),
-            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+            source: wgpu::ShaderSource::Wgsl(
+                if affine.is_some() {
+                    include_str!("shaders/affine_area.wgsl")
+                } else {
+                    SHADER
+                }
+                .into(),
+            ),
         });
         let compute = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("settled preview reconstruction"),
@@ -115,6 +145,7 @@ impl AreaAverage {
             finish,
             sums,
             dimensions: [source[0], source[1], output[0], output[1]],
+            affine,
         })
     }
     pub fn accumulate(
@@ -134,9 +165,14 @@ impl AreaAverage {
             tile.width(),
             tile.height(),
         ];
+        let mut bytes = bytemuck::cast_slice(&parameters).to_vec();
+        if let Some(affine) = self.affine {
+            bytes.extend_from_slice(bytemuck::cast_slice(&affine));
+            bytes.extend_from_slice(bytemuck::cast_slice(&[0_f32; 2]));
+        }
         let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
-            contents: bytemuck::cast_slice(&parameters),
+            contents: &bytes,
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let view = tile.create_view(&Default::default());

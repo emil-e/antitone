@@ -22,6 +22,8 @@ fn source(model: &str, matrix: DMat3) -> Source {
         },
         reference_only: false,
         photo: Default::default(),
+        orientation: Default::default(),
+        crop: None,
     }
 }
 fn project() -> Project {

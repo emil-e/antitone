@@ -1,6 +1,8 @@
 use crate::{
     Error, PROCESSING_MODEL_VERSION,
     color::wb_matrix,
+    crop::Crop,
+    geometry::{PhotoOrientation, RollOrientation, SourceRegion},
     processing::{Calibration, Inversion, PhotoSettings, RollSettings, exposure_multiplier},
 };
 use glam::{DMat3, DVec3};
@@ -153,12 +155,7 @@ impl SourceDevelopment {
     }
 }
 fn contains(area: [u32; 4], region: [u32; 4]) -> bool {
-    region[2] > 0
-        && region[3] > 0
-        && region[0] >= area[0]
-        && region[1] >= area[1]
-        && u64::from(region[0]) + u64::from(region[2]) <= u64::from(area[0]) + u64::from(area[2])
-        && u64::from(region[1]) + u64::from(region[3]) <= u64::from(area[1]) + u64::from(area[3])
+    SourceRegion::from(area).contains_region(SourceRegion::from(region))
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -169,12 +166,19 @@ pub struct Source {
     pub development: SourceDevelopment,
     pub reference_only: bool,
     pub photo: PhotoSettings,
+    #[serde(default, skip_serializing_if = "PhotoOrientation::is_identity")]
+    pub orientation: PhotoOrientation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crop: Option<Crop>,
 }
 impl Source {
     fn validate(&self) -> Result<()> {
         require(!self.path.as_os_str().is_empty(), "empty source path")?;
         self.fingerprint.validate()?;
         self.development.validate()?;
+        if let Some(crop) = self.crop {
+            crop.region(self.development.active_area.into())?;
+        }
         exposure_multiplier(self.photo.exposure)?;
         wb_matrix(self.photo.wb)?;
         Ok(())
@@ -227,6 +231,8 @@ pub struct Project {
     pub dmax: Option<[f64; 3]>,
     pub input_floor: Option<f64>,
     pub roll: RollSettings,
+    #[serde(default, skip_serializing_if = "RollOrientation::is_identity")]
+    pub orientation: RollOrientation,
     pub output: Output,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flat_field: Option<FlatFieldSettings>,
@@ -245,6 +251,7 @@ impl Default for Project {
             dmax: None,
             input_floor: None,
             roll: RollSettings::new_grade(),
+            orientation: RollOrientation::default(),
             output: Output::default(),
             flat_field: None,
         }
@@ -350,6 +357,9 @@ impl Project {
             && self.order.contains(&id)
         {
             field.require_source(&development)?;
+        }
+        if let Some(crop) = self.source(id)?.crop {
+            crop.region(development.active_area.into())?;
         }
         let fingerprint = Fingerprint::read(path)?;
         require(

@@ -104,6 +104,25 @@ fn command_save_commits_pending_numeric_text_before_snapshot() {
         .unwrap();
     editor.tab = 1;
     let context = egui::Context::default();
+    for _ in 0..3 {
+        ui_frame(&mut editor, &context, vec![]);
+    }
+    ui_frame(
+        &mut editor,
+        &context,
+        vec![
+            egui::Event::PointerMoved(egui::pos2(950., 350.)),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                phase: egui::TouchPhase::Move,
+                delta: egui::vec2(0., -1000.),
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    for _ in 0..12 {
+        ui_frame(&mut editor, &context, vec![]);
+    }
     let shapes = ui_frame(&mut editor, &context, vec![]);
     let exposure = shapes
         .iter()
@@ -228,6 +247,8 @@ fn fixture() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
                 },
                 reference_only: false,
                 photo: PhotoSettings::default(),
+                orientation: Default::default(),
+                crop: None,
             },
             Development::new(crate::raw::version(), [2., 1., 1.5, 1.]),
         )
@@ -238,6 +259,39 @@ fn fixture() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
     editor.dmax = Some(DVec3::new(0.008, 0.005, 0.002));
     editor.sync_document();
     (editor, send, receiver)
+}
+#[test]
+fn orientation_is_source_owned_and_restored_without_changing_grade_on_load() {
+    let (mut editor, _send, receiver) = fixture();
+    let id = editor.current_source.unwrap();
+    editor.roll_orientation.horizontal = true;
+    editor.roll_orientation.turn_clockwise();
+    editor.photo_orientation.turn_clockwise();
+    editor.photo_orientation.flips.vertical = true;
+    editor.crop = Some(Crop::from_region(Rect {
+        x: 30,
+        y: 20,
+        width: 401,
+        height: 203,
+    }));
+    let crop = editor.crop;
+    let orientation = editor.photo_orientation;
+    let grade = (editor.roll, editor.photo, editor.dmin, editor.dmax);
+    editor.sync_document();
+    assert_eq!(editor.document.project.orientation, editor.roll_orientation);
+    assert_eq!(
+        editor.document.project.source(id).unwrap().orientation,
+        orientation
+    );
+    editor.load("temporary-reference.ARW".into());
+    assert_eq!(editor.photo_orientation, PhotoOrientation::default());
+    assert!(editor.crop.is_none());
+    editor.load("fixture.ARW".into());
+    assert_eq!(editor.photo_orientation, orientation);
+    assert_eq!(editor.crop, crop);
+    assert_eq!((editor.roll, editor.photo, editor.dmin, editor.dmax), grade);
+    assert_eq!(editor.roll_orientation, editor.document.project.orientation);
+    assert!(matches!(receiver.try_recv().unwrap(), Command::Load(..)));
 }
 #[test]
 fn failed_and_stale_document_results_preserve_state_and_active_request() {
@@ -365,12 +419,12 @@ fn navigation_and_view_state_do_not_dirty_a_saved_document() {
     let before = editor.document.project.clone();
     editor.source = false;
     editor.viewport.zoom = Some(2.);
-    editor.region = Some(Rect {
+    editor.region = Some(Coverage::rectangle(Rect {
         x: 12,
         y: 12,
         width: 32,
         height: 32,
-    });
+    }));
     let source_path = editor
         .document
         .source_path(editor.current_source.unwrap())

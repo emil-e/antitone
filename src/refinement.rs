@@ -15,6 +15,7 @@ use std::sync::{
 pub struct ViewRequest {
     pub area: crate::raw::Rect,
     pub output: [u32; 2],
+    pub frame: Option<crate::frame_raster::FrameRaster>,
 }
 
 pub fn refine(
@@ -45,11 +46,20 @@ pub fn refine(
         scan.camera_to_ap1,
         target,
     ))?;
-    let average = pollster::block_on(AreaAverage::new(
-        device,
-        [view.area.width, view.area.height],
-        [width, height],
-    ))?;
+    let average = if let Some(frame) = view.frame {
+        if frame.bounds()? != view.area || frame.output != view.output {
+            return Err(Error::InvalidParameter(
+                "inconsistent frame refinement request",
+            ));
+        }
+        pollster::block_on(AreaAverage::new_affine(device, frame))?
+    } else {
+        pollster::block_on(AreaAverage::new(
+            device,
+            [view.area.width, view.area.height],
+            [width, height],
+        ))?
+    };
     let mut sampling = std::time::Duration::ZERO;
     let mut gpu = std::time::Duration::ZERO;
     for y in (0..view.area.height).step_by(tile_height as usize) {

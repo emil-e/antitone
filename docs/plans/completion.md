@@ -4,9 +4,7 @@ Scope basis: product goals/remaining work, not one approved implementation chang
 
 ## Geometry
 
-Start with independent roll/photo horizontal/vertical flips and photo quarter-turns. Define composition, dimensions and one shared source↔display transform across viewer, full-resolution pickers, thumbnails, scopes and exports. Calibration RGB stays unchanged. Use asymmetric corner fixtures for every composition and exact picker mapping.
-
-Then add non-destructive crop/arbitrary rotation with explicit source-coordinate storage, pivot/order, resampling and edge/transparent-area policy. Verify preview/export geometry, valid transformed picks, scope coverage, undo/reopen and untouched RAWs. These are larger processing/state changes, not a viewer-only cosmetic transform.
+Selected in the focused [flip/crop/rotate plan](flip-crop-rotate.md). It owns the agreed shared mappings/interaction, implementation checkpoints, straightening/coverage verification and remaining acceptance. This is a persistent composition across viewer/pickers/thumbnails/exports, not a viewer-only cosmetic transform. Scopes and undo remain separate integration dependencies; no implementation is approved by this split.
 
 ## Inversion bases and roll assistance
 
@@ -49,8 +47,8 @@ Next action when selected: propose the source scope, language tooling, slice ord
 - Bundle native dependencies, review dependency licenses/notices and distribution layout. Checkout-local rpaths are not deployable packaging.
 - Lightroom/Resolve interoperability remains deferred; no application automation is authorized.
 
-[Flat-field correction](completed/flat-field-correction.md) is completed and user-accepted, not folded into calibration/toe or these later requests. Windows/HDR output, custom RAW development and dust/catalog features are outside the current pass.
+[Flat-field correction](completed/flat-field-correction.md) is completed and user-accepted, not folded into calibration/toe or these later requests. The [geometry integration](flip-crop-rotate.md#baseline-and-integration-boundary) preserves its original-source coordinates and main's native-camera model. Windows/HDR output, custom RAW development and dust/catalog features are outside the current pass.
 
 ## Handoff
 
-No implementation in this package. New feedback has been classified through read-only code/plan inspection, not runtime testing or design approval. Next action: select one work item through the roadmap and design its smallest verifiable slice. Original requirements/approval context: [historical feedback amendment](../research/history/feedback-plan.md), [historical product plan](../research/history/product-plan.md). The feedback inbox is triaged; the remaining requirements above are the persistent record.
+No implementation in this package. New feedback has been classified through read-only code/plan inspection, not runtime testing or design approval. Geometry implementation/progress is owned by the [focused plan](flip-crop-rotate.md); other items still need selection through the roadmap and design of their smallest verifiable slice. Original requirements/approval context: [historical feedback amendment](../research/history/feedback-plan.md), [historical product plan](../research/history/product-plan.md). The feedback inbox is triaged; the remaining requirements above are the persistent record.

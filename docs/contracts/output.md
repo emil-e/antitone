@@ -24,12 +24,16 @@ Full-resolution pipeline → OCIO CPU rendering → matching transfer → round-
 
 Full-resolution signed/HDR AP1 → AP0/D60 → ZIP16 half/full RGB EXR. Exclude ACES, transfer encoding and monitor conversion. Record AP0 chromaticities, processing model and exposure convention. Reject half overflow and offer full float; never silently clip/change precision. AP0 pixels alone are not a claim of complete ACES-container compliance.
 
-Export APIs receive the actual `Response`. Original model-2 metadata remains unchanged. Film output records exact toe/shoulder and signed-root policy, with the actual model number; do not label original probes/exports using the latest global version.
+Export APIs receive the actual `Response`. Both classic Original and Film use native-camera model 4; Film additionally records exact toe/shoulder and signed-root policy. AP0/model-2/3 project processing is not a supported export path.
+
+## Spatial composition
+
+Editor export snapshots accepted framing (centre, extents and source-plane angle) and exact roll/photo orientation together with calibration/grade. Exact integer cropping/flips/quarter-turns retain pixel permutations with no new interpolation. Rotated output pixels inverse-map to real source coverage and use exact pixel-cell intersection weights. TIFF renders each original processed pixel through unchanged ACES before averaging linear target RGB and encoding; EXR averages signed/HDR scene-linear data and converts AP1→AP0 without ACES or clamping. Bounded TIFF strips retain contributing/rendered samples, not a wide whole-source cache. Output dimensions follow the composed frame and swap for discrete 90°/270° actions. Diagnostic raster-writer APIs remain available, while composed export adapters own shared footprint reconstruction. Every output corner is source-covered; no draft or bounding-box-only pixels enter the export. [Geometry and reconstruction contract](geometry.md).
 
 ## Destination safety and budgets
 
 Recompute from full-resolution source, never preview buffers. Write same-directory temporaries; flush/sync before atomic installation. Refuse overwrite unless replacement is explicitly confirmed. macOS exclusive rename protects no-overwrite races; callback errors preserve old files and leave no final partial output. This is not full power-loss durability or cross-platform exclusive-rename support.
 
-TIFF/EXR sample buffers each have a current 1 GiB cap (~306 MiB RGB16/half or ~612 MiB full for the supplied full developed frame, excluding RAW/runtime). Batch snapshots, progress/cancellation, metadata propagation and aggregate memory validation remain scheduled work. Editor export uses the active metadata image area; the diagnostic CLI intentionally uses full developed dimensions.
+TIFF/EXR sample buffers each have a current 1 GiB cap (~306 MiB RGB16/half or ~612 MiB full for the supplied full developed frame, excluding RAW/runtime). Batch snapshots, progress/cancellation, metadata propagation and aggregate memory validation remain scheduled work. Editor export uses the accepted composition within the active metadata image area; the diagnostic CLI intentionally uses full developed dimensions.
 
 Software checks include ICC/transfer exhaustion, ColorSync/Core Image, compressed numerical reopen and full TIFF/ImageIO decode. Lightroom/Resolve interoperability remains unverified/deferred. Use [the runbook](../build-and-probes.md) for reproduction and [recorded evidence](../research/evidence/README.md) for past outcomes.

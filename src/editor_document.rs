@@ -228,6 +228,8 @@ pub(super) fn read_source(path: &Path) -> Result<(Source, [f64; 4])> {
             development: metadata_development(&raw.metadata)?,
             reference_only: false,
             photo: Default::default(),
+            orientation: Default::default(),
+            crop: None,
         },
         raw.metadata.cam_mul,
     ))

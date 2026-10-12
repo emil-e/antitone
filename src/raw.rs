@@ -107,13 +107,7 @@ impl Metadata {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Rect {
-    pub x: u32,
-    pub y: u32,
-    pub width: u32,
-    pub height: u32,
-}
+pub use crate::geometry::SourceRegion as Rect;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]

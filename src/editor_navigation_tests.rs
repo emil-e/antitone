@@ -28,7 +28,7 @@ impl Harness {
             _receiver: receiver,
         }
     }
-    fn frame(&mut self, events: Vec<egui::Event>) -> (Geometry, bool, egui::CursorIcon) {
+    fn frame(&mut self, events: Vec<egui::Event>) -> (CanvasLayout, bool, egui::CursorIcon) {
         self.time += 1. / 60.;
         let mut result = None;
         let mut output = self.context.run_ui(
@@ -64,7 +64,7 @@ impl Harness {
         point: egui::Pos2,
         pressed: bool,
         button: egui::PointerButton,
-    ) -> (Geometry, bool, egui::CursorIcon) {
+    ) -> (CanvasLayout, bool, egui::CursorIcon) {
         self.frame(vec![
             egui::Event::PointerMoved(point),
             egui::Event::PointerButton {
@@ -75,7 +75,7 @@ impl Harness {
             },
         ])
     }
-    fn native(&mut self) -> Geometry {
+    fn native(&mut self) -> CanvasLayout {
         let (fit, _, _) = self.frame(vec![]);
         self.editor
             .viewport
@@ -213,6 +213,7 @@ fn picker_cursors_share_rectangle_hit_testing_and_no_image_click_changes_view() 
         height: 256,
     };
     let screen = geometry.screen_region(region);
+    let region = Coverage::rectangle(region);
     assert_eq!(
         picker_cursor(geometry, screen.min, Some(region), None, false),
         egui::CursorIcon::ResizeNwSe

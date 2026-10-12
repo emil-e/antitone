@@ -1,9 +1,13 @@
 pub mod color;
+pub mod coverage;
+pub mod crop;
 #[cfg(feature = "editor")]
 pub mod editor;
 #[cfg(feature = "export")]
 pub mod export;
 pub mod flat_field;
+pub mod frame_raster;
+pub mod geometry;
 #[cfg(feature = "gpu")]
 pub mod gpu;
 #[cfg(feature = "ui")]

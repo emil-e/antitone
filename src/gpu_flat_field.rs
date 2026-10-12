@@ -1,5 +1,5 @@
 use super::{CameraMatrix, split_constants};
-use crate::{Error, flat_field::FlatField};
+use crate::{Error, flat_field::FlatField, geometry::SourceRaster};
 use glam::{DMat3, DVec3, Vec4};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
@@ -7,8 +7,7 @@ use wgpu::util::DeviceExt;
 /// Integer nearest-centre sampling, shared by full-resolution tiles and sparse previews.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SourceGeometry {
-    area: [u32; 4],
-    size: [u32; 2],
+    raster: SourceRaster,
 }
 impl SourceGeometry {
     pub fn new(area: [u32; 4], size: [u32; 2]) -> Result<Self, Error> {
@@ -27,21 +26,20 @@ impl SourceGeometry {
         if u64::from(size[0]) * u64::from(size[1]) > u32::MAX as u64 {
             return Err(Error::Gpu("source geometry exceeds GPU limits".into()));
         }
-        Ok(Self { area, size })
+        Ok(Self {
+            raster: SourceRaster::new(area.into(), size)?,
+        })
     }
     pub fn pixel(&self, index: u32) -> Result<[u32; 2], Error> {
-        if u64::from(index) >= u64::from(self.size[0]) * u64::from(self.size[1]) {
+        let size = self.raster.size();
+        if u64::from(index) >= u64::from(size[0]) * u64::from(size[1]) {
             return Err(Error::InvalidParameter("source index outside geometry"));
         }
-        let xy = [index % self.size[0], index / self.size[0]];
-        Ok(std::array::from_fn(|axis| {
-            self.area[axis]
-                + ((2 * u64::from(xy[axis]) + 1) * u64::from(self.area[axis + 2])
-                    / (2 * u64::from(self.size[axis]))) as u32
-        }))
+        self.raster.source_pixel([index % size[0], index / size[0]])
     }
     pub(super) fn pixels(&self) -> u32 {
-        self.size[0] * self.size[1]
+        let size = self.raster.size();
+        size[0] * size[1]
     }
 }
 
@@ -118,11 +116,13 @@ pub(super) struct FieldGeometry {
 impl FieldGeometry {
     pub(super) fn new(field: &GpuFlatField, source: SourceGeometry) -> Self {
         let grid = field.field.size();
+        let area = source.raster.region();
+        let size = source.raster.size();
         Self {
             support: field.field.area(),
             grid: [grid[0] as u32, grid[1] as u32, 1, 0],
-            area: source.area,
-            dimensions: [source.size[0], source.size[1], 0, 0],
+            area: [area.x, area.y, area.width, area.height],
+            dimensions: [size[0], size[1], 0, 0],
         }
     }
 }

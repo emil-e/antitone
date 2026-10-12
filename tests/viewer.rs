@@ -128,6 +128,215 @@ fn corrected_viewer_shares_the_field_and_matches_both_cpu_output_targets() {
 }
 
 #[test]
+fn corrected_rotated_tiles_use_original_source_coordinates_before_native_camera_inversion() {
+    use antitone::{
+        crop::Crop,
+        frame_raster::FrameRaster,
+        geometry::{
+            Composition, Flips, FramePoint, PhotoOrientation, QuarterTurns, RollOrientation,
+            SourceRegion,
+        },
+        resample::AreaAverage,
+    };
+    use std::sync::Arc;
+    pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let area = SourceRegion {
+            x: 120,
+            y: 73,
+            width: 23,
+            height: 19,
+        };
+        let matrix = DMat3::from_cols(
+            DVec3::new(0.6, 0.02, -0.01),
+            DVec3::new(0.4, 1.2, -0.15),
+            DVec3::new(0., -0.22, 1.16),
+        );
+        let field = Arc::new(
+            FlatField::from_nodes(
+                [area.x + 2, area.y + 1, area.width - 4, area.height - 2],
+                [2, 2],
+                vec![
+                    DVec3::new(0.9, 1., 0.95),
+                    DVec3::new(1.2, 1.1, 1.),
+                    DVec3::new(1., 1.2, 0.9),
+                    DVec3::new(1.3, 1.15, 1.1),
+                ],
+            )
+            .unwrap(),
+        );
+        let gpu = Arc::new(GpuFlatField::new(&device, field.clone()).unwrap());
+        let codes = |x: u32, y: u32| {
+            let values = [
+                (x * 13 + y * 7) % 31,
+                (x * 7 + y * 11) % 23,
+                (x * 19 + y * 3) % 41,
+            ];
+            [
+                3000 + values[0] as u16 * 1300,
+                4000 + values[1] as u16 * 1700,
+                5000 + values[2] as u16 * 1100,
+                65535,
+            ]
+        };
+        let base = Calibration {
+            dmin: DVec3::new(0.8, 0.7, 0.9),
+            dmax: DVec3::new(0.003, 0.002, 0.001),
+            input_floor: antitone::processing::CAMERA_INPUT_FLOOR,
+        };
+        let roll = RollSettings {
+            exposure: -1.,
+            ..RollSettings::new_grade()
+        };
+        let photo = PhotoSettings {
+            wb: Balance {
+                warmth: 0.13,
+                tint: -0.07,
+            },
+            ..Default::default()
+        };
+        for corrected in [false, true] {
+            let calibration = if corrected {
+                field.processing_calibration(base).unwrap()
+            } else {
+                base
+            };
+            let pipeline = Pipeline::new(calibration, roll, photo, matrix).unwrap();
+            let parameters =
+                ProcessingParameters::positive(calibration, roll, photo, matrix).unwrap();
+            let working: Vec<_> = (area.y..area.y + area.height)
+                .flat_map(|y| {
+                    (area.x..area.x + area.width)
+                        .map(|x| {
+                            let p = codes(x, y);
+                            let gain = if corrected {
+                                field.gain([x as f64 + 0.5, y as f64 + 0.5]).unwrap()
+                            } else {
+                                DVec3::ONE
+                            };
+                            pipeline
+                                .apply(
+                                    DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.
+                                        * gain,
+                                )
+                                .unwrap()
+                                .rgb
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
+                let scalar = CpuRenderer::new(target).unwrap().render(&working).unwrap();
+                for angle in [-23.7_f64, 31.2] {
+                    let crop = Crop {
+                        center: [132.25, 82.75],
+                        size: [15, 9],
+                        angle: angle.to_radians(),
+                    }
+                    .constrained(area)
+                    .unwrap();
+                    let composition = Composition::with_crop(
+                        area,
+                        RollOrientation {
+                            turns: QuarterTurns::One,
+                            horizontal: true,
+                            ..Default::default()
+                        },
+                        PhotoOrientation {
+                            flips: Flips {
+                                vertical: true,
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        },
+                        Some(crop),
+                    )
+                    .unwrap();
+                    for output in [composition.size(), [4, 3], [1, 1]] {
+                        let raster = FrameRaster::new(
+                            composition,
+                            FramePoint([0., 0.]),
+                            FramePoint(composition.size().map(f64::from)),
+                            output,
+                        )
+                        .unwrap();
+                        let bounds = raster.bounds().unwrap();
+                        let average = AreaAverage::new_affine(&device, raster).await.unwrap();
+                        let mut tile =
+                            GpuImage::new(&device, &queue, 6, 4, &[[0; 4]; 24], matrix, target)
+                                .await
+                                .unwrap();
+                        for y in (0..bounds.height).step_by(4) {
+                            for x in (0..bounds.width).step_by(6) {
+                                let pixels: Vec<_> = (0..4)
+                                    .flat_map(|dy| {
+                                        (0..6).map(move |dx| {
+                                            if x + dx < bounds.width && y + dy < bounds.height {
+                                                codes(bounds.x + x + dx, bounds.y + y + dy)
+                                            } else {
+                                                [0; 4]
+                                            }
+                                        })
+                                    })
+                                    .collect();
+                                tile.write_source(&queue, &pixels).unwrap();
+                                tile.set_flat_field(
+                                    corrected.then(|| gpu.clone()),
+                                    SourceGeometry::new([bounds.x + x, bounds.y + y, 6, 4], [6, 4])
+                                        .unwrap(),
+                                )
+                                .unwrap();
+                                let mut encoder =
+                                    device.create_command_encoder(&Default::default());
+                                tile.encode(&device, &mut encoder, parameters);
+                                average.accumulate(&device, &mut encoder, &tile.linear, [x, y]);
+                                queue.submit([encoder.finish()]);
+                                device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+                            }
+                        }
+                        let result =
+                            GpuImage::new_rendered(&device, &queue, output[0], output[1], target)
+                                .await
+                                .unwrap();
+                        let mut encoder = device.create_command_encoder(&Default::default());
+                        average.finish(&device, &mut encoder, &result.linear);
+                        queue.submit([encoder.finish()]);
+                        let actual = read(&device, &queue, &result.linear).await;
+                        for y in 0..output[1] {
+                            for x in 0..output[0] {
+                                let coverage = raster.footprint([x, y]).unwrap();
+                                let mut expected = DVec3::ZERO;
+                                for ([sx, sy], weight) in coverage.pixels(area).unwrap() {
+                                    expected += scalar
+                                        [((sy - area.y) * area.width + sx - area.x) as usize]
+                                        .as_dvec3()
+                                        * weight
+                                        / coverage.area();
+                                }
+                                let pixel = actual[(y * output[0] + x) as usize];
+                                for c in 0..3 {
+                                    assert!(
+                                        (f64::from(pixel[c]) - expected[c]).abs() < 2e-5,
+                                        "corrected={corrected} target={target:?} angle={angle} output={output:?} pixel={x},{y} c={c}: {} vs {}",
+                                        pixel[c],
+                                        expected[c]
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+#[test]
 fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -307,6 +516,190 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
                                 (f64::from(actual[c]) - expected).abs() < 0.0015,
                                 "{target:?} {actual:?} {srgb:?}"
                             );
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn oriented_presentation_matches_exact_source_pixel_mapping() {
+    use antitone::crop::Crop;
+    use antitone::geometry::{
+        Composition, Flips, FramePoint, PhotoOrientation, QuarterTurns, RollOrientation,
+        SourceRegion,
+    };
+    pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let area = SourceRegion {
+            x: 12,
+            y: 7,
+            width: 5,
+            height: 3,
+        };
+        let pixels: Vec<_> = (0..15)
+            .map(|i| [3000 + i * 2500, 12000 + i * 700, 35000 - i * 1500, 0])
+            .collect();
+        for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
+            let image = GpuImage::new(&device, &queue, 5, 3, &pixels, DMat3::IDENTITY, target)
+                .await
+                .unwrap();
+            let mut encoder = device.create_command_encoder(&Default::default());
+            image.encode(&device, &mut encoder, ProcessingParameters::source());
+            queue.submit([encoder.finish()]);
+            let linear = read(&device, &queue, &image.linear).await;
+            let crop = Some(Crop::from_region(SourceRegion {
+                x: 13,
+                y: 8,
+                width: 3,
+                height: 2,
+            }));
+            for (crop, margin) in [(None, 0), (crop, 0), (crop, 2)] {
+                for roll_turns in [
+                    QuarterTurns::Zero,
+                    QuarterTurns::One,
+                    QuarterTurns::Two,
+                    QuarterTurns::Three,
+                ] {
+                    for roll_horizontal in [false, true] {
+                        for roll_vertical in [false, true] {
+                            for turns in [
+                                QuarterTurns::Zero,
+                                QuarterTurns::One,
+                                QuarterTurns::Two,
+                                QuarterTurns::Three,
+                            ] {
+                                for photo_horizontal in [false, true] {
+                                    for photo_vertical in [false, true] {
+                                        let composition = Composition::with_crop(
+                                            area,
+                                            RollOrientation {
+                                                turns: roll_turns,
+                                                horizontal: roll_horizontal,
+                                                vertical: roll_vertical,
+                                            },
+                                            PhotoOrientation {
+                                                turns,
+                                                flips: Flips {
+                                                    horizontal: photo_horizontal,
+                                                    vertical: photo_vertical,
+                                                },
+                                            },
+                                            crop,
+                                        )
+                                        .unwrap();
+                                        let [frame_width, frame_height] = composition.size();
+                                        let [width, height] =
+                                            [frame_width + margin * 2, frame_height + margin * 2];
+                                        let texture =
+                                            device.create_texture(&wgpu::TextureDescriptor {
+                                                label: None,
+                                                size: wgpu::Extent3d {
+                                                    width,
+                                                    height,
+                                                    depth_or_array_layers: 1,
+                                                },
+                                                mip_level_count: 1,
+                                                sample_count: 1,
+                                                dimension: wgpu::TextureDimension::D2,
+                                                format: wgpu::TextureFormat::Rgba16Float,
+                                                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                                                    | wgpu::TextureUsages::COPY_SRC,
+                                                view_formats: &[],
+                                            });
+                                        let view = texture.create_view(&Default::default());
+                                        let mapping = composition.texture_mapping(
+                                            FramePoint([-f64::from(margin), -f64::from(margin)]),
+                                            FramePoint([
+                                                f64::from(frame_width + margin),
+                                                f64::from(frame_height + margin),
+                                            ]),
+                                            area,
+                                        );
+                                        let group = image.presentation_group(&device, mapping);
+                                        let mut encoder =
+                                            device.create_command_encoder(&Default::default());
+                                        {
+                                            let pass = encoder.begin_render_pass(
+                                                &wgpu::RenderPassDescriptor {
+                                                    label: None,
+                                                    color_attachments: &[Some(
+                                                        wgpu::RenderPassColorAttachment {
+                                                            view: &view,
+                                                            depth_slice: None,
+                                                            resolve_target: None,
+                                                            ops: wgpu::Operations {
+                                                                load: wgpu::LoadOp::Clear(
+                                                                    wgpu::Color::BLACK,
+                                                                ),
+                                                                store: wgpu::StoreOp::Store,
+                                                            },
+                                                        },
+                                                    )],
+                                                    ..Default::default()
+                                                },
+                                            );
+                                            image.paint_group(&mut pass.forget_lifetime(), &group);
+                                        }
+                                        queue.submit([encoder.finish()]);
+                                        let actual = read(&device, &queue, &texture).await;
+                                        for y in 0..height {
+                                            for x in 0..width {
+                                                let point = composition
+                                                    .frame_to_source(FramePoint([
+                                                        f64::from(x) - f64::from(margin) + 0.5,
+                                                        f64::from(y) - f64::from(margin) + 0.5,
+                                                    ]))
+                                                    .0;
+                                                let sample = if point[0] >= f64::from(area.x)
+                                                    && point[0] < f64::from(area.x + area.width)
+                                                    && point[1] >= f64::from(area.y)
+                                                    && point[1] < f64::from(area.y + area.height)
+                                                {
+                                                    let [sx, sy] = point.map(|v| v.floor() as u32);
+                                                    linear[((sy - area.y) * area.width + sx
+                                                        - area.x)
+                                                        as usize]
+                                                } else {
+                                                    [0., 0., 0., 1.]
+                                                };
+                                                let expected = target.linear_to_srgb()
+                                                    * DVec3::new(
+                                                        f64::from(sample[0]),
+                                                        f64::from(sample[1]),
+                                                        f64::from(sample[2]),
+                                                    );
+                                                for channel in 0..3 {
+                                                    let value = expected[channel];
+                                                    let a = value.abs();
+                                                    let encoded = value.signum()
+                                                        * if a <= 0.0031308 {
+                                                            12.92 * a
+                                                        } else {
+                                                            1.055 * a.powf(1. / 2.4) - 0.055
+                                                        };
+                                                    assert!(
+                                                        (f64::from(
+                                                            actual[(y * width + x) as usize]
+                                                                [channel]
+                                                        ) - encoded)
+                                                            .abs()
+                                                            < 0.0015,
+                                                        "{composition:?} {x},{y}"
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

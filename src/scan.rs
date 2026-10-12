@@ -2,6 +2,8 @@ use crate::flat_field::FlatField;
 use crate::{
     Error,
     color::Balance,
+    coverage::Coverage,
+    geometry::SourceRaster,
     processing::{Calibration, PhotoSettings, Pipeline, RollSettings},
     raw::{RawFile, Rect, SensorDiagnostics},
     sampling,
@@ -300,6 +302,89 @@ impl Scan {
         sampling::photo_neutral(&pixels)
     }
 
+    fn checked_coverage(&mut self, coverage: Coverage) -> Result<()> {
+        for span in coverage.row_spans(self.area)? {
+            self.checked_region(span)?;
+        }
+        Ok(())
+    }
+    pub fn reference_coverage(&mut self, coverage: Coverage) -> Result<DVec3> {
+        if let Some(region) = coverage.exact_rectangle(self.area) {
+            return self.reference(region);
+        }
+        self.checked_coverage(coverage)?;
+        let mean = sampling::weighted_mean_iter(
+            coverage
+                .pixels(self.area)?
+                .map(|([x, y], weight)| self.pixel(x, y).map(|p| (p, weight))),
+        )?;
+        if mean.min_element() <= self.corrected_floor {
+            return Err(Error::UnusableSample(
+                "reference mean is at/below the scan precision floor",
+            ));
+        }
+        Ok(mean)
+    }
+    fn patch_coverage(&mut self, coverage: Coverage) -> Result<Vec<(DVec3, f64)>> {
+        self.checked_coverage(coverage)?;
+        coverage
+            .pixels(self.area)?
+            .map(|([x, y], weight)| {
+                let pixel = self.pixel(x, y)?;
+                if !pixel.is_finite() || pixel.min_element() < self.corrected_floor {
+                    return Err(Error::UnusableSample(
+                        "patch contains nonfinite or floored scan inputs",
+                    ));
+                }
+                Ok((pixel, weight))
+            })
+            .collect()
+    }
+    pub fn roll_neutral_coverage(
+        &mut self,
+        coverage: Coverage,
+        calibration: Calibration,
+        roll: RollSettings,
+    ) -> Result<Balance> {
+        if let Some(region) = coverage.exact_rectangle(self.area) {
+            return self.roll_neutral(region, calibration, roll);
+        }
+        let calibration = self.processing_calibration(calibration)?;
+        let matrix = self.camera_to_ap1;
+        sampling::roll_neutral_weighted(calibration, roll, &self.patch_coverage(coverage)?, matrix)
+    }
+    pub fn photo_neutral_coverage(
+        &mut self,
+        coverage: Coverage,
+        calibration: Calibration,
+        roll: RollSettings,
+        photo: PhotoSettings,
+    ) -> Result<Balance> {
+        if let Some(region) = coverage.exact_rectangle(self.area) {
+            return self.photo_neutral(region, calibration, roll, photo);
+        }
+        let pipeline = Pipeline::new(
+            self.processing_calibration(calibration)?,
+            roll,
+            PhotoSettings {
+                wb: Balance::default(),
+                ..photo
+            },
+            self.camera_to_ap1,
+        )?;
+        let mut pixels = self.patch_coverage(coverage)?;
+        for (pixel, _) in &mut pixels {
+            let result = pipeline.apply(*pixel)?;
+            if result.floored.into_iter().any(|v| v) {
+                return Err(Error::UnusableSample(
+                    "WB patch contains inputs below the calibration floor",
+                ));
+            }
+            *pixel = result.rgb;
+        }
+        sampling::photo_neutral_weighted(&pixels)
+    }
+
     pub fn tile_region(
         &self,
         area: Rect,
@@ -324,15 +409,7 @@ impl Scan {
     }
 
     pub fn validate_area(&self, area: Rect) -> Result<()> {
-        if area.width == 0
-            || area.height == 0
-            || area.x < self.area.x
-            || area.y < self.area.y
-            || u64::from(area.x) + u64::from(area.width)
-                > u64::from(self.area.x) + u64::from(self.area.width)
-            || u64::from(area.y) + u64::from(area.height)
-                > u64::from(self.area.y) + u64::from(self.area.height)
-        {
+        if !self.area.contains_region(area) {
             return Err(Error::InvalidParameter(
                 "view region is outside the active source area",
             ));
@@ -355,15 +432,11 @@ impl Scan {
     pub fn preview_source(&self, maximum: u32) -> Result<(u32, u32, Vec<[u16; 4]>)> {
         let (width, height) = self.preview_dimensions(maximum)?;
         let image = self.raw.camera_image()?;
+        let raster = SourceRaster::new(self.area, [width, height])?;
         let mut pixels = Vec::with_capacity(width as usize * height as usize);
         for y in 0..height {
             for x in 0..width {
-                let sx = self.area.x
-                    + ((2 * u64::from(x) + 1) * u64::from(self.area.width) / (2 * u64::from(width)))
-                        as u32;
-                let sy = self.area.y
-                    + ((2 * u64::from(y) + 1) * u64::from(self.area.height)
-                        / (2 * u64::from(height))) as u32;
+                let [sx, sy] = raster.source_pixel([x, y])?;
                 pixels.push(image.pixel_codes(sx, sy)?);
             }
         }

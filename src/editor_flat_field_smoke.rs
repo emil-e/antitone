@@ -59,7 +59,7 @@ impl FlatFieldSmoke {
     fn geometry(
         &self,
         ui: &egui::Ui,
-    ) -> Result<crate::viewport::Geometry, Box<dyn std::error::Error>> {
+    ) -> Result<crate::viewport::CanvasLayout, Box<dyn std::error::Error>> {
         let canvas = ui.ctx().graphics(|graphics| {
             graphics.get(ui.layer_id()).and_then(|list| {
                 list.all_entries()
@@ -74,12 +74,11 @@ impl FlatFieldSmoke {
         if !canvas.expand(0.1).contains_rect(image) {
             return Err("Fit image exceeds visible canvas".into());
         }
-        let mut viewport = self.editor.viewport;
-        Ok(viewport.layout(
-            canvas,
-            self.editor.ready.as_ref().ok_or("missing scan")?.area,
-            ui.ctx().pixels_per_point(),
-        ))
+        Ok(self
+            .editor
+            .last_layout
+            .ok_or("missing shared canvas layout")?
+            .0)
     }
     fn correction(&mut self, enabled: Option<bool>) {
         let mut document = self.editor.document.clone();
@@ -94,7 +93,7 @@ impl FlatFieldSmoke {
     }
     fn pick(&mut self, kind: Pick, region: Rect) {
         self.editor.begin_pick(kind);
-        self.editor.region = Some(region);
+        self.editor.region = Some(Coverage::rectangle(region));
         self.editor.apply_pick();
     }
     fn calibration_regions(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -181,22 +180,30 @@ impl FlatFieldSmoke {
                 if !geometry
                     .canvas
                     .expand(0.1)
-                    .contains_rect(geometry.screen_region(original))
+                    .contains_rect(geometry.screen_coverage(original))
                 {
                     return Err("support rectangle exceeds visible viewer".into());
                 }
-                let at = geometry.screen_region(original).center();
+                let at = geometry.screen_coverage(original).center();
                 let moved = PickDrag::begin(geometry, at, Some(original))
                     .update(geometry, at + egui::vec2(geometry.scale * 2., 0.));
                 if moved == original {
                     return Err("rectangle move did not change support".into());
                 }
-                let corner = geometry.screen_region(moved).right_bottom();
+                let corner = geometry.screen_coverage(moved).right_bottom();
                 let resized = PickDrag::begin(geometry, corner, Some(moved)).update(
                     geometry,
                     corner - egui::vec2(geometry.scale * 4., geometry.scale * 4.),
                 );
-                if resized.width >= moved.width || resized.height >= moved.height {
+                let moved_rect = moved
+                    .exact_rectangle(geometry.composition.area())
+                    .ok_or("support move is not source rectangular")?;
+                let resized_rect = resized
+                    .exact_rectangle(geometry.composition.area())
+                    .ok_or("support resize is not source rectangular")?;
+                if resized_rect.width >= moved_rect.width
+                    || resized_rect.height >= moved_rect.height
+                {
                     return Err("rectangle resize did not shrink support".into());
                 }
                 self.editor.region = Some(resized);
@@ -210,9 +217,16 @@ impl FlatFieldSmoke {
             }
             2 if self.settled() => {
                 self.geometry(ui)?;
-                let region = self.editor.region.as_mut().ok_or("missing support")?;
+                let area = self.editor.ready.as_ref().ok_or("missing scan")?.area;
+                let mut region = self
+                    .editor
+                    .region
+                    .ok_or("missing support")?
+                    .exact_rectangle(area)
+                    .ok_or("support is not source rectangular")?;
                 region.width -= 2;
                 region.height -= 2;
+                self.editor.region = Some(Coverage::rectangle(region));
                 self.editor.apply_pick();
                 self.next();
             }
@@ -415,7 +429,7 @@ impl FlatFieldSmoke {
             15 if self.settled() => {
                 let geometry = self.geometry(ui)?;
                 if !geometry.canvas.expand(0.1).contains_rect(
-                    geometry.screen_region(self.editor.region.ok_or("missing support")?),
+                    geometry.screen_coverage(self.editor.region.ok_or("missing support")?),
                 ) {
                     return Err("narrow Fit clipped support".into());
                 }

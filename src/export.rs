@@ -112,6 +112,104 @@ pub fn tiff(
     response: Response,
     mut pixel: impl FnMut(u32, u32) -> Result<DVec3>,
 ) -> Result<()> {
+    let renderer = CpuRenderer::new(target)?;
+    tiff_encoded(path, size, target, overwrite, response, |y, end| {
+        let mut working = Vec::with_capacity(size.width as usize * (end - y) as usize);
+        for row in y..end {
+            for x in 0..size.width {
+                working.push(pixel(x, row)?);
+            }
+        }
+        target.encode_u16(&renderer.render(&working)?)
+    })
+}
+
+pub fn tiff_composed(
+    path: &Path,
+    composition: crate::geometry::Composition,
+    target: OutputTarget,
+    overwrite: Overwrite,
+    response: Response,
+    mut pixel: impl FnMut(u32, u32) -> Result<DVec3>,
+) -> Result<()> {
+    let [width, height] = composition.size();
+    let size = ImageSize { width, height };
+    if composition.is_exact() {
+        return tiff(path, size, target, overwrite, response, |x, y| {
+            let [sx, sy] = composition.source_pixel([x, y])?;
+            pixel(sx, sy)
+        });
+    }
+    let raster = crate::frame_raster::FrameRaster::full(composition)?;
+    let renderer = CpuRenderer::new(target)?;
+    tiff_encoded(path, size, target, overwrite, response, |y, end| {
+        let mut working = Vec::new();
+        let mut weights = Vec::new();
+        let mut groups = Vec::new();
+        for row in y..end {
+            for x in 0..width {
+                let start = working.len();
+                for ([sx, sy], weight) in raster.footprint([x, row])?.pixels(composition.area())? {
+                    working.push(pixel(sx, sy)?);
+                    weights.push(weight);
+                }
+                groups.push(start..working.len());
+            }
+        }
+        // ACES is per original processed pixel; reconstruction is in linear target RGB.
+        let rendered = renderer.render(&working)?;
+        let linear = groups
+            .into_iter()
+            .map(|range| {
+                crate::sampling::weighted_mean_iter(
+                    range.map(|i| Ok((rendered[i].as_dvec3(), weights[i]))),
+                )
+                .map(|p| p.as_vec3())
+            })
+            .collect::<Result<Vec<_>>>()?;
+        target.encode_u16(&linear)
+    })
+}
+
+pub fn exr_composed(
+    path: &Path,
+    composition: crate::geometry::Composition,
+    precision: ExrPrecision,
+    overwrite: Overwrite,
+    response: Response,
+    mut pixel: impl FnMut(u32, u32) -> Result<DVec3>,
+) -> Result<()> {
+    let [width, height] = composition.size();
+    let raster = crate::frame_raster::FrameRaster::full(composition)?;
+    exr(
+        path,
+        ImageSize { width, height },
+        precision,
+        overwrite,
+        response,
+        |x, y| {
+            if composition.is_exact() {
+                let [sx, sy] = composition.source_pixel([x, y])?;
+                return pixel(sx, sy);
+            }
+            crate::sampling::weighted_mean_iter(
+                raster
+                    .footprint([x, y])?
+                    .pixels(composition.area())?
+                    .map(|([sx, sy], weight)| pixel(sx, sy).map(|p| (p, weight))),
+            )
+        },
+    )
+}
+
+fn tiff_encoded(
+    path: &Path,
+    size: ImageSize,
+    target: OutputTarget,
+    overwrite: Overwrite,
+    response: Response,
+    mut strip: impl FnMut(u32, u32) -> Result<Vec<[u16; 3]>>,
+) -> Result<()> {
     response.shape()?;
     let count = size.count()?;
     if count > (1024 * 1024 * 1024) / 6 {
@@ -119,7 +217,6 @@ pub fn tiff(
             "TIFF RGB16 buffer exceeds the current 1 GiB export budget".into(),
         ));
     }
-    let renderer = CpuRenderer::new(target)?;
     atomic_file(path, overwrite, |file| {
         let mut buffered = BufWriter::new(file);
         {
@@ -156,13 +253,7 @@ pub fn tiff(
             let mut samples = Vec::with_capacity(count * 3);
             for y in (0..size.height).step_by(8) {
                 let end = (y + 8).min(size.height);
-                let mut working = Vec::with_capacity(size.width as usize * (end - y) as usize);
-                for row in y..end {
-                    for x in 0..size.width {
-                        working.push(pixel(x, row)?);
-                    }
-                }
-                let encoded = target.encode_u16(&renderer.render(&working)?)?;
+                let encoded = strip(y, end)?;
                 samples.extend(encoded.into_iter().flatten());
             }
             image.write_data(&samples).map_err(failure)?;

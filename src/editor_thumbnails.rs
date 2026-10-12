@@ -353,9 +353,15 @@ impl Editor {
                     let mut error = None;
                     match (entry,parameters) {
                         (Some(Ok(image)),Ok(parameters)) => {
-                            let aspect = image.linear.width() as f32/image.linear.height() as f32;
+                            let photo_orientation = if self.current_source == Some(source.id) { self.photo_orientation } else { source.orientation };
+                            let crop = if self.current_source == Some(source.id) { self.crop } else { source.crop };
+                            let composition = Composition::with_crop(source.development.active_area.into(), self.roll_orientation, photo_orientation, crop)
+                                .expect("document source has a valid active area");
+                            let dimensions = composition.size();
+                            let aspect = dimensions[0] as f32/dimensions[1] as f32;
                             let size = egui::vec2((image_rect.height()*aspect).min(image_rect.width()),(image_rect.width()/aspect).min(image_rect.height()));
-                            ui.painter().with_clip_rect(ui.clip_rect()).add(egui_wgpu::Callback::new_paint_callback(egui::Rect::from_center_size(image_rect.center(),size),ImagePaint::new(image,Some(parameters),[0.,0.,1.,1.])));
+                            let mapping = composition.texture_mapping(crate::geometry::FramePoint([0.,0.]), crate::geometry::FramePoint(dimensions.map(f64::from)), composition.area());
+                            ui.painter().with_clip_rect(ui.clip_rect()).add(egui_wgpu::Callback::new_paint_callback(egui::Rect::from_center_size(image_rect.center(),size),ImagePaint::new(image,Some(parameters),mapping)));
                         }
                         (Some(Err(message)),_) => { error = Some(message); }
                         (_,Err(message)) => { error = Some(message.to_string()); }
@@ -368,7 +374,7 @@ impl Editor {
                     let name = path.file_name().unwrap_or_default().to_string_lossy();
                     let galley = ui.painter().layout(name.into_owned(),egui::FontId::proportional(11.),visuals.text_color(),image_width);
                     ui.painter().with_clip_rect(cell.intersect(ui.clip_rect())).galley(cell.min+egui::vec2(2.,image_height+2.),galley,visuals.text_color());
-                    if response.clicked() && !self.busy && self.flat_edit.is_none() { select = Some(index); }
+                    if response.clicked() && !self.busy && self.flat_edit.is_none() && self.crop_edit.is_none() { select = Some(index); }
                     response.on_hover_text(error.unwrap_or_else(||format!("{}\nApproximate whole-frame thumbnail; drag the strip's top edge to resize.",path.display())));
                 }
             });
@@ -387,6 +393,7 @@ impl Editor {
             }
         } else if !self.busy
             && self.pick.is_none()
+            && self.crop_edit.is_none()
             && self.document_pending.is_none()
             && self.transition.is_none()
             && self.project_overwrite.is_none()

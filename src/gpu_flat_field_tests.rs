@@ -19,6 +19,28 @@ fn source_geometry_uses_exact_nearest_centres_and_rejects_overflow() {
         );
     }
     assert!(geometry.pixel(44461).is_err());
+    for (area, size) in [
+        ([17, 29, 23, 19], [1, 1]),
+        ([17, 29, 23, 19], [7, 1]),
+        ([17, 29, 23, 19], [1, 5]),
+        ([16_777_190, 16_777_180, 23, 19], [7, 5]),
+    ] {
+        let geometry = SourceGeometry::new(area, size).unwrap();
+        for index in 0..size[0] * size[1] {
+            let pixel = geometry.pixel(index).unwrap();
+            for axis in 0..2 {
+                let coordinate = if axis == 0 {
+                    index % size[0]
+                } else {
+                    index / size[0]
+                };
+                let expected = u64::from(area[axis])
+                    + (2 * u64::from(coordinate) + 1) * u64::from(area[axis + 2])
+                        / (2 * u64::from(size[axis]));
+                assert_eq!(u64::from(pixel[axis]), expected);
+            }
+        }
+    }
     for (a, s) in [
         ([0, 0, 0, 100], [1, 1]),
         ([u32::MAX, 0, 2, 2], [1, 1]),

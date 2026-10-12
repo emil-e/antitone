@@ -2,42 +2,35 @@
 
 ## Current focus
 
-Documentation/workflow reorganization is complete; [closure record](docs/plans/completed/documentation-structure.md). The user approved stabilizing the existing editor and making it saveable, with an initial commit/push first. The settled-preview buffer-limit fix is complete; [closure/reproduction](docs/plans/completed/preview-stability.md). Adapter-supported limits replace restrictive defaults; strip processing is deferred until observed problems justify it. Basic editor Save/Open is implemented; [closure and verification limits](docs/plans/completed/save-open.md). Recovery/relink/undo remain separate slices. Navigation, source inspection and bounded/resizable thumbnails are implemented. Roll-level flat-field correction is user-accepted and complete; [closure](docs/plans/completed/flat-field-correction.md). Current work in this isolated checkout is the user-approved [native-camera inversion replacement](docs/plans/camera-inversion.md), integrated onto the finalized flat-field commit and verified after rebase. No old-grade compatibility is required.
+Orientation/crop/straightening and native-camera/flat-field coordinate integration are implemented and verified; the crop UX is user-accepted for now. The user authorized local checkpoint commits, rebase, the whole-feature coordinate audit and updating main; no push. Photographic acceptance and separately scoped feedback remain; no next implementation is presumed. [Geometry checkpoint, verification and next action](docs/plans/flip-crop-rotate.md).
 
-Start here, then use [the documentation map](docs/README.md), [architecture](docs/architecture.md) and [repository workflow](AGENTS.md). Detailed contracts/decisions/evidence have their own homes; this is the only current cross-package status/order record.
+Start here, then use [the documentation map](docs/README.md), [architecture](docs/architecture.md) and [repository workflow](AGENTS.md). This is the current cross-package status/order record; details live in contracts, plans and evidence.
 
 ## Implemented
 
-The saveable editor develops Sony RAWs with fixed LibRaw settings, offers full-resolution calibration/neutral picks and scoped controls, renders interactive GPU edits plus tiled settled regional previews, presents managed SDR, and exports matching sRGB/P3 TIFF or signed/HDR AP0 EXR.
+The saveable editor develops RAWs with fixed LibRaw settings, offers full-resolution calibration/neutral picks and scoped controls, renders interactive GPU edits plus bounded tiled settled previews, presents managed SDR, and exports matching sRGB/P3 TIFF or signed/HDR AP0 EXR. One compact RGB16 production source path is retained.
 
-Completed feedback includes output-target diagnosis/replacement, RGB-only Dmin/Dmax, reusable precise controls, Dmin-first hard-clipping diagnosis and adjustable film response. The camera replacement uses model 4, with new grades retaining toe 2.5/shoulder off; AP0 grades/schemas reject explicitly. One compact RGB16 production source path is integrated. The user reports successful real-use testing. [Completed response plan/evidence](docs/plans/completed/film-response.md).
-
-The camera-replacement editor owns schema-4 project state through stable source IDs, restores saved development WB, offers transactional Open and atomic Save/Save As, and guards dirty New/Open/Close. File and Export menus replace the header action buttons without another row. Recovery, relink/source-change UI and undo remain unwired. [Project contract](docs/contracts/project-state.md).
-
-Roll-level flat-field correction is implemented and user-accepted: automatic/editable rectangular support, three-channel neutral-gray correction preserving centre luminance, corrected processing/picks/thumbnails/exports and durable map state. [Closure/evidence limits](docs/plans/completed/flat-field-correction.md).
+- Native-camera calibration/inversion/fitting and post-inversion camera→AP1 use model/schema 4. New grades retain toe 2.5/shoulder off; AP0 schemas/models reject explicitly, without migration. [Camera plan/photographic limits](docs/plans/camera-inversion.md), [processing contract](docs/contracts/processing-model.md).
+- Stable-ID Save/Open, fixed development WB, atomic saves and dirty New/Open/Close guards are implemented. Recovery/relink/source-change UI and undo remain unwired. [Project contract](docs/contracts/project-state.md), [Save/Open closure](docs/plans/completed/save-open.md).
+- Navigation, source-inspection brightness and bounded/resizable thumbnails are implemented. [Interaction package](docs/plans/inspection-and-interaction.md), [visual feedback](docs/plans/visual-feedback.md).
+- Roll-level flat-field correction is implemented and user-accepted: editable rectangular support, native-camera gains, corrected processing/picks/thumbnails/exports and durable map state. [Closure/evidence limits](docs/plans/completed/flat-field-correction.md).
+- Shared roll/photo turns/flips, source-anchored crop/straightening, actual-coverage picks, bounded rotated reconstruction and composed exports are implemented. Tab-scoped Scan orientation/Composition panels, action flips, stable-source crop UX and thirds guides are user-accepted for now. [Geometry contract](docs/contracts/geometry.md), [integration checkpoint](docs/plans/flip-crop-rotate.md).
 
 ## Remaining work
 
-Recovery/relink/undo is already recorded, but the user does **not** consider it the highest priority now. Navigation polish and source inspection are implemented. Bounded thumbnails are implemented in the user-approved enlarged/resizable strip; cache/worker design and verification limits are recorded in the visual-feedback plan.
+Recovery/relink/undo is recorded but is not the user's highest priority.
 
-- **Camera inversion (implemented/verified; photographic feedback pending)** — native-camera calibration/fitting and scalar/GPU inversion, post-inversion camera→AP1, schema/model/development replacement; no AP0 migration. [Plan and exact next action](docs/plans/camera-inversion.md).
-- **Scopes and remaining inspection/interaction polish** — scopes need their own basis/design; physical trackpad exercise and remaining layout complaints remain open; consult the user about viewer-intrusion cases. Dark red/cold toe-shadow appearance remains a separate reproducible investigation, not an assumed processing fix, unless it blocks useful grading. [Interaction package](docs/plans/inspection-and-interaction.md), [visual feedback package](docs/plans/visual-feedback.md).
-- **Larger completion work** — roll/photo flips and photo quarter-turns, then crop/arbitrary rotation; explicitly accepted/cancellable roll estimates; contrast/pivot needs design. [Package](docs/plans/completion.md).
-- **Export/release acceptance** — progress/cancellation/batch snapshots/metadata, aggregate budgets, packaging/licensing and broader device/monitor/interoperability checks. [Scope](docs/plans/completion.md#export-and-release-work).
-
-- **Later persistence work: recovery, relink and undo/redo** — separately scoped; basic Save/Open is complete. Ordered missing/changed/incompatible RAWs currently reject Open while retaining the current document. Never silently overwrite explicit saves or resample reference RGB. [Broader package](docs/plans/durable-projects.md).
-
-Windows/HDR and custom RAW development are not part of the current pass.
+1. **Camera/geometry photographic acceptance** — native/settled straightening agreement, rotated Gamma/WB picks, Save/Open and TIFF/EXR reopen on real photographs; synthetic combined checks pass. Dense guides remain separate. [Verification/limits and next action](docs/plans/flip-crop-rotate.md#integrated-native-camera--flat-field-checkpoint).
+2. **Scopes and inspection/interaction polish** — scopes need their own basis/design; physical trackpad exercise and remaining viewer-intrusion/layout complaints remain open. Dark-red/cold-toe appearance is a reproducible investigation, not an assumed processing fix. [Interaction](docs/plans/inspection-and-interaction.md), [visual feedback](docs/plans/visual-feedback.md).
+3. **Larger completion work** — explicitly accepted/cancellable roll estimates, photographic controls/B&W design, general operation feedback and separately scoped readability work. [Package](docs/plans/completion.md).
+4. **Export/release acceptance** — progress/cancellation/batch snapshots/metadata, observed aggregate-resource needs, packaging/licensing and broader device/monitor/interoperability checks. [Scope](docs/plans/completion.md#export-and-release-work).
+5. **Later persistence** — recovery, relink/source-change UI and undo/redo. Never silently overwrite explicit saves or resample reference RGB. [Package](docs/plans/durable-projects.md).
 
 ## Limits and blockers
 
-- Broader device/resource testing, macOS 14 and physical-monitor/monitor-transition validation remain open; finite M5 results do not establish universal acceptance. No minimum chip/RAM target is established.
-- Historical AP0/model-2/3 numerical limits remain [research evidence](docs/research/film-response-precision-gate.md), not a current compatibility gate. Model-4 checks establish finite numerical agreement, not calibrated photographic accuracy or universal domain coverage.
+- Camera and geometry photographic feedback remains distinct from finite scalar/Metal checks. Historical AP0/model-2/3 precision results are research evidence, not current compatibility gates.
+- Broader device/resource testing, macOS 14 and physical-monitor/monitor-transition checks remain open. No minimum chip/RAM target is established.
 - Lightroom/Resolve interoperability remains deferred; no application automation. Exact historical dog Photo/session settings are unknown.
-- Native dependencies still use checkout-local builds/rpaths; no distributable packaging or universal numerical-domain proof.
+- Native dependencies still use checkout-local builds/rpaths; distribution and universal numerical-domain coverage are not established. Windows/HDR and custom RAW development are outside this pass.
 
-## Handoff
-
-Camera work is isolated in `.worktrees/camera-inversion` on `impl/camera-inversion`, integrated onto main's finalized flat-field commit `c0b664a`. Camera implementation is committed locally on this branch; main is untouched and no push is authorized or made. [Verified checks, remaining limits and next action](docs/plans/camera-inversion.md). Prior editor/navigation/thumbnail outcomes remain in their closure plans. Flat-field is closed and accepted, with native/physical limits retained as historical evidence rather than active blockers; [closure](docs/plans/completed/flat-field-correction.md). Do not restart historical investigations/PCA or broaden into scopes/recovery/geometry from stale checklists.
-
-Current commands: [runbook](docs/build-and-probes.md). Original accumulated plans/checkpoints are preserved as [history](docs/research/history/README.md), not active queues. Samples remain read-only; commits, pushes and global installs require explicit user authorization.
+Current commands: [runbook](docs/build-and-probes.md). Old checkpoints are [history](docs/research/history/README.md), not active queues. Samples remain read-only. No push or global installation is authorized.

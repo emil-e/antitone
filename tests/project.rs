@@ -41,6 +41,8 @@ fn fixture(directory: &std::path::Path) -> (Project, SourceId, SourceId) {
             },
             reference_only: false,
             photo: PhotoSettings::default(),
+            orientation: Default::default(),
+            crop: None,
         }
     };
     let dmin_source_id = project.add_source(source("dmin.ARW")).unwrap();
@@ -57,6 +59,235 @@ fn fixture(directory: &std::path::Path) -> (Project, SourceId, SourceId) {
         },
     };
     (project, dmin_source_id, dmax_source_id)
+}
+#[test]
+fn orientation_roundtrip_keeps_legacy_identity_and_numerical_state() {
+    use antitone::geometry::{Flips, PhotoOrientation, QuarterTurns};
+    let dir = tempfile::tempdir().unwrap();
+    let (mut project, one, two) = fixture(dir.path());
+    let path = dir.path().join("geometry.antitone.json");
+    project.save(&path, Save::New).unwrap();
+    let legacy = std::fs::read_to_string(&path).unwrap();
+    assert!(!legacy.contains("orientation"));
+    assert!(!legacy.contains("crop"));
+    assert_eq!(Project::load(&path).unwrap(), project);
+    let numerical = (
+        project.roll,
+        project.dmin,
+        project.dmax,
+        project.source(one).unwrap().photo,
+    );
+    project.orientation = Flips {
+        horizontal: true,
+        vertical: false,
+    }
+    .into();
+    let photo = PhotoOrientation {
+        turns: QuarterTurns::Three,
+        flips: Flips {
+            horizontal: false,
+            vertical: true,
+        },
+    };
+    project.source_mut(one).unwrap().orientation = photo;
+    project.order.reverse();
+    project.save(&path, Save::Replace).unwrap();
+    let restored = Project::load(&path).unwrap();
+    assert_eq!(restored, project);
+    assert_eq!(restored.source(one).unwrap().orientation, photo);
+    assert_eq!(
+        restored.source(two).unwrap().orientation,
+        PhotoOrientation::default()
+    );
+    assert_eq!(
+        (
+            restored.roll,
+            restored.dmin,
+            restored.dmax,
+            restored.source(one).unwrap().photo
+        ),
+        numerical
+    );
+    let invalid = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("three", "four");
+    std::fs::write(&path, invalid).unwrap();
+    assert!(Project::load(&path).is_err());
+}
+#[test]
+fn roll_turns_preserve_flip_only_documents_and_roundtrip_without_changing_photos_or_grade() {
+    use antitone::geometry::{Flips, QuarterTurns, RollOrientation};
+    let dir = tempfile::tempdir().unwrap();
+    let (project, _, _) = fixture(dir.path());
+    let original = serde_json::to_value(&project).unwrap();
+    let path = dir.path().join("roll-turns.json");
+    for horizontal in [false, true] {
+        for vertical in [false, true] {
+            let legacy = serde_json::json!({"horizontal":horizontal,"vertical":vertical});
+            let mut value = original.clone();
+            value["orientation"] = legacy.clone();
+            std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+            let mut loaded = Project::load(&path).unwrap();
+            assert_eq!(
+                loaded.orientation,
+                RollOrientation {
+                    turns: QuarterTurns::Zero,
+                    horizontal,
+                    vertical
+                }
+            );
+            if horizontal || vertical {
+                assert_eq!(
+                    serde_json::to_value(&loaded).unwrap()["orientation"],
+                    legacy
+                );
+            } else {
+                assert!(
+                    serde_json::to_value(&loaded)
+                        .unwrap()
+                        .get("orientation")
+                        .is_none()
+                );
+            }
+            for turns in [
+                QuarterTurns::Zero,
+                QuarterTurns::One,
+                QuarterTurns::Two,
+                QuarterTurns::Three,
+            ] {
+                loaded.orientation.turns = turns;
+                loaded.save(&path, Save::Replace).unwrap();
+                assert_eq!(Project::load(&path).unwrap(), loaded);
+                let serialized = serde_json::to_value(&loaded).unwrap();
+                if turns != QuarterTurns::Zero {
+                    assert!(
+                        serde_json::from_value::<Flips>(serialized["orientation"].clone()).is_err()
+                    );
+                }
+                assert_eq!(loaded.sources, project.sources);
+                assert_eq!(
+                    (
+                        loaded.roll,
+                        loaded.dmin,
+                        loaded.dmax,
+                        loaded.processing_model
+                    ),
+                    (
+                        project.roll,
+                        project.dmin,
+                        project.dmax,
+                        project.processing_model
+                    )
+                );
+            }
+        }
+    }
+    for bad in [
+        serde_json::json!({"turns":"four","horizontal":false,"vertical":false}),
+        serde_json::json!({"turns":90,"horizontal":false,"vertical":false}),
+        serde_json::json!({"turns":"one","horizontal":false,"vertical":false,"extra":0}),
+    ] {
+        let mut value = original.clone();
+        value["orientation"] = bad;
+        std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(Project::load(&path).is_err());
+    }
+}
+#[test]
+fn crops_roundtrip_by_source_id_and_reject_outside_fractional_or_empty_coverage() {
+    use antitone::{crop::Crop, geometry::SourceRegion};
+    let dir = tempfile::tempdir().unwrap();
+    let (mut project, one, two) = fixture(dir.path());
+    let crop = Crop::from_region(SourceRegion {
+        x: 123,
+        y: 77,
+        width: 321,
+        height: 213,
+    });
+    let source = project.source(one).unwrap().clone();
+    project.source_mut(one).unwrap().crop = Some(crop);
+    project.order.reverse();
+    let path = dir.path().join("crop.json");
+    project.save(&path, Save::New).unwrap();
+    let restored = Project::load(&path).unwrap();
+    assert_eq!(restored, project);
+    assert_eq!(restored.source(one).unwrap().crop, Some(crop));
+    assert!(restored.source(two).unwrap().crop.is_none());
+    let mut without_crop = restored.source(one).unwrap().clone();
+    without_crop.crop = None;
+    assert_eq!(without_crop, source);
+    for invalid in [
+        Crop {
+            center: [0., 0.],
+            ..crop
+        },
+        Crop {
+            size: [0, 10],
+            ..crop
+        },
+        Crop {
+            center: [f64::INFINITY, 77.],
+            ..crop
+        },
+        Crop {
+            center: [123.25, 77.],
+            size: [10, 10],
+            angle: 0.,
+        },
+    ] {
+        project.source_mut(one).unwrap().crop = Some(invalid);
+        assert!(project.validate().is_err());
+    }
+    // Zero angle keeps the literal old centre/extent representation.
+    assert!(
+        serde_json::to_value(&restored).unwrap()["sources"][0]["crop"]
+            .get("angle")
+            .is_none()
+    );
+    let active: SourceRegion = restored.source(one).unwrap().development.active_area.into();
+    let rotated = Crop::from_region(active)
+        .straightened(active, 0.231)
+        .unwrap();
+    let mut rotated_project = restored.clone();
+    rotated_project.source_mut(one).unwrap().crop = Some(rotated);
+    rotated_project
+        .save(&dir.path().join("rotated.json"), Save::New)
+        .unwrap();
+    let loaded_rotated = Project::load(&dir.path().join("rotated.json")).unwrap();
+    assert_eq!(loaded_rotated.source(one).unwrap().crop, Some(rotated));
+    for invalid in [
+        Crop {
+            angle: f64::NAN,
+            ..rotated
+        },
+        Crop {
+            angle: 4.,
+            ..rotated
+        },
+        Crop {
+            center: [0., 0.],
+            ..rotated
+        },
+    ] {
+        rotated_project.source_mut(one).unwrap().crop = Some(invalid);
+        assert!(rotated_project.validate().is_err());
+    }
+    let mut replacement = restored.clone();
+    let before = replacement.source(one).unwrap().clone();
+    let small = SourceDevelopment {
+        dimensions: [64, 64],
+        active_area: [0, 0, 64, 64],
+        ..before.development.clone()
+    };
+    assert!(
+        replacement
+            .accept_changed_source(one, &dir.path().join("dmin.ARW"), small)
+            .is_err()
+    );
+    assert_eq!(replacement.source(one).unwrap(), &before);
+    let mut value = serde_json::to_value(&restored).unwrap();
+    value["sources"][0]["crop"]["basis"] = serde_json::json!(1.);
+    assert!(serde_json::from_value::<Project>(value).is_err());
 }
 #[test]
 fn atomic_roundtrip_preserves_calibration_and_output_after_removal_and_missing_sources() {

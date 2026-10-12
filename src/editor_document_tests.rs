@@ -21,6 +21,8 @@ fn fixture(directory: &Path) -> Document {
                     },
                     reference_only: false,
                     photo: PhotoSettings::default(),
+                    orientation: Default::default(),
+                    crop: None,
                 },
                 Development::new(crate::raw::version(), [2., 1., 1.5, 1.]),
             )

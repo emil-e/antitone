@@ -20,6 +20,8 @@ fn fixture() -> Document {
                     },
                     reference_only: false,
                     photo: PhotoSettings::default(),
+                    orientation: Default::default(),
+                    crop: None,
                 },
                 Development::new(crate::raw::version(), [2., 1., 1.5, 1.]),
             )
@@ -62,6 +64,21 @@ fn source_identity_excludes_locator_photo_and_roll_edits_but_includes_bytes_matr
     document.project.source_mut(id).unwrap().path = "moved.ARW".into();
     document.project.source_mut(id).unwrap().photo.exposure = 7.12345;
     document.project.roll.exposure = 1.5;
+    document.project.orientation.horizontal = true;
+    document.project.orientation.turn_clockwise();
+    document
+        .project
+        .source_mut(id)
+        .unwrap()
+        .orientation
+        .turn_clockwise();
+    document.project.source_mut(id).unwrap().crop = Some(Crop::from_region(Rect {
+        x: 30,
+        y: 20,
+        width: 401,
+        height: 203,
+    }));
+    // Composition is applied on paint, so source/processed textures remain reusable.
     assert_eq!(key(&document, id), original);
     document.project.source_mut(id).unwrap().fingerprint.bytes += 1;
     assert_ne!(key(&document, id), original);

@@ -1,5 +1,6 @@
 use crate::{
     Error,
+    geometry::TextureMapping,
     gpu::{GpuFlatField, ProcessingKernel, ProcessingParameters, ProcessingSource, SourceGeometry},
     rendering::OutputTarget,
 };
@@ -15,10 +16,11 @@ struct Vertex { @builtin(position) position: vec4f, @location(0) uv: vec2f }
 }"#;
 const DISPLAY: &str = r#"
 @group(0) @binding(0) var image:texture_2d<f32>;
-struct Parameters { c0:vec4f, c1:vec4f, c2:vec4f, size:vec4u, uv:vec4f }
+struct Parameters { c0:vec4f, c1:vec4f, c2:vec4f, size:vec4u, uv_x:vec4f, uv_y:vec4f }
 @group(0) @binding(1) var<uniform> p:Parameters;
 @fragment fn main(@location(0) uv:vec2f) -> @location(0) vec4f {
- let mapped=p.uv.xy+uv*p.uv.zw;
+ let mapped=p.uv_x.xy+uv.x*p.uv_x.zw+uv.y*p.uv_y.xy;
+ if any(mapped<vec2f(0.)) || any(mapped>vec2f(1.)) { discard; }
  let xy=min(vec2u(max(mapped,vec2f(0.))*vec2f(p.size.xy)),p.size.xy-vec2u(1));
  let linear=mat3x3f(p.c0.xyz,p.c1.xyz,p.c2.xyz)*textureLoad(image,vec2i(xy),0).rgb;
  let a=abs(linear);
@@ -31,7 +33,8 @@ struct Parameters { c0:vec4f, c1:vec4f, c2:vec4f, size:vec4u, uv:vec4f }
 struct Presentation {
     columns: [Vec4; 3],
     size: [u32; 4],
-    uv: [f32; 4],
+    uv_x: [f32; 4],
+    uv_y: [f32; 4],
 }
 
 struct ImageProcessing {
@@ -304,7 +307,8 @@ impl GpuImage {
         let parameters = Presentation {
             columns: [matrix.x_axis, matrix.y_axis, matrix.z_axis].map(|v| v.as_vec3().extend(0.)),
             size: [width, height, 0, 0],
-            uv: [0., 0., 1., 1.],
+            uv_x: [0., 0., 1., 0.],
+            uv_y: [0., 1., 0., 0.],
         };
         let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("presentation basis and dimensions"),
@@ -404,9 +408,15 @@ impl GpuImage {
         pass.set_bind_group(0, &processing.aces_group, &[]);
         pass.draw(0..3, 0..1);
     }
-    pub fn presentation_group(&self, device: &wgpu::Device, uv: [f32; 4]) -> wgpu::BindGroup {
+    pub fn presentation_group(
+        &self,
+        device: &wgpu::Device,
+        uv: impl Into<TextureMapping>,
+    ) -> wgpu::BindGroup {
+        let uv = uv.into();
         let parameters = Presentation {
-            uv,
+            uv_x: [uv.origin[0], uv.origin[1], uv.x_axis[0], uv.x_axis[1]],
+            uv_y: [uv.y_axis[0], uv.y_axis[1], 0., 0.],
             ..self.presentation
         };
         let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -484,19 +494,19 @@ fn create_pipeline(
 pub struct ImagePaint {
     pub image: Arc<GpuImage>,
     pub parameters: Option<ProcessingParameters>,
-    uv: [f32; 4],
+    uv: TextureMapping,
     group: std::sync::Mutex<Option<wgpu::BindGroup>>,
 }
 impl ImagePaint {
     pub fn new(
         image: Arc<GpuImage>,
         parameters: Option<ProcessingParameters>,
-        uv: [f32; 4],
+        uv: impl Into<TextureMapping>,
     ) -> Self {
         Self {
             image,
             parameters,
-            uv,
+            uv: uv.into(),
             group: std::sync::Mutex::new(None),
         }
     }
@@ -518,7 +528,7 @@ impl egui_wgpu::CallbackTrait for ImagePaint {
                 *previous = Some(signature);
             }
         }
-        if self.uv != [0., 0., 1., 1.] {
+        if self.uv != TextureMapping::IDENTITY {
             *self.group.lock().unwrap() = Some(self.image.presentation_group(device, self.uv));
         }
         Vec::new()

@@ -1,7 +1,10 @@
 use crate::{
     Error,
     color::Balance,
-    export::{self, ExrPrecision, ImageSize, Overwrite},
+    coverage::Coverage,
+    crop::Crop,
+    export::{self, ExrPrecision, Overwrite},
+    geometry::{Composition, PhotoOrientation, RollOrientation},
     gpu::ProcessingParameters,
     platform::host,
     processing::{Calibration, PhotoSettings, RollSettings},
@@ -33,9 +36,12 @@ mod thumbnails;
 use thumbnails::Thumbnails;
 #[path = "editor_flat_field.rs"]
 mod flat;
+use flat::{Correction, FlatEdit, FlatPreview};
+#[path = "editor_crop.rs"]
+mod crop_editor;
+use crop_editor::CropEdit;
 #[path = "editor_navigation.rs"]
 mod navigation;
-use flat::{Correction, FlatEdit, FlatPreview};
 #[path = "editor_smoke.rs"]
 mod smoke;
 pub use smoke::SmokeEditor;
@@ -57,7 +63,12 @@ enum Pick {
 struct PickReturn {
     path: PathBuf,
     selected: usize,
+}
+#[derive(Clone, Copy)]
+struct PickView {
+    source: bool,
     viewport: Viewport,
+    anchored: Viewport,
 }
 struct Ready {
     path: PathBuf,
@@ -105,7 +116,7 @@ enum Command {
     Pick(
         u64,
         Pick,
-        Rect,
+        Coverage,
         Option<Calibration>,
         RollSettings,
         PhotoSettings,
@@ -117,6 +128,7 @@ enum Command {
         Calibration,
         RollSettings,
         PhotoSettings,
+        Composition,
         Overwrite,
     ),
 }
@@ -451,10 +463,10 @@ fn backend(
                     }
                     match kind {
                         Pick::Dmin | Pick::Dmax => {
-                            scan.reference(region).map(Measurement::Reference)
+                            scan.reference_coverage(region).map(Measurement::Reference)
                         }
                         Pick::Gamma => scan
-                            .roll_neutral(
+                            .roll_neutral_coverage(
                                 region,
                                 calibration.ok_or(Error::UnusableSample(
                                     "both film references are required",
@@ -466,7 +478,7 @@ fn backend(
                             "flat-field acceptance uses a separate transaction",
                         )),
                         Pick::Wb => scan
-                            .photo_neutral(
+                            .photo_neutral_coverage(
                                 region,
                                 calibration.ok_or(Error::UnusableSample(
                                     "both film references are required",
@@ -482,7 +494,7 @@ fn backend(
                     break;
                 }
             }
-            Command::Export(id, path, format, calibration, roll, photo, overwrite) => {
+            Command::Export(id, path, format, calibration, roll, photo, composition, overwrite) => {
                 let result = (|| -> Result<PathBuf, Error> {
                     let (loaded, scan) = source
                         .as_ref()
@@ -496,23 +508,29 @@ fn backend(
                         photo,
                         scan.camera_to_ap1,
                     )?;
-                    let area = scan.area;
-                    let size = ImageSize {
-                        width: area.width,
-                        height: area.height,
-                    };
-                    let pixel = |x, y| {
-                        pipeline
-                            .apply(scan.pixel(area.x + x, area.y + y)?)
-                            .map(|p| p.rgb)
-                    };
+                    if composition.area() != scan.area {
+                        return Err(Error::InvalidParameter(
+                            "export composition belongs to another source area",
+                        ));
+                    }
+                    let pixel = |x, y| pipeline.apply(scan.pixel(x, y)?).map(|p| p.rgb);
                     match format {
-                        OutputFormat::Tiff(target) => {
-                            export::tiff(&path, size, target, overwrite, roll.response, pixel)?
-                        }
-                        OutputFormat::Exr(precision) => {
-                            export::exr(&path, size, precision, overwrite, roll.response, pixel)?
-                        }
+                        OutputFormat::Tiff(target) => export::tiff_composed(
+                            &path,
+                            composition,
+                            target,
+                            overwrite,
+                            roll.response,
+                            pixel,
+                        )?,
+                        OutputFormat::Exr(precision) => export::exr_composed(
+                            &path,
+                            composition,
+                            precision,
+                            overwrite,
+                            roll.response,
+                            pixel,
+                        )?,
                     }
                     Ok(path)
                 })()
@@ -532,7 +550,8 @@ pub struct Editor {
     signature: Option<(
         [u8; ProcessingParameters::BYTE_LEN],
         OutputTarget,
-        ViewRequest,
+        Option<ViewRequest>,
+        Composition,
     )>,
     settled: Option<(u64, ViewRequest, Arc<GpuImage>)>,
     refining: Option<(u64, ViewRequest)>,
@@ -551,13 +570,18 @@ pub struct Editor {
     floor: f64,
     roll: RollSettings,
     photo: PhotoSettings,
+    roll_orientation: RollOrientation,
+    photo_orientation: PhotoOrientation,
+    crop: Option<Crop>,
+    crop_edit: Option<CropEdit>,
+    last_layout: Option<(crate::viewport::CanvasLayout, f32)>,
     target: OutputTarget,
     source: bool,
     source_exposure: f64,
     pick: Option<Pick>,
-    pick_view: Option<bool>,
+    pick_view: Option<PickView>,
     pick_return: Option<PickReturn>,
-    region: Option<Rect>,
+    region: Option<Coverage>,
     pick_drag: Option<PickDrag>,
     tab: usize,
     document: Document,
@@ -626,6 +650,11 @@ impl Editor {
             floor: 0.,
             roll: RollSettings::new_grade(),
             photo: PhotoSettings::default(),
+            roll_orientation: RollOrientation::default(),
+            photo_orientation: PhotoOrientation::default(),
+            crop: None,
+            crop_edit: None,
+            last_layout: None,
             target: OutputTarget::DisplayP3,
             source: true,
             source_exposure: 0.,
@@ -663,6 +692,7 @@ impl Editor {
     fn sync_document(&mut self) {
         let project = &mut self.document.project;
         project.roll = self.roll;
+        project.orientation = self.roll_orientation;
         project.processing_model = self.roll.response.processing_model();
         project.dmin = self.dmin.map(|value| value.to_array());
         project.dmax = self.dmax.map(|value| value.to_array());
@@ -674,10 +704,12 @@ impl Editor {
             OutputTarget::DisplayP3 => crate::project::TiffTarget::DisplayP3,
         };
         if let Some(id) = self.current_source {
-            project
+            let source = project
                 .source_mut(id)
-                .expect("active source belongs to document")
-                .photo = self.photo;
+                .expect("active source belongs to document");
+            source.photo = self.photo;
+            source.orientation = self.photo_orientation;
+            source.crop = self.crop;
         }
     }
     fn request_id(&mut self) -> u64 {
@@ -723,6 +755,17 @@ impl Editor {
             .and_then(|id| self.document.project.source(id).ok())
             .map(|source| source.photo)
             .unwrap_or_default();
+        self.photo_orientation = self
+            .current_source
+            .and_then(|id| self.document.project.source(id).ok())
+            .map(|source| source.orientation)
+            .unwrap_or_default();
+        self.crop = self
+            .current_source
+            .and_then(|id| self.document.project.source(id).ok())
+            .and_then(|source| source.crop);
+        self.crop_edit = None;
+        self.last_layout = None;
         self.persistent_load = persistent;
         let expected = self.current_source.map(|id| {
             Box::new(
@@ -805,6 +848,8 @@ impl Editor {
                             if self.persistent_load && self.current_source.is_none() {
                                 let mut record = ready.record.clone();
                                 record.photo = self.photo;
+                                record.orientation = self.photo_orientation;
+                                record.crop = self.crop;
                                 match self.document.register(record, ready.development.clone()) {
                                     Ok(id) => self.current_source = Some(id),
                                     Err(error) => {
@@ -913,6 +958,7 @@ impl Editor {
                                 })
                                 .unwrap_or(0);
                             self.roll = self.document.project.roll;
+                            self.roll_orientation = self.document.project.orientation;
                             self.dmin = self.document.project.dmin.map(DVec3::from_array);
                             self.dmax = self.document.project.dmax.map(DVec3::from_array);
                             self.floor = self.document.project.input_floor.unwrap_or_else(|| {
@@ -929,6 +975,17 @@ impl Editor {
                                 .and_then(|id| self.document.project.source(id).ok())
                                 .map(|source| source.photo)
                                 .unwrap_or_default();
+                            self.photo_orientation = prepared
+                                .selected
+                                .and_then(|id| self.document.project.source(id).ok())
+                                .map(|source| source.orientation)
+                                .unwrap_or_default();
+                            self.crop = prepared
+                                .selected
+                                .and_then(|id| self.document.project.source(id).ok())
+                                .and_then(|source| source.crop);
+                            self.crop_edit = None;
+                            self.last_layout = None;
                             self.target = match self.document.project.output.tiff {
                                 crate::project::TiffTarget::Srgb => OutputTarget::Srgb,
                                 crate::project::TiffTarget::DisplayP3 => OutputTarget::DisplayP3,
@@ -967,7 +1024,7 @@ impl Editor {
                     self.busy = false;
                     match result {
                         Ok(preview) => {
-                            self.region = self.region.or(preview.region);
+                            self.region = self.region.or(preview.region.map(Coverage::rectangle));
                             self.ready = Some(preview.ready);
                             self.status=if self.region.is_some(){"Proposed illuminated rectangle: adjust edges, then Apply."}else{"Illuminated area is ambiguous; draw a rectangle around the usable light."}.into();
                         }
@@ -1010,10 +1067,9 @@ impl Editor {
             self.finish_flat_edit();
             return;
         }
-        let source = self
-            .pick_view
-            .take()
-            .unwrap_or(self.calibration().is_none());
+        let view = self.pick_view.take();
+        let source = view.map_or(self.calibration().is_none(), |view| view.source);
+        let returning = self.pick_return.is_some();
         self.pick = None;
         self.region = None;
         self.pick_drag = None;
@@ -1028,7 +1084,14 @@ impl Editor {
                 self.return_notice = Some(notice);
             }
             self.selected = context.selected;
-            self.viewport = context.viewport;
+        }
+        if let Some(view) = view {
+            if returning || self.viewport == view.anchored {
+                self.viewport = view.viewport;
+            } else if let Some((layout, pixels_per_point)) = self.last_layout {
+                self.viewport
+                    .reframe(layout, layout.composition, pixels_per_point);
+            }
         }
         self.source = source;
     }
@@ -1036,11 +1099,12 @@ impl Editor {
         if self.pick.is_some() {
             self.finish_pick();
         }
-        if self.busy {
+        if self.busy || self.crop_edit.is_some() {
             return;
         }
         self.thumbnails.cancel();
-        self.pick_view = self.calibration().is_some().then_some(self.source);
+        let viewport = self.viewport;
+        let source = self.calibration().is_none() || self.source;
         self.pick = Some(kind);
         self.region = None;
         self.pick_drag = None;
@@ -1049,9 +1113,29 @@ impl Editor {
             self.pick_return = self.ready.as_ref().map(|ready| PickReturn {
                 path: ready.path.clone(),
                 selected: self.selected,
-                viewport: self.viewport,
             });
         }
+        if let Some((layout, pixels_per_point)) = self.last_layout {
+            let next = if self.source {
+                Composition::new(
+                    layout.composition.area(),
+                    self.roll_orientation,
+                    self.photo_orientation,
+                )
+                .expect("loaded source has a valid active area")
+            } else {
+                layout.composition
+            };
+            // Picker controls change canvas size; freeze a fitted view's physical scale as well.
+            if next != layout.composition || self.viewport.zoom.is_none() {
+                self.viewport.reframe(layout, next, pixels_per_point);
+            }
+        }
+        self.pick_view = Some(PickView {
+            source,
+            viewport,
+            anchored: self.viewport,
+        });
     }
     fn pick_source(&mut self, path: PathBuf) {
         let kind = self.pick;
@@ -1113,7 +1197,14 @@ impl Editor {
             self.status = "Export destination is the current project document".into();
             return;
         }
-        if let Some(calibration) = self.calibration() {
+        if let (Some(calibration), Some(ready)) = (self.calibration(), &self.ready) {
+            let composition = Composition::with_crop(
+                ready.area,
+                self.roll_orientation,
+                self.photo_orientation,
+                self.crop,
+            )
+            .expect("accepted crop belongs to the loaded source");
             self.thumbnails.cancel();
             self.busy = true;
             self.status = "Exporting full-resolution source; preview pixels are not used…".into();
@@ -1126,6 +1217,7 @@ impl Editor {
                     calibration,
                     self.roll,
                     self.photo,
+                    composition,
                     overwrite,
                 ))
                 .is_err()
@@ -1137,13 +1229,45 @@ impl Editor {
     }
     fn controls(&mut self, ui: &mut egui::Ui) {
         use controls::{ColorControl, Parameter};
-        let editable = !self.busy && self.flat_edit.is_none() && self.calibration().is_some();
-        let can_pick = !self.busy && self.ready.is_some() && self.flat_edit.is_none();
-        let mut start_pick = None;
+        let previous_orientation = (self.roll_orientation, self.photo_orientation);
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.tab, 0, "Roll");
             ui.selectable_value(&mut self.tab, 1, "Photo");
         });
+        if self.tab == 1 {
+            self.composition_controls(ui);
+        } else {
+            let geometry_editable = !self.busy
+                && self.crop_edit.is_none()
+                && self.ready.is_some()
+                && self.pick.is_none();
+            ui.push_id("roll", |ui| {
+                ui.add_enabled_ui(geometry_editable, |ui| {
+                    let (_, reset) = controls::section(ui, "orientation", "Scan orientation", Some(!self.roll_orientation.is_identity()), |ui| {
+                        ui.horizontal(|ui| {
+                            if ui.button("Turn left").clicked() { self.roll_orientation.turn_counterclockwise(); }
+                            if ui.button("Turn right").clicked() { self.roll_orientation.turn_clockwise(); }
+                        });
+                        ui.horizontal(|ui| {
+                            if ui.button("Flip horizontal").on_hover_text("Flip the shared scan baseline left/right; photo exceptions apply afterward.").clicked() { self.roll_orientation.horizontal ^= true; }
+                            if ui.button("Flip vertical").on_hover_text("Flip the shared scan baseline top/bottom; photo exceptions apply afterward.").clicked() { self.roll_orientation.vertical ^= true; }
+                        });
+                        ui.small("Shared scanning baseline; photo exceptions apply afterward.");
+                    });
+                    if reset { self.roll_orientation = RollOrientation::default(); }
+                });
+            });
+        }
+        let editable = !self.busy
+            && self.crop_edit.is_none()
+            && self.flat_edit.is_none()
+            && self.calibration().is_some();
+        let can_pick = !self.busy
+            && self.crop_edit.is_none()
+            && self.flat_edit.is_none()
+            && self.ready.is_some();
+        let mut start_pick = None;
+        ui.add_space(8.);
         // Reserve four rows plus section chrome before the panel has a cached size.
         let output_height =
             4. * ui.spacing().interact_size.y + 3. * ui.spacing().item_spacing.y + 36.;
@@ -1152,6 +1276,7 @@ impl Editor {
             .resizable(false)
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
+                if self.crop_edit.is_some() || self.flat_edit.is_some() { ui.disable(); }
                 let (_, reset) = controls::section(
                     ui, "output", "Output", Some(self.target != OutputTarget::DisplayP3),
                     |ui| {
@@ -1258,6 +1383,9 @@ impl Editor {
                 });
             }
         });
+        if previous_orientation != (self.roll_orientation, self.photo_orientation) {
+            self.viewport.fit();
+        }
         if let Some(kind) = start_pick {
             self.begin_pick(kind);
         }
@@ -1301,6 +1429,7 @@ impl host::App for Editor {
         self.thumbnails.receive(&self.document);
         let available = !self.busy
             && self.pick.is_none()
+            && self.crop_edit.is_none()
             && self.overwrite.is_none()
             && self.transition.is_none()
             && self.project_overwrite.is_none()
@@ -1362,7 +1491,20 @@ impl host::App for Editor {
                 self.finish_pick();
                 self.region = None;
             }
-            if self.pick.is_none() && !self.document.project.order.is_empty() {
+            if self.crop_edit.is_some() {
+                if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+                {
+                    self.finish_crop(false);
+                } else if ui
+                    .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+                {
+                    self.finish_crop(true);
+                }
+            }
+            if self.pick.is_none()
+                && self.crop_edit.is_none()
+                && !self.document.project.order.is_empty()
+            {
                 let previous = ui.input_mut(|input| {
                     input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
                 });
@@ -1486,7 +1628,7 @@ impl host::App for Editor {
         }
         egui::CentralPanel::default().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.add_enabled(self.pick!=Some(Pick::Flat),egui::Checkbox::new(&mut self.source, "Developed source"));
+                ui.add_enabled(self.crop_edit.is_none() && self.pick!=Some(Pick::Flat), egui::Checkbox::new(&mut self.source, "Developed source"));
                 if calibration.is_none() {
                     self.source = true;
                     ui.label("Dmin and Dmax required for a positive preview");
@@ -1541,7 +1683,7 @@ impl host::App for Editor {
             let pixels_per_point = ui.ctx().pixels_per_point();
             let mut zoom_action = None;
             ui.horizontal(|ui| {
-                if ui.button("Fit").clicked() {
+                if ui.button(if self.crop_edit.is_some() { "Fit source" } else { "Fit" }).clicked() {
                     self.viewport.fit();
                 }
                 if ui.button("100%").clicked() {
@@ -1568,7 +1710,16 @@ impl host::App for Editor {
             .max(egui::vec2(1., 1.));
             let (canvas, response) =
                 ui.allocate_exact_size(available, egui::Sense::click_and_drag());
-            let mut geometry = self.viewport.layout(canvas, area, pixels_per_point);
+            let crop = if matches!(self.pick, Some(Pick::Dmin | Pick::Dmax | Pick::Flat)) { None }
+                else { self.crop_edit.as_ref().map(|edit| edit.draft).or(self.crop) };
+            let composition = if self.pick==Some(Pick::Flat) {Composition::new(area,RollOrientation::default(),PhotoOrientation::default())}
+                else {Composition::with_crop(area, self.roll_orientation, self.photo_orientation, crop)}
+                .expect("accepted crop belongs to the loaded source");
+            let inset = 20_f32.min((canvas.width().min(canvas.height())-1.).max(0.)*0.5);
+            let layout_canvas = if self.crop_edit.is_some() { canvas.shrink(inset) } else { canvas };
+            let cropping = self.crop_edit.is_some();
+            let mut geometry = if cropping { self.viewport.layout_crop(layout_canvas,composition,pixels_per_point) }
+                else { self.viewport.layout_composition(layout_canvas,composition,pixels_per_point) };
             if let Some(zoom) = zoom_action {
                 self.viewport.zoom_at(
                     geometry,
@@ -1581,14 +1732,24 @@ impl host::App for Editor {
                     canvas.center(),
                 );
             }
-            geometry = self.viewport.layout(canvas, area, pixels_per_point);
+            geometry = if cropping { self.viewport.layout_crop(layout_canvas,composition,pixels_per_point) }
+                else { self.viewport.layout_composition(layout_canvas,composition,pixels_per_point) };
+            geometry.canvas = canvas;
             if response.drag_started_by(egui::PointerButton::Primary) { self.pick_drag = None; }
-            let (geometry, panning) = self.navigate(ui, &response, geometry, pixels_per_point);
-            let rect = geometry.image.intersect(canvas);
-            let view = ViewRequest {
-                area: geometry.visible_area(),
-                output: geometry.output_size(geometry.visible_area(), pixels_per_point),
+            let (geometry, panning) = if self.crop_edit.is_some() {
+                (self.crop_interaction(ui, &response, geometry), false)
+            } else {
+                self.navigate(ui, &response, geometry, pixels_per_point)
             };
+            if self.crop_edit.is_none() { self.last_layout = Some((geometry, pixels_per_point)); }
+            let composition = geometry.composition;
+            let rect = geometry.image.intersect(canvas);
+            // An editing frame may be offscreen at explicit zoom; no refinement raster is requested.
+            let view = (!cropping).then(||ViewRequest {
+                area: geometry.visible_area(),
+                output: if composition.is_exact() { geometry.output_size(geometry.visible_area(),pixels_per_point) } else { geometry.frame_raster(pixels_per_point).output },
+                frame: (!composition.is_exact()).then(||geometry.frame_raster(pixels_per_point)),
+            });
             let parameters = if self.source {
                 let source_parameters=ProcessingParameters::source_inspection(self.source_exposure);
                 match source_parameters {
@@ -1612,6 +1773,7 @@ impl host::App for Editor {
                 bytemuck::bytes_of(&parameters).try_into().unwrap(),
                 self.target,
                 view,
+                composition,
             );
             if self.signature != Some(signature) {
                 self.thumbnails.cancel();
@@ -1623,10 +1785,12 @@ impl host::App for Editor {
             }
             let revision = self.generation.load(std::sync::atomic::Ordering::Relaxed);
             if !self.busy
+                && self.crop_edit.is_none()
                 && self.refining.is_none()
                 && self.settled.is_none()
                 && self.refinement_error != Some(revision)
                 && self.last_edit.elapsed() >= Duration::from_millis(250)
+                && let Some(view) = view
             {
                 if self
                     .commands
@@ -1650,18 +1814,21 @@ impl host::App for Editor {
             {
                 ui.ctx().request_repaint_after(Duration::from_millis(50));
             }
-            let (image, parameters, sampled) = match &self.settled {
-                Some((settled_revision, settled_view, image)) if *settled_revision == revision => {
-                    (image.clone(), None, settled_view.area)
+            let draw = if cropping { canvas } else { rect };
+            let (image, parameters, mapping) = match &self.settled {
+                Some((settled_revision, settled_view, image)) if *settled_revision == revision && !cropping => {
+                    let mapping = if settled_view.frame.is_some() { crate::geometry::TextureMapping::IDENTITY } else { geometry.uv(draw,settled_view.area) };
+                    (image.clone(),None,mapping)
                 }
-                _ => (provisional, Some(parameters), area),
+                _ => (provisional,Some(parameters),geometry.uv(draw,area)),
             };
             ui.painter()
                 .with_clip_rect(canvas)
                 .add(egui_wgpu::Callback::new_paint_callback(
-                    rect,
-                    ImagePaint::new(image, parameters, geometry.uv(rect, sampled)),
+                    draw,
+                    ImagePaint::new(image, parameters, mapping),
                 ));
+            if cropping { self.paint_crop(ui, geometry); }
             if self.pick.is_some()
                 && !self.busy
                 && !panning
@@ -1671,7 +1838,7 @@ impl host::App for Editor {
                     && let Some(point) = response.interact_pointer_pos()
                     && geometry.image.contains(point)
                 {
-                    self.region = Some(geometry.patch(point, 32));
+                    self.region = Some(geometry.pick_patch(point, 32));
                 }
                 if response.drag_started_by(egui::PointerButton::Primary) {
                     self.pick_drag = response
@@ -1687,12 +1854,12 @@ impl host::App for Editor {
                 }
                 if let Some(region) = self.region {
                     ui.painter().with_clip_rect(canvas).rect_stroke(
-                        geometry.screen_region(region),
+                        geometry.screen_coverage(region),
                         0.,
                         egui::Stroke::new(1., egui::Color32::WHITE),
                         egui::StrokeKind::Inside,
                     );
-                    let screen = geometry.screen_region(region);
+                    let screen = geometry.screen_coverage(region);
                     for point in [
                         screen.min,
                         screen.max,
@@ -1706,28 +1873,18 @@ impl host::App for Editor {
                         );
                     }
                     ui.horizontal(|ui| {
-                        ui.label("Source rectangle");
-                        let region = self.region.as_mut().unwrap();
-                        ui.add(
-                            egui::DragValue::new(&mut region.x)
-                                .range(area.x..=area.x + area.width - 1)
-                                .prefix("x "),
-                        );
-                        ui.add(
-                            egui::DragValue::new(&mut region.y)
-                                .range(area.y..=area.y + area.height - 1)
-                                .prefix("y "),
-                        );
-                        ui.add(
-                            egui::DragValue::new(&mut region.width)
-                                .range(1..=area.x + area.width - region.x)
-                                .prefix("w "),
-                        );
-                        ui.add(
-                            egui::DragValue::new(&mut region.height)
-                                .range(1..=area.y + area.height - region.y)
-                                .prefix("h "),
-                        );
+                        ui.label(if self.pick==Some(Pick::Flat) {"Source rectangle"} else {"Frame rectangle"});
+                        let (mut min,max) = geometry.frame_bounds(region);
+                        let mut extent: [f64;2] = std::array::from_fn(|i|max.0[i]-min.0[i]);
+                        let size = composition.size().map(f64::from);
+                        let origin=if self.pick==Some(Pick::Flat) {[f64::from(area.x),f64::from(area.y)]} else {[0.,0.]};
+                        let mut changed = false;
+                        for (i,label) in [(0,"x "),(1,"y ")] {
+                            let mut position=min.0[i]+origin[i];
+                            if ui.add(egui::DragValue::new(&mut position).range(origin[i]..=origin[i]+size[i]-extent[i]).max_decimals(0).prefix(label)).changed() {min.0[i]=position-origin[i];changed=true;}
+                        }
+                        for (i,label) in [(0,"w "),(1,"h ")] { changed |= ui.add(egui::DragValue::new(&mut extent[i]).range(1.0..=size[i]-min.0[i]).max_decimals(0).prefix(label)).changed(); }
+                        if changed { self.region = Some(geometry.frame_selection(min,crate::geometry::FramePoint(std::array::from_fn(|i|min.0[i]+extent[i])))); }
                         if ui.button(if self.pick==Some(Pick::Flat){"Apply correction"}else{"Apply pick"}).clicked() {
                             self.apply_pick();
                         }

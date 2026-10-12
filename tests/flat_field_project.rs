@@ -33,6 +33,8 @@ fn fixture() -> Project {
         },
         reference_only: false,
         photo: PhotoSettings::default(),
+        orientation: Default::default(),
+        crop: None,
     };
     let id = project.add_source(source).unwrap();
     let map = Arc::new(
@@ -57,13 +59,24 @@ fn fixture() -> Project {
 }
 #[test]
 fn map_roundtrip_is_exact_and_does_not_require_reference_file_or_resample_rgb() {
-    let project = fixture();
+    let mut project = fixture();
+    let correction = project.flat_field.clone();
+    project.orientation.turn_clockwise();
+    project.orientation.horizontal = true;
+    project.sources[0].orientation.turn_counterclockwise();
+    project.sources[0].orientation.flips.vertical = true;
+    project.sources[0].crop = Some(antitone::crop::Crop {
+        center: [412., 312.],
+        size: [420, 310],
+        angle: 0.27,
+    });
     project.validate().unwrap();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("roll.antitone.json");
     project.save(&path, Save::New).unwrap();
     let reopened = Project::load(&path).unwrap();
     assert_eq!(reopened, project);
+    assert_eq!(reopened.flat_field, correction);
     assert_eq!(
         reopened.calibration().unwrap(),
         project.calibration().unwrap()

@@ -7,6 +7,38 @@ use antitone::processing::{
     Calibration, Inversion, PhotoSettings, Pipeline, RollSettings, exposure_multiplier,
 };
 use antitone::sampling::{mean, photo_neutral, roll_neutral};
+
+#[test]
+fn weighted_neutral_picks_match_repeated_full_resolution_pixels_not_bounding_box_means() {
+    use antitone::sampling::{photo_neutral_weighted, roll_neutral_weighted, weighted_mean};
+    let cal = calibration();
+    let correct = RollSettings {
+        balance: Balance {
+            warmth: 0.21,
+            tint: -0.14,
+        },
+        ..RollSettings::default()
+    };
+    let matrix = DMat3::from_diagonal(DVec3::new(0.8, 1.1, 1.3));
+    let target = matrix.inverse() * DVec3::ONE;
+    let patch = [0.025, 0.09, 0.4].map(|v| scan_for_positive(cal, correct, target * v));
+    let weighted = [(patch[0], 0.5), (patch[1], 1.), (patch[2], 0.5)];
+    let repeated = [patch[0], patch[1], patch[1], patch[2]];
+    assert!((weighted_mean(&weighted).unwrap() - mean(&repeated).unwrap()).length() < 1e-15);
+    let a = photo_neutral_weighted(&weighted).unwrap();
+    let b = photo_neutral(&repeated).unwrap();
+    assert!((a.warmth - b.warmth).abs() < 1e-14 && (a.tint - b.tint).abs() < 1e-14);
+    let roll = RollSettings::default();
+    let a = roll_neutral_weighted(cal, roll, &weighted, matrix).unwrap();
+    let b = roll_neutral(cal, roll, &repeated, matrix).unwrap();
+    assert!((a.warmth - b.warmth).abs() < 1e-9 && (a.tint - b.tint).abs() < 1e-9);
+    assert!(
+        (a.warmth - correct.balance.warmth).abs() < 1e-8
+            && (a.tint - correct.balance.tint).abs() < 1e-8
+    );
+    assert!(weighted_mean(&[(patch[0], 0.)]).is_err());
+    assert!(weighted_mean(&[(patch[0], f64::NAN)]).is_err());
+}
 use glam::{DMat3, DVec3};
 
 const ABS: f64 = 2e-12;
