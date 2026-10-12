@@ -4,7 +4,7 @@ This describes the implemented application, not the delivery plan. Current work/
 
 ## System boundaries
 
-Antitone is a single Rust package with narrow native bridges. The numerical core can be tested without the desktop stack. Cargo features add `project`, `raw`, `gpu`, `render`, `export`, `ui` and `editor`; `editor` assembles the desktop application. Versions are pinned in `Cargo.toml`/`Cargo.lock`.
+Antitone is a single Rust package with narrow native bridges. The numerical core can be tested without the desktop stack. Cargo features add `project`, `raw`, `gpu`, `render`, `export`, `ui` and `editor`; `editor` assembles the desktop application. Versions are pinned in `Cargo.toml`/`Cargo.lock`; `rust-toolchain.toml` selects the shared developer toolchain. Human and agent builds use ordinary Cargo with the same aliases/compiler configuration and pinned native setup described in [the README](../README.md).
 
 | Boundary | Implementation | Responsibility |
 | --- | --- | --- |

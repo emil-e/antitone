@@ -85,8 +85,7 @@ At the completed response-integration checkpoint, **88 all-feature tests**, stri
 The real-image editor smoke has an optional layout pass:
 
 ```sh
-ANTITONE_SMOKE_CONTROLS=1 CC=/usr/bin/clang CXX=/usr/bin/clang++ \
-  ./scripts/cargo.sh run --offline --release --features editor --bin antitone -- --smoke \
+ANTITONE_SMOKE_CONTROLS=1 cargo app --offline -- --smoke \
   samples/DSC04397.ARW 4000 5644 128 32 \
   samples/DSC04378.ARW 4000 2600 128 128 samples/DSC04416.ARW
 ```

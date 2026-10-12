@@ -57,7 +57,7 @@ This captures only the application window during timed smoke holds; it does not 
 
 ## What remains in `.cache` and why
 
-- `.cache/deps/`, `.cache/rustup/`: downloaded dependencies/toolchain, build trees/libraries; reconstruct via existing build scripts. They are not distributable app packaging.
+- `.cache/native-deps/` (LibRaw/OpenMP) and `.cache/deps/` (OCIO): downloaded native dependencies and build trees/libraries; reconstruct via `scripts/setup-native.sh`. These are not distributable app packaging. Historical `.cache/rustup/` toolchains may remain as local inputs; current builds use normal rustup project selection through `rust-toolchain.toml`, not the old Cargo wrapper.
 - Generated camera/rendering fixtures, regenerated OCIO intermediates, binaries/objects, duplicate build logs and full-resolution TIFF/EXR/PNG outputs: rebuildable diagnostics, not authoritative source.
 - Sample-derived photography/user screenshots: private local material, not automatically committed. The RAWs remain read-only under ignored `samples/`.
 - Kodak PDFs/text/drawing derivatives and the copied/modified upstream OCIO boundary experiment: third-party material kept local. URLs, source provenance, reported findings and owned extraction/internal-inspection tools are durable; no wholesale upstream vendoring or copyrighted-document promotion.

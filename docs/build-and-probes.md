@@ -1,36 +1,39 @@
 # Build and verification runbook
 
-Run from the repository root. macOS/Apple Silicon is the current supported checkout; samples are read-only/local. This is a command guide, not a claim that all checks ran today. Historical outcomes are in [research evidence](research/evidence/README.md); acceptance gaps/status are in [PLAN.md](../PLAN.md).
+Run from the repository root. Use [the README](../README.md) for initial developer setup; humans and agents use the same Cargo/native setup path. macOS/Apple Silicon is the current supported checkout; samples are read-only/local. This is a command guide, not a claim that all checks ran today. Historical outcomes are in [research evidence](research/evidence/README.md); acceptance gaps/status are in [PLAN.md](../PLAN.md).
 
 ## Toolchain and native dependencies
 
-Use `./scripts/cargo.sh`: checkout-local Rust 1.99.0 under `.cache/rustup`, package MSRV 1.95. Global default/toolchain selection is not changed. Native dependencies are pinned LibRaw 0.22.0, LLVM OpenMP 22.1.8 and OCIO 2.6.0:
+Run ordinary `cargo` commands. `rust-toolchain.toml` selects Rust 1.99.0 with rustfmt/Clippy through normal rustup project selection; package MSRV is separately 1.95. Your global default toolchain is unchanged. `.cargo/config.toml` selects Apple Clang for Cargo native builds, including when an ambient `CC`/`CXX` points elsewhere. Older historical records use the removed `scripts/cargo.sh` wrapper and checkout-local Rust; those are not current setup instructions.
+
+Native dependencies are pinned LibRaw 0.22.0, LLVM OpenMP 22.1.8 and OCIO 2.6.0:
 
 ```sh
-./scripts/build-libraw.sh
-./scripts/build-ocio.sh
+./scripts/setup-native.sh
 ```
 
-Bootstrap/downloads require network; do not install global/Homebrew packages. LibRaw/OpenMP use private ignored `.cache/native-deps` (LibRaw script builds OpenMP first); OCIO uses `.cache/deps`. OpenMP's LLVM release archive is SHA256-pinned and extracted selectively, source-built arm64/macOS-14 with `@rpath/libomp.dylib`. Licenses remain beside local products. `LIBRAW_SOURCE` and `OCIO_PREFIX` override native source/prefix defaults; OpenMP has no inherited runtime override. Existing serial LibRaw builds in `.cache/deps` are not the production default. Rpaths remain checkout-local, not distributable packaging. Little CMS is built statically through the pinned Rust dependency; do not set `LCMS2_LIB_DIR` to override that choice. Cargo/native commands below use Apple Clang.
+Setup checks host prerequisites, then runs `build-libraw.sh` (which builds OpenMP first) and `build-ocio.sh`; these can also be invoked individually. Bootstrap/downloads require network. LibRaw/OpenMP use private ignored `.cache/native-deps`; OCIO uses `.cache/deps`. OpenMP's LLVM release archive is SHA256-pinned and extracted selectively, source-built arm64/macOS-14 with `@rpath/libomp.dylib`. Licenses remain beside local products. Agents must obtain any required environment permissions and must not install system/Homebrew packages without a separate request.
+
+`LIBRAW_SOURCE` and `OCIO_PREFIX` select existing compatible native builds for Cargo/probes; setup always builds the pinned local defaults. OpenMP remains required at `.cache/native-deps/openmp-22.1.8-install`, with no inherited runtime override. Existing serial LibRaw builds in `.cache/deps` are not the production default. OpenMP/OCIO rpaths remain checkout-local, not distributable packaging. Little CMS is built statically through the pinned Rust dependency; do not set `LCMS2_LIB_DIR` to override that choice.
+
+The focused commands below use `--offline` to avoid downloads during verification with an already populated cache. For a first build, omit it; retain `--locked` to use the committed dependency resolution.
 
 ## Focused checks
 
 Choose checks relevant to the change before running the broad suite:
 
 ```sh
-./scripts/cargo.sh fmt --all -- --check
-./scripts/cargo.sh test --offline --no-default-features --test camera_inversion --test processing --test film_response
-./scripts/cargo.sh test --offline --features project --test camera_project --test project --test film_project
-./scripts/cargo.sh test --offline --features gpu --test gpu_film_response -- --nocapture
+cargo fmt --all -- --check
+cargo test --locked --offline --no-default-features --test camera_inversion --test processing --test film_response
+cargo test --locked --offline --features project --test camera_project --test project --test film_project
+cargo test --locked --offline --features gpu --test gpu_film_response -- --nocapture
 ```
 
 Project/scalar checks do not require native RAW/render libraries. GPU checks require available Metal. For a processing/rendering integration closure, when warranted:
 
 ```sh
-CC=/usr/bin/clang CXX=/usr/bin/clang++ \
-  ./scripts/cargo.sh test --offline --all-features
-CC=/usr/bin/clang CXX=/usr/bin/clang++ \
-  ./scripts/cargo.sh clippy --offline --all-features --all-targets -- -D warnings
+cargo test --locked --offline --all-features
+cargo clippy --locked --offline --all-features --all-targets -- -D warnings
 ```
 
 Do not treat unavailable hardware or an unrelated test failure as permission to weaken gates or broaden scope. Numerical gates and actual onscreen/device acceptance are separate.
@@ -38,8 +41,7 @@ Do not treat unavailable hardware or an unrelated test failure as permission to 
 ## Editor and layout smoke
 
 ```sh
-CC=/usr/bin/clang CXX=/usr/bin/clang++ \
-  ./scripts/cargo.sh build --offline --release --features editor --bin antitone
+cargo build-app --offline
 target/release/antitone samples/DSC04416.ARW
 # Explicit diagnostic calibration, not the user's saved grade:
 target/release/antitone --smoke \
@@ -67,7 +69,7 @@ This uses temporary project files, leaves RAWs untouched, and verifies exact mod
 The flat-field editor/worker integration has an explicit read-only local-RAW/Metal test (temporary projects/32×32 corrected TIFF/AP0 EXR crops):
 
 ```sh
-./scripts/cargo.sh test --offline --release --all-features --lib \
+cargo test --locked --offline --release --all-features --lib \
   editor::flat::tests::real_reference_editor_save_open_and_corrected_exports \
   -- --ignored --nocapture
 ```
@@ -79,7 +81,7 @@ Scripted corrected onscreen acceptance (keeps the nonzero-visible-frame gate and
 ```sh
 target/release/antitone --smoke-flat-field samples/DSC01737.ARW samples/DSC01739.ARW
 target/release/antitone --smoke-flat-field samples/DSC01811.ARW samples/DSC01813.ARW
-./scripts/cargo.sh test --offline --release --all-features --test flat_field_export \
+cargo test --locked --offline --release --all-features --test flat_field_export \
   -- --ignored --nocapture
 ```
 
@@ -92,11 +94,9 @@ For window capture use [the relocated capture helper](research/tools/README.md#m
 The above-controls slot provides positive-grade-only whole-frame approximate waveform/vectorscope, in selected output-native codes. RGB/luma reuse bins; vectorscope scale re-bins cached rendering without rerunning ACES. Source/reference views and crop drafts suspend scopes. Accepted crop/orientation follows canonical whole-frame mapping, independently of viewer navigation. [Contract](contracts/scopes.md), [implementation/integration closure](plans/completed/vectorscope-and-waveform.md).
 
 ```sh
-CC=/usr/bin/clang CXX=/usr/bin/clang++ \
-  ./scripts/cargo.sh test --offline --features editor --lib --test scopes --test viewer
+cargo test --locked --offline --features editor --lib --test scopes --test viewer
 # Bounded 1024×1024 flat/varied reduction probe; Metal, no RAWs/window:
-CC=/usr/bin/clang CXX=/usr/bin/clang++ \
-  ./scripts/cargo.sh test --offline --features editor --test scopes \
+cargo test --locked --offline --features editor --test scopes \
   scope_reduction_latency -- --ignored --nocapture
 # Release editor built as above; scripted scope modes/amplification and layout holds:
 ANTITONE_SMOKE_SCOPES=1 ANTITONE_SMOKE_CONTROLS=1 target/release/antitone --smoke \
@@ -106,31 +106,31 @@ ANTITONE_SMOKE_SCOPES=1 ANTITONE_SMOKE_CONTROLS=1 target/release/antitone --smok
 
 The latency probe times encode/submit/wait for reductions only, not RAW/ACES processing or end-to-end gesture latency. GPU-bin/pixel readbacks are test-only; the live UI maps just 16 diagnostic bytes asynchronously with one outstanding job. Smoke retains nonzero-visible-frame acceptance and uses diagnostic calibration, not the user's grade. Capture only the application window during layout holds with the existing [helper](research/tools/README.md#manufacturer-study--capture); photographic screenshots remain ignored/private.
 
-In `.worktrees/scopes`, ignored `.cache/{rustup,deps}` reuse existing inputs, `.cache/samples` is read-only sample access, Cargo runs with `CARGO_HOME="$PWD/.cache/cargo"` and separate target products. Substitute `.cache/samples/…` in the smoke command there. Do not bootstrap/download or install globally when checkout-local inputs are absent.
+Worktrees share the normal rustup/Cargo download caches and keep separate `target/` products and native build directories by default. To reuse existing native builds, set `LIBRAW_SOURCE` and `OCIO_PREFIX` to their absolute paths; OpenMP must also be available at the fixed checkout-local path above, for example through an ignored shared `.cache/native-deps` link. `LIBRAW_SOURCE` does not relocate the OpenMP runtime. Use absolute RAW paths or read-only sample links for photographic checks; no per-worktree Rust bootstrap is needed.
 
 ## Rendering/import performance probes
 
 The ignored editor probes leave samples unchanged and use local Metal. `import_and_refinement_latency` compares bounded queue depths 1/2/3 with and without simulated foreground GPU submissions and checks bitwise reconstruction agreement; it takes about 34 seconds on the recorded M5 snapshot. This is not physical control/presentation latency. `initial_import_with_renderer_prewarm` separates header/hash/unpack/process/resource phases, then verifies whole-frame scope processing/diagnostics remain coherent during seeded-thumbnail creation and disk restart. `project_relative_locator_cold_thumbnail` uses an ignored temporary symlink/project/cache to verify cold development against a resolved locator.
 
 ```sh
-CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --release --features editor --lib import_and_refinement_latency -- --ignored --nocapture
-CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --release --features editor --lib initial_import_with_renderer_prewarm -- --ignored --nocapture
-CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --release --features editor --lib project_relative_locator_cold_thumbnail -- --ignored --nocapture
+cargo test --locked --offline --release --features editor --lib import_and_refinement_latency -- --ignored --nocapture
+cargo test --locked --offline --release --features editor --lib initial_import_with_renderer_prewarm -- --ignored --nocapture
+cargo test --locked --offline --release --features editor --lib project_relative_locator_cold_thumbnail -- --ignored --nocapture
 ```
 
 Combined geometry integration (corrected real RAW, shared affine refinement, tile seams, both targets and independent scalar coverage; no sample edits):
 
 ```sh
-CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --features editor --lib --test scopes --test viewer --test affine_resample --test geometry_export --test camera_inversion --test gpu_film_response
-CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --release --features editor --lib corrected_affine_refinement_matches_scalar_coverage -- --ignored --nocapture
+cargo test --locked --offline --features editor --lib --test scopes --test viewer --test affine_resample --test geometry_export --test camera_inversion --test gpu_film_response
+cargo test --locked --offline --release --features editor --lib corrected_affine_refinement_matches_scalar_coverage -- --ignored --nocapture
 ```
 
 Additional ignored native follow-up checks:
 
 ```sh
-CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --release --features editor --lib development_and_region_picks -- --ignored --nocapture
+cargo test --locked --offline --release --features editor --lib development_and_region_picks -- --ignored --nocapture
 # Build .cache/native-deps/probe per the linked guide before the contention probe:
-CC=/usr/bin/clang CXX=/usr/bin/clang++ ./scripts/cargo.sh test --offline --release --features editor --lib native_development_foreground_contention -- --ignored --nocapture
+cargo test --locked --offline --release --features editor --lib native_development_foreground_contention -- --ignored --nocapture
 ```
 
 [Native complete-RGB/metadata/diagnostics comparison and build guide](research/tools/raw-development.md). Native thread stress excludes physical input/layout/surface latency, as with tile stress; scoped CPU policy and lazy decoding do not change source/development identity. `raw_development` logs include priority/requested thread count.
@@ -142,8 +142,7 @@ Runtime `source_registration`, `raw_import`, `raw_development`, `selected_source
 Camera-model replacement checks use read-only train samples/diagnostic anchors, not a recovered photographic grade:
 
 ```sh
-CC=/usr/bin/clang CXX=/usr/bin/clang++ \
-  ./scripts/cargo.sh test --offline --release --features raw,gpu \
+cargo test --locked --offline --release --features raw,gpu \
   --test camera_raw -- --ignored --nocapture
 ```
 
@@ -151,7 +150,7 @@ The ignored real flat-field Save/Open/corrected-export check above exercises the
 
 
 ```sh
-./scripts/cargo.sh run --offline --features raw,gpu \
+cargo run --locked --offline --features raw,gpu \
   --bin antitone-calibration-probe -- \
   samples/DSC04397.ARW 4000 5644 128 32 \
   samples/DSC04378.ARW 4000 2600 128 128 \
@@ -169,12 +168,10 @@ After regenerating OCIO fixtures:
 
 ```sh
 ./scripts/probe-rendering.sh
-CC=/usr/bin/clang CXX=/usr/bin/clang++ \
-  ./scripts/cargo.sh test --offline --features render --test rendering
+cargo test --locked --offline --features render --test rendering
 ./scripts/probe-gamut.sh
 # Independent current-target check, no RAW fixtures needed:
-CC=/usr/bin/clang CXX=/usr/bin/clang++ \
-  ./scripts/cargo.sh run --offline --features render \
+cargo run --locked --offline --features render \
   --bin antitone-rendering-probe -- --gamut-check
 ```
 
@@ -185,12 +182,12 @@ CPU renderer/scalar reference, exhaustive profile/transfer and independent Color
 ## Export and cached sampling
 
 ```sh
-./scripts/cargo.sh run --offline --release --features raw,export \
+cargo run --locked --offline --release --features raw,export \
   --bin antitone-export-probe -- \
   samples/DSC04397.ARW 4000 5644 128 32 \
   samples/DSC04378.ARW 4000 2600 128 128 \
   samples/DSC04416.ARW .cache/probes/NEW_OUTPUT_DIRECTORY
-./scripts/cargo.sh run --offline --release --features raw \
+cargo run --locked --offline --release --features raw \
   --bin antitone-scan-probe -- \
   samples/DSC04378.ARW 4000 2600 128 128
 ```
@@ -210,9 +207,9 @@ For an independent full TIFF/ImageIO reopening after a diagnostic export:
 
 ```sh
 ./scripts/probe-presentation-reference.sh
-./scripts/cargo.sh run --offline --features ui --bin antitone-presentation-probe
+cargo run --locked --offline --features ui --bin antitone-presentation-probe
 # Leave the chart open:
-./scripts/cargo.sh run --offline --features ui \
+cargo run --locked --offline --features ui \
   --bin antitone-presentation-probe -- --interactive
 ```
 

@@ -5,7 +5,8 @@ Start with [the roadmap](../PLAN.md) and [repository workflow](../AGENTS.md). Re
 ## Architecture and operation
 
 - [Architecture](architecture.md): implemented modules, colour/data flow, ownership, workers, GPU resources and gaps.
-- [Build and probes](build-and-probes.md): current checkout-local commands and verification boundaries, not a rolling list of test counts.
+- [Developer setup](../README.md): prerequisites and the shared human/agent Cargo build path.
+- [Build and probes](build-and-probes.md): focused commands and verification boundaries, not a rolling list of test counts.
 - [Work plans](plans/README.md): focused scopes/acceptance/handoff; root roadmap owns status/order.
 
 ## Current contracts
