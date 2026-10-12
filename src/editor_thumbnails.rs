@@ -174,6 +174,7 @@ pub(super) struct Thumbnails {
     sources: Arc<std::sync::Mutex<Cache<SourceKey, Arc<Proxy>>>>,
     budgets: memory::CacheBudgets,
     memory_watch: Option<memory::PressureWatch>,
+    repaint: Arc<std::sync::OnceLock<egui::Context>>,
     gpu: Option<(
         wgpu::Device,
         wgpu::Queue,
@@ -204,6 +205,7 @@ impl Default for Thumbnails {
             ))),
             budgets,
             memory_watch: None,
+            repaint: Arc::default(),
             gpu: None,
             commands: None,
             messages: None,
@@ -353,9 +355,10 @@ impl Thumbnails {
         };
         let generation = state.generation.clone();
         let sources = state.sources.clone();
+        let repaint = state.repaint.clone();
         std::thread::spawn(move || {
             worker(
-                device, queue, renderers, sources, receiver, send, generation, disk,
+                device, queue, renderers, sources, receiver, send, generation, disk, repaint,
             )
         });
         state
@@ -483,6 +486,7 @@ fn worker(
     messages: mpsc::Sender<Outcome>,
     generation: Arc<std::sync::atomic::AtomicU64>,
     disk: Option<disk::DiskCache>,
+    repaint: Arc<std::sync::OnceLock<egui::Context>>,
 ) {
     while let Ok(job) = commands.recv() {
         let started = std::time::Instant::now();
@@ -597,6 +601,12 @@ fn worker(
         {
             break;
         }
+        if let Some(context) = repaint.get() {
+            context.request_repaint();
+        }
+    }
+    if let Some(context) = repaint.get() {
+        context.request_repaint();
     }
 }
 
@@ -658,6 +668,7 @@ impl Editor {
     }
     pub(super) fn filmstrip(&mut self, ui: &mut egui::Ui) {
         if self.thumbnails.memory_watch.is_none() {
+            self.thumbnails.repaint.get_or_init(|| ui.ctx().clone());
             self.thumbnails.memory_watch = Some(memory::PressureWatch::new(ui.ctx().clone()));
         }
         if self.ready.is_none() && self.pending_preview.is_none() && self.flat_edit.is_none() {
@@ -669,14 +680,15 @@ impl Editor {
             .map(|c| FieldKey(c.settings.map.clone()));
         self.thumbnails.cache.retain(|key, _| key.field == field);
         self.thumbnails.update_memory();
-        let idle = !self.busy
+        let visible_allowed = !self.busy
             && self.thumbnails.budgets.pressure != memory::Pressure::Critical
             && self.pick.is_none()
             && self.crop_edit.is_none()
             && self.document_pending.is_none()
             && self.transition.is_none()
             && self.project_overwrite.is_none()
-            && self.overwrite.is_none()
+            && self.overwrite.is_none();
+        let idle = visible_allowed
             && (self.settled.is_some()
                 || self.refinement_error
                     == Some(self.generation.load(std::sync::atomic::Ordering::Relaxed)))
@@ -802,7 +814,10 @@ impl Editor {
                 self.selected = index;
                 self.load(path);
             }
-        } else if idle {
+        } else if visible_allowed {
+            if !idle {
+                wanted.retain(|(index, _, _, _)| visible.contains(index));
+            }
             wanted.sort_by_key(|(index, _, _, _)| {
                 let distance = visible
                     .iter()
@@ -826,6 +841,9 @@ impl Editor {
     }
 }
 
+#[cfg(test)]
+#[path = "editor_thumbnail_latency_tests.rs"]
+mod latency_tests;
 #[cfg(test)]
 #[path = "editor_performance_tests.rs"]
 mod performance;

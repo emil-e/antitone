@@ -100,6 +100,27 @@ The ignored editor probes use local Metal. `selected_proxy_switching_latency` ex
 cargo test --locked --offline --release --features editor --lib selected_proxy_switching_latency -- --ignored --nocapture
 ```
 
+`visible_thumbnail_import_latency` measures actual Editor imports at 1100×800 with 4-/36-source rolls, a private empty disk-proxy cache, then reuse in a fresh Editor. The selected source seeds its normal proxy; other cold visible sources need full development. It records foreground preparation, first/all-visible UI cache readiness and whether first readiness waited for settled refinement. Frames poll at 2 ms; callbacks are not painted, filesystem caching is uncontrolled, and cache readiness is not GPU completion, host wake latency or physical presentation. Sources are read-only `DSC04378` onward. Run:
+
+```sh
+cargo test --locked --offline --release --features editor --lib visible_thumbnail_import_latency -- --ignored --nocapture
+```
+
+The read-only embedded-preview diagnostic inspects LibRaw header descriptors and extracts each encoded preview without sensor unpack/development. It reports dimensions, format, JPEG SOI/byte counts and header/extraction time, not JPEG decode/upload or display/colour correctness. The diagnostic has no production preview path. Build against the same pinned native libraries:
+
+```sh
+mkdir -p .cache/probes
+/usr/bin/clang++ -std=c++17 -O2 -Wall -Wextra -Werror -mmacosx-version-min=14.0 \
+  -I.cache/native-deps/LibRaw-0.22.0-openmp native/raw_thumbnail_probe.cpp \
+  .cache/native-deps/LibRaw-0.22.0-openmp/lib/libraw_r.a -lz \
+  -L.cache/native-deps/openmp-22.1.8-install/lib -lomp \
+  -Wl,-rpath,"$PWD/.cache/native-deps/openmp-22.1.8-install/lib" \
+  -o .cache/probes/raw-thumbnail-probe
+.cache/probes/raw-thumbnail-probe samples/DSC04378.ARW
+```
+
+Embedded JPEGs are camera-rendered/display-referred, not linear native-camera RGB16; they cannot feed model-4 inversion, correction, calibration, scopes or export. A navigation-only interim remains an [open design question](plans/visual-feedback.md), separate from developed positive thumbnails.
+
 Runtime `selected_preview` logs report proxy dimensions, independent GPU pixel bytes and preparation time. `selected_switch` distinguishes admission/cache hit, backend message receipt and first paint callback for each request. Keep generated output in ignored cache storage; compare only runs with matching boundaries and workload.
 
 The other probes cover import, refinement and thumbnail lifecycle: `import_switching_latency` measures backend readiness for 4-/36-source import/Open, switching/revisits and controlled cold/memory/disk/selected-seed thumbnails. Filesystem caching is uncontrolled; backend Ready is not physical presentation. `raw_byte_edits_reopen_without_identity_rejection_and_old_seed_keeps_its_revision` edits only a temporary RAW copy, checks saved state/exact RGB16 and verifies that a selected proxy is not retagged with newer file stats. Other probes leave samples unchanged. `import_and_refinement_latency` compares bounded queue depths 1/2/3 with and without simulated foreground GPU submissions and checks bitwise reconstruction agreement. This is not physical control/presentation latency. `initial_import_with_renderer_prewarm` separates header/unpack/process/resource phases, then verifies whole-frame scope processing/diagnostics remain coherent during seeded-thumbnail creation and disk restart. `project_relative_locator_cold_thumbnail` uses an ignored temporary symlink/project/cache to verify cold development against a resolved locator.

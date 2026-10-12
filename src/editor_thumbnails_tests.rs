@@ -532,6 +532,156 @@ fn critical_pressure_cancels_work_once_and_drops_optional_images() {
 }
 
 #[test]
+fn visible_jobs_do_not_wait_for_refinement_or_grading_idle() {
+    let (commands, _) = mpsc::channel();
+    let (_, messages) = mpsc::channel();
+    let mut editor = Editor::state(commands, messages, Arc::default());
+    editor.document = fixture();
+    let first = editor.document.project.order[0];
+    let last = *editor.document.project.order.last().unwrap();
+    for id in editor
+        .document
+        .project
+        .order
+        .clone()
+        .into_iter()
+        .filter(|id| *id != first && *id != last)
+    {
+        editor
+            .thumbnails
+            .cache
+            .insert(key(&editor.document, id), Err("already visited".into()));
+    }
+    let (commands, jobs) = mpsc::channel();
+    let (completed, outcomes) = mpsc::channel();
+    editor.thumbnails.commands = Some(commands);
+    editor.thumbnails.messages = Some(outcomes);
+    editor.refining = Some((
+        0,
+        crate::refinement::ViewRequest {
+            area: [0, 0, 1, 1].into(),
+            output: [1, 1],
+            frame: None,
+        },
+    ));
+    editor.last_edit = std::time::Instant::now();
+    let context = egui::Context::default();
+    let frame = |editor: &mut Editor| {
+        let mut output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1100., 800.),
+                )),
+                ..Default::default()
+            },
+            |ui| editor.filmstrip(ui),
+        );
+        output.textures_delta.clear();
+    };
+    frame(&mut editor);
+    let job = jobs
+        .try_recv()
+        .expect("missing visible cell must not wait for settled refinement");
+    assert_eq!(job.key.source.id, first);
+    frame(&mut editor);
+    assert!(
+        jobs.try_recv().is_err(),
+        "only one outstanding thumbnail job"
+    );
+    completed
+        .send(Outcome {
+            ticket: job.ticket,
+            key: job.key,
+            image: Err("fixture completed".into()),
+        })
+        .unwrap();
+    editor.thumbnails.receive(&editor.document);
+    frame(&mut editor);
+    assert!(
+        jobs.try_recv().is_err(),
+        "offscreen work still requires idle"
+    );
+}
+
+#[test]
+fn visible_jobs_remain_suspended_for_foreground_and_reference_work() {
+    for suspension in ["busy", "pick", "document"] {
+        let (commands, _) = mpsc::channel();
+        let (_, messages) = mpsc::channel();
+        let mut editor = Editor::state(commands, messages, Arc::default());
+        editor.document = fixture();
+        let (commands, jobs) = mpsc::channel();
+        editor.thumbnails.commands = Some(commands);
+        match suspension {
+            "busy" => editor.busy = true,
+            "pick" => editor.pick = Some(super::super::Pick::Dmin),
+            "document" => editor.document_pending = Some(0),
+            _ => unreachable!(),
+        }
+        let context = egui::Context::default();
+        let mut output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1100., 800.),
+                )),
+                ..Default::default()
+            },
+            |ui| editor.filmstrip(ui),
+        );
+        output.textures_delta.clear();
+        assert!(
+            jobs.try_recv().is_err(),
+            "{suspension} must block visible admission"
+        );
+    }
+}
+
+#[test]
+fn worker_completion_requests_immediate_repaint() {
+    pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let renderers = Arc::new(crate::renderer::RendererCache::default());
+        let mut thumbnails = Thumbnails::with_disk(device, queue, renderers, None);
+        let context = egui::Context::default();
+        for _ in 0..3 {
+            let mut output = context.run_ui(Default::default(), |_| {});
+            output.textures_delta.clear();
+        }
+        context.request_repaint_after(Duration::from_millis(50));
+        let (send, wake) = mpsc::channel();
+        context.set_request_repaint_callback(move |info| {
+            if info.delay == Duration::ZERO {
+                let _ = send.send(());
+            }
+        });
+        thumbnails.repaint.get_or_init(|| context);
+        let document = fixture();
+        let id = document.project.order[0];
+        thumbnails.request(
+            key(&document, id),
+            document.source_path(id).unwrap(),
+            document.project.source(id).unwrap().clone(),
+            None,
+        );
+        wake.recv_timeout(Duration::from_secs(10))
+            .expect("completion must wake UI immediately, not await the polling timer");
+        thumbnails.receive(&document);
+        assert!(thumbnails.pending.is_none());
+        assert!(matches!(
+            thumbnails.cache.get(&key(&document, id)),
+            Some(Err(_))
+        ));
+    });
+}
+
+#[test]
 fn idle_roll_prefetch_reaches_unshown_photos_after_visible_work() {
     let (commands, _) = mpsc::channel();
     let (_, messages) = mpsc::channel();

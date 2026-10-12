@@ -132,6 +132,7 @@ fn import_switching_latency() {
                                 messages,
                                 Arc::new(AtomicU64::new(1)),
                                 Some(disk),
+                                Arc::default(),
                             );
                         });
                         let outcome = receive.recv_timeout(Duration::from_secs(20)).unwrap();
