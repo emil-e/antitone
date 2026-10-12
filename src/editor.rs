@@ -34,6 +34,9 @@ use files::{FileAction, Transition};
 #[path = "editor_thumbnails.rs"]
 mod thumbnails;
 use thumbnails::Thumbnails;
+#[path = "editor_selected_preview.rs"]
+mod selected_preview;
+use selected_preview::{SelectionPaint, SelectionTiming};
 #[path = "editor_scopes.rs"]
 mod scopes;
 use scopes::{Scopes, Slot as ScopeSlot};
@@ -607,6 +610,8 @@ pub struct Editor {
     messages: mpsc::Receiver<Message>,
     id: u64,
     ready: Option<Ready>,
+    pending_preview: Option<thumbnails::SelectedPreview>,
+    selection_timing: Option<Arc<SelectionTiming>>,
     busy: bool,
     status: String,
     return_notice: Option<String>,
@@ -694,6 +699,8 @@ impl Editor {
             messages,
             id: 0,
             ready: None,
+            pending_preview: None,
+            selection_timing: None,
             busy: false,
             status: "Add a RAW to begin".into(),
             return_notice: None,
@@ -793,6 +800,8 @@ impl Editor {
         self.next_request
     }
     fn start_document(&mut self, work: DocumentWork) {
+        self.pending_preview = None;
+        self.selection_timing = None;
         self.thumbnails.cancel();
         let id = self.request_id();
         self.generation
@@ -823,6 +832,10 @@ impl Editor {
         self.load_source(path, true);
     }
     fn load_source(&mut self, path: PathBuf, persistent: bool) {
+        let started = std::time::Instant::now();
+        self.seed_thumbnail();
+        self.pending_preview = None;
+        self.selection_timing = None;
         self.thumbnails.cancel();
         self.sync_document();
         self.current_source = self.document.find_source(&path);
@@ -869,6 +882,8 @@ impl Editor {
         self.pick_return = None;
         self.id = self.request_id();
         self.ready = None;
+        self.selection_timing =
+            persistent.then(|| Arc::new(SelectionTiming::new(self.id, started)));
         self.region = None;
         self.pick = None;
         self.source = self.calibration().is_none();
@@ -887,7 +902,33 @@ impl Editor {
             .is_err()
         {
             self.busy = false;
+            self.selection_timing = None;
             self.status = "RAW worker stopped".into();
+        } else if persistent
+            && self.pick.is_none()
+            && self.flat_edit.is_none()
+            && let Some(source) = self.current_source
+        {
+            match self.thumbnails.selected_preview(
+                self.id,
+                &self.document,
+                source,
+                self.correction.as_ref(),
+            ) {
+                Ok(preview) => {
+                    println!(
+                        "selected_switch request={} cache_hit={} boundary=admission elapsed_ms={:.6}",
+                        self.id,
+                        preview.is_some(),
+                        started.elapsed().as_secs_f64() * 1000.
+                    );
+                    self.pending_preview = preview;
+                }
+                Err(error) => eprintln!(
+                    "selected_preview request={} unavailable reason={error}",
+                    self.id
+                ),
+            }
         }
     }
     fn receive(&mut self) {
@@ -915,6 +956,14 @@ impl Editor {
                     }
                 }
                 Message::Ready(id, result) if id == self.id && self.document_pending.is_none() => {
+                    self.pending_preview = None;
+                    if let Some(timing) = &self.selection_timing {
+                        println!(
+                            "selected_switch request={id} success={} boundary=backend_ready elapsed_ms={:.6}",
+                            result.is_ok(),
+                            timing.started.elapsed().as_secs_f64() * 1000.
+                        );
+                    }
                     self.busy = false;
                     match result {
                         Ok(ready) => {
@@ -945,7 +994,10 @@ impl Editor {
                             }
                             self.ready = Some(*ready);
                         }
-                        Err(error) => self.status = error,
+                        Err(error) => {
+                            self.selection_timing = None;
+                            self.status = error;
+                        }
                     }
                 }
                 Message::Picked(id, kind, result)
@@ -1506,6 +1558,7 @@ impl host::App for Editor {
         self.receive();
         self.seed_thumbnail();
         self.thumbnails.receive(&self.document);
+        self.validate_pending_preview();
         let available = !self.busy
             && self.pick.is_none()
             && self.crop_edit.is_none()
@@ -1741,7 +1794,7 @@ impl host::App for Editor {
                     }
                 }
             });
-            let Some(ready) = &self.ready else {
+            let Some((area, provisional, pending)) = self.selected_view() else {
                 ui.centered_and_justified(|ui| {
                     ui.label(if self.busy {
                         "Developing…"
@@ -1751,15 +1804,15 @@ impl host::App for Editor {
                 });
                 return;
             };
-            ui.small(if self.settled.is_some() {
+            ui.small(if pending {
+                "Cached preview · developing full-resolution RAW…"
+            } else if self.settled.is_some() {
                 "Preview ready"
             } else if self.refining.is_some() {
                 "Refining preview…"
             } else {
                 "Approximate preview"
             }).on_hover_text("Interactive preview uses nearest-center samples. Settled preview processes every visible full-resolution source pixel before linear-target area averaging. Calibration and export always use the full source.");
-            let area = ready.area;
-            let provisional = ready.images[self.target as usize].clone();
             let pixels_per_point = ui.ctx().pixels_per_point();
             let mut zoom_action = None;
             ui.horizontal(|ui| {
@@ -1905,7 +1958,7 @@ impl host::App for Editor {
                 .with_clip_rect(canvas)
                 .add(egui_wgpu::Callback::new_paint_callback(
                     draw,
-                    ImagePaint::new(image, parameters, mapping),
+                    SelectionPaint::new(ImagePaint::new(image, parameters, mapping), self.selection_timing.clone(), pending),
                 ));
             if cropping { self.paint_crop(ui, geometry); }
             if self.pick.is_some()

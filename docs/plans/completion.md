@@ -19,7 +19,7 @@ These are unfinished requirements, not one settled implementation design. [Roadm
 ## Rendering and thumbnail performance
 
 - Exercise rapid forward/reverse scrolling, live controls and actual OS-pressure transitions; assess aggregate worker/cache/buffer memory on available devices. Headless lifecycle checks do not establish physical responsiveness.
-- Measure switching cost/retention before selecting a higher-resolution cache tier. A pending cached preview is not a verified selected Scan: picks, refinement and analysis wait for identity/development acceptance. No whole-roll developed RAW cache.
+- Higher-resolution recent previews remain deferred until real-use hit rate, quality or memory requirements justify a new tier. Measure click-to-first-image presentation and retention/memory cost separately from full RAW readiness. Keep pending display distinct from the authoritative Scan; no whole-roll developed RAW cache.
 
 [Cache contract](../contracts/output.md#responsiveness-and-optional-caches). Next: reproduce a concrete issue or agree a measurement exercise; no new cache tier or capture-identity policy is selected.
 

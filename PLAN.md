@@ -4,7 +4,7 @@
 
 The editor supports native-camera model-4 inversion, roll flat-field correction, full-resolution calibration, crop/straightening, responsive GPU previews and scopes, thumbnails, Save/Open and TIFF/AP0 EXR export. [Contracts](docs/README.md#contracts) define behavior; [architecture](docs/architecture.md) describes the implementation.
 
-No next application change is selected. Recovery/relink/undo remains lower priority than interaction and photographic acceptance.
+Memory-256 cached pending selected previews are implemented and accepted for current use. No higher-resolution cache tier is selected. Recovery/relink/undo remains lower priority than interaction and photographic acceptance.
 
 ## Remaining work, in priority order
 

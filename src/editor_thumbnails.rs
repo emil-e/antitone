@@ -88,6 +88,33 @@ pub(super) struct Proxy {
     matrix: glam::DMat3,
 }
 impl Proxy {
+    pub(super) async fn image(
+        &self,
+        renderer: &Arc<crate::renderer::GpuRenderer>,
+        device: &wgpu::Device,
+        target: OutputTarget,
+        source: &SourceDevelopment,
+        correction: Option<&Arc<Correction>>,
+    ) -> Result<Arc<GpuImage>, Error> {
+        let mut image = GpuImage::new_shared(
+            renderer,
+            device,
+            self.width,
+            self.height,
+            &self.pixels,
+            self.matrix,
+            target,
+        )
+        .await?;
+        if let Some(correction) = correction {
+            correction.settings.require_source(source)?;
+            image.set_flat_field(
+                Some(correction.gpu.clone()),
+                crate::gpu::SourceGeometry::new(source.active_area, [self.width, self.height])?,
+            )?;
+        }
+        Ok(Arc::new(image))
+    }
     pub(super) fn from_scan(scan: &Scan) -> Result<Self, Error> {
         let (width, height, pixels) = scan.preview_source(SOURCE_SIZE)?;
         Ok(Self {
@@ -96,6 +123,38 @@ impl Proxy {
             pixels,
             matrix: scan.camera_to_ap1,
         })
+    }
+}
+pub(super) struct SelectedPreview {
+    request: u64,
+    key: SourceKey,
+    field: Option<FieldKey>,
+    pub(super) images: [Arc<GpuImage>; 2],
+}
+impl SelectedPreview {
+    pub(super) fn area(&self) -> Rect {
+        self.key.source.active_area.into()
+    }
+    pub(super) fn current(
+        &self,
+        request: u64,
+        document: &Document,
+        source: Option<SourceId>,
+        correction: Option<&Arc<Correction>>,
+    ) -> bool {
+        self.request == request
+            && source == Some(self.key.id)
+            && self.field == correction.map(|c| FieldKey(c.settings.map.clone()))
+            && document
+                .project
+                .source(self.key.id)
+                .ok()
+                .zip(document.project.development.as_ref())
+                .zip(document.source_path(self.key.id).ok())
+                .is_some_and(|((source, development), path)| {
+                    !source.reference_only
+                        && SourceKey::new(source, development, FileKey::new(&path)) == self.key
+                })
     }
 }
 struct Job {
@@ -115,6 +174,11 @@ pub(super) struct Thumbnails {
     sources: Arc<std::sync::Mutex<Cache<SourceKey, Arc<Proxy>>>>,
     budgets: memory::CacheBudgets,
     memory_watch: Option<memory::PressureWatch>,
+    gpu: Option<(
+        wgpu::Device,
+        wgpu::Queue,
+        Arc<crate::renderer::RendererCache>,
+    )>,
     commands: Option<mpsc::Sender<Job>>,
     messages: Option<mpsc::Receiver<Outcome>>,
     generation: Arc<std::sync::atomic::AtomicU64>,
@@ -140,6 +204,7 @@ impl Default for Thumbnails {
             ))),
             budgets,
             memory_watch: None,
+            gpu: None,
             commands: None,
             messages: None,
             generation: Arc::default(),
@@ -148,6 +213,78 @@ impl Default for Thumbnails {
     }
 }
 impl Thumbnails {
+    pub(super) fn selected_preview(
+        &mut self,
+        request: u64,
+        document: &Document,
+        id: SourceId,
+        correction: Option<&Arc<Correction>>,
+    ) -> Result<Option<SelectedPreview>, Error> {
+        let started = std::time::Instant::now();
+        let source = document.project.source(id)?;
+        let Some(development) = &document.project.development else {
+            return Ok(None);
+        };
+        let key = SourceKey::new(
+            source,
+            development,
+            FileKey::new(&document.source_path(id)?),
+        );
+        if source.reference_only || key.file.revision.is_none() {
+            return Ok(None);
+        }
+        let Some(proxy) = self.sources.lock().unwrap().get(&key).cloned() else {
+            return Ok(None);
+        };
+        let Some((device, queue, renderers)) = &self.gpu else {
+            return Ok(None);
+        };
+        let renderer = renderers.get(device, queue)?;
+        // Filmstrip and source-inspection callbacks must not share mutable processing images.
+        let preview = SelectedPreview {
+            request,
+            key: key.clone(),
+            field: correction.map(|c| FieldKey(c.settings.map.clone())),
+            images: [
+                pollster::block_on(proxy.image(
+                    &renderer,
+                    device,
+                    OutputTarget::Srgb,
+                    &source.development,
+                    correction,
+                ))?,
+                pollster::block_on(proxy.image(
+                    &renderer,
+                    device,
+                    OutputTarget::DisplayP3,
+                    &source.development,
+                    correction,
+                ))?,
+            ],
+        };
+        if !preview.current(request, document, Some(id), correction) {
+            return Ok(None);
+        }
+        self.sources.lock().unwrap().protect(vec![key]);
+        let bytes: u64 = preview
+            .images
+            .iter()
+            .map(|image| {
+                let (source, working) = image.processing_byte_len();
+                source
+                    + working
+                    + u64::from(image.linear.width()) * u64::from(image.linear.height()) * 16
+            })
+            .sum();
+        println!(
+            "selected_preview request={request} source_id={} cache=memory dimensions={}x{} gpu_pixel_bytes={bytes} preparation_ms={:.6}",
+            id.0,
+            proxy.width,
+            proxy.height,
+            started.elapsed().as_secs_f64() * 1000.
+        );
+        Ok(Some(preview))
+    }
     pub fn seed(
         &mut self,
         source: &Source,
@@ -209,6 +346,7 @@ impl Thumbnails {
         let (commands, receiver) = mpsc::channel();
         let (send, messages) = mpsc::channel();
         let state = Self {
+            gpu: Some((device.clone(), queue.clone(), renderers.clone())),
             commands: Some(commands),
             messages: Some(messages),
             ..Default::default()
@@ -488,29 +626,15 @@ fn make_image(
     let renderer = renderers.get(device, queue)?;
     metrics.renderer_seconds = tick.elapsed().as_secs_f64();
     let tick = std::time::Instant::now();
-    let mut image = pollster::block_on(GpuImage::new_shared(
+    let image = pollster::block_on(proxy.image(
         &renderer,
         device,
-        proxy.width,
-        proxy.height,
-        &proxy.pixels,
-        proxy.matrix,
         job.key.target,
+        &job.source.development,
+        job.correction.as_ref(),
     ))?;
-    if let Some(correction) = &job.correction {
-        correction
-            .settings
-            .require_source(&job.source.development)?;
-        image.set_flat_field(
-            Some(correction.gpu.clone()),
-            crate::gpu::SourceGeometry::new(
-                job.source.development.active_area,
-                [proxy.width, proxy.height],
-            )?,
-        )?;
-    }
     metrics.image_seconds = tick.elapsed().as_secs_f64();
-    Ok(active().then(|| Arc::new(image)))
+    Ok(active().then_some(image))
 }
 
 impl Editor {
@@ -536,7 +660,7 @@ impl Editor {
         if self.thumbnails.memory_watch.is_none() {
             self.thumbnails.memory_watch = Some(memory::PressureWatch::new(ui.ctx().clone()));
         }
-        if self.ready.is_none() && self.flat_edit.is_none() {
+        if self.ready.is_none() && self.pending_preview.is_none() && self.flat_edit.is_none() {
             self.thumbnails.release_selected();
         }
         let field = self
@@ -587,7 +711,7 @@ impl Editor {
                     let path = self.document.source_path(id).expect("filmstrip locator");
                     let cell = egui::Rect::from_min_size(content.min+egui::vec2(index as f32*pitch,0.),egui::vec2(image_width,image_height+22.));
                     let response = ui.interact(cell,ui.id().with(id.0),egui::Sense::click());
-                    let selected = self.ready.is_some() && self.current_source == Some(id);
+                    let selected = (self.ready.is_some() || self.pending_preview.is_some()) && self.current_source == Some(id);
                     let visuals = ui.style().interact_selectable(&response,selected);
                     ui.painter().rect_filled(cell,3.,visuals.bg_fill);
                     let image_rect = egui::Rect::from_min_size(cell.min,egui::vec2(image_width,image_height)).shrink(2.);
@@ -705,6 +829,9 @@ impl Editor {
 #[cfg(test)]
 #[path = "editor_performance_tests.rs"]
 mod performance;
+#[cfg(test)]
+#[path = "editor_selected_preview_tests.rs"]
+mod selected_tests;
 #[cfg(test)]
 #[path = "editor_thumbnails_tests.rs"]
 mod tests;
