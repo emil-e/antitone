@@ -2,7 +2,7 @@
 
 Archived product/architecture proposal with later amendments. **Not the current contract or execution queue.** Reference provenance, stage layout, schema statements and outstanding gates below include superseded material. Use [architecture](../../architecture.md), [contracts](../../README.md#current-contracts) and [roadmap](../../../PLAN.md) for current work. The companion mockup is illustrative history, not implemented UI.
 
-Status: implementation in progress, 8 October 2026. The single-image prototype now opens RAWs, samples four full-resolution corrections, presents GPU edits and full-source-derived settled previews, and exports TIFF/EXR. Numerical/probe evidence is recorded in `docs/research/history/execution-plan.md`; physical monitor matching, Lightroom/Resolve interoperability, durable roll/project workflow and M1 Pro validation remain pending. Companion: `antitone-ux-mockup.html`. Output policy update: explicitly approved **sRGB + Display P3** now replaces ProPhoto after the ProPhoto/SDR Rec.2020 yellow-collapse gates; see [implementation and evidence](../p3-output-update.md). Other feedback amendments are recorded in `feedback-plan.md`.
+Status: implementation in progress, 8 October 2026. The single-image prototype now opens RAWs, samples four full-resolution corrections, presents GPU edits and full-source-derived settled previews, and exports TIFF/EXR. Numerical/probe evidence is recorded in `docs/research/history/execution-plan.md`; physical monitor matching, Lightroom/Resolve interoperability and durable roll/project workflow remain pending. Companion: `antitone-ux-mockup.html`. Output policy update: explicitly approved **sRGB + Display P3** now replaces ProPhoto after the ProPhoto/SDR Rec.2020 yellow-collapse gates; see [implementation and evidence](../p3-output-update.md). Other feedback amendments are recorded in `feedback-plan.md`.
 
 ## 1. Product goal
 
@@ -209,7 +209,7 @@ Workers handle RAW decode/development, full-resolution export and IO; interactiv
 
 Accepted preview policy: responsive approximate previews during interaction, then full-resolution-derived settled previews, subject to measured latency and memory budgets. Inversion of downsampled negative data is not equivalent to downsampling inverted pixels. Label approximate/refining states, and never use preview pixels for calibration/export. The exact resampling/rendering order for the settled view must be defined and compared against full-resolution export.
 
-Target an M1 Pro; use its 16 GB configuration as the conservative engineering baseline. Aim for smooth GPU interaction, then refinement; measure rather than promise a frame rate before the probe. A 50-megapixel RGBA32F buffer is about 800 MB. Do not retain every full-resolution intermediate or every decoded photograph on the GPU. Use a preview-resolution cache, reuse buffers and establish explicit CPU/GPU budgets. Full-resolution export may need tiling, with correct demosaic neighborhood handling if tiling occurs before development.
+Base resource policy on observed needs, without an assumed minimum chip/RAM baseline. Aim for smooth GPU interaction, then refinement; measure rather than promise a frame rate before the probe. A 50-megapixel RGBA32F buffer is about 800 MB. Do not retain every full-resolution intermediate or every decoded photograph on the GPU. Use a preview-resolution cache, reuse buffers and establish explicit CPU/GPU budgets. Full-resolution export may need tiling, with correct demosaic neighborhood handling if tiling occurs before development.
 
 ## 11. Delivery sequence and acceptance gates
 
@@ -230,8 +230,8 @@ At this historical checkpoint, product choices and the original execution plan w
 - Choose and document absolute/relative scalar/CPU/GPU tolerances before optimization; report measured ACES differences, including negatives and HDR inputs.
 - Preserve generated OCIO shader integration and the current sRGB/P3 color/ICC/encoding agreement. Reopen TIFFs in an ICC-aware reference; Lightroom interoperability remains intentionally deferred.
 - Prove wide-gamut managed macOS presentation through the owned winit/wgpu host and its native tagging/reconfiguration behavior. Never treat an explicit surface declaration as completed hardware color validation.
-- Set measured worker/cache/buffer budgets and latency targets for an M1 Pro/16 GB baseline; establish full-resolution-derived preview resampling order.
-- Proposed deployment default: macOS 14+ on Apple Silicon, subject to actual pinned dependency/API minimums. Test monitors and physical M1 Pro hardware availability remain environment-dependent; report unavailable checks rather than claiming them.
+- Set worker/cache/buffer budgets and latency targets from measurements on available hardware; establish full-resolution-derived preview resampling order.
+- Proposed deployment default: macOS 14+ on Apple Silicon, subject to actual pinned dependency/API minimums. Test hardware and monitor availability remain environment-dependent; report unavailable checks rather than claiming them.
 - Source-change detection/relink behavior: proposed default is to flag fingerprint mismatch and require explicit source acceptance without silently resampling. This is separate from the agreed no-action removal of reference filmstrip entries.
 
 Flat-field correction, crop/rotation, contrast/pivot, vectorscope, extra inversion spaces and later-platform implementation stay deferred.

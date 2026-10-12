@@ -1,6 +1,6 @@
 # Settled-preview buffer limits
 
-Status: complete. Adapter-supported buffer limits implemented and focused checks passed. User approved raising limits and deferring strip processing until observed problems warrant it. No minimum chip/RAM target is established; M1 Pro/16 GB was a provisional example, not a required gate.
+Status: complete. Adapter-supported buffer limits implemented and focused checks passed. User approved raising limits and deferring strip processing until observed problems warrant it. No minimum chip/RAM target is established.
 
 ## Goal and scope
 
@@ -29,10 +29,10 @@ The earlier strip proposal is not selected. Implement it only if actual applicat
 
 Diagnostic: `docs/research/tools/film/src/bin/preview-budget-check.rs` compares the default rejection with the same production limits policy. Build/run named bins using the [tools guide](../../research/tools/README.md#current-gate-reproduction). Its baseline initially exited 1; the updated probe passes and prints both default rejection and successful negotiated construction. The Metal regression additionally proves actual accumulation and finish/readback, not merely constructor acceptance.
 
-Production scope is `src/platform/{host,mod}.rs`; the averaging kernel, refinement scheduler and viewer geometry are unchanged. Active guidance now treats hardware examples as provisional rather than mandatory minimum specifications; historical results remain historical.
+Production scope is `src/platform/{host,mod}.rs`; the averaging kernel, refinement scheduler and viewer geometry are unchanged. Active guidance bases resource policy on observed needs, not an assumed hardware baseline; historical results remain historical.
 
 ## Handoff
 
 At this checkpoint, basic Save/Open was next; it has since been [implemented and closed](save-open.md). No active implementation remains in this preview-limit package. Record actual resource/performance problems before considering strip machinery; [the roadmap](../../../PLAN.md) owns current priority.
 
-Large output was verified offscreen; real-source editor smoke used its normal window, not a physical large-display scenario. No fresh full suite, aggregate peak-memory benchmark or universal device claim. Broader device/macOS-14/physical-monitor checks remain separate work, not a fixed M1 release gate. An initial viewport command inherited an unavailable GCC path; rerunning with the documented Apple-Clang environment passed, without global environment/toolchain changes.
+Large output was verified offscreen; real-source editor smoke used its normal window, not a physical large-display scenario. No fresh full suite, aggregate peak-memory benchmark or universal device claim. Broader device/macOS-14/physical-monitor checks remain separate work. An initial viewport command inherited an unavailable GCC path; rerunning with the documented Apple-Clang environment passed, without global environment/toolchain changes.

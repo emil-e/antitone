@@ -37,7 +37,7 @@ When the user requests wrap-up of agreed work, that request authorizes the follo
 
 ## Engineering boundaries
 
-- macOS/Apple Silicon first; no minimum chip/RAM requirement is established. M1 Pro/16 GB was a provisional example, not a mandatory target or acceptance gate. Resource policy should follow observed problems, not speculative hardware constraints. macOS 14 and physical-monitor acceptance remain separate checks.
+- macOS/Apple Silicon first; no minimum chip/RAM requirement is established. Resource policy should follow observed problems, not speculative hardware constraints. macOS 14 and physical-monitor acceptance remain separate checks.
 - Reuse pinned LibRaw development. No custom demosaicer, camera-specific repair, CPU interactive fallback, approximate ACES replacement or weakened numerical gate.
 - Preserve native-camera calibration/inversion, signed/HDR AP1 working data and AP0 EXR; AP0 is otherwise internal to unchanged ACES. Native-camera model/matrix identity must match the roll's retained basis. Preview/TIFF targets are matching 100-nit sRGB and Display P3, with managed extended-sRGB SDR presentation.
 - Dmin/Dmax are RGB-only values. Picker context is transient; source fingerprints and development compatibility are separate concerns. Invalid/cancelled picks and rejected edits change no processing state.

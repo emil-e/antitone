@@ -19,7 +19,7 @@ Preserve existing Original/model-2 grades. New grades use Film/model 3, toe 2.5/
 
 [The production checkpoint](../../research/film-response-precision-gate.md#production-film-response-checkpoint) is the detailed numerical record; [selected logs](../../research/evidence/README.md) retain small decisive results outside the cache. Scalar/GPU/complete-target, original camera-chain, state/export, controls/layout, Clippy/format/release and real editor checks passed at that checkpoint.
 
-Original-model expanded extreme-EV cancellation limitations remain preserved/documented. Finite M5 tests and user testing do not establish universal numerical-domain, M1 Pro/16 GB, macOS-14 or physical-monitor acceptance. Editor persistence/recovery/undo and flat field were not part of this integration.
+Original-model expanded extreme-EV cancellation limitations remain preserved/documented. Finite M5 tests and user testing do not establish universal numerical-domain/device, macOS-14 or physical-monitor acceptance. Editor persistence/recovery/undo and flat field were not part of this integration.
 
 ## Handoff
 

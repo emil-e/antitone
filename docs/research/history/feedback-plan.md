@@ -25,7 +25,7 @@ The user's completion list supersedes the original blanket deferral of scopes, t
 
 **2a. Reference semantics and terminology — implemented**
 
-Editor and project references are now single RGB values. Domain identifiers, processing/GPU code, probe usage/output and tests use `dmin`/`dmax`, not merely renamed UI labels. Project schema 3 stores RGB arrays without provenance; photo identity/relink and roll-level compatibility remain. Current-photo re-picking, atomic rejection/cancellation, calibration without source records and 58 all-feature tests pass; strict Clippy and formatting pass. Real-window smoke verifies current-photo initialization, deliberate source switching and working-photo/view return: **11.40 s / 478 submitted frames** on M5 Pro (`.cache/probes/editor-dmin-dmax-smoke.txt`), not M1 validation. The following 2b cleanup is also implemented.
+Editor and project references are now single RGB values. Domain identifiers, processing/GPU code, probe usage/output and tests use `dmin`/`dmax`, not merely renamed UI labels. Project schema 3 stores RGB arrays without provenance; photo identity/relink and roll-level compatibility remain. Current-photo re-picking, atomic rejection/cancellation, calibration without source records and 58 all-feature tests pass; strict Clippy and formatting pass. Real-window smoke verifies current-photo initialization, deliberate source switching and working-photo/view return: **11.40 s / 478 submitted frames** on M5 Pro (`.cache/probes/editor-dmin-dmax-smoke.txt`). The following 2b cleanup is also implemented.
 
 - Model each calibration reference as one RGB value. Remove stored source/path/rectangle/fingerprint relationships from calibration references, not just their visible labels. Sampling rectangles and source-return context are transient UI state.
 - Starting a reference pick uses the currently selected image. Re-picking never automatically navigates to the previous reference source or reinstates its old rectangle. Explicitly choosing a different source remains possible, and finishing/cancelling can restore the working image when the picker deliberately changed it.
@@ -81,7 +81,7 @@ Shared `editor_controls.rs` sections/rows/calibration/color inputs now replace i
 - Add atomic explicit saves, separate autosave/recovery that never silently overwrites the saved project, missing-photo relinking and explicit changed-source acceptance. Keep view/navigation state separate from processing state.
 - Add undo/redo with one drag or pick per operation and the correct shared/photo/reset scope. Include any implemented scope/thumbnail-independent settings; derived images and caches never belong in the project.
 - **Accept:** reopen reproduces settings/output; removed/missing photos preserve calibration; schema/model incompatibilities are explicit; failed save/recovery leaves the prior document intact.
-- **Preserved follow-ups:** export progress/cancellation and batch snapshots, metadata propagation, aggregate memory/cache budgets, M1 Pro/16 GB validation and distributable native dependencies remain in the original execution plan.
+- **Preserved follow-ups:** export progress/cancellation and batch snapshots, metadata propagation, aggregate memory/cache budgets and distributable native dependencies remain in the original execution plan.
 
 ### 6. Add roll/photo orientation, then crop/rotation
 
@@ -116,4 +116,4 @@ Shared `editor_controls.rs` sections/rows/calibration/color inputs now replace i
 - The plan was approved after the planning-only turn. Execute incrementally, starting with diagnosis; material processing-policy changes still require the explicit decision described in step 1.
 - Preserve the established-library/GPU policy, signed/HDR working values, full-resolution sampling, managed SDR presentation and exact pinned ACES/profile contracts. New findings can justify a discussion, not silent weakening.
 - Use focused tests per step and real UI evidence where event/layout behavior matters. Existing 52 tests and prior smoke are a baseline, not proof that the reported visual issues are absent.
-- Leave samples untouched; no commits/pushes, global installations or Lightroom/Resolve automation. Hardware-specific monitor/M1 checks remain explicitly pending.
+- Leave samples untouched; no commits/pushes, global installations or Lightroom/Resolve automation. Physical-monitor checks remain explicitly pending.

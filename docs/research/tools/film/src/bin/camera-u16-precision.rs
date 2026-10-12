@@ -117,7 +117,7 @@ fn main()->Result<()> {pollster::block_on(async {
  println!("BENCHMARK one_tile_pixels={n} source_RGB16_MiB={:.3} source_cached_AP0_triple_MiB={:.3} source_current_AP0_f32_MiB={:.3} working_output_MiB={:.3} target_textures_unchanged=true",data8.len()as f64/1048576.,data48.len()as f64/1048576.,n as f64*16./1048576.,out.size()as f64/1048576.);
  println!("BENCHMARK_CPU_PACK median_ms_RGB16={:.3} median_ms_matrix_and_triple_AP0={:.3} RGB16_runs={pack8:?} cached_AP0_runs={pack48:?}; excludes_LibRaw_decode; RGB16_serialization_not_zero_copy",median(&pack8),median(&pack48));
  println!("BENCHMARK_UPLOAD_QUEUE_DRAIN median_ms_RGB16={:.3} median_ms_cached_AP0={:.3} RGB16_runs={upload8:?} cached_AP0_runs={upload48:?}",median(&upload8),median(&upload48));
- println!("BENCHMARK_COMPUTE_SUBMIT_DRAIN per_dispatch_median_ms_RGB16={:.3} cached_AP0={:.3} RGB16_runs={gpu8:?} cached_AP0_runs={gpu48:?}; five_dispatches_per_batch; no_ACES_rendering; M5_not_M1",median(&gpu8),median(&gpu48));
+ println!("BENCHMARK_COMPUTE_SUBMIT_DRAIN per_dispatch_median_ms_RGB16={:.3} cached_AP0={:.3} RGB16_runs={gpu8:?} cached_AP0_runs={gpu48:?}; five_dispatches_per_batch; no_ACES_rendering",median(&gpu8),median(&gpu48));
  if conversion_bad>0||high_bad>0||stress_bad>0||stress_high_bad>0||new_failures>0||flags_failures>0{return Err("packed RGB16 conversion/new-response gate failed; no production upload changes".into());}
  if old_failures>0{return Err("packed RGB16 source/new-response gates pass; expanded legacy extreme-exposure gate still fails separately".into());}Ok(())
 })}

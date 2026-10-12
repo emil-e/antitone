@@ -12,7 +12,7 @@ Compact text logs promoted from `.cache/probes` during the documentation reorgan
 
 ## Response-integration checkpoint (historical AP0 models)
 
-Environment recorded by the runbook/history: Apple M5 Pro / `Mac17,9`, 48 GiB, macOS 26.6.2, checkout-local Rust 1.99.0, LibRaw 0.22.0, OCIO 2.6.0, Metal/wgpu 30.0.1. This is not M1 Pro/16 GB, macOS-14 or physical-monitor acceptance.
+Environment recorded by the runbook/history: Apple M5 Pro / `Mac17,9`, 48 GiB, macOS 26.6.2, checkout-local Rust 1.99.0, LibRaw 0.22.0, OCIO 2.6.0, Metal/wgpu 30.0.1. This records the measured environment, not universal device, macOS-14 or physical-monitor acceptance.
 
 The detailed domain/sample/tolerance/timing definitions live in [the precision report](../film-response-precision-gate.md#production-film-response-checkpoint). That checkpoint closed 88 all-feature tests plus strict Clippy/format/release, original-chain regression, candidate/production sweeps, real-camera both-target comparisons and editor/layout smoke. Do not infer blanket correctness from the counts.
 

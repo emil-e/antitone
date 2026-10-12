@@ -2,7 +2,7 @@
 
 Antitone converts camera-scanned film negatives into grading-friendly positive images using explicit roll calibration, small per-photo adjustments and export for finishing elsewhere. It does not promise exact scene radiometry, dye reconstruction or stock identification, and does not use opaque adaptive per-image inversion.
 
-- macOS/Apple Silicon first; initial camera is Sony ILCE-1M2 lossless-compressed ARW. Reuse established RAW development rather than camera-specific hacks. No minimum chip/RAM requirement is established; M1 Pro/16 GB was a provisional example, not an acceptance gate.
+- macOS/Apple Silicon first; initial camera is Sony ILCE-1M2 lossless-compressed ARW. Reuse established RAW development rather than camera-specific hacks. No minimum chip/RAM requirement is established. Resource policy follows observed needs, not an assumed hardware baseline.
 - A roll is an explicitly selected ordered set of external, untouched photographs, not a watched folder/catalog. Shared roll edits and individual photo edits are separate scopes.
 - Native-camera inversion/calibration with explicit camera-model/matrix identity; photographic working space AP1/D60; signed/HDR AP0 EXR and matching sRGB/Display P3 rendered TIFF. [Processing](processing-model.md) and [output](output.md) define exact behavior.
 - Four full-resolution single-patch corrections: Dmin, Dmax, roll gamma neutral and photo WB neutral. Invalid or cancelled picks leave processing state unchanged. Stored reference values are independent of photo availability.
