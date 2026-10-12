@@ -34,6 +34,9 @@ use files::{FileAction, Transition};
 #[path = "editor_thumbnails.rs"]
 mod thumbnails;
 use thumbnails::Thumbnails;
+#[path = "editor_scopes.rs"]
+mod scopes;
+use scopes::{Scopes, Slot as ScopeSlot};
 #[path = "editor_flat_field.rs"]
 mod flat;
 use flat::{Correction, FlatEdit, FlatPreview};
@@ -546,6 +549,7 @@ fn backend(
 pub struct Editor {
     started: bool,
     thumbnails: Thumbnails,
+    scopes: Scopes,
     generation: Arc<std::sync::atomic::AtomicU64>,
     signature: Option<(
         [u8; ProcessingParameters::BYTE_LEN],
@@ -604,6 +608,7 @@ impl Editor {
         let (commands, receiver) = mpsc::channel();
         let (send, messages) = mpsc::channel();
         let thumbnails = Thumbnails::new(device.clone(), queue.clone());
+        let scopes = Scopes::new(device);
         let device = device.clone();
         let queue = queue.clone();
         let generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -611,6 +616,7 @@ impl Editor {
         std::thread::spawn(move || backend(device, queue, receiver, send, worker_generation));
         let mut editor = Self::state(commands, messages, generation);
         editor.thumbnails = thumbnails;
+        editor.scopes = scopes;
         if let Some(path) = initial {
             if path
                 .extension()
@@ -630,6 +636,7 @@ impl Editor {
     ) -> Self {
         Self {
             thumbnails: Thumbnails::default(),
+            scopes: Scopes::default(),
             generation,
             signature: None,
             settled: None,
@@ -1227,9 +1234,42 @@ impl Editor {
             }
         }
     }
-    fn controls(&mut self, ui: &mut egui::Ui) {
+    fn controls(&mut self, ui: &mut egui::Ui) -> Option<ScopeSlot> {
         use controls::{ColorControl, Parameter};
         let previous_orientation = (self.roll_orientation, self.photo_orientation);
+        let editable = !self.busy
+            && self.crop_edit.is_none()
+            && self.flat_edit.is_none()
+            && self.calibration().is_some();
+        let can_pick = !self.busy
+            && self.crop_edit.is_none()
+            && self.flat_edit.is_none()
+            && self.ready.is_some();
+        let mut start_pick = None;
+        // Reserve four rows plus section chrome before the panel has a cached size.
+        let output_height =
+            4. * ui.spacing().interact_size.y + 3. * ui.spacing().item_spacing.y + 36.;
+        egui::Panel::bottom("control-output")
+            .default_size(output_height)
+            .resizable(false)
+            .frame(egui::Frame::NONE)
+            .show(ui, |ui| {
+                if self.crop_edit.is_some() || self.flat_edit.is_some() { ui.disable(); }
+                let (_, reset) = controls::section(
+                    ui, "output", "Output", Some(self.target != OutputTarget::DisplayP3),
+                    |ui| {
+                        ui.label("Preview / TIFF").on_hover_text(
+                            "100-nit ACES 2 SDR rendering with matching TIFF encoding/ICC. Preview is converted to tagged extended sRGB for OS monitor management. EXR remains scene-linear AP0.",
+                        );
+                        ui.radio_value(&mut self.target, OutputTarget::DisplayP3, "Display P3 / D65");
+                        ui.radio_value(&mut self.target, OutputTarget::Srgb, "sRGB / D65");
+                    },
+                );
+                if reset {
+                    self.target = OutputTarget::DisplayP3;
+                }
+            });
+        let scope_slot = self.scope_panel(ui);
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.tab, 0, "Roll");
             ui.selectable_value(&mut self.tab, 1, "Photo");
@@ -1258,39 +1298,7 @@ impl Editor {
                 });
             });
         }
-        let editable = !self.busy
-            && self.crop_edit.is_none()
-            && self.flat_edit.is_none()
-            && self.calibration().is_some();
-        let can_pick = !self.busy
-            && self.crop_edit.is_none()
-            && self.flat_edit.is_none()
-            && self.ready.is_some();
-        let mut start_pick = None;
         ui.add_space(8.);
-        // Reserve four rows plus section chrome before the panel has a cached size.
-        let output_height =
-            4. * ui.spacing().interact_size.y + 3. * ui.spacing().item_spacing.y + 36.;
-        egui::Panel::bottom("control-output")
-            .default_size(output_height)
-            .resizable(false)
-            .frame(egui::Frame::NONE)
-            .show(ui, |ui| {
-                if self.crop_edit.is_some() || self.flat_edit.is_some() { ui.disable(); }
-                let (_, reset) = controls::section(
-                    ui, "output", "Output", Some(self.target != OutputTarget::DisplayP3),
-                    |ui| {
-                        ui.label("Preview / TIFF").on_hover_text(
-                            "100-nit ACES 2 SDR rendering with matching TIFF encoding/ICC. Preview is converted to tagged extended sRGB for OS monitor management. EXR remains scene-linear AP0.",
-                        );
-                        ui.radio_value(&mut self.target, OutputTarget::DisplayP3, "Display P3 / D65");
-                        ui.radio_value(&mut self.target, OutputTarget::Srgb, "sRGB / D65");
-                    },
-                );
-                if reset {
-                    self.target = OutputTarget::DisplayP3;
-                }
-            });
         egui::ScrollArea::vertical().show(ui, |ui| {
             if self.tab == 0 {
                 ui.push_id("roll", |ui| {
@@ -1389,6 +1397,7 @@ impl Editor {
         if let Some(kind) = start_pick {
             self.begin_pick(kind);
         }
+        scope_slot
     }
     fn export_dialog(&mut self, format: OutputFormat) {
         let Some(ready) = &self.ready else {
@@ -1615,10 +1624,11 @@ impl host::App for Editor {
             ui.label(&self.status);
         });
         self.filmstrip(ui);
-        egui::Panel::right("controls")
+        let scope_slot = egui::Panel::right("controls")
             .default_size(315.)
             .min_size(270.)
-            .show(ui, |ui| self.controls(ui));
+            .show(ui, |ui| self.controls(ui))
+            .inner;
         if let Some(calibration) = self.calibration()
             && let Err(error) = self.positive_parameters(calibration, self.roll, self.photo)
         {
@@ -1893,6 +1903,7 @@ impl host::App for Editor {
             }
             if response.drag_stopped_by(egui::PointerButton::Primary) { self.pick_drag = None; }
         });
+        self.paint_scope(scope_slot);
         self.sync_document();
         if self.document.dirty() != was_dirty {
             ui.ctx().request_repaint();

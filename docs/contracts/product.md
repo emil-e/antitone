@@ -13,7 +13,7 @@ Antitone converts camera-scanned film negatives into grading-friendly positive i
 
 ## Boundaries and future goals
 
-[PLAN.md](../../PLAN.md) is the only current priority/status list. Recorded goals include natural Mac interaction, thumbnails/scopes, geometry, inversion bases, assisted roll analysis and contrast/pivot. Their numerical/UX design is not settled merely because they appear in feedback. Consult the user about each existing viewer-intrusion case before choosing a layout replacement.
+[PLAN.md](../../PLAN.md) is the only current priority/status list. Navigation/source inspection, bounded thumbnails and responsive display-referred proxy scopes are implemented. Recorded goals include remaining interaction polish, geometry integration, inversion bases, assisted roll analysis and contrast/pivot. Their numerical/UX design is not settled merely because they appear in feedback. Consult the user about each existing viewer-intrusion case before choosing a layout replacement.
 
 Flat-field correction remains separate deferred work. Custom demosaicing, dust removal, catalogs, arbitrary node graphs, HDR display output and later-platform support are not current implementation scope. Do not change ACES mathematics or introduce a pedestal/clamp as an implicit remedy.
 

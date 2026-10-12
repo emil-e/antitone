@@ -30,6 +30,11 @@ Retained under `film-model-images/` (formerly `.cache/probes/film-model-images/`
 
 User-accepted closure and verification limits: [completed plan](../../plans/completed/flat-field-correction.md#verified-automated-acceptance).
 
+## Responsive scope checkpoint
+
+- [Proxy scopes](scopes-checkpoint.txt): initial scalar/Metal/layout/cache checks, bounded reduction timings, strict Clippy/release and real-source onscreen capture.
+- [Layout/flicker/colour follow-up](scopes-layout-and-flicker.txt): divider/width sizing, retained coherent grading traces, guide contrast and fresh focused/onscreen checks. Geometry integration, full-source scopes and physical/device acceptance remain separate; [handoff](../../plans/vectorscope-and-waveform.md).
+
 ## Earlier independent gates
 
 These remain separate historical checkpoints rather than being summed into one current test count:

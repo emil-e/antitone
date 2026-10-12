@@ -1,0 +1,521 @@
+use crate::{
+    Error,
+    gpu::ProcessingParameters,
+    scopes::{BINS, Basis, Counts, PLANE_LEN, Plot, Settings},
+    viewer::GpuImage,
+};
+use std::sync::{Arc, Mutex, Weak};
+use wgpu::util::DeviceExt;
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct Parameters {
+    size: [u32; 4],
+    luma_gain: [f32; 4],
+    direction_extent: [f32; 4],
+}
+
+struct Key {
+    image: Weak<GpuImage>,
+    source_revision: u64,
+    parameters: [u8; ProcessingParameters::BYTE_LEN],
+    settings: Settings,
+}
+fn accumulation_settings(mut settings: Settings) -> Settings {
+    if settings.plot == Plot::Luma {
+        settings.plot = Plot::Rgb;
+    }
+    settings
+}
+impl Key {
+    fn new(image: &Arc<GpuImage>, parameters: ProcessingParameters, settings: Settings) -> Self {
+        Self {
+            image: Arc::downgrade(image),
+            source_revision: image.source_revision(),
+            parameters: bytemuck::bytes_of(&parameters).try_into().unwrap(),
+            settings: accumulation_settings(settings),
+        }
+    }
+    fn matches(
+        &self,
+        image: &Arc<GpuImage>,
+        parameters: ProcessingParameters,
+        settings: Settings,
+    ) -> bool {
+        self.same_presentation(image, settings)
+            && self.parameters.as_slice() == bytemuck::bytes_of(&parameters)
+    }
+    fn same_presentation(&self, image: &Arc<GpuImage>, settings: Settings) -> bool {
+        self.image.ptr_eq(&Arc::downgrade(image))
+            && self.source_revision == image.source_revision()
+            && self.settings == accumulation_settings(settings)
+    }
+}
+struct Prepared {
+    key: Key,
+    plot: Plot,
+    group: Option<wgpu::BindGroup>,
+}
+#[derive(Default)]
+struct Diagnostic {
+    revision: u64,
+    pending: bool,
+    result: Option<Result<Counts, String>>,
+}
+
+pub struct GpuScopes {
+    reduce: wgpu::ComputePipeline,
+    display: wgpu::RenderPipeline,
+    pub bins: wgpu::Buffer,
+    pub totals: wgpu::Buffer,
+    prepared: Mutex<Option<Prepared>>,
+    diagnostic: Arc<Mutex<Diagnostic>>,
+    reductions: std::sync::atomic::AtomicU64,
+}
+
+impl GpuScopes {
+    pub async fn new(device: &wgpu::Device) -> Result<Self, Error> {
+        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let bins = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("scope density bins"),
+            size: (PLANE_LEN * 4 * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let totals = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("scope sample totals"),
+            size: u64::from(BINS + 4) * 4,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let buffer = |binding, visibility, ty| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility,
+            count: None,
+            ty: wgpu::BindingType::Buffer {
+                ty,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+        };
+        let reduce_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("scope reduction layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    count: None,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                },
+                buffer(
+                    1,
+                    wgpu::ShaderStages::COMPUTE,
+                    wgpu::BufferBindingType::Uniform,
+                ),
+                buffer(
+                    2,
+                    wgpu::ShaderStages::COMPUTE,
+                    wgpu::BufferBindingType::Storage { read_only: false },
+                ),
+                buffer(
+                    3,
+                    wgpu::ShaderStages::COMPUTE,
+                    wgpu::BufferBindingType::Storage { read_only: false },
+                ),
+            ],
+        });
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("whole-frame scope reduction"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/scopes.wgsl").into()),
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[Some(&reduce_layout)],
+            immediate_size: 0,
+        });
+        let reduce = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("whole-frame scope reduction"),
+            layout: Some(&layout),
+            module: &module,
+            entry_point: Some("reduce"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let draw_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("scope display layout"),
+            entries: &[
+                buffer(
+                    0,
+                    wgpu::ShaderStages::FRAGMENT,
+                    wgpu::BufferBindingType::Storage { read_only: true },
+                ),
+                buffer(
+                    1,
+                    wgpu::ShaderStages::FRAGMENT,
+                    wgpu::BufferBindingType::Storage { read_only: true },
+                ),
+                buffer(
+                    2,
+                    wgpu::ShaderStages::FRAGMENT,
+                    wgpu::BufferBindingType::Uniform,
+                ),
+            ],
+        });
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("scope density display"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/scope_display.wgsl").into()),
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[Some(&draw_layout)],
+            immediate_size: 0,
+        });
+        let display = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("scope density display"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vertex"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fragment"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        if let Some(error) = scope.pop().await {
+            return Err(Error::Gpu(error.to_string()));
+        }
+        Ok(Self {
+            reduce,
+            display,
+            bins,
+            totals,
+            prepared: Mutex::new(None),
+            diagnostic: Arc::default(),
+            reductions: Default::default(),
+        })
+    }
+
+    /// Input is the complete final-frame linear-target raster, never a regional settled image.
+    pub fn encode(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        frame: &wgpu::Texture,
+        settings: Settings,
+    ) -> Result<wgpu::BindGroup, Error> {
+        settings.validate([frame.width(), frame.height()])?;
+        if frame.format() != wgpu::TextureFormat::Rgba32Float {
+            return Err(Error::InvalidParameter(
+                "scopes require a linear-target float raster",
+            ));
+        }
+        let uniform = Self::uniform(device, frame, settings);
+        let view = frame.create_view(&Default::default());
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("scope reduction resources"),
+            layout: &self.reduce.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.bins.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.totals.as_entire_binding(),
+                },
+            ],
+        });
+        encoder.clear_buffer(&self.bins, 0, None);
+        encoder.clear_buffer(&self.totals, 0, None);
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&self.reduce);
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups(frame.width().div_ceil(16), frame.height().div_ceil(16), 1);
+        }
+        self.reductions
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(self.draw_group(device, &uniform))
+    }
+
+    fn uniform(device: &wgpu::Device, frame: &wgpu::Texture, settings: Settings) -> wgpu::Buffer {
+        let basis = Basis::new(settings.target);
+        let parameters = Parameters {
+            size: [
+                frame.width(),
+                frame.height(),
+                match settings.plot {
+                    Plot::Rgb => 0,
+                    Plot::Luma => 1,
+                    Plot::Vector => 2,
+                },
+                0,
+            ],
+            luma_gain: [
+                basis.luma.x as f32,
+                basis.luma.y as f32,
+                basis.luma.z as f32,
+                settings.amplification as f32,
+            ],
+            direction_extent: [
+                basis.blue_direction.x as f32,
+                basis.blue_direction.y as f32,
+                (basis.extent / settings.amplification as f64) as f32,
+                0.,
+            ],
+        };
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("scope target and plot parameters"),
+            contents: bytemuck::bytes_of(&parameters),
+            usage: wgpu::BufferUsages::UNIFORM,
+        })
+    }
+
+    fn draw_group(&self, device: &wgpu::Device, uniform: &wgpu::Buffer) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("scope display resources"),
+            layout: &self.display.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.bins.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.totals.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniform.as_entire_binding(),
+                },
+            ],
+        })
+    }
+
+    pub fn reduction_count(&self) -> u64 {
+        self.reductions.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn status(
+        &self,
+        image: &Arc<GpuImage>,
+        parameters: ProcessingParameters,
+        settings: Settings,
+    ) -> Option<Result<Counts, String>> {
+        if self
+            .prepared
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|prepared| prepared.key.matches(image, parameters, settings))
+        {
+            self.diagnostic.lock().unwrap().result.clone()
+        } else {
+            None
+        }
+    }
+
+    pub fn invalidate(&self) {
+        if self.prepared.lock().unwrap().take().is_some() {
+            let mut diagnostic = self.diagnostic.lock().unwrap();
+            diagnostic.revision += 1;
+            diagnostic.result = None;
+        }
+    }
+
+    pub fn paint(&self, pass: &mut wgpu::RenderPass<'static>, group: &wgpu::BindGroup) {
+        pass.set_pipeline(&self.display);
+        pass.set_bind_group(0, group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
+    fn read_diagnostics(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        context: &egui::Context,
+    ) {
+        let revision = {
+            let mut state = self.diagnostic.lock().unwrap();
+            state.revision += 1;
+            state.pending = true;
+            state.result = None;
+            state.revision
+        };
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("16-byte scope diagnostic readback"),
+            size: 16,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        encoder.copy_buffer_to_buffer(&self.totals, 0, &staging, 0, 16);
+        let buffer = staging.clone();
+        let state = self.diagnostic.clone();
+        let context = context.clone();
+        encoder.map_buffer_on_submit(&staging, wgpu::MapMode::Read, .., move |result| {
+            let result = result
+                .map_err(|e| format!("Scope diagnostics failed: {e}"))
+                .and_then(|()| {
+                    let mapped = buffer.get_mapped_range(..).map_err(|e| e.to_string())?;
+                    let values: &[u32] = bytemuck::cast_slice(&mapped);
+                    let counts = Counts {
+                        valid: values[0],
+                        invalid: values[1],
+                        outside: values[2],
+                    };
+                    drop(mapped);
+                    buffer.unmap();
+                    Ok(counts)
+                });
+            let mut state = state.lock().unwrap();
+            state.pending = false;
+            if state.revision == revision {
+                state.result = Some(result);
+            }
+            context.request_repaint();
+        });
+    }
+}
+
+pub struct ScopePaint {
+    pub gpu: Arc<GpuScopes>,
+    pub image: Arc<GpuImage>,
+    pub parameters: ProcessingParameters,
+    pub settings: Settings,
+    pub context: egui::Context,
+    group: Mutex<Option<wgpu::BindGroup>>,
+}
+impl ScopePaint {
+    pub fn new(
+        gpu: Arc<GpuScopes>,
+        image: Arc<GpuImage>,
+        parameters: ProcessingParameters,
+        settings: Settings,
+        context: egui::Context,
+    ) -> Self {
+        Self {
+            gpu,
+            image,
+            parameters,
+            settings,
+            context,
+            group: Mutex::new(None),
+        }
+    }
+}
+impl egui_wgpu::CallbackTrait for ScopePaint {
+    fn prepare(
+        &self,
+        device: &wgpu::Device,
+        _queue: &wgpu::Queue,
+        _screen: &egui_wgpu::ScreenDescriptor,
+        encoder: &mut wgpu::CommandEncoder,
+        _resources: &mut egui_wgpu::CallbackResources,
+    ) -> Vec<wgpu::CommandBuffer> {
+        self.image.prepare(device, encoder, self.parameters);
+        let mut cached = self.gpu.prepared.lock().unwrap();
+        let matches = cached.as_ref().is_some_and(|prepared| {
+            prepared
+                .key
+                .matches(&self.image, self.parameters, self.settings)
+        });
+        // UI state supplies the newest request on the completion repaint. Don't enqueue another
+        // reduction/readback while the previous one is outstanding, even after hide/source changes.
+        let pending = self.gpu.diagnostic.lock().unwrap().pending;
+        if !matches && !pending {
+            let key = Key::new(&self.image, self.parameters, self.settings);
+            match self
+                .gpu
+                .encode(device, encoder, &self.image.linear, self.settings)
+            {
+                Ok(group) => {
+                    *cached = Some(Prepared {
+                        key,
+                        plot: self.settings.plot,
+                        group: Some(group),
+                    });
+                    self.gpu.read_diagnostics(device, encoder, &self.context);
+                }
+                Err(error) => {
+                    *cached = Some(Prepared {
+                        key,
+                        plot: self.settings.plot,
+                        group: None,
+                    });
+                    let mut diagnostic = self.gpu.diagnostic.lock().unwrap();
+                    diagnostic.revision += 1;
+                    diagnostic.result = Some(Err(error.to_string()));
+                    self.context.request_repaint();
+                }
+            }
+        }
+        *self.group.lock().unwrap() = cached.as_mut().and_then(|prepared| {
+            // Retain coherent bins during grading edits; status stays Updating until the current
+            // parameters complete. Never pair old bins with a different source or graticule.
+            if !prepared.key.same_presentation(&self.image, self.settings) {
+                return None;
+            }
+            if prepared.plot != self.settings.plot && prepared.group.is_some() {
+                let uniform = GpuScopes::uniform(device, &self.image.linear, self.settings);
+                prepared.group = Some(self.gpu.draw_group(device, &uniform));
+                prepared.plot = self.settings.plot;
+            }
+            prepared.group.clone()
+        });
+        drop(cached);
+        let pending = self.gpu.diagnostic.lock().unwrap().pending;
+        if pending {
+            if let Err(error) = device.poll(wgpu::PollType::Poll) {
+                let mut diagnostic = self.gpu.diagnostic.lock().unwrap();
+                diagnostic.revision += 1;
+                diagnostic.pending = false;
+                diagnostic.result = Some(Err(format!("Scope GPU polling failed: {error}")));
+                self.context.request_repaint();
+            } else {
+                self.context
+                    .request_repaint_after(std::time::Duration::from_millis(16));
+            }
+        }
+        Vec::new()
+    }
+    fn paint(
+        &self,
+        _info: egui::PaintCallbackInfo,
+        pass: &mut wgpu::RenderPass<'static>,
+        _resources: &egui_wgpu::CallbackResources,
+    ) {
+        if let Some(group) = &*self.group.lock().unwrap() {
+            self.gpu.paint(pass, group);
+        }
+    }
+}

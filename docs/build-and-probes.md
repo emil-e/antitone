@@ -87,6 +87,27 @@ The host smoke renders Fit/reference support, exercises scripted geometry move/r
 
 For window capture use [the relocated capture helper](research/tools/README.md#manufacturer-study--capture); outputs stay under `.cache/probes`. Requires normal desktop/screen-capture permissions. Do not bypass occlusion or automate Lightroom/Resolve.
 
+## Responsive image scopes
+
+The above-controls slot provides positive-grade-only whole-frame approximate waveform/vectorscope, in selected output-native codes. RGB/luma reuse bins; vectorscope scale re-bins cached rendering without rerunning ACES. Source/reference views suspend scopes. [Contract](contracts/scopes.md), [plan/rebase boundary and verification](plans/vectorscope-and-waveform.md).
+
+```sh
+CC=/usr/bin/clang CXX=/usr/bin/clang++ \
+  ./scripts/cargo.sh test --offline --features editor --lib --test scopes --test viewer
+# Bounded 1024×1024 flat/varied reduction probe; Metal, no RAWs/window:
+CC=/usr/bin/clang CXX=/usr/bin/clang++ \
+  ./scripts/cargo.sh test --offline --features editor --test scopes \
+  scope_reduction_latency -- --ignored --nocapture
+# Release editor built as above; scripted scope modes/amplification and layout holds:
+ANTITONE_SMOKE_SCOPES=1 ANTITONE_SMOKE_CONTROLS=1 target/release/antitone --smoke \
+  samples/DSC04397.ARW 4000 5644 128 32 \
+  samples/DSC04378.ARW 4000 2600 128 128 samples/DSC04416.ARW
+```
+
+The latency probe times encode/submit/wait for reductions only, not RAW/ACES processing or end-to-end gesture latency. GPU-bin/pixel readbacks are test-only; the live UI maps just 16 diagnostic bytes asynchronously with one outstanding job. Smoke retains nonzero-visible-frame acceptance and uses diagnostic calibration, not the user's grade. Capture only the application window during layout holds with the existing [helper](research/tools/README.md#manufacturer-study--capture); photographic screenshots remain ignored/private.
+
+In `.worktrees/scopes`, ignored `.cache/{rustup,deps}` reuse existing inputs, `.cache/samples` is read-only sample access, Cargo runs with `CARGO_HOME="$PWD/.cache/cargo"` and separate target products. Substitute `.cache/samples/…` in the smoke command there. Do not bootstrap/download or install globally when checkout-local inputs are absent.
+
 ## RAW and complete GPU chain
 
 Camera-model replacement checks use read-only train samples/diagnostic anchors, not a recovered photographic grade:

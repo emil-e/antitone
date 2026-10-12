@@ -1,0 +1,39 @@
+Scope layout/flicker/colour follow-up checkpoint
+
+Checkout: .worktrees/scopes, plan/vectorscope-waveform; uncommitted.
+Environment: Apple M5 Pro / macOS 26.6.2, checkout-local Rust 1.99.0,
+pinned LibRaw/OCIO and Metal/wgpu 30.0.1; same native setup as scopes-checkpoint.txt.
+
+Changes:
+- Larger width-based default; visible draggable divider, reset on double-click.
+  Height/width preference survives idle/plot switches and scales with sidebar width.
+  Short-window height cap leaves scroll space; shrinking/collapsing restores more controls.
+- Retain coherent same-source/revision/basis GPU bins during grading, labelled Updating.
+  Target/projection/amplification/source changes cannot borrow incompatible bins.
+  Hide/suspension still invalidate; one reduction/readback outstanding, no second bin/image cache.
+- Near-white vector trace, blue-purple graticules, coloured RGB/CMY references.
+
+Final commands (worktree root):
+CARGO_HOME="$PWD/.cache/cargo" CC=/usr/bin/clang CXX=/usr/bin/clang++ \
+  ./scripts/cargo.sh test --offline --features editor --lib --test scopes --test viewer
+92 library + 6 GPU scopes + 5 viewer = 103 passed; two unrelated/manual tests remain ignored.
+Divider pointer drag/release, 20 idle frames, width scaling and double-click reset pass at 1x/2x DPI.
+Geometry assertions account for physical-pixel rounding and settled egui DPI initialization.
+Visible idle divider and reference/graticule colours checked as actual paint shapes.
+GPU render/readback verifies a retained nonempty trace during grading, Updating diagnostics,
+completion, one-job coalescing, and no incompatible trace for target/plot/scale/source/revision/suspension.
+Strict editor-feature all-target Clippy (-D warnings), format check and release editor build pass.
+
+ANTITONE_SMOKE_SCOPES=1 ANTITONE_SMOKE_CONTROLS=1 target/release/antitone --smoke \
+  .cache/samples/DSC04397.ARW 4000 5644 128 32 \
+  .cache/samples/DSC04378.ARW 4000 2600 128 128 .cache/samples/DSC04416.ARW
+scope_smoke target=DisplayP3 samples=699392 reductions=8 invalid=0
+editor_smoke elapsed_seconds=30.43; submitted_frames=1498; exit=0
+Four window-only captures succeeded: .cache/probes/scopes-polish-{roll,photo}-{normal,narrow}.png.
+Software inspection checks larger plots, trace/grid contrast, visible divider/grip and pinned Output.
+Short windows trade visible grading space for larger scopes; divider/collapse are deliberate controls.
+Private photographic captures and full logs remain ignored under .cache/probes; samples read-only.
+
+Limits: no physical drag/continuous-control feel certification, new end-to-end latency measurement,
+full-source scopes, full export rerun, geometry rebase, other-device/macOS-14 or physical-monitor gate.
+No extra independent review, installs, commits or pushes.

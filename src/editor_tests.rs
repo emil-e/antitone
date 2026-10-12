@@ -1,5 +1,5 @@
 use super::*;
-fn fixture() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
+pub(super) fn fixture() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
     let (commands, receiver) = mpsc::channel();
     let (send, messages) = mpsc::channel();
     let mut editor = Editor::state(
@@ -1658,7 +1658,7 @@ fn controls_frame(
     width: f32,
     events: Vec<egui::Event>,
 ) -> Vec<(String, egui::Rect)> {
-    controls_frame_sized(editor, context, width, 1300., events)
+    controls_frame_sized(editor, context, width, 1600., events)
 }
 fn controls_frame_sized(
     editor: &mut Editor,
@@ -1907,30 +1907,42 @@ fn response_section_is_reachable_by_scrolling_and_output_stays_pinned() {
         }
         let first = controls_frame_sized(&mut editor, &context, width, height, vec![]);
         let output = first.iter().find(|(label, _)| label == "Output").unwrap().1;
-        for frame in 0..60 {
-            let events = if frame == 0 {
+        let grading_top = first
+            .iter()
+            .find(|(label, _)| label == "Roll")
+            .unwrap()
+            .1
+            .bottom();
+        let names = ["Toe & shoulder", "Toe", "Shoulder", "Exposure"];
+        let mut visible = [false; 4];
+        for frame in 0..90 {
+            let events = if frame % 10 == 0 {
                 vec![
-                    egui::Event::PointerMoved(egui::pos2(width / 2., 300.)),
+                    egui::Event::PointerMoved(egui::pos2(width / 2., output.top() - 40.)),
                     egui::Event::MouseWheel {
                         unit: egui::MouseWheelUnit::Point,
                         phase: egui::TouchPhase::Move,
-                        delta: egui::vec2(0., -1000.),
+                        delta: egui::vec2(0., -100.),
                         modifiers: egui::Modifiers::NONE,
                     },
                 ]
             } else {
                 vec![]
             };
-            controls_frame_sized(&mut editor, &context, width, height, events);
+            let text = controls_frame_sized(&mut editor, &context, width, height, events);
+            for (i, name) in names.iter().enumerate() {
+                if text.iter().any(|(label, rect)| {
+                    label == name && rect.top() > grading_top && rect.bottom() < output.top()
+                }) {
+                    visible[i] = true;
+                }
+            }
         }
+        assert!(
+            visible.into_iter().all(|seen| seen),
+            "unreachable response controls: {visible:?}"
+        );
         let scrolled = controls_frame_sized(&mut editor, &context, width, height, vec![]);
-        for name in ["Toe & shoulder", "Toe", "Shoulder", "Exposure"] {
-            let rect = scrolled.iter().find(|(label, _)| label == name).unwrap().1;
-            assert!(
-                rect.top() > 0. && rect.bottom() < output.top(),
-                "{name}: {rect:?}"
-            );
-        }
         assert_eq!(
             scrolled
                 .iter()

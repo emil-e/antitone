@@ -159,6 +159,15 @@ impl host::App for SmokeEditor {
                 } else {
                     OutputTarget::Srgb
                 };
+                if std::env::var_os("ANTITONE_SMOKE_SCOPES").is_some() {
+                    self.editor.scopes.vector = (8..16).contains(&self.frames);
+                    self.editor.scopes.waveform = if self.frames < 4 {
+                        crate::scopes::Plot::Rgb
+                    } else {
+                        crate::scopes::Plot::Luma
+                    };
+                    self.editor.scopes.amplification = [1, 2, 4, 8][(self.frames as usize % 8) / 2];
+                }
                 self.editor.roll.gamma = 0.75;
                 self.editor.photo.exposure = 0.5;
                 self.editor.photo.wb = Balance {
@@ -173,6 +182,43 @@ impl host::App for SmokeEditor {
             }
             5 => {
                 if self.editor.settled.is_some() {
+                    if std::env::var_os("ANTITONE_SMOKE_SCOPES").is_some() {
+                        let gpu = self
+                            .editor
+                            .scopes
+                            .gpu
+                            .as_ref()
+                            .expect("smoke scope GPU resources");
+                        let image = &self.editor.ready.as_ref().unwrap().images
+                            [self.editor.target as usize];
+                        let parameters = self
+                            .editor
+                            .positive_parameters(
+                                self.editor.calibration().unwrap(),
+                                self.editor.roll,
+                                self.editor.photo,
+                            )
+                            .unwrap();
+                        let settings = crate::scopes::Settings {
+                            target: self.editor.target,
+                            plot: self.editor.scopes.waveform,
+                            amplification: 1,
+                        };
+                        let Some(result) = gpu.status(image, parameters, settings) else {
+                            return;
+                        };
+                        let counts = result.expect("smoke scope diagnostics");
+                        assert_eq!(counts.invalid, 0);
+                        assert_eq!(counts.valid, image.linear.width() * image.linear.height());
+                        assert!(gpu.reduction_count() >= 3);
+                        println!(
+                            "scope_smoke target={:?} samples={} reductions={} invalid={}",
+                            self.editor.target,
+                            counts.valid,
+                            gpu.reduction_count(),
+                            counts.invalid
+                        );
+                    }
                     self.editor.viewport.zoom = Some(1.);
                     self.phase = 6;
                 } else if self.editor.refinement_error.is_some() {
@@ -225,6 +271,15 @@ impl host::App for SmokeEditor {
                 let index = self.phase - 9;
                 if self.layout_start.is_none() {
                     self.editor.tab = usize::from(index % 2);
+                    if std::env::var_os("ANTITONE_SMOKE_SCOPES").is_some() {
+                        self.editor.scopes.vector = index % 2 == 1;
+                        self.editor.scopes.amplification = if index >= 2 { 4 } else { 2 };
+                        self.editor.scopes.waveform = if index == 0 {
+                            crate::scopes::Plot::Rgb
+                        } else {
+                            crate::scopes::Plot::Luma
+                        };
+                    }
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
                     let narrow = index >= 2;
                     ui.ctx()

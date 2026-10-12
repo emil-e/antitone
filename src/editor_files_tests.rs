@@ -104,24 +104,28 @@ fn command_save_commits_pending_numeric_text_before_snapshot() {
         .unwrap();
     editor.tab = 1;
     let context = egui::Context::default();
-    for _ in 0..3 {
-        ui_frame(&mut editor, &context, vec![]);
-    }
-    ui_frame(
-        &mut editor,
-        &context,
-        vec![
-            egui::Event::PointerMoved(egui::pos2(950., 350.)),
-            egui::Event::MouseWheel {
-                unit: egui::MouseWheelUnit::Point,
-                phase: egui::TouchPhase::Move,
-                delta: egui::vec2(0., -1000.),
-                modifiers: egui::Modifiers::NONE,
-            },
-        ],
-    );
-    for _ in 0..12 {
-        ui_frame(&mut editor, &context, vec![]);
+    let initial = ui_frame(&mut editor, &context, vec![]);
+    let output_top = initial
+        .iter()
+        .find(|(label, _)| label == "Output")
+        .unwrap()
+        .1
+        .top();
+    for frame in 0..60 {
+        let events = if frame == 0 {
+            vec![
+                egui::Event::PointerMoved(egui::pos2(950., output_top - 40.)),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    phase: egui::TouchPhase::Move,
+                    delta: egui::vec2(0., -600.),
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        } else {
+            vec![]
+        };
+        ui_frame(&mut editor, &context, events);
     }
     let shapes = ui_frame(&mut editor, &context, vec![]);
     let exposure = shapes

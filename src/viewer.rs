@@ -47,6 +47,7 @@ struct ImageProcessing {
 
 pub struct GpuImage {
     last_parameters: std::sync::Mutex<Option<[u8; ProcessingParameters::BYTE_LEN]>>,
+    source_revision: std::sync::atomic::AtomicU64,
     processing: Option<ImageProcessing>,
     pub linear: wgpu::Texture,
     display: wgpu::RenderPipeline,
@@ -335,6 +336,7 @@ impl GpuImage {
         }
         Ok(Self {
             last_parameters: std::sync::Mutex::new(None),
+            source_revision: std::sync::atomic::AtomicU64::new(0),
             processing,
             linear,
             display,
@@ -359,6 +361,8 @@ impl GpuImage {
             .as_mut()
             .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
         processing.source.set_flat_field(field, geometry)?;
+        self.source_revision
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         *self.last_parameters.lock().unwrap() = None;
         Ok(())
     }
@@ -369,8 +373,32 @@ impl GpuImage {
             .as_ref()
             .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
         processing.source.write(queue, pixels)?;
+        self.source_revision
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         *self.last_parameters.lock().unwrap() = None;
         Ok(())
+    }
+
+    pub fn source_revision(&self) -> u64 {
+        self.source_revision
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Shared by viewer and scopes so either callback can prepare the whole proxy first.
+    pub fn prepare(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        parameters: ProcessingParameters,
+    ) -> bool {
+        let signature = bytemuck::bytes_of(&parameters).try_into().unwrap();
+        let mut previous = self.last_parameters.lock().unwrap();
+        if *previous == Some(signature) {
+            return false;
+        }
+        self.encode(device, encoder, parameters);
+        *previous = Some(signature);
+        true
     }
 
     pub fn encode(
@@ -521,12 +549,7 @@ impl egui_wgpu::CallbackTrait for ImagePaint {
         _resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
         if let Some(parameters) = self.parameters {
-            let signature = bytemuck::bytes_of(&parameters).try_into().unwrap();
-            let mut previous = self.image.last_parameters.lock().unwrap();
-            if *previous != Some(signature) {
-                self.image.encode(device, encoder, parameters);
-                *previous = Some(signature);
-            }
+            self.image.prepare(device, encoder, parameters);
         }
         if self.uv != TextureMapping::IDENTITY {
             *self.group.lock().unwrap() = Some(self.image.presentation_group(device, self.uv));
