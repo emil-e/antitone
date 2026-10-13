@@ -39,6 +39,10 @@ Worker results are proposals. Request IDs, generations and source/settings snaps
 
 Accepted photographic state lives in [projects](projects.md). Tool drafts and viewport state are transient; durable UI preferences are stored independently. [Editor](editor.md) explains preview/cache distinctions and the input/transaction model.
 
+## UI test boundary
+
+The opt-in `ui-tests` feature keeps egui_kittest cases in the Editor’s private child test module, [editor_kittest](../src/editor_kittest.rs). The harness calls the production `host::App::ui` composition boundary; it does not replace the application host or expose editor state publicly. A test-only RGBA16Float renderer shares the real device/queue and submission gate, and executes production paint callbacks. [Framework UI regressions](development.md#framework-ui-regressions) are offscreen; the native-host migration remains separate unfinished work.
+
 ## Finding the right explanation
 
 - Pixels and grades: [processing](processing.md), [roll analysis](roll-analysis.md), [flat-field correction](flat-field.md).

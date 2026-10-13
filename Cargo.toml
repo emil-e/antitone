@@ -12,6 +12,7 @@ pollster = { version = "=1.0.1", optional = true }
 bytemuck = { version = "=1.25.2", optional = true, features = ["derive"] }
 
 egui = { version = "=0.36.2", optional = true }
+egui_kittest = { version = "=0.36.2", optional = true, default-features = false, features = ["wgpu"] }
 egui-winit = { version = "=0.36.2", optional = true, default-features = false, features = ["clipboard"] }
 egui-wgpu = { version = "=0.36.2", optional = true, default-features = false }
 winit = { version = "=0.30.13", optional = true, default-features = false, features = ["rwh_06"] }
@@ -33,6 +34,7 @@ objc2-core-graphics = { version = "=0.3.2", optional = true, default-features = 
 objc2-quartz-core = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "CAMetalLayer", "objc2-core-graphics"] }
 
 [features]
+ui-tests = ["editor", "dep:egui_kittest", "image/png"]
 editor = ["ui", "raw", "export", "project", "dep:rfd", "dep:blake3", "dep:image"]
 project = ["dep:serde", "dep:serde_json", "dep:tempfile", "glam/serde"]
 ui = ["gpu", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:winit", "dep:half", "dep:objc2-core-foundation", "dep:objc2-core-graphics", "dep:objc2-quartz-core"]

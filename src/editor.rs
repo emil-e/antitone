@@ -69,6 +69,9 @@ pub use smoke::SmokeEditor;
 #[path = "editor_flat_field_smoke.rs"]
 mod flat_smoke;
 pub use flat_smoke::FlatFieldSmoke;
+#[cfg(all(test, feature = "ui-tests"))]
+#[path = "editor_kittest.rs"]
+mod kittest_tests;
 #[cfg(test)]
 #[path = "editor_tests.rs"]
 mod tests;

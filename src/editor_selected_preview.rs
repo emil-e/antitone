@@ -9,6 +9,10 @@ pub(super) struct SelectionTiming {
     ready_painted: AtomicBool,
 }
 impl SelectionTiming {
+    #[cfg(all(test, feature = "ui-tests"))]
+    pub(super) fn ready_was_painted(&self) -> bool {
+        self.ready_painted.load(Ordering::Relaxed)
+    }
     pub fn new(id: u64, started: std::time::Instant) -> Self {
         Self {
             id,

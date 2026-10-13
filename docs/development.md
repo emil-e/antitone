@@ -91,6 +91,30 @@ For feature-specific transactions, use the `editor::analysis::tests`, `editor::f
 
 The thumbnail suite includes composed cold-load/error selection, JPEG placeholder semantics, disabled focus/input and ordered-roll picker return checks. [Wheel accessibility](plans/inspection-and-interaction.md#focused-fixes) remains unsettled. Physical pointer/trackpad behavior, VoiceOver and preference relaunch also need real-use checks; headless events cannot establish them.
 
+### Framework UI regressions
+
+The optional `ui-tests` feature pins egui_kittest to the application’s egui version. No eframe host or snapshot baselines are enabled. Run the interaction tests in both profiles:
+
+```sh
+cargo test --locked --features ui-tests --lib editor::kittest_tests -- --test-threads=1
+cargo test --locked --release --features ui-tests --lib editor::kittest_tests -- --test-threads=1
+cargo clippy --locked --features ui-tests --lib --tests -- -D warnings
+```
+
+`parameter_reset_click_respects_disabled_state` finds Reset Contrast by its accessibility label, clicks it and checks disabled input. `dmin_picker_cancels_or_applies_measurement_and_paints_source` requires the documented native setup and a **Metal device**, but no desktop/window. It imports the committed patch DNG, scrolls to the real Dmin picker, checks disabled Apply and unchanged picker cancellation before dispatch, then selects a source-coordinate patch and applies through the real worker. Worker waits have a 60-second deadline; GPU readback waits are bounded. Missing Metal fails rather than silently skipping.
+
+A test-only renderer shares the Editor’s device/queue and submission gate, and paints the production selected-image callback into RGBA16Float. Finite readback and two neutral patches are checked against the CPU source-rendering reference at `0.001`; this is implementation agreement, not a new independent ACES oracle. Existing OCIO and native presentation checks remain necessary. Preferences are never restored and disk thumbnails are disabled.
+
+For an optional named inspection artifact:
+
+```sh
+ANTITONE_UI_CAPTURE="$PWD/.cache/ui-captures" \
+  cargo test --locked --features ui-tests --lib dmin_picker_cancels_or_applies \
+  -- --test-threads=1
+```
+
+`authored-dmin-offscreen.png` is clipped/quantized from the float capture for inspection only. Its successful generation does not approve appearance or establish native surface/ColorSync presentation, physical input, dialogs, or other platforms. [Scenario/native migration](plans/verification-tooling.md) remains unfinished.
+
 ## Specialist diagnostics
 
 Most ordinary tests need no private RAWs. Tests marked ignored are opt-in because they need samples, hardware, visible windows or substantial resources. [Diagnostics](diagnostics.md) explains how to run them safely and interpret their results.

@@ -1,6 +1,6 @@
 # Verification tooling and UI test structure
 
-Status: unfinished UI framework and scenario/native migration. Use the [authored DNGs](../../tests/fixtures/raw/README.md) and [supported diagnostics](../diagnostics.md) as the starting coverage. General composed-UI/native presentation remains unproved. No UI-test feature or framework integration exists. [Roadmap](../../PLAN.md) owns priority; this plan does not change active photographic work or shared UI ownership.
+Status: unfinished scenario/native migration. The [framework UI regressions](../development.md#framework-ui-regressions) cover semantic reset/disabled input and authored Dmin interaction/worker/callback capture; general composed interaction and native presentation remain unproved. Use the [authored DNGs](../../tests/fixtures/raw/README.md) and [supported diagnostics](../diagnostics.md) as the starting coverage. [Roadmap](../../PLAN.md) owns priority; this plan does not change active photographic work or shared UI ownership.
 
 ## Goal
 
@@ -74,22 +74,20 @@ Each retained probe starts with a concise comment explaining its purpose, inputs
 
 ## Structured UI automation
 
-### Framework proof and ownership
+### Framework ownership
 
-[egui_kittest 0.36.2](https://docs.rs/egui_kittest/0.36.2/egui_kittest/) is the first candidate: it matches current egui/wgpu and offers AccessKit queries/actions, controlled frames and offscreen rendering. This is a proposed test dependency, not an application-framework decision. Do not adopt eframe or expose private editor fields merely to fit the harness.
-
-Prove one isolated shared component and one composed Editor scenario, including a real custom GPU paint callback. Check shared device/queue resources, texture/pipeline formats, precise rendering, backend completion/repaint behavior and accessibility names. If integration fails, identify the actual constraint before choosing another library or writing an adapter.
+Use the implemented [egui_kittest test boundary](../architecture.md#ui-test-boundary) and [framework commands/limits](../development.md#framework-ui-regressions). Extend only the coverage needed for each migration slice. Do not adopt eframe or expose private editor fields merely to fit the harness.
 
 Reuse existing input/AccessKit tests, `Editor` fixtures, component tests and production worker/rendering paths. Fixture setup may initialize state or open a document; the interaction being asserted must use real widget input rather than direct field assignment. Keep private-editor scenarios near the editor's test modules. Add only narrow support for fixture setup, bounded waits, rendering and result artifacts; no parallel state machine, action DSL or widget registry.
 
 ### Build and runner boundaries
 
-- Add an explicit opt-in test feature, provisionally `ui-tests`. Gate framework dependencies and automation support so ordinary numerical-core and `cargo build-app` builds stay unchanged/lightweight.
+- Keep framework dependencies opt-in through `ui-tests` and automation support test-only, so ordinary numerical-core and `cargo build-app` builds stay unchanged/lightweight.
 - Do not use `debug_assertions` as the boundary: meaningful GPU/integration checks must also run release-optimized.
 - Keep framework-driven UI cases as normal named Rust tests. Distinguish GPU requirements from the absence of a desktop/window requirement.
 - Put the small real-window suite in a separate gated test executable sharing `platform::host`. AppKit requires a main-thread event loop; do not rely on ordinary Rust test worker threads for this runner.
 - Normal application binaries expose no `--smoke*` routes or capture environment switches after migration. `cargo test --all-features` must not unexpectedly open windows or write personal state; native-window execution is explicit.
-- Define one documented command per check class with filtering and explicit capture/output options. Exact target names and feature wiring are settled by the proof, not a second Cargo wrapper.
+- Define one documented command per check class with filtering and explicit capture/output options. Use ordinary Cargo and the existing `ui-tests` feature, not a second Cargo wrapper.
 
 ### Actions, assertions and completion
 
@@ -103,15 +101,14 @@ Wait on observable conditions with deadlines and useful failure state. No fixed 
 
 Capture named UI states and failure artifacts under ignored storage. Assertions establish behavior/geometry; an agent or human may inspect captures, but successful capture is not approval. Offscreen captures must be labelled as such and cannot replace surface/ColorSync checks.
 
-Snapshot comparisons are optional until a real visual contract warrants them. Keep generated captures/diffs out of source by default. Checked-in visual baselines would be an explicit, reviewed test-fixture exception to the current generated-screenshot policy; settle that separately after the framework proof. Never auto-update baselines or widen numerical tolerances to obtain a pass.
+Snapshot comparisons are optional until a real visual contract warrants them. Keep generated captures/diffs out of source by default. Checked-in visual baselines would be an explicit, reviewed test-fixture exception to the current generated-screenshot policy; settle that separately for a concrete visual contract. Never auto-update baselines or widen numerical tolerances to obtain a pass.
 
 The native suite remains small: window/surface presentation, resize, close/completion and selected input forwarding. Full macOS accessibility automation, native-dialog coverage and physical trackpad/keyboard/VoiceOver acceptance remain separate choices. Headless egui actions do not claim those boundaries.
 
 ## Ordered implementation slices
 
-1. **UI framework proof.** Wire the optional dependency/feature and demonstrate semantic input, asynchronous state, custom GPU rendering and a named capture. Decide renderer adapters and snapshot policy from this proof; do not rewrite all UI tests first.
-2. **Scenario/native migration.** Port one end-to-end scenario at a time into framework tests or the small native suite. Exercise failure/timeout/early-close behavior and production build exclusion. Remove equivalent smoke classes, CLI/env branches and capture scripts as replacements pass; do not leave parallel supported paths.
-3. **Contributor handoff.** Organize core/fixture/UI/reference/native/optional-real-use commands in their existing guides. Update architecture only for implemented boundaries and the owning topic guides only for changed behavior. Replace named private-photo recipes with supplied-source acceptance instructions. Remove completed scope from this plan; delete it once all maintained behavior and remaining acceptance have proper homes.
+1. **Scenario/native migration.** Port one end-to-end scenario at a time into framework tests or the small native suite. Exercise failure/timeout/early-close behavior and production build exclusion. Remove equivalent smoke classes, CLI/env branches and capture scripts as replacements pass; do not leave parallel supported paths.
+2. **Contributor handoff.** Organize core/fixture/UI/reference/native/optional-real-use commands in their existing guides. Update architecture only for implemented boundaries and the owning topic guides only for changed behavior. Replace named private-photo recipes with supplied-source acceptance instructions. Remove completed scope from this plan; delete it once all maintained behavior and remaining acceptance have proper homes.
 
 ## Acceptance and verification
 
@@ -128,9 +125,8 @@ Verify each slice with focused tests/lints/parser/link checks and inspect its di
 
 - Corrected-thumbnail coordination, general composed interaction/native presentation and Adobe DNG Validator conformance remain unproved; the named authored worker tests are not acceptance for those boundaries.
 - Initial-path opening in `Editor::new` still recognizes only ARW; broader picker filters do not prove CLI startup support for other RAW suffixes. Keep this entry-point gap explicit until separately corrected.
-- Does egui_kittest's offscreen renderer support the production callbacks/device/format needs with a narrow adapter? Prove this before committing to the framework.
 - Are any reviewed visual baselines needed, and what narrowly justified renderer/platform expectations apply? No blanket golden-image suite is selected.
 - Which additional optional Analyze/real-camera diagnostics answer a concrete current acceptance question? Unclear utility defaults to deletion, not archival retention.
 - Full OS accessibility/dialog automation and real photographic/performance/monitor acceptance are not selected by this restructuring.
 
-Next: prove egui_kittest with one shared control, an asynchronous composed Editor scenario, a production custom GPU callback and a named offscreen capture. Settle only the adapters and feature wiring required by that proof. Keep native/OCIO/broad-gamut coverage; do not begin wholesale UI replacement before the proof passes.
+Next: select one existing smoke scenario for framework migration, inventory its assertions and native-only boundary, then implement explicit completion and negative/timeout coverage before retiring its route. Define the separate main-thread native runner only for the host coverage that scenario needs. Keep native/OCIO/broad-gamut references; no blanket UI rewrite or snapshot baseline adoption.
