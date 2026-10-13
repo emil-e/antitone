@@ -4,7 +4,7 @@ use crate::Error;
 use crate::color::{Balance, wb_matrix};
 
 pub const CAMERA_INPUT_FLOOR: f64 = 1. / 65535.;
-pub const DEFAULT_GAMMA: f64 = 0.65;
+pub const DEFAULT_GAMMA: f64 = 0.60;
 pub const MIN_GAMMA: f64 = 0.1;
 pub const MAX_GAMMA: f64 = 3.0;
 pub const MAX_EXPOSURE: f64 = 16.0;

@@ -37,6 +37,40 @@ fn project() -> Project {
 }
 
 #[test]
+fn saved_gamma_is_explicit_and_preserved_independently_of_the_new_grade_default() {
+    use antitone::processing::{Pipeline, Response};
+    assert_eq!(Project::default().roll.gamma, 0.60);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("roll.antitone.json");
+    for response in [Response::Original, Response::film()] {
+        let mut p = project();
+        p.roll.gamma = 0.65;
+        p.roll.response = response;
+        let positive = |p: &Project| {
+            Pipeline::new(
+                p.calibration().unwrap().unwrap(),
+                p.roll,
+                p.sources[0].photo,
+                DMat3::IDENTITY,
+            )
+            .unwrap()
+            .apply(DVec3::new(0.02, 0.05, 0.08))
+            .unwrap()
+            .rgb
+        };
+        let before = positive(&p);
+        p.save(&path, Save::Replace).unwrap();
+        let restored = Project::load(&path).unwrap();
+        assert_eq!(restored.roll.gamma, 0.65);
+        assert_eq!(restored, p);
+        assert_eq!(positive(&restored), before);
+        let mut missing = serde_json::to_value(&p).unwrap();
+        missing["roll"].as_object_mut().unwrap().remove("gamma");
+        assert!(serde_json::from_value::<Project>(missing).is_err());
+    }
+}
+
+#[test]
 fn analysis_area_roundtrips_without_changing_processing_and_old_documents_default_to_none() {
     let mut p = project();
     let old = serde_json::to_value(&p).unwrap();

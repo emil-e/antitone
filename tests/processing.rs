@@ -4,7 +4,8 @@ use antitone::color::{
     wb_matrix,
 };
 use antitone::processing::{
-    Calibration, Inversion, PhotoSettings, Pipeline, RollSettings, exposure_multiplier,
+    Calibration, DEFAULT_GAMMA, Inversion, PhotoSettings, Pipeline, RollSettings,
+    exposure_multiplier,
 };
 use antitone::sampling::{mean, photo_neutral, roll_neutral};
 
@@ -74,9 +75,18 @@ fn scan_for_positive(calibration: Calibration, roll: RollSettings, value: DVec3)
 }
 
 #[test]
+fn roll_defaults_use_a_shared_gamma_of_point_six() {
+    assert_eq!(DEFAULT_GAMMA, 0.60);
+    assert_eq!(RollSettings::default().gamma, 0.60);
+    let grade = RollSettings::new_grade();
+    assert_eq!(grade.gamma, 0.60);
+    assert_eq!(grade.channel_gammas().unwrap(), DVec3::splat(0.60));
+}
+
+#[test]
 fn anchors_hold_for_all_supported_global_gammas_and_balances() {
     let cal = calibration();
-    for gamma in [0.1, 0.3, 0.65, 1.0, 3.0] {
+    for gamma in [0.1, 0.3, DEFAULT_GAMMA, 0.65, 1.0, 3.0] {
         for balance in [
             Balance::default(),
             Balance {

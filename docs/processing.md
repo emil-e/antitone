@@ -35,6 +35,8 @@ Consequently, Dmin's measured value must be greater than Dmax's in each channel.
 
 Between the anchors, the curve works with relative log attenuation: how much less light a sample transmits than the Dmin reference. Gamma controls the response through that interval; toe and shoulder change its shape. New grades use the adjustable response. The classic response is another shape within the same native-camera model, not a compatibility path for old AP0 grades. Displaying or resetting controls does not convert a classic grade; **Use adjustable response** is the explicit opt-in.
 
+New grades and gamma resets start at **0.60**, a shared practical response prior rather than a measured population-mean film gamma. Using one common value leaves stock/process contrast differences available instead of equalizing each stock. Lower gamma generally increases tonal separation. Analyze fits relative channel balance while preserving the selected global gamma; saved projects retain their explicit value, so a default change does not regrade them.
+
 The anchors are not clipping limits. Samples can lie beyond them. Above-base noise has a defined signed continuation, and a dense sample can produce a value above one. The input precision floor prevents interpreting values below the developed scan's precision as reliable density; it is not a hidden brightness pedestal or a measured noise floor.
 
 ## Curve balance is not white balance

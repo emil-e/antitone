@@ -2,7 +2,7 @@
 
 use antitone::color::Balance;
 use antitone::gpu::{ProcessingKernel, ProcessingParameters, ProcessingSource};
-use antitone::processing::{Calibration, PhotoSettings, Pipeline, RollSettings};
+use antitone::processing::{Calibration, DEFAULT_GAMMA, PhotoSettings, Pipeline, RollSettings};
 use glam::{DMat3, DVec3, Vec4};
 
 #[test]
@@ -73,7 +73,7 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
             mapped_at_creation: false,
         });
         let mut configurations = vec![(None, ProcessingParameters::source())];
-        for gamma in [0.1, 0.65, 1.0, 3.0] {
+        for gamma in [0.1, DEFAULT_GAMMA, 0.65, 1.0, 3.0] {
             for balance in [
                 Balance::default(),
                 Balance {
