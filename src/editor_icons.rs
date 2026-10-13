@@ -163,6 +163,94 @@ impl Icon {
     }
 }
 
+fn rotation_cursor_artwork() -> [Vec<Vec2>; 3] {
+    let centre = egui::vec2(0., 8.);
+    let arc: Vec<_> = (0..=24)
+        .map(|i| {
+            let theta = std::f32::consts::PI * (13. / 12. + i as f32 * (5. / 6.) / 24.);
+            centre + egui::vec2(theta.cos(), theta.sin()) * 8.
+        })
+        .collect();
+    let head = |endpoint: Vec2, direction: f32| {
+        let radial = (endpoint - centre) / 8.;
+        let tangent = egui::vec2(-radial.y, radial.x) * direction;
+        let normal = egui::vec2(-tangent.y, tangent.x);
+        let a = endpoint + normal * 2.4;
+        let b = endpoint - normal * 2.4;
+        // The shaft meets the head's base; its tip continues along the endpoint tangent.
+        vec![a, endpoint + tangent * 3.2, b, a]
+    };
+    let start = head(arc[0], -1.);
+    let end = head(arc[24], 1.);
+    [arc, start, end]
+}
+
+pub(super) fn rotation_cursor(
+    context: &egui::Context,
+    id: egui::Id,
+    angle: f32,
+) -> egui::CustomCursorImage {
+    context.data_mut(|data| {
+        if let Some((previous, image)) = data.get_temp::<(f32, egui::CustomCursorImage)>(id)
+            && previous == angle
+        {
+            return image;
+        }
+        let rotation = egui::emath::Rot2::from_angle(angle);
+        // Keep the arc's midpoint at the hotspot, with padding for every orientation.
+        let paths = rotation_cursor_artwork().map(|path| {
+            path.into_iter()
+                .map(|point| Vec2::splat(15.5) + rotation * point)
+                .collect::<Vec<_>>()
+        });
+        let mut rgba = Vec::with_capacity(31 * 31 * 4);
+        for y in 0..31 {
+            for x in 0..31 {
+                let sample = egui::vec2(x as f32 + 0.5, y as f32 + 0.5);
+                let distance = paths
+                    .iter()
+                    .enumerate()
+                    .map(|(index, path)| {
+                        let distance = path
+                            .windows(2)
+                            .map(|segment| {
+                                let edge = segment[1] - segment[0];
+                                let t = ((sample - segment[0]).dot(edge) / edge.length_sq())
+                                    .clamp(0., 1.);
+                                (sample - segment[0] - edge * t).length_sq()
+                            })
+                            .fold(f32::INFINITY, f32::min)
+                            .sqrt();
+                        let side = |segment: &[Vec2]| {
+                            let edge = segment[1] - segment[0];
+                            egui::vec2(-edge.y, edge.x).dot(sample - segment[0])
+                        };
+                        let inside = index > 0
+                            && (path.windows(2).all(|segment| side(segment) >= 0.)
+                                || path.windows(2).all(|segment| side(segment) <= 0.));
+                        if inside { -distance } else { distance }
+                    })
+                    .fold(f32::INFINITY, f32::min);
+                let outline = (2.25 - distance).clamp(0., 1.) * (200. / 255.);
+                let white = (1.375 - distance).clamp(0., 1.);
+                let alpha = white + outline * (1. - white);
+                // CustomCursorImage uses straight RGBA, unlike egui's premultiplied colours.
+                let colour = if alpha > 0. { white / alpha } else { 0. };
+                let grey = (colour * 255.).round() as u8;
+                rgba.extend_from_slice(&[grey, grey, grey, (alpha * 255.).round() as u8]);
+            }
+        }
+        let image = egui::CustomCursorImage {
+            rgba: rgba.into(),
+            size: [31, 31],
+            hotspot: [15, 15],
+        };
+        // Retain only the current bitmap; stable orientation also preserves the backend's Arc key.
+        data.insert_temp(id, (angle, image.clone()));
+        image
+    })
+}
+
 pub(super) fn row<R>(ui: &mut Ui, contents: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
     ui.allocate_ui_with_layout(
         egui::vec2(ui.available_width(), CONTROL_HEIGHT),
@@ -223,4 +311,29 @@ pub(super) fn toggle(
         egui::WidgetInfo::selected(egui::WidgetType::Checkbox, response.enabled(), *value, name)
     });
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rotation_arrowheads_extend_along_endpoint_tangents_and_are_filled() {
+        let [arc, start, end] = rotation_cursor_artwork();
+        assert!(arc[12].length() < 1e-5);
+        let context = egui::Context::default();
+        let image = rotation_cursor(&context, egui::Id::new("rotation-cursor"), 0.);
+        for (endpoint, neighbour, head) in [(arc[0], arc[1], start), (arc[24], arc[23], end)] {
+            let base = (head[0] + head[2]) * 0.5;
+            let forward = head[1] - base;
+            let radial = endpoint - egui::vec2(0., 8.);
+            assert!((base - endpoint).length() < 1e-5);
+            assert!(forward.dot(radial).abs() < 1e-5);
+            assert!(forward.dot(endpoint - neighbour) > 0.);
+            assert!((forward.length() - 3.2).abs() < 1e-5);
+            let inside = Vec2::splat(15.5) + (head[0] + head[1] + head[2]) / 3.;
+            let index = (inside.y.floor() as usize * 31 + inside.x.floor() as usize) * 4;
+            assert_eq!(&image.rgba[index..index + 4], &[255; 4]);
+        }
+    }
 }

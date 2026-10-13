@@ -348,6 +348,51 @@ fn bar_inspector_and_help_own_pointer_drag_wheel_and_escape_before_the_canvas() 
 }
 
 #[test]
+fn viewer_requests_a_native_rotation_cursor_and_restores_it_on_popup_and_crop_exit() {
+    let (mut editor, _send, _receiver) = fixture();
+    add_ready_fixture(&mut editor);
+    editor.scopes.visible = false;
+    editor.begin_crop();
+    let context = egui::Context::default();
+    let size = egui::vec2(800., 600.);
+    warm(&mut editor, &context, size);
+    let layout = editor.crop_edit.as_ref().unwrap().layout.unwrap();
+    let point = layout.image.right_center() + egui::vec2(18., 0.);
+    assert!(layout.canvas.contains(point));
+    let output = frame(
+        &mut editor,
+        &context,
+        size,
+        vec![egui::Event::PointerMoved(point)],
+    );
+    let expected = icons::rotation_cursor(
+        &context,
+        egui::Id::new("expected-rotation-cursor"),
+        (point - layout.image.center()).angle() + std::f32::consts::FRAC_PI_2,
+    );
+    assert_eq!(
+        output.platform_output.cursor_image.as_ref(),
+        Some(&expected)
+    );
+    assert_eq!(
+        output.platform_output.cursor_icon,
+        egui::CursorIcon::Crosshair
+    );
+    let draft = editor.crop_edit.as_ref().unwrap().draft;
+    egui::Popup::open_id(&context, egui::Id::new("rotation-cursor-popup"));
+    let blocked = frame(&mut editor, &context, size, vec![]);
+    assert!(blocked.platform_output.cursor_image.is_none());
+    assert_ne!(blocked.platform_output.cursor_icon, egui::CursorIcon::None);
+    assert_eq!(editor.crop_edit.as_ref().unwrap().draft, draft);
+    egui::Popup::close_all(&context);
+    editor.finish_crop(false);
+    let exited = frame(&mut editor, &context, size, vec![]);
+    assert!(exited.platform_output.cursor_image.is_none());
+    assert_ne!(exited.platform_output.cursor_icon, egui::CursorIcon::None);
+    assert!(editor.crop_edit.is_none());
+}
+
+#[test]
 fn bottom_crop_handles_are_unobstructed_without_reframing_or_docking() {
     for size in [egui::vec2(1100., 800.), egui::vec2(800., 600.)] {
         let (mut editor, _send, _receiver) = fixture();

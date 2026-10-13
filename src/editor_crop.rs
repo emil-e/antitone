@@ -432,25 +432,6 @@ impl Editor {
                 point.and_then(|point| handle_at(layout.image, point))
             }
         };
-        if response.hovered() || response.dragged() {
-            let cursor = match handle {
-                Some([x, y]) if x != 0 && y != 0 => {
-                    if x * y > 0 {
-                        egui::CursorIcon::ResizeNwSe
-                    } else {
-                        egui::CursorIcon::ResizeNeSw
-                    }
-                }
-                Some([0, _]) => egui::CursorIcon::ResizeVertical,
-                Some(_) => egui::CursorIcon::ResizeHorizontal,
-                None if response.dragged() => egui::CursorIcon::Grabbing,
-                None if hover.is_some_and(|point| layout.image.contains(point)) => {
-                    egui::CursorIcon::Grab
-                }
-                None => egui::CursorIcon::Crosshair,
-            };
-            ui.ctx().set_cursor_icon(cursor);
-        }
         if response.drag_started_by(egui::PointerButton::Primary)
             && let Some(start) = ui.input(|input| input.pointer.press_origin())
         {
@@ -587,12 +568,77 @@ impl Editor {
         if response.drag_stopped_by(egui::PointerButton::Primary) {
             edit.drag = None;
         }
+        if response.hovered() || response.dragged() {
+            // On release, describe the next gesture at the updated frame.
+            let handle = if response.drag_stopped_by(egui::PointerButton::Primary) {
+                hover.and_then(|point| handle_at(layout.image, point))
+            } else {
+                handle
+            };
+            let cursor = match handle {
+                Some([x, y]) if x != 0 && y != 0 => {
+                    if x * y > 0 {
+                        egui::CursorIcon::ResizeNwSe
+                    } else {
+                        egui::CursorIcon::ResizeNeSw
+                    }
+                }
+                Some([0, _]) => egui::CursorIcon::ResizeVertical,
+                Some(_) => egui::CursorIcon::ResizeHorizontal,
+                None if matches!(edit.drag, Some(CropDrag::Straighten { .. }))
+                    && response.dragged_by(egui::PointerButton::Primary) =>
+                {
+                    egui::CursorIcon::Crosshair
+                }
+                None if response.dragged() => egui::CursorIcon::Grabbing,
+                None if hover.is_some_and(|point| layout.image.contains(point)) => {
+                    egui::CursorIcon::Grab
+                }
+                None => egui::CursorIcon::Crosshair,
+            };
+            ui.ctx().set_cursor_icon(cursor);
+        }
         // The painted layout is the editing viewport: retain it, not a new Fit of the crop.
         self.viewport
             .reframe(layout, layout.composition, ui.ctx().pixels_per_point());
         edit.layout = Some(layout);
         layout
     }
+    pub(super) fn crop_rotation_cursor(
+        &self,
+        ui: &egui::Ui,
+        response: &egui::Response,
+        layout: CanvasLayout,
+    ) {
+        if !ui.is_enabled() || !response.enabled() {
+            return;
+        }
+        let Some(edit) = &self.crop_edit else {
+            return;
+        };
+        let position = match edit.drag {
+            Some(CropDrag::Straighten {
+                layout: original, ..
+            }) if response.dragged_by(egui::PointerButton::Primary) => response
+                .interact_pointer_pos()
+                .map(|point| (point, original.image.center())),
+            None if response.hovered() && !response.dragged() => response
+                .hover_pos()
+                .filter(|point| {
+                    !layout.image.contains(*point) && handle_at(layout.image, *point).is_none()
+                })
+                .map(|point| (point, layout.image.center())),
+            _ => None,
+        };
+        let Some((point, pivot)) = position.filter(|(point, _)| layout.canvas.contains(*point))
+        else {
+            return;
+        };
+        let angle = (point - pivot).angle() + std::f32::consts::FRAC_PI_2;
+        let image = icons::rotation_cursor(ui.ctx(), response.id.with("rotation-cursor"), angle);
+        ui.ctx().set_cursor_image(Some(image));
+    }
+
     pub(super) fn paint_crop(&self, ui: &egui::Ui, layout: CanvasLayout) {
         let crop = layout.image;
         let canvas = layout.canvas;

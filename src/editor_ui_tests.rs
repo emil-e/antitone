@@ -32,6 +32,47 @@ pub(super) fn frame<R>(
     (result.unwrap(), output)
 }
 
+#[test]
+fn rotation_cursor_bitmaps_keep_the_hotspot_contrast_and_bounded_storage() {
+    let context = Context::default();
+    let id = egui::Id::new("rotation-cursor");
+    for step in 0..32 {
+        let angle = step as f32 * std::f32::consts::TAU / 32.;
+        let image = super::icons::rotation_cursor(&context, id, angle);
+        assert_eq!(image.size, [31, 31]);
+        assert_eq!(image.hotspot, [15, 15]);
+        assert_eq!(image.rgba.len(), 31 * 31 * 4);
+        assert_eq!(&image.rgba[(15 * 31 + 15) * 4..][..4], &[255; 4]);
+        let (pixels, remainder) = image.rgba.as_chunks::<4>();
+        assert!(remainder.is_empty());
+        assert!(pixels.iter().any(|pixel| pixel[0] == 0 && pixel[3] > 0));
+        for (index, pixel) in pixels.iter().enumerate() {
+            assert_eq!(pixel[0], pixel[1]);
+            assert_eq!(pixel[1], pixel[2]);
+            if index % 31 == 0 || index % 31 == 30 || index / 31 == 0 || index / 31 == 30 {
+                assert_eq!(pixel[3], 0, "cursor clipped at angle {angle}");
+            }
+        }
+        let reused = super::icons::rotation_cursor(&context, id, angle);
+        assert!(std::sync::Arc::ptr_eq(&image.rgba, &reused.rgba));
+    }
+    let original = super::icons::rotation_cursor(&context, id, 0.);
+    let turned = super::icons::rotation_cursor(&context, id, std::f32::consts::FRAC_PI_2);
+    assert!(!std::sync::Arc::ptr_eq(&original.rgba, &turned.rgba));
+    for y in 0..31 {
+        for x in 0..31 {
+            let a = original.rgba[(y * 31 + x) * 4 + 3];
+            let b = turned.rgba[(x * 31 + 30 - y) * 4 + 3];
+            assert!(a.abs_diff(b) <= 1);
+        }
+    }
+    frame(&context, 200., true, vec![], |ui| {
+        let before = ui.next_auto_id();
+        super::icons::rotation_cursor(ui.ctx(), id, 0.);
+        assert_eq!(ui.next_auto_id(), before);
+    });
+}
+
 fn direct(ui: &mut Ui, action: TextAction<'_>) -> Response {
     if action.toolbar_width.is_none()
         && !action.primary

@@ -2090,6 +2090,9 @@ impl host::App for Editor {
             } else {
                 self.navigate(ui, &response, geometry, pixels_per_point)
             };
+            if cropping && canvas_input {
+                self.crop_rotation_cursor(ui, &response, geometry);
+            }
             if self.crop_edit.is_none() {
                 self.last_layout = Some((geometry, pixels_per_point));
             }
