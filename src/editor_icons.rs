@@ -1,3 +1,4 @@
+use super::presentation::CONTROL_HEIGHT;
 use egui::{Rect, Response, Stroke, Ui, Vec2};
 
 /// Project-authored outline artwork, drawn in logical points without a font or asset dependency.
@@ -164,7 +165,7 @@ impl Icon {
 
 pub(super) fn row<R>(ui: &mut Ui, contents: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
     ui.allocate_ui_with_layout(
-        egui::vec2(ui.available_width(), 28.),
+        egui::vec2(ui.available_width(), CONTROL_HEIGHT),
         egui::Layout::left_to_right(egui::Align::Center),
         contents,
     )
@@ -181,7 +182,7 @@ pub(super) fn button(
         ui.add_enabled_ui(enabled, |ui| {
             let response = ui.add(
                 egui::Button::new("")
-                    .min_size(Vec2::splat(28.))
+                    .min_size(Vec2::splat(CONTROL_HEIGHT))
                     .frame_when_inactive(false),
             );
             response.widget_info(|| {

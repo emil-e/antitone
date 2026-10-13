@@ -30,6 +30,8 @@ mod document;
 mod icons;
 #[path = "editor_preferences.rs"]
 mod preferences;
+#[path = "editor_ui.rs"]
+mod presentation;
 use crate::project::{Development, Source, SourceId};
 use document::Document;
 #[path = "editor_files.rs"]
@@ -1485,9 +1487,9 @@ impl Editor {
                                 match &mut self.roll.response {
                                     crate::processing::Response::Original => {
                                         ui.label("Classic curve · camera model 4");
-                                        if ui.button("Use adjustable response").on_hover_text(
+                                        if presentation::TextAction::new("Use adjustable response").help(
                                             "Explicitly use toe 2.5 with shoulder off. Calibration, gamma, balance and exposure are kept; this changes the response, not RAW development or ACES.",
-                                        ).clicked() {
+                                        ).show(ui).clicked() {
                                             self.roll.response = crate::processing::Response::film();
                                         }
                                     }

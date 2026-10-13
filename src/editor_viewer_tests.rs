@@ -98,6 +98,10 @@ fn bar_and_canvas_are_stable_across_tools_source_quality_loading_and_errors() {
         let context = egui::Context::default();
         warm(&mut editor, &context, size);
         let canvas = editor.last_layout.unwrap().0.canvas;
+        let bar = egui::containers::panel::PanelState::load(&context, egui::Id::new("viewer-bar"))
+            .unwrap()
+            .outer_rect;
+        assert_eq!(bar.height(), 40.);
         let before = labels(&mut editor, &context, size, vec![]);
         let fit = before.iter().find(|(s, _)| s == "Fit").unwrap().1;
         assert!(fit.top() >= canvas.bottom());
@@ -174,6 +178,7 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                         .1
                         .bounds()
                         .unwrap();
+                    assert_eq!(bounds.y1 - bounds.y0, 28.);
                     assert!(bounds.y0 as f32 >= canvas.bottom());
                     assert!(bounds.x1 as f32 <= canvas.right() + 4.);
                 }
@@ -686,6 +691,7 @@ fn geometry_tools_use_trailing_viewer_bar_actions_and_only_their_own_inspector()
                             .1
                             .bounds()
                             .unwrap();
+                        assert_eq!(bounds.y1 - bounds.y0, 28.);
                         assert!(bounds.y0 as f32 >= canvas.bottom());
                         assert!(bounds.x1 as f32 <= canvas.right() + 4.);
                     }

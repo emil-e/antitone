@@ -20,6 +20,7 @@ impl Editor {
 
     pub(super) fn viewer_bar(&mut self, ui: &mut egui::Ui) -> Option<f32> {
         use icons::Icon;
+        use presentation::{CONTROL_HEIGHT, TextAction, VIEWER_BAR_HEIGHT, VIEWER_ITEM_GAP};
         let mut zoom_action = None;
         let cropping = self.crop_edit.is_some();
         let tool = self.viewer_tool();
@@ -32,20 +33,22 @@ impl Editor {
         let navigating = self.ready.is_some() && !self.busy;
         let inspecting = navigating && calibrated && tool.is_none();
         egui::Panel::bottom("viewer-bar")
-            .exact_size(40.)
+            .exact_size(VIEWER_BAR_HEIGHT)
             .show_separator_line(false)
             .frame(egui::Frame::side_top_panel(ui.style()).fill(surface()))
             .show(ui, |ui| {
-                ui.spacing_mut().item_spacing.x = 4.;
+                ui.spacing_mut().item_spacing.x = VIEWER_ITEM_GAP;
                 icons::row(ui, |ui| {
                     let target = if self.target == OutputTarget::DisplayP3 { "Display P3" } else { "sRGB" };
                     let quality = if self.pending_preview.is_some() { " · Cached preview" } else if self.source || self.ready.is_none() { "" } else if self.refining.is_some() { " · Refining" } else if self.settled.is_none() { " · Approximate" } else { "" };
                     let state = format!("{target}{quality}");
                     let tool_font = egui::FontId::proportional(12.);
                     let tool_action_space = 8.;
+                    let cancel_action = TextAction::new("Cancel").enabled(!self.busy).toolbar(0.).help("Cancel the active tool (Escape).");
+                    let apply_action = TextAction::new("Apply").enabled(navigating && (cropping || self.region.is_some())).primary().toolbar(0.).help("Apply the active tool (Enter).");
                     let trailing_width = if let Some((_, title)) = tool {
                         let title_width = ui.painter().layout_no_wrap(title.into(), tool_font.clone(), ui.visuals().text_color()).size().x;
-                        let actions_width = ["Cancel", "Apply"].into_iter().map(|label| ui.painter().layout_no_wrap(label.into(), egui::TextStyle::Button.resolve(ui.style()), ui.visuals().text_color()).size().x + 2. * ui.spacing().button_padding.x).sum::<f32>();
+                        let actions_width = cancel_action.width(ui) + apply_action.width(ui);
                         title_width + actions_width + 16. + 12. + 3. * ui.spacing().item_spacing.x + tool_action_space
                     } else {
                         ui.painter().layout_no_wrap(state.clone(), egui::TextStyle::Small.resolve(ui.style()), ui.visuals().text_color()).size().x
@@ -56,8 +59,7 @@ impl Editor {
                     }
                     let layout = self.crop_edit.as_ref().and_then(|edit| edit.layout).or(self.last_layout.map(|(layout, _)| layout));
                     let zoom = layout.map_or("—".into(), |layout| format!("{:.0}%", 100. * layout.scale * ui.ctx().pixels_per_point()));
-                    let zoom = ui.add_enabled(navigating, egui::Button::new(zoom).min_size(egui::vec2(50., 28.))).on_hover_text("Show 100%: one source pixel per physical display pixel.");
-                    zoom.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, zoom.enabled(), "100%"));
+                    let zoom = TextAction::new(&zoom).enabled(navigating).toolbar(50.).name("100%").help("Show 100%: one source pixel per physical display pixel.").show(ui);
                     if zoom.clicked() { zoom_action = Some(1.); }
                     if show_zoom_steps {
                         for (icon, name, factor) in [(Icon::ZoomOut, "Zoom out", 1. / 1.25), (Icon::ZoomIn, "Zoom in", 1.25)] {
@@ -118,8 +120,8 @@ impl Editor {
                         });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if let Some((icon, title)) = tool {
-                            egui::Frame::NONE.fill(ui.visuals().selection.bg_fill.linear_multiply(0.15)).inner_margin(egui::Margin::symmetric(6, 0)).show(ui, |ui| {
-                                ui.allocate_ui_with_layout(egui::vec2(trailing_width - 12., 28.), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            egui::Frame::NONE.fill(presentation::active_tool_fill(ui)).inner_margin(egui::Margin::symmetric(6, 0)).show(ui, |ui| {
+                                ui.allocate_ui_with_layout(egui::vec2(trailing_width - 12., CONTROL_HEIGHT), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                     let (rect, _) = ui.allocate_exact_size(egui::vec2(16., 16.), egui::Sense::hover());
                                     if self.busy {
                                         ui.put(rect, egui::Spinner::new().size(16.));
@@ -129,8 +131,8 @@ impl Editor {
                                     let label = ui.add(egui::Label::new(egui::RichText::new(title).font(tool_font).strong()));
                                     label.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, label.enabled(), format!("Active tool: {title}{}", if self.busy { " · Working" } else { "" })));
                                     ui.add_space(tool_action_space);
-                                    cancel = ui.add_enabled(!self.busy, egui::Button::new("Cancel").min_size(egui::vec2(0., 28.))).on_hover_text("Cancel the active tool (Escape).").clicked();
-                                    apply = ui.add_enabled(navigating && (cropping || self.region.is_some()), egui::Button::new("Apply").fill(ui.visuals().selection.bg_fill).min_size(egui::vec2(0., 28.))).on_hover_text("Apply the active tool (Enter).").clicked();
+                                    cancel = cancel_action.show(ui).clicked();
+                                    apply = apply_action.show(ui).clicked();
                                 });
                             });
                         } else {

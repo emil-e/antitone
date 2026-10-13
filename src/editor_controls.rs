@@ -1,4 +1,7 @@
-use super::icons::{self, Icon};
+use super::{
+    icons::{self, Icon},
+    presentation::{CONTROL_HEIGHT, active_tool_fill},
+};
 use crate::{
     color::{Balance, ap1_to_cones, opponent, opponent_coordinates},
     processing::{
@@ -30,8 +33,10 @@ pub fn collect_expansion(ctx: &egui::Context) -> std::collections::BTreeMap<Stri
 
 pub fn stage_tabs(ui: &mut Ui, selected: &mut usize) {
     // One allocation avoids fractional button widths growing the sidebar and changing Fit.
-    let (bar, _) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 28.), egui::Sense::hover());
+    let (bar, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), CONTROL_HEIGHT),
+        egui::Sense::hover(),
+    );
     let width = (bar.width() - 24.) / 3.;
     for (index, (label, help)) in [
         ("Roll", "Shared scanning setup, calibration and negative inversion."),
@@ -106,12 +111,13 @@ pub fn section<R>(
         let mut reset = false;
         let header = icons::row(ui, |ui| {
             let reset_width = if reset_enabled.is_some() {
-                28. + ui.spacing().item_spacing.x
+                CONTROL_HEIGHT + ui.spacing().item_spacing.x
             } else {
                 0.
             };
             let width = (ui.available_width() - reset_width).max(1.);
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 28.), egui::Sense::hover());
+            let (rect, _) =
+                ui.allocate_exact_size(egui::vec2(width, CONTROL_HEIGHT), egui::Sense::hover());
             let response = ui.interact(
                 rect,
                 ui.make_persistent_id("disclosure"),
@@ -236,7 +242,7 @@ pub(super) fn active_tool<R>(
 ) -> R {
     let mut reset_clicked = false;
     egui::Frame::NONE
-        .fill(ui.visuals().selection.bg_fill.linear_multiply(0.15))
+        .fill(active_tool_fill(ui))
         .inner_margin(6.)
         .show(ui, |ui| {
             icons::row(ui, |ui| {

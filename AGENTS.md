@@ -52,6 +52,16 @@ An explicit wrap-up request authorizes local delivery of agreed work, never a pu
 - One RGB16 production source path: 8 bytes/pixel. Higher precision belongs in temporaries/small constants, not a wide retained source cache.
 - Samples are read-only, ignored and never committed. Do not automate Lightroom/Resolve or add correction workflows without a request. No hidden pedestal/clamp or development changes to improve inspection.
 
+## UI engineering
+
+For new or changed editor UI, use the shared code rather than copy feature-local layout, painting or interaction logic:
+
+- Inspect [presentation tokens/text actions](src/editor_ui.rs), [icon actions](src/editor_icons.rs) and [inspector controls](src/editor_controls.rs) first. Use their applicable APIs and semantic roles; preserve natural versus toolbar sizing. Follow [control contracts](docs/contracts/editor-controls.md) and [workspace boundaries](docs/architecture.md#editor-workspace).
+- Extend a shared component for a real supported variant instead of bypassing it with local style/interaction overrides. Do not unify deliberately different tab/card/tool treatments or specialized image visualization merely because they share an accent.
+- Keep domain values/defaults, availability decisions, transactions, processing, workers and persistence in their existing owners. Components present supplied state and return responses; preserve accessible names, focus/keyboard precedence, disabled safety and geometry/IDs.
+- A local implementation is acceptable only for a genuinely one-off requirement that does not fit an existing component family. State the concrete reason when proposing it and keep it within the shared UX language. When a second consumer needs that pattern, promote it into a shared component rather than copy it. Native egui menu/selection controls and specialized visualization need not become generic text actions.
+- Verify the affected component contract and composed consumer. Avoid speculative abstractions, a parallel widget/state framework and unrelated migrations. Keep these entry-point links current as shared families evolve.
+
 ## Build and generated storage
 
 Dogfood the human workflow: ordinary Cargo from the repository root, project rustup selection and Apple Clang from `.cargo/config.toml`. Follow [README](README.md), `./scripts/setup-native.sh`, `cargo build-app` and `cargo app`. Do not maintain an agent bootstrap or Cargo wrapper. Sandbox-required environment overrides are local execution details, not a second workflow.
