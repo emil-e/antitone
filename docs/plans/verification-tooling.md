@@ -1,6 +1,6 @@
 # Verification tooling and UI test structure
 
-Status: unfinished RAW-fixture, reference and UI restructuring. Current probes have purpose headers; supported commands are in the [diagnostic guide](../diagnostics.md). No checked-in RAW fixtures, UI-test feature or framework integration exist. [Roadmap](../../PLAN.md) owns priority; this plan does not change active photographic work or shared UI ownership.
+Status: unfinished fixture-regression migration, reference and UI restructuring. Use the [authored DNGs](../../tests/fixtures/raw/README.md) and [supported diagnostics](../diagnostics.md) as the starting coverage. General composed-UI/native presentation remains unproved. No UI-test feature or framework integration exists. [Roadmap](../../PLAN.md) owns priority; this plan does not change active photographic work or shared UI ownership.
 
 ## Goal
 
@@ -40,14 +40,9 @@ Build/setup scripts remain the normal shared infrastructure. No agent-specific C
 - Keep a small maintained generation recipe in `scripts/` and a fixture README explaining named patches, metadata, dimensions and intended assertions. Regeneration must be reproducible, with no wall-clock/random/path-dependent metadata. The script is maintenance tooling, not a prerequisite for running tests.
 - Checked-in fixtures are read-only. File-edit/revision/error tests operate on temporary copies. Projects, caches, exports, logs and captures use isolated temporary or ignored output directories; do not load or overwrite a developer's preferences or grades.
 
-### Smallest useful set
+### Remaining fixture coverage
 
-First prove one DNG through `RawFile`, `Scan`, camera RGB16, preview and TIFF/AP0 EXR export. Add variants only for concrete coverage:
-
-- Safe uniform calibration patches, neutral/colour ramps, edges and detail.
-- Deliberate black/white/clipping cases and signed/HDR results after processing.
-- A matching smooth bare-light reference and a short synthetic roll with controlled film/picture populations for correction and Analyze.
-- An authored embedded preview/orientation variant if required for the production extraction/replacement boundary; keep direct JPEG/ICC unit fixtures for decoder-only tests.
+Reuse the [current fixture set and its named assertions](../../tests/fixtures/raw/README.md) before adding variants. Add data only for an uncovered gate, such as capture clipping/rejection, corrupt metadata or a required native-pixel viewport. Keep direct JPEG/ICC unit fixtures for decoder-only checks; synthetic RAW success does not replace proprietary-camera acceptance.
 
 Start with dimensions in the hundreds, not full camera resolution. Determine the actual minimum from patch support, crop/refinement, Analyze adequacy and viewport tests. Do not weaken sample-count or numerical gates to accommodate tiny fixtures. Native-pixel tests may need a smaller viewport or one deliberately larger fixture. Generate large workloads only for explicitly selected resource/performance exercises.
 
@@ -112,11 +107,10 @@ The native suite remains small: window/surface presentation, resize, close/compl
 
 ## Ordered implementation slices
 
-1. **RAW fixture proof.** Check in one tiny authored DNG and its recipe; prove metadata, sensor data, normal LibRaw development, Scan/proxy mapping and export. Establish size/runtime needs; then add the minimal correction/roll/preview variants. Stop rather than alter production processing if fixture metadata is invalid.
-2. **Fixture regression migration and probe consolidation.** Replace private-file dependencies and hidden cache prerequisites in maintained automated checks. Transfer useful scan/calibration/raw/export assertions, broader gamut coverage and independent ImageIO reopening before deleting their old entrypoints. Preserve current Analyze numerical/transaction tests.
-3. **UI framework proof.** Wire the optional dependency/feature and demonstrate semantic input, asynchronous state, custom GPU rendering and a named capture. Decide renderer adapters and snapshot policy from this proof; do not rewrite all UI tests first.
-4. **Scenario/native migration.** Port one end-to-end scenario at a time into framework tests or the small native suite. Exercise failure/timeout/early-close behavior and production build exclusion. Remove equivalent smoke classes, CLI/env branches and capture scripts as replacements pass; do not leave parallel supported paths.
-5. **Contributor handoff.** Organize core/fixture/UI/reference/native/optional-real-use commands in their existing guides. Update architecture only for implemented boundaries and the owning topic guides only for changed behavior. Replace named private-photo recipes with supplied-source acceptance instructions. Remove completed scope from this plan; delete it once all maintained behavior and remaining acceptance have proper homes.
+1. **Fixture regression migration and probe consolidation.** Replace private-file dependencies and hidden cache prerequisites in maintained automated checks. Transfer useful scan/calibration/raw/export assertions, broader gamut coverage and independent ImageIO reopening before deleting their old entrypoints. Preserve current Analyze numerical/transaction tests.
+2. **UI framework proof.** Wire the optional dependency/feature and demonstrate semantic input, asynchronous state, custom GPU rendering and a named capture. Decide renderer adapters and snapshot policy from this proof; do not rewrite all UI tests first.
+3. **Scenario/native migration.** Port one end-to-end scenario at a time into framework tests or the small native suite. Exercise failure/timeout/early-close behavior and production build exclusion. Remove equivalent smoke classes, CLI/env branches and capture scripts as replacements pass; do not leave parallel supported paths.
+4. **Contributor handoff.** Organize core/fixture/UI/reference/native/optional-real-use commands in their existing guides. Update architecture only for implemented boundaries and the owning topic guides only for changed behavior. Replace named private-photo recipes with supplied-source acceptance instructions. Remove completed scope from this plan; delete it once all maintained behavior and remaining acceptance have proper homes.
 
 ## Acceptance and verification
 
@@ -131,10 +125,11 @@ Verify each slice with focused tests/lints/parser/link checks and inspect its di
 
 ## Open gates and exact next action
 
-- Which minimal DNG metadata and dimensions work through the pinned LibRaw path without changing it? Prove this before broad fixture migration.
+- Corrected-thumbnail coordination, general composed interaction/native presentation and Adobe DNG Validator conformance remain unproved; the named authored worker tests are not acceptance for those boundaries.
+- Initial-path opening in `Editor::new` still recognizes only ARW; broader picker filters do not prove CLI startup support for other RAW suffixes. Keep this entry-point gap explicit until separately corrected.
 - Does egui_kittest's offscreen renderer support the production callbacks/device/format needs with a narrow adapter? Prove this before committing to the framework.
 - Are any reviewed visual baselines needed, and what narrowly justified renderer/platform expectations apply? No blanket golden-image suite is selected.
 - Which additional optional Analyze/real-camera diagnostics answer a concrete current acceptance question? Unclear utility defaults to deletion, not archival retention.
 - Full OS accessibility/dialog automation and real photographic/performance/monitor acceptance are not selected by this restructuring.
 
-Next: prove one checked-in authored DNG through pinned LibRaw, Scan/proxy mapping and TIFF/AP0 EXR export, with a deterministic generation recipe and explicit provenance/size limits. Do not begin wholesale UI or numerical-tool replacement before their replacement gates are demonstrated.
+Next: migrate the retained Scan/calibration/RAW probe gates and explicit fixture-dependent reference inputs, keeping independent native/OCIO/ImageIO coverage until equivalent replacements pass. Do not begin wholesale UI or numerical-tool replacement before their replacement gates are demonstrated.

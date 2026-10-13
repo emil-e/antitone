@@ -62,6 +62,15 @@ impl Metadata {
     pub fn camera_model(&self) -> String {
         format!("{} {}", self.make(), self.model())
     }
+    /// Selects as-shot gains, sharing green with an unspecified second green on three-color sources.
+    /// Raw metadata and explicitly supplied development gains remain unchanged.
+    pub fn as_shot_wb(&self) -> [f64; 4] {
+        let mut wb = self.cam_mul;
+        if self.colors == 3 && wb[3] == 0. {
+            wb[3] = wb[1];
+        }
+        wb
+    }
     pub fn camera_to_ap1(&self) -> Result<DMat3, Error> {
         let camera_to_srgb = self.camera_to_srgb();
         if !camera_to_srgb.is_finite() || camera_to_srgb.determinant().abs() < 1e-8 {
@@ -536,6 +545,79 @@ mod tests {
         m.inset_height = 5760;
         m.rgb_cam = DMat3::IDENTITY.to_cols_array();
         m
+    }
+
+    #[test]
+    fn as_shot_wb_aliases_only_an_unspecified_second_green_on_three_color_sources() {
+        let mut m = metadata_fixture();
+        m.colors = 3;
+        m.cam_mul = [2., 1.25, 1.5, 0.];
+        assert_eq!(m.as_shot_wb(), [2., 1.25, 1.5, 1.25]);
+        assert_eq!(m.cam_mul, [2., 1.25, 1.5, 0.]);
+        for gain in [0.75, -1., f64::NAN, f64::INFINITY] {
+            m.cam_mul[3] = gain;
+            assert_eq!(
+                m.as_shot_wb().map(f64::to_bits),
+                m.cam_mul.map(f64::to_bits)
+            );
+        }
+        m.colors = 4;
+        m.cam_mul[3] = 0.;
+        assert_eq!(m.as_shot_wb(), m.cam_mul);
+        m.colors = 3;
+        for channel in 0..3 {
+            for gain in [0., -1., f64::NAN, f64::INFINITY] {
+                m.cam_mul = [2., 1.25, 1.5, 0.];
+                m.cam_mul[channel] = gain;
+                let wb = m.as_shot_wb();
+                assert_eq!(wb[channel].to_bits(), gain.to_bits());
+                assert_eq!(wb[3].to_bits(), m.cam_mul[1].to_bits());
+            }
+        }
+    }
+
+    #[cfg(feature = "editor")]
+    #[test]
+    fn authored_dng_thumbnail_extraction_keeps_sensor_and_development_untouched() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw");
+        let path = root.join("preview.dng");
+        let original = std::fs::read(&path).unwrap();
+        let mut raw = RawFile::open(&path).unwrap();
+        let thumbnail = raw.embedded_thumbnail().unwrap().unwrap();
+        assert_eq!((thumbnail.flip, thumbnail.color_space), (6, 1));
+        assert!(!raw.unpacked);
+        assert!(raw.diagnostics.is_none());
+        assert!(raw.camera_image().is_err());
+        assert_eq!(
+            raw.embedded_thumbnail().unwrap().unwrap().jpeg,
+            thumbnail.jpeg
+        );
+        let before = raw.unpack().unwrap();
+        let mut plain = RawFile::open(&root.join("patches.dng")).unwrap();
+        let expected = plain.develop_camera([1.; 4]).unwrap();
+        let actual = raw.develop_camera([1.; 4]).unwrap();
+        for y in 0..192 {
+            for x in 0..256 {
+                assert_eq!(
+                    actual.pixel_codes(x, y).unwrap(),
+                    expected.pixel_codes(x, y).unwrap()
+                );
+            }
+        }
+        assert_eq!(raw.unpack().unwrap(), before);
+        assert_eq!(
+            raw.embedded_thumbnail().unwrap().unwrap().jpeg,
+            thumbnail.jpeg
+        );
+        drop(raw);
+        assert_eq!(
+            image::load_from_memory(&thumbnail.jpeg)
+                .unwrap()
+                .to_rgb8()
+                .dimensions(),
+            (16, 8)
+        );
+        assert_eq!(std::fs::read(path).unwrap(), original);
     }
 
     #[test]

@@ -47,7 +47,7 @@ impl Scan {
         Self::from_raw(raw, fixed_wb)
     }
     pub(crate) fn from_raw(mut raw: RawFile, fixed_wb: Option<[f64; 4]>) -> Result<Self> {
-        let wb = fixed_wb.unwrap_or(raw.metadata.cam_mul);
+        let wb = fixed_wb.unwrap_or_else(|| raw.metadata.as_shot_wb());
         let matrix = raw.metadata.camera_to_ap1()?;
         let camera_model = raw.metadata.camera_model();
         let area = raw.metadata.image_area()?;

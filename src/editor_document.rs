@@ -223,7 +223,7 @@ fn metadata_development(metadata: &Metadata) -> Result<SourceDevelopment> {
 }
 pub(super) fn read_source(path: &Path) -> Result<(Source, [f64; 4])> {
     let (source, raw) = open_source(path)?;
-    Ok((source, raw.metadata.cam_mul))
+    Ok((source, raw.metadata.as_shot_wb()))
 }
 pub(super) fn open_source(path: &Path) -> Result<(Source, RawFile)> {
     let path = absolute(path)?;

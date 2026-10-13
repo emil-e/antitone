@@ -45,7 +45,7 @@ fn main() -> Result<()> {
     }
     let start = Instant::now();
     let dmax_source = RawFile::open(Path::new(&a[5]))?;
-    let wb = dmax_source.metadata.cam_mul;
+    let wb = dmax_source.metadata.as_shot_wb();
     let floor = antitone::processing::CAMERA_INPUT_FLOOR;
     drop(dmax_source);
     let calibration = Calibration {

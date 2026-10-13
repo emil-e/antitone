@@ -1,6 +1,112 @@
 use super::*;
 use crate::project::SourceDevelopment;
 
+#[test]
+fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_open_state() {
+    pollster::block_on(async {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw");
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = instance
+            .request_adapter(&Default::default())
+            .await
+            .expect("authored worker test requires Metal");
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let mut editor = Editor::new(&device, &queue, None);
+        // Thumbnail scheduling is separate; this worker test must not touch the user's disk cache.
+        editor.thumbnails = Thumbnails::default();
+        editor.add_raws(vec![root.join("roll-0.dng"), root.join("roll-1.dng")]);
+        wait_with_limit(&mut editor, Duration::from_secs(60));
+        assert!(editor.ready.is_some(), "{}", editor.status);
+        assert_eq!(editor.document.project.order.len(), 2);
+        let selected = editor.current_source;
+        editor.document.project.analysis_area = Some([96, 96, 320, 320]);
+        editor.roll.gamma = 0.7;
+        editor.roll_orientation.turn_clockwise();
+        editor.photo_orientation.flips.horizontal = true;
+        editor.crop = Some(crate::crop::Crop {
+            center: [256., 256.],
+            size: [288, 288],
+            angle: 0.05,
+        });
+        editor.sync_document();
+        let before = editor.document.project.clone();
+        click_analyze(&mut editor);
+        assert!(editor.analysis_pending.is_some());
+        wait_with_limit(&mut editor, Duration::from_secs(60));
+        assert!(editor.status.starts_with("Analyzed 2"), "{}", editor.status);
+        assert_eq!(editor.current_source, selected);
+        assert_eq!(editor.roll.gamma, 0.7);
+        assert_eq!(editor.roll.response, before.roll.response);
+        assert_eq!(editor.document.project.orientation, before.orientation);
+        for (source, prior) in editor.document.project.sources.iter().zip(&before.sources) {
+            assert_eq!(source.orientation, prior.orientation);
+            assert_eq!(source.crop, prior.crop);
+            assert_eq!(source.photo.wb, Balance::default());
+        }
+        let expected = 3000. / 4031.;
+        assert!(
+            editor
+                .document
+                .project
+                .dmin
+                .unwrap()
+                .iter()
+                .all(|v| (v - expected).abs() <= 2. / 65535.)
+        );
+        let ids = &editor.document.project.order;
+        assert!(
+            editor
+                .document
+                .project
+                .source(ids[0])
+                .unwrap()
+                .photo
+                .exposure
+                > editor
+                    .document
+                    .project
+                    .source(ids[1])
+                    .unwrap()
+                    .photo
+                    .exposure
+        );
+        let accepted = editor.document.project.clone();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("authored-roll.antitone.json");
+        editor.queue_save(path.clone(), crate::project::Save::New, None);
+        wait_with_limit(&mut editor, Duration::from_secs(60));
+        assert!(!editor.document.dirty(), "{}", editor.status);
+        editor.start_document(DocumentWork::Open(path));
+        wait_with_limit(&mut editor, Duration::from_secs(60));
+        assert_eq!(editor.document.project, accepted);
+        editor.document.project.analysis_area = Some([96, 96, 8, 8]);
+        let sparse = editor.document.project.clone();
+        editor.begin_analysis();
+        wait_with_limit(&mut editor, Duration::from_secs(60));
+        assert!(
+            editor.status.contains("picture samples"),
+            "{}",
+            editor.status
+        );
+        assert_eq!(editor.document.project, sparse);
+        editor.document.project.analysis_area = accepted.analysis_area;
+        let before_cancel = editor.document.project.clone();
+        editor.begin_analysis();
+        assert!(editor.analysis_pending.is_some());
+        assert!(editor.busy);
+        editor.cancel_analysis();
+        wait_with_limit(&mut editor, Duration::from_secs(60));
+        assert!(editor.analysis_pending.is_none());
+        assert!(!editor.busy);
+        assert_eq!(editor.status, "Analysis cancelled; grade unchanged");
+        assert_eq!(editor.document.project, before_cancel);
+        assert!(editor.ready.is_some());
+    });
+}
+
 fn state() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
     let (commands, receiver) = mpsc::channel();
     let (send, messages) = mpsc::channel();
@@ -1007,13 +1113,12 @@ fn escape_cancels_confirmation_without_invalidating_settled_preview_or_grade() {
 }
 
 fn wait(editor: &mut Editor) {
+    wait_with_limit(editor, Duration::from_secs(180));
+}
+fn wait_with_limit(editor: &mut Editor, limit: Duration) {
     let start = std::time::Instant::now();
     while editor.busy {
-        assert!(
-            start.elapsed() < Duration::from_secs(180),
-            "{}",
-            editor.status
-        );
+        assert!(start.elapsed() < limit, "{}", editor.status);
         std::thread::sleep(Duration::from_millis(10));
         editor.receive();
     }

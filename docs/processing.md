@@ -22,6 +22,8 @@ LibRaw develops the RAW into linear camera RGB using a fixed roll white balance.
 
 LibRaw recognizes more RAW formats than Antitone's developer accepts. This path currently needs three-colour integer Bayer data without repeated black-level patterns; X-Trans, Foveon and linear DNG do not fit it. Both photo and reference pickers offer common camera RAW extensions, but decoded contents, the camera matrix and WB—not the filename—determine whether a source can be used. [Broader LibRaw compatibility](plans/raw-compatibility.md) is future work.
 
+The first scan selects its as-shot WB for the roll; later loads keep that choice. LibRaw can leave the second green site's gain unspecified on a three-colour Bayer source. Automatic selection shares the green gain in that case without changing raw metadata or repairing other invalid gains. Explicit WB, including a saved roll's WB, is used as supplied and must pass validation.
+
 Inversion must happen before the camera-to-working-space matrix. A matrix mixes channels; inversion applies a different nonlinear response to each channel. Mixing first and inverting afterward would produce a different model. This is the reason for the [native-camera boundary](decisions/native-camera-inversion.md), not simply an implementation preference.
 
 An optional [flat-field map](flat-field.md) corrects scan illumination in these same camera coordinates before inversion.

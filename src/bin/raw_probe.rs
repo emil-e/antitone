@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let start = Instant::now();
         let mut raw = RawFile::open(&path)?;
         let metadata = raw.metadata;
-        let wb = *fixed_wb.get_or_insert(metadata.cam_mul);
+        let wb = *fixed_wb.get_or_insert_with(|| metadata.as_shot_wb());
         let matrix = metadata.camera_to_ap1()?;
         let area = metadata.image_area()?;
         println!("\nSOURCE {}", path.display());

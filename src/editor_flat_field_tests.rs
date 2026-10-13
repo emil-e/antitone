@@ -265,6 +265,113 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
 }
 
 #[test]
+fn authored_reference_worker_cancels_applies_and_restores_without_reference_reread() {
+    pollster::block_on(async {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw");
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = instance
+            .request_adapter(&Default::default())
+            .await
+            .expect("authored correction worker test requires Metal");
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let mut editor = Editor::new(&device, &queue, None);
+        // Thumbnail scheduling is separate and must not write the user's disk cache.
+        editor.thumbnails = Thumbnails::default();
+        editor.add_raws(vec![root.join("illuminated-patches.dng")]);
+        wait_with_limit(&mut editor, Duration::from_secs(60));
+        assert!(editor.ready.is_some(), "{}", editor.status);
+        let selected = editor.current_source;
+        let mut scan = Scan::open(&root.join("illuminated-patches.dng"), None).unwrap();
+        editor.dmin = Some(
+            scan.reference(Rect {
+                x: 16,
+                y: 16,
+                width: 32,
+                height: 32,
+            })
+            .unwrap(),
+        );
+        editor.dmax = Some(
+            scan.reference(Rect {
+                x: 80,
+                y: 16,
+                width: 32,
+                height: 32,
+            })
+            .unwrap(),
+        );
+        editor.sync_document();
+        let rgb = (editor.dmin, editor.dmax);
+        let original = editor.document.project.clone();
+        editor.begin_flat_edit(root.join("bare-light.dng"), None);
+        wait_with_limit(&mut editor, Duration::from_secs(60));
+        assert_eq!(editor.pick, Some(Pick::Flat));
+        assert!(editor.region.is_some());
+        editor.finish_pick();
+        assert_eq!(editor.document.project, original);
+        assert_eq!(editor.current_source, selected);
+        editor.begin_flat_edit(root.join("bare-light.dng"), None);
+        wait_with_limit(&mut editor, Duration::from_secs(60));
+        editor.apply_pick();
+        wait_with_limit(&mut editor, Duration::from_secs(60));
+        assert!(editor.correction.is_some(), "{}", editor.status);
+        assert_eq!(editor.document.project.order, original.order);
+        assert_eq!((editor.dmin, editor.dmax), rgb);
+        assert_eq!(editor.current_source, selected);
+        let settings = editor.document.project.flat_field.clone().unwrap();
+        assert!(
+            editor
+                .document
+                .project
+                .source(settings.reference)
+                .unwrap()
+                .reference_only
+        );
+        let directory = tempfile::tempdir().unwrap();
+        let accepted = editor.document.project.clone();
+        editor.begin_flat_edit(directory.path().join("missing.dng"), None);
+        assert!(editor.busy);
+        assert!(editor.flat_edit.is_some());
+        wait_with_limit(&mut editor, Duration::from_secs(60));
+        assert!(editor.status.contains("open"), "{}", editor.status);
+        assert!(!editor.busy);
+        assert!(editor.flat_edit.is_none());
+        assert!(editor.pick.is_none());
+        assert!(editor.document_pending.is_none());
+        assert_eq!(editor.document.project, accepted);
+        assert_eq!(editor.current_source, selected);
+        assert!(editor.ready.is_some());
+        let path = directory.path().join("authored-correction.antitone.json");
+        editor.queue_save(path.clone(), crate::project::Save::New, None);
+        wait_with_limit(&mut editor, Duration::from_secs(60));
+        assert!(!editor.document.dirty(), "{}", editor.status);
+        editor.start_document(DocumentWork::Open(path));
+        wait_with_limit(&mut editor, Duration::from_secs(60));
+        assert_eq!(editor.document.project, accepted);
+        assert_eq!(
+            editor.correction.as_ref().unwrap().settings.map,
+            settings.map
+        );
+        let mut missing = accepted;
+        missing.source_mut(settings.reference).unwrap().path =
+            directory.path().join("unavailable.dng");
+        let path = directory.path().join("missing-reference.antitone.json");
+        missing.save(&path, crate::project::Save::New).unwrap();
+        editor.start_document(DocumentWork::Open(path));
+        wait_with_limit(&mut editor, Duration::from_secs(60));
+        assert_eq!(editor.document.project, missing);
+        assert_eq!(
+            editor.correction.as_ref().unwrap().settings.map,
+            settings.map
+        );
+        assert!(editor.ready.is_some(), "{}", editor.status);
+    });
+}
+
+#[test]
 #[ignore = "read-only local RAW/Metal integration; run explicitly with supplied samples"]
 fn real_reference_editor_save_open_and_corrected_exports() {
     pollster::block_on(async {
@@ -513,14 +620,13 @@ fn real_reference_editor_save_open_and_corrected_exports() {
     });
 }
 fn wait(editor: &mut Editor) {
+    wait_with_limit(editor, Duration::from_secs(120));
+}
+fn wait_with_limit(editor: &mut Editor, limit: Duration) {
     let start = std::time::Instant::now();
     while editor.busy {
         editor.receive();
-        assert!(
-            start.elapsed() < Duration::from_secs(120),
-            "{}",
-            editor.status
-        );
+        assert!(start.elapsed() < limit, "{}", editor.status);
         std::thread::sleep(Duration::from_millis(10));
     }
 }

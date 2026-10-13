@@ -27,12 +27,20 @@ cargo test --locked --no-default-features \
 cargo test --locked --features project \
   --test camera_project --test project --test film_project --test flat_field_project
 
+# Authored DNG plumbing; native libraries, no private photographs or desktop.
+cargo test --locked --features raw,export,project --test raw_dng --test raw_flat_field --test raw_roll
+
+# Authored import/correction/Analyze/JPEG workers; native setup and Metal, no desktop window.
+cargo test --locked --features editor --lib authored_ -- --test-threads=1
+
 # Production GPU math; requires Metal, not native RAW/rendering libraries.
 cargo test --locked --features gpu --test gpu_processing --test gpu_film_response
 
 # Composed editor, scopes and viewer; native setup and Metal required.
 cargo test --locked --features editor --lib --test scopes --test viewer
 ```
+
+The [authored RAW fixtures](../tests/fixtures/raw/README.md) are repository data, not private camera samples. They cover RAW/Scan/export, correction/map persistence, roll sampling and named Editor/JPEG worker flows. They do not establish native-dialog interaction, general composed-UI behavior or photographic quality. Tests read them directly and use temporary export/project outputs; they never generate or download their inputs. The fixture README explains the patch expectations and deterministic maintenance recipe.
 
 The photographic tests use an independent scalar oracle in [test support](../tests/support/photographic_reference.rs). Numerical gates live in the tests; do not loosen them merely to make a new implementation agree. A missing Metal device is a verification limit, not a numerical pass.
 

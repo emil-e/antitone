@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dmin_region = region(1)?;
     let dmax_region = region(6)?;
     let mut dmax_source = RawFile::open(Path::new(&arguments[5]))?;
-    let wb = dmax_source.metadata.cam_mul;
+    let wb = dmax_source.metadata.as_shot_wb();
     let matrix = dmax_source.metadata.camera_to_ap1()?;
     let floor = antitone::processing::CAMERA_INPUT_FLOOR;
     let dmax_sensor = dmax_source.region_sensor_diagnostics(dmax_region)?;

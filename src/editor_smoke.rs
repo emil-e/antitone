@@ -503,7 +503,7 @@ impl host::App for SmokeEditor {
                     crate::raw::RawFile::open(&self.dmax_source)
                         .unwrap()
                         .metadata
-                        .cam_mul
+                        .as_shot_wb()
                 );
                 assert_ne!(
                     wb,

@@ -18,6 +18,55 @@ fn jpeg(width: u32, height: u32, flip: i32) -> crate::raw::EmbeddedThumbnail {
     }
 }
 #[test]
+fn authored_dng_extraction_reaches_the_oriented_display_referred_placeholder_decoder() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/preview.dng");
+    let mut raw = crate::raw::RawFile::open(&path).unwrap();
+    let thumbnail = raw.embedded_thumbnail().unwrap().unwrap();
+    let image = decode(thumbnail).unwrap().unwrap();
+    assert_eq!(image.size, [8, 16]);
+    for y in 0..16 {
+        let code = if y < 8 { 64 } else { 192 };
+        for x in 0..8 {
+            assert_eq!(
+                image.pixels[y * 8 + x],
+                egui::Color32::from_rgb(code, code, code)
+            );
+        }
+    }
+    assert!(
+        raw.camera_image().is_err(),
+        "a camera JPEG is not developed/inverted RAW"
+    );
+}
+
+#[test]
+fn authored_dng_preview_worker_installs_and_releases_the_visible_placeholder() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/preview.dng");
+    let mut document = Document::default();
+    document.import(&[path]).unwrap();
+    let context = egui::Context::default();
+    let mut previews = EmbeddedPreviews::new(Arc::new(std::sync::OnceLock::new()));
+    let visible = vec![wanted(&document, 0)];
+    previews.request_visible(&visible, true);
+    let started = std::time::Instant::now();
+    while previews.pending() {
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "JPEG worker did not complete"
+        );
+        previews.receive(&document, &context);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(previews.get(&visible[0].1.source).unwrap().size(), [8, 16]);
+    // The proper-thumbnail coordinator removes replaced images from this wanted list.
+    previews.request_visible(&[], true);
+    assert!(previews.entries.is_empty());
+    assert!(!previews.pending());
+}
+
+#[test]
 fn jpeg_decode_is_bounded_oriented_and_display_referred_without_upscaling() {
     let normal = decode(jpeg(8, 4, 0)).unwrap().unwrap();
     assert_eq!(normal.size, [8, 4]);

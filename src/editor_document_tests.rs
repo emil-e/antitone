@@ -30,6 +30,35 @@ fn fixture(directory: &Path) -> Document {
     document
 }
 #[test]
+fn authored_dng_import_selects_as_shot_wb_and_open_preserves_saved_gains() {
+    let raw_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
+    let mut document = Document::default();
+    document.import(std::slice::from_ref(&raw_path)).unwrap();
+    assert_eq!(document.project.order.len(), 1);
+    assert_eq!(
+        document.project.development.as_ref().unwrap().fixed_wb,
+        [1.; 4]
+    );
+    let custom = [2., 1., 1.5, 0.75];
+    document.project.development.as_mut().unwrap().fixed_wb = custom;
+    let directory = tempfile::tempdir().unwrap();
+    let project_path = directory.path().join("grade.antitone.json");
+    let saved = document.save(&project_path, Save::New).unwrap();
+    let mut reopened = Document::open(&project_path).unwrap();
+    assert_eq!(reopened.project, saved.project);
+    reopened.import(std::slice::from_ref(&raw_path)).unwrap();
+    assert_eq!(
+        reopened.project.development.as_ref().unwrap().fixed_wb,
+        custom
+    );
+    let source = reopened.project.order[0];
+    let scan = Scan::open(&reopened.source_path(source).unwrap(), Some(custom)).unwrap();
+    assert_eq!(scan.fixed_wb, custom);
+    reopened.project.development.as_mut().unwrap().fixed_wb[3] = 0.;
+    assert!(reopened.validate().is_err());
+}
+
+#[test]
 fn stable_identity_keeps_photo_edits_independent_of_order_and_locator() {
     let directory = tempfile::tempdir().unwrap();
     let mut document = fixture(directory.path());
