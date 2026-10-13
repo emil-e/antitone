@@ -1,7 +1,7 @@
 //! Checks OCIO-generated GLSL/LUTs on Metal against CPU references; no window is needed.
 //! Requires fresh `.cache/probes` OCIO artifacts; writes adapted shaders there.
-//! An existing camera RGB16 fixture additionally gates the complete model-4 GPU path and floor flags.
-//! Cache presence selects that extension; agreement is not photographic or monitor acceptance.
+//! `--camera` additionally gates the complete model-4 RGB16 GPU path and floor flags.
+//! Missing/stale requested camera artifacts fail; agreement is not photographic or monitor acceptance.
 use std::borrow::Cow;
 use std::sync::mpsc;
 use std::time::Instant;
@@ -16,10 +16,16 @@ const VERTEX: &str = r#"
 "#;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    pollster::block_on(run())
+    let arguments: Vec<_> = std::env::args().skip(1).collect();
+    let camera = match arguments.as_slice() {
+        [] => false,
+        [flag] if flag == "--camera" => true,
+        _ => return Err("Usage: antitone-gpu-probe [--camera]".into()),
+    };
+    pollster::block_on(run(camera))
 }
 
-async fn run() -> Result<(), Box<dyn std::error::Error>> {
+async fn run(camera: bool) -> Result<(), Box<dyn std::error::Error>> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::METAL,
         ..wgpu::InstanceDescriptor::new_without_display_handle()
@@ -43,7 +49,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         contents: &input_bytes,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
     });
-    if std::path::Path::new(".cache/probes/camera-source-model4.rgb16").exists() {
+    if camera {
         let (working, reference) = camera_processing(&device, &queue).await?;
         if !input_bytes.ends_with(&reference) {
             return Err("Regenerate OCIO artifacts after creating the camera fixture".into());

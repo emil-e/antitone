@@ -58,19 +58,14 @@ path = "src/bin/raw_probe.rs"
 required-features = ["raw"]
 
 [[bin]]
-name = "antitone-calibration-probe"
-path = "src/bin/calibration_probe.rs"
-required-features = ["raw"]
+name = "antitone-camera-reference"
+path = "scripts/camera-reference.rs"
+required-features = ["raw", "gpu"]
 
 [[bin]]
 name = "antitone-gpu-probe"
 path = "src/bin/gpu_probe.rs"
 required-features = ["gpu"]
-
-[[bin]]
-name = "antitone-scan-probe"
-path = "src/bin/scan_probe.rs"
-required-features = ["raw"]
 
 [[bin]]
 name = "antitone-export-probe"

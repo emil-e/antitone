@@ -178,19 +178,25 @@ cargo run --locked --offline --release --features raw \
 
 Full mode checks sampled repeatability, flooring rate and eligible in-sRGB LibRaw matrix comparisons. Inspect `compared_grid`: zero eligible comparisons does not fail and cannot establish matrix agreement. This is not photographic calibration; optional diagnostic PPMs are clipped source previews, not ACES/ICC output.
 
-For native-camera checks and generated reference fixtures:
+The [authored RAW checks](development.md#feature-specific-checks) preserve Scan immutability, measured black/white anchors (`2e-12`), per-channel flooring rate (at most 1%) and sampled LibRaw matrix agreement (`2/65535`). The authored matrix case requires nonzero eligible comparisons; the supplied-source diagnostic still reports skips without treating an empty grid as agreement.
+
+For the independent upstream OCIO → Metal chain:
+
+```sh
+# Synthetic AP1 inputs only; ignores camera artifacts already in the cache.
+./scripts/probe-ocio.sh
+# Regenerates authored RGB16/model-4 inputs, then includes them explicitly.
+./scripts/probe-ocio.sh --camera
+```
+
+The camera extension uses the committed patch DNG and two explicit code-floor cases, not private photographs. Its CPU working values are implementation references; upstream OCIO supplies the independent rendering comparison. Missing or stale requested camera inputs fail. Both modes retain the existing finite/neutral/basis and `2e-5 + 2e-4*abs(reference)` agreement gates. They do not establish full-image or photographic acceptance.
+
+For a separately supplied camera's numerical diagnostic:
 
 ```sh
 cargo test --locked --offline --release --features raw,gpu \
   --test camera_raw -- --ignored --nocapture
-cargo run --locked --offline --features raw,gpu --bin antitone-calibration-probe -- \
-  samples/DSC04397.ARW 4000 5644 128 32 \
-  samples/DSC04378.ARW 4000 2600 128 128 \
-  --gpu-fixture samples/DSC04416.ARW
-./scripts/probe-ocio.sh
 ```
-
-Regenerate calibration fixtures before OCIO comparisons. These are regenerable RAW-derived fixtures, not full-image or photographic acceptance.
 
 For corrected affine reconstruction against scalar coverage:
 
@@ -215,15 +221,13 @@ cargo run --locked --offline --features render --bin antitone-rendering-probe --
 
 CPU/GPU agreement, profile/transfer checks and independent ColorSync/Core Image comparisons address different boundaries. [Artifact](../assets/ocio/README.md) and [profile](../assets/profiles/README.md) guides retain provenance.
 
-## Export and cached sampling
+## Export
 
 ```sh
 cargo run --locked --offline --release --features raw,export --bin antitone-export-probe -- \
   samples/DSC04397.ARW 4000 5644 128 32 \
   samples/DSC04378.ARW 4000 2600 128 128 \
   samples/DSC04416.ARW .cache/probes/NEW_OUTPUT_DIRECTORY
-cargo run --locked --offline --release --features raw --bin antitone-scan-probe -- \
-  samples/DSC04378.ARW 4000 2600 128 128
 ```
 
 The export CLI uses diagnostic settings and full developed dimensions; editor exports use accepted composition. Large exports can consume substantial time/memory. For full TIFF/ImageIO reopening:

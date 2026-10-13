@@ -66,6 +66,8 @@ python3 scripts/generate-raw-fixture.py
 
 Ordinary tests read the repository binaries; they never generate or download them. Exports and projects go to isolated temporary directories. The recipe uses only Python's standard library and `--check` compares bytes without writing.
 
+The RAW tests also preserve measured inversion anchors at `2e-12` for gamma 0.1/0.65/1/3, a per-channel flooring rate no greater than 1%, and sampled LibRaw sRGB matrix agreement at `2/65535`. The authored matrix case must actually compare eligible pixels. Sensor-white/black rejection tests edit isolated temporary copies, never the repository data.
+
 The tests cover declared metadata/sensor statistics, AHD camera RGB16, complete foreground/background-policy RGB agreement, immutable sensor diagnostics, automatic/explicit WB and invalid-gain rejection, nonzero crop/proxy centres, reference sampling, model-4 processing, both TIFF targets and half/full AP0 EXR reopening. `editor::document::tests` additionally covers initial DNG registration and preservation of saved WB through Open/re-import. TIFF/EXR comparisons verify serialization against the actual pipeline, not independent photographic calibration or the separate ImageIO reference.
 
 ## Limits
@@ -74,4 +76,4 @@ Pinned LibRaw supplies `[1,1,1,0]` for this three-plane DNG's raw metadata WB. A
 
 Tag choices follow [DNG definitions](https://www.adobe.com/go/dng_spec) and were checked against pinned LibRaw's parser. Adobe DNG Validator acceptance is not established. Successful LibRaw decoding is not general DNG conformance.
 
-No proprietary-camera preview behavior, photographic correction/Analyze quality, GPU/desktop presentation, physical colour or realistic resource/performance acceptance follows. Probe migration, framework-driven UI checks, corrected-thumbnail coordination and independent references remain unfinished in the [verification plan](../../../docs/plans/verification-tooling.md).
+No proprietary-camera preview behavior, photographic correction/Analyze quality, GPU/desktop presentation, physical colour or realistic resource/performance acceptance follows. Export/reference migration, framework-driven UI checks and corrected-thumbnail coordination remain unfinished in the [verification plan](../../../docs/plans/verification-tooling.md).

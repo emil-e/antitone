@@ -218,7 +218,137 @@ fn authored_dng_scan_keeps_crop_proxy_centres_and_original_reference_values() {
         })
         .is_err()
     );
+    assert_eq!(scan.reference(patch).unwrap(), mean);
     assert_eq!(scan.preview_source(60).unwrap(), (w, h, codes));
+}
+
+#[test]
+fn authored_raw_keeps_the_measured_anchor_flooring_and_libraw_matrix_gates() {
+    use antitone::processing::{Calibration, Inversion, RollSettings};
+    let mut scan = Scan::open(&fixture(), None).unwrap();
+    let calibration = Calibration {
+        dmin: scan
+            .reference(Rect {
+                x: 16,
+                y: 16,
+                width: 32,
+                height: 32,
+            })
+            .unwrap(),
+        dmax: scan
+            .reference(Rect {
+                x: 80,
+                y: 16,
+                width: 32,
+                height: 32,
+            })
+            .unwrap(),
+        input_floor: scan.input_floor,
+    }
+    .validate()
+    .unwrap();
+    for gamma in [0.1, 0.65, 1., 3.] {
+        let inversion = Inversion::new(
+            calibration,
+            RollSettings {
+                gamma,
+                ..RollSettings::default()
+            },
+        )
+        .unwrap();
+        assert!(
+            inversion
+                .apply(calibration.dmin)
+                .unwrap()
+                .rgb
+                .abs()
+                .max_element()
+                <= 2e-12
+        );
+        assert!(
+            (inversion.apply(calibration.dmax).unwrap().rgb - DVec3::ONE)
+                .abs()
+                .max_element()
+                <= 2e-12
+        );
+    }
+    let mut raw = RawFile::open(&fixture()).unwrap();
+    let matrix = raw.metadata.camera_to_srgb();
+    let area = raw.metadata.image_area().unwrap();
+    let image = raw.develop_camera(WB).unwrap();
+    let mut below_floor = [0u64; 3];
+    let mut points = Vec::new();
+    for y in area.y..area.y + area.height {
+        for x in area.x..area.x + area.width {
+            let camera = image.pixel(x, y).unwrap();
+            for c in 0..3 {
+                below_floor[c] += u64::from(camera[c] < scan.input_floor);
+            }
+            if (x - area.x).is_multiple_of(32) && (y - area.y).is_multiple_of(32) {
+                points.push((x, y, matrix * camera));
+            }
+        }
+    }
+    let count = u64::from(area.width) * u64::from(area.height);
+    assert!(below_floor.into_iter().all(|v| v <= count / 100));
+    let reference = raw.develop_srgb_reference(WB).unwrap();
+    let mut compared = 0;
+    for (x, y, expected) in points {
+        if expected.min_element() < 0. || expected.max_element() > 1. {
+            continue;
+        }
+        assert!(
+            (reference.pixel(x, y).unwrap() - expected)
+                .abs()
+                .max_element()
+                <= 2. / 65535.
+        );
+        compared += 1;
+    }
+    // The diagnostic permits an empty eligible grid; this fixture must actually exercise it.
+    assert!(compared > 0);
+}
+
+#[cfg(any(feature = "export", feature = "project"))]
+#[test]
+fn authored_raw_rejects_sensor_white_and_black_references_without_mutating_source() {
+    let original = fs::read(fixture()).unwrap();
+    let ifd = u32::from_le_bytes(original[4..8].try_into().unwrap()) as usize;
+    let entries = u16::from_le_bytes(original[ifd..ifd + 2].try_into().unwrap()) as usize;
+    let strip = (0..entries)
+        .map(|i| ifd + 2 + i * 12)
+        .find(|i| u16::from_le_bytes(original[*i..*i + 2].try_into().unwrap()) == 273)
+        .unwrap();
+    let offset = u32::from_le_bytes(original[strip + 8..strip + 12].try_into().unwrap()) as usize;
+    let directory = tempfile::tempdir().unwrap();
+    let patch = Rect {
+        x: 16,
+        y: 16,
+        width: 32,
+        height: 32,
+    };
+    for (code, reason) in [(4095u16, "at/above white"), (64u16, "at/below black")] {
+        let mut bytes = original.clone();
+        for y in 16..48 {
+            for x in 16..48 {
+                let at = offset + (y * 256 + x) * 2;
+                bytes[at..at + 2].copy_from_slice(&code.to_le_bytes());
+            }
+        }
+        let path = directory.path().join(format!("{code}.dng"));
+        fs::write(&path, &bytes).unwrap();
+        let mut scan = Scan::open(&path, None).unwrap();
+        let before = scan.preview_source(60).unwrap();
+        assert!(
+            scan.reference(patch)
+                .unwrap_err()
+                .to_string()
+                .contains(reason)
+        );
+        assert_eq!(scan.preview_source(60).unwrap(), before);
+        assert_eq!(fs::read(path).unwrap(), bytes);
+    }
+    assert_eq!(fs::read(fixture()).unwrap(), original);
 }
 
 #[cfg(feature = "export")]
