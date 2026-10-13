@@ -6,6 +6,8 @@ mod disk;
 #[path = "thumbnail_lru.rs"]
 mod lru;
 use lru::Cache;
+#[path = "editor_embedded_preview.rs"]
+mod embedded;
 const SOURCE_SIZE: u32 = 256;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -175,6 +177,7 @@ pub(super) struct Thumbnails {
     budgets: memory::CacheBudgets,
     memory_watch: Option<memory::PressureWatch>,
     repaint: Arc<std::sync::OnceLock<egui::Context>>,
+    embedded: embedded::EmbeddedPreviews,
     gpu: Option<(
         wgpu::Device,
         wgpu::Queue,
@@ -206,6 +209,7 @@ impl Default for Thumbnails {
             budgets,
             memory_watch: None,
             repaint: Arc::default(),
+            embedded: Default::default(),
             gpu: None,
             commands: None,
             messages: None,
@@ -347,12 +351,13 @@ impl Thumbnails {
     ) -> Self {
         let (commands, receiver) = mpsc::channel();
         let (send, messages) = mpsc::channel();
-        let state = Self {
+        let mut state = Self {
             gpu: Some((device.clone(), queue.clone(), renderers.clone())),
             commands: Some(commands),
             messages: Some(messages),
             ..Default::default()
         };
+        state.embedded = embedded::EmbeddedPreviews::new(state.repaint.clone());
         let generation = state.generation.clone();
         let sources = state.sources.clone();
         let repaint = state.repaint.clone();
@@ -390,6 +395,7 @@ impl Thumbnails {
             .count()
     }
     pub fn cancel(&mut self) {
+        self.embedded.cancel();
         self.generation
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
@@ -720,6 +726,7 @@ impl Editor {
             .map(|c| FieldKey(c.settings.map.clone()));
         self.thumbnails.cache.retain(|key, _| key.field == field);
         self.thumbnails.update_memory();
+        self.thumbnails.embedded.receive(&self.document, ui.ctx());
         let visible_allowed = !self.busy
             && self.thumbnails.budgets.pressure != memory::Pressure::Critical
             && self.pick.is_none()
@@ -737,6 +744,7 @@ impl Editor {
         let max_height = (ui.ctx().content_rect().height() * 0.35).clamp(52., 240.);
         let mut protected = Vec::new();
         let mut wanted = Vec::new();
+        let mut camera_wanted = Vec::new();
         let mut visible = Vec::new();
         let mut select = None;
         let height = self
@@ -832,8 +840,28 @@ impl Editor {
                         (Some(Err(message)),_) => { error = Some(message); }
                         (_,Err(message)) => { error = Some(message.to_string()); }
                         (None,Ok(_)) => {
-                            if let Some(key) = key { wanted.push((index,key,path.clone(),source.clone())); }
-                            ui.painter().text(image_rect.center(),egui::Align2::CENTER_CENTER,"…",placeholder_font.clone(),text_color);
+                            if let Some(key) = key {
+                                if let Some(texture) = self.thumbnails.embedded.get(&key.source) {
+                                    let dimensions = texture.size_vec2();
+                                    let scale = (image_rect.width()/dimensions.x).min(image_rect.height()/dimensions.y);
+                                    let rect = egui::Rect::from_center_size(image_rect.center(),dimensions*scale);
+                                    let painter = ui.painter().with_clip_rect(image_rect.intersect(ui.clip_rect()));
+                                    painter.image(texture.id(),rect,egui::Rect::from_min_max(egui::Pos2::ZERO,egui::pos2(1.,1.)),egui::Color32::WHITE);
+                                    let font = egui::FontId::proportional(((image_rect.height()-2.)/1.2).min(10.));
+                                    let galley = painter.layout_no_wrap(if image_rect.height() < 24. { "Camera" } else { "Camera preview" }.into(),font,egui::Color32::WHITE);
+                                    let size = (galley.size()+egui::vec2(4.,2.)).min(image_rect.size());
+                                    let label = egui::Rect::from_min_size(image_rect.left_bottom()-egui::vec2(0.,size.y),size);
+                                    painter.rect_filled(label,2.,egui::Color32::from_black_alpha(190));
+                                    painter.galley(label.center()-galley.size()*0.5,galley,egui::Color32::WHITE);
+                                } else {
+                                    ui.painter().text(image_rect.center(),egui::Align2::CENTER_CENTER,"…",placeholder_font.clone(),text_color);
+                                }
+                                if self.thumbnails.embedded.get(&key.source).is_some()
+                                    || !self.thumbnails.sources.lock().unwrap().contains(&key.source) {
+                                    camera_wanted.push((index,key.clone(),path.clone(),source.clone()));
+                                }
+                                wanted.push((index,key,path.clone(),source.clone()));
+                            }
                         }
                     }
                     if error.is_some() { ui.painter().text(image_rect.center(),egui::Align2::CENTER_CENTER,"!",placeholder_font,text_color); }
@@ -843,7 +871,7 @@ impl Editor {
                     let text_pos = caption.center()-galley.size()*0.5;
                     ui.painter().with_clip_rect(caption.intersect(ui.clip_rect())).galley(text_pos,galley,text_color);
                     if response.clicked() && !self.busy && self.flat_edit.is_none() && self.crop_edit.is_none() { select = Some(index); }
-                    response.on_hover_text(error.unwrap_or_else(||format!("{}\nApproximate whole-frame thumbnail; drag the strip's top edge to resize.",path.display())));
+                    response.on_hover_text(error.unwrap_or_else(||format!("{}\nCamera previews show embedded, ungraded camera framing until the developed thumbnail is ready. Drag the strip's top edge to resize.",path.display())));
                 }
             });
         });
@@ -892,6 +920,9 @@ impl Editor {
             self.thumbnails.cancel_offscreen(&eligible);
         }
         self.thumbnails.cache.protect(protected);
+        self.thumbnails
+            .embedded
+            .request_visible(&camera_wanted, visible_allowed && select.is_none());
         if let Some(index) = select {
             let id = self.document.project.order[index];
             let path = self
@@ -925,7 +956,7 @@ impl Editor {
                     .request(key, path, source, self.correction.clone());
             }
         }
-        if self.thumbnails.pending.is_some() {
+        if self.thumbnails.pending.is_some() || self.thumbnails.embedded.pending() {
             ui.ctx().request_repaint_after(Duration::from_millis(50));
         }
     }

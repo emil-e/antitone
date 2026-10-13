@@ -67,6 +67,7 @@ dependencies = [
  "exr",
  "glam",
  "half",
+ "image",
  "lcms2",
  "libc",
  "objc2-core-foundation",
@@ -866,6 +867,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]

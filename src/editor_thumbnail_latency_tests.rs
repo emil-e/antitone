@@ -58,6 +58,8 @@ fn visible_thumbnail_import_latency() {
                 editor.add_raws(paths.clone());
                 let mut prepared = None;
                 let mut first = None;
+                let mut camera_first = None;
+                let mut navigable_all = None;
                 let mut visible = Vec::new();
                 let mut first_refining = false;
                 let mut first_settled = false;
@@ -93,6 +95,30 @@ fn visible_thumbnail_import_latency() {
                         .iter()
                         .filter(|key| matches!(editor.thumbnails.cache.get(key), Some(Ok(_))))
                         .count();
+                    let camera_count = visible
+                        .iter()
+                        .filter(|key| editor.thumbnails.embedded.get(&key.source).is_some())
+                        .count();
+                    let navigable = visible
+                        .iter()
+                        .filter(|key| {
+                            matches!(editor.thumbnails.cache.get(key), Some(Ok(_)))
+                                || editor.thumbnails.embedded.get(&key.source).is_some()
+                        })
+                        .count();
+                    if camera_count > 0 && camera_first.is_none() {
+                        camera_first = Some(started.elapsed());
+                    }
+                    if !visible.is_empty() && navigable == visible.len() && navigable_all.is_none()
+                    {
+                        navigable_all = Some(started.elapsed());
+                        println!(
+                            "visible_thumbnail_navigation roll={roll} cache={state} visible={} camera_count={camera_count} first_camera_ms={:?} all_navigable_ms={:.6}",
+                            visible.len(),
+                            camera_first.map(|time| time.as_secs_f64() * 1000.),
+                            started.elapsed().as_secs_f64() * 1000.
+                        );
+                    }
                     if ready > 0 && first.is_none() {
                         first = Some(started.elapsed());
                         first_refining = editor.refining.is_some();
@@ -117,7 +143,11 @@ fn visible_thumbnail_import_latency() {
                 }
                 // Join logical thumbnail completion before the next case; native phases are not interruptible.
                 editor.thumbnails.cancel();
-                while editor.thumbnails.pending.is_some() {
+                while editor.thumbnails.pending.is_some() || editor.thumbnails.embedded.pending() {
+                    editor
+                        .thumbnails
+                        .embedded
+                        .receive(&editor.document, &context);
                     editor.thumbnails.receive(&editor.document);
                     assert!(std::time::Instant::now() < deadline);
                     std::thread::sleep(Duration::from_millis(2));

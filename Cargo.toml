@@ -25,6 +25,7 @@ rfd = { version = "=0.17.2", optional = true, default-features = false }
 serde = { version = "=1.0.229", optional = true, features = ["derive", "rc"] }
 serde_json = { version = "=1.0.151", optional = true, features = ["float_roundtrip"] }
 blake3 = { version = "=1.8.7", optional = true }
+image = { version = "=0.25.10", optional = true, default-features = false, features = ["jpeg"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-core-foundation = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "CFString"] }
@@ -32,7 +33,7 @@ objc2-core-graphics = { version = "=0.3.2", optional = true, default-features = 
 objc2-quartz-core = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "CAMetalLayer", "objc2-core-graphics"] }
 
 [features]
-editor = ["ui", "raw", "export", "project", "dep:rfd", "dep:blake3"]
+editor = ["ui", "raw", "export", "project", "dep:rfd", "dep:blake3", "dep:image"]
 project = ["dep:serde", "dep:serde_json", "dep:tempfile", "glam/serde"]
 ui = ["gpu", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:winit", "dep:half", "dep:objc2-core-foundation", "dep:objc2-core-graphics", "dep:objc2-quartz-core"]
 raw = ["dep:cc", "dep:libc"]

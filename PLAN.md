@@ -6,7 +6,7 @@ The editor supports native-camera model-4 inversion, roll flat-field correction,
 
 The workspace uses Roll → Photo → Rendering stages, collapsible inspector sections, independently saved UI preferences and stable viewer-bar tool identity/Apply/Cancel. The visual grouping is accepted; physical input, preference relaunch and broader photographic/device acceptance remain open. [Interaction follow-up](docs/plans/inspection-and-interaction.md).
 
-Memory-256 cached pending selected previews are implemented and accepted for current use. Visible-thumbnail admission no longer waits for settled refinement/grade idle, and worker completion wakes the UI; the improvement is accepted for current use. [Broader interaction/resource acceptance and embedded-preview design](docs/plans/visual-feedback.md) remain open; no new cache tier or embedded-preview implementation is selected. Recovery/relink/undo remains lower priority than interaction and photographic acceptance.
+Memory-256 cached pending selected previews and visible-thumbnail admission/repaint are implemented and accepted for current use. Filmstrip-only embedded camera-preview placeholders provide navigation while proper thumbnails develop, preserving the polished card layout and edge clipping. [Broader interaction/resource and photographic acceptance](docs/plans/visual-feedback.md) remain open. No selected-view JPEG adoption or persistent JPEG cache is selected. Recovery/relink/undo remains lower priority than interaction and photographic acceptance.
 
 ## Remaining work, in priority order
 

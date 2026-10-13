@@ -130,6 +130,24 @@ struct NativeView {
     pre_mul: [f64; 4],
 }
 
+#[cfg(feature = "editor")]
+#[repr(C)]
+struct NativeThumbnail {
+    jpeg: *const u8,
+    bytes: u32,
+    width: u32,
+    height: u32,
+    flip: i32,
+    color_space: i32,
+}
+
+#[cfg(feature = "editor")]
+pub(crate) struct EmbeddedThumbnail {
+    pub jpeg: Vec<u8>,
+    pub flip: i32,
+    pub color_space: i32,
+}
+
 unsafe extern "C" {
     fn antitone_raw_version() -> *const c_char;
     fn antitone_raw_open(
@@ -138,6 +156,13 @@ unsafe extern "C" {
         error: *mut c_char,
         size: usize,
     ) -> *mut c_void;
+    #[cfg(feature = "editor")]
+    fn antitone_raw_thumbnail(
+        handle: *mut c_void,
+        thumbnail: *mut NativeThumbnail,
+        error: *mut c_char,
+        size: usize,
+    ) -> c_int;
     fn antitone_raw_unpack(
         handle: *mut c_void,
         threads: c_int,
@@ -238,6 +263,36 @@ impl RawFile {
             diagnostics: None,
             camera_view: None,
         })
+    }
+
+    #[cfg(feature = "editor")]
+    pub(crate) fn embedded_thumbnail(&mut self) -> Result<Option<EmbeddedThumbnail>, Error> {
+        let mut thumbnail = std::mem::MaybeUninit::<NativeThumbnail>::zeroed();
+        let mut error = [0; 512];
+        // The bridge extracts only bounded JPEG data; it does not unpack/develop the sensor.
+        let code = unsafe {
+            antitone_raw_thumbnail(
+                self.handle.as_ptr(),
+                thumbnail.as_mut_ptr(),
+                error.as_mut_ptr(),
+                error.len(),
+            )
+        };
+        if code != 0 {
+            return Err(native_error("embedded thumbnail", &error));
+        }
+        let thumbnail = unsafe { thumbnail.assume_init() };
+        if thumbnail.jpeg.is_null() {
+            return Ok(None);
+        }
+        // Copy the handle-owned bytes before another extraction or closing the unique handle.
+        let jpeg = unsafe { std::slice::from_raw_parts(thumbnail.jpeg, thumbnail.bytes as usize) }
+            .to_vec();
+        Ok(Some(EmbeddedThumbnail {
+            jpeg,
+            flip: thumbnail.flip,
+            color_space: thumbnail.color_space,
+        }))
     }
 
     /// Changes resource scheduling only, never development settings or cached pixels.
@@ -488,6 +543,35 @@ mod tests {
         assert_eq!(size_of::<Metadata>(), 496);
         assert_eq!(size_of::<SensorDiagnostics>(), 112);
         assert_eq!(size_of::<NativeView>(), 64);
+        #[cfg(feature = "editor")]
+        assert_eq!(size_of::<NativeThumbnail>(), 32);
+    }
+
+    #[cfg(feature = "editor")]
+    #[test]
+    #[ignore = "read-only local RAW embedded extraction and unchanged camera development"]
+    fn embedded_jpeg_does_not_unpack_or_change_camera_development() {
+        let path = Path::new("samples/DSC04378.ARW");
+        let sample = |extract: bool| {
+            let mut raw = RawFile::open(path).unwrap();
+            let metadata = raw.metadata;
+            if extract {
+                let jpeg = raw.embedded_thumbnail().unwrap().unwrap();
+                assert!(jpeg.jpeg.starts_with(&[0xff, 0xd8]));
+                println!(
+                    "embedded_native bytes={} flip={} color_space={}",
+                    jpeg.jpeg.len(),
+                    jpeg.flip,
+                    jpeg.color_space
+                );
+                assert!(!raw.unpacked && raw.camera_view.is_none() && raw.diagnostics.is_none());
+                assert_eq!(format!("{:?}", raw.metadata), format!("{metadata:?}"));
+            }
+            let image = raw.develop_camera(metadata.cam_mul).unwrap();
+            let coordinates = [(0, 0), (100, 100), (1000, 1000), (4000, 2600), (8000, 5500)];
+            coordinates.map(|(x, y)| image.pixel_codes(x, y).unwrap())
+        };
+        assert_eq!(sample(true), sample(false));
     }
 
     #[test]

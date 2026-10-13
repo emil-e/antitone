@@ -7,6 +7,7 @@
 static_assert(sizeof(AntitoneRawMetadata) == 496);
 static_assert(sizeof(AntitoneRawDiagnostics) == 112);
 static_assert(sizeof(AntitoneRawView) == 64);
+static_assert(sizeof(AntitoneRawThumbnail) == 32);
 
 namespace {
 int check(int code, char *error, size_t size) {
@@ -94,6 +95,39 @@ extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out, c
     // Allocation failure must not unwind across the Rust C ABI.
     std::snprintf(error, size, "Unable to allocate LibRaw developer");
     return nullptr;
+}
+
+extern "C" int antitone_raw_thumbnail(void *handle, AntitoneRawThumbnail *out, char *error, size_t size) try {
+    *out = {};
+    auto &raw = *static_cast<LibRaw *>(handle);
+    const auto &list = raw.imgdata.thumbs_list;
+    int selected = -1;
+    uint64_t smallest = UINT64_MAX;
+    for (int index = 0; index < list.thumbcount; ++index) {
+        const auto &item = list.thumblist[index];
+        if (item.tformat != LIBRAW_INTERNAL_THUMBNAIL_JPEG || !item.twidth || !item.theight
+            || item.twidth > 2048 || item.theight > 2048 || !item.tlength || item.tlength > 1024 * 1024) continue;
+        uint64_t area = uint64_t(item.twidth) * item.theight;
+        if (area < smallest) { selected = index; smallest = area; }
+    }
+    if (selected < 0) return 0;
+    int code = raw.unpack_thumb_ex(selected);
+    if (check(code, error, size)) return code;
+    const auto &thumb = raw.imgdata.thumbnail;
+    if (thumb.tformat != LIBRAW_THUMBNAIL_JPEG || !thumb.thumb || !thumb.tlength
+        || thumb.tlength > 1024 * 1024 || !thumb.twidth || !thumb.theight
+        || thumb.twidth > 2048 || thumb.theight > 2048) return 0;
+    // Borrowed until the handle's next thumbnail extraction or close; Rust copies before either.
+    out->jpeg = reinterpret_cast<const uint8_t *>(thumb.thumb);
+    out->bytes = thumb.tlength;
+    out->width = thumb.twidth;
+    out->height = thumb.theight;
+    out->flip = list.thumblist[selected].tflip == 0xffff ? raw.imgdata.sizes.flip : list.thumblist[selected].tflip;
+    out->color_space = raw.imgdata.color.ExifColorSpace;
+    return 0;
+} catch (const std::bad_alloc &) {
+    std::snprintf(error, size, "Unable to allocate embedded JPEG preview");
+    return -1;
 }
 
 extern "C" int antitone_raw_unpack(void *handle, int threads, char *error, size_t size) {

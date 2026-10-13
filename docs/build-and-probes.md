@@ -121,7 +121,7 @@ The ignored editor probes use local Metal. `selected_proxy_switching_latency` ex
 cargo test --locked --offline --release --features editor --lib selected_proxy_switching_latency -- --ignored --nocapture
 ```
 
-`visible_thumbnail_import_latency` measures actual Editor imports at 1100×800 with 4-/36-source rolls, a private empty disk-proxy cache, then reuse in a fresh Editor. The selected source seeds its normal proxy; other cold visible sources need full development. It records foreground preparation, first/all-visible UI cache readiness and whether first readiness waited for settled refinement. Frames poll at 2 ms; callbacks are not painted, filesystem caching is uncontrolled, and cache readiness is not GPU completion, host wake latency or physical presentation. Sources are read-only `DSC04378` onward. Run:
+`visible_thumbnail_import_latency` measures actual Editor imports at 1100×800 with 4-/36-source rolls, a private empty disk-proxy cache, then reuse in a fresh Editor. The selected source seeds its normal proxy; other cold visible sources need full development. It records foreground preparation, first/all-visible developed-thumbnail UI cache readiness, first camera-preview readiness, all-visible navigability (camera or developed) and whether developed first readiness waited for settled refinement. Frames poll at 2 ms; callbacks are not painted, filesystem caching is uncontrolled, and cache readiness is not GPU completion, host wake latency or physical presentation. Sources are read-only `DSC04378` onward. Run:
 
 ```sh
 cargo test --locked --offline --release --features editor --lib visible_thumbnail_import_latency -- --ignored --nocapture
@@ -140,7 +140,13 @@ mkdir -p .cache/probes
 .cache/probes/raw-thumbnail-probe samples/DSC04378.ARW
 ```
 
-Embedded JPEGs are camera-rendered/display-referred, not linear native-camera RGB16; they cannot feed model-4 inversion, correction, calibration, scopes or export. A navigation-only interim remains an [open design question](plans/visual-feedback.md), separate from developed positive thumbnails.
+Embedded JPEGs are camera-rendered/display-referred, not linear native-camera RGB16; they cannot feed model-4 inversion, correction, calibration, scopes or export. The [filmstrip camera-preview path](contracts/editor-controls.md#filmstrip-thumbnails) keeps that distinction. The explicit read-only bridge regression checks that extraction does not unpack the sensor or change metadata and compares sampled camera development with/without extraction:
+
+```sh
+cargo test --locked --offline --release --features editor --lib embedded_jpeg_does_not_unpack_or_change_camera_development -- --ignored --nocapture
+```
+
+This sampled check is not a new whole-image numerical gate. JPEG placeholder readiness does not include GPU upload/completion or physical presentation; true cold filesystem, actual gestures/pressure and broader cameras remain separate acceptance.
 
 Runtime `selected_preview` logs report proxy dimensions, independent GPU pixel bytes and preparation time. `selected_switch` distinguishes admission/cache hit, backend message receipt and first paint callback for each request. Keep generated output in ignored cache storage; compare only runs with matching boundaries and workload.
 
