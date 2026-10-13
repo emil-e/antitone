@@ -26,6 +26,8 @@ Developed-source inspection bypasses inversion and photographic grading. Its exp
 
 Normal inspection retains accepted composition. Temporary calibration/reference tools may reveal another source domain, then restore the working view. Hidden inspection retains its transient EV; the positive ignores it.
 
+Missing calibration forces source-only presentation, not an explicit inspection choice. When a successful Dmin/Dmax pick completes the first usable pair, the editor returns to the positive. Inspection deliberately enabled with usable calibration is restored instead; failed/cancelled picks preserve calibration and the required source-only view.
+
 ## Fast feedback is not authoritative data
 
 The editor uses several image representations for different jobs:
@@ -41,6 +43,8 @@ The editor uses several image representations for different jobs:
 A pending preview can show the current grade from a retained compatible RGB16 proxy, but it is not a ready `Scan`. Picks, crop editing, refinement, scopes and exports wait for full preparation. A memory miss retains the loading placeholder.
 
 An embedded JPEG is different again: it is already camera-rendered and can show different framing/colour. Its Camera badge makes that distinction visible. It never becomes the selected processing image or a source for inversion, correction, measurement or export. Developed thumbnail completion supersedes it; authoritative RAW errors take precedence.
+
+Filmstrip selection follows the current source identity, not pixel readiness: its outline remains during cold loading, JPEG placeholders and failure. Cards expose their full filename and selected state to accessibility. Busy operations, crop drafts and reference-support edits disable selection and keyboard focus; ordered-roll Dmin/Dmax source selection remains available when not busy.
 
 ## Responsiveness and optional caches
 
@@ -60,7 +64,7 @@ Use the existing component families rather than copying their painting or intera
 - [Icons](../src/editor_icons.rs): semantic actions and artwork.
 - [Controls](../src/editor_controls.rs): photographic values, precision and calibration/balance adapters.
 
-Presentation receives display-ready state and returns responses. Controllers still own availability, IDs, accepted/draft state, resets and dispatch. Cards do not own images, selection, virtualization or workers. The fixed viewer bar hosts tool identity and Apply/Cancel without resizing the canvas; only selection/frame artwork belongs over the photograph.
+Presentation receives display-ready state and returns responses. Controllers still own availability, IDs, accepted/draft state, resets and dispatch. Cards receive selection/availability, and their caption supplies the unelided semantic filename; they do not own images, selection, virtualization or workers. Pinned section titles expose label semantics without disclosure/focus behavior. The fixed viewer bar hosts tool identity and Apply/Cancel without resizing the canvas; only selection/frame artwork belongs over the photograph.
 
 Reuse semantic roles, not arbitrary local styling overrides. Crop grids, photographic wheels, scope plots and native menus are intentionally specialized. Extend a shared family for a real variant; do not create a parallel widget/state framework to accommodate a hypothetical one.
 
@@ -68,4 +72,4 @@ Reuse semantic roles, not arbitrary local styling overrides. Crop grids, photogr
 
 Start with [editor orchestration](../src/editor.rs), then the feature owner: [viewer](../src/editor_viewer.rs), [crop](../src/editor_crop.rs), [analysis](../src/editor_analysis.rs), [correction](../src/editor_flat_field.rs), [thumbnails](../src/editor_thumbnails.rs), [pending previews](../src/editor_selected_preview.rs) or [camera placeholders](../src/editor_embedded_preview.rs).
 
-Use both component and composed-event checks from [development](development.md#shared-editor-ui-checks). They cover precision, transaction, input ownership and geometry—not complete accessibility or physical feel. [Interaction follow-up](plans/inspection-and-interaction.md) tracks known selection/semantic gaps and unsettled UX choices.
+Use both component and composed-event checks from [development](development.md#shared-editor-ui-checks). They cover precision, transaction, input ownership and geometry—not complete accessibility or physical feel. [Interaction follow-up](plans/inspection-and-interaction.md) tracks remaining wheel semantics and unsettled UX choices.

@@ -153,6 +153,10 @@ pub fn section<R>(
                         title,
                     )
                 });
+            } else {
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Label, response.enabled(), title)
+                });
             }
             let left = rect.left() + if default_open.is_some() { 24. } else { 0. };
             let marker_width = if changed { 12. } else { 0. };

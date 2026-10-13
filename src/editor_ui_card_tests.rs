@@ -43,6 +43,14 @@ fn direct(
     let card_height = image_height + 2. * padding + caption_height + caption_gap;
     let cell = Rect::from_min_size(origin, egui::vec2(image_width, card_height));
     let response = ui.interact(cell, id, egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            response.enabled(),
+            selected,
+            "01.ARW",
+        )
+    });
     let hovered = response.hovered();
     let fill = Color32::from_gray(if selected {
         30
@@ -148,7 +156,7 @@ fn render(
         let layout = ContactSheetLayout::new(height - 12., height < 90.);
         let id = ui.id().with("caller-card");
         let (response, image_rect) = if shared {
-            let card = layout.begin(ui, origin, id, selected);
+            let card = layout.begin(ui, origin, id, selected, true);
             match content {
                 Content::Empty => (),
                 Content::Loading => card.loading(ui),
@@ -268,6 +276,65 @@ fn card_responses_preserve_hover_mouse_keyboard_and_inherited_disabled_behavior(
         assert!(!draw(false, pointer(point, false)).0.0.clicked());
         assert_eq!(draw(false, vec![]).0.0.id, initial.id);
     }
+}
+
+#[test]
+fn card_availability_preserves_ids_and_full_caption_semantics_without_disabling_following_widgets()
+{
+    let context = Context::default();
+    let name = "京都_Summer_Scan_Reference_Roll01_Frame_04397.ARW";
+    let draw = |enabled, selected, events| {
+        frame(&context, 315., true, events, |ui| {
+            let layout = ContactSheetLayout::new(40., true);
+            let next_id = ui.next_auto_id();
+            let available = ui.available_rect_before_wrap();
+            let card = layout.begin(
+                ui,
+                egui::pos2(40., 10.),
+                ui.id().with("card"),
+                selected,
+                enabled,
+            );
+            card.caption(ui, name);
+            assert_eq!(ui.next_auto_id(), next_id);
+            assert_eq!(ui.available_rect_before_wrap(), available);
+            assert!(ui.is_enabled());
+            (card.response, ui.button("Following"))
+        })
+    };
+    let ((initial, following), _) = draw(true, true, vec![]);
+    context.memory_mut(|memory| memory.request_focus(initial.id));
+    let ((disabled, after), output) = draw(false, true, key(egui::Key::Space));
+    assert_eq!(disabled.id, initial.id);
+    assert_eq!(disabled.rect, initial.rect);
+    assert_eq!(after.id, following.id);
+    assert!(after.enabled());
+    assert!(!disabled.enabled() && !disabled.clicked() && !disabled.has_focus());
+    let node = output
+        .platform_output
+        .accesskit_update
+        .as_ref()
+        .unwrap()
+        .nodes
+        .iter()
+        .find(|(_, node)| node.label() == Some(name))
+        .unwrap();
+    assert_eq!(node.1.role(), egui::accesskit::Role::Button);
+    assert_eq!(node.1.toggled(), Some(egui::accesskit::Toggled::True));
+    assert!(node.1.is_disabled());
+    let ((enabled, _), output) = draw(true, false, vec![]);
+    assert_eq!(enabled.id, initial.id);
+    let node = output
+        .platform_output
+        .accesskit_update
+        .as_ref()
+        .unwrap()
+        .nodes
+        .iter()
+        .find(|(_, node)| node.label() == Some(name))
+        .unwrap();
+    assert_eq!(node.1.toggled(), Some(egui::accesskit::Toggled::False));
+    assert!(!node.1.is_disabled());
 }
 
 #[test]

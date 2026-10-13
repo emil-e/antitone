@@ -98,7 +98,7 @@ fn hover_is_neutral_and_distinct_from_selection_without_changing_cell_geometry()
     crate::editor::tests::add_ready_fixture(&mut editor);
     editor.document = super::tests::fixture();
     editor.current_source = Some(editor.document.project.order[0]);
-    editor.busy = true;
+    editor.busy = false;
     let context = egui::Context::default();
     let mut frame = |pointer: Option<egui::Pos2>| {
         let mut output = context.run_ui(

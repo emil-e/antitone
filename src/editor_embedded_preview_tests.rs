@@ -398,8 +398,10 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
     let (_, messages) = mpsc::channel();
     let mut editor = Editor::state(commands, messages, Arc::default());
     editor.document = fixture();
+    editor.current_source = Some(editor.document.project.order[0]);
     let original = editor.document.project.clone();
     let context = egui::Context::default();
+    context.enable_accesskit();
     let image_key = key(&editor.document, editor.document.project.order[0]);
     editor.thumbnails.embedded.entries.push((
         image_key.source.clone(),
@@ -421,6 +423,27 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
             |ui| editor.filmstrip(ui),
         );
         output.textures_delta.clear();
+        let name = editor
+            .document
+            .project
+            .source(editor.current_source.unwrap())
+            .unwrap()
+            .path
+            .file_name()
+            .unwrap()
+            .to_string_lossy();
+        let selected = output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|(_, node)| node.label() == Some(name.as_ref()))
+            .unwrap();
+        assert_eq!(selected.1.toggled(), Some(egui::accesskit::Toggled::True));
+        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+            egui::Shape::Rect(rect) if rect.stroke.width == 1.5 && rect.fill == egui::Color32::from_gray(30))));
         output
             .shapes
             .into_iter()

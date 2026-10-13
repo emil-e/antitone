@@ -226,8 +226,22 @@ fn sections_keep_pinned_expansion_and_independent_reset_without_domain_fixtures(
                 .1
             );
             assert_eq!(preferences.get("caller-section"), Some(&false));
-            let (pinned, _, _) = section_frame(&context, width, vec![], &mut preferences, true);
+            let (pinned, _, output) =
+                section_frame(&context, width, vec![], &mut preferences, true);
             assert!(pinned.is_some());
+            let title = output
+                .platform_output
+                .accesskit_update
+                .as_ref()
+                .unwrap()
+                .nodes
+                .iter()
+                .find(|(_, node)| {
+                    node.role() == egui::accesskit::Role::Label
+                        && node.value() == Some("Caller section")
+                })
+                .unwrap();
+            assert_eq!(title.1.is_expanded(), None);
             assert_eq!(preferences.get("caller-section"), Some(&false));
             assert!(
                 section_frame(&context, width, vec![], &mut preferences, false)

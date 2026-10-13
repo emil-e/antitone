@@ -1356,7 +1356,7 @@ impl Editor {
                     .reframe(layout, layout.composition, pixels_per_point);
             }
         }
-        self.source = source;
+        self.source = self.calibration().is_none() || source;
     }
     fn begin_pick(&mut self, kind: Pick) {
         if self.pick.is_some() {
@@ -1367,7 +1367,8 @@ impl Editor {
         }
         self.thumbnails.cancel();
         let viewport = self.viewport;
-        let source = self.calibration().is_none() || self.source;
+        // Missing calibration forces source display, not an explicit inspection choice.
+        let source = self.calibration().is_some() && self.source;
         self.pick = Some(kind);
         self.region = None;
         self.pick_drag = None;

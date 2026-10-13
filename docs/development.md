@@ -70,7 +70,7 @@ cargo clippy --locked --features editor --lib --tests -- -D warnings
 
 For feature-specific transactions, use the `editor::analysis::tests`, `editor::flat::tests`, `editor::files::tests`, `editor::navigation::tests`, `editor::preferences::tests` or `editor::scopes::tests` filter. Use [native layout and GPU fixtures](diagnostics.md#editor-and-layout-smoke) when painting/layout changes.
 
-Known [selection/accessibility gaps](plans/inspection-and-interaction.md#focused-fixes) still need implementation work. Physical pointer/trackpad behavior, VoiceOver and preference relaunch also need real-use checks; headless events cannot establish them.
+The thumbnail suite includes composed cold-load/error selection, JPEG placeholder semantics, disabled focus/input and ordered-roll picker return checks. [Wheel accessibility](plans/inspection-and-interaction.md#focused-fixes) remains unsettled. Physical pointer/trackpad behavior, VoiceOver and preference relaunch also need real-use checks; headless events cannot establish them.
 
 ## Specialist diagnostics
 

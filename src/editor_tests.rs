@@ -298,6 +298,96 @@ fn rejected_reference_and_cancel_restore_view_without_changing_processing() {
     assert!(editor.source);
 }
 #[test]
+fn completing_initial_calibration_leaves_forced_source_view_but_preserves_explicit_inspection() {
+    for order in [[Pick::Dmin, Pick::Dmax], [Pick::Dmax, Pick::Dmin]] {
+        for initial_source in [None, Some(false), Some(true)] {
+            let (mut editor, send, commands) = fixture();
+            if initial_source.is_none() {
+                editor.dmin = None;
+                editor.dmax = None;
+            }
+            editor.source = initial_source.unwrap_or(true);
+            let settings = (editor.roll, editor.photo);
+            for (index, kind) in order.into_iter().enumerate() {
+                editor.begin_pick(kind);
+                assert!(editor.source);
+                editor.region = Some(patch());
+                editor.apply_pick();
+                let Command::Pick(id, picked, ..) = commands.try_recv().unwrap() else {
+                    panic!()
+                };
+                assert_eq!(picked, kind);
+                let value = DVec3::splat(if kind == Pick::Dmin { 0.2 } else { 0.005 });
+                send.send(Message::Picked(id, kind, Ok(Measurement::Reference(value))))
+                    .unwrap();
+                editor.receive();
+                let expected = initial_source.unwrap_or(index == 0);
+                assert_eq!(
+                    editor.source, expected,
+                    "{order:?}, initial={initial_source:?}, index={index}"
+                );
+                assert_eq!(
+                    editor.calibration().is_some(),
+                    initial_source.is_some() || index == 1
+                );
+                assert!(editor.pick.is_none() && !editor.busy);
+                assert_eq!((editor.roll, editor.photo), settings);
+            }
+        }
+    }
+}
+
+#[test]
+fn failed_or_cancelled_initial_reference_picks_keep_forced_source_view_and_calibration() {
+    for kind in [Pick::Dmin, Pick::Dmax] {
+        let (mut editor, send, commands) = fixture();
+        if kind == Pick::Dmin {
+            editor.dmin = None;
+        } else {
+            editor.dmax = None;
+        }
+        editor.source = true;
+        let before = (
+            editor.dmin,
+            editor.dmax,
+            editor.roll,
+            editor.photo,
+            editor.viewport,
+        );
+        editor.begin_pick(kind);
+        editor.finish_pick();
+        assert!(editor.source);
+        for result in [
+            Ok(Measurement::Reference(DVec3::splat(
+                if kind == Pick::Dmin { 0.0001 } else { 0.4 },
+            ))),
+            Err("reference measurement failed".into()),
+        ] {
+            editor.begin_pick(kind);
+            editor.region = Some(patch());
+            editor.apply_pick();
+            let Command::Pick(id, ..) = commands.try_recv().unwrap() else {
+                panic!()
+            };
+            send.send(Message::Picked(id, kind, result)).unwrap();
+            editor.receive();
+            assert!(editor.source);
+            assert!(editor.pick.is_none() && !editor.busy && editor.calibration().is_none());
+            assert_eq!(
+                (
+                    editor.dmin,
+                    editor.dmax,
+                    editor.roll,
+                    editor.photo,
+                    editor.viewport
+                ),
+                before
+            );
+        }
+    }
+}
+
+#[test]
 fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
     let (mut editor, send, _receiver) = fixture();
     let id = editor

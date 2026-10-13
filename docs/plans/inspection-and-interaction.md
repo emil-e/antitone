@@ -14,7 +14,7 @@ These are unfinished fixes and design questions. [The roadmap](../../PLAN.md) ow
 ### Focused fixes
 
 - **Save prompt:** settle owner-relative placement and modality without changing Save/Discard/Cancel behavior.
-- **Selection/accessibility:** cards lack accessible filename/selection metadata; pinned section titles lack label semantics; wheels lack a named keyboard interface beyond adjacent numeric controls. Rejected filmstrip selection actions still expose enabled card responses. Scope fixes with cold-load/error/disabled/AccessKit tests; paint equivalence does not close these gaps.
+- **Wheel accessibility:** settle a named pointer-only surface with adjacent keyboard-editable numeric controls versus a dedicated wheel keyboard interface. Preserve the numerical mapping; do not introduce an inert focus stop. Physical/VoiceOver acceptance remains separate from card/title semantic and input checks.
 
 ### Roll workflow
 

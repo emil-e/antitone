@@ -709,6 +709,7 @@ impl Editor {
         let mut camera_wanted = Vec::new();
         let mut visible = Vec::new();
         let mut select = None;
+        let selection_enabled = !self.busy && self.flat_edit.is_none() && self.crop_edit.is_none();
         let height = self
             .preferences
             .filmstrip_height
@@ -747,9 +748,9 @@ impl Editor {
                     let id = self.document.project.order[index];
                     let source = self.document.project.source(id).expect("filmstrip source");
                     let path = self.document.source_path(id).expect("filmstrip locator");
-                    let selected = (self.ready.is_some() || self.pending_preview.is_some()) && self.current_source == Some(id);
+                    let selected = self.current_source == Some(id);
                     let response_id = ui.id().with(id.0);
-                    let card = layout.begin(ui,content.min+egui::vec2(index as f32*pitch,0.),response_id,selected);
+                    let card = layout.begin(ui,content.min+egui::vec2(index as f32*pitch,0.),response_id,selected,selection_enabled);
                     let image_rect = card.image_rect;
                     let key = self.document.project.development.as_ref().map(|development|ImageKey { source:SourceKey::new(source,development,FileKey::new(&path)),target:self.target,field:self.correction.as_ref().map(|c|FieldKey(c.settings.map.clone())) });
                     if let Some(key) = &key { protected.push(key.clone()); }
@@ -807,8 +808,9 @@ impl Editor {
                     if error.is_some() { card.error(ui); }
                     let name = path.file_name().unwrap_or_default().to_string_lossy();
                     card.caption(ui,&name);
-                    if card.response.clicked() && !self.busy && self.flat_edit.is_none() && self.crop_edit.is_none() { select = Some(index); }
-                    card.response.on_hover_text(error.unwrap_or_else(||format!("{}\nCamera previews show embedded, ungraded camera framing until the developed thumbnail is ready. Drag the strip's top edge to resize.",path.display())));
+                    if card.response.clicked() && selection_enabled { select = Some(index); }
+                    let help = error.unwrap_or_else(||format!("{}\nCamera previews show embedded, ungraded camera framing until the developed thumbnail is ready. Drag the strip's top edge to resize.",path.display()));
+                    card.response.on_hover_text(&help).on_disabled_hover_text(help);
                 }
             });
         });
@@ -911,6 +913,9 @@ mod performance;
 #[cfg(test)]
 #[path = "editor_selected_preview_tests.rs"]
 mod selected_tests;
+#[cfg(test)]
+#[path = "editor_thumbnail_selection_tests.rs"]
+mod selection_tests;
 #[cfg(test)]
 #[path = "editor_thumbnail_style_tests.rs"]
 mod style_tests;
