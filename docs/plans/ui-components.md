@@ -1,6 +1,6 @@
 # Shared UI components and standards
 
-Status: shared metrics/tint and text actions are implemented; tool-group, input, card and feedback consolidation remain unfinished. [Architecture](../architecture.md#editor-workspace), [controls](../contracts/editor-controls.md#shared-visual-language) and [root agent rules](../../AGENTS.md#ui-engineering) describe the implemented foundation. [Roadmap](../../PLAN.md) owns cross-package priority.
+Status: shared metrics/tint, text actions, viewer tool groups and inspector active-tool framing are implemented; section/row/input, card and feedback consolidation remain unfinished. [Architecture](../architecture.md#editor-workspace), [controls](../contracts/editor-controls.md#shared-visual-language) and [root agent rules](../../AGENTS.md#ui-engineering) describe the implemented foundation. [Roadmap](../../PLAN.md) owns cross-package priority.
 
 ## Goal and scope
 
@@ -11,7 +11,7 @@ This is UI polish and code standardization only. Preserve accepted appearance/be
 Remaining scope:
 
 - Semantic typography, spacing and surface/state roles as the next real component families need them.
-- Tool identity/transaction groups, toolbar and labelled-row composition, section/input presentation, thumbnail cards/captions and existing status/error/busy presentation.
+- Toolbar and labelled-row composition, section/input presentation, thumbnail cards/captions and existing status/error/busy presentation.
 - Incremental consumer migration, isolated and composed-view coverage, and discoverable shared-first instructions that stay aligned with implemented APIs.
 
 Non-goals:
@@ -30,7 +30,6 @@ Inspect entry points against current code before each slice; this table is not a
 | --- | --- | --- |
 | Actions/icons | `src/editor_ui.rs`, `src/editor_icons.rs` | Reuse these working APIs as later consumers migrate; preserve momentary versus selected semantics and meaningful names/help |
 | Inspector hierarchy/inputs | `src/editor_controls.rs` | Shared header/row composition beneath existing section/parameter/calibration/balance adapters, not numerical or wheel mathematics |
-| Viewer/tools | `src/editor_viewer.rs` | A reusable tool/action group whose total width measurement and painting share one definition |
 | Crop/flat-field settings | `src/editor_crop.rs`, `src/editor_flat_field.rs` | Shared action/labelled-row composition without draft/reference ownership |
 | Scopes/feedback | `src/editor_scopes.rs`, `src/editor.rs` | Chrome and existing status/error/busy presentation, not plot colours, analysis or error-priority decisions |
 | Filmstrip | `src/editor_thumbnails.rs` | Card layout/state treatment, caption elision and supplied placeholders/badges without image/cache/selection ownership |
@@ -43,7 +42,7 @@ Card components must preserve embedded Camera preview/Camera badges and their lo
 
 - Use semantic roles, not a catalogue of renamed literals or unrestricted per-call styling overrides. Resolve theme-responsive roles through egui visuals and retain deliberate neutral photographic surrounds. Selected cards, active tools and selected tabs can legitimately differ.
 - Introduce spacing/typography/surface tokens when their family needs them. Normal/compact filmstrip geometry and narrow viewer priorities are real contextual variants; do not merge unrelated values because their numbers happen to match.
-- Keep generic presentation in the existing private egui-only `presentation` module. Specialized `icons`/`controls` remain adapters. Do not supply `Editor`, `Ready`, `Command`, documents, RAW data or caches to generic components; use explicit imports and small display-ready inputs.
+- Keep generic presentation in the existing private `presentation` module using egui and the shared icon artwork. Specialized `icons`/`controls` remain adapters. Do not supply `Editor`, `Ready`, `Command`, documents, RAW data or caches to generic components; use explicit imports and small display-ready inputs.
 - Controllers retain availability, reset scope, accepted/draft state, validation, Apply/Cancel dispatch, view restoration and worker lifecycle. Domain wrappers remain the source of parameter ranges/defaults/precision; application preferences remain the persistence owner.
 - Preserve existing caller ID scopes, focus/popup identities and response semantics. Generic components must not add hidden keyboard handlers or a second transaction/state system.
 - Common fixed action names/help belong with the relevant component; contextual titles, paths, scientific explanations and backend errors remain caller inputs. No global string registry.
@@ -51,27 +50,21 @@ Card components must preserve embedded Camera preview/Camera badges and their lo
 
 ## Ordered remaining slices
 
-### 1. Tool and toolbar composition
+### 1. Sections, rows and input composition
 
-- Sketch the smallest tool-group input/response API using the implemented `TextAction` and shared metrics/tint. Share total width measurement and allocation, not just action widths.
-- Preserve the one trailing icon/spinner/name/Cancel/primary Apply group, right alignment, 40-point viewer bar, 12-point name→Cancel gap and narrow-width auxiliary-control priorities.
-- Migrate viewer tool groups and inspector active-tool framing; migrate crop/flat-field action rows and scope chrome only where the same primitives fit.
-- Keep busy, proposal availability, drafts, keyboard dispatch and canvas ownership in the controllers. No new placement, floating panels or implicit commit/cancel behavior.
-
-### 2. Sections and input composition
-
-- Consolidate header/row presentation beneath existing section, parameter and calibration APIs.
+- Consolidate header/row presentation beneath existing section, parameter and calibration APIs; migrate crop/flat-field action rows and scope chrome only where the same primitives fit.
+- Preserve viewer bar/action dimensions, name/action spacing, right alignment and narrow-width priorities as other toolbar consumers migrate. Keep availability, drafts, keyboard dispatch and canvas ownership in controllers; no new placement or implicit commit/cancel behavior.
 - Preserve numerical/balance wrappers, including Contrast/Pivot/Colour preservation/Saturation/Density. Add a generic input descriptor only when current consumers justify it; do not relocate numerical operators.
 - Preserve full-precision commits, disabled snapshots, independent reset/disclosure, pending-edit cancellation, stable IDs, summaries and preference retention.
 
-### 3. Cards, captions and existing feedback
+### 2. Cards, captions and existing feedback
 
 - Extract accepted filmstrip presentation/caption elision and return responses/content bounds so callers can paint current GPU and camera-preview content.
 - Retain virtualization, source lookup, pixel-rounded mappings, selection/sampling and scheduling in their current owners. Preserve square image wells, full aspect, compact geometry and stable footprints.
 - Consolidate repeated status/error/busy presentation without adding states, inferring progress or changing error priority. Receive real available actions and display-ready text/state; do not manufacture cancellation or idle repaint loops.
 - Coordinate with [operation-feedback work](completion.md#operation-feedback); backend phase/cancellation design is not a dependency for extracting current presentation.
 
-### 4. Coverage and handoff
+### 3. Coverage and handoff
 
 - Check applicable inventory consumers use their shared family; remove redundant implementations without forcing specialized visualization through generic controls.
 - Add concise usage/examples alongside implemented components and keep `AGENTS.md` rules/links discoverable. Do not duplicate a full style guide.
@@ -96,15 +89,13 @@ Follow [development checks](../development.md) and [layout/fixture probes](../bu
 
 ### Current verification checkpoint
 
-Local snapshot on Apple M5 Pro/arm64, macOS 26.6.2, Rust 1.99.0, Metal: 55 focused integration tests passed (presentation 5, controls 18, viewer 15, workspace 8, explicit response opt-in 1, embedded preview 8). Tests include direct-button paint/geometry/ID equivalence at 1×/2×, style-aware width measurement without widget allocation, semantic names, focus order, inherited/local disable transitions, exact action/bar heights, transaction guards and numerical precedence. Reproduce with:
+Local snapshot on Apple M5 Pro/arm64, macOS 26.6.2, Rust 1.99.0, Metal: 52 focused tests passed (presentation 11, controls 18, viewer 15, workspace 8). Tests include text-action and complete tool-frame paint/geometry/ID equivalence at 1×/2×, style-aware total width measurement without widget allocation, viewer/inspector semantic distinctions, busy identity, header/body result flow, focus order, inherited/local disable transitions, exact action/bar heights, transaction guards and numerical precedence. Reproduce with:
 
 ```sh
 cargo test --locked --offline --features editor --lib editor::presentation::tests
 cargo test --locked --offline --features editor --lib editor::controls::tests
 cargo test --locked --offline --features editor --lib editor::tests::viewer
 cargo test --locked --offline --features editor --lib editor::tests::workspace
-cargo test --locked --offline --features editor --lib original_grade_requires_explicit_response_opt_in_and_drawing_never_regrades_it
-cargo test --locked --offline --features editor --lib editor::thumbnails::embedded::tests
 cargo fmt --all -- --check
 cargo clippy --locked --offline --features editor --lib --tests -- -D warnings
 cargo build --locked --offline --features editor --bin antitone
@@ -114,9 +105,8 @@ Formatting, strict editor Clippy and debug build passed. Both native tool captur
 
 ## Open interfaces and next action
 
-- What is the smallest tool-group API that shares total width measurement while retaining caller IDs and dispatch?
 - Which selected/focus/active treatments need their own roles? Preserve appearance before considering unification.
 - What response/content-bounds API supports card GPU/camera-preview content without image ownership?
 - Which feedback consumers can share current presentation, and which need separately designed operation states?
 
-Next: settle the tool-group input/response/measurement interface, then migrate its viewer and inspector consumers in a separate worktree. Preserve current appearance, action priority and controller ownership; do not expand into backend feedback or resource/photographic acceptance.
+Next: inspect section/header/labelled-row consumers and settle the smallest shared composition beneath the current numeric/calibration adapters. Preserve current appearance, precision, IDs, action priority and controller ownership; do not expand into backend feedback or resource/photographic acceptance.

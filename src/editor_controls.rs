@@ -1,6 +1,6 @@
 use super::{
     icons::{self, Icon},
-    presentation::{CONTROL_HEIGHT, active_tool_fill},
+    presentation::{CONTROL_HEIGHT, ToolIdentity},
 };
 use crate::{
     color::{Balance, ap1_to_cones, opponent, opponent_coordinates},
@@ -240,31 +240,25 @@ pub(super) fn active_tool<R>(
     reset: Option<bool>,
     contents: impl FnOnce(&mut Ui, bool) -> R,
 ) -> R {
-    let mut reset_clicked = false;
-    egui::Frame::NONE
-        .fill(active_tool_fill(ui))
-        .inner_margin(6.)
-        .show(ui, |ui| {
-            icons::row(ui, |ui| {
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(16., 16.), egui::Sense::hover());
-                icon.paint(ui, rect, ui.visuals().selection.stroke);
-                ui.strong(title);
-                if let Some(enabled) = reset {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        reset_clicked = icons::button(
-                            ui,
-                            Icon::Reset,
-                            enabled,
-                            "Reset draft",
-                            "Reset draft crop and angle; keeps orientation and colour.",
-                        )
-                        .clicked();
-                    });
-                }
-            });
-            contents(ui, reset_clicked)
-        })
-        .inner
+    ToolIdentity { icon, title }.inspector(
+        ui,
+        |ui| {
+            reset.is_some_and(|enabled| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    icons::button(
+                        ui,
+                        Icon::Reset,
+                        enabled,
+                        "Reset draft",
+                        "Reset draft crop and angle; keeps orientation and colour.",
+                    )
+                    .clicked()
+                })
+                .inner
+            })
+        },
+        contents,
+    )
 }
 
 fn reset_button(ui: &mut Ui, enabled: bool, name: &str) -> Response {

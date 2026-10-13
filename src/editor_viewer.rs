@@ -20,7 +20,9 @@ impl Editor {
 
     pub(super) fn viewer_bar(&mut self, ui: &mut egui::Ui) -> Option<f32> {
         use icons::Icon;
-        use presentation::{CONTROL_HEIGHT, TextAction, VIEWER_BAR_HEIGHT, VIEWER_ITEM_GAP};
+        use presentation::{
+            TextAction, ToolGroup, ToolIdentity, VIEWER_BAR_HEIGHT, VIEWER_ITEM_GAP,
+        };
         let mut zoom_action = None;
         let cropping = self.crop_edit.is_some();
         let tool = self.viewer_tool();
@@ -31,6 +33,12 @@ impl Editor {
             self.source = true;
         }
         let navigating = self.ready.is_some() && !self.busy;
+        let tool_group = tool.map(|(icon, title)| ToolGroup {
+            identity: ToolIdentity { icon, title },
+            busy: self.busy,
+            cancel_enabled: !self.busy,
+            apply_enabled: navigating && (cropping || self.region.is_some()),
+        });
         let inspecting = navigating && calibrated && tool.is_none();
         egui::Panel::bottom("viewer-bar")
             .exact_size(VIEWER_BAR_HEIGHT)
@@ -42,14 +50,8 @@ impl Editor {
                     let target = if self.target == OutputTarget::DisplayP3 { "Display P3" } else { "sRGB" };
                     let quality = if self.pending_preview.is_some() { " · Cached preview" } else if self.source || self.ready.is_none() { "" } else if self.refining.is_some() { " · Refining" } else if self.settled.is_none() { " · Approximate" } else { "" };
                     let state = format!("{target}{quality}");
-                    let tool_font = egui::FontId::proportional(12.);
-                    let tool_action_space = 8.;
-                    let cancel_action = TextAction::new("Cancel").enabled(!self.busy).toolbar(0.).help("Cancel the active tool (Escape).");
-                    let apply_action = TextAction::new("Apply").enabled(navigating && (cropping || self.region.is_some())).primary().toolbar(0.).help("Apply the active tool (Enter).");
-                    let trailing_width = if let Some((_, title)) = tool {
-                        let title_width = ui.painter().layout_no_wrap(title.into(), tool_font.clone(), ui.visuals().text_color()).size().x;
-                        let actions_width = cancel_action.width(ui) + apply_action.width(ui);
-                        title_width + actions_width + 16. + 12. + 3. * ui.spacing().item_spacing.x + tool_action_space
+                    let trailing_width = if let Some(group) = tool_group {
+                        group.width(ui)
                     } else {
                         ui.painter().layout_no_wrap(state.clone(), egui::TextStyle::Small.resolve(ui.style()), ui.visuals().text_color()).size().x
                     };
@@ -119,22 +121,10 @@ impl Editor {
                             }
                         });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if let Some((icon, title)) = tool {
-                            egui::Frame::NONE.fill(presentation::active_tool_fill(ui)).inner_margin(egui::Margin::symmetric(6, 0)).show(ui, |ui| {
-                                ui.allocate_ui_with_layout(egui::vec2(trailing_width - 12., CONTROL_HEIGHT), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                    let (rect, _) = ui.allocate_exact_size(egui::vec2(16., 16.), egui::Sense::hover());
-                                    if self.busy {
-                                        ui.put(rect, egui::Spinner::new().size(16.));
-                                    } else {
-                                        icon.paint(ui, rect, ui.visuals().selection.stroke);
-                                    }
-                                    let label = ui.add(egui::Label::new(egui::RichText::new(title).font(tool_font).strong()));
-                                    label.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, label.enabled(), format!("Active tool: {title}{}", if self.busy { " · Working" } else { "" })));
-                                    ui.add_space(tool_action_space);
-                                    cancel = cancel_action.show(ui).clicked();
-                                    apply = apply_action.show(ui).clicked();
-                                });
-                            });
+                        if let Some(group) = tool_group {
+                            let actions = group.show(ui).inner;
+                            cancel = actions.cancel.clicked();
+                            apply = actions.apply.clicked();
                         } else {
                             ui.add(egui::Label::new(egui::RichText::new(state).small().weak()).truncate()).on_hover_text("Shared preview / thumbnail / scope / TIFF target · 100 nit. EXR is scene-linear AP0. Cached preview remains provisional while the full-resolution RAW develops.");
                         }

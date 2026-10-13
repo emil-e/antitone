@@ -1,3 +1,6 @@
+#[path = "editor_tool_group_tests.rs"]
+mod tool_groups;
+
 use super::TextAction;
 use egui::{Context, Event, FullOutput, Modifiers, Pos2, Rect, Response, Ui};
 
