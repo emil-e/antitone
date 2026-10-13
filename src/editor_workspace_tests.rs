@@ -16,7 +16,7 @@ fn stage_tabs_have_equal_named_hit_regions_selection_and_keyboard_activation() {
                 ..Default::default()
             },
             |ui| {
-                controls::stage_tabs(ui, &mut selected);
+                presentation::stage_tabs(ui, &mut selected);
             },
         );
         output.textures_delta.clear();

@@ -1,6 +1,6 @@
 # Shared UI components and standards
 
-Status: shared metrics/tint, text actions, viewer tool groups and inspector active-tool framing are implemented; section/row/input, card and feedback consolidation remain unfinished. [Architecture](../architecture.md#editor-workspace), [controls](../contracts/editor-controls.md#shared-visual-language) and [root agent rules](../../AGENTS.md#ui-engineering) describe the implemented foundation. [Roadmap](../../PLAN.md) owns cross-package priority.
+Status: shared metrics/tint, text actions, viewer tool groups, inspector framing, sections/stage tabs and labelled parameter/calibration rows are implemented; card and existing feedback consolidation remain unfinished. [Architecture](../architecture.md#editor-workspace), [controls](../contracts/editor-controls.md#shared-visual-language) and [root agent rules](../../AGENTS.md#ui-engineering) describe the implemented foundation. [Roadmap](../../PLAN.md) owns cross-package priority.
 
 ## Goal and scope
 
@@ -11,7 +11,7 @@ This is UI polish and code standardization only. Preserve accepted appearance/be
 Remaining scope:
 
 - Semantic typography, spacing and surface/state roles as the next real component families need them.
-- Toolbar and labelled-row composition, section/input presentation, thumbnail cards/captions and existing status/error/busy presentation.
+- Thumbnail cards/captions and existing status/error/busy presentation; scope chrome only where a concrete shared presentation pattern fits.
 - Incremental consumer migration, isolated and composed-view coverage, and discoverable shared-first instructions that stay aligned with implemented APIs.
 
 Non-goals:
@@ -29,12 +29,10 @@ Inspect entry points against current code before each slice; this table is not a
 | Family | Entry points | Remaining consolidation |
 | --- | --- | --- |
 | Actions/icons | `src/editor_ui.rs`, `src/editor_icons.rs` | Reuse these working APIs as later consumers migrate; preserve momentary versus selected semantics and meaningful names/help |
-| Inspector hierarchy/inputs | `src/editor_controls.rs` | Shared header/row composition beneath existing section/parameter/calibration/balance adapters, not numerical or wheel mathematics |
-| Crop/flat-field settings | `src/editor_crop.rs`, `src/editor_flat_field.rs` | Shared action/labelled-row composition without draft/reference ownership |
 | Scopes/feedback | `src/editor_scopes.rs`, `src/editor.rs` | Chrome and existing status/error/busy presentation, not plot colours, analysis or error-priority decisions |
 | Filmstrip | `src/editor_thumbnails.rs` | Card layout/state treatment, caption elision and supplied placeholders/badges without image/cache/selection ownership |
 
-The existing helpers already cover semantic icons, independent disclosure/reset, safe numeric editing and UI-only expansion. Extend them rather than introduce parallel replacements. Native egui menu/selection controls, stage tabs, colour-wheel/crop artwork and scope plotting are specialized consumers, not reasons to force every widget through text actions.
+Use the implemented presentation hierarchy/labelled rows beneath photographic adapters; do not introduce a generic input descriptor without a concrete supported need. Crop's aligned grid, balance artwork, native egui selection controls and scope plotting are deliberate specialized consumers, not remaining row migrations or reasons to force every widget through text actions.
 
 Card components must preserve embedded Camera preview/Camera badges and their loading/error precedence. Keep decoding/admission/cache ownership outside card components and never adopt camera previews as authoritative RAW working data.
 
@@ -50,21 +48,14 @@ Card components must preserve embedded Camera preview/Camera badges and their lo
 
 ## Ordered remaining slices
 
-### 1. Sections, rows and input composition
-
-- Consolidate header/row presentation beneath existing section, parameter and calibration APIs; migrate crop/flat-field action rows and scope chrome only where the same primitives fit.
-- Preserve viewer bar/action dimensions, name/action spacing, right alignment and narrow-width priorities as other toolbar consumers migrate. Keep availability, drafts, keyboard dispatch and canvas ownership in controllers; no new placement or implicit commit/cancel behavior.
-- Preserve numerical/balance wrappers, including Contrast/Pivot/Colour preservation/Saturation/Density. Add a generic input descriptor only when current consumers justify it; do not relocate numerical operators.
-- Preserve full-precision commits, disabled snapshots, independent reset/disclosure, pending-edit cancellation, stable IDs, summaries and preference retention.
-
-### 2. Cards, captions and existing feedback
+### 1. Cards, captions and existing feedback
 
 - Extract accepted filmstrip presentation/caption elision and return responses/content bounds so callers can paint current GPU and camera-preview content.
 - Retain virtualization, source lookup, pixel-rounded mappings, selection/sampling and scheduling in their current owners. Preserve square image wells, full aspect, compact geometry and stable footprints.
 - Consolidate repeated status/error/busy presentation without adding states, inferring progress or changing error priority. Receive real available actions and display-ready text/state; do not manufacture cancellation or idle repaint loops.
 - Coordinate with [operation-feedback work](completion.md#operation-feedback); backend phase/cancellation design is not a dependency for extracting current presentation.
 
-### 3. Coverage and handoff
+### 2. Coverage and handoff
 
 - Check applicable inventory consumers use their shared family; remove redundant implementations without forcing specialized visualization through generic controls.
 - Add concise usage/examples alongside implemented components and keep `AGENTS.md` rules/links discoverable. Do not duplicate a full style guide.
@@ -89,19 +80,20 @@ Follow [development checks](../development.md) and [layout/fixture probes](../bu
 
 ### Current verification checkpoint
 
-Local snapshot on Apple M5 Pro/arm64, macOS 26.6.2, Rust 1.99.0, Metal: 52 focused tests passed (presentation 11, controls 18, viewer 15, workspace 8). Tests include text-action and complete tool-frame paint/geometry/ID equivalence at 1×/2×, style-aware total width measurement without widget allocation, viewer/inspector semantic distinctions, busy identity, header/body result flow, focus order, inherited/local disable transitions, exact action/bar heights, transaction guards and numerical precedence. Reproduce with:
+Local snapshot on Apple M5 Pro/arm64, macOS 26.6.2, Rust 1.99.0, Metal: 59 focused tests passed (presentation 14, controls 18, viewer 15, workspace 8, flat-field 4; one sample-dependent flat-field test unperformed). Coverage includes text-action/tool-frame/labelled-row paint, geometry and ID equivalence at 1×/2×; total-width measurement; focus and disabled safety; pinned section expansion, independent reset and fresh-context restoration; numerical precision, pending-edit collapse and existing transaction guards. Section/tab/expansion implementations moved unchanged. Reproduce with:
 
 ```sh
 cargo test --locked --offline --features editor --lib editor::presentation::tests
 cargo test --locked --offline --features editor --lib editor::controls::tests
 cargo test --locked --offline --features editor --lib editor::tests::viewer
 cargo test --locked --offline --features editor --lib editor::tests::workspace
+cargo test --locked --offline --features editor --lib editor::flat::tests
 cargo fmt --all -- --check
 cargo clippy --locked --offline --features editor --lib --tests -- -D warnings
 cargo build --locked --offline --features editor --bin antitone
 ```
 
-Formatting, strict editor Clippy and debug build passed. Both native tool capture routes passed (six tool and two flat-reference normal/narrow captures); all eight were visually inspected. Use the runbook's window helper and `scripts/capture-viewer-tools.py` with the debug binary/read-only samples to reproduce. Captures/tests do not establish physical input, VoiceOver, preference relaunch, photographic or broader-device acceptance; those remain outside this package. The integrated camera-preview feature retains its separate decoding/admission/cache ownership and filmstrip-only presentation.
+Formatting, strict editor Clippy and debug build passed. Native workspace/tool/reference capture routes passed (six workspace, six tool and two flat-reference normal/narrow captures); all 14 were visually inspected. Use the runbook's window helper, `scripts/capture-controls.py` and `scripts/capture-viewer-tools.py` with read-only samples to reproduce. Captures/tests do not establish physical input, VoiceOver, preference relaunch, photographic or broader-device acceptance; those remain outside this package. The integrated camera-preview feature retains its separate decoding/admission/cache ownership and filmstrip-only presentation.
 
 ## Open interfaces and next action
 
@@ -109,4 +101,4 @@ Formatting, strict editor Clippy and debug build passed. Both native tool captur
 - What response/content-bounds API supports card GPU/camera-preview content without image ownership?
 - Which feedback consumers can share current presentation, and which need separately designed operation states?
 
-Next: inspect section/header/labelled-row consumers and settle the smallest shared composition beneath the current numeric/calibration adapters. Preserve current appearance, precision, IDs, action priority and controller ownership; do not expand into backend feedback or resource/photographic acceptance.
+Next: inspect current filmstrip card/caption/badge consumers and settle the response/content-bounds interface without moving image/cache/selection ownership. Preserve current appearance, pixel-rounded clipping and camera-preview precedence; do not expand into backend feedback or resource/photographic acceptance.

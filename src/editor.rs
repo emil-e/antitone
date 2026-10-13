@@ -1394,13 +1394,14 @@ impl Editor {
         }
     }
     fn controls(&mut self, ui: &mut egui::Ui) -> Option<ScopeSlot> {
-        use controls::{ColorControl, Parameter, SectionHeader};
+        use controls::{ColorControl, Parameter};
         use icons::Icon;
+        use presentation::SectionHeader;
         let previous_orientation = (self.roll_orientation, self.photo_orientation);
-        controls::restore_expansion(ui.ctx(), self.preferences.sections.clone());
+        presentation::restore_expansion(ui.ctx(), self.preferences.sections.clone());
         let scope_slot = self.scope_panel(ui);
         ui.add_space(8.);
-        controls::stage_tabs(ui, &mut self.tab);
+        presentation::stage_tabs(ui, &mut self.tab);
         let editable = !self.busy
             && self.crop_edit.is_none()
             && self.flat_edit.is_none()
@@ -1419,7 +1420,7 @@ impl Editor {
                 ui.push_id("roll", |ui| {
                     ui.add_enabled_ui(geometry_editable, |ui| {
                         let changed = !self.roll_orientation.is_identity();
-                        let (_, reset) = controls::section(ui, "roll-orientation", "Scan orientation", SectionHeader { summary: "Shared scanning baseline", changed, reset: Some(changed), default_open: Some(false) }, |ui| {
+                        let (_, reset) = presentation::section(ui, "roll-orientation", "Scan orientation", SectionHeader { summary: "Shared scanning baseline", changed, reset: Some(changed), default_open: Some(false) }, |ui| {
                             ui.horizontal(|ui| {
                                 if icons::button(ui, Icon::TurnLeft, true, "Turn left", "Turn the shared scan baseline 90° left.").clicked() { self.roll_orientation.turn_counterclockwise(); }
                                 if icons::button(ui, Icon::TurnRight, true, "Turn right", "Turn the shared scan baseline 90° right.").clicked() { self.roll_orientation.turn_clockwise(); }
@@ -1436,7 +1437,7 @@ impl Editor {
                         (false, true) => "Dmin not measured",
                         (true, false) => "Dmax not measured",
                     };
-                    controls::section(ui, "roll-calibration", "Calibration", SectionHeader { summary: calibration_summary, changed: false, reset: None, default_open: Some(true) }, |ui| {
+                    presentation::section(ui, "roll-calibration", "Calibration", SectionHeader { summary: calibration_summary, changed: false, reset: None, default_open: Some(true) }, |ui| {
                         if controls::calibration(
                             ui, "dmin", "Dmin (film base)", self.dmin, can_pick,
                             "Minimum-density film base. Linear native-camera RGB, not optical-density numbers.",
@@ -1453,7 +1454,7 @@ impl Editor {
                     ui.add_enabled_ui(editable, |ui| {
                         let inversion_changed = self.roll.gamma != crate::processing::DEFAULT_GAMMA
                             || self.roll.balance != Balance::default();
-                        let (_, reset) = controls::section(
+                        let (_, reset) = presentation::section(
                             ui, "roll-gamma-balance", "Gamma & balance",
                             SectionHeader {
                                 summary: &format!("Gamma {:.2} · Balance {}", self.roll.gamma, if self.roll.balance == Balance::default() { "neutral" } else { "adjusted" }),
@@ -1476,7 +1477,7 @@ impl Editor {
                             crate::processing::Response::Original => "Classic curve".into(),
                             crate::processing::Response::Film { toe, shoulder } => format!("Toe {toe:.2} · Shoulder {shoulder:.4}"),
                         };
-                        let (_, reset) = controls::section(
+                        let (_, reset) = presentation::section(
                             ui, "roll-response", "Toe & shoulder", SectionHeader {
                                 summary: &response_summary,
                                 changed: self.roll.response != crate::processing::Response::film(),
@@ -1504,7 +1505,7 @@ impl Editor {
                             },
                         );
                         if reset { self.roll.response = crate::processing::Response::film(); }
-                        let (_, reset) = controls::section(
+                        let (_, reset) = presentation::section(
                             ui, "roll-exposure", "Exposure", SectionHeader { summary: &format!("{:+.2} EV", self.roll.exposure), changed: self.roll.exposure != 0., reset: Some(self.roll.exposure != 0.), default_open: Some(false) },
                             |ui| {
                                 controls::parameter(ui, Parameter::Exposure, &mut self.roll.exposure);
@@ -1524,7 +1525,7 @@ impl Editor {
                         ) {
                             start_pick = Some(Pick::Wb);
                         }
-                        let (_, reset) = controls::section(
+                        let (_, reset) = presentation::section(
                             ui, "photo-exposure", "Exposure", SectionHeader { summary: &format!("{:+.2} EV", self.photo.exposure), changed: self.photo.exposure != 0., reset: Some(self.photo.exposure != 0.), default_open: Some(true) },
                             |ui| {
                                 controls::parameter(ui, Parameter::Exposure, &mut self.photo.exposure);
@@ -1537,7 +1538,7 @@ impl Editor {
                         let changed = self.photo.contrast != defaults.contrast
                             || self.photo.pivot != defaults.pivot
                             || self.photo.contrast_colour_mix != defaults.contrast_colour_mix;
-                        let (_, reset) = controls::section(ui, "photo-contrast", "Contrast", SectionHeader {
+                        let (_, reset) = presentation::section(ui, "photo-contrast", "Contrast", SectionHeader {
                             summary: &format!("{:.2} · Pivot {:.3} · Preserve {:.2}", self.photo.contrast, self.photo.pivot, self.photo.contrast_colour_mix),
                             changed, reset: Some(changed), default_open: Some(true),
                         }, |ui| {
@@ -1553,7 +1554,7 @@ impl Editor {
                         }
                         let changed = self.photo.saturation != defaults.saturation
                             || self.photo.saturation_density != defaults.saturation_density;
-                        let (_, reset) = controls::section(ui, "photo-saturation", "Saturation", SectionHeader {
+                        let (_, reset) = presentation::section(ui, "photo-saturation", "Saturation", SectionHeader {
                             summary: &format!("{:.2} · Density {:.2}", self.photo.saturation, self.photo.saturation_density),
                             changed, reset: Some(changed), default_open: Some(true),
                         }, |ui| {
@@ -1570,7 +1571,7 @@ impl Editor {
             } else {
                 ui.add_enabled_ui(self.crop_edit.is_none() && self.flat_edit.is_none(), |ui| {
                     let changed = self.target != OutputTarget::DisplayP3;
-                    let (_, reset) = controls::section(ui, "rendering-target", "Target", SectionHeader {
+                    let (_, reset) = presentation::section(ui, "rendering-target", "Target", SectionHeader {
                         summary: if self.target == OutputTarget::DisplayP3 { "Display P3 · 100 nit" } else { "sRGB · 100 nit" },
                         changed, reset: Some(changed), default_open: Some(true),
                     }, |ui| {
@@ -1592,7 +1593,7 @@ impl Editor {
                 });
             }
         });
-        self.preferences.sections = controls::collect_expansion(ui.ctx());
+        self.preferences.sections = presentation::collect_expansion(ui.ctx());
         self.preferences.scopes_visible = self.scopes.visible;
         self.preferences.scope_height_ratio = self.scopes.height_ratio;
         if previous_orientation != (self.roll_orientation, self.photo_orientation) {

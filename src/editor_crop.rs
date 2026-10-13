@@ -146,11 +146,11 @@ impl Editor {
         let mut reset_crop = false;
         let mut reset = false;
         ui.add_enabled_ui(editable || cropping, |ui| {
-            (_, reset) = controls::section(
+            (_, reset) = presentation::section(
                 ui,
                 "photo-composition",
                 "Composition",
-                controls::SectionHeader {
+                presentation::SectionHeader {
                     summary: if cropping {
                         "Crop active"
                     } else if self.crop.is_some() {

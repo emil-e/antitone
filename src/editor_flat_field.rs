@@ -70,11 +70,11 @@ impl Editor {
             Some(_) => "Disabled",
             None => "Not configured",
         };
-        controls::section(
+        presentation::section(
             ui,
             "roll-flat-field",
             "Flat-field correction",
-            controls::SectionHeader {
+            presentation::SectionHeader {
                 summary,
                 changed: settings.is_some(),
                 reset: None,
@@ -101,7 +101,9 @@ impl Editor {
                 ui.add_enabled_ui(
                     !self.busy && self.pick.is_none() && self.crop_edit.is_none(),
                     |ui| {
-                        if ui.button("Choose reference RAW…").clicked()
+                        if presentation::TextAction::new("Choose reference RAW…")
+                            .show(ui)
+                            .clicked()
                             && let Some(path) = rfd::FileDialog::new()
                                 .set_title("Bare light source · same setup, without film")
                                 .add_filter("Camera RAW", &["arw"])
@@ -128,7 +130,9 @@ impl Editor {
                                 ));
                             }
                             ui.horizontal(|ui| {
-                                if ui.button("Edit area…").clicked()
+                                if presentation::TextAction::new("Edit area…")
+                                    .show(ui)
+                                    .clicked()
                                     && let Some(path) = path
                                 {
                                     let [x, y, width, height] = settings.map.area();
@@ -142,7 +146,7 @@ impl Editor {
                                         }),
                                     );
                                 }
-                                if ui.button("Clear").clicked() {
+                                if presentation::TextAction::new("Clear").show(ui).clicked() {
                                     self.sync_document();
                                     let mut candidate = self.document.clone();
                                     candidate.project.flat_field = None;

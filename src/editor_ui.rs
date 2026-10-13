@@ -1,12 +1,40 @@
 use super::icons::{self, Icon};
 use egui::{Color32, Response, Ui, Vec2};
 
+#[path = "editor_ui_hierarchy.rs"]
+mod hierarchy;
+pub(super) use hierarchy::{
+    SectionHeader, collect_expansion, restore_expansion, section, stage_tabs,
+};
+
 pub(super) const CONTROL_HEIGHT: f32 = 28.;
 pub(super) const VIEWER_BAR_HEIGHT: f32 = 40.;
 pub(super) const VIEWER_ITEM_GAP: f32 = 4.;
 
 pub(super) fn active_tool_fill(ui: &Ui) -> Color32 {
     ui.visuals().selection.bg_fill.linear_multiply(0.15)
+}
+
+/// One label and a right-aligned caller-owned control group; no additional ID scope.
+pub(super) fn labelled_row<R>(
+    ui: &mut Ui,
+    label: &str,
+    help: Option<&str>,
+    controls: impl FnOnce(&mut Ui) -> R,
+) -> egui::InnerResponse<R> {
+    icons::row(ui, |ui| {
+        let label = ui.label(label);
+        if let Some(help) = help {
+            label.on_hover_text(help);
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), controls)
+            .inner
+    })
+}
+
+pub(super) fn reset_button(ui: &mut Ui, enabled: bool, name: &str) -> Response {
+    let name = format!("Reset {name}");
+    icons::button(ui, Icon::Reset, enabled, &name, &name)
 }
 
 /// Text-button presentation only; callers retain availability and action dispatch.

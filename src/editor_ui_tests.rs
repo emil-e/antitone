@@ -1,3 +1,5 @@
+#[path = "editor_ui_row_tests.rs"]
+mod rows;
 #[path = "editor_tool_group_tests.rs"]
 mod tool_groups;
 
@@ -80,6 +82,9 @@ fn text_actions_preserve_direct_button_geometry_ids_and_paint_at_both_scales() {
             for inherited_enabled in [true, false] {
                 for action in [
                     TextAction::new("Use adjustable response").help("Explicit opt-in"),
+                    TextAction::new("Choose reference RAW…"),
+                    TextAction::new("Edit area…"),
+                    TextAction::new("Clear"),
                     TextAction::new("Cancel").toolbar(0.),
                     TextAction::new("Apply").primary().toolbar(0.),
                     TextAction::new("Apply")
