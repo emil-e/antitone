@@ -209,15 +209,19 @@ cargo test --locked --offline --release --features editor --lib \
 
 ## Rendering, gamut and ICC
 
-After regenerating the OCIO fixtures:
+The CPU rendering/ICC route regenerates its OCIO references itself; no preceding Metal check or cached input is required:
 
 ```sh
 ./scripts/probe-rendering.sh
+# Optionally include freshly generated authored camera inputs; no Metal device is used.
+./scripts/probe-rendering.sh --camera
 cargo test --locked --offline --features render --test rendering
 ./scripts/probe-gamut.sh
 # Independent target check without RAW fixtures:
 cargo run --locked --offline --features render --bin antitone-rendering-probe -- --gamut-check
 ```
+
+Both rendering scripts share `scripts/generate-ocio-reference.sh`, which regenerates the upstream CPU/GLSL/LUT artifacts. It can also run directly when only reference generation is needed, with optional `--camera`; it does not open a window or request a GPU device. Existing camera artifacts are ignored unless explicitly requested. A generation failure stops the dependent check rather than falling back to cached files.
 
 CPU/GPU agreement, profile/transfer checks and independent ColorSync/Core Image comparisons address different boundaries. [Artifact](../assets/ocio/README.md) and [profile](../assets/profiles/README.md) guides retain provenance.
 

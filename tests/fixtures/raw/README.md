@@ -80,4 +80,4 @@ Pinned LibRaw supplies `[1,1,1,0]` for this three-plane DNG's raw metadata WB. A
 
 Tag choices follow [DNG definitions](https://www.adobe.com/go/dng_spec) and were checked against pinned LibRaw's parser. Adobe DNG Validator acceptance is not established. Successful LibRaw decoding is not general DNG conformance.
 
-No proprietary-camera preview behavior, photographic correction/Analyze quality, GPU/desktop presentation, physical colour or realistic resource/performance acceptance follows. Reference-prerequisite cleanup, framework-driven UI checks and corrected-thumbnail coordination remain unfinished in the [verification plan](../../../docs/plans/verification-tooling.md).
+No proprietary-camera preview behavior, photographic correction/Analyze quality, GPU/desktop presentation, physical colour or realistic resource/performance acceptance follows. Framework-driven UI checks and corrected-thumbnail coordination remain unfinished in the [verification plan](../../../docs/plans/verification-tooling.md).
