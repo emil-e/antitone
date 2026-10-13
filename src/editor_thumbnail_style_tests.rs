@@ -242,6 +242,7 @@ fn capture_camera_roll_review_fixtures() {
             thumbnail: None,
             path: record.path.clone(),
             area: record.development.active_area.into(),
+            analysis_support: None,
             floor: editor.floor,
             images: [image.clone(), image],
             record,

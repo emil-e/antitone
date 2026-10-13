@@ -42,6 +42,10 @@ fn camera_matrix_follows_inversion_and_precedes_photographic_wb() {
     let cal = calibration();
     let roll = RollSettings {
         exposure: 1.25,
+        wb: Balance {
+            warmth: -0.35,
+            tint: 0.15,
+        },
         ..RollSettings::new_grade()
     };
     let photo = PhotoSettings {
@@ -60,7 +64,11 @@ fn camera_matrix_follows_inversion_and_precedes_photographic_wb() {
         .unwrap();
     close(
         actual.rgb,
-        wb_matrix(photo.wb).unwrap() * matrix() * inverted.rgb * 0.75_f64.exp2(),
+        wb_matrix(photo.wb).unwrap()
+            * wb_matrix(roll.wb).unwrap()
+            * matrix()
+            * inverted.rgb
+            * 0.75_f64.exp2(),
     );
     assert_eq!(actual.floored, inverted.floored);
     let mixed_calibration = Calibration {
@@ -74,6 +82,44 @@ fn camera_matrix_follows_inversion_and_precedes_photographic_wb() {
         .unwrap()
         .rgb;
     assert!((mixed - matrix() * inverted.rgb).abs().max_element() > 0.01);
+}
+
+#[test]
+fn photo_neutral_is_a_replacement_residual_after_roll_wb_not_a_second_total_correction() {
+    let cal = calibration();
+    let total = Balance {
+        warmth: 0.3,
+        tint: -0.2,
+    };
+    let roll = RollSettings {
+        wb: Balance {
+            warmth: 0.12,
+            tint: -0.03,
+        },
+        ..RollSettings::new_grade()
+    };
+    let cast = wb_matrix(total).unwrap().inverse() * DVec3::splat(0.2);
+    let scan = forward(cal, roll, matrix().inverse() * cast);
+    let before_photo = Pipeline::new(cal, roll, PhotoSettings::default(), matrix())
+        .unwrap()
+        .apply(scan)
+        .unwrap()
+        .rgb;
+    let residual = antitone::sampling::photo_neutral(&[before_photo]).unwrap();
+    assert!((residual.warmth - (total.warmth - roll.wb.warmth)).abs() < 1e-11);
+    assert!((residual.tint - (total.tint - roll.wb.tint)).abs() < 1e-11);
+    let photo = PhotoSettings {
+        wb: residual,
+        ..PhotoSettings::default()
+    };
+    close(
+        Pipeline::new(cal, roll, photo, matrix())
+            .unwrap()
+            .apply(scan)
+            .unwrap()
+            .rgb,
+        DVec3::splat(0.2),
+    );
 }
 
 #[test]

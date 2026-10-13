@@ -25,7 +25,7 @@ These are unfinished requirements, not one settled implementation design. [Roadm
 
 ## Roll assistance
 
-Start with a cancellable proposed Dmax estimate: bounded candidate discovery, robust full-source confirmation, clipping/floor masks and outlier handling. Show uncertainty/coverage and require explicit acceptance. Insufficient exposure evidence is an outcome, not true Dmax. Gamma/WB suggestions remain model/scene-dependent proposals, not physically known calibration.
+Analyze roll provides explicit, cancellable one-action initialization with atomic internal validation, not a second proposal-acceptance step. Photographic acceptance and concrete feedback-driven refinement remain unfinished in [roll assistance](roll-assistance.md). Endpoint/balance/exposure estimates are scene-dependent priors, not physically known calibration.
 
 ## Photographic controls and B&W handling
 

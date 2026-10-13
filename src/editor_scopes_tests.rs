@@ -418,6 +418,7 @@ fn whole_proxy_scopes_are_independent_of_viewport_and_do_not_resize_the_viewer()
             thumbnail: None,
             path: path.clone(),
             area,
+            analysis_support: None,
             floor: crate::processing::CAMERA_INPUT_FLOOR,
             images: images.clone(),
             record: Source {

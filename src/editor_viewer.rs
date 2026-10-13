@@ -13,8 +13,10 @@ impl Editor {
             Pick::Dmin => (icons::Icon::Pick, "Dmin"),
             Pick::Dmax => (icons::Icon::Pick, "Dmax"),
             Pick::Gamma => (icons::Icon::Pick, "Gamma neutral"),
+            Pick::RollWb => (icons::Icon::Pick, "Roll WB neutral"),
             Pick::Wb => (icons::Icon::Pick, "WB neutral"),
             Pick::Flat => (icons::Icon::Crop, "Flat-field"),
+            Pick::Analysis => (icons::Icon::Crop, "Picture area"),
         })
     }
 
@@ -114,6 +116,9 @@ impl Editor {
                             } else if let Some(kind) = self.pick {
                                 ui.separator();
                                 ui.small("Click a patch or drag an area; drag its edges/corners to resize.");
+                                if kind == Pick::Analysis {
+                                    ui.small("Picture statistics only · source-aligned · not an output crop");
+                                }
                                 if matches!(kind, Pick::Dmin | Pick::Dmax) {
                                     ui.small("To sample another image, select it in the filmstrip. Apply/Cancel returns to the working photo.");
                                 }
@@ -150,7 +155,7 @@ impl Editor {
     }
 
     pub(super) fn canvas_input_allowed(&self, ui: &egui::Ui, canvas: egui::Rect) -> bool {
-        if egui::Popup::is_any_open(ui.ctx()) {
+        if self.analysis_confirmation.is_some() || egui::Popup::is_any_open(ui.ctx()) {
             return false;
         }
         let positions = ui.ctx().input(|input| {

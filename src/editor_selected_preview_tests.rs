@@ -472,6 +472,7 @@ fn authoritative_ready_replaces_pending_and_active_proxy_survives_optional_press
             thumbnail: None,
             path,
             area: editor.pending_preview.as_ref().unwrap().area(),
+            analysis_support: None,
             floor: editor.floor,
             images: editor.pending_preview.as_ref().unwrap().images.clone(),
             record: editor.document.project.source(id).unwrap().clone(),

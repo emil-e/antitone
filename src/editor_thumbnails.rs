@@ -734,7 +734,8 @@ impl Editor {
             && self.document_pending.is_none()
             && self.transition.is_none()
             && self.project_overwrite.is_none()
-            && self.overwrite.is_none();
+            && self.overwrite.is_none()
+            && self.analysis_confirmation.is_none();
         let idle = visible_allowed
             && (self.settled.is_some()
                 || self.refinement_error

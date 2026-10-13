@@ -46,6 +46,11 @@ use selected_preview::{SelectionPaint, SelectionTiming};
 #[path = "editor_scopes.rs"]
 mod scopes;
 use scopes::{Scopes, Slot as ScopeSlot};
+#[path = "editor_analysis.rs"]
+mod analysis;
+#[path = "editor_analysis_smoke.rs"]
+mod analysis_smoke;
+pub use analysis_smoke::AnalysisSmoke;
 #[path = "editor_flat_field.rs"]
 mod flat;
 use flat::{Correction, FlatEdit, FlatPreview};
@@ -73,8 +78,10 @@ enum Pick {
     Dmin,
     Dmax,
     Gamma,
+    RollWb,
     Wb,
     Flat,
+    Analysis,
 }
 struct PickReturn {
     path: PathBuf,
@@ -90,6 +97,7 @@ struct Ready {
     thumbnail: Option<(thumbnails::FileKey, Arc<thumbnails::Proxy>)>,
     path: PathBuf,
     area: Rect,
+    analysis_support: Option<Rect>,
     floor: f64,
     images: [Arc<GpuImage>; 2],
     record: Source,
@@ -111,6 +119,7 @@ struct Prepared {
     preserve_view: bool,
 }
 enum Command {
+    Analyze(u64, Box<analysis::Request>),
     Refine(u64, u64, ProcessingParameters, OutputTarget, ViewRequest),
     Load(
         u64,
@@ -159,6 +168,8 @@ enum Measurement {
     Balance(Balance),
 }
 enum Message {
+    AnalysisProgress(u64, usize, usize),
+    Analyzed(u64, Result<Option<Box<analysis::Outcome>>, String>),
     Refined(u64, Result<Option<Arc<GpuImage>>, String>),
     Ready(u64, Result<Box<Ready>, String>),
     Picked(u64, Pick, Result<Measurement, String>),
@@ -238,10 +249,12 @@ fn prepare_source(
         started.elapsed().as_secs_f64(),
         tick.elapsed().as_secs_f64()
     );
+    let analysis_support = scan.propose_flat_field_area()?;
     let ready = Ready {
         thumbnail,
         path,
         area: scan.area,
+        analysis_support,
         floor: scan.input_floor,
         images,
         record,
@@ -346,12 +359,36 @@ fn backend(
     commands: mpsc::Receiver<Command>,
     messages: mpsc::Sender<Message>,
     generation: Arc<std::sync::atomic::AtomicU64>,
+    analysis_generation: Arc<std::sync::atomic::AtomicU64>,
 ) {
     let mut source: Option<(u64, Scan)> = None;
     let mut correction: Option<Arc<Correction>> = None;
     let mut flat_preview: Option<(u64, Scan, Source)> = None;
     while let Ok(command) = commands.recv() {
         match command {
+            Command::Analyze(id, request) => {
+                let result = if source
+                    .as_ref()
+                    .is_some_and(|(loaded, _)| *loaded == request.loaded)
+                {
+                    analysis::run(
+                        &device,
+                        &request,
+                        &analysis_generation,
+                        correction.as_ref(),
+                        |done, total| {
+                            let _ = messages.send(Message::AnalysisProgress(id, done, total));
+                        },
+                    )
+                    .map(|result| result.map(Box::new))
+                    .map_err(|e| e.to_string())
+                } else {
+                    Err("source changed before analysis".into())
+                };
+                if messages.send(Message::Analyzed(id, result)).is_err() {
+                    break;
+                }
+            }
             Command::Refine(id, revision, parameters, target, view) => {
                 let active = match &flat_preview {
                     Some((loaded, scan, _)) if *loaded == id => Some((scan, None)),
@@ -529,9 +566,22 @@ fn backend(
                                 roll,
                             )
                             .map(Measurement::Balance),
-                        Pick::Flat => Err(Error::InvalidParameter(
-                            "flat-field acceptance uses a separate transaction",
+                        Pick::Flat | Pick::Analysis => Err(Error::InvalidParameter(
+                            "area acceptance uses a separate transaction",
                         )),
+                        Pick::RollWb => scan
+                            .photo_neutral_coverage(
+                                region,
+                                calibration.ok_or(Error::UnusableSample(
+                                    "both film references are required",
+                                ))?,
+                                RollSettings {
+                                    wb: Balance::default(),
+                                    ..roll
+                                },
+                                PhotoSettings::default(),
+                            )
+                            .map(Measurement::Balance),
                         Pick::Wb => scan
                             .photo_neutral_coverage(
                                 region,
@@ -600,6 +650,9 @@ fn backend(
 
 pub struct Editor {
     started: bool,
+    analysis_generation: Arc<std::sync::atomic::AtomicU64>,
+    analysis_pending: Option<analysis::Pending>,
+    analysis_confirmation: Option<analysis::Request>,
     thumbnails: Thumbnails,
     scopes: Scopes,
     generation: Arc<std::sync::atomic::AtomicU64>,
@@ -671,10 +724,21 @@ impl Editor {
         let queue = queue.clone();
         let generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let worker_generation = generation.clone();
+        let analysis_generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let worker_analysis_generation = analysis_generation.clone();
         std::thread::spawn(move || {
-            backend(renderers, device, queue, receiver, send, worker_generation)
+            backend(
+                renderers,
+                device,
+                queue,
+                receiver,
+                send,
+                worker_generation,
+                worker_analysis_generation,
+            )
         });
         let mut editor = Self::state(commands, messages, generation);
+        editor.analysis_generation = analysis_generation;
         editor.thumbnails = thumbnails;
         editor.scopes = scopes;
         if let Some(path) = initial {
@@ -696,6 +760,9 @@ impl Editor {
         generation: Arc<std::sync::atomic::AtomicU64>,
     ) -> Self {
         Self {
+            analysis_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            analysis_pending: None,
+            analysis_confirmation: None,
             thumbnails: Thumbnails::default(),
             scopes: Scopes::default(),
             generation,
@@ -832,8 +899,12 @@ impl Editor {
         self.next_request
     }
     fn start_document(&mut self, work: DocumentWork) {
+        self.analysis_confirmation = None;
         self.pending_preview = None;
         self.selection_timing = None;
+        if self.analysis_pending.take().is_some() {
+            self.cancel_analysis();
+        }
         self.thumbnails.cancel();
         let id = self.request_id();
         self.generation
@@ -863,11 +934,18 @@ impl Editor {
         self.start_document(DocumentWork::Import(self.document.clone(), paths, reuse));
     }
     fn load(&mut self, path: PathBuf) {
+        self.load_source(path, true);
+    }
+    fn load_source(&mut self, path: PathBuf, persistent: bool) {
+        self.analysis_confirmation = None;
         let started = std::time::Instant::now();
-        let selecting_photo = self.pick.is_none() && self.flat_edit.is_none();
+        let selecting_photo = persistent && self.pick.is_none() && self.flat_edit.is_none();
         self.seed_thumbnail();
         self.pending_preview = None;
         self.selection_timing = None;
+        if self.analysis_pending.take().is_some() {
+            self.cancel_analysis();
+        }
         self.thumbnails.cancel();
         self.sync_document();
         self.current_source = self.document.find_source(&path);
@@ -965,6 +1043,25 @@ impl Editor {
     fn receive(&mut self) {
         while let Ok(message) = self.messages.try_recv() {
             match message {
+                Message::AnalysisProgress(id, done, total) => {
+                    if let Some(pending) = &mut self.analysis_pending
+                        && pending.id == id
+                    {
+                        pending.progress = (done, total);
+                        if self
+                            .analysis_generation
+                            .load(std::sync::atomic::Ordering::Relaxed)
+                            == pending.request.revision
+                        {
+                            self.status = if done < total {
+                                format!("Analyzing frame {} of {total}…", done + 1)
+                            } else {
+                                "Fitting gamma/WB/exposures and validating proposal…".into()
+                            };
+                        }
+                    }
+                }
+                Message::Analyzed(id, result) => self.analysis_result(id, result),
                 Message::Refined(revision, result) => {
                     let view = self
                         .refining
@@ -1076,10 +1173,10 @@ impl Editor {
                         Ok(Measurement::Balance(balance)) => {
                             let mut roll = self.roll;
                             let mut photo = self.photo;
-                            if kind == Pick::Gamma {
-                                roll.balance = balance;
-                            } else {
-                                photo.wb = balance;
+                            match kind {
+                                Pick::Gamma => roll.balance = balance,
+                                Pick::RollWb => roll.wb = balance,
+                                _ => photo.wb = balance,
                             }
                             if let Some(cal) = self.calibration()
                                 && let Err(error) = self.positive_parameters(cal, roll, photo)
@@ -1274,7 +1371,7 @@ impl Editor {
         self.pick = Some(kind);
         self.region = None;
         self.pick_drag = None;
-        self.source = matches!(kind, Pick::Dmin | Pick::Dmax);
+        self.source = matches!(kind, Pick::Dmin | Pick::Dmax | Pick::Analysis);
         if self.source {
             self.pick_return = self.ready.as_ref().map(|ready| PickReturn {
                 path: ready.path.clone(),
@@ -1282,7 +1379,14 @@ impl Editor {
             });
         }
         if let Some((layout, pixels_per_point)) = self.last_layout {
-            let next = if self.source {
+            let next = if kind == Pick::Analysis {
+                Composition::new(
+                    layout.composition.area(),
+                    RollOrientation::default(),
+                    PhotoOrientation::default(),
+                )
+                .expect("loaded source has a valid active area")
+            } else if self.source {
                 Composition::new(
                     layout.composition.area(),
                     self.roll_orientation,
@@ -1327,6 +1431,10 @@ impl Editor {
         self.source = true;
     }
     fn apply_pick(&mut self) {
+        if self.pick == Some(Pick::Analysis) {
+            self.apply_analysis_area();
+            return;
+        }
         if self.pick == Some(Pick::Flat) {
             self.apply_flat_edit();
             return;
@@ -1393,15 +1501,25 @@ impl Editor {
             }
         }
     }
-    fn controls(&mut self, ui: &mut egui::Ui) -> Option<ScopeSlot> {
+    fn controls(&mut self, ui: &mut egui::Ui) -> (Option<ScopeSlot>, bool) {
         use controls::{ColorControl, Parameter};
         use icons::Icon;
         use presentation::SectionHeader;
         let previous_orientation = (self.roll_orientation, self.photo_orientation);
         presentation::restore_expansion(ui.ctx(), self.preferences.sections.clone());
+        let mut analyze = false;
         let scope_slot = self.scope_panel(ui);
         ui.add_space(8.);
-        presentation::stage_tabs(ui, &mut self.tab);
+        let mut next_tab = self.tab;
+        presentation::stage_tabs(ui, &mut next_tab);
+        if next_tab != self.tab {
+            ui.ctx().memory_mut(|memory| {
+                if let Some(id) = memory.focused() {
+                    memory.surrender_focus(id);
+                }
+            });
+            ui.ctx().request_repaint();
+        }
         let editable = !self.busy
             && self.crop_edit.is_none()
             && self.flat_edit.is_none()
@@ -1431,6 +1549,7 @@ impl Editor {
                         if reset { self.roll_orientation = RollOrientation::default(); }
                     });
                     self.flat_controls(ui);
+                    analyze = self.analysis_controls(ui);
                     let calibration_summary = match (self.dmin.is_some(), self.dmax.is_some()) {
                         (true, true) => "Dmin + Dmax measured",
                         (false, false) => "Dmin + Dmax not measured",
@@ -1505,6 +1624,9 @@ impl Editor {
                             },
                         );
                         if reset { self.roll.response = crate::processing::Response::film(); }
+                        if controls::white_balance(ui, "roll-white-balance", &mut self.roll.wb, can_pick) {
+                            start_pick = Some(Pick::RollWb);
+                        }
                         let (_, reset) = presentation::section(
                             ui, "roll-exposure", "Exposure", SectionHeader { summary: &format!("{:+.2} EV", self.roll.exposure), changed: self.roll.exposure != 0., reset: Some(self.roll.exposure != 0.), default_open: Some(false) },
                             |ui| {
@@ -1602,7 +1724,9 @@ impl Editor {
         if let Some(kind) = start_pick {
             self.begin_pick(kind);
         }
-        scope_slot
+        // Render outgoing numeric controls once to commit focus loss before switching stages.
+        self.tab = next_tab;
+        (scope_slot, analyze)
     }
     fn export_dialog(&mut self, format: OutputFormat) {
         let Some(ready) = &self.ready else {
@@ -1656,7 +1780,8 @@ impl host::App for Editor {
             && self.overwrite.is_none()
             && self.transition.is_none()
             && self.project_overwrite.is_none()
-            && self.resume_transition.is_none();
+            && self.resume_transition.is_none()
+            && self.analysis_confirmation.is_none();
         let mut file_action = None;
         if !self.allow_close && ui.input(|input| input.viewport().close_requested()) {
             ui.ctx()
@@ -1704,6 +1829,7 @@ impl host::App for Editor {
                 .unwrap_or(false)
         });
         if !self.busy
+            && self.analysis_confirmation.is_none()
             && !(text_was_focused && ui.input(|input| input.key_pressed(egui::Key::Escape)))
             && self.overwrite.is_none()
             && self.transition.is_none()
@@ -1772,6 +1898,7 @@ impl host::App for Editor {
             || self.transition.is_some()
             || self.project_overwrite.is_some()
             || self.resume_transition.is_some()
+            || self.analysis_confirmation.is_some()
         {
             ui.disable();
         }
@@ -1851,7 +1978,7 @@ impl host::App for Editor {
             ui.label(&self.status);
         });
         self.filmstrip(ui);
-        let scope_slot = egui::Panel::right("controls")
+        let (scope_slot, analyze) = egui::Panel::right("controls")
             .default_size(315.)
             .min_size(270.)
             .show(ui, |ui| self.controls(ui))
@@ -1890,12 +2017,15 @@ impl host::App for Editor {
             };
             let pixels_per_point = ui.ctx().pixels_per_point();
             let canvas_input = self.canvas_input_allowed(ui, canvas);
-            let crop = if matches!(self.pick, Some(Pick::Dmin | Pick::Dmax | Pick::Flat)) {
+            let crop = if matches!(
+                self.pick,
+                Some(Pick::Dmin | Pick::Dmax | Pick::Flat | Pick::Analysis)
+            ) {
                 None
             } else {
                 self.crop_edit.as_ref().map(|edit| edit.draft).or(self.crop)
             };
-            let composition = if self.pick == Some(Pick::Flat) {
+            let composition = if matches!(self.pick, Some(Pick::Flat | Pick::Analysis)) {
                 Composition::new(
                     area,
                     RollOrientation::default(),
@@ -2002,6 +2132,7 @@ impl host::App for Editor {
             }
             let revision = self.generation.load(std::sync::atomic::Ordering::Relaxed);
             if !self.busy
+                && self.analysis_confirmation.is_none()
                 && self.crop_edit.is_none()
                 && self.refining.is_none()
                 && self.settled.is_none()
@@ -2122,8 +2253,12 @@ impl host::App for Editor {
             self.file_action(action, ui.ctx());
         } else if let Some(format) = export_action {
             self.export_dialog(format);
+        } else if analyze {
+            // Inspect the validated, focus-committed Photo state before confirming a reset.
+            self.request_analysis();
         }
         self.document_dialogs(ui.ctx());
+        self.analysis_dialog(ui.ctx());
         if let Some((path, format)) = self.overwrite.clone() {
             egui::Window::new("Replace existing output?")
                 .collapsible(false)

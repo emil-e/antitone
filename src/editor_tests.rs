@@ -71,6 +71,7 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                     thumbnail: None,
                     path: path.clone(),
                     area,
+                    analysis_support: None,
                     floor: editor.floor,
                     images: images.clone(),
                     record: Source {
@@ -352,6 +353,19 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
     assert_eq!(editor.roll.gamma, gamma);
     assert_eq!(editor.roll.exposure, exposure);
     assert_eq!(editor.photo, photo);
+    editor.begin_pick(Pick::RollWb);
+    send.send(Message::Picked(
+        editor.id,
+        Pick::RollWb,
+        Ok(Measurement::Balance(balance)),
+    ))
+    .unwrap();
+    editor.receive();
+    assert_eq!(editor.roll.wb, balance);
+    assert_eq!(editor.roll.balance, balance);
+    assert_eq!(editor.roll.gamma, gamma);
+    assert_eq!(editor.roll.exposure, exposure);
+    assert_eq!(editor.photo, photo);
     let roll = editor.roll;
     editor.begin_pick(Pick::Wb);
     send.send(Message::Picked(
@@ -446,13 +460,14 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
         thumbnail: None,
         path: record.path.clone(),
         area: record.development.active_area.into(),
+        analysis_support: None,
         floor: editor.floor,
         images,
         record,
         development,
     });
 }
-fn app_frame(
+pub(super) fn app_frame(
     editor: &mut Editor,
     context: &egui::Context,
     events: Vec<egui::Event>,
@@ -1572,6 +1587,7 @@ fn shared_roll_turns_apply_to_new_photos_and_export_snapshots() {
             thumbnail: None,
             path: record.path.clone(),
             area: ready.area,
+            analysis_support: None,
             floor: ready.floor,
             images: ready.images,
             record,
@@ -1730,7 +1746,7 @@ fn controls_frame(
     width: f32,
     events: Vec<egui::Event>,
 ) -> Vec<(String, egui::Rect)> {
-    controls_frame_sized(editor, context, width, 1600., events)
+    controls_frame_sized(editor, context, width, 2000., events)
 }
 fn controls_frame_sized(
     editor: &mut Editor,
@@ -1873,6 +1889,9 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
             let required = if tab == 0 {
                 vec![
                     "Scan orientation",
+                    "Roll analysis",
+                    "Analyze roll",
+                    "Edit picture area…",
                     "Calibration",
                     "Gamma & balance",
                     "Balance",
@@ -1913,6 +1932,7 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
             let sections = if tab == 0 {
                 vec![
                     "Scan orientation",
+                    "Roll analysis",
                     "Calibration",
                     "Gamma & balance",
                     "Toe & shoulder",
@@ -2184,7 +2204,7 @@ fn response_section_is_reachable_by_scrolling_while_stage_tabs_stay_fixed() {
             .bottom();
         let names = ["Toe & shoulder", "Toe", "Shoulder", "Exposure"];
         let mut visible = [false; 4];
-        for frame in 0..90 {
+        for frame in 0..150 {
             let events = if frame % 10 == 0 {
                 vec![
                     egui::Event::PointerMoved(egui::pos2(width / 2., height - 40.)),

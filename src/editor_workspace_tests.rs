@@ -265,6 +265,9 @@ fn all_three_stage_controls_are_reachable_at_normal_and_narrow_inspector_sizes()
                     "Balance",
                     "Warmth",
                     "Tint",
+                    "Roll analysis",
+                    "Analyze roll",
+                    "White balance",
                     "Toe & shoulder",
                     "Toe",
                     "Shoulder",
@@ -298,6 +301,7 @@ fn all_three_stage_controls_are_reachable_at_normal_and_narrow_inspector_sizes()
                 "roll-calibration",
                 "roll-gamma-balance",
                 "roll-response",
+                "roll-white-balance",
                 "roll-exposure",
                 "photo-composition",
                 "photo-white-balance",
@@ -312,7 +316,7 @@ fn all_three_stage_controls_are_reachable_at_normal_and_narrow_inspector_sizes()
             let mut seen = std::collections::HashSet::new();
             let first = controls_frame_sized(&mut editor, &context, width, height, vec![]);
             let tabs = first.iter().find(|(s, _)| s == "Roll").unwrap().1;
-            for frame in 0..110 {
+            for frame in 0..180 {
                 let events = if frame > 0 && frame % 10 == 0 {
                     vec![
                         egui::Event::PointerMoved(egui::pos2(width * 0.5, height - 40.)),

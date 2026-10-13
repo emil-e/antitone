@@ -13,6 +13,15 @@ use std::{path::Path, sync::Arc};
 
 type Result<T> = std::result::Result<T, Error>;
 
+#[derive(Debug, Default)]
+pub struct AnalysisSamples {
+    pub pixels: Vec<DVec3>,
+    pub attempted: usize,
+    pub rejected_capture: usize,
+    pub rejected_development: usize,
+    pub rejected_floor: usize,
+}
+
 pub struct Scan {
     raw: RawFile,
     pub camera_to_ap1: DMat3,
@@ -227,6 +236,85 @@ impl Scan {
             ));
         }
         Ok(diagnostics)
+    }
+
+    /// Bounded original-pixel centres, checked in local 8×8 capture/development
+    /// footprints. The rectangle selects eligibility, not an output crop or film mask.
+    pub fn analysis_samples(
+        &mut self,
+        area: Rect,
+        budget: usize,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<Option<AnalysisSamples>> {
+        if cancelled() {
+            return Ok(None);
+        }
+        self.validate_area(area)?;
+        if budget == 0 || budget > crate::roll_analysis::MAX_SAMPLES_PER_FRAME {
+            return Err(Error::InvalidParameter("invalid analysis sampling budget"));
+        }
+        if area.width < 8 || area.height < 8 {
+            return Err(Error::UnusableSample(
+                "analysis area is smaller than a capture footprint",
+            ));
+        }
+        let columns = ((budget as f64 * f64::from(area.width) / f64::from(area.height)).sqrt()
+            as usize)
+            .max(1)
+            .min(budget)
+            .min((area.width / 8) as usize);
+        let rows = (budget / columns).min((area.height / 8) as usize);
+        let grid = crate::geometry::SourceRaster::new(area, [columns as u32, rows as u32])?;
+        let mut result = AnalysisSamples {
+            pixels: Vec::with_capacity(columns * rows),
+            ..AnalysisSamples::default()
+        };
+        for gy in 0..rows {
+            if cancelled() {
+                return Ok(None);
+            }
+            for gx in 0..columns {
+                let [x, y] = grid.source_pixel([gx as u32, gy as u32])?;
+                let footprint = Rect {
+                    x: x - 4,
+                    y: y - 4,
+                    width: 8,
+                    height: 8,
+                };
+                result.attempted += 1;
+                let diagnostic = self.raw.region_sensor_diagnostics(footprint)?;
+                if diagnostic.at_white.iter().any(|n| *n > 0)
+                    || diagnostic.below_black.iter().any(|n| *n > 0)
+                {
+                    result.rejected_capture += 1;
+                    continue;
+                }
+                let mut white = false;
+                let mut floor = false;
+                for yy in footprint.y..footprint.y + 8 {
+                    for xx in footprint.x..footprint.x + 8 {
+                        white |=
+                            self.raw.camera_image()?.pixel_codes(xx, yy)?[..3].contains(&u16::MAX);
+                        let p = self.pixel(xx, yy)?;
+                        if !p.is_finite() {
+                            return Err(Error::NumericalOverflow);
+                        }
+                        floor |= p.min_element() <= self.corrected_floor;
+                    }
+                }
+                if white {
+                    result.rejected_development += 1;
+                } else if floor {
+                    result.rejected_floor += 1;
+                } else {
+                    result.pixels.push(self.pixel(x, y)?);
+                }
+            }
+        }
+        if cancelled() {
+            return Ok(None);
+        }
+        Ok(Some(result))
     }
 
     pub fn reference(&mut self, region: Rect) -> Result<DVec3> {

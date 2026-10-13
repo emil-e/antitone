@@ -152,7 +152,14 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
         let (mut editor, _send, _receiver) = fixture();
         add_ready_fixture(&mut editor);
         let context = egui::Context::default();
-        for pick in [Pick::Dmin, Pick::Dmax, Pick::Gamma, Pick::Wb] {
+        for pick in [
+            Pick::Dmin,
+            Pick::Dmax,
+            Pick::Gamma,
+            Pick::RollWb,
+            Pick::Wb,
+            Pick::Analysis,
+        ] {
             editor.begin_pick(pick);
             for tab in 0..3 {
                 editor.tab = tab;
@@ -187,7 +194,9 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                     Pick::Dmin => "Dmin",
                     Pick::Dmax => "Dmax",
                     Pick::Gamma => "Gamma neutral",
+                    Pick::RollWb => "Roll WB neutral",
                     Pick::Wb => "WB neutral",
+                    Pick::Analysis => "Picture area",
                     Pick::Flat => unreachable!(),
                 };
                 let identity = text
@@ -498,6 +507,7 @@ fn flat_fixture(
         thumbnail: None,
         path: record.path.clone(),
         area: ready.area,
+        analysis_support: None,
         floor: ready.floor,
         images: ready.images.clone(),
         record,

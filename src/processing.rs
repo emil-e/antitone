@@ -103,6 +103,8 @@ pub struct RollSettings {
     pub response: Response,
     pub gamma: f64,
     pub balance: Balance,
+    #[cfg_attr(feature = "project", serde(default))]
+    pub wb: Balance,
     pub exposure: f64,
 }
 
@@ -112,6 +114,7 @@ impl Default for RollSettings {
             response: Response::Original,
             gamma: DEFAULT_GAMMA,
             balance: Balance::default(),
+            wb: Balance::default(),
             exposure: 0.0,
         }
     }
@@ -296,7 +299,8 @@ impl Pipeline {
         validate_camera_matrix(camera_to_ap1)?;
         photo.validate()?;
         let gain = exposure_multiplier(roll.exposure)? * exposure_multiplier(photo.exposure)?;
-        let post_inversion_matrix = wb_matrix(photo.wb)? * camera_to_ap1 * gain;
+        let post_inversion_matrix =
+            wb_matrix(photo.wb)? * wb_matrix(roll.wb)? * camera_to_ap1 * gain;
         if !post_inversion_matrix.is_finite() {
             return Err(Error::NumericalOverflow);
         }

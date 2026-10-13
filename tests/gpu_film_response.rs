@@ -132,6 +132,7 @@ fn film_gpu_matches_full_f64_for_shapes_matrices_balances_wb_and_exposure_extrem
                     response: Response::Film { toe, shoulder },
                     gamma,
                     balance: balances[case / 13 % 4],
+                    wb: balances[case / 19 % 4],
                     exposure: ev / 2.,
                 };
                 let photo = PhotoSettings {

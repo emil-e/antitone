@@ -17,6 +17,10 @@ Schema-5 Photo settings retain exposure/WB and add `contrast`, `pivot`, `contras
 
 The fields are source-owned grading state, not UI preferences or derived cache data. Dirty checks, source switching, thumbnails/scopes/preview/refinement and export snapshots include the full Photo settings. [Exact operator contract](processing-model.md#photo-contrastpivot-and-saturation).
 
+## Photographic roll WB
+
+Schema 5 stores `roll.wb` as independent warmth/tint Bradford coordinates, distinct from native-channel `roll.balance` and fixed development WB. A missing `roll.wb` defaults to zero/identity, preserving existing schema-5 appearance; invalid coordinates and unknown fields still reject. Both roll and Photo photographic WB reach scalar/GPU preview, scopes, thumbnails and exports through the common positive-processing path. Save/Open retains exact values without recalculation. Explicit Analyze initializes shared roll WB, replaces all ordered Photo exposures and resets their WB and creative grading controls to defaults atomically; retired/nonordered source settings remain intact. Confirmation is transient and conditional on non-default ordered Photo settings; it adds no authored/untouched state.
+
 ## Flat-field state
 
 Schema 5 has an optional `flat_field`; an absent field still selects the uncorrected camera source path. Present state stores the explicit algorithm contract from `src/flat_field.rs`, Enabled, reference source ID, source development, roll development including fixed WB, accepted support and bounded RGB gain nodes (maximum 256×256). Deserialization validates node geometry/representability; document validation rejects unknown contracts, snapshot mismatches, incompatible enabled photo geometry/matrix/floor and invalid corrected calibration domains. The existing 8 MiB document limit remains.
@@ -30,6 +34,10 @@ Schema 5 stores orientation separately from numerical grading: shared roll quart
 Optional source `crop` stores source centre/pivot, positive integer frame extents in native units and optional source-plane basis `angle` in radians. Missing/zero angle selects exact integer-edge framing; zero is omitted. Nonzero angles allow fractional source centres, must be finite within −π…π, and require all four rotated frame corners inside the active area. Missing/omitted crop means full active source; applying a full-frame, zero-angle draft normalizes to omission. Document validation rejects crops outside recorded source coverage; loading rejects incompatible actual development.
 
 Accepted geometry is dirty/saveable source-ID-owned state; viewport, source inspection and picker return context remain transient. New/Open/selection restore the appropriate orientation; newly imported photos inherit shared roll orientation, including turns, with identity photo orientation. Geometry reset leaves calibration and colour settings intact. Export holds composition and grade in one request snapshot and writes composed pixels/dimensions. Crop drafts/aspect preferences are transient: Save/Export use only accepted framing. Integer cropping and arbitrary-angle framing with coverage-aware reconstruction/measurement are implemented. See the [geometry contract](geometry.md).
+
+## Picture-analysis area
+
+Schema 5 accepts optional `analysis_area: [x,y,width,height]` in original developed-source coordinates. Absent state remains valid and gets an editable UI suggestion when illumination support is available. Accepted state must be at least 8×8 and fit every ordered source's active area; it is shared statistics geometry, independent of output crop, straightening and orientation. Area acceptance/reset changes dirty state but no processing values; Analyze installs its complete RGB/roll/ordered-Photo proposal and used area together. New/Open restores the document's area without recomputing calibration or exposure. Ordinary area-edit context is transient. Schema-5 documents without this field still load; unsupported schemas reject without migration.
 
 ## Validation and source changes
 
@@ -52,7 +60,7 @@ The editor's source records own photo settings by stable ID, not path. New docum
 
 File New/Open/Add RAWs/Save/Save As and Export TIFF/EXR half/full occupy the existing header row. `.antitone.json` is the default naming convention; Save accepts JSON filenames and compatibility is validated from content, not naming alone. Save As rebases relative locators against the new directory. Input RAWs cannot be project destinations, and Export cannot replace the currently open project.
 
-Dirty state compares accepted persistent values with the last successful Save/Open snapshot. Numeric focus loss is processed before file actions; views, selection, rectangles and source bypass do not dirty a document. Dirty New/Open/Close asks Save/Discard/Cancel. Failed/cancelled Save prevents continuation; failed Open retains old state and display even after Discard. Monotonic request IDs reject stale results during document work.
+Dirty state compares accepted persistent values with the last successful Save/Open snapshot. Numeric focus loss is processed before file actions; views, selection, transient pick/area-edit rectangles and source bypass do not dirty a document. Accepted picture-analysis geometry does. Dirty New/Open/Close asks Save/Discard/Cancel. Failed/cancelled Save prevents continuation; failed Open retains old state and display even after Discard. Monotonic request IDs reject stale results during document work.
 
 Open selects the first ordered photo at Fit, or no scan for an empty filmstrip. Missing/unloadable/development-incompatible ordered RAWs reject Open with the path; unavailable nonordered records are retained without blocking Open or invalidating RGB calibration. Intentional byte edits need no separate acceptance. No automatic source substitution or migration occurs.
 

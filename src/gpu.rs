@@ -73,7 +73,7 @@ impl ProcessingParameters {
         photo.validate()?;
         let grade = crate::photographic::Grade::new(photo)?;
         let gain = exposure_multiplier(roll.exposure)? * exposure_multiplier(photo.exposure)?;
-        let matrix = wb_matrix(photo.wb)?;
+        let matrix = wb_matrix(photo.wb)? * wb_matrix(roll.wb)?;
         let (toe, shoulder) = roll.response.shape()?;
         let floor_bound = inversion
             .apply(DVec3::splat(calibration.input_floor))?

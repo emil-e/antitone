@@ -77,6 +77,59 @@ pub fn weighted_mean_iter(
     Ok(result)
 }
 
+/// Per-channel mean of the 98–99.5% quantile band in linear camera RGB.
+/// The caller supplies eligible film samples pooled across the roll; this does not
+/// identify film, validate capture/camera compatibility, or establish pool adequacy.
+pub fn roll_dmin(pixels: &[DVec3], input_floor: f64) -> Result<DVec3, Error> {
+    if !input_floor.is_finite() || input_floor <= 0. {
+        return Err(Error::InvalidParameter("invalid roll sampling floor"));
+    }
+    if pixels.is_empty() {
+        return Err(Error::UnusableSample("empty roll film samples"));
+    }
+    for &pixel in pixels {
+        for (channel, value) in pixel.to_array().into_iter().enumerate() {
+            if !value.is_finite() {
+                return Err(Error::NonFinitePixel { channel });
+            }
+            if value <= input_floor {
+                return Err(Error::UnusableSample(
+                    "roll film samples contain floored inputs",
+                ));
+            }
+        }
+    }
+    if pixels.len() == 1 {
+        return Ok(pixels[0]);
+    }
+    let start = (pixels.len() - 1) as f64 * 0.98;
+    let end = (pixels.len() - 1) as f64 * 0.995;
+    let mut result = DVec3::ZERO;
+    for channel in 0..3 {
+        let mut values: Vec<_> = pixels.iter().map(|p| p[channel]).collect();
+        values.sort_unstable_by(f64::total_cmp);
+        let mut sum = 0.;
+        let mut compensation = 0.;
+        for i in start.floor() as usize..end.ceil() as usize {
+            let left = start.max(i as f64);
+            let right = end.min((i + 1) as f64);
+            let delta = values[i + 1] - values[i];
+            let a = values[i] + delta * (left - i as f64);
+            let b = values[i] + delta * (right - i as f64);
+            let term = (a * 0.5 + b * 0.5) * ((right - left) / (end - start));
+            let y = term - compensation;
+            let t = sum + y;
+            compensation = (t - sum) - y;
+            sum = t;
+        }
+        result[channel] = sum;
+    }
+    if !result.is_finite() {
+        return Err(Error::NumericalOverflow);
+    }
+    Ok(result)
+}
+
 pub fn photo_neutral_weighted(pixels: &[(DVec3, f64)]) -> Result<Balance, Error> {
     neutral_wb(weighted_mean(pixels)?)
 }

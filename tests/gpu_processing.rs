@@ -130,7 +130,13 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
                 for colour in [0., 0.5, 1.] {
                     for saturation in [0., 0.7, 1.3, 2.] {
                         for exposure in [-16., 2., 16.] {
-                            let roll = RollSettings::new_grade();
+                            let roll = RollSettings {
+                                wb: Balance {
+                                    warmth: 0.14,
+                                    tint: -0.18,
+                                },
+                                ..RollSettings::new_grade()
+                            };
                             let photo = PhotoSettings {
                                 contrast,
                                 pivot,

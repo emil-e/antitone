@@ -26,6 +26,7 @@ mod refinement;
 pub mod rendering;
 #[cfg(feature = "raw")]
 mod resources;
+pub mod roll_analysis;
 pub mod sampling;
 #[cfg(feature = "raw")]
 pub mod scan;

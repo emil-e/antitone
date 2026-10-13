@@ -173,6 +173,7 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
         thumbnail: None,
         path: record.path.clone(),
         area,
+        analysis_support: None,
         floor: ready.floor,
         images: ready.images.clone(),
         record,

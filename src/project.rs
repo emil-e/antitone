@@ -1,5 +1,6 @@
 use crate::{
     Error, PROCESSING_MODEL_VERSION,
+    color::wb_matrix,
     crop::Crop,
     geometry::{PhotoOrientation, RollOrientation, SourceRegion},
     processing::{Calibration, Inversion, PhotoSettings, RollSettings, exposure_multiplier},
@@ -196,6 +197,8 @@ pub struct Project {
     pub output: Output,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flat_field: Option<FlatFieldSettings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub analysis_area: Option<[u32; 4]>,
 }
 impl Default for Project {
     fn default() -> Self {
@@ -214,6 +217,7 @@ impl Default for Project {
             orientation: RollOrientation::default(),
             output: Output::default(),
             flat_field: None,
+            analysis_area: None,
         }
     }
 }
@@ -305,6 +309,7 @@ impl Project {
             "unsupported processing model; no automatic migration",
         )?;
         self.roll.channel_gammas()?;
+        wb_matrix(self.roll.wb)?;
         exposure_multiplier(self.roll.exposure)?;
         if let Some(development) = &self.development {
             development.validate()?;
@@ -340,6 +345,18 @@ impl Project {
                 ids.contains(id) && ordered.insert(*id),
                 "invalid/duplicate ordered source ID",
             )?;
+        }
+        if let Some(region) = self.analysis_area {
+            require(
+                region[2] >= 8 && region[3] >= 8,
+                "analysis area is smaller than a capture footprint",
+            )?;
+            for id in &self.order {
+                require(
+                    contains(self.source(*id)?.development.active_area, region),
+                    "analysis area is outside a roll source",
+                )?;
+            }
         }
         require(self.next_source_id > 0, "invalid source ID allocator")?;
         if let Some(floor) = self.input_floor {

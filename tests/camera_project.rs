@@ -37,6 +37,65 @@ fn project() -> Project {
 }
 
 #[test]
+fn analysis_area_roundtrips_without_changing_processing_and_old_documents_default_to_none() {
+    let mut p = project();
+    let old = serde_json::to_value(&p).unwrap();
+    assert!(old.get("analysis_area").is_none());
+    assert_eq!(
+        serde_json::from_value::<Project>(old)
+            .unwrap()
+            .analysis_area,
+        None
+    );
+    let before = p.clone();
+    p.analysis_area = Some([40, 30, 820, 540]);
+    p.validate().unwrap();
+    let saved = serde_json::to_string(&p).unwrap();
+    assert_eq!(serde_json::from_str::<Project>(&saved).unwrap(), p);
+    assert_eq!(p.roll, before.roll);
+    assert_eq!(p.sources, before.sources);
+    assert_eq!(
+        (p.dmin, p.dmax, p.input_floor),
+        (before.dmin, before.dmax, before.input_floor)
+    );
+    for area in [[40, 30, 7, 540], [0, 0, 901, 600], [u32::MAX, 0, 8, 8]] {
+        p.analysis_area = Some(area);
+        assert!(p.validate().is_err());
+    }
+}
+
+#[test]
+fn roll_wb_roundtrips_defaults_old_schema_five_to_zero_and_rejects_invalid_values() {
+    use antitone::color::Balance;
+    let mut p = project();
+    let mut old = serde_json::to_value(&p).unwrap();
+    old["roll"].as_object_mut().unwrap().remove("wb");
+    assert_eq!(serde_json::from_value::<Project>(old).unwrap(), p);
+    p.roll.wb = Balance {
+        warmth: -0.25,
+        tint: 0.15,
+    };
+    p.validate().unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("roll.antitone.json");
+    p.save(&path, Save::New).unwrap();
+    assert_eq!(Project::load(&path).unwrap(), p);
+    for value in [f64::NAN, f64::INFINITY, 1.01, -1.01] {
+        for tint in [false, true] {
+            let mut invalid = p.clone();
+            if tint {
+                invalid.roll.wb.tint = value;
+            } else {
+                invalid.roll.wb.warmth = value;
+            }
+            assert!(invalid.validate().is_err());
+            assert!(invalid.save(&path, Save::Replace).is_err());
+            assert_eq!(Project::load(&path).unwrap(), p);
+        }
+    }
+}
+
+#[test]
 fn incompatible_native_camera_sources_and_reference_picks_reject_without_mutation() {
     let mut project = project();
     let before = project.clone();

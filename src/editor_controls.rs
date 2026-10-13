@@ -275,19 +275,30 @@ pub fn color(ui: &mut Ui, kind: ColorControl, value: &mut Balance, can_pick: boo
             })
             .inner
         }
-        ColorControl::WhiteBalance => section(
-            ui,
-            "photo-white-balance",
-            "White balance",
-            SectionHeader {
-                summary: &format!("Warmth {:+.2} · Tint {:+.2}", value.warmth, value.tint),
-                changed,
-                reset: Some(changed),
-                default_open: Some(true),
-            },
-            |ui| color_inputs(ui, kind, value, can_pick),
-        ),
+        ColorControl::WhiteBalance => {
+            return white_balance(ui, "photo-white-balance", value, can_pick);
+        }
     };
+    if reset {
+        *value = Balance::default();
+    }
+    pick.unwrap_or(false)
+}
+
+pub fn white_balance(ui: &mut Ui, id: &str, value: &mut Balance, can_pick: bool) -> bool {
+    let changed = *value != Balance::default();
+    let (pick, reset) = section(
+        ui,
+        id,
+        "White balance",
+        SectionHeader {
+            summary: &format!("Warmth {:+.2} · Tint {:+.2}", value.warmth, value.tint),
+            changed,
+            reset: Some(changed),
+            default_open: Some(true),
+        },
+        |ui| color_inputs(ui, ColorControl::WhiteBalance, value, can_pick),
+    );
     if reset {
         *value = Balance::default();
     }
