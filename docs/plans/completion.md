@@ -1,54 +1,54 @@
-# Completion and acceptance work
+# Remaining acceptance and release work
 
-These are unfinished requirements, not one settled implementation design. [Roadmap](../../PLAN.md) owns priority; select and scope a concrete slice before implementation.
+[The roadmap](../../PLAN.md) orders this work. These are open requirements and questions, not selected implementation designs. Focused packages own their detailed scope; this page keeps the other acceptance and release needs visible.
 
 ## Geometry
 
-- Exercise native/settled straightening agreement, rotated Gamma/WB picks, invalid/cancelled selections, Save/Open and TIFF/AP0 EXR reopen on real photographs, with and without correction. Numerical agreement does not establish photographic appearance or physical interaction.
-- Dense alignment guides need a visual/control design. Thirds are available; any additional guides must not change framing, measurements, processing or export.
+Exercise straightening, rotated neutral picks, rejection/cancellation, Save/Open and TIFF/AP0 EXR reopening on real photographs, corrected and uncorrected. Numerical tests do not establish appearance or physical interaction. Dense alignment guides still need a design; thirds are already available.
 
-[Geometry contract](../contracts/geometry.md). Next: agree a real-photo acceptance exercise or a guide-design slice.
+Next: agree a photographic acceptance exercise or a guide-design slice. [Current geometry](../geometry.md).
 
 ## Scopes
 
-- Inspect rim directions, approximate Skin guide and turned/flipped/cropped/straightened photographs on an unoccluded desktop. Exercise source/reference/crop-draft suspension. Physical controls and photographic appearance remain unverified.
-- Full-source analysis is deferred. Decide requested versus automatic operation from actual cost/use need. Use canonical exported coverage, bounded source tiles and valid-edge masks; process/render before accumulation, preserve source-coordinate correction, yield to foreground work and reject stale generations. No extra RAW development or retained full rendered image. Magnification needs another tile pass; proxy data must never be labelled Full source.
+Inspect target directions, the heuristic Skin guide and composed photographs on a visible desktop, including source/reference/draft suspension. Physical interaction and photographic interpretation remain open.
 
-[Scope contract](../contracts/scopes.md). Next: agree visual acceptance; no new analysis mode is selected.
+Full-source scopes are deferred, not an implemented mode. Any design must distinguish them from proxy statistics, use actual exported coverage, preserve processing-before-accumulation and source correction, and yield to foreground work without a retained full rendered image.
+
+Next: agree visual acceptance before designing another analysis mode. [Current scopes](../scopes.md).
 
 ## Rendering and thumbnail performance
 
-- Exercise rapid forward/reverse scrolling, live controls and actual OS-pressure transitions; assess aggregate worker/cache/buffer memory on available devices. Headless lifecycle checks do not establish physical responsiveness.
-- Higher-resolution recent previews remain deferred until real-use hit rate, quality or memory requirements justify a new tier. Measure click-to-first-image presentation and retention/memory cost separately from full RAW readiness. Keep pending display distinct from the authoritative Scan; no whole-roll developed RAW cache.
+[Thumbnail/resource follow-up](visual-feedback.md) owns cold scrolling, camera-preview replacement, live grading and actual OS-pressure/aggregate-memory assessment. Higher-resolution recent previews or additional cache tiers need a demonstrated quality/hit-rate benefit and measured cost; none is selected.
 
-[Cache contract](../contracts/output.md#responsiveness-and-optional-caches). Next: reproduce a concrete issue or agree a measurement exercise; no new cache tier or capture-identity policy is selected.
+Next: reproduce a concrete issue or agree a measurement exercise. [Current preview/cache model](../editor.md#responsiveness-and-optional-caches).
 
 ## Roll assistance
 
-Analyze roll provides explicit, cancellable one-action initialization with atomic internal validation, not a second proposal-acceptance step. Photographic acceptance and concrete feedback-driven refinement remain unfinished in [roll assistance](roll-assistance.md). Endpoint/balance/exposure estimates are scene-dependent priors, not physically known calibration.
+[Analyze acceptance](roll-assistance.md) owns photographic and physical-use evaluation of the implemented [initializer](../roll-analysis.md). Statistical priors are not measured calibration truth.
 
 ## Photographic controls and B&W handling
 
-- Evaluate the implemented [Photo contrast/pivot and saturation](../contracts/processing-model.md#photo-contrastpivot-and-saturation) at full resolution on noisy shadows, skin and coloured lights, with corrected and uncorrected sources and both output targets. Judge endpoint/blend character, hue continuity, shadow separation and noise/texture; numerical agreement does not establish photographic preference. Physical interaction and older-binary project interoperability remain unverified. Keep additional photographic tools separate until a concrete benefit is demonstrated.
-- B&W needs clarification: monochrome film captured by an RGB camera, colour-negative desaturation, or both. Compare RGB inversion plus a declared mix with a dedicated monochrome response, considering base colour, channel weighting/noise, calibration and tint. No automatic film detection or implicit calibration reinterpretation.
+Evaluate [contrast and saturation](../processing.md#photo-contrast-and-saturation) at full resolution on noisy shadows, skin and coloured lighting, corrected and uncorrected, with both targets. Assess colour/hue, separation and noise/texture. Physical use and older-binary interoperability remain unverified.
+
+B&W scope is unresolved: monochrome film captured by an RGB camera, colour-negative desaturation, or both? Compare the relevant models before choosing one. No automatic film detection or calibration reinterpretation is implied.
 
 ## Operation feedback
 
-Design shared progress for RAW opening/export and development spinners for the viewer/thumbnails. Inventory import, Open/Save, reference processing, refinement, thumbnails and export; declare ownership, phases, completion/errors and stale-result handling through existing worker boundaries.
+Design the smallest shared loading/export feedback slice. Inventory existing operation ownership and available phases before choosing determinate progress or cancellation. Opaque native/GPU phases cannot be interrupted immediately; animation must stop when work completes.
 
-Use determinate progress only for measurable work and indeterminate feedback for opaque phases. LibRaw and submitted GPU work cannot be interrupted mid-phase. Decide cancellation boundaries separately; preserve transactional document state and safe export replacement. Selected-image work stays ahead of thumbnails. Test success/failure/switching/cancellation; animations stop repainting at completion.
+Preserve accepted-state transactions, stale-result rejection, foreground priority and destination safety. Exercise success, failure, switching and cancellation. Loading spinners and new backend phases are separate design questions.
 
-Next: agree the smallest operation-state/presentation slice, starting with RAW loading and export. [Thumbnail follow-up](visual-feedback.md#triaged-thumbnail-follow-up).
+Next: scope RAW-loading/export feedback with [thumbnail follow-up](visual-feedback.md#triaged-thumbnail-follow-up).
 
 ## Code readability and style
 
-Agree tracked authored-source scope, language tooling, slice order and checks, excluding generated/vendor files, dependencies, products and samples. Use standard formatters, then inspect naming, dense expressions and long functions in small behavior-preserving slices. Do not redesign architecture as cleanup or install tools globally.
-
-Document authored types/public functions briefly, preserving contracts rather than narrating implementation. Keep inline comments only for non-obvious intent or constraints. Every Rust unsafe block needs its actual preconditions in a `SAFETY:` comment. Preserve numerical, compatibility, ownership and concurrency rationale. Verify focused tests/lints and diff behavior, then record established conventions in `AGENTS.md`; do not claim repository-wide compliance in advance.
+Authored-source cleanup remains separate work. Agree language/tooling, file scope and small behavior-preserving slices before editing; exclude generated/vendor files and samples. Preserve numerical, compatibility, ownership and unsafe preconditions. Do not turn formatting or comments into an architectural redesign or claim repository-wide compliance from a local check.
 
 ## Export and release work
 
-- Batch settings snapshots, reference-only exclusions, destination collisions/per-photo failures and source metadata; shared progress/cancellation follows operation feedback.
-- Aggregate resource assessment, broader camera/metadata/domain checks, actual macOS-14 execution and physical monitor matching/transitions. No minimum chip/RAM target is established.
-- Bundle native dependencies, including pinned `libomp.dylib`, with bundle-relative loading and required license notices; review distribution layout, sign/notarize and test clean-machine execution. Checkout-local rpaths are not deployable packaging.
-- Lightroom/Resolve interoperability remains unverified; no application automation. Windows/HDR display output, custom RAW development and dust/catalog features are outside current scope.
+- Design batch snapshots, reference-only exclusions, collision/per-photo failure handling, metadata and progress/cancellation.
+- Assess aggregate resources, broader cameras/domains, actual macOS 14 and physical monitor matching/transitions; no minimum hardware target is established.
+- Bundle native libraries and license notices with bundle-relative loading; sign/notarize and exercise clean-machine execution. Checkout-local runtime paths are not distributable packaging.
+- Reopen outputs in Lightroom/Resolve without application automation; interoperability remains unverified.
+
+Windows, HDR display output, custom RAW development, dust removal and catalog features remain outside current scope.

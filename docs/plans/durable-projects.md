@@ -1,18 +1,17 @@
-# Recovery, source-change UI and undo
+# Recovery, source changes and undo
 
-Status: unfinished persistence work. [Roadmap](../../PLAN.md) owns priority. Save/Open, stable-ID settings, explicit development WB and dirty-transition guards are available; [project-state contract](../contracts/project-state.md) defines the supported document.
+[Projects](../projects.md) explains implemented Save/Open and compatibility. [The roadmap](../../PLAN.md) owns priority. Recovery, relinking/source-change UI and undo/redo remain unfinished.
 
-## Goal and boundaries
+## Scope and open choices
 
-Add recovery, source-change UI and undo/redo without reinterpreting grades or resampling RGB calibration. No catalog, automatic migration, derived images in JSON or silently overwritten explicit saves. `load()` structural validation and `require_runtime()` are distinct gates.
+1. **Missing sources/relink:** define matching candidates and explicit acceptance from workflow needs. Do not assume byte immutability or invent capture identity. Retain source IDs and Photo settings; source changes/removal never resample calibration.
+2. **Recovery/autosave:** use separate recovery state with explicit document identity and stale/corrupt handling. Preserve the last explicit save; exercise interrupted/failed writes before making durability claims.
+3. **Undo/redo:** settle shared versus Photo scope and gesture coalescing. Include accepted geometry/correction changes; invalid picks create no entry, and drafts/navigation/caches stay transient.
 
-## Work and acceptance
+No catalog, automatic schema migration, derived images in project JSON or silently overwritten explicit saves are implied.
 
-1. Design missing-source/relink and explicit source-change UI without assuming byte immutability or a capture-identity scheme. Settle matching/candidate/acceptance policy from workflow needs before adding primitives. Relinking retains IDs/photo edits; source changes/removal never resample stored calibration RGB.
-2. Add separate recovery/autosave with explicit saved-document identity and stale/recovery handling. Preserve the last explicit save; test interrupted/failed writes and corrupt/incompatible records. Do not claim complete power-loss durability without evidence.
-3. Add undo/redo for shared/photo edits, reset and successful picks, coalescing one gesture into one operation. Include accepted orientation, framing and flat-field changes in the selected scope. Invalid/cancelled picks create no entry; drafts, view/navigation and derived caches stay transient.
-4. Verify exact settings/output reopen, worker-active document transitions, stale-result rejection, recovery decisions and independent undo scopes. Legal out-of-slider values must survive. Use narrow state tests before an editor Save/Open smoke.
+## Acceptance and next action
 
-Likely boundaries: `src/{editor,editor_document,editor_files,project}.rs`, worker commands, close/dialog handling and focused project/recovery/undo tests. [Architecture](../architecture.md#persistence-boundary-and-known-gaps).
+Select and design one slice. Start with focused state tests, then exercise exact settings/output reopening, worker-active transitions, stale replies and the selected recovery/undo decisions. Legal values outside a slider's normal span must survive.
 
-Next: select and design one missing-source/relink, recovery or undo slice.
+Likely owners are [document transitions](../../src/editor_document.rs), [file actions](../../src/editor_files.rs) and [project validation](../../src/project.rs). Use [development checks](../development.md) before a sample-dependent Save/Open smoke.

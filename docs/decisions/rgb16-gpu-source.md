@@ -1,15 +1,9 @@
-# Retain compact developed RGB16 on the GPU
+# Keep the retained source compact
 
-Status: accepted.
+The developed source is RGB16. Retaining it exactly in four u16 slots preserves its integer information without a wide converted-image cache.
 
-## Choice and rationale
+Storage precision and arithmetic precision solve different problems. Near film base, nonlinear inversion makes small rounding differences significant. Shader temporaries and small constants therefore use additional precision where needed, without multiplying the retained source's memory cost.
 
-Retain exact developed camera RGB in four u16 slots, 8 bytes/pixel, with the fourth ignored. This preserves the source's integer information without a wide converted-source cache.
+Unsupported numerical domains reject rather than changing the source representation or falling back to CPU interactive processing. Rendered-only images need not retain unused source resources.
 
-Normalize, evaluate optional gains/inversion and apply the post-inversion camera matrix using accurate shader temporaries and small precise constants. Near-base nonlinear response makes premature f32 rounding significant; extra arithmetic precision need not increase retained image storage.
-
-Preflight rejects unsupported constants, products and ranges rather than choosing a different source representation or CPU fallback. Rendered-only outputs retain no unused source/working/processing resources.
-
-[Source contract](../contracts/processing-model.md#camera-source-representation)
-
-Implementation: `src/gpu.rs`, `src/shaders/{camera_conversion,film_response}.wgsl`, `src/viewer.rs`; regression coverage in `tests/{camera_inversion,gpu_film_response}.rs` and `src/gpu_tests.rs`.
+[GPU processing](../../src/gpu.rs) and [response tests](../../tests/gpu_film_response.rs) own the mechanics. [Editor previews](../editor.md#fast-feedback-is-not-authoritative-data) explain how those resources are used.

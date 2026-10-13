@@ -1,21 +1,11 @@
-# LibRaw development and bounded parallelism
+# Use established RAW development
 
-Status: accepted.
+A roll's calibration must refer to a consistent developed source. Automatic brightness or per-photo WB substitution would change that basis beneath shared settings.
 
-## Choice and rationale
+We use pinned LibRaw development with one fixed roll WB and established AHD demosaicing, retrieving linear camera RGB before standard-space output clipping. Reusing a mature developer avoids the uncertainty and maintenance cost of a custom demosaicer or camera-specific repair.
 
-Use pinned LibRaw 0.22.0 black subtraction, one roll-fixed WB tuple and AHD development. Retrieve linear developed camera RGB16 before standard-space output matrix/curve clipping. A mature decoder/developer avoids the cost and uncertainty of a custom demosaicer or camera-specific repair. Automatic brightness and per-photo WB substitution would make shared calibration inconsistent.
+Native parallelism improves development time, but background work must leave room for foreground interaction. Scoped OpenMP budgets follow priority and pressure without changing pixels or leaking task settings. The pinned source-built runtime makes this reproducible rather than dependent on a system installation.
 
-Enable upstream OpenMP with checksum-pinned, source-built LLVM OpenMP 22.1.8 in checkout-local storage. Building arm64 for macOS 14 makes the runtime reproducible without relying on a system/Homebrew library. The dynamic runtime and license notices must be bundled for distribution.
+Original capture diagnostics remain separate from the developed image. Regional checks can still detect sensor clipping after development; whole-frame statistics are computed only when explicitly requested.
 
-Bound decode/process calls by priority, CPU availability and memory pressure; scope/restore OpenMP task settings and let idle workers sleep. Foreground/background caps are eight/two threads, reserving two logical CPUs where possible. These are job budgets, not a whole-roll RAW cache.
-
-Decode once and compute whole-sensor statistics only on explicit request. Regional diagnostics use original CFA, margins and black/white levels after development; developed-RGB clipping is not a substitute.
-
-## Constraints
-
-Thread policy must preserve complete RGB16 output, metadata and immutable diagnostics. Differing pixels cannot silently share development/cache identity. Changes to source support or development settings require compatibility and numerical validation. LibRaw calls cannot be interrupted mid-phase; native deployment targets do not establish actual macOS-14 acceptance.
-
-[Source contract](../contracts/processing-model.md#camera-source-representation) · [Diagnostic guide](../native-development.md)
-
-Implementation: `native/raw_bridge.cpp`, `src/raw.rs`, `src/scan.rs`.
+See [the bridge](../../native/raw_bridge.cpp), [RAW ownership](../../src/raw.rs) and [native diagnostic](../native-development.md). Runtime inspection is not distributable packaging or broader-camera acceptance.

@@ -1,39 +1,35 @@
 # Interaction and colour diagnosis
 
-Status: unfinished fixes and UX/design questions. [Roadmap](../../PLAN.md) owns priority. Preserve full-resolution picks, source anchors, atomic rejection/cancellation and independence from calibration/export. Current behavior: [controls](../contracts/editor-controls.md), [geometry](../contracts/geometry.md).
+These are unfinished fixes and design questions. [The roadmap](../../PLAN.md) owns priority; [editor](../editor.md) and [geometry](../geometry.md) explain current behavior.
 
 ## Decisions and open questions
 
-- Reproduce DSC04524 dark reds using the exact RAW, calibration, response and Roll/Photo settings. Trace corrected camera RGB → inversion → camera→AP1 → photographic edits → rendered target. A cause is not established; [native-camera inversion](../decisions/native-camera-inversion.md) remains the processing basis.
-- Investigate cold near-base shadows with Vision3 500T. Greater blue sensitivity is a hypothesis, not an established cause. Trace signed working channels and rendering with a reproducible current grade; do not silently warm shadows or add a pedestal/clamp.
-- Reproduce stale fitted-resolution symptoms across Fit/native/resize/rapid switching. Validate dimensions, adapter limits and stale-result rejection without skipping refinement, weakening gates or adding perpetual redraw.
-- Validate physical pointer/trackpad/keyboard/VoiceOver behavior across normal/narrow stages and all image tools. Exercise numeric/popup precedence, exact view restoration and normal-app preference relaunch. Headless events and visible-frame smoke do not establish these boundaries.
+- Reproduce DSC04524 dark reds with the exact RAW and grade, tracing camera RGB through inversion, AP1 grading and rendering. The cause is not established.
+- Investigate cold near-base Vision3 500T shadows. Greater blue sensitivity is a hypothesis, not permission to warm shadows or add a pedestal.
+- Reproduce stale fitted-resolution symptoms across Fit/native/resize/switching. Preserve refinement and existing numerical/visibility gates.
+- Exercise physical pointer/trackpad/keyboard/VoiceOver behavior, numeric/popup precedence, view restoration and normal-app preference relaunch. Headless and scripted window checks cannot establish these.
 
 ## Triaged interaction follow-up
 
 ### Focused fixes
 
-- **Save prompt:** discuss centered owner-relative placement/modality; preserve Save/Discard/Cancel and failure behavior.
-- **Selection/accessibility gaps:** scope focused fixes against the [current selection/semantic limits](../contracts/editor-controls.md#verification), with composed cold-load/error/disabled/AccessKit tests. Preserve ID/layout, ordered-roll sampling and transaction guards; settle wheel keyboard semantics without changing its numerical mapping. These known implementation gaps are not closed by physical acceptance alone.
+- **Save prompt:** settle owner-relative placement and modality without changing Save/Discard/Cancel behavior.
+- **Selection/accessibility:** cards lack accessible filename/selection metadata; pinned section titles lack label semantics; wheels lack a named keyboard interface beyond adjacent numeric controls. Rejected filmstrip selection actions still expose enabled card responses. Scope fixes with cold-load/error/disabled/AccessKit tests; paint equivalence does not close these gaps.
 
 ### Roll workflow
 
-- **RAW drag/drop:** use staged import/identity validation. Settle supported-file feedback, busy-state drops, duplicates and all-or-nothing failure; wider format support is not implied.
-- **Selection/removal:** clarify multi-selection versus removal selection. Define active/last-photo removal, next selection, dirty state, in-flight work and reference-only records. Removal is project-only: never delete RAWs or change RGB calibration. Undo is separately scoped.
+- **RAW drag/drop:** settle supported-file feedback, busy drops, duplicates and all-or-nothing failure through staged import/compatibility checks.
+- **Selection/removal:** clarify selection modes, active/last-photo removal, next selection and in-flight work. Removal changes the project, never deletes RAWs or resamples calibration; undo is separate.
 
 ### Layout and controls
 
-- **Scopes disclosure:** decide whether the existing persistent checkbox should become disclosure-style hiding, without changing canvas geometry or resource bounds.
-- **Native shell:** native app menus and owner-relative dialog presentation remain unselected; no framework/dependency choice is established.
-- **Remaining feedback:** share operation progress/error language without adding redundant rows or changing transaction/cancellation boundaries. Current stage/tool hierarchy is defined in the control contract; broader feedback stays separately scoped.
-- **Wheel mapping:** identify the wheel/gesture that appears asymmetric before changing it. Equal artwork sectors do not imply equal processing response: gamma controls camera-channel log gamma; WB uses the local AP1 response to Bradford log-cone gains. [Mapping](../contracts/editor-controls.md#resolve-style-wheel-orientation-and-mapping).
-
-## Recorded support/architecture questions
-
-Current input support and the CPU/GPU boundary should be clear to users: exposed inputs are ARW RAWs and schema-5 JSON projects, not developed JPEG/TIFF/EXR. CPU LibRaw development, full-resolution f64 sampling/fitting/validation and export/reference paths coexist with GPU-only interactive processing. [Product](../contracts/product.md), [architecture](../architecture.md#ownership-and-execution).
+- **Scopes disclosure:** decide whether disclosure-style hiding improves the persistent visibility control without changing canvas/resource behavior.
+- **Native shell:** app menus and owner-relative dialogs need design; no framework choice is established.
+- **Operation feedback:** coordinate progress/errors with [the feedback slice](completion.md#operation-feedback), preserving transactions and cancellation boundaries.
+- **Wheel feel/mapping:** reproduce the specific gesture first. Gamma and Bradford WB have different processing responses despite similar artwork; [processing](../processing.md#curve-balance-is-not-white-balance) explains why. Precision/keyboard changes must not quietly change numerical mapping.
 
 ## Next action and acceptance
 
-Select one fix or design question. Reproduce symptoms against current composed views, then implement only that slice with focused event/geometry/state checks. Preserve picker/crop priority and view restoration; physical trackpad feel, popup appearance and monitor matching need real-use checks. Keep existing smoke deadlines/visibility/numerical gates unchanged.
+Select one concrete symptom or design question, reproduce it in the current composed editor, and verify the focused fix. Preserve full-resolution picks, source anchors, draft/accepted separation, input precedence and exact working-context restoration. Physical feel and monitor appearance need real-use evidence.
 
-[Thumbnails](visual-feedback.md) · [Progress, photographic controls and release](completion.md)
+[Thumbnail follow-up](visual-feedback.md) · [Photographic and release work](completion.md).

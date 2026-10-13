@@ -1,17 +1,11 @@
-# Matching SDR outputs and managed presentation
+# Match rendered outputs and use managed SDR presentation
 
-Status: accepted.
+A P3 file should contain a P3 rendering, not an sRGB rendering hidden inside a wider container. Preview and TIFF therefore use the same selected ACES target and matching encoding/profile.
 
-## Choice and rationale
+CPU export/reference and GPU preview share pinned native definitions and generated algorithms. We keep ACES mathematics unchanged; agreeing implementations still need independent gamut, profile and presentation checks, since both could agree on the same mistake.
 
-Keep pinned OCIO 2.6.0 ACES 2 mathematics unchanged. Render to 100-nit sRGB/D65 or Display P3/D65, with matching TIFF transfer/ICC. A wider file container must not hide a narrower rendering gamut.
+The preview converts to an explicitly tagged extended-sRGB floating-point SDR layer. This preserves P3 coordinates outside ordinary sRGB until the OS performs monitor conversion. Encoding happens once; neither a second display transform nor an application monitor transform is added.
 
-Share native definitions between CPU rendering and pinned generated GPU algorithms/tables. CPU/GPU agreement establishes consistency, not colour preservation; independent gamut, profile and presentation checks are also required.
+HDR display output or another target would need its own validated boundary. Software agreement and layer tagging do not establish physical-monitor calibration or broad device support.
 
-Convert the selected linear target to explicitly tagged extended-sRGB `RGBA16Float` SDR presentation, with EDR disabled. Preserve P3's out-of-sRGB coordinates until OS monitor conversion. Encode once, handle ordinary UI separately and apply neither a second DRT nor an application monitor transform.
-
-## Limits
-
-Generated parameter tables are not a baked-LUT approximation. Output compatibility rejects unrecognized transform state rather than silently reinterpreting it. HDR or additional gamuts require their own colour-preservation gates. Software comparisons do not establish physical-monitor matching, broader-device/macOS-14 acceptance or complete CTL conformance.
-
-[Output contract](../contracts/output.md) · [Pinned shaders](../../assets/ocio/README.md) · [Profiles](../../assets/profiles/README.md) · [Verification](../build-and-probes.md#rendering-gamut-and-icc)
+[Colour and output](../colour-and-output.md) explains the paths. [OCIO artifacts](../../assets/ocio/README.md), [profiles](../../assets/profiles/README.md) and [diagnostics](../diagnostics.md#rendering-gamut-and-icc) own provenance and checks.

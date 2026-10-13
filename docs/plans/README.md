@@ -1,12 +1,12 @@
 # Unfinished work
 
-[Roadmap](../../PLAN.md) owns priority. These packages describe remaining problems and acceptance, not authorization to implement every item.
+[PLAN.md](../../PLAN.md) owns priorities. These packages describe open scope, questions and acceptance—not implemented behavior:
 
-- [Analyze roll photographic acceptance](roll-assistance.md)
+- [Analyze photographic acceptance](roll-assistance.md)
 - [Verification tools, RAW fixtures and UI automation](verification-tooling.md)
 - [Interaction and colour diagnosis](inspection-and-interaction.md)
-- [Thumbnail loading and resource acceptance](visual-feedback.md)
-- [Photographic acceptance, completion features and release](completion.md)
-- [Recovery, source-change UI and undo](durable-projects.md)
+- [Thumbnail loading and resources](visual-feedback.md)
+- [Other photographic acceptance and release needs](completion.md)
+- [Recovery, source changes and undo](durable-projects.md)
 
-Select a focused slice and settle its open design questions before implementation. Current behavior belongs in [contracts](../README.md#contracts), not in completed task lists.
+Use the [topic guides](../README.md#understand-the-system) for the current system. Select a focused slice and settle its design before implementing it.

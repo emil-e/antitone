@@ -1,15 +1,9 @@
-# Output-native scopes with independent magnification
+# Measure scopes in the selected output
 
-Status: accepted.
+Scopes help judge the rendered photograph. Measuring the selected output's native encoded RGB, before monitor conversion, keeps them tied to that photograph rather than the monitor or an unrelated analysis gamut.
 
-## Choice and rationale
+A P3 target therefore uses P3-derived luma/chroma conventions. Equal codes across targets are not asserted to be equal colours. Whole-frame proxy sampling makes updates responsive, provided the approximation is visible; a regional settled viewer image cannot stand in for whole-frame statistics.
 
-Scopes judge the rendered positive photograph, so measure the selected ACES output's native encoded sRGB/Display P3 coordinates before monitor conversion. Label the target and derive its luma/chroma coefficients and references. These coordinates correspond to TIFF encoding before quantization; identical codes across targets need not represent identical colours.
+Vectorscope magnification is independent of grade and widget size. Re-binning cached rendered samples reveals detail without changing the photograph or rerunning ACES. Full-source statistics are a separate feature with different costs.
 
-Use the whole accepted-composition proxy for responsive updates, explicitly labelled Approximate. Regional settled viewer images cannot supply whole-frame statistics. Suspend scopes outside positive-grade viewing.
-
-Vectorscope amplification narrows chroma range around neutral independently of widget size or grade. Re-bin cached rendered samples for detail, with explicit scale/reset and offscreen accounting, without rerunning ACES. Magnification changes neither colour processing nor measured values.
-
-Full-source analysis is a separate feature with different cost and coverage requirements.
-
-[Scope contract](../contracts/scopes.md) · [Rendering/presentation](sdr-output-and-presentation.md)
+[Scopes](../scopes.md) explains interpretation and coverage. [Measurement code](../../src/scopes.rs) defines the equations and plot conventions.

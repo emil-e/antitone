@@ -2,7 +2,7 @@
 
 ## Current state
 
-The editor supports native-camera model-4 inversion, roll flat-field correction, Analyze roll, full-resolution calibration, crop/straightening, Photo contrast/pivot and saturation, responsive GPU previews and scopes, thumbnails, Save/Open and TIFF/AP0 EXR export. [Contracts](docs/README.md#contracts) define behavior; [architecture](docs/architecture.md) describes the implementation.
+The editor supports native-camera model-4 inversion, roll flat-field correction, Analyze roll, full-resolution calibration, crop/straightening, Photo contrast/pivot and saturation, responsive GPU previews and scopes, thumbnails, Save/Open and TIFF/AP0 EXR export. [Topic guides](docs/README.md#understand-the-system) explain the models and important boundaries; [architecture](docs/architecture.md) maps the implementation.
 
 The workspace uses Roll → Photo → Rendering stages, collapsible inspector sections, independently saved UI preferences and stable viewer-bar tool identity/Apply/Cancel. The visual grouping is accepted; physical input, preference relaunch and broader photographic/device acceptance remain open. [Interaction follow-up](docs/plans/inspection-and-interaction.md). Shared presentation metrics/actions, viewer tool groups, inspector sections/tabs/labelled rows, contact-sheet cards/captions and agent reuse rules are implemented. Existing status, Analyze progress and canvas placeholders retain their distinct presentation; [operation feedback](docs/plans/completion.md#operation-feedback) needs separate design.
 
@@ -13,7 +13,7 @@ Current focus is [Analyze photographic acceptance](docs/plans/roll-assistance.md
 ## Remaining work, in priority order
 
 1. **Responsiveness and resources:** real-use scrolling/control feedback, actual memory-pressure exercise and aggregate memory assessment. Measure switching caches or source-loading costs only for a concrete need. [Scope](docs/plans/completion.md#rendering-and-thumbnail-performance).
-2. **Photographic acceptance:** camera inversion, native/settled straightening agreement, rotated neutral picks, corrected/uncorrected Save/Open and TIFF/AP0 EXR reopen; full-resolution evaluation of the implemented [contrast/saturation tools](docs/contracts/processing-model.md#photo-contrastpivot-and-saturation). [Geometry](docs/plans/completion.md#geometry), [photographic controls](docs/plans/completion.md#photographic-controls-and-bw-handling).
+2. **Photographic acceptance:** camera inversion, native/settled straightening agreement, rotated neutral picks, corrected/uncorrected Save/Open and TIFF/AP0 EXR reopen; full-resolution evaluation of the implemented [contrast/saturation tools](docs/processing.md#photo-contrast-and-saturation). [Geometry](docs/plans/completion.md#geometry), [photographic controls](docs/plans/completion.md#photographic-controls-and-bw-handling).
 3. **UI polish, scopes and interaction:** scope-guide/composed-photo appearance, known selection/accessibility gaps, physical trackpad/preference-relaunch exercise, dialog/native-shell decisions and dark-red/cold-shadow diagnosis. [Scopes](docs/plans/completion.md#scopes), [interaction](docs/plans/inspection-and-interaction.md), [thumbnails](docs/plans/visual-feedback.md).
 4. **Completion features:** Analyze photographic acceptance, additional photographic controls/B&W design, shared operation feedback and source readability. [Scope](docs/plans/completion.md).
 5. **Export and release:** batch/progress/cancellation/metadata, dependency bundling/licensing, clean-machine testing, macOS 14, broader cameras/devices and physical-monitor matching/transitions. [Scope](docs/plans/completion.md#export-and-release-work).
@@ -23,4 +23,4 @@ Current focus is [Analyze photographic acceptance](docs/plans/roll-assistance.md
 
 Numerical and headless checks do not establish photographic, physical-input or monitor acceptance. No minimum chip/RAM target or universal numerical-domain coverage is established. Native runtime paths are checkout-local, not distributable packaging. Lightroom/Resolve interoperability remains unverified. Windows/HDR display output and custom RAW development are outside current scope.
 
-Setup: [README](README.md). Checks: [development](docs/development.md), [specialist probes](docs/build-and-probes.md).
+Setup: [README](README.md). Checks: [development](docs/development.md), [diagnostics](docs/diagnostics.md).

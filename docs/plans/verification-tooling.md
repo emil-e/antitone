@@ -1,6 +1,6 @@
 # Verification tooling and UI test structure
 
-Status: unfinished RAW-fixture, reference and UI restructuring. Current probes have purpose headers; supported commands are in the [probe guide](../build-and-probes.md). No checked-in RAW fixtures, UI-test feature or framework integration exist. [Roadmap](../../PLAN.md) owns priority; this plan does not change active photographic work or shared UI ownership.
+Status: unfinished RAW-fixture, reference and UI restructuring. Current probes have purpose headers; supported commands are in the [diagnostic guide](../diagnostics.md). No checked-in RAW fixtures, UI-test feature or framework integration exist. [Roadmap](../../PLAN.md) owns priority; this plan does not change active photographic work or shared UI ownership.
 
 ## Goal
 
@@ -116,7 +116,7 @@ The native suite remains small: window/surface presentation, resize, close/compl
 2. **Fixture regression migration and probe consolidation.** Replace private-file dependencies and hidden cache prerequisites in maintained automated checks. Transfer useful scan/calibration/raw/export assertions, broader gamut coverage and independent ImageIO reopening before deleting their old entrypoints. Preserve current Analyze numerical/transaction tests.
 3. **UI framework proof.** Wire the optional dependency/feature and demonstrate semantic input, asynchronous state, custom GPU rendering and a named capture. Decide renderer adapters and snapshot policy from this proof; do not rewrite all UI tests first.
 4. **Scenario/native migration.** Port one end-to-end scenario at a time into framework tests or the small native suite. Exercise failure/timeout/early-close behavior and production build exclusion. Remove equivalent smoke classes, CLI/env branches and capture scripts as replacements pass; do not leave parallel supported paths.
-5. **Contributor handoff.** Organize core/fixture/UI/reference/native/optional-real-use commands in their existing guides. Update architecture only for implemented boundaries and contracts only for changed behavior. Replace named private-photo recipes with supplied-source acceptance instructions. Remove completed scope from this plan; delete it once all maintained behavior and remaining acceptance have proper homes.
+5. **Contributor handoff.** Organize core/fixture/UI/reference/native/optional-real-use commands in their existing guides. Update architecture only for implemented boundaries and the owning topic guides only for changed behavior. Replace named private-photo recipes with supplied-source acceptance instructions. Remove completed scope from this plan; delete it once all maintained behavior and remaining acceptance have proper homes.
 
 ## Acceptance and verification
 

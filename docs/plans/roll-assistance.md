@@ -4,7 +4,7 @@
 
 Evaluate Analyze as a useful shared-colour and individual-exposure starting point, followed by ordinary manual grading. It is not an automatically finished or physically calibrated grade. Preserve legitimate blue shade/water and coloured lighting.
 
-Implemented behavior belongs in the [processing](../contracts/processing-model.md), [controls](../contracts/editor-controls.md#analyze-roll) and [persistence](../contracts/project-state.md#photographic-roll-wb) contracts. Verification commands and maintained diagnostics belong in the [probe guide](../build-and-probes.md#analyze-roll).
+The [Analyze guide](../roll-analysis.md) explains the implemented estimator and transaction; [projects](../projects.md) explains saved state. Commands and maintained diagnostic recipes belong in [diagnostics](../diagnostics.md#analyze-roll).
 
 ## Unfinished acceptance
 

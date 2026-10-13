@@ -1,6 +1,10 @@
 # Antitone
 
-A macOS editor for camera-scanned film negatives, with native-camera inversion, GPU previews, saveable projects and TIFF/EXR export.
+A macOS editor for camera-scanned film negatives. Analyze a roll to establish shared colour and individual exposures, then refine the photographs manually and export TIFF or EXR.
+
+Antitone works from linear camera measurements rather than inverting a displayed JPEG. Calibration and response are shared across a roll; Photo adjustments provide individual grading. [How processing works](docs/processing.md) and [how Analyze chooses a starting grade](docs/roll-analysis.md) explain those two separate jobs.
+
+The current photo input is ARW RAW, with Sony ILCE-1M2 lossless-compressed ARW as the supported camera baseline. Saved grades use JSON projects. Developed JPEG/TIFF/EXR import, dust removal, catalogs and HDR display output are not implemented; this checkout is not a distribution-ready app.
 
 ## Prerequisites
 
@@ -43,7 +47,7 @@ cargo run --locked --release --features editor --bin antitone -- /path/to/photo.
 
 Plain `cargo build --locked` builds the lightweight numerical core, not the editor. Editor features remain opt-in so core development does not require the native libraries or desktop stack.
 
-Existing compatible native builds can be selected with `LIBRAW_SOURCE` (LibRaw source/build directory containing `lib/libraw_r.a`) and `OCIO_PREFIX` (installed OCIO prefix containing `include/` and `lib/`). These are build/probe overrides; `setup-native.sh` always builds the pinned checkout-local dependencies. LibRaw must use the accepted OpenMP build, and the pinned runtime remains required at `.cache/native-deps/openmp-22.1.8-install`; `LIBRAW_SOURCE` does not relocate it. System/Homebrew OpenMP runtimes are not supported inputs. Do not substitute different library versions or build options without validating the processing/rendering contracts.
+For an existing compatible native build or a separate worktree, see [reusing native builds](docs/native-development.md#reusing-native-builds). The ordinary setup remains the command above.
 
 The editor currently links OCIO and OpenMP through absolute local library paths. Keep those libraries available when running the binary; this workflow is not a distributable app bundle.
 
@@ -56,10 +60,10 @@ cargo fmt --all -- --check
 cargo test --locked --no-default-features
 ```
 
-For feature-specific tests, see [development checks](docs/development.md). Numerical/reference, RAW, export and presentation probes are in [specialist verification](docs/build-and-probes.md). `--offline` is useful with a populated cache, but is not required for normal builds. Local RAW samples are optional, read-only and never downloaded by setup.
+For feature-specific tests, see [development checks](docs/development.md). Numerical/reference, RAW, export and presentation probes are in [diagnostics](docs/diagnostics.md). `--offline` is useful with a populated cache, but is not required for normal builds. Local RAW samples are optional, read-only and never downloaded by setup.
 
-## More context
+## Contributing
 
-- [Roadmap](PLAN.md)
-- [Architecture](docs/architecture.md)
-- [Documentation map](docs/README.md)
+The [contributor guide](docs/README.md) helps you choose an area without reading every document. Start with its explanation, follow the implementation links, and run the relevant [development checks](docs/development.md).
+
+[Architecture](docs/architecture.md) maps ownership. [The roadmap](PLAN.md) and [work plans](docs/plans/README.md) distinguish current behavior from unfinished features and acceptance.

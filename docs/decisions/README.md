@@ -1,14 +1,14 @@
-# Decision rationale
+# Why these choices?
 
-These records explain current choices and tradeoffs. [Contracts](../README.md#contracts) define exact behavior.
+The [topic guides](../README.md#understand-the-system) explain how Antitone works. These short records preserve the reasoning behind consequential choices:
 
-- [LibRaw development and bounded parallelism](established-raw-development.md)
+- [Established RAW development](established-raw-development.md)
 - [Native-camera inversion](native-camera-inversion.md)
-- [Simple signed-AP1 photographic grading](photographic-grading.md)
-- [Compact RGB16 GPU source](rgb16-gpu-source.md)
-- [RGB-only calibration](rgb-only-calibration.md)
-- [RAW loading and cache-only file revisions](no-raw-content-hashing.md)
+- [Signed-AP1 photographic grading](photographic-grading.md)
+- [Compact retained GPU source](rgb16-gpu-source.md)
+- [Calibration independent of picker context](rgb-only-calibration.md)
+- [Cache freshness versus photograph identity](no-raw-content-hashing.md)
 - [Matching SDR outputs and managed presentation](sdr-output-and-presentation.md)
-- [Output-native scopes and independent magnification](output-native-scopes.md)
+- [Output-native scopes](output-native-scopes.md)
 
-Keep a record only when its rationale helps maintain a consequential choice. Link contracts and implementation rather than repeating specifications. Proposed designs belong in work plans, not in this index.
+A decision is not a second API specification or a feature proposal. Keep its rationale and tradeoffs; link to code for mechanics and to [plans](../plans/README.md) for unfinished designs.

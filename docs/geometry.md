@@ -1,0 +1,58 @@
+# Coordinates, composition and pixel coverage
+
+An image can be developed in one orientation, cropped in another, shown at a third resolution and placed anywhere on a canvas. Geometry keeps those descriptions connected without changing which original pixels a measurement or export represents.
+
+## Give each space one job
+
+| Space | What it describes |
+| --- | --- |
+| **Source** | Original developed-image pixels, before user orientation or framing |
+| **Oriented source** | The active source after exact Roll and Photo turns/flips |
+| **Frame** | The finished photograph after orientation, crop and straightening |
+| **Raster** | A sampled representation of a declared region at a chosen resolution |
+| **Canvas** | Logical UI positions, related to the image by viewport layout |
+
+Source coordinates are developed RGB coordinates, not RAW Bayer coordinates. The metadata active area is a rectangle within the source; its origin need not be zero. Texture UVs are an adapter for drawing, not an additional authoritative composition space.
+
+A thumbnail and an export can represent the same frame at different raster resolutions. Zoom and pan move that frame on the canvas; they do not change composition.
+
+Coordinates use a top-left origin, x right and y down. Integer positions describe pixel edges; a pixel's centre is halfway between them. Integer regions are half-open, so their far edge is not another pixel index. Mapping a point does not silently clamp it: an outside-image click must not turn into a measurement of an unrelated edge pixel.
+
+## Orientation and straightening are different
+
+Shared Roll orientation comes first, followed by each Photo's orientation. Quarter-turns and flips are exact pixel permutations. They transform the finished composition, preserving selected source content; a quarter-turn can swap its displayed dimensions.
+
+Straightening instead rotates the image beneath the crop frame. The crop retains its source-coordinate centre and basis, and its corners must remain inside real source coverage. Constraints may shrink the frame rather than invent blank corners.
+
+The original source stays in place for development, illumination correction and calibration. Turning the photograph does not turn a flat-field pattern within the source. The [crop implementation](../src/crop.rs) owns exact framing and constraints.
+
+## A bounding box is not coverage
+
+Consider a rectangular picker over a straightened photograph. Mapping it back to the source produces a tilted polygon. Its bounding rectangle includes pixels the user never selected.
+
+Antitone measures the actual polygon. Each intersecting original pixel cell contributes according to its covered area. A bounding box only limits the cells that need inspection; it cannot replace those weights. Capture-clipping diagnostics inspect the same contributing cells as the RGB measurement.
+
+This keeps picks consistent through orientation, crop, zoom and arbitrary straightening. Full-resolution measurements never use display, proxy or already-resampled pixels. Only the resulting calibration/balance values persist, not picker coverage.
+
+## Process before averaging
+
+Nonlinear processing does not commute with averaging. Averaging two negative samples and then inverting them generally gives a different result from inverting each and averaging the positives.
+
+The same issue applies to display rendering:
+
+- Settled preview and TIFF process/render original pixels first, then average **linear target RGB**, before output encoding.
+- EXR averages the signed/HDR working positives and converts to AP0, without display rendering.
+
+A destination pixel inverse-maps to a source footprint. Exact intersection areas provide its reconstruction weights. Exact turns and integer framing retain simple permutation/rectangular paths; arbitrary-angle framing uses polygon coverage. Interactive previews and thumbnails deliberately use cheaper proxy approximations.
+
+## Drafts do not change accepted composition
+
+Crop editing has a temporary frame and viewport. Apply accepts the proposed composition; Cancel restores the accepted composition and starting view. Save and Export consume only accepted state. Changing inspector tabs does not implicitly accept or cancel a tool.
+
+Dmin/Dmax sampling temporarily reveals uncropped oriented source, while a flat-field reference uses untransformed source. Those are viewing arrangements, not changes to the working Photo's crop. Tool exit restores its working context. [Editor state](editor.md#accepted-state-and-drafts) explains ownership.
+
+## Working on this area
+
+[Geometry](../src/geometry.rs) owns shared mappings; [coverage](../src/coverage.rs) owns actual cell intersection; [viewport](../src/viewport.rs) owns image-to-canvas layout. [Frame rasters](../src/frame_raster.rs), [refinement](../src/refinement.rs) and [export](../src/export.rs) consume those definitions rather than inventing parallel coordinate conventions.
+
+Use asymmetric images and nonzero active-area origins when testing mappings: square, centred fixtures hide mistakes. [Affine reconstruction](../tests/affine_resample.rs), [geometry export](../tests/geometry_export.rs), [viewer](../tests/viewer.rs) and [scope geometry](../tests/scopes/geometry.rs) cover the composed paths. Spatial tolerances do not replace colour-processing gates.
