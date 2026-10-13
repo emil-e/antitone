@@ -29,6 +29,8 @@ Thumbnail and embedded-camera-preview workers are separate bounded background pa
 
 UI, backend and image workers share a wgpu device/queue and reusable immutable GPU infrastructure. Mutable processing/storage and signatures remain image/job-owned. CPU processing supplies the numerical reference, measurements and export; it is not an interactive fallback when a GPU domain is unsupported.
 
+Surface reconfiguration must not overlap submission on the shared queue. The host and background submitters use the same [submission gate](../src/platform/submission.rs), excluding new submissions while wgpu drains GPU work for a resize. CPU tile preparation, command encoding, staged uploads and explicit completion polls remain outside that gate.
+
 Worker results are proposals. Request IDs, generations and source/settings snapshots determine whether they still belong to the current operation. Prepare and validate before replacing accepted state; discard stale results. Cancellation is cooperative, not a promise to interrupt LibRaw or already-submitted GPU work immediately.
 
 ## Editor workspace

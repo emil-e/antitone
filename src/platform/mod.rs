@@ -3,6 +3,9 @@ pub mod host;
 #[cfg(target_os = "macos")]
 pub mod macos;
 
+mod submission;
+pub use submission::SubmissionGate;
+
 pub fn device_limits(supported: wgpu::Limits) -> wgpu::Limits {
     wgpu::Limits {
         max_storage_buffer_binding_size: supported.max_storage_buffer_binding_size,

@@ -24,6 +24,67 @@ pub(super) fn fixture() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Comman
     (editor, send, receiver)
 }
 #[test]
+fn refinement_worker_uses_the_submission_gate_supplied_to_the_host() {
+    pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let mut editor = Editor::new(&device, &queue, None);
+        editor.thumbnails = Thumbnails::default();
+        editor.add_raws(vec![
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/roll-0.dng"),
+        ]);
+        let started = std::time::Instant::now();
+        while editor.busy || editor.ready.is_none() {
+            editor.receive();
+            assert!(
+                started.elapsed() < Duration::from_secs(15),
+                "{}",
+                editor.status
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let view = ViewRequest {
+            area: editor.ready.as_ref().unwrap().area,
+            output: [16, 16],
+            frame: None,
+        };
+        let revision = editor.generation.load(std::sync::atomic::Ordering::Relaxed);
+        let submissions = host::App::submission_gate(&editor).clone();
+        submissions.configure(|| {
+            editor
+                .commands
+                .send(Command::Refine(
+                    editor.id,
+                    revision,
+                    ProcessingParameters::source(),
+                    OutputTarget::Srgb,
+                    view,
+                ))
+                .unwrap();
+            assert!(matches!(
+                editor.messages.recv_timeout(Duration::from_millis(100)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ));
+        });
+        match editor
+            .messages
+            .recv_timeout(Duration::from_secs(15))
+            .unwrap()
+        {
+            Message::Refined(received, Ok(Some(image))) => {
+                assert_eq!(received, revision);
+                assert_eq!(image.processing_byte_len(), (0, 0));
+            }
+            _ => panic!("worker failed to finish refinement after surface configuration"),
+        }
+    });
+}
+
+#[test]
 fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {

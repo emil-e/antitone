@@ -43,6 +43,10 @@ impl AnalysisSmoke {
     }
 }
 impl host::App for AnalysisSmoke {
+    fn submission_gate(&self) -> &crate::platform::SubmissionGate {
+        self.editor.submission_gate()
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui) {
         self.editor.ui(ui);
         ui.ctx().request_repaint_after(Duration::from_millis(50));

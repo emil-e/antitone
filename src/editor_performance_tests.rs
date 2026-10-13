@@ -103,7 +103,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
                 let image = crate::refinement::refine(
                     &renderer,
                     &device,
-                    &queue,
+                    (&queue, &crate::platform::SubmissionGate::default()),
                     (&scan, Some(gpu_field.clone())),
                     parameters,
                     target,
@@ -144,7 +144,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
                     crate::refinement::refine(
                         &renderer,
                         &device,
-                        &queue,
+                        (&queue, &crate::platform::SubmissionGate::default()),
                         (&scan, Some(gpu_field.clone())),
                         parameters,
                         target,
@@ -162,7 +162,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
                     crate::refinement::refine(
                         &renderer,
                         &device,
-                        &queue,
+                        (&queue, &crate::platform::SubmissionGate::default()),
                         (&scan, Some(gpu_field.clone())),
                         parameters,
                         target,
@@ -633,7 +633,7 @@ fn import_and_refinement_latency() {
                     let image = crate::refinement::refine_with_depth(
                         &renderer,
                         &device,
-                        &queue,
+                        (&queue, &crate::platform::SubmissionGate::default()),
                         (&scan, None),
                         parameters,
                         OutputTarget::DisplayP3,

@@ -22,7 +22,7 @@ pub struct ViewRequest {
 pub fn refine(
     renderer: &Arc<crate::renderer::GpuRenderer>,
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    (queue, submissions): (&wgpu::Queue, &crate::platform::SubmissionGate),
     (scan, field): (&Scan, Option<Arc<GpuFlatField>>),
     parameters: ProcessingParameters,
     target: OutputTarget,
@@ -32,7 +32,7 @@ pub fn refine(
     refine_with_depth(
         renderer,
         device,
-        queue,
+        (queue, submissions),
         (scan, field),
         parameters,
         target,
@@ -46,7 +46,7 @@ pub fn refine(
 pub(crate) fn refine_with_depth(
     renderer: &Arc<crate::renderer::GpuRenderer>,
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    (queue, submissions): (&wgpu::Queue, &crate::platform::SubmissionGate),
     (scan, field): (&Scan, Option<Arc<GpuFlatField>>),
     parameters: ProcessingParameters,
     target: OutputTarget,
@@ -121,7 +121,7 @@ pub(crate) fn refine_with_depth(
             let mut encoder = device.create_command_encoder(&Default::default());
             tile.encode(device, &mut encoder, parameters);
             average.accumulate(device, &mut encoder, &tile.linear, [x, y]);
-            pending.push_back(queue.submit([encoder.finish()]));
+            pending.push_back(submissions.submit(queue, [encoder.finish()]));
             // Queue order permits reuse of the tile buffers; only upload staging is outstanding.
             if pending.len() >= depth {
                 wait_for(device, pending.pop_front().unwrap())?;
@@ -136,7 +136,7 @@ pub(crate) fn refine_with_depth(
     gpu += tick.elapsed();
     let mut encoder = device.create_command_encoder(&Default::default());
     average.finish(device, &mut encoder, &output.linear);
-    queue.submit([encoder.finish()]);
+    submissions.submit(queue, [encoder.finish()]);
     println!(
         "settled_preview source={}x{} output={}x{} target={target:?} depth={depth} seconds={:.3} sampling_seconds={:.3} gpu_seconds={:.3}",
         view.area.width,

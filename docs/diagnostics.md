@@ -246,8 +246,12 @@ ImageIO storage/profile agreement is not a pixel-rendering or photographic-quali
 ```sh
 ./scripts/probe-presentation-reference.sh
 cargo run --locked --offline --features ui --bin antitone-presentation-probe
+# Resize repeatedly while a bounded background worker submits on the same queue:
+cargo run --locked --offline --features ui --bin antitone-presentation-probe -- --submission-stress
 # Leave the chart open:
 cargo run --locked --offline --features ui --bin antitone-presentation-probe -- --interactive
 ```
+
+The submission stress route brings its own window forward and checks repeated native size changes, background-work completion and presented frames. It exercises the shared submission gate during repeated small resizes, not RAW refinement quality or prolonged physical use.
 
 Zero submitted frames fails the onscreen check. Layer/encoding/readback agreement does not establish physical monitor matching, monitor transitions, actual macOS 14 or broader-device behavior. Keep those limits distinct from the tested [output boundary](colour-and-output.md).

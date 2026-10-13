@@ -65,6 +65,15 @@ cargo test --locked --features editor --lib editor::analysis::tests -- --test-th
 
 The first two exercise synthetic populations and curve fitting. Editor checks additionally cover snapshots, confirmation, cancellation and atomic full-grade reset. [Real-RAW diagnostics](diagnostics.md#analyze-roll) are separate, explicit exercises.
 
+## Shared GPU queue checks
+
+```sh
+cargo test --locked --features ui --lib platform::submission
+cargo test --locked --features editor --lib refinement_worker_uses_the_submission_gate_supplied_to_the_host
+```
+
+These headless Metal checks verify submission exclusion during surface configuration and the editor worker's use of the host's gate. Use the [native presentation stress route](diagnostics.md#macos-presentation) for real surface reconfiguration alongside background GPU work.
+
 ## Shared editor UI checks
 
 Read [shared presentation](editor.md#build-ui-from-shared-presentation) before adding a widget. Check the component **and** its composed consumer: paint equivalence alone does not verify state or input ownership.

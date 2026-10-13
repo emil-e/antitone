@@ -355,7 +355,7 @@ fn prepare_document(
 fn backend(
     renderers: Arc<crate::renderer::RendererCache>,
     device: wgpu::Device,
-    queue: wgpu::Queue,
+    (queue, submissions): (wgpu::Queue, crate::platform::SubmissionGate),
     commands: mpsc::Receiver<Command>,
     messages: mpsc::Sender<Message>,
     generation: Arc<std::sync::atomic::AtomicU64>,
@@ -404,7 +404,7 @@ fn backend(
                             crate::refinement::refine(
                                 &renderer,
                                 &device,
-                                &queue,
+                                (&queue, &submissions),
                                 context,
                                 parameters,
                                 target,
@@ -650,6 +650,7 @@ fn backend(
 
 pub struct Editor {
     started: bool,
+    submissions: crate::platform::SubmissionGate,
     analysis_generation: Arc<std::sync::atomic::AtomicU64>,
     analysis_pending: Option<analysis::Pending>,
     analysis_confirmation: Option<analysis::Request>,
@@ -726,18 +727,19 @@ impl Editor {
         let worker_generation = generation.clone();
         let analysis_generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let worker_analysis_generation = analysis_generation.clone();
+        let mut editor = Self::state(commands, messages, generation);
+        let submissions = editor.submissions.clone();
         std::thread::spawn(move || {
             backend(
                 renderers,
                 device,
-                queue,
+                (queue, submissions),
                 receiver,
                 send,
                 worker_generation,
                 worker_analysis_generation,
             )
         });
-        let mut editor = Self::state(commands, messages, generation);
         editor.analysis_generation = analysis_generation;
         editor.thumbnails = thumbnails;
         editor.scopes = scopes;
@@ -760,6 +762,7 @@ impl Editor {
         generation: Arc<std::sync::atomic::AtomicU64>,
     ) -> Self {
         Self {
+            submissions: crate::platform::SubmissionGate::default(),
             analysis_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             analysis_pending: None,
             analysis_confirmation: None,
@@ -1758,6 +1761,10 @@ impl Editor {
 }
 
 impl host::App for Editor {
+    fn submission_gate(&self) -> &crate::platform::SubmissionGate {
+        &self.submissions
+    }
+
     fn on_exit(&mut self) {
         if let Some(store) = &mut self.preference_store
             && let Err(error) = store.save(&self.preferences)

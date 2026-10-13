@@ -113,6 +113,10 @@ impl SmokeEditor {
     }
 }
 impl host::App for SmokeEditor {
+    fn submission_gate(&self) -> &crate::platform::SubmissionGate {
+        self.editor.submission_gate()
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui) {
         self.editor.ui(ui);
         if self.start.elapsed()

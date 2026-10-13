@@ -6,11 +6,13 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
-use super::macos;
+use super::{SubmissionGate, macos};
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 pub trait App {
+    /// The same gate used by every background submitter on this host's queue.
+    fn submission_gate(&self) -> &SubmissionGate;
     fn ui(&mut self, ui: &mut egui::Ui);
     fn on_exit(&mut self) {}
 }
@@ -185,7 +187,7 @@ impl<A: App> State<A> {
                 || size.width != self.gpu.config.width
                 || size.height != self.gpu.config.height
             {
-                self.gpu.configure()?;
+                self.gpu.configure(self.app.submission_gate())?;
             }
             match self.gpu.surface.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(frame) => Some(frame),
@@ -194,13 +196,13 @@ impl<A: App> State<A> {
                     Some(frame)
                 }
                 wgpu::CurrentSurfaceTexture::Outdated => {
-                    self.gpu.configure()?;
+                    self.gpu.configure(self.app.submission_gate())?;
                     self.gpu.window.request_redraw();
                     None
                 }
                 wgpu::CurrentSurfaceTexture::Lost => {
                     self.gpu.surface = self.gpu.instance.create_surface(self.gpu.window.clone())?;
-                    self.gpu.configure()?;
+                    self.gpu.configure(self.app.submission_gate())?;
                     self.gpu.window.request_redraw();
                     None
                 }
@@ -265,9 +267,10 @@ impl<A: App> State<A> {
                     .renderer
                     .render(&mut pass.forget_lifetime(), &jobs, &screen);
             }
-            self.gpu
-                .queue
-                .submit(commands.into_iter().chain([encoder.finish()]));
+            self.app.submission_gate().submit(
+                &self.gpu.queue,
+                commands.into_iter().chain([encoder.finish()]),
+            );
             self.gpu.window.pre_present_notify();
             self.gpu.queue.present(frame);
             self.gpu.presented += 1;
@@ -373,7 +376,8 @@ impl Gpu {
             needs_configure: true,
             presented: 0,
         };
-        gpu.configure()?;
+        // No application or background submitters exist during initial configuration.
+        gpu.configure(&SubmissionGate::default())?;
         println!(
             "presentation adapter={:?} target={:?}",
             gpu.adapter.get_info(),
@@ -382,7 +386,7 @@ impl Gpu {
         Ok(gpu)
     }
 
-    fn configure(&mut self) -> Result<()> {
+    fn configure(&mut self, submissions: &SubmissionGate) -> Result<()> {
         if !self
             .surface
             .get_capabilities(&self.adapter)
@@ -405,7 +409,7 @@ impl Gpu {
             self.window.is_minimized(),
             self.window.has_focus()
         );
-        self.surface.configure(&self.device, &self.config);
+        submissions.configure(|| self.surface.configure(&self.device, &self.config));
         macos::configure_sdr(&self.surface)?;
         self.needs_configure = false;
         Ok(())

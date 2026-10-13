@@ -528,6 +528,10 @@ impl FlatFieldSmoke {
     }
 }
 impl host::App for FlatFieldSmoke {
+    fn submission_gate(&self) -> &crate::platform::SubmissionGate {
+        self.editor.submission_gate()
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui) {
         self.editor.ui(ui);
         if let Err(error) = self.advance(ui) {

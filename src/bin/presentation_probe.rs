@@ -17,6 +17,9 @@ fn main() -> ProbeResult<()> {
     #[cfg(target_os = "macos")]
     {
         let interactive = std::env::args().any(|v| v == "--interactive");
+        let submission_stress = std::env::args().any(|v| v == "--submission-stress");
+        let result = Arc::new(std::sync::Mutex::new(None));
+        let report = result.clone();
         let presented = host::run(
             "Antitone — managed presentation probe",
             move |device, queue| {
@@ -33,6 +36,9 @@ fn main() -> ProbeResult<()> {
                     0.001,
                 ))?;
                 pollster::block_on(validate_ui(device, queue))?;
+                let submissions = antitone::platform::SubmissionGate::default();
+                let worker = submission_stress
+                    .then(|| SubmissionWorker::new(device, queue, submissions.clone(), report));
                 Ok(Probe {
                     chart: Arc::new(Chart::new(
                         device,
@@ -40,10 +46,28 @@ fn main() -> ProbeResult<()> {
                         wgpu::TextureFormat::Rgba16Float,
                     )),
                     frame: 0,
+                    submissions,
+                    worker,
+                    last_size: None,
+                    resizes: 0,
                     interactive,
                 })
             },
         )?;
+        if submission_stress {
+            let (submitted, resizes) = result
+                .lock()
+                .unwrap()
+                .take()
+                .ok_or("submission worker did not report completion")??;
+            if submitted == 0 {
+                return Err("submission worker did no GPU work".into());
+            }
+            if resizes < 2 {
+                return Err("submission stress observed fewer than two native resizes".into());
+            }
+            println!("presentation background_submissions={submitted} native_resizes={resizes}");
+        }
         println!("presentation submitted_frames={presented}");
         if presented == 0 && !interactive {
             return Err("window remained occluded; offscreen checks passed but onscreen presentation was not exercised".into());
@@ -52,15 +76,99 @@ fn main() -> ProbeResult<()> {
     }
 }
 
+#[cfg(target_os = "macos")]
+type SubmissionReport = Arc<std::sync::Mutex<Option<Result<(u64, u32), String>>>>;
+
+#[cfg(target_os = "macos")]
+struct SubmissionWorker {
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    thread: std::thread::JoinHandle<Result<u64, String>>,
+    report: SubmissionReport,
+}
+
+#[cfg(target_os = "macos")]
+impl SubmissionWorker {
+    fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        submissions: antitone::platform::SubmissionGate,
+        report: SubmissionReport,
+    ) -> Self {
+        let device = device.clone();
+        let queue = queue.clone();
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stopping = stop.clone();
+        let thread = std::thread::spawn(move || {
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("surface configure submission stress"),
+                size: 4096,
+                usage: wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let mut count = 0;
+            while !stopping.load(std::sync::atomic::Ordering::Acquire) {
+                let mut encoder = device.create_command_encoder(&Default::default());
+                encoder.clear_buffer(&buffer, 0, None);
+                let index = submissions.submit(&queue, [encoder.finish()]);
+                device
+                    .poll(wgpu::PollType::Wait {
+                        submission_index: Some(index),
+                        timeout: None,
+                    })
+                    .map_err(|error| error.to_string())?;
+                count += 1;
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            Ok(count)
+        });
+        Self {
+            stop,
+            thread,
+            report,
+        }
+    }
+
+    fn finish(self, resizes: u32) {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        let outcome = self
+            .thread
+            .join()
+            .map_err(|_| "submission worker panicked".to_owned())
+            .and_then(|outcome| outcome);
+        *self.report.lock().unwrap() = Some(outcome.map(|submitted| (submitted, resizes)));
+    }
+}
+
 struct Probe {
     chart: Arc<Chart>,
+    submissions: antitone::platform::SubmissionGate,
+    #[cfg(target_os = "macos")]
+    worker: Option<SubmissionWorker>,
+    last_size: Option<egui::Vec2>,
+    resizes: u32,
     frame: usize,
     interactive: bool,
 }
 #[cfg(target_os = "macos")]
 impl host::App for Probe {
+    fn submission_gate(&self) -> &antitone::platform::SubmissionGate {
+        &self.submissions
+    }
+
+    fn on_exit(&mut self) {
+        if let Some(worker) = self.worker.take() {
+            worker.finish(self.resizes);
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui) {
         self.frame += 1;
+        if let Some(size) = ui.input(|input| input.viewport().inner_rect.map(|rect| rect.size())) {
+            if self.last_size.is_some_and(|previous| previous != size) {
+                self.resizes += 1;
+            }
+            self.last_size = Some(size);
+        }
         ui.heading("Managed wide-gamut SDR probe");
         ui.label(
             "sRGB white / gray / sRGB red / P3 red / sRGB green / P3 green / sRGB blue / P3 blue",
@@ -76,6 +184,24 @@ impl host::App for Probe {
         ));
         ui.label("Layer configuration and transfer/readback are tested. Physical monitor matching is not yet proven.");
         if !self.interactive {
+            if self.worker.is_some() {
+                if self.frame == 1 {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
+                }
+                if self.frame < 64 {
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                            760.,
+                            360. + (self.frame % 2) as f32,
+                        )));
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_millis(4));
+                } else {
+                    println!("presentation submission_stress UI passes={}", self.frame);
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                return;
+            }
             if self.frame == 2 {
                 ui.ctx()
                     .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(640.0, 340.0)));
