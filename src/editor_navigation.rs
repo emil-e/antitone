@@ -85,7 +85,9 @@ impl Editor {
         if response.hovered() || response.dragged() {
             let cursor = if panning {
                 egui::CursorIcon::Grabbing
-            } else if space {
+            } else if space
+                || self.pick.is_none() && self.viewport.zoom.is_some() && can_pan(geometry)
+            {
                 egui::CursorIcon::Grab
             } else if self.pick.is_some() && !self.busy {
                 pointer

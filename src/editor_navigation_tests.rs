@@ -9,6 +9,7 @@ struct Harness {
     editor: Editor,
     context: egui::Context,
     time: f64,
+    enabled: bool,
     _receiver: mpsc::Receiver<Command>,
 }
 impl Harness {
@@ -25,6 +26,7 @@ impl Harness {
             editor,
             context: egui::Context::default(),
             time: 0.,
+            enabled: true,
             _receiver: receiver,
         }
     }
@@ -45,6 +47,9 @@ impl Harness {
                 egui::CentralPanel::default()
                     .frame(egui::Frame::NONE)
                     .show(ui, |ui| {
+                        if !self.enabled {
+                            ui.disable();
+                        }
                         let (canvas, response) = ui.allocate_exact_size(
                             ui.available_size(),
                             egui::Sense::click_and_drag(),
@@ -181,7 +186,7 @@ fn click_toggles_native_and_fit_and_primary_drag_pans_only_without_a_picker() {
     h.press(point, true, egui::PointerButton::Primary);
     let (native, _, cursor) = h.press(point, false, egui::PointerButton::Primary);
     assert_eq!(h.editor.viewport.zoom, Some(1.));
-    assert_eq!(cursor, egui::CursorIcon::ZoomOut);
+    assert_eq!(cursor, egui::CursorIcon::Grab);
     assert!((native.source_point(point) - fit.source_point(point)).length() < 0.001);
     h.press(point, true, egui::PointerButton::Primary);
     let delta = egui::vec2(20., 15.);
@@ -202,6 +207,43 @@ fn click_toggles_native_and_fit_and_primary_drag_pans_only_without_a_picker() {
     assert_eq!(cursor, egui::CursorIcon::Crosshair);
     assert_eq!(after.image, before.image);
 }
+#[test]
+fn pan_hover_preserves_fit_small_zoom_picker_and_disabled_cursors() {
+    let mut h = Harness::new();
+    let (fit, _, _) = h.frame(vec![]);
+    let point = fit.canvas.center();
+    assert_eq!(
+        h.frame(vec![egui::Event::PointerMoved(point)]).2,
+        egui::CursorIcon::ZoomIn
+    );
+    h.editor.viewport.zoom_at(fit, 2., 0.1, point);
+    let (small, _, cursor) = h.frame(vec![egui::Event::PointerMoved(point)]);
+    assert!(!can_pan(small));
+    assert_eq!(cursor, egui::CursorIcon::ZoomOut);
+    h.native();
+    assert_eq!(
+        h.frame(vec![egui::Event::PointerMoved(point)]).2,
+        egui::CursorIcon::Grab
+    );
+    h.editor.pick = Some(Pick::Gamma);
+    assert_eq!(
+        h.frame(vec![egui::Event::PointerMoved(point)]).2,
+        egui::CursorIcon::Crosshair
+    );
+    h.editor.busy = true;
+    assert_eq!(
+        h.frame(vec![egui::Event::PointerMoved(point)]).2,
+        egui::CursorIcon::Default
+    );
+    h.editor.pick = None;
+    h.editor.busy = false;
+    h.enabled = false;
+    assert_eq!(
+        h.frame(vec![egui::Event::PointerMoved(point)]).2,
+        egui::CursorIcon::Default
+    );
+}
+
 #[test]
 fn picker_cursors_share_rectangle_hit_testing_and_no_image_click_changes_view() {
     let mut h = Harness::new();

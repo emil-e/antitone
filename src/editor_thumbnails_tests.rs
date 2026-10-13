@@ -1,5 +1,5 @@
 use super::*;
-fn fixture() -> Document {
+pub(super) fn fixture() -> Document {
     let mut document = Document::default();
     for index in 0..40 {
         document
@@ -25,7 +25,7 @@ fn fixture() -> Document {
     }
     document
 }
-fn key(document: &Document, id: SourceId) -> ImageKey {
+pub(super) fn key(document: &Document, id: SourceId) -> ImageKey {
     ImageKey {
         source: SourceKey::new(
             document.project.source(id).unwrap(),

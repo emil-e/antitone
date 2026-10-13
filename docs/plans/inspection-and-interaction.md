@@ -13,7 +13,6 @@ Status: unfinished fixes and UX/design questions. [Roadmap](../../PLAN.md) owns 
 
 ### Focused fixes
 
-- **Hand cursor:** zoomed primary drag can pan, but hover shows ZoomOut except with Space. Show Grab when dragging would pan, preserving picker priority, disabled state and click-to-Fit. Extend navigation cursor tests.
 - **Save prompt:** discuss centered owner-relative placement/modality; preserve Save/Discard/Cancel and failure behavior.
 
 ### Roll workflow

@@ -754,8 +754,22 @@ impl Editor {
                             let dimensions = composition.size();
                             let aspect = dimensions[0] as f32/dimensions[1] as f32;
                             let size = egui::vec2((image_rect.height()*aspect).min(image_rect.width()),(image_rect.width()/aspect).min(image_rect.height()));
-                            let mapping = composition.texture_mapping(crate::geometry::FramePoint([0.,0.]), crate::geometry::FramePoint(dimensions.map(f64::from)), composition.area());
-                            ui.painter().with_clip_rect(ui.clip_rect()).add(egui_wgpu::Callback::new_paint_callback(egui::Rect::from_center_size(image_rect.center(),size),ImagePaint::new(image,Some(parameters),mapping)));
+                            let full = egui::Rect::from_center_size(image_rect.center(), size);
+                            let draw = full.intersect(ui.clip_rect());
+                            // egui-wgpu clamps offscreen viewports; remap clipped, pixel-rounded bounds instead of squeezing the whole image.
+                            let scale = ui.ctx().pixels_per_point();
+                            let min = (full.min.to_vec2() * scale).round();
+                            let extent = (full.max.to_vec2() * scale).round() - min;
+                            let draw_min = (draw.min.to_vec2() * scale).round();
+                            let draw_max = (draw.max.to_vec2() * scale).round();
+                            if draw_max.x > draw_min.x && draw_max.y > draw_min.y {
+                                let frame_point = |point: egui::Vec2| {
+                                    let fraction = (point - min) / extent;
+                                    crate::geometry::FramePoint([f64::from(fraction.x) * f64::from(dimensions[0]), f64::from(fraction.y) * f64::from(dimensions[1])])
+                                };
+                                let mapping = composition.texture_mapping(frame_point(draw_min), frame_point(draw_max), composition.area());
+                                ui.painter().with_clip_rect(draw).add(egui_wgpu::Callback::new_paint_callback(draw,ImagePaint::new(image,Some(parameters),mapping)));
+                            }
                         }
                         (Some(Err(message)),_) => { error = Some(message); }
                         (_,Err(message)) => { error = Some(message.to_string()); }
@@ -857,6 +871,9 @@ impl Editor {
     }
 }
 
+#[cfg(test)]
+#[path = "editor_thumbnail_clipping_tests.rs"]
+mod clipping_tests;
 #[cfg(test)]
 #[path = "editor_thumbnail_latency_tests.rs"]
 mod latency_tests;
