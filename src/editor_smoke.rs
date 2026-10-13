@@ -1,3 +1,7 @@
+//! Scripted RAW/Metal editor, project and capture scenarios with explicit diagnostic anchors.
+//! Uses production workers/rendering but drives editor state directly; project files are temporary.
+//! Asserts executed phases and emits layout markers; visible frames alone do not prove completion.
+//! Requires a desktop for presentation; does not test physical input or photographic quality.
 use super::*;
 pub struct SmokeEditor {
     editor: Editor,

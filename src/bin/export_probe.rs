@@ -1,3 +1,7 @@
+//! Exports a read-only RAW with explicit Dmin/Dmax regions and default diagnostic edits.
+//! Requires native RAW/export dependencies; clipped references and export errors fail.
+//! Writes full-extent sRGB/P3 RGB16 TIFF and half AP0 EXR to the supplied directory, refusing overwrite.
+//! Does not reopen outputs independently or establish photographic/project-export acceptance.
 use antitone::{
     export::{self, ExrPrecision, ImageSize, Overwrite},
     processing::{Calibration, PhotoSettings, Pipeline, RollSettings},

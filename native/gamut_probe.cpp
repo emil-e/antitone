@@ -1,3 +1,7 @@
+// Checks the direct ACES 2 output transform over a broad moderate-exposure AP1 RGB grid.
+// Requires pinned OCIO; takes no RAW/cache fixtures and writes no artifacts.
+// Fails on nonfinite outputs or coloured samples collapsed to gray in either SDR target.
+// Does not exercise inversion, GPU presentation or physical-monitor matching.
 #include "rendering_transform.h"
 #include <algorithm>
 #include <array>

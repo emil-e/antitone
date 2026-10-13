@@ -1,3 +1,7 @@
+// Independent Core Image/ColorSync check of both output ICCs, including toes and gamut corners.
+// Consumes rendering-probe ICC/encoded/linear fixtures in .cache/probes; writes no artifacts.
+// Fails on malformed inputs, rejected ICCs, nonfinite conversion or error above 2e-4.
+// Tests numerical profile conversion, not a monitor or photographic appearance.
 #import <Foundation/Foundation.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <CoreImage/CoreImage.h>

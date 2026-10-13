@@ -1,3 +1,7 @@
+//! Checks production CPU rendering against generated OCIO references in `.cache/probes`.
+//! Requires native rendering dependencies and fresh OCIO inputs/references; writes ICC/transfer fixtures.
+//! `--gamut-check` instead runs a cache-independent yellow/neutral gate, not the broad native grid.
+//! Numerical agreement does not establish photographic or physical-display acceptance.
 use antitone::{
     color::BRADFORD,
     profiles,

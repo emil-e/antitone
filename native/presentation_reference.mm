@@ -1,3 +1,7 @@
+// Independent Core Image signed extended-sRGB transfer reference, including above-white values.
+// Requires macOS frameworks and an existing .cache/probes; writes linear/encoded f32 fixtures.
+// Fails on setup errors or maximum transfer error >= 3e-5; no window or photographs are needed.
+// Does not establish physical-display matching.
 #import <Foundation/Foundation.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <CoreImage/CoreImage.h>

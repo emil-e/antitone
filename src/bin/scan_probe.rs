@@ -1,3 +1,6 @@
+//! Checks Scan caching, proxy/source coordinates, invalid picks and failed-pick immutability.
+//! Requires pinned LibRaw and one read-only RAW with an explicit developed-source rectangle.
+//! Prints measurements; writes no artifacts. Agreement is plumbing coverage, not photographic acceptance.
 use antitone::{raw::Rect, scan::Scan};
 use std::{error::Error, path::Path};
 

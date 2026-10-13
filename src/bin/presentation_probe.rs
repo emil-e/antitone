@@ -1,3 +1,7 @@
+//! Checks managed macOS Metal presentation against generated Core Image transfer references.
+//! Requires transfer artifacts in `.cache/probes` and a desktop for the resize/window route.
+//! Gates f32/half and UI readbacks; noninteractive execution also requires submitted visible frames.
+//! Shows a chart (`--interactive` keeps it open); does not establish physical-monitor matching.
 use std::sync::Arc;
 
 #[cfg(target_os = "macos")]

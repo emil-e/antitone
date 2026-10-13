@@ -36,7 +36,7 @@ target/release/antitone --smoke-project \
   samples/DSC04416.ARW samples/DSC04393.ARW
 ```
 
-This uses temporary project files, leaves RAWs untouched, and verifies exact model-4 response state, custom saved WB after New/different-WB import, unvisited records, working/sRGB/P3 pixel reproduction, live refinement and failed Open preservation. A zero-onscreen-frame result remains failure; a locked macOS session can pass persistence assertions but fail this presentation gate.
+This uses temporary project files, leaves RAWs untouched, and verifies exact model-4 response state, custom saved WB after New/different-WB import, unvisited records, working/sRGB/P3 pixel reproduction, live refinement and failed Open preservation. A zero-onscreen-frame result remains failure; a locked macOS session can pass persistence assertions but fail this presentation gate. Ordinary/project smoke checks executed phases but has no explicit completed-success result: closing early after a visible frame can return success without completing the scenario. These routes drive editor state directly, not full widget input.
 
 The flat-field editor/worker integration has an explicit read-only local-RAW/Metal test (temporary projects/32×32 corrected TIFF/AP0 EXR crops):
 
@@ -95,7 +95,6 @@ mkdir -p .cache/roll-check
   -framework Foundation -framework ImageIO -framework CoreGraphics -framework CoreText \
   -o .cache/roll-check/image-contacts
 .cache/roll-check/image-contacts previews .cache/roll-check/source /absolute/samples/*.ARW
-.cache/roll-check/image-contacts metadata .cache/roll-check/source-metadata.json /absolute/samples/*.ARW
 .cache/roll-check/image-contacts sheet .cache/roll-check/source-contact.png .cache/roll-check/source/*.png
 ```
 
@@ -111,115 +110,6 @@ cargo test --locked --offline --release --features editor --lib diagnose_sample_
 ```
 
 The diagnostic drives the actual Editor import/correction/Analyze transaction on Metal. Each case reports failure unchanged or installed state, full proposal, local support and picture rejection counts. Per-frame channel tails and counts at/below proposed Dmax audit original eligible populations before equal-frame endpoint resampling. Successful cases render every source through the actual scalar Pipeline and CPU ACES into 384px nearest-centre sRGB TIFF previews. These are deliberately approximate contacts, not area-averaged settled/export acceptance. The test succeeds when the diagnostic completes, **not** when every roll is photographically acceptable; inspect statuses, render errors and all images. Generated reports, projects and photographic images remain private/ignored. Use a fresh output directory; samples and saved grades are untouched.
-
-#### Appearance counterfactuals
-
-To separate exposure, near-base response and Dmin effects for an installed diagnostic proposal, use the private baseline report (with an automatic support matching its picture area) and a fresh output directory:
-
-```sh
-ANTITONE_ROLL_REPORT=/absolute/baseline/roll-name/report.json \
-ANTITONE_ROLL_OUTPUT="$PWD/.cache/roll-check/FRESH_APPEARANCE" \
-ANTITONE_ROLL_FRAMES=DSC04495,DSC04496,DSC04515 \
-ANTITONE_ROLL_VARIANTS=baseline,EV-minus-1,toe-1-matched-first-frame,first-frame-only-Dmin,mean-key,median-frame-mean-key \
-cargo test --locked --offline --release --features editor --lib diagnose_analyzed_appearance \
-  -- --ignored --nocapture --test-threads=1
-```
-
-The probe audits original film/picture populations across the complete roll, including per-frame positive pre-Photo arithmetic mean luminance and endpoint contributors. Named frames render at 1024px nearest-centres with the unchanged Pipeline/CPU ACES. Omit `ANTITONE_ROLL_VARIANTS` for all variants, including −0.5/−1.5 EV and a re-analyzed toe-1 response. The matched toe-1 variant aligns the first ordered frame's median brightness; first-frame-only Dmin uses the same band estimator on that frame's film pool, not a validated manual film-base patch. Mean keys change exposure only and are experiments, not application controls or accepted replacement behavior. Candidate margin patch coordinates in the report are unvalidated Sony diagnostic regions, not material detection. No grade is installed or saved.
-
-For a complete cross-roll exposure-only comparison, repeat against each installed baseline report with `ANTITONE_ROLL_VARIANTS=baseline,median-frame-mean-key` and all of its ordered source stems in `ANTITONE_ROLL_FRAMES`. A private batch can obtain those stems with:
-
-```sh
-python3 -c 'import json,pathlib,sys; p=json.load(open(sys.argv[1]))["project"]; s={v["id"]:v for v in p["sources"]}; print(",".join(pathlib.Path(s[i]["path"]).stem for i in p["order"]))' /absolute/report.json
-```
-
-Use a fresh directory per case; contacts sorted by filename pair baseline with candidate. Inspect every pair, including already-dark pictures. For post-fit outlier sensitivity, take `median(log2(pre_photo_positive_picture_mean_y))` from the audit, replace one frame at a time with a log-key 32 stops beyond either observed extreme, and compare the medians. The EV movement is the negated key movement. Holding endpoints/balance fixed isolates the exposure statistic; it does not test the full estimator's resistance to damaged endpoints.
-
-#### Per-photo exposure counterfactuals
-
-Use an appearance report containing `baseline_project` and the `median-frame-mean-key` variant, not an Editor baseline report directly:
-
-```sh
-ANTITONE_ROLL_REPORT=/absolute/appearance/roll-name/report.json \
-ANTITONE_ROLL_OUTPUT="$PWD/.cache/roll-check/FRESH_PHOTO_EXPOSURE" \
-ANTITONE_ROLL_FRAMES=DSC04495,DSC04510,DSC04515 \
-ANTITONE_PHOTO_VARIANTS=roll-only,photo-blend99,photo-robust-blend99 \
-cargo test --locked --offline --release --features editor --lib diagnose_photo_exposures \
-  -- --ignored --nocapture --test-threads=1
-```
-
-The candidate roll, references and all non-exposure Photo settings stay fixed. Proposals are additive EV changes to diagnostic Photo copies, never installed/saved. Original eligible picture pixels provide positive Y populations (at least 512); original signed/HDR pixels render through the actual Pipeline/CPU ACES at 1024px nearest-centres. Reports assert original project state is unchanged and include each proposed EV, mean/p99 placements and a synthetic one-hot-positive sensitivity check (first positive replaced by `65536*p99`, not a simulated RAW defect).
-
-Omit `ANTITONE_PHOTO_VARIANTS` to compare all controls: `roll-only`, `photo-mean` (mean→0.18), `photo-highlight99` (p99→1), `photo-blend95`, `photo-blend99` (average of mean/highlight EV corrections), and `photo-robust-blend99` (same blend, but the mean's values above p99 contribute as p99). The upper-tail limit bounds only the statistic; no source or working-pixel clamp. Quantiles use linear interpolation over positive Y. Targets are uncalibrated AP1 scene-linear priors, not display white or clipping limits. These per-photo estimators cancel a common roll exposure shift; the roll/Photo EV split is not an additional normalization benefit. The production initializer selects the robust p99 blend after gamma/shared roll WB, with median total EV in Roll and residuals in Photo; explicit overwrite/reset semantics belong to the [Analyze contract](contracts/editor-controls.md#analyze-roll), not this fixed-colour counterfactual.
-
-For a complete scan-set comparison, list all ordered stems from the report's `baseline_project` (the earlier extraction command uses `project`), select `roll-only,photo-robust-blend99`, and use a fresh output per case. Construct contacts in report `frames`/`variants` order, roll-only first: lexical `*.tif` sorting puts `photo-...` before `roll-only` and reverses that visual convention.
-
-#### Gamma-balance influence counterfactuals
-
-The gamma influence/tonal/drift counterfactuals consume a **mean-neutral gamma control** per-photo exposure report with zero photographic roll WB, all ordered sources and `photo-robust-blend99` proposals. Their arithmetic-mean reconstruction guard deliberately does not accept an arbitrary grade from the newer tonal-drift initializer. The probes retain fixed colour/exposure controls rather than installing or reinitializing a project. The influence probe reconstructs global gamma 0.65 with zero starting gamma-balance coordinates:
-
-```sh
-ANTITONE_ROLL_REPORT=/absolute/photo-exposure/roll-name/report.json \
-ANTITONE_ROLL_OUTPUT="$PWD/.cache/roll-check/FRESH_GAMMA_BALANCE" \
-ANTITONE_ROLL_FRAMES=DSC04495,DSC04509,DSC04510,DSC04515 \
-ANTITONE_BALANCE_LOO=1 \
-cargo test --locked --offline --release --features editor --lib diagnose_gamma_balance \
-  -- --ignored --nocapture --test-threads=1
-```
-
-All sources are sampled with the production eligibility/positive-selection rules, equal original counts and 2,048 balance-sample cap. Named frames render all six variants: `current`, `tail99`, `tail95`, `frame-mean`, `native99`, `native95`. Tail weights are `min(1,cutoff/metric)` with each frame's weight sum restored to its original count. The metric is unbalanced pre-exposure AP1 Y, or `max(native_positive_RGB / camera_neutral_target)` for native variants. Weights are frozen before fitting, joint across RGB, never colour clustering or source/working-pixel modification. The separate frame-mean control uses inverse baseline mean Y per frame, equalizing initial luminance contribution rather than sample weight. All fits reuse the actual-response weighted neutral solver/target and unchanged numerical gates.
-
-Reports audit native channel contributions per frame, brightness-ranked 1/5/10% tail shares, pre-fit/fitted AP1 means, and every single-frame omission fit with **endpoints fixed**. Omission failures are explicitly reported, never replaced by another fit; actual product sources remain included. Set `ANTITONE_BALANCE_LOO=0` to omit that diagnostic. Roll/Photo EV, global gamma/response, endpoints, basis and Photo WB stay fixed during 1024px nearest-centre Pipeline/CPU ACES rendering; no exposure key is recalculated. Changing channel gammas can nevertheless change luminance. Every rendered variant and the original project snapshot are checked for non-balance changes. Assemble contacts in report variant order, not wildcard filename order. These probes separate balance-mean leverage from endpoint contamination; they do not establish calibrated scene colour or a production robust estimator.
-
-#### Gamma tonal-objective counterfactuals
-
-Use the same per-photo exposure report and a fresh output directory:
-
-```sh
-ANTITONE_ROLL_REPORT=/absolute/photo-exposure/roll-name/report.json \
-ANTITONE_ROLL_OUTPUT="$PWD/.cache/roll-check/FRESH_GAMMA_TONES" \
-ANTITONE_ROLL_FRAMES=DSC04495,DSC04510,DSC04515,DSC04526 \
-cargo test --locked --offline --release --features editor --lib diagnose_gamma_tones \
-  -- --ignored --nocapture --test-threads=1
-cargo test --locked --offline --features editor --lib known_neutral_ramp_recovers_one_gamma_fit_across_tones
-```
-
-The shared original-sample loader reconstructs the current fit before testing frozen unbalanced-Y ranks: shadow/middle/light 1–33/33–67/67–99% bands, both per-frame and pooled. Relative bands keep equal frame counts; pooled counts are reported and may differ. Tonal-fit failures are reported, not substituted. No band is an identified gray/neutral material. `pixel-root-Y` uses frozen inverse-square-root Y weights with each frame's total normalized back to its count.
-
-The `span-axis` parameter control sets channel gamma ratios proportional to `ln(Dmin/Dmax)` while retaining the selected global gamma and response. It preserves the chromaticity of a **model-defined straight normalized-density axis**, not a measured film gray reference. `span-axis-WB` additionally fits the existing Bradford WB to the same whole-roll positive mean. `constant-WB-control` uses zero gamma-balance coordinates plus Bradford correction of that unbalanced mean. These are diagnostic copies using existing processing operators, not selected model/initializer changes. Operator controls expect zero original Photo WB; their nonzero WB is explicit. Current/global settings, all exposure values, source data and ACES are unchanged; no exposure recalculation or installation/saving occurs.
-
-Reports contain all fits and frame counts, per-picture tonal AP1 means and RGB/Y, synthetic mean-colour and normalized-density model-axis responses, and the rendered settings. Known-neutral synthetic tests use unequal camera-neutral components and verify one true gamma fit across dark/middle/light populations; they do not validate the actual roll endpoints or scene-grey assumptions. Named pictures render all successful variants at 1024px nearest-centres through the actual Pipeline/CPU ACES. Assemble contacts in report `rendered`/`variants` order, not wildcard order. Changed gamma/WB can change luminance even with exposure fixed; RGB/Y measures separate that from chromatic changes. No photographic, corrected-roll, GPU or calibrated-monitor acceptance follows from a successful run.
-
-#### WB-invariant gamma optimization and WB comparison
-
-The diagnostic-only drift optimizer uses the same complete per-photo exposure report, original bounded sample loader and frozen per-frame tonal ranks:
-
-```sh
-ANTITONE_ROLL_REPORT=/absolute/photo-exposure/roll-name/report.json \
-ANTITONE_ROLL_OUTPUT="$PWD/.cache/roll-check/FRESH_GAMMA_DRIFT" \
-ANTITONE_ROLL_FRAMES=DSC04495,DSC04510,DSC04515,DSC04525 \
-cargo test --locked --offline --release --features editor --lib diagnose_gamma_drift \
-  -- --ignored --nocapture --test-threads=1
-cargo test --locked --offline --release --features editor --lib gamma_drift_recovers_known_curves_and_ignores_wb_and_exposure
-```
-
-For each frame/band, invert original pixels, average, map to AP1 and take log-opponent Bradford cone coordinates. The scalar score is the sum of squared **equal-frame mean** shadow-minus-mid and highlight-minus-mid differences. Average across frames before squaring; do not require each picture's differently coloured materials to be gray. Fixed populations and differencing make the score invariant to constant per-frame WB/exposure. Nonpositive band-mean cone responses make a candidate undefined; candidates are counted/rejected without deleting samples. Other errors propagate. A deterministic eight-direction pattern search uses current/zero/density-span starts, only the existing balance range, and coordinate resolution at most `1e-7`. Reports retain all starts/scores/residuals and rejection counts. This is a scene-statistical proxy, not physical stock characterization or an accepted production optimizer.
-
-After curve optimization, fit existing mean-neutral Bradford WB separately to either equal-count whole-roll means or individual-frame means. Render in this order: `current`, `optimized-pre-WB`, `optimized-roll-WB`, `optimized-photo-WB`. Source data, endpoints, selected global gamma/response, geometry and all roll/Photo exposure values stay fixed; WB may nevertheless change luminance. This diagnostic represents common WB in **Photo copies** to preserve its input project. Production instead uses the independent persistent roll WB control; do not apply the common correction twice. Invalid/out-of-range WB is explicitly reported without clipping or substituting identity; all frames still contribute to gamma fitting. Reports assert unchanged original project state and verify each available WB leaves tonal drift unchanged.
-
-The native contact tool retains six columns by default; `--columns 4` makes a four-control row. Supply files in report order, not lexical wildcard order:
-
-```sh
-.cache/roll-check/image-contacts sheet .cache/roll-check/comparison.png --columns 4 \
-  .cache/roll-check/FRESH_GAMMA_DRIFT/DSC04495-current.tif \
-  .cache/roll-check/FRESH_GAMMA_DRIFT/DSC04495-optimized-pre-WB.tif \
-  .cache/roll-check/FRESH_GAMMA_DRIFT/DSC04495-optimized-roll-WB.tif \
-  .cache/roll-check/FRESH_GAMMA_DRIFT/DSC04495-optimized-photo-WB.tif
-```
-
-These 1024px nearest-centre Pipeline/CPU ACES comparisons do not establish settled-preview, corrected-roll, export, stock/process or calibrated-colour acceptance. Per-photo gray-world WB can remove intended/material colour. Production selects shared roll WB and zero initial Photo WB, leaving local/creative WB manual; these fixed-exposure counterfactuals do not establish photographic acceptance.
-
-`image-contacts raster OUTPUT.ppm IMAGE` decodes a full image into colour-managed 8-bit sRGB PPM for private screenshot/result pixel comparisons. It converts the input profile rather than treating Display P3 bytes as sRGB. Raster statistics and nearest-centre contacts do not replace settled-preview or calibrated-monitor acceptance.
 
 ### Window capture
 
@@ -289,19 +179,6 @@ cargo test --locked --offline --release --features editor --lib selected_proxy_s
 cargo test --locked --offline --release --features editor --lib visible_thumbnail_import_latency -- --ignored --nocapture
 ```
 
-The read-only embedded-preview diagnostic inspects LibRaw header descriptors and extracts each encoded preview without sensor unpack/development. It reports dimensions, format, JPEG SOI/byte counts and header/extraction time, not JPEG decode/upload or display/colour correctness. The diagnostic has no production preview path. Build against the same pinned native libraries:
-
-```sh
-mkdir -p .cache/probes
-/usr/bin/clang++ -std=c++17 -O2 -Wall -Wextra -Werror -mmacosx-version-min=14.0 \
-  -I.cache/native-deps/LibRaw-0.22.0-openmp native/raw_thumbnail_probe.cpp \
-  .cache/native-deps/LibRaw-0.22.0-openmp/lib/libraw_r.a -lz \
-  -L.cache/native-deps/openmp-22.1.8-install/lib -lomp \
-  -Wl,-rpath,"$PWD/.cache/native-deps/openmp-22.1.8-install/lib" \
-  -o .cache/probes/raw-thumbnail-probe
-.cache/probes/raw-thumbnail-probe samples/DSC04378.ARW
-```
-
 Embedded JPEGs are camera-rendered/display-referred, not linear native-camera RGB16; they cannot feed model-4 inversion, correction, calibration, scopes or export. The [filmstrip camera-preview path](contracts/editor-controls.md#filmstrip-thumbnails) keeps that distinction. The explicit read-only bridge regression checks that extraction does not unpack the sensor or change metadata and compares sampled camera development with/without extraction:
 
 ```sh
@@ -342,6 +219,17 @@ cargo test --locked --offline --release --features editor --lib native_developme
 Runtime `source_registration`, `raw_import`, `raw_development`, `selected_source`, `thumbnail` and `settled_preview` logs identify phases. Thumbnail logs include memory/disk hits, cancellation and failure; source checks cover camera/development compatibility, not RAW byte identity. File stats are optional-cache freshness; generated RGB16 checksums and small locator-key hashes do not read/hash RAW contents. Settled `gpu_seconds` includes encoding/upload/submission/wait wall time, not hardware timestamps.
 
 ## RAW and complete GPU chain
+
+The diagnostic CLI reports metadata (`--metadata` skips development), and its full mode gates sampled repeatability, eligible in-sRGB LibRaw matrix comparisons and flooring rate. It needs no saved grade and leaves RAWs unchanged:
+
+```sh
+cargo run --locked --offline --release --features raw \
+  --bin antitone-raw-probe -- --metadata /absolute/photo.ARW
+cargo run --locked --offline --release --features raw \
+  --bin antitone-raw-probe -- /absolute/photo.ARW
+```
+
+Its fixed WB comes from the first source. Matrix samples outside sRGB are skipped; zero eligible comparisons does not fail, so inspect `compared_grid` before claiming matrix agreement. Statistics/synthetic anchors are not photographic calibration; optional `--diagnostic-ppm` writes clipped +3 EV source previews under `.cache/probes`, without ACES/ICC.
 
 Native-camera checks use read-only RAWs and diagnostic anchors:
 

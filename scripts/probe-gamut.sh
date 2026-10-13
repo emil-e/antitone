@@ -1,4 +1,7 @@
 #!/bin/sh
+# Build/run the broad native AP1 gamut gate with pinned OCIO; no RAW/cache inputs are needed.
+# Stores the executable in .cache/probes; nonfinite/collapsed outputs fail in either SDR target.
+# This is a bounded numerical check, not photographic or physical-monitor acceptance.
 set -eu
 cd "$(dirname "$0")/.."
 mkdir -p .cache/probes

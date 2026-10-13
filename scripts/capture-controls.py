@@ -1,3 +1,9 @@
+"""Capture six controls-layout holds from the release editor and named local RAWs.
+
+Requires the compiled window locator, output directory and desktop capture permission.
+Writes window PNGs/logs under .cache/probes/controls; missing stages or smoke failure fail.
+Successful capture does not establish visual correctness or physical interaction.
+"""
 import os
 import subprocess
 import time

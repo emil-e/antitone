@@ -1,3 +1,7 @@
+// Generates upstream OCIO AP1/AP0 equivalence references, GLSL and LUTs for both SDR targets.
+// Requires pinned OCIO and an existing .cache/probes; appends a camera AP1 fixture if present.
+// Gates finite outputs/LUTs, neutral spread and basis agreement; prints resource/error statistics.
+// Writes regenerable reference artifacts, not photographic or physical-display acceptance.
 #include "rendering_transform.h"
 #include <algorithm>
 #include <array>

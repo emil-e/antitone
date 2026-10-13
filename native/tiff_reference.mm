@@ -1,3 +1,7 @@
+// Independently reopens DSC04416-{srgb,display-p3}.tif via ImageIO from a supplied directory.
+// Requires macOS frameworks and pinned profiles in assets/profiles; writes no artifacts.
+// Gates one-image, 8704x6144 RGB16 storage and exact ICC identity, not per-pixel agreement.
+// Fixed photographic filenames/dimensions make this a supplied-source check, not a general fixture test.
 #import <Foundation/Foundation.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <ImageIO/ImageIO.h>

@@ -41,7 +41,7 @@ cargo build --locked --release --features editor --bin antitone
 cargo run --locked --release --features editor --bin antitone -- /path/to/photo.ARW
 ```
 
-Plain `cargo build --locked` builds the lightweight numerical core and scalar probe, not the editor. Editor features remain opt-in so core development does not require the native libraries or desktop stack.
+Plain `cargo build --locked` builds the lightweight numerical core, not the editor. Editor features remain opt-in so core development does not require the native libraries or desktop stack.
 
 Existing compatible native builds can be selected with `LIBRAW_SOURCE` (LibRaw source/build directory containing `lib/libraw_r.a`) and `OCIO_PREFIX` (installed OCIO prefix containing `include/` and `lib/`). These are build/probe overrides; `setup-native.sh` always builds the pinned checkout-local dependencies. LibRaw must use the accepted OpenMP build, and the pinned runtime remains required at `.cache/native-deps/openmp-22.1.8-install`; `LIBRAW_SOURCE` does not relocate it. System/Homebrew OpenMP runtimes are not supported inputs. Do not substitute different library versions or build options without validating the processing/rendering contracts.
 

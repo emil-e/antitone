@@ -1,3 +1,7 @@
+//! Scripted RAW/Metal area and atomic Analyze checks, optionally with a correction reference.
+//! Requires explicit source RAWs and a desktop; errors, timeout and early close fail.
+//! Exercises production workers and settled previews, without saving grades or editing sources.
+//! Direct editor actions do not establish widget/physical-input or photographic acceptance.
 use super::*;
 
 pub struct AnalysisSmoke {

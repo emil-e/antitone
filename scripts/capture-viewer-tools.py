@@ -1,4 +1,9 @@
-"""Capture only Antitone's window during viewer-tool or flat-field layout holds."""
+"""Capture named viewer-tool or flat-field layout holds from the release editor.
+
+Requires local RAWs, the window locator and desktop capture permission; writes PNGs/logs.
+Missing stages or smoke/capture failure fail; no independent process timeout is enforced.
+Output is visual evidence, not approval.
+"""
 import argparse
 import os
 import subprocess

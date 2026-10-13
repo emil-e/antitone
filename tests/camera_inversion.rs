@@ -180,6 +180,50 @@ fn roll_neutral_fits_actual_response_to_unequal_camera_white_not_equal_channels(
     }
 }
 
+#[test]
+fn roll_neutral_recovers_the_same_balance_across_dark_middle_and_light_patches() {
+    let cal = Calibration {
+        dmin: DVec3::new(0.14, 0.098, 0.094),
+        dmax: DVec3::new(0.017, 0.0052, 0.0029),
+        input_floor: 1. / 65535.,
+    };
+    let truth = RollSettings {
+        balance: Balance {
+            warmth: -0.56,
+            tint: -0.03,
+        },
+        ..RollSettings::new_grade()
+    };
+    let initial = RollSettings {
+        balance: Balance::default(),
+        ..truth
+    };
+    let target = matrix().inverse() * DVec3::ONE;
+    let inverse = Inversion::new(cal, truth).unwrap();
+    let points: [_; 90] = std::array::from_fn(|i| {
+        let y = 2_f64.powf(-7. + i as f64 / 89. * 6.8);
+        let p = forward(cal, truth, target * y);
+        assert!(p.min_element() >= cal.input_floor);
+        assert!(
+            (matrix() * inverse.apply(p).unwrap().rgb - DVec3::splat(y))
+                .abs()
+                .max_element()
+                < 1e-11
+        );
+        p
+    });
+    for patch in [
+        points.as_slice(),
+        &points[..30],
+        &points[30..60],
+        &points[60..],
+    ] {
+        let fitted = roll_neutral(cal, initial, patch, matrix()).unwrap();
+        assert!((fitted.warmth - truth.balance.warmth).abs() < 1e-8);
+        assert!((fitted.tint - truth.balance.tint).abs() < 1e-8);
+    }
+}
+
 #[cfg(feature = "gpu")]
 #[test]
 fn gpu_range_gate_covers_above_base_continuation_after_camera_mapping() {

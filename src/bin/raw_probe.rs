@@ -1,3 +1,7 @@
+//! Read-only LibRaw diagnostic for supplied RAWs; metadata-only mode skips development.
+//! Full mode gates flooring rates, sampled repeatability and eligible in-sRGB matrix comparisons.
+//! Zero eligible comparisons does not fail; inspect the reported comparison count.
+//! Optional `.cache/probes` PPMs are clipped unmanaged views, not grades or photographic acceptance.
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;

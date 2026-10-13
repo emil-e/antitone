@@ -1,4 +1,8 @@
 #!/bin/sh
+# Generate upstream OCIO CPU/GLSL/LUT references, then gate their Metal agreement.
+# Requires pinned OCIO (OCIO_PREFIX or .cache/deps/ocio-install), Cargo and Metal.
+# Writes .cache/probes artifacts; existing camera fixtures enable an optional RAW-derived extension.
+# Numerical failures propagate; this does not establish photographic or display acceptance.
 set -eu
 cd "$(dirname "$0")/.."
 mkdir -p .cache/probes

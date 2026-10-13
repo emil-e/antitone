@@ -1,4 +1,8 @@
 #!/bin/sh
+# Gate production CPU/OCIO agreement and independent Core Image/ColorSync ICC conversion.
+# Requires native rendering setup and fresh OCIO artifacts from probe-ocio.sh in .cache/probes.
+# Writes profile fixtures/ICC files and a reference executable there; failures propagate.
+# Does not establish photographic or physical-display acceptance.
 set -eu
 cd "$(dirname "$0")/.."
 mkdir -p .cache/probes

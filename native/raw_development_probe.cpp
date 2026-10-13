@@ -1,4 +1,7 @@
-// Read-only full RGB/metadata/immutable-diagnostics comparison through the production bridge.
+// Read-only production RAW bridge diagnostic with a source, WB reference and thread budget.
+// Requires pinned LibRaw/OpenMP and a source containing the fixed diagnostic rectangle.
+// Gates immutable sensor diagnostics and OpenMP restoration; prints complete RGB/metadata digests
+// for cross-budget comparison. Digests/timings alone are not numerical or photographic acceptance.
 #include <raw_bridge.h>
 #include <CommonCrypto/CommonDigest.h>
 #include <array>

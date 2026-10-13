@@ -53,10 +53,6 @@ path = "src/bin/antitone.rs"
 required-features = ["editor"]
 
 [[bin]]
-name = "antitone-probe"
-path = "src/bin/probe.rs"
-
-[[bin]]
 name = "antitone-raw-probe"
 path = "src/bin/raw_probe.rs"
 required-features = ["raw"]

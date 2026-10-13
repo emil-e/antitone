@@ -3,6 +3,7 @@
 [Roadmap](../../PLAN.md) owns priority. These packages describe remaining problems and acceptance, not authorization to implement every item.
 
 - [Analyze roll photographic acceptance](roll-assistance.md)
+- [Verification tools, RAW fixtures and UI automation](verification-tooling.md)
 - [Interaction and colour diagnosis](inspection-and-interaction.md)
 - [Thumbnail loading and resource acceptance](visual-feedback.md)
 - [Photographic acceptance, completion features and release](completion.md)

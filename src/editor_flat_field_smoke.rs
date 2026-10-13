@@ -1,6 +1,8 @@
+//! Scripted RAW/Metal correction, picker, preview and temporary-project checks.
+//! Requires explicit negative/reference RAWs and a desktop; errors, timeout and early close fail.
+//! Optional layout holds emit capture markers without accepting a map, saving or exporting.
+//! Direct editor/worker actions do not establish native-dialog, physical-input or photographic acceptance.
 use super::*;
-
-/// Scripted application/renderer acceptance, not native-dialog or physical-input automation.
 pub struct FlatFieldSmoke {
     editor: Editor,
     negative: PathBuf,

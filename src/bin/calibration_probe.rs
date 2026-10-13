@@ -1,3 +1,7 @@
+//! Checks read-only RAW Dmin/Dmax regions, clipping and measured inversion anchors.
+//! Requires pinned LibRaw; `--gpu-fixture` also requires `gpu` and matching camera bases.
+//! Reports calibration and optionally writes RGB16/matrix/CPU references under `.cache/probes`.
+//! Diagnostic anchors do not establish photographic calibration.
 use std::path::Path;
 
 use antitone::processing::{Calibration, Inversion, RollSettings};

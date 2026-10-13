@@ -1,7 +1,7 @@
 use antitone::{
     Error,
     color::{AP1_TO_XYZ, Balance, wb_matrix},
-    processing::{Calibration, Inversion, PhotoSettings, Response, RollSettings},
+    processing::{Calibration, Inversion, PhotoSettings, Pipeline, Response, RollSettings},
     roll_analysis::{FrameSamples, MAX_SAMPLES_PER_FRAME, estimate},
 };
 use glam::{DMat3, DVec3};
@@ -217,6 +217,49 @@ fn out_of_range_shared_wb_is_rejected_not_clamped_or_replaced_by_identity() {
             "WB correction is outside the control range"
         ))
     ));
+}
+
+#[test]
+fn one_hdr_outlier_does_not_move_the_p99_capped_exposure_prior_or_clamp_working_pixels() {
+    let film = vec![BASE; 256];
+    let mut source = vec![BASE * 0.3; 8192];
+    let fit = |pixels: &[DVec3]| {
+        proposal(
+            &[FrameSamples {
+                film: &film,
+                picture: pixels,
+            }],
+            DMat3::IDENTITY,
+            RollSettings::default(),
+        )
+    };
+    let before = fit(&source);
+    // One sample cannot move either endpoint quantile; every channel stays above the floor.
+    source[0] = BASE * 0.0001;
+    let after = fit(&source);
+    close(before.dmin, after.dmin);
+    close(before.dmax, after.dmax);
+    assert!((after.roll.exposure - before.roll.exposure).abs() < 1e-14);
+    assert!((after.photos[0].exposure - before.photos[0].exposure).abs() < 1e-14);
+    let pipeline = Pipeline::new(
+        Calibration {
+            dmin: after.dmin,
+            dmax: after.dmax,
+            input_floor: FLOOR,
+        },
+        after.roll,
+        after.photos[0],
+        DMat3::IDENTITY,
+    )
+    .unwrap();
+    let y: Vec<_> = source
+        .iter()
+        .map(|&p| (AP1_TO_XYZ * pipeline.apply(p).unwrap().rgb).y)
+        .collect();
+    assert!(y[0] > 65536.);
+    let uncapped_mean = y.iter().sum::<f64>() / y.len() as f64;
+    assert!((uncapped_mean / y[1]).log2() * 0.5 > 2.);
+    assert_eq!(after.frames[0].exposure_samples, source.len());
 }
 
 #[test]
