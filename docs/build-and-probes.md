@@ -83,6 +83,17 @@ python3 scripts/capture-viewer-tools.py --flat-only --samples samples \
 
 The six-tool route holds crop/Dmin/WB at normal/narrow sizes with diagnostic regions; crop holds show Photo/hide scopes, picker holds show Rendering/scopes. Flat-only holds real reference support at normal/narrow sizes and cancels without accepting a map, saving or exporting. These are diagnostic setups, not automatic tab/scope changes. Partial captures or timeout are not route acceptance; keep photographic outputs private and record unperformed physical/device checks separately.
 
+### Camera-roll review fixtures
+
+The GPU-painted strip-only fixture shows landscape, portrait, wide crop, long filename, loading/error cells and selection/hover at 140-, 80- and 52-point strip heights:
+
+```sh
+cargo test --locked --offline --features editor --lib \
+  capture_camera_roll_review_fixtures -- --ignored --nocapture
+```
+
+It writes private TIFFs under `.cache/probes/camera-roll`. Images are synthetic RGB16 data through the normal thumbnail renderer, not photographs or photographic acceptance. The fixture paints actual egui cards/captions; it does not establish native presentation, physical input or VoiceOver. Use the window-capture route separately for composed native layouts.
+
 ## Responsive image scopes
 
 The above-controls slot provides positive-grade-only whole-frame approximate waveform/vectorscope, in selected output-native codes. RGB/luma reuse bins; vectorscope scale re-bins cached rendering without rerunning ACES. Source/reference views and crop drafts suspend scopes. Accepted crop/orientation follows canonical whole-frame mapping, independently of viewer navigation. [Contract](contracts/scopes.md).

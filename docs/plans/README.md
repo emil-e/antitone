@@ -3,7 +3,7 @@
 [Roadmap](../../PLAN.md) owns priority. These packages describe remaining problems and acceptance, not authorization to implement every item.
 
 - [Interaction and colour diagnosis](inspection-and-interaction.md)
-- [Thumbnail clipping and loading feedback](visual-feedback.md)
+- [Thumbnail loading and resource acceptance](visual-feedback.md)
 - [Photographic acceptance, completion features and release](completion.md)
 - [Recovery, source-change UI and undo](durable-projects.md)
 

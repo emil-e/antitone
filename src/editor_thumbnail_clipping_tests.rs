@@ -27,15 +27,17 @@ fn frame(editor: &mut Editor, context: &egui::Context, time: f64, scroll: f32) -
     output
 }
 
-fn names(output: &egui::FullOutput) -> Vec<(String, egui::Pos2)> {
+fn cards(output: &egui::FullOutput) -> Vec<egui::Rect> {
     output
         .shapes
         .iter()
         .filter_map(|shape| {
-            if let egui::Shape::Text(text) = &shape.shape
-                && text.galley.job.text.starts_with("photo-")
+            if let egui::Shape::Rect(rect) = &shape.shape
+                && rect.corner_radius == egui::CornerRadius::same(4)
+                && rect.rect.width() >= 64.
+                && rect.stroke.width > 0.
             {
-                Some((text.galley.job.text.clone(), text.pos))
+                Some(rect.rect)
             } else {
                 None
             }
@@ -57,16 +59,24 @@ fn callbacks(output: &egui::FullOutput) -> Vec<(egui::Rect, egui::Rect)> {
         .collect()
 }
 
-fn paint(
+pub(super) fn paint(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     context: &egui::Context,
     renderer: &mut egui_wgpu::Renderer,
-    output: egui::FullOutput,
+    mut output: egui::FullOutput,
+    full_ui: bool,
+    size_in_points: [u32; 2],
 ) -> Vec<[u16; 4]> {
+    for (id, deltas) in &output.textures_delta.set {
+        for delta in deltas {
+            renderer.update_texture(device, queue, *id, delta);
+        }
+    }
+    output.textures_delta.clear();
     let pixels_per_point = output.pixels_per_point;
-    let width = (WIDTH * pixels_per_point) as u32;
-    let height = (800. * pixels_per_point) as u32;
+    let width = (size_in_points[0] as f32 * pixels_per_point) as u32;
+    let height = (size_in_points[1] as f32 * pixels_per_point) as u32;
     let screen = egui_wgpu::ScreenDescriptor {
         size_in_pixels: [width, height],
         pixels_per_point,
@@ -75,7 +85,7 @@ fn paint(
         output
             .shapes
             .into_iter()
-            .filter(|shape| matches!(shape.shape, egui::Shape::Callback(_)))
+            .filter(|shape| full_ui || matches!(shape.shape, egui::Shape::Callback(_)))
             .collect(),
         pixels_per_point,
     );
@@ -205,10 +215,14 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
                     frame(&mut editor, &context, f64::from(step) / 60., 0.);
                 }
                 let output = frame(&mut editor, &context, 3. / 60., 0.);
-                let references = callbacks(&output);
-                let reference_rect = references[0].0;
-                let reference_name = names(&output)[0].1;
-                let reference = paint(&device, &queue, &context, &mut renderer, output);
+                let reference_rect = callbacks(&output)[0].0;
+                let reference_card = cards(&output)[0];
+                let reference_shape = output
+                    .shapes
+                    .iter()
+                    .find(|shape| matches!(shape.shape, egui::Shape::Callback(_)))
+                    .unwrap()
+                    .clone();
                 let mut output = frame(
                     &mut editor,
                     &context,
@@ -218,15 +232,24 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
                 for step in 5..40 {
                     output = frame(&mut editor, &context, f64::from(step) / 60., 0.);
                 }
-                let labels = names(&output);
+                let cells = cards(&output);
                 let draws = callbacks(&output);
-                let actual = paint(&device, &queue, &context, &mut renderer, output);
+                let actual = paint(
+                    &device,
+                    &queue,
+                    &context,
+                    &mut renderer,
+                    output,
+                    false,
+                    [WIDTH as u32, 800],
+                );
                 let width = (WIDTH * scale) as usize;
                 let y = (reference_rect.center().y * scale).floor() as usize;
                 let mut edges = [false; 2];
-                for ((name, position), (draw, clip)) in labels.iter().zip(draws.iter()) {
-                    let full =
-                        reference_rect.translate(egui::vec2(position.x - reference_name.x, 0.));
+                assert_eq!(cells.len(), draws.len());
+                for (card, (draw, clip)) in cells.iter().zip(draws.iter()) {
+                    let full = reference_rect
+                        .translate(egui::vec2(card.left() - reference_card.left(), 0.));
                     let visible = full.intersect(*clip);
                     if visible.width() >= full.width() {
                         continue;
@@ -235,25 +258,45 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
                     edges[edge] = true;
                     let pixel_left = (full.left() * scale).round() as isize;
                     let pixel_width = (full.right() * scale).round() as isize - pixel_left;
-                    let reference_rect = references
-                        .iter()
-                        .map(|(rect, _)| *rect)
-                        .find(|rect| {
-                            rect.width() == full.width()
-                                && (rect.right() * scale).round() as isize
-                                    - (rect.left() * scale).round() as isize
-                                    == pixel_width
-                        })
-                        .expect("a full thumbnail with the same pixel-rounded width");
+                    // Negative half-pixel endpoints round away from zero. Replay the full
+                    // image at exactly that rounded size, without depending on caption layout.
+                    let reference_rect = egui::Rect::from_min_size(
+                        egui::pos2(10., (full.top() * scale).round() / scale),
+                        egui::vec2(
+                            pixel_width as f32 / scale,
+                            ((full.bottom() * scale).round() - (full.top() * scale).round())
+                                / scale,
+                        ),
+                    );
+                    let mut expected_shape = reference_shape.clone();
+                    let egui::Shape::Callback(callback) = &mut expected_shape.shape else {
+                        unreachable!()
+                    };
+                    callback.rect = reference_rect;
+                    expected_shape.clip_rect = reference_rect;
+                    let reference = paint(
+                        &device,
+                        &queue,
+                        &context,
+                        &mut renderer,
+                        egui::FullOutput {
+                            shapes: vec![expected_shape],
+                            pixels_per_point: scale,
+                            ..Default::default()
+                        },
+                        false,
+                        [WIDTH as u32, 800],
+                    );
                     let shift = pixel_left - (reference_rect.left() * scale).round() as isize;
                     let start = (visible.left() * scale).ceil() as usize + 1;
                     let end = (visible.right() * scale).floor() as usize - 1;
+                    assert!(start < end, "edge must have comparable pixels");
                     for x in start..end {
                         let expected_x = (x as isize - shift) as usize;
                         assert_eq!(
                             actual[y * width + x],
                             reference[y * width + expected_x],
-                            "{height}pt / {scale}x / {name} / draw={draw:?} / full={full:?} / reference={reference_rect:?} / label={position:?} / reference label={reference_name:?} / shift={shift} / x={x}"
+                            "{height}pt / {scale}x / card={card:?} / draw={draw:?} / full={full:?} / reference={reference_rect:?} / shift={shift} / x={x}"
                         );
                     }
                 }

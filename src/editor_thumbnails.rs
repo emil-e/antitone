@@ -647,6 +647,46 @@ fn make_image(
     Ok(active().then_some(image))
 }
 
+fn thumbnail_name(
+    ui: &egui::Ui,
+    name: &str,
+    width: f32,
+    color: egui::Color32,
+) -> Arc<egui::Galley> {
+    let layout = |text: String| {
+        ui.painter()
+            .layout_no_wrap(text, egui::FontId::proportional(11.), color)
+    };
+    let full = layout(name.to_owned());
+    if full.size().x <= width {
+        return full;
+    }
+    let characters: Vec<char> = name.chars().collect();
+    let mut lower = 0;
+    let mut upper = characters.len();
+    let mut fitted = layout("…".into());
+    while lower + 1 < upper {
+        let keep = (lower + upper) / 2;
+        // Prioritize the trailing frame identifier and extension at compact strip heights.
+        let suffix = keep.min(9).max(keep / 2);
+        let prefix = keep - suffix;
+        let text = characters[..prefix]
+            .iter()
+            .copied()
+            .chain(std::iter::once('…'))
+            .chain(characters[characters.len() - suffix..].iter().copied())
+            .collect();
+        let candidate = layout(text);
+        if candidate.size().x <= width {
+            lower = keep;
+            fitted = candidate;
+        } else {
+            upper = keep;
+        }
+    }
+    fitted
+}
+
 impl Editor {
     fn thumbnail_parameters(&self, source: &Source) -> Result<ProcessingParameters, Error> {
         let photo = if self.current_source == Some(source.id) {
@@ -716,16 +756,25 @@ impl Editor {
             .default_size(height)
             .min_size(52.)
             .max_size(max_height)
-            .frame(egui::Frame::side_top_panel(ui.style()).fill(egui::Color32::from_gray(28)));
+            .frame(
+                egui::Frame::side_top_panel(ui.style())
+                    .inner_margin(egui::Margin::symmetric(10, 6))
+                    .fill(egui::Color32::from_gray(22)),
+            );
         let strip = panel.show(ui, |ui| {
             ui.take_available_height();
-            let image_height = (ui.available_height()-28.).max(20.);
-            let image_width = (image_height*1.5).max(64.);
-            let pitch = image_width+8.;
+            let compact = height < 90.;
+            let padding = if compact { 3. } else { 5. };
+            let caption_height = if compact { 14. } else { 18. };
+            let caption_gap = if compact { 2. } else { 4. };
+            let image_height = (ui.available_height() - 6. - 2. * padding - caption_height - caption_gap).max(8.);
+            let image_width = (image_height * 1.5 + 2. * padding).max(80.);
+            let card_height = image_height + 2. * padding + caption_height + caption_gap;
+            let pitch = image_width + 12.;
             let count = self.document.project.order.len();
             egui::ScrollArea::horizontal().show_viewport(ui,|ui,viewport| {
                 let width = (count as f32*pitch).max(ui.available_width());
-                let (content,_) = ui.allocate_exact_size(egui::vec2(width,image_height+22.),egui::Sense::hover());
+                let (content,_) = ui.allocate_exact_size(egui::vec2(width,card_height),egui::Sense::hover());
                 let first = (viewport.min.x/pitch).floor().max(0.) as usize;
                 let last = (viewport.max.x/pitch).ceil().max(0.) as usize;
                 let last = last.min(count);
@@ -734,17 +783,26 @@ impl Editor {
                     let id = self.document.project.order[index];
                     let source = self.document.project.source(id).expect("filmstrip source");
                     let path = self.document.source_path(id).expect("filmstrip locator");
-                    let cell = egui::Rect::from_min_size(content.min+egui::vec2(index as f32*pitch,0.),egui::vec2(image_width,image_height+22.));
+                    let cell = egui::Rect::from_min_size(content.min+egui::vec2(index as f32*pitch,0.),egui::vec2(image_width,card_height));
                     let response = ui.interact(cell,ui.id().with(id.0),egui::Sense::click());
                     let selected = (self.ready.is_some() || self.pending_preview.is_some()) && self.current_source == Some(id);
-                    let visuals = ui.style().interact_selectable(&response,selected);
-                    ui.painter().rect_filled(cell,3.,visuals.bg_fill);
-                    let image_rect = egui::Rect::from_min_size(cell.min,egui::vec2(image_width,image_height)).shrink(2.);
+                    let hovered = response.hovered();
+                    let fill = egui::Color32::from_gray(if selected { 30 } else if hovered { 28 } else { 24 });
+                    let stroke = if selected || response.has_focus() {
+                        egui::Stroke::new(1.5, ui.visuals().selection.stroke.color)
+                    } else {
+                        egui::Stroke::new(1., egui::Color32::from_gray(if hovered { 65 } else { 42 }))
+                    };
+                    let text_color = egui::Color32::from_gray(if selected { 225 } else if hovered { 195 } else { 165 });
+                    ui.painter().rect(cell,4.,fill,stroke,egui::StrokeKind::Inside);
+                    let image_rect = egui::Rect::from_min_size(cell.min+egui::vec2(padding,padding),egui::vec2(image_width-2.*padding,image_height));
+                    ui.painter().rect_filled(image_rect,0.,egui::Color32::from_gray(14));
                     let key = self.document.project.development.as_ref().map(|development|ImageKey { source:SourceKey::new(source,development,FileKey::new(&path)),target:self.target,field:self.correction.as_ref().map(|c|FieldKey(c.settings.map.clone())) });
                     if let Some(key) = &key { protected.push(key.clone()); }
                     let entry = key.as_ref().and_then(|key|self.thumbnails.cache.get(key)).cloned();
                     let parameters = self.thumbnail_parameters(source);
                     let mut error = None;
+                    let placeholder_font = egui::FontId::proportional((image_rect.height()/1.2).min(16.));
                     match (entry,parameters) {
                         (Some(Ok(image)),Ok(parameters)) => {
                             let photo_orientation = if self.current_source == Some(source.id) { self.photo_orientation } else { source.orientation };
@@ -775,13 +833,15 @@ impl Editor {
                         (_,Err(message)) => { error = Some(message.to_string()); }
                         (None,Ok(_)) => {
                             if let Some(key) = key { wanted.push((index,key,path.clone(),source.clone())); }
-                            ui.painter().text(image_rect.center(),egui::Align2::CENTER_CENTER,"…",egui::FontId::proportional(16.),visuals.text_color());
+                            ui.painter().text(image_rect.center(),egui::Align2::CENTER_CENTER,"…",placeholder_font.clone(),text_color);
                         }
                     }
-                    if error.is_some() { ui.painter().text(image_rect.center(),egui::Align2::CENTER_CENTER,"!",egui::FontId::proportional(16.),visuals.text_color()); }
+                    if error.is_some() { ui.painter().text(image_rect.center(),egui::Align2::CENTER_CENTER,"!",placeholder_font,text_color); }
                     let name = path.file_name().unwrap_or_default().to_string_lossy();
-                    let galley = ui.painter().layout(name.into_owned(),egui::FontId::proportional(11.),visuals.text_color(),image_width);
-                    ui.painter().with_clip_rect(cell.intersect(ui.clip_rect())).galley(cell.min+egui::vec2(2.,image_height+2.),galley,visuals.text_color());
+                    let caption = egui::Rect::from_min_size(egui::pos2(image_rect.left(),image_rect.bottom()+caption_gap),egui::vec2(image_rect.width(),caption_height));
+                    let galley = thumbnail_name(ui,&name,caption.width(),text_color);
+                    let text_pos = caption.center()-galley.size()*0.5;
+                    ui.painter().with_clip_rect(caption.intersect(ui.clip_rect())).galley(text_pos,galley,text_color);
                     if response.clicked() && !self.busy && self.flat_edit.is_none() && self.crop_edit.is_none() { select = Some(index); }
                     response.on_hover_text(error.unwrap_or_else(||format!("{}\nApproximate whole-frame thumbnail; drag the strip's top edge to resize.",path.display())));
                 }
@@ -883,6 +943,9 @@ mod performance;
 #[cfg(test)]
 #[path = "editor_selected_preview_tests.rs"]
 mod selected_tests;
+#[cfg(test)]
+#[path = "editor_thumbnail_style_tests.rs"]
+mod style_tests;
 #[cfg(test)]
 #[path = "editor_thumbnails_tests.rs"]
 mod tests;
