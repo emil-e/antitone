@@ -36,4 +36,4 @@ Little CMS is built statically through Cargo; `LCMS2_LIB_DIR` is not a supported
 
 ## Runtime and acceptance limits
 
-`otool -l .cache/native-deps/openmp-22.1.8-install/lib/libomp.dylib` should report `@rpath/libomp.dylib` and minimum OS 14.0; `otool -L` should show only system dependencies. Runtime identity, deployment-target inspection and local license files do not establish distributable packaging or actual macOS-14 execution. Bundling/codesigning/notices, broader cameras/devices and physical memory-pressure/input checks remain [release work](plans/completion.md#export-and-release-work).
+`otool -l .cache/native-deps/openmp-22.1.8-install/lib/libomp.dylib` should report `@rpath/libomp.dylib` and minimum OS 14.0; `otool -L` should show only system dependencies. The [local macOS bundle](../README.md#build-and-run) keeps those runtime paths. Runtime identity, deployment-target inspection and local license files do not establish distributable packaging or actual macOS-14 execution. Bundling/codesigning/notices, broader cameras/devices and physical memory-pressure/input checks remain [release work](plans/completion.md#export-and-release-work).

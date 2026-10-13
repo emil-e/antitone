@@ -19,7 +19,8 @@ For the photographic model, start with [processing](processing.md). This page is
 | Scopes | [measurement](../src/scopes.rs), [GPU reduction](../src/gpu_scopes.rs) | Approximate whole-frame output statistics |
 | Editor | [editor](../src/editor.rs) and its feature modules | Live state, controls, transactions and worker dispatch |
 | Persistence | [project](../src/project.rs), [document](../src/editor_document.rs) | Accepted state and compatibility |
-| Host | [host](../src/platform/host.rs), [macOS](../src/platform/macos.rs) | Event loop, surface and managed SDR presentation |
+| Host | [host](../src/platform/host.rs), [macOS](../src/platform/macos.rs) | Event loop, surface, managed SDR presentation and native application icon |
+| Branding | [assets](../assets/branding/README.md), [generator](../native/branding_assets.swift), [macOS packaging](../scripts/package-macos.py) | Portable artwork and checkout-local application bundle |
 
 ## Ownership and execution
 

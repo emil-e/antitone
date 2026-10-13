@@ -1,6 +1,64 @@
 use super::*;
 
 #[test]
+fn branded_header_preserves_composed_menu_availability_and_processing_state() {
+    for scale in [1., 2.] {
+        for width in [720., 1100.] {
+            for busy in [false, true] {
+                let (mut editor, _send, _receiver) = fixture();
+                editor.busy = busy;
+                let before = (editor.roll, editor.photo, editor.document.dirty());
+                let context = egui::Context::default();
+                context.enable_accesskit();
+                let mut input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, 600.),
+                    )),
+                    ..Default::default()
+                };
+                input
+                    .viewports
+                    .get_mut(&egui::ViewportId::ROOT)
+                    .unwrap()
+                    .native_pixels_per_point = Some(scale);
+                let mut output = context.run_ui(input, |ui| host::App::ui(&mut editor, ui));
+                assert_eq!(context.pixels_per_point(), scale);
+                output.textures_delta.clear();
+                let nodes = &output
+                    .platform_output
+                    .accesskit_update
+                    .as_ref()
+                    .unwrap()
+                    .nodes;
+                let mark = &nodes
+                    .iter()
+                    .find(|(_, node)| node.value() == Some("Antitone"))
+                    .unwrap()
+                    .1;
+                let bounds = mark.bounds().unwrap();
+                assert_eq!(bounds.x1 - bounds.x0, 118.);
+                assert_eq!(bounds.y1 - bounds.y0, 16.);
+                assert_eq!(bounds.x0, 12.);
+                assert!(((bounds.y0 + bounds.y1) / 2. - 16.).abs() < 1.);
+                for (label, disabled) in [("File", busy), ("Export", true)] {
+                    let menu = &nodes
+                        .iter()
+                        .find(|(_, node)| node.label() == Some(label))
+                        .unwrap()
+                        .1;
+                    assert_eq!(menu.is_disabled(), disabled);
+                    assert!(menu.bounds().unwrap().y1 <= 32.);
+                }
+                assert_eq!((editor.roll, editor.photo, editor.document.dirty()), before);
+                assert!(editor.pick.is_none() && editor.crop_edit.is_none());
+                assert!(editor.document_pending.is_none());
+            }
+        }
+    }
+}
+
+#[test]
 fn stage_tabs_have_equal_named_hit_regions_selection_and_keyboard_activation() {
     let context = egui::Context::default();
     context.enable_accesskit();

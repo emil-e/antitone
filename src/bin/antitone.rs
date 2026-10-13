@@ -60,6 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         let initial = arguments.first().map(std::path::PathBuf::from);
         host::run("Antitone", move |device, queue| {
+            antitone::platform::macos::set_application_icon()?;
             let mut editor = Editor::new(device, queue, initial);
             editor.restore_ui_preferences();
             Ok(editor)

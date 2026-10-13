@@ -4,6 +4,8 @@ The editor connects photographic settings, image tools and asynchronous work. It
 
 Roll, Photo and Rendering are editing scopes, not separate pipelines. Roll owns shared scan setup and grading; Photo owns individual grading and composition; Rendering selects the common preview/TIFF target. Changing tabs changes available controls, not the image's processing.
 
+The editor uses a neutral dark workspace with amber identity and active-state accents. The shared application header presents the film-edge wordmark without making it an interactive control; File/Export availability remains controller-owned. [Branding assets](../assets/branding/README.md) explain the artwork and regeneration.
+
 ## Accepted state and drafts
 
 A crop, picker or reference-area edit has temporary interaction state. Apply promotes a validated proposal; Cancel restores the working context. Tabs and outside clicks do not implicitly accept or discard a draft, and Save/Export never consume half-applied geometry.
@@ -62,7 +64,7 @@ GPU infrastructure is shared, but mutable image storage, revision and processing
 
 Use the existing component families rather than copying their painting or interaction logic:
 
-- [Presentation](../src/editor_ui.rs): labelled rows, text actions and viewer tool groups.
+- [Presentation](../src/editor_ui.rs): application header/branding, labelled rows, text actions and viewer tool groups.
 - [Hierarchy](../src/editor_ui_hierarchy.rs): sections, disclosure/reset and stage tabs.
 - [Cards](../src/editor_ui_cards.rs): contact-sheet geometry, captions and supplied-state artwork.
 - [Icons](../src/editor_icons.rs): semantic actions and artwork.
@@ -70,7 +72,13 @@ Use the existing component families rather than copying their painting or intera
 
 Presentation receives display-ready state and returns responses. Controllers still own availability, IDs, accepted/draft state, resets and dispatch. Cards receive selection/availability, and their caption supplies the unelided semantic filename; they do not own images, selection, virtualization or workers. Pinned section titles expose label semantics without disclosure/focus behavior. The fixed viewer bar hosts tool identity and Apply/Cancel without resizing the canvas; only selection/frame artwork belongs over the photograph.
 
-Reuse semantic roles, not arbitrary local styling overrides. Crop grids, photographic wheels, scope plots and native menus are intentionally specialized. Extend a shared family for a real variant; do not create a parallel widget/state framework to accommodate a hypothetical one.
+### Colour roles
+
+Colour expresses interaction state, not feature ownership. Presentation installs the editor theme once; ordinary egui widgets and the shared components inherit its selection, active-state and link colours. Choose semantic variants such as a primary action rather than choosing amber or overriding widget visuals in a feature controller.
+
+Custom interaction painting reads the applicable inherited role from `ui.visuals()` or `ui.style().interact(&response)`, rather than copying brand RGB values. Contact-sheet fills and image wells deliberately stay neutral; photographic wheels and scope plots retain colours that represent image data. These treatments belong to their shared component or visualization owner. Add a genuinely needed role or variant there, not as a feature-local palette.
+
+Crop grids and native menus remain specialized. Extend a shared family for a real variant; do not create a parallel widget/state framework to accommodate a hypothetical one.
 
 ## Working on this area
 

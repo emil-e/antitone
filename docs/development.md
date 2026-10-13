@@ -87,6 +87,8 @@ cargo test --locked --features editor --lib editor::thumbnails
 cargo clippy --locked --features editor --lib --tests -- -D warnings
 ```
 
+For wordmark/icon changes, also [regenerate the branding assets](../assets/branding/README.md#regenerate) and inspect the SVG/PNG and native icon results. Presentation tests cover the header’s fixed logical size and menu focus at native 1×/2× density; workspace tests cover its composed availability and unchanged processing state. A local bundle launch is separate from release/device acceptance.
+
 For feature-specific transactions, use the `editor::analysis::tests`, `editor::flat::tests`, `editor::files::tests`, `editor::navigation::tests`, `editor::preferences::tests` or `editor::scopes::tests` filter. Use [native layout and GPU fixtures](diagnostics.md#editor-and-layout-smoke) when painting/layout changes.
 
 The thumbnail suite includes composed cold-load/error selection, JPEG placeholder semantics, disabled focus/input and ordered-roll picker return checks. [Wheel accessibility](plans/inspection-and-interaction.md#focused-fixes) remains unsettled. Physical pointer/trackpad behavior, VoiceOver and preference relaunch also need real-use checks; headless events cannot establish them.

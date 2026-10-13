@@ -26,16 +26,19 @@ rfd = { version = "=0.17.2", optional = true, default-features = false }
 serde = { version = "=1.0.229", optional = true, features = ["derive", "rc"] }
 serde_json = { version = "=1.0.151", optional = true, features = ["float_roundtrip"] }
 blake3 = { version = "=1.8.7", optional = true }
-image = { version = "=0.25.10", optional = true, default-features = false, features = ["jpeg"] }
+image = { version = "=0.25.10", optional = true, default-features = false, features = ["jpeg", "png"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "=0.6.5", optional = true }
+objc2-app-kit = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder"] }
+objc2-foundation = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "NSData"] }
 objc2-core-foundation = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "CFString"] }
 objc2-core-graphics = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "CGColorSpace"] }
 objc2-quartz-core = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "CAMetalLayer", "objc2-core-graphics"] }
 
 [features]
 ui-tests = ["editor", "dep:egui_kittest", "image/png"]
-editor = ["ui", "raw", "export", "project", "dep:rfd", "dep:blake3", "dep:image"]
+editor = ["ui", "raw", "export", "project", "dep:rfd", "dep:blake3", "dep:image", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation"]
 project = ["dep:serde", "dep:serde_json", "dep:tempfile", "glam/serde"]
 ui = ["gpu", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:winit", "dep:half", "dep:objc2-core-foundation", "dep:objc2-core-graphics", "dep:objc2-quartz-core"]
 raw = ["dep:cc", "dep:libc"]

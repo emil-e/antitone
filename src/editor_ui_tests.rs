@@ -3,7 +3,7 @@ mod rows;
 #[path = "editor_tool_group_tests.rs"]
 mod tool_groups;
 
-use super::TextAction;
+use super::{INSCRIPTION, TextAction, app_header, configure_branding};
 use egui::{Context, Event, FullOutput, Modifiers, Pos2, Rect, Response, Ui};
 
 pub(super) fn frame<R>(
@@ -122,6 +122,180 @@ pub(super) fn pointer(position: Pos2, pressed: bool) -> Vec<Event> {
             modifiers: Modifiers::NONE,
         },
     ]
+}
+
+#[test]
+fn brand_assets_have_the_expected_sizes_and_self_contained_wordmarks() {
+    let header = image::load_from_memory(include_bytes!("../assets/branding/wordmark-header.png"))
+        .unwrap()
+        .into_rgba8();
+    assert_eq!(header.dimensions(), (472, 64));
+    assert!(
+        header
+            .pixels()
+            .any(|pixel| pixel.0 == INSCRIPTION.to_array())
+    );
+    assert!(header.pixels().any(|pixel| pixel.0[3] == 0));
+    for svg in [
+        include_str!("../assets/branding/wordmark-amber.svg"),
+        include_str!("../assets/branding/wordmark-density.svg"),
+    ] {
+        assert!(svg.contains("<path"));
+        assert!(!svg.contains("<text"));
+        assert!(!svg.contains("href="));
+    }
+    let ico = include_bytes!("../assets/branding/icon.ico");
+    assert_eq!(&ico[..6], &[0, 0, 1, 0, 7, 0]);
+    let mut next_offset = 6 + 7 * 16;
+    for (index, size) in [16, 24, 32, 48, 64, 128, 256].into_iter().enumerate() {
+        let entry = &ico[6 + index * 16..6 + (index + 1) * 16];
+        assert_eq!(entry[0] as u32, size % 256);
+        assert_eq!(entry[1], entry[0]);
+        let length = u32::from_le_bytes(entry[8..12].try_into().unwrap()) as usize;
+        let offset = u32::from_le_bytes(entry[12..16].try_into().unwrap()) as usize;
+        assert_eq!(offset, next_offset);
+        let image = image::load_from_memory(&ico[offset..offset + length]).unwrap();
+        assert_eq!((image.width(), image.height()), (size, size));
+        next_offset += length;
+    }
+    assert_eq!(next_offset, ico.len());
+    let icns = include_bytes!("../assets/branding/icon.icns");
+    assert_eq!(&icns[..4], b"icns");
+    assert_eq!(
+        u32::from_be_bytes(icns[4..8].try_into().unwrap()) as usize,
+        icns.len()
+    );
+}
+
+#[test]
+fn shared_components_inherit_interaction_colours_without_tinting_photographic_surfaces() {
+    for accent in [INSCRIPTION, egui::Color32::from_rgb(71, 143, 207)] {
+        let context = Context::default();
+        let mut rectangles = None;
+        let mut output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(600., 320.))),
+                ..Default::default()
+            },
+            |ui| {
+                configure_branding(ui);
+                assert_eq!(ui.visuals().selection.stroke.color, INSCRIPTION);
+                assert_eq!(
+                    ui.visuals().selection.bg_fill,
+                    INSCRIPTION.gamma_multiply(0.25)
+                );
+                assert_eq!(ui.visuals().hyperlink_color, INSCRIPTION);
+                // A second accent detects components that hard-code the current brand colour.
+                ui.visuals_mut().selection.stroke.color = accent;
+                ui.visuals_mut().selection.bg_fill = accent.gamma_multiply(0.25);
+                let action = TextAction::new("Apply").primary().show(ui);
+                let mut selected = 1;
+                super::stage_tabs(ui, &mut selected);
+                super::ToolIdentity {
+                    icon: super::Icon::Pick,
+                    title: "Dmin",
+                }
+                .inspector(ui, |_| (), |ui, ()| ui.label("Tool details"));
+                let layout = super::ContactSheetLayout::new(100., false);
+                let (id, cell) = ui.allocate_space(layout.size());
+                let card = layout.begin(ui, cell.min, id, true, true);
+                rectangles = Some((action.rect, card.response.rect));
+            },
+        );
+        output.textures_delta.clear();
+        let (action, card) = rectangles.unwrap();
+        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+            egui::Shape::Rect(rect) if rect.rect == action && rect.fill == accent.gamma_multiply(0.25))));
+        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+            egui::Shape::Rect(rect) if rect.fill == accent.gamma_multiply(0.25).linear_multiply(0.15))));
+        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+            egui::Shape::LineSegment { stroke, .. } if stroke.width == 2. && stroke.color == accent)));
+        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+            egui::Shape::Rect(rect) if rect.rect == card && rect.stroke.color == accent
+                && rect.fill.r() == rect.fill.g() && rect.fill.g() == rect.fill.b())));
+    }
+}
+
+#[test]
+fn app_header_keeps_the_wordmark_size_neutral_theme_and_menu_focus_at_both_scales() {
+    for scale in [1., 2.] {
+        for width in [320., 720., 1100.] {
+            let context = Context::default();
+            context.enable_accesskit();
+            let mut buttons = None;
+            let mut draw = |events| {
+                let mut input = egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(width, 200.))),
+                    events,
+                    ..Default::default()
+                };
+                input
+                    .viewports
+                    .get_mut(&egui::ViewportId::ROOT)
+                    .unwrap()
+                    .native_pixels_per_point = Some(scale);
+                let mut output = context.run_ui(input, |ui| {
+                    configure_branding(ui);
+                    assert_eq!(ui.ctx().pixels_per_point(), scale);
+                    assert_eq!(ui.visuals().selection.stroke.color, INSCRIPTION);
+                    let surface = ui.visuals().panel_fill;
+                    assert!(surface.r().abs_diff(surface.g()) <= 4);
+                    assert!(surface.g().abs_diff(surface.b()) <= 4);
+                    app_header(ui, |ui| {
+                        let file = ui.menu_button("File", |_| ());
+                        let export = ui.menu_button("Export", |_| ());
+                        let name = ui.add(
+                            egui::Label::new("A very long project filename.antitone.json")
+                                .truncate(),
+                        );
+                        assert!(
+                            name.rect.right() <= width,
+                            "name {:?}, screen {width}, scale {scale}",
+                            name.rect
+                        );
+                        buttons = Some([file.response, export.response]);
+                    });
+                });
+                output.textures_delta.clear();
+                output
+            };
+            let output = draw(vec![]);
+            let update = output.platform_output.accesskit_update.as_ref().unwrap();
+            let mark = &update
+                .nodes
+                .iter()
+                .find(|(_, node)| node.value() == Some("Antitone"))
+                .unwrap()
+                .1;
+            assert_eq!(mark.role(), egui::accesskit::Role::Label);
+            let bounds = mark.bounds().unwrap();
+            assert_eq!(bounds.x1 - bounds.x0, 118.);
+            assert_eq!(bounds.y1 - bounds.y0, 16.);
+            assert_eq!(bounds.x0, 12.);
+            assert!(((bounds.y0 + bounds.y1) / 2. - 16.).abs() < 1.);
+            let mark_before = bounds;
+            let after = draw(key(egui::Key::Tab));
+            let mark_after = after
+                .platform_output
+                .accesskit_update
+                .as_ref()
+                .unwrap()
+                .nodes
+                .iter()
+                .find(|(_, node)| node.value() == Some("Antitone"))
+                .map(|(_, node)| node.bounds().unwrap());
+            if let Some(bounds) = mark_after {
+                assert_eq!(bounds, mark_before);
+            }
+            drop(draw);
+            let buttons = buttons.unwrap();
+            assert_eq!(
+                context.memory(|memory| memory.focused()),
+                Some(buttons[0].id)
+            );
+            assert!(buttons.iter().all(|button| button.rect.bottom() <= 32.));
+        }
+    }
 }
 
 #[test]

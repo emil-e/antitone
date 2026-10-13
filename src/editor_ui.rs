@@ -14,6 +14,66 @@ pub(super) use hierarchy::{
 pub(super) const CONTROL_HEIGHT: f32 = 28.;
 pub(super) const VIEWER_BAR_HEIGHT: f32 = 40.;
 pub(super) const VIEWER_ITEM_GAP: f32 = 4.;
+const HEADER_HEIGHT: f32 = 32.;
+const INSCRIPTION: Color32 = Color32::from_rgb(223, 170, 96);
+
+pub(super) fn configure_branding(ui: &mut Ui) {
+    let mut visuals = egui::Visuals::dark();
+    visuals.panel_fill = Color32::from_rgb(34, 36, 38);
+    visuals.window_fill = visuals.panel_fill;
+    visuals.selection.stroke.color = INSCRIPTION;
+    visuals.selection.bg_fill = INSCRIPTION.gamma_multiply(0.25);
+    visuals.hyperlink_color = INSCRIPTION;
+    ui.ctx().set_theme(egui::Theme::Dark);
+    ui.ctx().set_visuals(visuals.clone());
+    *ui.visuals_mut() = visuals;
+}
+
+pub(super) fn app_header<R>(ui: &mut Ui, contents: impl FnOnce(&mut Ui) -> R) -> R {
+    egui::Panel::top("header")
+        .exact_size(HEADER_HEIGHT)
+        .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin::symmetric(12, 2)))
+        .show(ui, |ui| {
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                wordmark(ui);
+                contents(ui)
+            })
+            .inner
+        })
+        .inner
+}
+
+fn wordmark(ui: &mut Ui) -> Response {
+    let id = egui::Id::new("antitone-wordmark-texture");
+    let cached = ui
+        .ctx()
+        .data_mut(|data| data.get_temp::<egui::TextureHandle>(id));
+    let texture = cached.unwrap_or_else(|| {
+        let image = image::load_from_memory_with_format(
+            include_bytes!("../assets/branding/wordmark-header.png"),
+            image::ImageFormat::Png,
+        )
+        .expect("valid embedded wordmark PNG")
+        .into_rgba8();
+        let image = egui::ColorImage::from_rgba_unmultiplied(
+            [image.width() as usize, image.height() as usize],
+            image.as_raw(),
+        );
+        let texture =
+            ui.ctx()
+                .load_texture("Antitone wordmark", image, egui::TextureOptions::LINEAR);
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(id, texture.clone()));
+        texture
+    });
+    // The outlined 16-point inscription is rasterized at 4×, independent of UI fonts.
+    let size = texture.size_vec2() / 4.;
+    let response = ui.add(egui::Image::from_texture((texture.id(), size)));
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Label, response.enabled(), "Antitone")
+    });
+    response
+}
 
 pub(super) fn active_tool_fill(ui: &Ui) -> Color32 {
     ui.visuals().selection.bg_fill.linear_multiply(0.15)

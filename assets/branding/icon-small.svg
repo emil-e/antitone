@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" role="img" aria-labelledby="title desc">
+  <title id="title">Antitone — small icon</title>
+  <desc id="desc">An orange film-base tile with a dark rebate, an open window and an upward-pointing index, optically adjusted for small sizes.</desc>
+  <defs><linearGradient id="film-base" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#d9874c"/><stop offset=".5" stop-color="#cb713f"/><stop offset="1" stop-color="#b85d36"/></linearGradient></defs>
+  <rect width="32" height="32" rx="7" fill="url(#film-base)"/>
+  <path fill="#38271f" fill-rule="evenodd" d="M6 5L26 5Q27 5 27 6L27 26Q27 27 26 27L6 27Q5 27 5 26L5 6Q5 5 6 5ZM12 8L24 8L24 24L12 24ZM8.5 12L6.5 18L10.5 18Z"/>
+</svg>

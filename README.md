@@ -1,4 +1,9 @@
-# Antitone
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/branding/wordmark-amber.svg">
+    <img src="assets/branding/wordmark-density.svg" alt="Antitone" width="320">
+  </picture>
+</h1>
 
 An editor for camera-scanned film negatives. Analyze a roll to establish shared colour and individual exposures, then refine the photographs manually and export TIFF or EXR.
 
@@ -49,7 +54,16 @@ Plain `cargo build --locked` builds the lightweight numerical core, not the edit
 
 For an existing compatible native build or a separate worktree, see [reusing native builds](docs/native-development.md#reusing-native-builds). The ordinary setup remains the command above.
 
-The editor currently links OCIO and OpenMP through absolute local library paths. Keep those libraries available when running the binary; this workflow is not a distributable app bundle.
+The editor has its Dock icon when launched with `cargo app`. To package the built release binary with a Finder icon as a local macOS application:
+
+```sh
+./scripts/package-macos.py
+open .cache/app/Antitone.app
+```
+
+The bundle is disposable and can be regenerated after `cargo build-app`. It still links OCIO and OpenMP through absolute local library paths; keep those libraries available. This is local development packaging, not a distributable release: dependency bundling, signing/notarization and file associations remain unfinished.
+
+[Branding assets](assets/branding/README.md) include self-contained SVG wordmarks, portable PNG/ICO icons, the macOS icon and their regeneration command. These assets do not imply that the application supports other platforms yet.
 
 ## Checks
 

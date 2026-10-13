@@ -1778,6 +1778,7 @@ impl host::App for Editor {
     fn ui(&mut self, ui: &mut egui::Ui) {
         if !self.started {
             self.started = true;
+            presentation::configure_branding(ui);
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1100., 800.)));
         }
@@ -1914,69 +1915,66 @@ impl host::App for Editor {
             ui.disable();
         }
         let mut export_action = None;
-        egui::Panel::top("header").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("antitone");
-                ui.add_enabled_ui(available, |ui| {
-                    ui.menu_button("File", |ui| {
-                        for (label, action) in [
-                            ("New", FileAction::New),
-                            ("Open…", FileAction::Open),
-                            ("Add RAWs…", FileAction::Add),
-                            ("Save", FileAction::Save),
-                            ("Save As…", FileAction::SaveAs),
+        presentation::app_header(ui, |ui| {
+            ui.add_enabled_ui(available, |ui| {
+                ui.menu_button("File", |ui| {
+                    for (label, action) in [
+                        ("New", FileAction::New),
+                        ("Open…", FileAction::Open),
+                        ("Add RAWs…", FileAction::Add),
+                        ("Save", FileAction::Save),
+                        ("Save As…", FileAction::SaveAs),
+                    ] {
+                        if ui.button(label).clicked() {
+                            file_action = Some(action);
+                            ui.close();
+                        }
+                    }
+                });
+            });
+            ui.add_enabled_ui(
+                available && calibration.is_some() && self.ready.is_some(),
+                |ui| {
+                    ui.menu_button("Export", |ui| {
+                        for (label, format) in [
+                            ("TIFF…", OutputFormat::Tiff(self.target)),
+                            ("EXR half…", OutputFormat::Exr(ExrPrecision::Half)),
+                            ("EXR full…", OutputFormat::Exr(ExrPrecision::Full)),
                         ] {
                             if ui.button(label).clicked() {
-                                file_action = Some(action);
+                                export_action = Some(format);
                                 ui.close();
                             }
                         }
                     });
-                });
-                ui.add_enabled_ui(
-                    available && calibration.is_some() && self.ready.is_some(),
-                    |ui| {
-                        ui.menu_button("Export", |ui| {
-                            for (label, format) in [
-                                ("TIFF…", OutputFormat::Tiff(self.target)),
-                                ("EXR half…", OutputFormat::Exr(ExrPrecision::Half)),
-                                ("EXR full…", OutputFormat::Exr(ExrPrecision::Full)),
-                            ] {
-                                if ui.button(label).clicked() {
-                                    export_action = Some(format);
-                                    ui.close();
-                                }
-                            }
-                        });
-                    },
-                );
-                ui.separator();
-                let name = self
-                    .document
+                },
+            );
+            ui.separator();
+            let name = self
+                .document
+                .path
+                .as_ref()
+                .and_then(|path| path.file_name())
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "Untitled".into());
+            ui.add(
+                egui::Label::new(format!(
+                    "{name}{}",
+                    if self.document.dirty() {
+                        " • Modified"
+                    } else {
+                        ""
+                    }
+                ))
+                .truncate(),
+            )
+            .on_hover_text(
+                self.document
                     .path
                     .as_ref()
-                    .and_then(|path| path.file_name())
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "Untitled".into());
-                ui.add(
-                    egui::Label::new(format!(
-                        "{name}{}",
-                        if self.document.dirty() {
-                            " • Modified"
-                        } else {
-                            ""
-                        }
-                    ))
-                    .truncate(),
-                )
-                .on_hover_text(
-                    self.document
-                        .path
-                        .as_ref()
-                        .map(|path| path.display().to_string())
-                        .unwrap_or_else(|| "Save to create a project document".into()),
-                );
-            });
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "Save to create a project document".into()),
+            );
         });
         if file_action.is_some() {
             ui.ctx().memory_mut(|memory| {
