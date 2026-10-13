@@ -26,7 +26,7 @@ These are unfinished fixes and design questions. [The roadmap](../../PLAN.md) ow
 - **Scopes disclosure:** decide whether disclosure-style hiding improves the persistent visibility control without changing canvas/resource behavior.
 - **Native shell:** app menus and owner-relative dialogs need design; no framework choice is established.
 - **Operation feedback:** coordinate progress/errors with [the feedback slice](completion.md#operation-feedback), preserving transactions and cancellation boundaries.
-- **Wheel feel/mapping:** reproduce the specific gesture first. Gamma and Bradford WB have different processing responses despite similar artwork; [processing](../processing.md#curve-balance-is-not-white-balance) explains why. Precision/keyboard changes must not quietly change numerical mapping.
+- **Wheel feel/mapping:** exercise normal/Shift-fine dragging and modifier transitions with physical input; reproduce any directional asymmetry before changing mapping. Gamma and Bradford WB have different processing responses despite similar artwork; [processing](../processing.md#curve-balance-is-not-white-balance) explains why. Further sensitivity/keyboard changes must not quietly change numerical mapping.
 
 ## Next action and acceptance
 

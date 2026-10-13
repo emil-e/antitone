@@ -565,6 +565,692 @@ fn wheel_pointer_updates_the_same_coordinates_and_disabled_wheels_are_read_only(
         }
     }
 }
+fn wheel_frame(
+    context: &egui::Context,
+    balance: &mut Balance,
+    kind: ColorControl,
+    enabled: bool,
+    mut events: Vec<egui::Event>,
+    modifiers: egui::Modifiers,
+) -> Response {
+    events.insert(0, egui::Event::ModifiersChanged(modifiers));
+    for event in &mut events {
+        if let egui::Event::PointerButton {
+            modifiers: event_modifiers,
+            ..
+        } = event
+        {
+            *event_modifiers = modifiers;
+        }
+    }
+    let mut response = None;
+    let mut output = context.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(315., 250.),
+            )),
+            events,
+            ..Default::default()
+        },
+        |ui| {
+            ui.add_enabled_ui(enabled, |ui| {
+                response = Some(wheel(ui, kind, balance));
+            });
+        },
+    );
+    output.textures_delta.clear();
+    response.unwrap()
+}
+
+fn assert_balance(actual: Balance, expected: Balance) {
+    assert!(
+        (actual.warmth - expected.warmth).abs() < 1e-12,
+        "{actual:?} != {expected:?}"
+    );
+    assert!(
+        (actual.tint - expected.tint).abs() < 1e-12,
+        "{actual:?} != {expected:?}"
+    );
+}
+
+#[test]
+fn shift_wheel_drag_anchors_to_the_current_value_and_uses_one_tenth_motion() {
+    for scale in [1., 2.] {
+        for kind in [ColorControl::GammaBalance, ColorControl::WhiteBalance] {
+            let context = egui::Context::default();
+            context.set_pixels_per_point(scale);
+            let initial = Balance {
+                warmth: 0.234567891234,
+                tint: -0.123456789123,
+            };
+            let mut balance = initial;
+            let wheel = wheel_frame(
+                &context,
+                &mut balance,
+                kind,
+                true,
+                vec![],
+                egui::Modifiers::NONE,
+            );
+            let origin = wheel.rect.center() + egui::vec2(-30., 10.);
+            wheel_frame(
+                &context,
+                &mut balance,
+                kind,
+                true,
+                pointer(origin, true),
+                egui::Modifiers::SHIFT,
+            );
+            assert_eq!(
+                balance, initial,
+                "precision press does not reposition the marker"
+            );
+            let point = origin + egui::vec2(2., -1.);
+            wheel_frame(
+                &context,
+                &mut balance,
+                kind,
+                true,
+                vec![egui::Event::PointerMoved(point)],
+                egui::Modifiers::SHIFT,
+            );
+            assert_eq!(
+                balance, initial,
+                "pointer jitter below the drag threshold is not an edit"
+            );
+            let point = point + egui::vec2(26., -13.);
+            wheel_frame(
+                &context,
+                &mut balance,
+                kind,
+                true,
+                vec![egui::Event::PointerMoved(point)],
+                egui::Modifiers::SHIFT,
+            );
+            let delta = (point - origin) / 52.;
+            let expected = kind.coordinates(
+                kind.position(initial) + DVec2::new(f64::from(delta.x), -f64::from(delta.y)) * 0.1,
+            );
+            assert_balance(balance, expected);
+            let before = balance;
+            wheel_frame(
+                &context,
+                &mut balance,
+                kind,
+                true,
+                pointer(point, false),
+                egui::Modifiers::SHIFT,
+            );
+            wheel_frame(
+                &context,
+                &mut balance,
+                kind,
+                true,
+                vec![],
+                egui::Modifiers::NONE,
+            );
+            assert_eq!(balance, before, "release/idle does not move the marker");
+        }
+    }
+}
+
+#[test]
+fn wheel_shift_transitions_do_not_jump_and_normal_motion_resumes_relative_until_release() {
+    for kind in [ColorControl::GammaBalance, ColorControl::WhiteBalance] {
+        let context = egui::Context::default();
+        let mut balance = Balance::default();
+        let center = wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            vec![],
+            egui::Modifiers::NONE,
+        )
+        .rect
+        .center();
+        wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            pointer(center, true),
+            egui::Modifiers::NONE,
+        );
+        let mut point = center + egui::vec2(26., 0.);
+        wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            vec![egui::Event::PointerMoved(point)],
+            egui::Modifiers::NONE,
+        );
+        assert_balance(balance, kind.coordinates(DVec2::new(0.5, 0.)));
+        for modifiers in [
+            egui::Modifiers::SHIFT,
+            egui::Modifiers::NONE,
+            egui::Modifiers::SHIFT,
+        ] {
+            let before = balance;
+            wheel_frame(&context, &mut balance, kind, true, vec![], modifiers);
+            assert_eq!(
+                balance, before,
+                "stationary modifier changes preserve exact f64 values"
+            );
+            point += egui::vec2(-13., 13.);
+            wheel_frame(
+                &context,
+                &mut balance,
+                kind,
+                true,
+                vec![egui::Event::PointerMoved(point)],
+                modifiers,
+            );
+            let expected = kind.coordinates(
+                kind.position(before)
+                    + DVec2::new(-0.25, -0.25) * if modifiers.shift { 0.1 } else { 1. },
+            );
+            assert_balance(balance, expected);
+        }
+        let before = balance;
+        wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            vec![],
+            egui::Modifiers::NONE,
+        );
+        wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            pointer(point, false),
+            egui::Modifiers::NONE,
+        );
+        assert_eq!(balance, before);
+        let target = center + egui::vec2(-26., 0.);
+        wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            pointer(target, true),
+            egui::Modifiers::NONE,
+        );
+        wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            pointer(target, false),
+            egui::Modifiers::NONE,
+        );
+        assert_balance(balance, kind.coordinates(DVec2::new(-0.5, 0.)));
+    }
+}
+
+#[test]
+fn normal_wheel_drag_keeps_absolute_mapping_and_shift_click_does_not_reposition() {
+    for kind in [ColorControl::GammaBalance, ColorControl::WhiteBalance] {
+        let context = egui::Context::default();
+        let mut balance = Balance {
+            warmth: 0.2,
+            tint: -0.1,
+        };
+        let center = wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            vec![],
+            egui::Modifiers::NONE,
+        )
+        .rect
+        .center();
+        let point = center + egui::vec2(-26., 26.);
+        let before = balance;
+        wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            pointer(point, true),
+            egui::Modifiers::SHIFT,
+        );
+        wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            pointer(point, false),
+            egui::Modifiers::SHIFT,
+        );
+        assert_eq!(balance, before);
+        wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            pointer(point, true),
+            egui::Modifiers::NONE,
+        );
+        for offset in [egui::vec2(26., -13.), egui::vec2(-13., 13.)] {
+            let point = center + offset;
+            wheel_frame(
+                &context,
+                &mut balance,
+                kind,
+                true,
+                vec![egui::Event::PointerMoved(point)],
+                egui::Modifiers::NONE,
+            );
+            let position = offset / 52.;
+            assert_balance(
+                balance,
+                kind.coordinates(DVec2::new(f64::from(position.x), -f64::from(position.y))),
+            );
+        }
+    }
+}
+
+#[test]
+fn disabled_wheels_never_apply_precision_motion_and_discard_drag_memory() {
+    for kind in [ColorControl::GammaBalance, ColorControl::WhiteBalance] {
+        let context = egui::Context::default();
+        let mut balance = Balance {
+            warmth: 0.123456789123,
+            tint: -0.234567891234,
+        };
+        let response = wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            vec![],
+            egui::Modifiers::NONE,
+        );
+        let center = response.rect.center();
+        wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            pointer(center, true),
+            egui::Modifiers::SHIFT,
+        );
+        wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            vec![egui::Event::PointerMoved(center + egui::vec2(13., 0.))],
+            egui::Modifiers::SHIFT,
+        );
+        let before = balance;
+        let disabled = wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            false,
+            vec![egui::Event::PointerMoved(center + egui::vec2(26., 13.))],
+            egui::Modifiers::SHIFT,
+        );
+        assert_eq!(disabled.id, response.id);
+        assert!(!disabled.enabled());
+        assert_eq!(balance, before);
+        assert!(
+            context
+                .data_mut(|data| data.get_temp::<WheelDrag>(response.id.with("wheel-drag")))
+                .is_none()
+        );
+        wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            false,
+            pointer(center + egui::vec2(26., 13.), false),
+            egui::Modifiers::SHIFT,
+        );
+        wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            false,
+            pointer(center, true),
+            egui::Modifiers::SHIFT,
+        );
+        wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            false,
+            vec![egui::Event::PointerMoved(center + egui::vec2(26., 0.))],
+            egui::Modifiers::SHIFT,
+        );
+        wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            false,
+            pointer(center + egui::vec2(26., 0.), false),
+            egui::Modifiers::SHIFT,
+        );
+        assert_eq!(balance, before);
+        wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            vec![],
+            egui::Modifiers::NONE,
+        );
+        wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            pointer(center, true),
+            egui::Modifiers::NONE,
+        );
+        wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            pointer(center, false),
+            egui::Modifiers::NONE,
+        );
+        assert_eq!(balance, Balance::default());
+    }
+}
+
+#[test]
+fn precision_wheels_keep_existing_coordinate_bounds_and_use_current_accepted_values() {
+    for kind in [ColorControl::GammaBalance, ColorControl::WhiteBalance] {
+        let context = egui::Context::default();
+        let mut balance = Balance::default();
+        let center = wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            vec![],
+            egui::Modifiers::NONE,
+        )
+        .rect
+        .center();
+        wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            pointer(center, true),
+            egui::Modifiers::SHIFT,
+        );
+        let point = center + egui::vec2(5200., -5200.);
+        wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            vec![egui::Event::PointerMoved(point)],
+            egui::Modifiers::SHIFT,
+        );
+        assert!(balance.validate().is_ok());
+        assert_eq!(balance.warmth.abs(), 1.);
+        assert_eq!(balance.tint.abs(), 1.);
+        let accepted = Balance {
+            warmth: 0.123456789123,
+            tint: -0.234567891234,
+        };
+        balance = accepted;
+        wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            vec![],
+            egui::Modifiers::SHIFT,
+        );
+        assert_eq!(
+            balance, accepted,
+            "no stored grade overrides controller rollback/reset"
+        );
+        wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            vec![egui::Event::PointerMoved(point + egui::vec2(-26., 0.))],
+            egui::Modifiers::SHIFT,
+        );
+        assert_balance(
+            balance,
+            kind.coordinates(kind.position(accepted) + DVec2::new(-0.05, 0.)),
+        );
+    }
+}
+
+#[test]
+fn composed_gamma_roll_and_photo_wheels_keep_precision_gestures_scoped() {
+    let context = egui::Context::default();
+    let initial = [
+        Balance {
+            warmth: 0.1,
+            tint: -0.2,
+        },
+        Balance {
+            warmth: -0.2,
+            tint: 0.1,
+        },
+        Balance {
+            warmth: 0.3,
+            tint: -0.1,
+        },
+    ];
+    let mut balances = initial;
+    let draw = |balances: &mut [Balance; 3], mut events: Vec<egui::Event>, modifiers| {
+        events.insert(0, egui::Event::ModifiersChanged(modifiers));
+        for event in &mut events {
+            if let egui::Event::PointerButton {
+                modifiers: event_modifiers,
+                ..
+            } = event
+            {
+                *event_modifiers = modifiers;
+            }
+        }
+        let mut output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(315., 1800.),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                color(ui, ColorControl::GammaBalance, &mut balances[0], false);
+                white_balance(ui, "roll-white-balance", &mut balances[1], false);
+                color(ui, ColorControl::WhiteBalance, &mut balances[2], false);
+            },
+        );
+        output.textures_delta.clear();
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Circle(circle) if circle.radius == 52. => Some(circle.center),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    draw(&mut balances, vec![], egui::Modifiers::NONE);
+    let centers = draw(&mut balances, vec![], egui::Modifiers::NONE);
+    assert_eq!(centers.len(), 3);
+    for (index, center) in centers.into_iter().enumerate() {
+        let before = balances;
+        let origin = center + egui::vec2(-13., 13.);
+        let point = origin + egui::vec2(26., -13.);
+        draw(&mut balances, pointer(origin, true), egui::Modifiers::SHIFT);
+        draw(
+            &mut balances,
+            vec![egui::Event::PointerMoved(point)],
+            egui::Modifiers::SHIFT,
+        );
+        draw(&mut balances, pointer(point, false), egui::Modifiers::SHIFT);
+        for other in 0..3 {
+            if other != index {
+                assert_eq!(balances[other], before[other]);
+            }
+        }
+        let kind = if index == 0 {
+            ColorControl::GammaBalance
+        } else {
+            ColorControl::WhiteBalance
+        };
+        assert_balance(
+            balances[index],
+            kind.coordinates(kind.position(before[index]) + DVec2::new(0.05, 0.025)),
+        );
+    }
+}
+
+#[test]
+fn hidden_wheel_drag_memory_cannot_leak_into_a_new_normal_gesture() {
+    let context = egui::Context::default();
+    let kind = ColorControl::WhiteBalance;
+    let mut balance = Balance::default();
+    let response = wheel_frame(
+        &context,
+        &mut balance,
+        kind,
+        true,
+        vec![],
+        egui::Modifiers::NONE,
+    );
+    let center = response.rect.center();
+    wheel_frame(
+        &context,
+        &mut balance,
+        kind,
+        true,
+        pointer(center, true),
+        egui::Modifiers::SHIFT,
+    );
+    wheel_frame(
+        &context,
+        &mut balance,
+        kind,
+        true,
+        vec![egui::Event::PointerMoved(center + egui::vec2(26., 0.))],
+        egui::Modifiers::SHIFT,
+    );
+    let mut output = context.run_ui(
+        egui::RawInput {
+            events: pointer(center + egui::vec2(26., 0.), false),
+            ..Default::default()
+        },
+        |_| (),
+    );
+    output.textures_delta.clear();
+    wheel_frame(
+        &context,
+        &mut balance,
+        kind,
+        true,
+        vec![],
+        egui::Modifiers::NONE,
+    );
+    let target = center + egui::vec2(-26., 0.);
+    wheel_frame(
+        &context,
+        &mut balance,
+        kind,
+        true,
+        pointer(target, true),
+        egui::Modifiers::NONE,
+    );
+    wheel_frame(
+        &context,
+        &mut balance,
+        kind,
+        true,
+        pointer(target, false),
+        egui::Modifiers::NONE,
+    );
+    assert_balance(balance, kind.coordinates(DVec2::new(-0.5, 0.)));
+    assert!(
+        context
+            .data_mut(|data| data.get_temp::<WheelDrag>(response.id.with("wheel-drag")))
+            .is_none()
+    );
+}
+
+#[test]
+fn precision_motion_is_not_applied_twice_when_egui_repeats_a_layout_pass() {
+    for kind in [ColorControl::GammaBalance, ColorControl::WhiteBalance] {
+        let context = egui::Context::default();
+        let initial = Balance {
+            warmth: 0.123456789123,
+            tint: -0.234567891234,
+        };
+        let mut balance = initial;
+        let center = wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            vec![],
+            egui::Modifiers::NONE,
+        )
+        .rect
+        .center();
+        wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            pointer(center, true),
+            egui::Modifiers::SHIFT,
+        );
+        let mut passes = 0;
+        let mut output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(315., 250.),
+                )),
+                events: vec![
+                    egui::Event::ModifiersChanged(egui::Modifiers::SHIFT),
+                    egui::Event::PointerMoved(center + egui::vec2(26., 0.)),
+                ],
+                ..Default::default()
+            },
+            |ui| {
+                ui.add_enabled_ui(true, |ui| {
+                    wheel(ui, kind, &mut balance);
+                });
+                passes += 1;
+                if passes == 1 {
+                    ui.ctx()
+                        .request_discard("test wheel precision across layout passes");
+                }
+            },
+        );
+        output.textures_delta.clear();
+        assert!(passes > 1);
+        assert_balance(
+            balance,
+            kind.coordinates(kind.position(initial) + DVec2::new(0.05, 0.)),
+        );
+    }
+}
+
 #[test]
 fn resolve_orientation_keeps_blue_right_and_yellow_left_for_artwork_and_input() {
     assert!((hue_direction(2.) - DVec2::X).length() < 1e-12);

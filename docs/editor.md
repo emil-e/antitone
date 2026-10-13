@@ -18,6 +18,8 @@ A displayed number is not necessarily a rounded stored value. Controls must pres
 
 Pending text commits before a stage switch, Analyze snapshot or file action. Escape cancels text editing before it can cancel an image tool. Popovers, numeric controls and toolbar gestures own input ahead of the canvas, so one action cannot also pan, pick or apply a draft.
 
+Colour wheels normally position the marker under the pointer. Hold Shift while dragging for ten-times finer motion from the current value. Changing Shift during a drag keeps the marker continuous: normal-speed motion resumes from its adjusted position until release, rather than snapping back under the pointer. A new ordinary gesture returns to direct positioning.
+
 Disabled controls must be genuinely read-only. In particular, focus loss must not commit old pending text when an operation makes the control unavailable. Parameter domains and complete GPU preflight decide whether a proposed edit is acceptable; rejected edits restore the previous grade rather than switching to another processing path.
 
 ## Source inspection is a view

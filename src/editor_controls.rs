@@ -318,6 +318,12 @@ fn color_inputs(ui: &mut Ui, kind: ColorControl, value: &mut Balance, can_pick: 
     }).inner
 }
 
+#[derive(Clone, Copy, Default)]
+struct WheelDrag {
+    pointer: egui::Pos2,
+    relative: bool,
+}
+
 fn wheel(ui: &mut Ui, kind: ColorControl, value: &mut Balance) -> Response {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(140., 140.), egui::Sense::click_and_drag());
@@ -367,11 +373,52 @@ fn wheel(ui: &mut Ui, kind: ColorControl, value: &mut Balance) -> Response {
         radius,
         egui::Stroke::new(1., ui.visuals().weak_text_color()),
     );
-    if (response.dragged() || response.clicked())
+    let drag_id = response.id.with("wheel-drag");
+    let mut drag = ui
+        .ctx()
+        .data_mut(|data| data.remove_temp::<WheelDrag>(drag_id));
+    let down = response.enabled() && response.is_pointer_button_down_on();
+    if response.enabled()
         && let Some(pointer) = response.interact_pointer_pos()
     {
-        let position = (pointer - center) / radius;
-        *value = kind.coordinates(DVec2::new(f64::from(position.x), -f64::from(position.y)));
+        let (shift, pressed, origin) = ui.input(|input| {
+            (
+                input.modifiers.shift,
+                input.pointer.any_pressed(),
+                input.pointer.press_origin(),
+            )
+        });
+        if down && (pressed || drag.is_none()) {
+            drag = Some(WheelDrag {
+                pointer: origin.unwrap_or(pointer),
+                relative: shift,
+            });
+        }
+        if down {
+            // Keep motion relative after using precision so releasing Shift cannot snap to the pointer.
+            drag.as_mut().unwrap().relative |= shift;
+        }
+        if let Some(state) = &drag
+            && state.relative
+        {
+            if response.dragged() || response.drag_stopped() {
+                let delta = (pointer - state.pointer) / radius;
+                if delta != egui::Vec2::ZERO {
+                    let delta = DVec2::new(f64::from(delta.x), -f64::from(delta.y));
+                    *value = kind
+                        .coordinates(kind.position(*value) + delta * if shift { 0.1 } else { 1. });
+                }
+            }
+        } else if (response.dragged() || response.clicked()) && !shift {
+            let position = (pointer - center) / radius;
+            *value = kind.coordinates(DVec2::new(f64::from(position.x), -f64::from(position.y)));
+        }
+        if down && response.dragged() {
+            drag.as_mut().unwrap().pointer = pointer;
+        }
+    }
+    if down && let Some(drag) = drag {
+        ui.ctx().data_mut(|data| data.insert_temp(drag_id, drag));
     }
     let position = kind.position(*value);
     ui.painter().circle_filled(
@@ -379,7 +426,10 @@ fn wheel(ui: &mut Ui, kind: ColorControl, value: &mut Balance) -> Response {
         4.,
         ui.visuals().text_color(),
     );
-    response.on_hover_text(kind.tooltip())
+    response.on_hover_ui(|ui| {
+        ui.label("Click or drag to position. Shift-drag for 10× finer adjustment.");
+        ui.label(kind.tooltip());
+    })
 }
 
 #[cfg(test)]
