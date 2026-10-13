@@ -1531,6 +1531,38 @@ impl Editor {
                         if reset {
                             self.photo.exposure = 0.;
                         }
+                        let defaults = PhotoSettings::default();
+                        let changed = self.photo.contrast != defaults.contrast
+                            || self.photo.pivot != defaults.pivot
+                            || self.photo.contrast_colour_mix != defaults.contrast_colour_mix;
+                        let (_, reset) = controls::section(ui, "photo-contrast", "Contrast", SectionHeader {
+                            summary: &format!("{:.2} · Pivot {:.3} · Preserve {:.2}", self.photo.contrast, self.photo.pivot, self.photo.contrast_colour_mix),
+                            changed, reset: Some(changed), default_open: Some(true),
+                        }, |ui| {
+                            controls::parameter(ui, Parameter::Contrast, &mut self.photo.contrast);
+                            controls::parameter(ui, Parameter::Pivot, &mut self.photo.pivot);
+                            ui.small("Colour behavior");
+                            controls::parameter(ui, Parameter::ColourMix, &mut self.photo.contrast_colour_mix);
+                        });
+                        if reset {
+                            self.photo.contrast = defaults.contrast;
+                            self.photo.pivot = defaults.pivot;
+                            self.photo.contrast_colour_mix = defaults.contrast_colour_mix;
+                        }
+                        let changed = self.photo.saturation != defaults.saturation
+                            || self.photo.saturation_density != defaults.saturation_density;
+                        let (_, reset) = controls::section(ui, "photo-saturation", "Saturation", SectionHeader {
+                            summary: &format!("{:.2} · Density {:.2}", self.photo.saturation, self.photo.saturation_density),
+                            changed, reset: Some(changed), default_open: Some(true),
+                        }, |ui| {
+                            controls::parameter(ui, Parameter::Saturation, &mut self.photo.saturation);
+                            ui.small("Colour behavior");
+                            controls::parameter(ui, Parameter::Density, &mut self.photo.saturation_density);
+                        });
+                        if reset {
+                            self.photo.saturation = defaults.saturation;
+                            self.photo.saturation_density = defaults.saturation_density;
+                        }
                     });
                 });
             } else {

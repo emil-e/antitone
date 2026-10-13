@@ -11,6 +11,12 @@ Implemented in `src/project.rs` behind the `project` feature and connected to Ed
 - Dmin/Dmax each store only an optional native-camera RGB array; floor/development compatibility is roll-level. Uncorrected floor is `1/65535`; correction scales a runtime copy by the maximum gain including identity. Picker source/rectangle does not belong to a reference.
 - Processing model 4 requires native-camera inversion and AP1/D60 working identity. Response is explicit (classic Original or Film); missing response rejects. New projects use Film toe 2.5/shoulder off. Only project schema 5 and processing model 4 are supported. Incompatible schema/model/development state rejects without migration or reinterpretation.
 
+## Photo grade extension
+
+Schema-5 Photo settings retain exposure/WB and add `contrast`, `pivot`, `contrast_colour_mix`, `saturation`, `saturation_density`. Missing new fields default to 1 / 0.18 / 0 / 1 / 0, so existing supported grades retain their exact appearance. New saves retain all fields with f64 round trips. The Colour preservation UI label still serializes as `contrast_colour_mix`; explicit saved blend values, including halfway, are not changed by new defaults. Source validation and runtime GPU preflight check their declared processing domains; invalid edits/Open/save fail atomically. Unknown fields remain rejected, so older readers cannot silently discard a new grade. No schema-4 migration or legacy processing path is introduced.
+
+The fields are source-owned grading state, not UI preferences or derived cache data. Dirty checks, source switching, thumbnails/scopes/preview/refinement and export snapshots include the full Photo settings. [Exact operator contract](processing-model.md#photo-contrastpivot-and-saturation).
+
 ## Flat-field state
 
 Schema 5 has an optional `flat_field`; an absent field still selects the uncorrected camera source path. Present state stores the explicit algorithm contract from `src/flat_field.rs`, Enabled, reference source ID, source development, roll development including fixed WB, accepted support and bounded RGB gain nodes (maximum 256×256). Deserialization validates node geometry/representability; document validation rejects unknown contracts, snapshot mismatches, incompatible enabled photo geometry/matrix/floor and invalid corrected calibration domains. The existing 8 MiB document limit remains.

@@ -137,6 +137,7 @@ fn film_gpu_matches_full_f64_for_shapes_matrices_balances_wb_and_exposure_extrem
                 let photo = PhotoSettings {
                     exposure: ev / 2.,
                     wb: balances[case / 17 % 4],
+                    ..PhotoSettings::default()
                 };
                 let params = match ProcessingParameters::positive(cal, roll, photo, matrix) {
                     Ok(p) => p,

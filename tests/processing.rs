@@ -454,6 +454,7 @@ fn moving_bradford_wb_to_ap1_preserves_the_xyz_operation() {
             warmth: 0.3,
             tint: -0.2,
         },
+        ..PhotoSettings::default()
     };
     let scan = DVec3::new(0.05, 0.07, 0.02);
     let inverted = Inversion::new(cal, roll).unwrap().apply(scan).unwrap();

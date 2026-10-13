@@ -6,7 +6,7 @@ The implemented application is one Rust package with narrow native bridges. The 
 
 | Boundary | Implementation | Responsibility |
 | --- | --- | --- |
-| Scalar processing | `src/{processing,color,sampling}.rs` | f64 response/domain reference, transforms, compensated sampling and actual-response fitting |
+| Scalar processing | `src/{processing,photographic,color,sampling}.rs` | f64 response/domain reference, transforms, compensated sampling and actual-response fitting |
 | RAW/source | `src/{raw,scan}.rs`, `native/raw_bridge.{h,cpp}` | Owned LibRaw development, metadata, immutable sensor diagnostics and camera RGB16 source/proxies/tiles |
 | Flat-field | `src/{flat_field,gpu_flat_field,editor_flat_field,project_flat_field}.rs` | Native-camera gain estimation/evaluation, transactional reference workflow and durable map identity |
 | GPU processing | `src/gpu.rs`, owned shaders | Exact integer source, precise temporary arithmetic, AP1 results and floor flags |
@@ -33,6 +33,7 @@ RAW Bayer samples
   → normalize / optional source-coordinate camera-RGB flat-field gains
   → native-camera calibration / model-4 inversion / roll gamma balance
   → camera-to-AP1/D60 / exposure / photographic Bradford WB
+  → Photo ACEScct contrast + colour preservation / AP1 saturation + density mix
   → signed/HDR AP1
        ├→ AP1-to-AP0 → scene-linear EXR
        └→ pinned ACES 2, 100-nit sRGB or P3/D65

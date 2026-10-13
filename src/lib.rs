@@ -10,6 +10,7 @@ pub mod frame_raster;
 pub mod geometry;
 #[cfg(feature = "gpu")]
 pub mod gpu;
+pub mod photographic;
 #[cfg(feature = "ui")]
 pub mod platform;
 pub mod processing;

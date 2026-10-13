@@ -103,6 +103,10 @@ fn command_save_commits_pending_numeric_text_before_snapshot() {
         )
         .unwrap();
     editor.tab = 1;
+    // Keep the pending Exposure edit visible rather than scrolling past it.
+    for section in ["photo-contrast", "photo-saturation"] {
+        editor.preferences.sections.insert(section.into(), false);
+    }
     let context = egui::Context::default();
     ui_frame(&mut editor, &context, vec![]);
     for frame in 0..60 {

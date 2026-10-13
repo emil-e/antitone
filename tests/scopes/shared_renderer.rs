@@ -137,6 +137,7 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                             tint: -0.1,
                         },
                         exposure: -1.,
+                        ..PhotoSettings::default()
                     },
                     DMat3::IDENTITY,
                 )

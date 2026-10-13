@@ -9,6 +9,8 @@ struct Parameters {
     shape: vec4f,
     anchor_low: vec4f,
     post_low: array<vec4f, 3>,
+    creative: array<vec4f, 3>,
+    creative_low: array<vec4f, 3>,
 }
 @group(0) @binding(0) var<storage, read> scans: array<vec2u>;
 @group(0) @binding(1) var<storage, read_write> positives: array<vec4f>;

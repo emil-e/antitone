@@ -13,6 +13,8 @@ pub const DEFAULT_TOE: f64 = 2.5;
 pub const MIN_TOE: f64 = 1.0;
 pub const MAX_TOE: f64 = 4.0;
 pub const MAX_SHOULDER: f64 = 0.02;
+pub const DEFAULT_PIVOT: f64 = 0.18;
+pub const DEFAULT_COLOUR_MIX: f64 = 0.;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "project", derive(serde::Serialize, serde::Deserialize))]
@@ -134,12 +136,59 @@ impl RollSettings {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "project", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "project", serde(deny_unknown_fields))]
 pub struct PhotoSettings {
     pub exposure: f64,
     pub wb: Balance,
+    #[cfg_attr(feature = "project", serde(default = "identity_amount"))]
+    pub contrast: f64,
+    #[cfg_attr(feature = "project", serde(default = "default_pivot"))]
+    pub pivot: f64,
+    #[cfg_attr(feature = "project", serde(default = "default_colour_mix"))]
+    pub contrast_colour_mix: f64,
+    #[cfg_attr(feature = "project", serde(default = "identity_amount"))]
+    pub saturation: f64,
+    #[cfg_attr(feature = "project", serde(default = "default_colour_mix"))]
+    pub saturation_density: f64,
+}
+fn identity_amount() -> f64 {
+    1.
+}
+fn default_pivot() -> f64 {
+    DEFAULT_PIVOT
+}
+fn default_colour_mix() -> f64 {
+    DEFAULT_COLOUR_MIX
+}
+impl Default for PhotoSettings {
+    fn default() -> Self {
+        Self {
+            exposure: 0.,
+            wb: Balance::default(),
+            contrast: identity_amount(),
+            pivot: default_pivot(),
+            contrast_colour_mix: default_colour_mix(),
+            saturation: identity_amount(),
+            saturation_density: default_colour_mix(),
+        }
+    }
+}
+impl PhotoSettings {
+    pub fn validate(self) -> Result<Self, Error> {
+        exposure_multiplier(self.exposure)?;
+        wb_matrix(self.wb)?;
+        crate::photographic::Grade::new(self)?;
+        Ok(self)
+    }
+    /// Measurement is before Photo WB and creative grading, retaining exposure.
+    pub fn before_white_balance(self) -> Self {
+        Self {
+            exposure: self.exposure,
+            ..Self::default()
+        }
+    }
 }
 
 pub fn exposure_multiplier(stops: f64) -> Result<f64, Error> {
@@ -234,6 +283,7 @@ impl Inversion {
 pub struct Pipeline {
     inversion: Inversion,
     post_inversion_matrix: DMat3,
+    grade: crate::photographic::Grade,
 }
 
 impl Pipeline {
@@ -244,6 +294,7 @@ impl Pipeline {
         camera_to_ap1: DMat3,
     ) -> Result<Self, Error> {
         validate_camera_matrix(camera_to_ap1)?;
+        photo.validate()?;
         let gain = exposure_multiplier(roll.exposure)? * exposure_multiplier(photo.exposure)?;
         let post_inversion_matrix = wb_matrix(photo.wb)? * camera_to_ap1 * gain;
         if !post_inversion_matrix.is_finite() {
@@ -252,16 +303,14 @@ impl Pipeline {
         Ok(Self {
             inversion: Inversion::new(calibration, roll)?,
             post_inversion_matrix,
+            grade: crate::photographic::Grade::new(photo)?,
         })
     }
 
     /// Returns unclipped AP1 working RGB; scene-linear AP0 export converts at its boundary.
     pub fn apply(&self, scan: DVec3) -> Result<InvertedPixel, Error> {
         let mut pixel = self.inversion.apply(scan)?;
-        pixel.rgb = self.post_inversion_matrix * pixel.rgb;
-        if !pixel.rgb.is_finite() {
-            return Err(Error::NumericalOverflow);
-        }
+        pixel.rgb = self.grade.apply(self.post_inversion_matrix * pixel.rgb)?;
         Ok(pixel)
     }
 }

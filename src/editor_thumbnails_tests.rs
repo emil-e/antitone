@@ -481,8 +481,24 @@ fn thumbnail_parameters_follow_actual_roll_and_each_photo_without_inspection_gai
     .unwrap();
     assert_eq!(bytemuck::bytes_of(&first), bytemuck::bytes_of(&expected));
     let unchanged_key = key(&editor.document, id);
-    editor.photo.exposure = 1.25;
+    editor.photo = PhotoSettings {
+        exposure: 1.25,
+        contrast: 1.2,
+        pivot: 0.25,
+        contrast_colour_mix: 0.75,
+        saturation: 1.3,
+        saturation_density: 0.25,
+        ..PhotoSettings::default()
+    };
     let adjusted = editor.thumbnail_parameters(&source).unwrap();
+    let expected = ProcessingParameters::positive(
+        editor.calibration().unwrap(),
+        editor.roll,
+        editor.photo,
+        glam::DMat3::IDENTITY,
+    )
+    .unwrap();
+    assert_eq!(bytemuck::bytes_of(&adjusted), bytemuck::bytes_of(&expected));
     assert_ne!(bytemuck::bytes_of(&adjusted), bytemuck::bytes_of(&first));
     assert_eq!(
         bytemuck::bytes_of(

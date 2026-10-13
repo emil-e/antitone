@@ -294,10 +294,7 @@ impl Scan {
         let pipeline = Pipeline::new(
             self.processing_calibration(calibration)?,
             roll,
-            PhotoSettings {
-                wb: Balance::default(),
-                ..photo
-            },
+            photo.before_white_balance(),
             self.camera_to_ap1,
         )?;
         let mut pixels = self.patch(region)?;
@@ -377,10 +374,7 @@ impl Scan {
         let pipeline = Pipeline::new(
             self.processing_calibration(calibration)?,
             roll,
-            PhotoSettings {
-                wb: Balance::default(),
-                ..photo
-            },
+            photo.before_white_balance(),
             self.camera_to_ap1,
         )?;
         let mut pixels = self.patch_coverage(coverage)?;

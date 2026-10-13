@@ -132,13 +132,16 @@ fn camera_positive_to_ap1(q: array<Pair, 3>) -> array<Pair, 3> {
     return working;
 }
 fn photographic_post(working: array<Pair, 3>, flags: u32) -> vec4f {
-    var result = vec3f(0.0);
+    var rgb: array<Pair, 3>;
     for (var c = 0u; c < 3u; c++) {
         let x = pair_mul(Pair(parameters.post[0][c], parameters.post_low[0][c]), working[0]);
         let y = pair_mul(Pair(parameters.post[1][c], parameters.post_low[1][c]), working[1]);
         let z = pair_mul(Pair(parameters.post[2][c], parameters.post_low[2][c]), working[2]);
-        let sum = pair_add(pair_add(x, y), z);
-        result[c] = fma(1.0, sum.h, sum.l);
+        rgb[c] = pair_add(pair_add(x, y), z);
     }
+    // Source inspection shares the precise matrix stage, never the creative grade.
+    if parameters.gamma_mode.w > 0.5 { rgb = photographic_grade(rgb); }
+    var result = vec3f(0.0);
+    for (var c = 0u; c < 3u; c++) { result[c] = fma(1.0, rgb[c].h, rgb[c].l); }
     return vec4f(result, f32(flags));
 }

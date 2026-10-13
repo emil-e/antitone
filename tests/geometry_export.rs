@@ -229,7 +229,12 @@ fn native_camera_flat_field_compositions_reopen_with_source_anchored_correction(
         } else {
             base
         };
-        let pipeline = Pipeline::new(calibration, roll, PhotoSettings::default(), matrix).unwrap();
+        let photo = PhotoSettings {
+            contrast: 0.8,
+            saturation: 1.3,
+            ..PhotoSettings::default()
+        };
+        let pipeline = Pipeline::new(calibration, roll, photo, matrix).unwrap();
         let source = |x: u32, y: u32| {
             pipeline
                 .apply(

@@ -43,6 +43,7 @@ fn stable_identity_keeps_photo_edits_independent_of_order_and_locator() {
             warmth: 0.25,
             tint: -0.125,
         },
+        ..PhotoSettings::default()
     };
     document.project.source_mut(one).unwrap().photo = photo;
     document.project.order.reverse();

@@ -58,6 +58,7 @@ fn train_native_source_and_gpu_match_scalar_with_unchanged_numerical_gate() {
             warmth: -0.15,
             tint: 0.12,
         },
+        ..PhotoSettings::default()
     };
     let pipeline = Pipeline::new(cal, roll, photo, train.camera_to_ap1).unwrap();
     let params = ProcessingParameters::positive(cal, roll, photo, train.camera_to_ap1).unwrap();

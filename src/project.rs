@@ -1,6 +1,5 @@
 use crate::{
     Error, PROCESSING_MODEL_VERSION,
-    color::wb_matrix,
     crop::Crop,
     geometry::{PhotoOrientation, RollOrientation, SourceRegion},
     processing::{Calibration, Inversion, PhotoSettings, RollSettings, exposure_multiplier},
@@ -141,8 +140,7 @@ impl Source {
         if let Some(crop) = self.crop {
             crop.region(self.development.active_area.into())?;
         }
-        exposure_multiplier(self.photo.exposure)?;
-        wb_matrix(self.photo.wb)?;
+        self.photo.validate()?;
         Ok(())
     }
 }

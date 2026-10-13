@@ -56,9 +56,50 @@ fn fixture(directory: &std::path::Path) -> (Project, SourceId, SourceId) {
             warmth: 0.1,
             tint: -0.05,
         },
+        ..PhotoSettings::default()
     };
     (project, dmin_source_id, dmax_source_id)
 }
+#[test]
+fn photographic_settings_roundtrip_and_absent_fields_preserve_current_grades() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut project, id, _) = fixture(directory.path());
+    let before = project.source(id).unwrap().photo;
+    let photo = PhotoSettings {
+        contrast: 1.123456789012345,
+        pivot: 0.23456789012345,
+        contrast_colour_mix: 0.3456789012345,
+        saturation: 1.23456789012345,
+        saturation_density: 0.456789012345,
+        ..before
+    };
+    project.source_mut(id).unwrap().photo = photo;
+    let path = directory.path().join("grade.antitone.json");
+    project.save(&path, Save::New).unwrap();
+    assert_eq!(
+        Project::load(&path).unwrap().source(id).unwrap().photo,
+        photo
+    );
+    let mut json = serde_json::to_value(&project).unwrap();
+    for source in json["sources"].as_array_mut().unwrap() {
+        let fields = source["photo"].as_object_mut().unwrap();
+        for name in [
+            "contrast",
+            "pivot",
+            "contrast_colour_mix",
+            "saturation",
+            "saturation_density",
+        ] {
+            fields.remove(name);
+        }
+    }
+    let old: Project = serde_json::from_value(json).unwrap();
+    old.validate().unwrap();
+    assert_eq!(old.source(id).unwrap().photo, before);
+    project.source_mut(id).unwrap().photo.contrast = 2.;
+    assert!(project.validate().is_err());
+}
+
 #[test]
 fn orientation_roundtrip_keeps_legacy_identity_and_numerical_state() {
     use antitone::geometry::{Flips, PhotoOrientation, QuarterTurns};

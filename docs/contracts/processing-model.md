@@ -8,7 +8,7 @@ The numerical core is an f64 scalar reference using pinned `glam 0.34.1`. It app
 
 Calibration, input-floor diagnostics, gamma balance and nonlinear inversion operate in **developed native-camera RGB**. This is demosaiced, fixed-WB LibRaw output, not a Bayer mosaic, narrowband dye measurements or a standardized colour space. `Inversion::apply` returns native-camera positive coordinates. Dmin→0 and Dmax→1 are per-channel response anchors, not a claim that camera `[1,1,1]` is AP1 neutral.
 
-`Pipeline::new` takes the source's explicit camera→AP1 matrix. `Pipeline::apply` inverts first, then maps positives to linear AP1/ACEScg, applies common exposure and photographic Bradford WB, and returns **AP1**. Scalar composition is `WB_AP1 * camera_to_AP1 * 2^(roll_EV+photo_EV)` after inversion. Preserve signed/HDR values; no intermediate working-gamut clamp.
+`Pipeline::new` takes the source's explicit camera→AP1 matrix. `Pipeline::apply` inverts first, then maps positives to linear AP1/ACEScg, applies common exposure and photographic Bradford WB, and returns **AP1**. The matrix stage is `WB_AP1 * camera_to_AP1 * 2^(roll_EV+photo_EV)` after inversion, followed by the Photo contrast/saturation grade below. Preserve signed/HDR values; no intermediate working-gamut clamp.
 
 `Metadata::camera_to_ap1()` composes metadata camera→linear-sRGB, sRGB→XYZ/D65, Bradford D65→D60, then XYZ→AP1. There is no pre-inversion AP0/AP1 matrix. Using this positive camera matrix is the agreed pragmatic baseline, not proof of recovered scene radiometry through overlapping sensor/film spectra. No stock calibration, PCA-derived basis or invented dye unmixing is required/applied.
 
@@ -22,7 +22,19 @@ One production GPU source: developed RGB16 in four u16 slots, **8 bytes/pixel**,
 
 `preview_source` uses integer nearest-grid centres; tiles copy integer full-resolution pixels and pad partial edges with zero. GPU normalization/field interpolation/gain multiplication retain scalar-f64 rounding in temporary f32 expansions. All response shapes use compensated log/exp and post-matrix pairs. Source bypass carries its complete expansion through the camera→AP1 matrix before narrowing. Camera matrix preflight rejects unrepresentable/subnormal constants and unsupported smallest-code products.
 
-Working/linear-target buffers remain f32; presentation remains RGBA16Float. A 1024×256 source tile is 2 MiB with a 4 MiB working buffer. Settled images retain rendered/presentation resources only. Processing constants are 224 bytes, camera constants 144 bytes; optional field geometry is 64 bytes. Higher precision lives in temporaries/small constants, not a retained wide source cache.
+Working/linear-target buffers remain f32; presentation remains RGBA16Float. A 1024×256 source tile is 2 MiB with a 4 MiB working buffer. Settled images retain rendered/presentation resources only. Processing constants are 320 bytes, camera constants 144 bytes; optional field geometry is 64 bytes. Higher precision lives in temporaries/small constants, not a retained wide source cache.
+
+## Photo contrast/pivot and saturation
+
+`PhotoSettings` owns contrast/pivot, contrast colour preservation, saturation and saturation density. They operate after camera-to-AP1/exposure/Bradford WB and before unchanged ACES or AP0 conversion. Source bypass/inspection and calibration/neutral fitting ignore them. Photo WB measurement retains exposure but explicitly resets WB and all creative fields; the accepted grade is not reset by a pick.
+
+Contrast uses temporary ACEScct `E/D`: `f(x)=D(E(p)+a*(E(x)-E(p)))`. Its standard linear toe supports signed inputs; decode omits the interchange high-end clip. There is no extra S-curve, pedestal or working-data clamp. RGB contrast applies `f` independently per channel. The ratio proxy uses `b=f(0)`, `g(Y)=(f(Y)-b)/Y`, `out=b*1+g(Y)*rgb`, with stable divided differences and analytic `f'(0)` at zero Y. It matches the RGB endpoint's neutral response and preserves **black-relative RGB direction**, not perceived saturation or unconditional output chromaticity. Contrast can make black negative.
+
+Saturation endpoints are `Y*1+s*(rgb-Y*1)` and `M*1+s*(rgb-M*1)`, with `M=max(rgb)` and Y from the actual AP1-to-XYZ row. Maximum anchoring is HSV-like on positive RGB with an algebraic signed continuation, not a physical print model. Each blend interpolates independently computed endpoint outputs in linear AP1; contrast precedes saturation. Identity amounts return the original data exactly, regardless of pivot/blends. Nonfinite/invalid inputs and unsupported processing ranges reject rather than repair.
+
+Defaults/ranges: contrast **1** / 0.4..1.6; pivot **0.18** / 0.01..1 linear AP1; colour preservation **0** / 0..1 (0 RGB, 1 ratio proxy); saturation **1** / 0..2; density **0** / 0..1 (0 constant Y, 1 maximum anchor). Zero saturation's grey brightness depends on density; this is not a dedicated monochrome-film workflow.
+
+GPU creative processing retains compensated AP1 pairs through luminance, ACEScct and zero-Y gain evaluation, then narrows the working buffer as before. Positive-only grading preserves camera-floor flags; source inspection never enters it. Preflight includes curve/encoding, secant-gain and saturation intermediate bounds, retaining the existing precision/range gates. No wide source cache or CPU interactive fallback is added. Contract identifier: `ap1-acescct-rgb-black-relative-contrast-y-max-saturation-blends-v1`; [persistence](project-state.md), [controls](editor-controls.md).
 
 ## Optional roll-level flat-field correction
 

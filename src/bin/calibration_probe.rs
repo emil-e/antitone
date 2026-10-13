@@ -143,6 +143,7 @@ fn write_gpu_fixture(
             warmth: -0.25,
             tint: 0.15,
         },
+        ..PhotoSettings::default()
     };
     let parameters = ProcessingParameters::positive(calibration, roll, photo, matrix)?;
     let pipeline = Pipeline::new(calibration, roll, photo, matrix)?;

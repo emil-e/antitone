@@ -36,6 +36,8 @@ Full-resolution pipeline → OCIO CPU rendering → matching transfer → round-
 
 Full-resolution signed/HDR AP1 → AP0/D60 → ZIP16 half/full RGB EXR. Exclude ACES, transfer encoding and monitor conversion. Record AP0 chromaticities, processing model and exposure convention. Reject half overflow and offer full float; never silently clip/change precision. AP0 pixels alone are not a claim of complete ACES-container compliance.
 
+Full-resolution exports include the accepted Photo contrast/saturation grade before their existing output boundary. TIFF descriptions and EXR `antitonePhotographicProcessing` identify `ap1-acescct-rgb-black-relative-contrast-y-max-saturation-blends-v1`. Metadata identifies the operator family, not a complete reconstructible grade; projects retain exact Photo settings.
+
 Export APIs receive the actual `Response`. Both classic Original and Film use native-camera model 4; Film additionally records exact toe/shoulder and signed-root policy. AP0/model-2/3 project processing is not a supported export path.
 
 ## Spatial composition

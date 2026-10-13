@@ -240,6 +240,7 @@ fn tiff_encoded(
             let mut description = format!(
                 "Antitone model {model}; native-camera RGB inversion to AP1; ACES 2 / OCIO 2.6.0; {target:?} v1 / 100-nit SDR; rendering and encoding in matching target RGB"
             );
+            description.push_str(&format!("; photographic={}", crate::photographic::CONTRACT));
             if let Response::Film { toe, shoulder } = response {
                 description.push_str(&format!(
                     "; film toe={toe}; shoulder={shoulder}; signed-root continuation above base"
@@ -342,6 +343,10 @@ pub fn exr(
             )),
         );
     }
+    attributes.other.insert(
+        Text::from("antitonePhotographicProcessing"),
+        AttributeValue::Text(Text::from(crate::photographic::CONTRACT)),
+    );
     attributes.other.insert(
         Text::from("antitoneColorSpace"),
         AttributeValue::Text(Text::from(

@@ -410,6 +410,9 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
                 tint: 0.2,
             },
             exposure: 0.5,
+            contrast: 1.2,
+            saturation: 1.3,
+            ..PhotoSettings::default()
         };
         let pipeline = Pipeline::new(calibration, roll, photo, matrix).unwrap();
         let positive: Vec<_> = scans

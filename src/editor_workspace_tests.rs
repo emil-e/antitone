@@ -281,6 +281,11 @@ fn all_three_stage_controls_are_reachable_at_normal_and_narrow_inspector_sizes()
                     "Tint",
                     "Exposure",
                     "EV",
+                    "Contrast",
+                    "Pivot",
+                    "Colour preservation",
+                    "Saturation",
+                    "Density",
                 ],
             ),
             (2, vec!["Target", "Display P3", "Preview + TIFF · 100 nit"]),
@@ -297,6 +302,8 @@ fn all_three_stage_controls_are_reachable_at_normal_and_narrow_inspector_sizes()
                 "photo-composition",
                 "photo-white-balance",
                 "photo-exposure",
+                "photo-contrast",
+                "photo-saturation",
                 "rendering-target",
             ] {
                 editor.preferences.sections.insert(name.into(), true);

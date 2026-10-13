@@ -9,7 +9,7 @@ use glam::{DMat3, DVec3, Vec4, Vec4Swizzles};
 use wgpu::util::DeviceExt;
 
 use crate::Error;
-use crate::color::wb_matrix;
+use crate::color::{AP1_TO_XYZ, wb_matrix};
 use crate::processing::{
     Calibration, Inversion, PhotoSettings, RollSettings, exposure_multiplier, log_abs_expm1,
     log_ratio, validate_camera_matrix,
@@ -28,6 +28,8 @@ pub struct ProcessingParameters {
     shape: Vec4,
     anchor_low: Vec4,
     post_low: [Vec4; 3],
+    creative: [Vec4; 3],
+    creative_low: [Vec4; 3],
 }
 
 impl ProcessingParameters {
@@ -68,6 +70,8 @@ impl ProcessingParameters {
         validate_camera_matrix(camera_to_ap1)?;
         CameraMatrix::new(camera_to_ap1)?;
         let inversion = Inversion::new(calibration, roll)?;
+        photo.validate()?;
+        let grade = crate::photographic::Grade::new(photo)?;
         let gain = exposure_multiplier(roll.exposure)? * exposure_multiplier(photo.exposure)?;
         let matrix = wb_matrix(photo.wb)?;
         let (toe, shoulder) = roll.response.shape()?;
@@ -86,15 +90,19 @@ impl ProcessingParameters {
         let bound = matrix.x_axis.abs() * working_bound.x
             + matrix.y_axis.abs() * working_bound.y
             + matrix.z_axis.abs() * working_bound.z;
+        let creative_bound = grade.intermediate_bound(bound.max_element());
         if !largest.is_finite()
             || largest.max_element() > f32::MAX as f64 / 4.0
             || !working_bound.is_finite()
             || working_bound.max_element() > f32::MAX as f64 / 4.0
             || !bound.is_finite()
             || bound.max_element() > f32::MAX as f64 / 4.0
+            || !creative_bound.is_finite()
+            || creative_bound > f32::MAX as f64 / 4.0
         {
             return Err(Error::Gpu(
-                "settings can exceed the f32 working range in the response domain".into(),
+                "settings can exceed the f32 working range in response/photographic processing"
+                    .into(),
             ));
         }
         let gammas = roll.channel_gammas()?;
@@ -112,6 +120,19 @@ impl ProcessingParameters {
         let gamma = split_constants(gammas, toe)?;
         let logs = split_constants(inversion.anchor_exponents.map(log_abs_expm1), gain.ln())?;
         let k = shoulder as f32;
+        let weights = AP1_TO_XYZ.transpose().y_axis;
+        let [contrast, colour, luminance] = [
+            [photo.contrast, grade.qp, grade.q0, grade.black],
+            [
+                photo.contrast_colour_mix,
+                photo.saturation,
+                photo.saturation_density,
+                0.,
+            ],
+            [weights.x, weights.y, weights.z, 0.],
+        ]
+        .map(|v| split_constants(DVec3::new(v[0], v[1], v[2]), v[3]));
+        let controls = [contrast?, colour?, luminance?];
         let mut result = Self {
             dmin_floor: reference[0],
             dmin_low: reference[1],
@@ -122,6 +143,8 @@ impl ProcessingParameters {
             anchor: logs[0],
             anchor_low: logs[1],
             post: matrix_columns(matrix),
+            creative: std::array::from_fn(|c| controls[c][0]),
+            creative_low: std::array::from_fn(|c| controls[c][1] + controls[c][2]),
             ..Self::zeroed()
         };
         result.post_low = std::array::from_fn(|c| {
@@ -305,10 +328,11 @@ impl ProcessingKernel {
             label: Some("camera RGB16 to AP1 photographic processing"),
             source: wgpu::ShaderSource::Wgsl(
                 format!(
-                    "{}\n{}\n{}\n{}",
+                    "{}\n{}\n{}\n{}\n{}",
                     include_str!("shaders/camera_conversion.wgsl"),
                     include_str!("shaders/flat_field.wgsl"),
                     include_str!("shaders/film_response.wgsl"),
+                    include_str!("shaders/photographic.wgsl"),
                     include_str!("shaders/processing.wgsl")
                 )
                 .into(),

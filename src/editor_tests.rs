@@ -2057,6 +2057,7 @@ fn section_and_color_resets_preserve_calibration_and_other_edit_scopes() {
             warmth: -0.2,
             tint: 0.1,
         },
+        ..PhotoSettings::default()
     };
     let calibration = (editor.dmin, editor.dmax);
     let photo = editor.photo;
@@ -2096,6 +2097,57 @@ fn section_and_color_resets_preserve_calibration_and_other_edit_scopes() {
     assert_eq!(editor.photo.exposure, -1.);
     click_section_reset(&mut editor, &context, "Exposure");
     assert_eq!(editor.photo.exposure, 0.);
+    assert_eq!(editor.roll, roll);
+    assert_eq!((editor.dmin, editor.dmax), calibration);
+}
+
+#[test]
+fn photographic_section_resets_are_scoped_and_disabled_while_busy() {
+    let context = egui::Context::default();
+    let (mut editor, _send, _receiver) = fixture();
+    editor.tab = 1;
+    for section in ["photo-composition", "photo-white-balance", "photo-exposure"] {
+        editor.preferences.sections.insert(section.into(), false);
+    }
+    editor.photo = PhotoSettings {
+        exposure: 1.25,
+        wb: Balance {
+            warmth: 0.2,
+            tint: -0.1,
+        },
+        contrast: 1.2,
+        pivot: 0.25,
+        contrast_colour_mix: 1.,
+        saturation: 1.3,
+        saturation_density: 1.,
+    };
+    let photo = editor.photo;
+    let roll = editor.roll;
+    let calibration = (editor.dmin, editor.dmax);
+    editor.busy = true;
+    click_section_reset(&mut editor, &context, "Contrast");
+    assert_eq!(editor.photo, photo);
+    editor.busy = false;
+    click_section_reset(&mut editor, &context, "Contrast");
+    let defaults = PhotoSettings::default();
+    assert_eq!(
+        editor.photo,
+        PhotoSettings {
+            contrast: defaults.contrast,
+            pivot: defaults.pivot,
+            contrast_colour_mix: defaults.contrast_colour_mix,
+            ..photo
+        }
+    );
+    click_section_reset(&mut editor, &context, "Saturation");
+    assert_eq!(
+        editor.photo,
+        PhotoSettings {
+            exposure: photo.exposure,
+            wb: photo.wb,
+            ..defaults
+        }
+    );
     assert_eq!(editor.roll, roll);
     assert_eq!((editor.dmin, editor.dmax), calibration);
 }

@@ -2,8 +2,8 @@ use super::icons::{self, Icon};
 use crate::{
     color::{Balance, ap1_to_cones, opponent, opponent_coordinates},
     processing::{
-        DEFAULT_GAMMA, DEFAULT_TOE, MAX_EXPOSURE, MAX_GAMMA, MAX_SHOULDER, MAX_TOE, MIN_GAMMA,
-        MIN_TOE,
+        DEFAULT_COLOUR_MIX, DEFAULT_GAMMA, DEFAULT_PIVOT, DEFAULT_TOE, MAX_EXPOSURE, MAX_GAMMA,
+        MAX_SHOULDER, MAX_TOE, MIN_GAMMA, MIN_TOE,
     },
 };
 use egui::{Color32, Response, Ui};
@@ -274,6 +274,11 @@ pub enum Parameter {
     Exposure,
     Warmth,
     Tint,
+    Contrast,
+    Pivot,
+    ColourMix,
+    Saturation,
+    Density,
 }
 impl Parameter {
     fn label(self) -> &'static str {
@@ -284,6 +289,11 @@ impl Parameter {
             Self::Exposure => "Exposure",
             Self::Warmth => "Warmth",
             Self::Tint => "Tint",
+            Self::Contrast => "Contrast",
+            Self::Pivot => "Pivot",
+            Self::ColourMix => "Colour preservation",
+            Self::Saturation => "Saturation",
+            Self::Density => "Density",
         }
     }
     fn range(self) -> RangeInclusive<f64> {
@@ -292,6 +302,10 @@ impl Parameter {
             Self::Toe => MIN_TOE..=MAX_TOE,
             Self::Shoulder => 0.0..=MAX_SHOULDER,
             Self::Exposure => -MAX_EXPOSURE..=MAX_EXPOSURE,
+            Self::Contrast => 0.4..=1.6,
+            Self::Pivot => 0.01..=1.,
+            Self::Saturation => 0.0..=2.,
+            Self::ColourMix | Self::Density => 0.0..=1.,
             _ => -1.0..=1.0,
         }
     }
@@ -306,6 +320,9 @@ impl Parameter {
         match self {
             Self::Gamma => DEFAULT_GAMMA,
             Self::Toe => DEFAULT_TOE,
+            Self::Contrast | Self::Saturation => 1.,
+            Self::Pivot => DEFAULT_PIVOT,
+            Self::ColourMix | Self::Density => DEFAULT_COLOUR_MIX,
             _ => 0.,
         }
     }
@@ -313,6 +330,7 @@ impl Parameter {
         match self {
             Self::Exposure => 0.05,
             Self::Shoulder => 0.0001,
+            Self::Pivot => 0.001,
             _ => 0.01,
         }
     }
@@ -328,7 +346,16 @@ pub fn parameter(ui: &mut Ui, kind: Parameter, value: &mut f64) -> (Response, Re
     };
     ui.push_id(kind.label(), |ui| {
         let (numeric, reset) = icons::row(ui, |ui| {
-            ui.label(kind.label());
+            let label = ui.label(kind.label());
+            let help = match kind {
+                Parameter::Contrast => "Log-domain contrast in ACEScct around Pivot. 1 is identity; no added S-curve.",
+                Parameter::Pivot => "Neutral pivot in linear AP1; 0.18 is the initial reference, not calibrated scene grey.",
+                Parameter::ColourMix => "Reduces contrast-driven colour changes. 0: RGB log contrast. 1: black-relative ratio preservation. Intermediate values blend outputs in AP1 before ACES; unchanged displayed saturation is not guaranteed.",
+                Parameter::Saturation => "1 is identity; 0 is grey. Signed/HDR AP1 colour separation before unchanged ACES.",
+                Parameter::Density => "0: constant AP1 luminance. 1: HSV-like maximum anchor (darkening on saturation increase). Intermediate values blend endpoint outputs, not print-film simulation.",
+                _ => "",
+            };
+            if !help.is_empty() { label.on_hover_text(help); }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let reset = reset_button(ui, *value != kind.default(), kind.label());
                 if reset.clicked() {
@@ -341,7 +368,7 @@ pub fn parameter(ui: &mut Ui, kind: Parameter, value: &mut f64) -> (Response, Re
                     ui.add_sized(
                         [85., ui.spacing().interact_size.y],
                         egui::DragValue::new(value)
-                            .speed(if matches!(kind, Parameter::Shoulder) { 0.0001 } else { 0.01 })
+                            .speed(match kind { Parameter::Shoulder => 0.0001, Parameter::Pivot => 0.001, _ => 0.01 })
                             .range(kind.range())
                             .clamp_existing_to_range(false)
                             .min_decimals(2)
@@ -361,6 +388,7 @@ pub fn parameter(ui: &mut Ui, kind: Parameter, value: &mut f64) -> (Response, Re
                 egui::Slider::new(value, kind.slider_range())
                     .clamping(egui::SliderClamping::Edits)
                     .show_value(false)
+                    .logarithmic(matches!(kind, Parameter::Pivot))
                     .smart_aim(false)
                     .step_by(step),
             ).on_hover_text(if matches!(kind, Parameter::Exposure) {

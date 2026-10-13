@@ -4,6 +4,7 @@ These records explain current choices and tradeoffs. [Contracts](../README.md#co
 
 - [LibRaw development and bounded parallelism](established-raw-development.md)
 - [Native-camera inversion](native-camera-inversion.md)
+- [Simple signed-AP1 photographic grading](photographic-grading.md)
 - [Compact RGB16 GPU source](rgb16-gpu-source.md)
 - [RGB-only calibration](rgb-only-calibration.md)
 - [RAW loading and cache-only file revisions](no-raw-content-hashing.md)

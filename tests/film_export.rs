@@ -29,8 +29,12 @@ fn film_exports_reopen_with_actual_response_and_unchanged_target_and_ap0_pixels(
         dmax: DVec3::new(0.008061, 0.003409, 0.001442),
         input_floor: 2.1630933622265155e-5,
     };
-    let pipeline =
-        Pipeline::new(cal, roll, PhotoSettings::default(), glam::DMat3::IDENTITY).unwrap();
+    let photo = PhotoSettings {
+        contrast: 1.2,
+        saturation: 1.3,
+        ..PhotoSettings::default()
+    };
+    let pipeline = Pipeline::new(cal, roll, photo, glam::DMat3::IDENTITY).unwrap();
     let scans = [
         cal.dmin * (1. - 1e-12),
         cal.dmin * (1. + 1e-12),
@@ -59,6 +63,7 @@ fn film_exports_reopen_with_actual_response_and_unchanged_target_and_ap0_pixels(
         assert!(description.contains("toe=2.543210987654321"));
         assert!(description.contains("shoulder=0.003210987654321"));
         assert!(description.contains("signed-root"));
+        assert!(description.contains(antitone::photographic::CONTRACT));
         let expected: Vec<_> = target
             .encode_u16(&CpuRenderer::new(target).unwrap().render(&working).unwrap())
             .unwrap()
@@ -96,6 +101,12 @@ fn film_exports_reopen_with_actual_response_and_unchanged_target_and_ap0_pixels(
         attrs.get(&Text::from("antitoneFilmResponse")),
         Some(&AttributeValue::Text(Text::from(
             "toe=2.543210987654321; shoulder=0.003210987654321; signed-root continuation above base"
+        )))
+    );
+    assert_eq!(
+        attrs.get(&Text::from("antitonePhotographicProcessing")),
+        Some(&AttributeValue::Text(Text::from(
+            antitone::photographic::CONTRACT
         )))
     );
     for channel in &image.layer_data.channel_data.list {

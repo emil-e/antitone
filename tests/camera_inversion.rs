@@ -50,6 +50,7 @@ fn camera_matrix_follows_inversion_and_precedes_photographic_wb() {
             warmth: 0.2,
             tint: -0.1,
         },
+        ..PhotoSettings::default()
     };
     let camera = DVec3::new(0.01, 0.1, 0.1);
     let inverted = Inversion::new(cal, roll).unwrap().apply(camera).unwrap();

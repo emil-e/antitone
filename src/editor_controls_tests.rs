@@ -365,6 +365,84 @@ fn parameter_reset_uses_actual_default_and_disabled_controls_do_not_edit() {
     }
 }
 #[test]
+fn contrast_rows_accept_wider_endpoints_and_reset_to_identity() {
+    assert_eq!(Parameter::Contrast.range(), 0.4..=1.6);
+    for (initial, edge_key) in [(0.4, egui::Key::ArrowLeft), (1.6, egui::Key::ArrowRight)] {
+        let context = egui::Context::default();
+        let mut value = initial;
+        let (slider, _, reset) = frame(
+            &context,
+            &mut value,
+            Parameter::Contrast,
+            270.,
+            true,
+            vec![],
+            egui::Modifiers::NONE,
+        );
+        assert_eq!(value, initial);
+        context.memory_mut(|memory| memory.request_focus(slider.id));
+        frame(
+            &context,
+            &mut value,
+            Parameter::Contrast,
+            270.,
+            true,
+            vec![key(edge_key, egui::Modifiers::NONE)],
+            egui::Modifiers::NONE,
+        );
+        assert_eq!(value, initial);
+        for pressed in [true, false] {
+            frame(
+                &context,
+                &mut value,
+                Parameter::Contrast,
+                270.,
+                true,
+                pointer(reset.rect.center(), pressed),
+                egui::Modifiers::NONE,
+            );
+        }
+        assert_eq!(value, 1.);
+    }
+}
+
+#[test]
+fn photographic_blend_rows_fit_and_reset_to_zero_only_when_enabled() {
+    for kind in [Parameter::ColourMix, Parameter::Density] {
+        assert_eq!(kind.default(), 0.);
+        for width in [270., 315.] {
+            for enabled in [true, false] {
+                let context = egui::Context::default();
+                let mut value = 0.75;
+                let (_, numeric, reset) = frame(
+                    &context,
+                    &mut value,
+                    kind,
+                    width,
+                    enabled,
+                    vec![],
+                    egui::Modifiers::NONE,
+                );
+                assert!(reset.rect.right() <= width - 8.);
+                assert!(numeric.rect.right() < reset.rect.left());
+                for pressed in [true, false] {
+                    frame(
+                        &context,
+                        &mut value,
+                        kind,
+                        width,
+                        enabled,
+                        pointer(reset.rect.center(), pressed),
+                        egui::Modifiers::NONE,
+                    );
+                }
+                assert_eq!(value, if enabled { 0. } else { 0.75 });
+            }
+        }
+    }
+}
+
+#[test]
 fn response_inputs_preserve_precision_use_true_defaults_and_fine_shoulder_steps() {
     for (kind, initial, step) in [
         (Parameter::Toe, 3.123456789, 0.01),

@@ -13,7 +13,7 @@ Antitone converts camera-scanned film negatives into grading-friendly positive i
 
 ## Boundaries and future goals
 
-[PLAN.md](../../PLAN.md) is the only current priority/status list. Navigation/source inspection, bounded thumbnails and responsive display-referred proxy scopes are implemented. Native-camera inversion and accepted composition are integrated. Remaining goals include interaction/photographic acceptance, assisted roll analysis and contrast/pivot. Their numerical/UX design is not settled merely because they appear in feedback. Consult the user about each existing viewer-intrusion case before choosing a layout replacement.
+[PLAN.md](../../PLAN.md) is the only current priority/status list. Navigation/source inspection, bounded thumbnails and responsive display-referred proxy scopes are implemented. Native-camera inversion and accepted composition are integrated. Photo contrast/pivot and saturation are implemented with explicit signed-AP1 operators and identity defaults; [processing](processing-model.md#photo-contrastpivot-and-saturation) defines them. Remaining goals include interaction/photographic acceptance and assisted roll analysis; additional tools are not specified merely because they appear in feedback. Consult the user about each existing viewer-intrusion case before choosing a layout replacement.
 
 Roll-level flat-field correction is implemented; [processing](processing-model.md#optional-roll-level-flat-field-correction) and [controls](editor-controls.md#flat-field-workflow) define its behavior. Custom demosaicing, dust removal, catalogs, arbitrary node graphs, HDR display output and later-platform support are not current implementation scope. Do not change ACES mathematics or introduce a pedestal/clamp as an implicit remedy.
 
