@@ -316,7 +316,7 @@ impl Editor {
                 edit.ratio = edit.ratio.map(|r| 1. / r);
             }
             ui.end_row();
-            ui.label("Angle");
+            let angle_label = ui.label("Angle");
             let angle = ui.add_sized([96., 28.],
                 egui::DragValue::new(&mut degrees)
                     .range(-180.0..=180.0)
@@ -324,7 +324,7 @@ impl Editor {
                     .fixed_decimals(2)
                     .update_while_editing(false)
                     .suffix("°"),
-            );
+            ).labelled_by(angle_label.id);
             // egui 0.36 retains cancelled text for its second lost-focus pass.
             let cancel_id = ui.id().with("angle-cancelled");
             let cancelled = ui

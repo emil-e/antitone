@@ -1,6 +1,6 @@
 //! Scripted RAW/Metal editor, project and capture scenarios with explicit diagnostic anchors.
 //! Uses production workers/rendering but drives editor state directly; project files are temporary.
-//! Asserts executed phases and emits layout markers; visible frames alone do not prove completion.
+//! Asserts executed phases; visible frames alone do not prove completion.
 //! Requires a desktop for presentation; does not test physical input or photographic quality.
 use super::*;
 pub struct SmokeEditor {
@@ -13,7 +13,6 @@ pub struct SmokeEditor {
     phase: u8,
     frames: u32,
     start: std::time::Instant,
-    layout_start: Option<std::time::Instant>,
     project_directory: Option<tempfile::TempDir>,
     unvisited: Option<PathBuf>,
     saved_project: Option<crate::project::Project>,
@@ -59,7 +58,6 @@ impl SmokeEditor {
             phase: 0,
             frames: 0,
             start: std::time::Instant::now(),
-            layout_start: None,
             project_directory,
             unvisited: arguments.get(11).map(PathBuf::from),
             saved_project: None,
@@ -271,99 +269,8 @@ impl host::App for SmokeEditor {
                         tint: -0.05
                     }
                 );
-                self.phase = if std::env::var_os("ANTITONE_SMOKE_TOOLS").is_some() {
-                    25
-                } else {
-                    13
-                };
+                self.phase = 13;
                 self.frames = 0;
-            }
-            25..=30 => {
-                let index = self.phase - 25;
-                let stages = [
-                    "crop-normal",
-                    "dmin-normal",
-                    "wb-normal",
-                    "crop-narrow",
-                    "dmin-narrow",
-                    "wb-narrow",
-                ];
-                if self.layout_start.is_none() {
-                    let narrow = index >= 3;
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
-                    ui.ctx()
-                        .send_viewport_cmd(egui::ViewportCommand::InnerSize(if narrow {
-                            egui::vec2(800., 600.)
-                        } else {
-                            egui::vec2(1100., 800.)
-                        }));
-                    if let Some(mut panel) = egui::containers::panel::PanelState::load(
-                        ui.ctx(),
-                        egui::Id::new("controls"),
-                    ) {
-                        panel.outer_rect.min.x =
-                            panel.outer_rect.max.x - if narrow { 270. } else { 315. };
-                        ui.ctx().data_mut(|data| {
-                            data.insert_persisted(egui::Id::new("controls"), panel)
-                        });
-                    }
-                    self.editor.viewport.fit();
-                    self.editor.tab = if index.is_multiple_of(3) { 1 } else { 2 };
-                    self.editor.scopes.visible = !index.is_multiple_of(3);
-                    let area = self.editor.ready.as_ref().unwrap().area;
-                    if index.is_multiple_of(3) {
-                        self.editor.begin_crop();
-                        self.editor.crop_edit.as_mut().unwrap().draft = Crop::from_region(Rect {
-                            x: area.x + area.width / 8,
-                            y: area.y + area.height / 8,
-                            width: area.width * 3 / 4,
-                            height: area.height * 3 / 4,
-                        })
-                        .straightened(area, 0.04)
-                        .unwrap();
-                    } else {
-                        self.editor
-                            .begin_pick(if index % 3 == 1 { Pick::Dmin } else { Pick::Wb });
-                        self.editor.region = Some(Coverage::rectangle(Rect {
-                            x: area.x + area.width / 2,
-                            y: area.y + area.height / 2,
-                            width: 128,
-                            height: 128,
-                        }));
-                        self.editor.source_exposure = 2.;
-                    }
-                    self.layout_start = Some(std::time::Instant::now());
-                }
-                let expected_mode = match index % 3 {
-                    0 => self.editor.crop_edit.is_some(),
-                    1 => self.editor.pick == Some(Pick::Dmin),
-                    _ => self.editor.pick == Some(Pick::Wb),
-                };
-                if !expected_mode {
-                    *self.result.lock().unwrap() = Some(format!(
-                        "tools smoke interrupted during {}: {}",
-                        stages[usize::from(index)],
-                        self.editor.status
-                    ));
-                    self.editor.allow_close = true;
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                    return;
-                }
-                let elapsed = self.layout_start.unwrap().elapsed();
-                if elapsed > Duration::from_secs(1) && self.frames == 0 {
-                    println!("tools_layout stage={}", stages[usize::from(index)]);
-                    self.frames = 1;
-                }
-                if elapsed > Duration::from_millis(2500) {
-                    if self.editor.crop_edit.is_some() {
-                        self.editor.finish_crop(false);
-                    } else {
-                        self.editor.finish_pick();
-                    }
-                    self.phase = if index == 5 { 13 } else { self.phase + 1 };
-                    self.layout_start = None;
-                    self.frames = 0;
-                }
             }
             13 if self.project_directory.is_some() => {
                 self.editor

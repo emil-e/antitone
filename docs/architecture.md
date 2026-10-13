@@ -42,7 +42,7 @@ Accepted photographic state lives in [projects](projects.md). Tool drafts and vi
 
 ## UI test boundary
 
-The opt-in `ui-tests` feature keeps egui_kittest cases in the Editor’s private child test module, [editor_kittest](../src/editor_kittest.rs). The harness calls the production `host::App::ui` composition boundary; it does not replace the application host or expose editor state publicly. A test-only RGBA16Float renderer shares the real device/queue and submission gate, and executes production paint callbacks. [Framework UI regressions](development.md#framework-ui-regressions) are offscreen; the native-host migration remains separate unfinished work.
+The opt-in `ui-tests` feature keeps egui_kittest cases in the Editor’s private child test module, [editor_kittest](../src/editor_kittest.rs). The harness calls the production `host::App::ui` composition boundary; it does not replace the application host or expose editor state publicly. A test-only RGBA16Float renderer shares the real device/queue and submission gate, and executes production paint callbacks. [Framework UI regressions](development.md#framework-ui-regressions) are offscreen. The separate [native-host test executable](../tests/native_host.rs) uses the production host on the main thread and launches a window only with explicit `--run`; it checks focus/size forwarding, per-size surface paint and completion/close failures without exposing Editor state. Pointer/keyboard host forwarding and remaining application-smoke migration are unfinished; [commands/limits](development.md#explicit-native-host-checks).
 
 ## Finding the right explanation
 

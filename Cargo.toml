@@ -82,5 +82,11 @@ name = "antitone-presentation-probe"
 path = "src/bin/presentation_probe.rs"
 required-features = ["ui"]
 
+[[test]]
+name = "native_host"
+path = "tests/native_host.rs"
+harness = false
+required-features = ["ui"]
+
 [profile.release]
 lto = "thin"

@@ -31,22 +31,9 @@ target/release/antitone --smoke-project \
 
 This uses temporary projects and checks restored settings/pixels and failed-Open preservation. It requires submitted visible frames, but ordinary/project smoke has no explicit completed-success result: early closure after a frame can return success before the scenario finishes. These routes drive editor state directly, not full widget input. [Verification restructuring](plans/verification-tooling.md) tracks those gaps; flat-field/Analyze routes reject early closure.
 
-### Window capture
+### Viewer-tool evidence
 
-With an unlocked desktop and normal screen-capture permissions:
-
-```sh
-mkdir -p .cache/probes
-/usr/bin/clang -fobjc-arc native/controls_window_id.m \
-  -framework Foundation -framework CoreGraphics \
-  -o .cache/probes/controls-window-id
-python3 scripts/capture-viewer-tools.py --samples samples
-# Reference-support layouts only:
-python3 scripts/capture-viewer-tools.py --flat-only --samples samples \
-  --output .cache/probes/flat-layout
-```
-
-Capture only the application window. Do not bypass occlusion or automate Lightroom/Resolve. Partial captures/timeouts are not completed route acceptance.
+[Framework tool tests](development.md#framework-ui-regressions) render authored Crop/Dmin/WB and flat-field support states at normal/narrow sizes. Optional `ANTITONE_UI_CAPTURE` outputs are labelled offscreen evidence, not native-window appearance approval. [Explicit native-host checks](development.md#explicit-native-host-checks) separately exercise focus, size forwarding, surface paint and completion/close failures. Physical tool interaction and composed Editor-in-window appearance remain real-use checks; do not automate Lightroom/Resolve or bypass window occlusion.
 
 ### Camera-roll fixtures
 

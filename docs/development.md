@@ -117,7 +117,24 @@ ANTITONE_UI_CAPTURE="$PWD/.cache/ui-captures" \
   -- --test-threads=1
 ```
 
-Use the `stage_tabs_preserve_project` filter with the same capture environment to write `{roll,photo,rendering}-{normal,narrow}-offscreen.png`. These and `authored-dmin-offscreen.png` are clipped/quantized from float captures for inspection only. Successful generation does not approve appearance or establish native surface/ColorSync presentation, physical input, dialogs, or other platforms. [Scenario/native migration](plans/verification-tooling.md) remains unfinished.
+Use the `stage_tabs_preserve_project` filter with the same capture environment to write `{roll,photo,rendering}-{normal,narrow}-offscreen.png`. The `editor::kittest_tests::tools` filter adds `{crop,dmin,wb,flat}-{normal,narrow}-offscreen.png`: real crop/angle and patch input, disabled Apply, unchanged Cancel and accepted Apply through the actual workers. Flat-field reference-path selection is fixture setup, not native file-dialog automation; the test checks proposed support/Fit bounds, settled reference previews and widget Apply/Cancel. These and `authored-dmin-offscreen.png` are clipped/quantized from float captures for inspection only. Successful generation does not approve appearance or establish native surface/ColorSync presentation, physical input, dialogs, or other platforms. [Scenario/native migration](plans/verification-tooling.md) remains unfinished.
+
+### Explicit native-host checks
+
+The separate [native-host test executable](../tests/native_host.rs) shares the production host, not Editor state or kittest. It needs macOS/Metal and an available desktop, but no RAWs/native RAW libraries or personal preferences. Ordinary test invocation runs software result-contract checks without opening a window, including under `--all-features`. Only explicit `--run` launches it:
+
+```sh
+cargo test --locked --features ui --test native_host -- --run lifecycle
+cargo test --locked --release --features ui --test native_host -- --run lifecycle
+# Negative cases: all must exit nonzero with the corresponding failure.
+cargo test --locked --features ui --test native_host -- --run early-close
+cargo test --locked --features ui --test native_host -- --run timeout
+cargo test --locked --features ui --test native_host -- --run process-timeout
+```
+
+Lifecycle requests focus and four native sizes, waits for each real surface paint, requires submitted/presented frames and explicit completion, then closes through the host. Premature closure and a 10-second UI deadline fail; a 20-second process watchdog also bounds initialization/event-loop hangs. The timeout case uses a 200-ms UI deadline; process-timeout shortens the process watchdog to 200 ms while leaving UI completion pending. Zero-frame/incomplete-paint rejection is also exercised by software result checks. Hardware errors are failures, not skips after a requested launch.
+
+This checks native size/focus forwarding and host lifecycle, not pointer/keyboard event forwarding, Editor-in-window tool appearance, native dialogs, physical gestures or monitor matching. Existing [presentation references and resize/submission stress](diagnostics.md#macos-presentation) remain separate.
 
 ## Specialist diagnostics
 

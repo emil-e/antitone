@@ -5,6 +5,9 @@ use egui_kittest::{
 };
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
+#[path = "editor_kittest_tools.rs"]
+mod tools;
+
 #[test]
 fn parameter_reset_click_respects_disabled_state() {
     let mut harness = Harness::builder().with_max_steps(12).build_ui_state(
@@ -355,6 +358,17 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
     save_capture(&png, "authored-dmin-offscreen");
 }
 
+fn set_layout(harness: &mut Harness<'_, Editor>, size: egui::Vec2, width: f32) {
+    harness.set_size(size);
+    let mut panel =
+        egui::containers::panel::PanelState::load(&harness.ctx, egui::Id::new("controls")).unwrap();
+    panel.outer_rect.min.x = panel.outer_rect.max.x - width;
+    harness
+        .ctx
+        .data_mut(|data| data.insert_persisted(egui::Id::new("controls"), panel));
+    harness.step();
+}
+
 fn save_capture(png: &image::RgbaImage, name: &str) {
     if let Some(directory) = std::env::var_os("ANTITONE_UI_CAPTURE") {
         let directory = PathBuf::from(directory);
@@ -401,15 +415,7 @@ fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
         ("normal", egui::vec2(1100., 800.), 315.),
         ("narrow", egui::vec2(800., 600.), 270.),
     ] {
-        harness.set_size(size);
-        let mut panel =
-            egui::containers::panel::PanelState::load(&harness.ctx, egui::Id::new("controls"))
-                .unwrap();
-        panel.outer_rect.min.x = panel.outer_rect.max.x - width;
-        harness
-            .ctx
-            .data_mut(|data| data.insert_persisted(egui::Id::new("controls"), panel));
-        harness.step();
+        set_layout(&mut harness, size, width);
         for (index, stage, heading, absent) in [
             (0, "Roll", "Scan orientation", "Composition"),
             (1, "Photo", "Composition", "Target"),
