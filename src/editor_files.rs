@@ -1,3 +1,4 @@
+use super::presentation::TextAction;
 use super::*;
 
 #[cfg(test)]
@@ -121,14 +122,14 @@ impl Editor {
                 .show(context, |ui| {
                     ui.label("Save this project's changes before continuing?");
                     ui.horizontal(|ui| {
-                        if ui.button("Cancel").clicked() {
+                        if TextAction::new("Cancel").show(ui).clicked() {
                             self.transition = None;
                         }
-                        if ui.button("Discard").clicked() {
+                        if TextAction::new("Discard").show(ui).clicked() {
                             self.transition = None;
                             self.perform_transition(transition.clone(), context);
                         }
-                        if ui.button("Save").clicked() {
+                        if TextAction::new("Save").show(ui).clicked() {
                             self.transition = None;
                             self.save_dialog(false, Some(transition.clone()));
                         }
@@ -142,10 +143,10 @@ impl Editor {
                 .show(context, |ui| {
                     ui.label(path.display().to_string());
                     ui.horizontal(|ui| {
-                        if ui.button("Cancel").clicked() {
+                        if TextAction::new("Cancel").show(ui).clicked() {
                             self.project_overwrite = None;
                         }
-                        if ui.button("Replace").clicked() {
+                        if TextAction::new("Replace").show(ui).clicked() {
                             self.project_overwrite = None;
                             self.queue_save(
                                 path.clone(),

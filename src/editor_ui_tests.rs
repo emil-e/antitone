@@ -33,6 +33,14 @@ pub(super) fn frame<R>(
 }
 
 fn direct(ui: &mut Ui, action: TextAction<'_>) -> Response {
+    if action.toolbar_width.is_none()
+        && !action.primary
+        && action.enabled
+        && action.name.is_none()
+        && action.help.is_none()
+    {
+        return ui.button(action.label);
+    }
     let mut button = egui::Button::new(action.label);
     if let Some(width) = action.toolbar_width {
         button = button.min_size(egui::vec2(width, 28.));
@@ -85,6 +93,10 @@ fn text_actions_preserve_direct_button_geometry_ids_and_paint_at_both_scales() {
                     TextAction::new("Choose reference RAW…"),
                     TextAction::new("Edit area…"),
                     TextAction::new("Clear"),
+                    TextAction::new("Cancel"),
+                    TextAction::new("Discard"),
+                    TextAction::new("Save"),
+                    TextAction::new("Replace"),
                     TextAction::new("Analyze roll").primary(),
                     TextAction::new("Edit picture area…"),
                     TextAction::new("Cancel").toolbar(0.),

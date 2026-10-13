@@ -14,6 +14,7 @@ Status: unfinished fixes and UX/design questions. [Roadmap](../../PLAN.md) owns 
 ### Focused fixes
 
 - **Save prompt:** discuss centered owner-relative placement/modality; preserve Save/Discard/Cancel and failure behavior.
+- **Selection/accessibility gaps:** scope focused fixes against the [current selection/semantic limits](../contracts/editor-controls.md#verification), with composed cold-load/error/disabled/AccessKit tests. Preserve ID/layout, ordered-roll sampling and transaction guards; settle wheel keyboard semantics without changing its numerical mapping. These known implementation gaps are not closed by physical acceptance alone.
 
 ### Roll workflow
 

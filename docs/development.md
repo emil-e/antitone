@@ -43,6 +43,25 @@ cargo clippy --locked --all-features --all-targets -- -D warnings
 
 These tests do not require private RAWs by default; sample/hardware acceptance checks marked ignored are exercised explicitly. A missing Metal device is a verification limit, not evidence that a numerical gate passed.
 
+## Shared editor UI checks
+
+Use the [shared visual-language contract](contracts/editor-controls.md#shared-visual-language) and [agent entry points](../AGENTS.md#ui-engineering) to choose the component and its composed consumers. Presentation tests run without document/worker fixtures; photographic adapters and editor tests retain domain/transaction coverage.
+
+```sh
+cargo test --locked --features editor --lib editor::presentation
+cargo test --locked --features editor --lib editor::controls::tests
+cargo test --locked --features editor --lib editor::files::tests
+cargo test --locked --features editor --lib editor::tests::viewer
+cargo test --locked --features editor --lib editor::tests::workspace
+cargo test --locked --features editor --lib editor::thumbnails
+cargo fmt --all -- --check
+cargo clippy --locked --features editor --lib --tests -- -D warnings
+```
+
+The presentation suite checks direct-widget paint/geometry/ID equivalence, allocation-free width/sizing, focus/activation, inherited/local disable, section expansion and caption elision at normal/narrow widths and 1×/2×. Thumbnail checks include actual GPU scroll-edge clipping and camera-preview precedence. Use `editor::analysis::tests`, `editor::flat::tests`, `editor::navigation::tests`, `editor::preferences::tests` or `editor::scopes::tests` for changes involving those owners. Run the [native layout and GPU fixtures](build-and-probes.md#editor-and-layout-smoke) when painting/layout changes, not as a substitute for event/state checks.
+
+Equivalence coverage preserves existing behavior, not complete accessibility. Known [selection/semantic gaps](plans/inspection-and-interaction.md#focused-fixes), physical input/VoiceOver, normal-app preference relaunch and broader-device/photographic acceptance remain separate. Real-RAW/resource probes stay opt-in; an ordinary focused run does not perform ignored acceptance.
+
 ## Specialist verification
 
 [Build and probes](build-and-probes.md) covers numerical/reference probes, ignored RAW tests, export reopening and scripted presentation checks. These are optional specialist checks, not prerequisites for an ordinary build.

@@ -2266,10 +2266,10 @@ impl host::App for Editor {
                 .show(ui.ctx(), |ui| {
                     ui.label(path.display().to_string());
                     ui.horizontal(|ui| {
-                        if ui.button("Cancel").clicked() {
+                        if presentation::TextAction::new("Cancel").show(ui).clicked() {
                             self.overwrite = None;
                         }
-                        if ui.button("Replace").clicked() {
+                        if presentation::TextAction::new("Replace").show(ui).clicked() {
                             self.overwrite = None;
                             self.export(path, format, Overwrite::Confirmed);
                         }
