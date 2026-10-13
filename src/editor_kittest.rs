@@ -205,21 +205,31 @@ impl TestRenderer for FloatRenderer {
 }
 
 fn wait_for(harness: &mut Harness<'_, Editor>, done: impl Fn(&Editor) -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(60);
-    while !done(harness.state()) {
+    wait_for_with_timeout(harness, Duration::from_secs(60), done);
+}
+
+fn wait_for_with_timeout(
+    harness: &mut Harness<'_, Editor>,
+    timeout: Duration,
+    done: impl Fn(&Editor) -> bool,
+) {
+    let deadline = Instant::now() + timeout;
+    loop {
         assert!(
             Instant::now() < deadline,
             "Editor wait timed out: {}",
             harness.state().status
         );
+        if done(harness.state()) {
+            break;
+        }
         harness.step();
         std::thread::sleep(Duration::from_millis(5));
     }
     harness.step();
 }
 
-#[test]
-fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
+fn editor_harness() -> (Harness<'static, Editor>, Rc<RefCell<FloatCapture>>) {
     let (device, queue) = pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,
@@ -240,12 +250,18 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
         host::App::submission_gate(&editor).clone(),
         capture.clone(),
     );
-    let mut harness = Harness::builder()
+    let harness = Harness::builder()
         .with_size(egui::vec2(1100., 800.))
         .with_max_steps(240)
         .with_step_dt(1. / 60.)
         .renderer(renderer)
         .build_ui_state(|ui, editor| host::App::ui(editor, ui), editor);
+    (harness, capture)
+}
+
+#[test]
+fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
+    let (mut harness, capture) = editor_harness();
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
     harness.state_mut().add_raws(vec![fixture.clone()]);
     wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
@@ -336,10 +352,130 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
             );
         }
     }
+    save_capture(&png, "authored-dmin-offscreen");
+}
+
+fn save_capture(png: &image::RgbaImage, name: &str) {
     if let Some(directory) = std::env::var_os("ANTITONE_UI_CAPTURE") {
         let directory = PathBuf::from(directory);
         std::fs::create_dir_all(&directory).unwrap();
-        png.save(directory.join("authored-dmin-offscreen.png"))
-            .unwrap();
+        png.save(directory.join(format!("{name}.png"))).unwrap();
     }
+}
+
+#[test]
+#[should_panic(expected = "Editor wait timed out")]
+fn unfinished_editor_operation_fails_at_wait_deadline() {
+    let (mut harness, _) = editor_harness();
+    harness.state_mut().busy = true;
+    wait_for_with_timeout(&mut harness, Duration::ZERO, |e| !e.busy);
+}
+
+#[test]
+fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
+    let (mut harness, _capture) = editor_harness();
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
+    harness.state_mut().add_raws(vec![fixture]);
+    wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+    assert!(
+        harness.state().ready.is_some(),
+        "{}",
+        harness.state().status
+    );
+    {
+        let editor = harness.state_mut();
+        editor.dmin = Some(DVec3::splat(3000. / 4031.));
+        editor.dmax = Some(DVec3::splat(128. / 4031.));
+        editor.roll.gamma = 0.75;
+        editor.photo.exposure = 0.5;
+        editor.photo.wb = Balance {
+            warmth: 0.1,
+            tint: -0.05,
+        };
+        editor.source = false;
+        editor.sync_document();
+    }
+    let project = harness.state().document.project.clone();
+    let source = harness.state().current_source;
+    for (layout, size, width) in [
+        ("normal", egui::vec2(1100., 800.), 315.),
+        ("narrow", egui::vec2(800., 600.), 270.),
+    ] {
+        harness.set_size(size);
+        let mut panel =
+            egui::containers::panel::PanelState::load(&harness.ctx, egui::Id::new("controls"))
+                .unwrap();
+        panel.outer_rect.min.x = panel.outer_rect.max.x - width;
+        harness
+            .ctx
+            .data_mut(|data| data.insert_persisted(egui::Id::new("controls"), panel));
+        harness.step();
+        for (index, stage, heading, absent) in [
+            (0, "Roll", "Scan orientation", "Composition"),
+            (1, "Photo", "Composition", "Target"),
+            (2, "Rendering", "Target", "Scan orientation"),
+        ] {
+            harness
+                .get_by_role_and_label(egui::accesskit::Role::Tab, stage)
+                .click();
+            harness.step();
+            harness.try_run_realtime().unwrap();
+            assert_eq!(harness.state().tab, index);
+            for name in ["Roll", "Photo", "Rendering"] {
+                let tab = harness.get_by_role_and_label(egui::accesskit::Role::Tab, name);
+                assert_eq!(tab.accesskit_node().is_selected(), Some(name == stage));
+                let rect = tab.rect();
+                assert!(
+                    rect.left() >= size.x - width && rect.right() <= size.x,
+                    "{layout}/{stage}: {name} {rect:?}"
+                );
+                assert!(rect.top() >= 0. && rect.bottom() <= size.y);
+            }
+            let header = harness
+                .get_by_role_and_label(egui::accesskit::Role::Button, heading)
+                .rect();
+            let tabs = harness
+                .get_by_role_and_label(egui::accesskit::Role::Tab, stage)
+                .rect();
+            assert!(header.top() >= tabs.bottom());
+            assert!(header.left() >= size.x - width && header.right() <= size.x);
+            assert!(harness.query_by_label(absent).is_none());
+            assert_eq!(harness.state().document.project, project);
+            assert_eq!(harness.state().current_source, source);
+            assert!(harness.state().preference_store.is_none());
+            wait_for(&mut harness, |e| {
+                assert!(e.refinement_error.is_none(), "{}", e.status);
+                e.settled.is_some()
+            });
+            harness.render().unwrap();
+            wait_for(&mut harness, |e| {
+                let gpu = e.scopes.gpu.as_ref().expect("scope GPU resources");
+                let (image, parameters, frame) = e.scope_input().unwrap();
+                let settings = crate::scopes::Settings {
+                    target: e.target,
+                    plot: crate::scopes::Plot::Vector,
+                    amplification: 1,
+                };
+                let Some(counts) = gpu.status(&image, parameters, frame, settings) else {
+                    return false;
+                };
+                let counts = counts.expect("scope diagnostics");
+                assert_eq!(counts.invalid, 0);
+                assert_eq!(counts.valid, frame.output[0] * frame.output[1]);
+                true
+            });
+            let timing = Arc::new(SelectionTiming::new(harness.state().id, Instant::now()));
+            harness.state_mut().selection_timing = Some(timing.clone());
+            harness.step();
+            let png = harness.render().unwrap();
+            assert_eq!(png.dimensions(), (size.x as u32, size.y as u32));
+            assert!(timing.ready_was_painted());
+            save_capture(
+                &png,
+                &format!("{}-{layout}-offscreen", stage.to_lowercase()),
+            );
+        }
+    }
+    assert_eq!(harness.state().document.project, project);
+    assert_eq!(harness.state().current_source, source);
 }

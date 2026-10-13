@@ -1,6 +1,6 @@
 # Verification tooling and UI test structure
 
-Status: unfinished scenario/native migration. The [framework UI regressions](../development.md#framework-ui-regressions) cover semantic reset/disabled input and authored Dmin interaction/worker/callback capture; general composed interaction and native presentation remain unproved. Use the [authored DNGs](../../tests/fixtures/raw/README.md) and [supported diagnostics](../diagnostics.md) as the starting coverage. [Roadmap](../../PLAN.md) owns priority; this plan does not change active photographic work or shared UI ownership.
+Status: unfinished scenario/native migration. The [framework UI regressions](../development.md#framework-ui-regressions) cover semantic reset/disabled input, authored Dmin interaction/worker/callback capture and all three stage tabs at normal/narrow sizes; general composed interaction and native presentation remain unproved. Use the [authored DNGs](../../tests/fixtures/raw/README.md) and [supported diagnostics](../diagnostics.md) as the starting coverage. [Roadmap](../../PLAN.md) owns priority; this plan does not change active photographic work or shared UI ownership.
 
 ## Goal
 
@@ -129,4 +129,4 @@ Verify each slice with focused tests/lints/parser/link checks and inspect its di
 - Which additional optional Analyze/real-camera diagnostics answer a concrete current acceptance question? Unclear utility defaults to deletion, not archival retention.
 - Full OS accessibility/dialog automation and real photographic/performance/monitor acceptance are not selected by this restructuring.
 
-Next: select one existing smoke scenario for framework migration, inventory its assertions and native-only boundary, then implement explicit completion and negative/timeout coverage before retiring its route. Define the separate main-thread native runner only for the host coverage that scenario needs. Keep native/OCIO/broad-gamut references; no blanket UI rewrite or snapshot baseline adoption.
+Next: migrate the viewer-tool layout extension, including actual crop/picker actions and explicit completion/negative/timeout coverage, before retiring its route and capture helper. Define the separate main-thread native runner only for the host coverage that scenario needs. Keep native/OCIO/broad-gamut references; no blanket UI rewrite or snapshot baseline adoption.

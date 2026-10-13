@@ -273,75 +273,10 @@ impl host::App for SmokeEditor {
                 );
                 self.phase = if std::env::var_os("ANTITONE_SMOKE_TOOLS").is_some() {
                     25
-                } else if std::env::var_os("ANTITONE_SMOKE_CONTROLS").is_some() {
-                    9
                 } else {
                     13
                 };
                 self.frames = 0;
-            }
-            9..=12 => {
-                let index = self.phase - 9;
-                if self.layout_start.is_none() {
-                    self.editor.tab = usize::from(index % 2);
-                    if std::env::var_os("ANTITONE_SMOKE_SCOPES").is_some() {
-                        self.editor.scopes.vector = index % 2 == 1;
-                        self.editor.scopes.amplification = if index >= 2 { 4 } else { 2 };
-                        self.editor.scopes.waveform = if index == 0 {
-                            crate::scopes::Plot::Rgb
-                        } else {
-                            crate::scopes::Plot::Luma
-                        };
-                    }
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
-                    let narrow = index >= 2;
-                    ui.ctx()
-                        .send_viewport_cmd(egui::ViewportCommand::InnerSize(if narrow {
-                            egui::vec2(800., 600.)
-                        } else {
-                            egui::vec2(1100., 800.)
-                        }));
-                    if let Some(mut panel) = egui::containers::panel::PanelState::load(
-                        ui.ctx(),
-                        egui::Id::new("controls"),
-                    ) {
-                        panel.outer_rect.min.x =
-                            panel.outer_rect.max.x - if narrow { 270. } else { 315. };
-                        ui.ctx().data_mut(|data| {
-                            data.insert_persisted(egui::Id::new("controls"), panel)
-                        });
-                    }
-                    self.layout_start = Some(std::time::Instant::now());
-                }
-                let elapsed = self.layout_start.unwrap().elapsed();
-                if elapsed > Duration::from_secs(1) && self.frames == 0 {
-                    println!(
-                        "controls_layout stage={}",
-                        if self.editor.tab == 2 {
-                            if index >= 2 {
-                                "rendering-narrow"
-                            } else {
-                                "rendering-normal"
-                            }
-                        } else {
-                            ["roll-normal", "photo-normal", "roll-narrow", "photo-narrow"]
-                                [usize::from(index)]
-                        }
-                    );
-                    self.frames = 1;
-                }
-                // Six holds share the original four-hold wait budget; keep the 45-second gate.
-                if elapsed > Duration::from_millis(2500) {
-                    if index % 2 == 1 && self.editor.tab != 2 {
-                        self.editor.tab = 2;
-                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
-                        self.layout_start = Some(std::time::Instant::now());
-                    } else {
-                        self.phase += 1;
-                        self.layout_start = None;
-                    }
-                    self.frames = 0;
-                }
             }
             25..=30 => {
                 let index = self.phase - 25;

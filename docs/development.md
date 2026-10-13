@@ -105,7 +105,9 @@ cargo clippy --locked --features ui-tests --lib --tests -- -D warnings
 
 A test-only renderer shares the Editor’s device/queue and submission gate, and paints the production selected-image callback into RGBA16Float. Finite readback and two neutral patches are checked against the CPU source-rendering reference at `0.001`; this is implementation agreement, not a new independent ACES oracle. Existing OCIO and native presentation checks remain necessary. Preferences are never restored and disk thumbnails are disabled.
 
-For an optional named inspection artifact:
+`stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts` clicks all three stage tabs at 1100×800/315-point sidebar and 800×600/270-point sidebar sizes. It checks selected-tab semantics, tab/header bounds, stage-specific contents, unchanged project/source selection, settled preview and completed scope diagnostics before rendering all six states. `unfinished_editor_operation_fails_at_wait_deadline` checks that unfinished work fails at the wait deadline rather than passing.
+
+For optional named inspection artifacts:
 
 ```sh
 ANTITONE_UI_CAPTURE="$PWD/.cache/ui-captures" \
@@ -113,7 +115,7 @@ ANTITONE_UI_CAPTURE="$PWD/.cache/ui-captures" \
   -- --test-threads=1
 ```
 
-`authored-dmin-offscreen.png` is clipped/quantized from the float capture for inspection only. Its successful generation does not approve appearance or establish native surface/ColorSync presentation, physical input, dialogs, or other platforms. [Scenario/native migration](plans/verification-tooling.md) remains unfinished.
+Use the `stage_tabs_preserve_project` filter with the same capture environment to write `{roll,photo,rendering}-{normal,narrow}-offscreen.png`. These and `authored-dmin-offscreen.png` are clipped/quantized from float captures for inspection only. Successful generation does not approve appearance or establish native surface/ColorSync presentation, physical input, dialogs, or other platforms. [Scenario/native migration](plans/verification-tooling.md) remains unfinished.
 
 ## Specialist diagnostics
 

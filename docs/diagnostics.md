@@ -13,12 +13,12 @@ Build the editor, then supply diagnostic calibration or open a saved project:
 ```sh
 cargo build-app --offline
 target/release/antitone /path/to/grade.antitone.json
-ANTITONE_SMOKE_CONTROLS=1 target/release/antitone --smoke \
+target/release/antitone --smoke \
   samples/DSC04397.ARW 4000 5644 128 32 \
   samples/DSC04378.ARW 4000 2600 128 128 samples/DSC04416.ARW
 ```
 
-`--smoke` exercises the GPU/worker path. The environment flag adds normal/narrow stage-layout holds. Diagnostic anchors are not a user's saved or physically measured grade.
+`--smoke` exercises the GPU/worker path. Diagnostic anchors are not a user's saved or physically measured grade. Normal/narrow Roll/Photo/Rendering interaction and named offscreen captures use the authored [framework UI tests](development.md#framework-ui-regressions), without private photographs or desktop capture permission. They do not establish native resize/presentation; the visible smoke and [macOS presentation](#macos-presentation) checks remain separate.
 
 For scripted Save/Open, include an unvisited source:
 
@@ -36,11 +36,10 @@ This uses temporary projects and checks restored settings/pixels and failed-Open
 With an unlocked desktop and normal screen-capture permissions:
 
 ```sh
-mkdir -p .cache/probes/controls
+mkdir -p .cache/probes
 /usr/bin/clang -fobjc-arc native/controls_window_id.m \
   -framework Foundation -framework CoreGraphics \
   -o .cache/probes/controls-window-id
-python3 scripts/capture-controls.py
 python3 scripts/capture-viewer-tools.py --samples samples
 # Reference-support layouts only:
 python3 scripts/capture-viewer-tools.py --flat-only --samples samples \
@@ -143,7 +142,7 @@ The diagnostic drives actual import/correction/Analyze and renders approximate c
 ```sh
 cargo test --locked --offline --features editor --test scopes \
   scope_reduction_latency -- --ignored --nocapture
-ANTITONE_SMOKE_SCOPES=1 ANTITONE_SMOKE_CONTROLS=1 target/release/antitone --smoke \
+ANTITONE_SMOKE_SCOPES=1 target/release/antitone --smoke \
   samples/DSC04397.ARW 4000 5644 128 32 \
   samples/DSC04378.ARW 4000 2600 128 128 samples/DSC04416.ARW
 ```
