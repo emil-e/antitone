@@ -29,7 +29,7 @@ Start with a cancellable proposed Dmax estimate: bounded candidate discovery, ro
 
 ## Photographic controls and B&W handling
 
-- [Photo contrast/pivot and saturation](completed/contrast-and-saturation.md) are implemented and integrated, including the 0.4..1.6 contrast range and zero-default preservation/density controls. Full-resolution noisy-shadow/skin/coloured-light and physical-interaction acceptance remain; keep additional photographic tools separate until a concrete benefit is demonstrated.
+- Evaluate the implemented [Photo contrast/pivot and saturation](../contracts/processing-model.md#photo-contrastpivot-and-saturation) at full resolution on noisy shadows, skin and coloured lights, with corrected and uncorrected sources and both output targets. Judge endpoint/blend character, hue continuity, shadow separation and noise/texture; numerical agreement does not establish photographic preference. Physical interaction and older-binary project interoperability remain unverified. Keep additional photographic tools separate until a concrete benefit is demonstrated.
 - B&W needs clarification: monochrome film captured by an RGB camera, colour-negative desaturation, or both. Compare RGB inversion plus a declared mix with a dedicated monochrome response, considering base colour, channel weighting/noise, calibration and tint. No automatic film detection or implicit calibration reinterpretation.
 
 ## Operation feedback

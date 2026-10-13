@@ -19,6 +19,9 @@ Cargo uses the committed lockfile. Add `--offline` when the dependency cache is 
 Choose the feature and tests relevant to the change:
 
 ```sh
+# Signed/HDR Photo grading and its independent f64 reference; no native libraries or Metal.
+cargo test --locked --no-default-features --test photographic
+
 # Project persistence without native libraries or Metal.
 cargo test --locked --features project --test camera_project --test project --test film_project
 
@@ -35,6 +38,8 @@ After native setup, broader integration/lint checks are available when relevant:
 cargo test --locked --all-features
 cargo clippy --locked --all-features --all-targets -- -D warnings
 ```
+
+`tests/support/photographic_reference.rs` supplies the independent endpoint/blend oracle and its scalar invariant tests to `tests/photographic.rs`. Run the latter with `--features project` to include Photo settings serialization checks.
 
 These tests do not require private RAWs by default; sample/hardware acceptance checks marked ignored are exercised explicitly. A missing Metal device is a verification limit, not evidence that a numerical gate passed.
 

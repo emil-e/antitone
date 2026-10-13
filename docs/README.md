@@ -23,4 +23,3 @@
 
 - [Decision rationale](decisions/README.md)
 - [Unfinished work](plans/README.md)
-- [Contrast/saturation comparison evidence](research/contrast-and-saturation.md) and [maintained reference probe](research/tools/contrast-saturation/README.md)

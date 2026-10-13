@@ -8,7 +8,3 @@
 - [Recovery, source-change UI and undo](durable-projects.md)
 
 Select a focused slice and settle its open design questions before implementation. Current behavior belongs in [contracts](../README.md#contracts), not in completed task lists.
-
-## Completed implementations
-
-- [Photo contrast/pivot and saturation](completed/contrast-and-saturation.md); remaining photographic acceptance is tracked in [completion](completion.md#photographic-controls-and-bw-handling).

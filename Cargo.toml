@@ -91,14 +91,5 @@ name = "antitone-presentation-probe"
 path = "src/bin/presentation_probe.rs"
 required-features = ["ui"]
 
-[[bin]]
-name = "antitone-contrast-saturation-probe"
-path = "docs/research/tools/contrast-saturation/main.rs"
-required-features = ["raw", "export"]
-
-[[test]]
-name = "contrast-saturation-reference"
-path = "docs/research/tools/contrast-saturation/operators.rs"
-
 [profile.release]
 lto = "thin"

@@ -3,7 +3,7 @@ use antitone::{
     processing::{Calibration, PhotoSettings, Pipeline, RollSettings},
 };
 use glam::{DMat3, DVec3};
-#[path = "../docs/research/tools/contrast-saturation/operators.rs"]
+#[path = "support/photographic_reference.rs"]
 mod reference;
 
 fn near(actual: DVec3, expected: DVec3) {
@@ -64,7 +64,7 @@ fn default_blends_select_rgb_contrast_and_constant_y_saturation() {
 }
 
 #[test]
-fn production_matches_retained_signed_hdr_reference_for_both_blends() {
+fn production_matches_signed_hdr_reference_for_both_blends() {
     for contrast in [0.4, 0.5, 0.8, 1., 1.2, 1.5, 1.6] {
         for pivot in [0.01, 0.18, 1.] {
             for colour in [0., 0.5, 1.] {

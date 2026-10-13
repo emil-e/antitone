@@ -1,3 +1,4 @@
+//! Independent f64 endpoint and blend oracle for signed-AP1 Photo grading.
 use antitone::{Error, color::AP1_TO_XYZ};
 use glam::DVec3;
 
@@ -42,7 +43,7 @@ fn parameter(value: f64, low: f64, high: f64) -> Result<()> {
     if value.is_finite() && (low..=high).contains(&value) {
         Ok(())
     } else {
-        Err(Error::InvalidParameter("outside declared research range"))
+        Err(Error::InvalidParameter("outside declared reference range"))
     }
 }
 
@@ -117,15 +118,11 @@ pub fn contrast(rgb: DVec3, amount: f64, pivot: f64, model: Contrast) -> Result<
 pub enum Saturation {
     ConstantY,
     Maximum,
-    DensityPower,
 }
 
 pub fn saturation(rgb: DVec3, amount: f64, model: Saturation) -> Result<DVec3> {
     finite(rgb)?;
     parameter(amount, 0., 2.)?;
-    if matches!(model, Saturation::DensityPower) && amount < 0.25 {
-        return Err(Error::InvalidParameter("density power requires 0.25..2"));
-    }
     if amount == 1. || rgb.x == rgb.y && rgb.y == rgb.z {
         return Ok(rgb);
     }
@@ -137,10 +134,6 @@ pub fn saturation(rgb: DVec3, amount: f64, model: Saturation) -> Result<DVec3> {
         Saturation::Maximum => {
             let anchor = DVec3::splat(rgb.max_element());
             anchor + amount * (rgb - anchor)
-        }
-        Saturation::DensityPower => {
-            let anchor = rgb.abs().max_element();
-            rgb.map(|v| anchor * v.signum() * (v.abs() / anchor).powf(amount))
         }
     };
     finite(out)
@@ -157,39 +150,6 @@ pub fn blend(a: DVec3, b: DVec3, t: f64) -> Result<DVec3> {
     } else {
         finite((1. - t) * a + t * b)
     }
-}
-
-pub fn chroma(rgb: DVec3) -> f64 {
-    (rgb - DVec3::splat(y(rgb))).length()
-}
-
-pub fn matched_density_amount(reference: DVec3, baseline_amount: f64) -> Result<f64> {
-    let target = chroma(saturation(
-        reference,
-        baseline_amount,
-        Saturation::ConstantY,
-    )?);
-    let (mut low, mut high) = if baseline_amount < 1. {
-        (0.25, 1.)
-    } else {
-        (1., 2.)
-    };
-    if target < chroma(saturation(reference, low, Saturation::DensityPower)?)
-        || target > chroma(saturation(reference, high, Saturation::DensityPower)?)
-    {
-        return Err(Error::InvalidParameter(
-            "strength-match target not bracketed",
-        ));
-    }
-    for _ in 0..60 {
-        let mid = (low + high) / 2.;
-        if chroma(saturation(reference, mid, Saturation::DensityPower)?) < target {
-            low = mid;
-        } else {
-            high = mid;
-        }
-    }
-    Ok((low + high) / 2.)
 }
 
 #[cfg(test)]
@@ -226,17 +186,15 @@ mod tests {
                     .unwrap(),
                     rgb
                 );
-                for model in [Saturation::Maximum, Saturation::DensityPower] {
-                    assert_eq!(
-                        blend(
-                            saturation(rgb, 1., Saturation::ConstantY).unwrap(),
-                            saturation(rgb, 1., model).unwrap(),
-                            t
-                        )
-                        .unwrap(),
-                        rgb
-                    );
-                }
+                assert_eq!(
+                    blend(
+                        saturation(rgb, 1., Saturation::ConstantY).unwrap(),
+                        saturation(rgb, 1., Saturation::Maximum).unwrap(),
+                        t
+                    )
+                    .unwrap(),
+                    rgb
+                );
             }
         }
     }
@@ -311,15 +269,9 @@ mod tests {
                     (mx - DVec3::splat(y(mx))) / scale,
                     amount * (rgb - DVec3::splat(y(rgb))) / scale,
                 );
-                let density = saturation(rgb, amount, Saturation::DensityPower).unwrap();
-                assert!(density.is_finite());
-                near(
-                    saturation(4. * rgb, amount, Saturation::DensityPower).unwrap(),
-                    4. * density,
-                );
             }
         }
-        for model in [Saturation::Maximum, Saturation::DensityPower] {
+        for model in [Saturation::ConstantY, Saturation::Maximum] {
             for x in [0., 0.2, -0.2] {
                 let a = saturation(DVec3::new(x - 1e-10, 0.2, -0.2), 0.7, model).unwrap();
                 let b = saturation(DVec3::new(x + 1e-10, 0.2, -0.2), 0.7, model).unwrap();
@@ -333,13 +285,8 @@ mod tests {
         let rgb = DVec3::new(0.22, 0.18, 0.14);
         for t in [0., 0.25, 0.5, 0.75, 1.] {
             let a = saturation(rgb, 1.3, Saturation::ConstantY).unwrap();
-            let b = saturation(rgb, 1.3, Saturation::DensityPower).unwrap();
+            let b = saturation(rgb, 1.3, Saturation::Maximum).unwrap();
             near(blend(a, b, t).unwrap(), (1. - t) * a + t * b);
-        }
-        for s in [0.7, 1.3] {
-            let matched = matched_density_amount(rgb, s).unwrap();
-            let actual = chroma(saturation(rgb, matched, Saturation::DensityPower).unwrap());
-            assert!((actual - s * chroma(rgb)).abs() < 1e-12);
         }
     }
 
@@ -378,18 +325,8 @@ mod tests {
     }
 
     #[test]
-    fn density_keeps_signs_maximum_magnitude_and_positive_darkening() {
-        for rgb in inputs() {
-            for amount in [0.25, 0.7, 1.3, 2.] {
-                let out = saturation(rgb, amount, Saturation::DensityPower).unwrap();
-                assert_eq!(out.abs().max_element(), rgb.abs().max_element());
-                for c in 0..3 {
-                    assert_eq!(out[c] >= 0., rgb[c] >= 0.);
-                }
-            }
-        }
+    fn desaturation_uses_each_endpoint_anchor() {
         let rgb = DVec3::new(0.3, 0.18, 0.08);
-        assert!(y(saturation(rgb, 1.3, Saturation::DensityPower).unwrap()) < y(rgb));
         near(
             saturation(rgb, 0., Saturation::ConstantY).unwrap(),
             DVec3::splat(y(rgb)),
@@ -407,7 +344,6 @@ mod tests {
             assert!(saturation(DVec3::ONE, amount, Saturation::Maximum).is_err());
             assert!(blend(DVec3::ZERO, DVec3::ONE, amount).is_err());
         }
-        assert!(saturation(DVec3::ONE, 0., Saturation::DensityPower).is_err());
         assert!(contrast(DVec3::splat(f64::MAX), 1.5, 0.18, Contrast::Rgb).is_err());
         assert!(saturation(DVec3::splat(f64::NAN), 1., Saturation::ConstantY).is_err());
     }
