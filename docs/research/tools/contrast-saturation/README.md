@@ -1,6 +1,6 @@
 # Contrast/saturation reference experiment
 
-Reference/research probe: scalar candidates and private comparison renders, not a production UI or saved-grade path. The selected production families/defaults are defined separately in the [processing contract](../../../contracts/processing-model.md#photo-contrastpivot-and-saturation). [Design plan](../../../plans/contrast-and-saturation.md), [prior art and results](../../contrast-and-saturation.md#reference-experiment-checkpoint).
+Reference/research probe: scalar candidates and private comparison renders, not a production UI or saved-grade path. The selected production families/defaults are defined separately in the [processing contract](../../../contracts/processing-model.md#photo-contrastpivot-and-saturation). [Completed implementation](../../../plans/completed/contrast-and-saturation.md), [prior art and results](../../contrast-and-saturation.md#reference-experiment-checkpoint).
 
 ## Operators
 

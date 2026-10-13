@@ -320,10 +320,17 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
         .unwrap();
     editor.current_source = Some(id);
     editor.source = false;
-    editor.photo.exposure = 0.5;
-    editor.photo.wb = Balance {
-        warmth: 0.2,
-        tint: 0.1,
+    editor.photo = PhotoSettings {
+        exposure: 0.5,
+        wb: Balance {
+            warmth: 0.2,
+            tint: 0.1,
+        },
+        contrast: 0.4,
+        pivot: 0.25,
+        contrast_colour_mix: 0.75,
+        saturation: 1.3,
+        saturation_density: 0.25,
     };
     editor.roll.exposure = -0.5;
     let photo = editor.photo;
@@ -355,8 +362,13 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
     .unwrap();
     editor.receive();
     assert_eq!(editor.roll, roll);
-    assert_eq!(editor.photo.exposure, photo.exposure);
-    assert_eq!(editor.photo.wb, balance);
+    assert_eq!(
+        editor.photo,
+        PhotoSettings {
+            wb: balance,
+            ..photo
+        }
+    );
     editor.roll.gamma = 0.1;
     let old = editor.roll.balance;
     editor.begin_pick(Pick::Gamma);

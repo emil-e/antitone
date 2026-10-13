@@ -14,4 +14,4 @@ Keep camera-native calibration/inversion, exposure/WB, signed/HDR AP1, AP0 EXR a
 
 Extend supported schema-5 Photo settings with identity-default fields instead of rejecting current grades or adding migration. Older readers reject the new fields rather than silently discard a look. This does not revive older unsupported schemas. Projects retain exact control values; export metadata identifies the photographic operator contract, not a complete reconstructible recipe.
 
-[Processing](../contracts/processing-model.md#photo-contrastpivot-and-saturation) · [Controls](../contracts/editor-controls.md) · [Persistence](../contracts/project-state.md#photo-grade-extension) · [Plan/acceptance](../plans/contrast-and-saturation.md) · [Comparison evidence](../research/contrast-and-saturation.md)
+[Processing](../contracts/processing-model.md#photo-contrastpivot-and-saturation) · [Controls](../contracts/editor-controls.md) · [Persistence](../contracts/project-state.md#photo-grade-extension) · [Implementation/verification](../plans/completed/contrast-and-saturation.md) · [Comparison evidence](../research/contrast-and-saturation.md)

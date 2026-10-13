@@ -190,123 +190,137 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
             .unwrap(),
         );
         for height in [80., 140., 210.] {
-            for scale in [1., 2.] {
-                let (mut editor, _, _commands) = crate::editor::tests::fixture();
-                editor.document = super::tests::fixture();
-                editor.dmin = None;
-                editor.dmax = None;
-                editor.busy = true;
-                editor.preferences.filmstrip_height = height;
-                let before = editor.document.project.clone();
-                for id in editor.document.project.order.clone() {
-                    editor
-                        .thumbnails
-                        .cache
-                        .insert(super::tests::key(&editor.document, id), Ok(image.clone()));
-                }
-                let context = egui::Context::default();
-                context.set_pixels_per_point(scale);
-                let mut renderer = egui_wgpu::Renderer::new(
-                    &device,
-                    wgpu::TextureFormat::Rgba16Float,
-                    Default::default(),
-                );
-                for step in 0..3 {
-                    frame(&mut editor, &context, f64::from(step) / 60., 0.);
-                }
-                let output = frame(&mut editor, &context, 3. / 60., 0.);
-                let reference_rect = callbacks(&output)[0].0;
-                let reference_card = cards(&output)[0];
-                let reference_shape = output
-                    .shapes
-                    .iter()
-                    .find(|shape| matches!(shape.shape, egui::Shape::Callback(_)))
-                    .unwrap()
-                    .clone();
-                let mut output = frame(
-                    &mut editor,
-                    &context,
-                    4. / 60.,
-                    -reference_rect.width() * 0.8,
-                );
-                for step in 5..40 {
-                    output = frame(&mut editor, &context, f64::from(step) / 60., 0.);
-                }
-                let cells = cards(&output);
-                let draws = callbacks(&output);
-                let actual = paint(
-                    &device,
-                    &queue,
-                    &context,
-                    &mut renderer,
-                    output,
-                    false,
-                    [WIDTH as u32, 800],
-                );
-                let width = (WIDTH * scale) as usize;
-                let y = (reference_rect.center().y * scale).floor() as usize;
-                let mut edges = [false; 2];
-                assert_eq!(cells.len(), draws.len());
-                for (card, (draw, clip)) in cells.iter().zip(draws.iter()) {
-                    let full = reference_rect
-                        .translate(egui::vec2(card.left() - reference_card.left(), 0.));
-                    let visible = full.intersect(*clip);
-                    if visible.width() >= full.width() {
-                        continue;
+            for contrast in [None, Some(0.4), Some(1.6)] {
+                for scale in [1., 2.] {
+                    let (mut editor, _, _commands) = crate::editor::tests::fixture();
+                    editor.document = super::tests::fixture();
+                    if let Some(contrast) = contrast {
+                        for source in &mut editor.document.project.sources {
+                            source.photo = PhotoSettings {
+                                contrast,
+                                saturation: 1.3,
+                                contrast_colour_mix: 0.5,
+                                saturation_density: 0.5,
+                                ..PhotoSettings::default()
+                            };
+                        }
+                    } else {
+                        editor.dmin = None;
+                        editor.dmax = None;
                     }
-                    let edge = if full.left() < clip.left() { 0 } else { 1 };
-                    edges[edge] = true;
-                    let pixel_left = (full.left() * scale).round() as isize;
-                    let pixel_width = (full.right() * scale).round() as isize - pixel_left;
-                    // Negative half-pixel endpoints round away from zero. Replay the full
-                    // image at exactly that rounded size, without depending on caption layout.
-                    let reference_rect = egui::Rect::from_min_size(
-                        egui::pos2(10., (full.top() * scale).round() / scale),
-                        egui::vec2(
-                            pixel_width as f32 / scale,
-                            ((full.bottom() * scale).round() - (full.top() * scale).round())
-                                / scale,
-                        ),
+                    editor.busy = true;
+                    editor.preferences.filmstrip_height = height;
+                    let before = editor.document.project.clone();
+                    for id in editor.document.project.order.clone() {
+                        editor
+                            .thumbnails
+                            .cache
+                            .insert(super::tests::key(&editor.document, id), Ok(image.clone()));
+                    }
+                    let context = egui::Context::default();
+                    context.set_pixels_per_point(scale);
+                    let mut renderer = egui_wgpu::Renderer::new(
+                        &device,
+                        wgpu::TextureFormat::Rgba16Float,
+                        Default::default(),
                     );
-                    let mut expected_shape = reference_shape.clone();
-                    let egui::Shape::Callback(callback) = &mut expected_shape.shape else {
-                        unreachable!()
-                    };
-                    callback.rect = reference_rect;
-                    expected_shape.clip_rect = reference_rect;
-                    let reference = paint(
+                    for step in 0..3 {
+                        frame(&mut editor, &context, f64::from(step) / 60., 0.);
+                    }
+                    let output = frame(&mut editor, &context, 3. / 60., 0.);
+                    let reference_rect = callbacks(&output)[0].0;
+                    let reference_card = cards(&output)[0];
+                    let reference_shape = output
+                        .shapes
+                        .iter()
+                        .find(|shape| matches!(shape.shape, egui::Shape::Callback(_)))
+                        .unwrap()
+                        .clone();
+                    let mut output = frame(
+                        &mut editor,
+                        &context,
+                        4. / 60.,
+                        -reference_rect.width() * 0.8,
+                    );
+                    for step in 5..40 {
+                        output = frame(&mut editor, &context, f64::from(step) / 60., 0.);
+                    }
+                    let cells = cards(&output);
+                    let draws = callbacks(&output);
+                    let actual = paint(
                         &device,
                         &queue,
                         &context,
                         &mut renderer,
-                        egui::FullOutput {
-                            shapes: vec![expected_shape],
-                            pixels_per_point: scale,
-                            ..Default::default()
-                        },
+                        output,
                         false,
                         [WIDTH as u32, 800],
                     );
-                    let shift = pixel_left - (reference_rect.left() * scale).round() as isize;
-                    let start = (visible.left() * scale).ceil() as usize + 1;
-                    let end = (visible.right() * scale).floor() as usize - 1;
-                    assert!(start < end, "edge must have comparable pixels");
-                    for x in start..end {
-                        let expected_x = (x as isize - shift) as usize;
-                        assert_eq!(
-                            actual[y * width + x],
-                            reference[y * width + expected_x],
-                            "{height}pt / {scale}x / card={card:?} / draw={draw:?} / full={full:?} / reference={reference_rect:?} / shift={shift} / x={x}"
+                    let width = (WIDTH * scale) as usize;
+                    let y = (reference_rect.center().y * scale).floor() as usize;
+                    let mut edges = [false; 2];
+                    assert_eq!(cells.len(), draws.len());
+                    for (card, (draw, clip)) in cells.iter().zip(draws.iter()) {
+                        let full = reference_rect
+                            .translate(egui::vec2(card.left() - reference_card.left(), 0.));
+                        let visible = full.intersect(*clip);
+                        if visible.width() >= full.width() {
+                            continue;
+                        }
+                        let edge = if full.left() < clip.left() { 0 } else { 1 };
+                        edges[edge] = true;
+                        let pixel_left = (full.left() * scale).round() as isize;
+                        let pixel_width = (full.right() * scale).round() as isize - pixel_left;
+                        // Negative half-pixel endpoints round away from zero. Replay the full
+                        // image at exactly that rounded size, without depending on caption layout.
+                        let reference_rect = egui::Rect::from_min_size(
+                            egui::pos2(10., (full.top() * scale).round() / scale),
+                            egui::vec2(
+                                pixel_width as f32 / scale,
+                                ((full.bottom() * scale).round() - (full.top() * scale).round())
+                                    / scale,
+                            ),
                         );
+                        let mut expected_shape = reference_shape.clone();
+                        let egui::Shape::Callback(callback) = &mut expected_shape.shape else {
+                            unreachable!()
+                        };
+                        callback.rect = reference_rect;
+                        expected_shape.clip_rect = reference_rect;
+                        let reference = paint(
+                            &device,
+                            &queue,
+                            &context,
+                            &mut renderer,
+                            egui::FullOutput {
+                                shapes: vec![expected_shape],
+                                pixels_per_point: scale,
+                                ..Default::default()
+                            },
+                            false,
+                            [WIDTH as u32, 800],
+                        );
+                        let shift = pixel_left - (reference_rect.left() * scale).round() as isize;
+                        let start = (visible.left() * scale).ceil() as usize + 1;
+                        let end = (visible.right() * scale).floor() as usize - 1;
+                        assert!(start < end, "edge must have comparable pixels");
+                        for x in start..end {
+                            let expected_x = (x as isize - shift) as usize;
+                            assert_eq!(
+                                actual[y * width + x],
+                                reference[y * width + expected_x],
+                                "{height}pt / {scale}x / card={card:?} / draw={draw:?} / full={full:?} / reference={reference_rect:?} / shift={shift} / x={x}"
+                            );
+                        }
                     }
+                    assert_eq!(
+                        edges,
+                        [true, true],
+                        "must exercise both scroll edges at {height}pt / {scale}x"
+                    );
+                    assert_eq!(editor.document.project, before);
+                    assert_eq!(editor.preferences.filmstrip_height, height);
                 }
-                assert_eq!(
-                    edges,
-                    [true, true],
-                    "must exercise both scroll edges at {height}pt / {scale}x"
-                );
-                assert_eq!(editor.document.project, before);
-                assert_eq!(editor.preferences.filmstrip_height, height);
             }
         }
     });

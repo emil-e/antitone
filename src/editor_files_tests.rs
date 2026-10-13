@@ -262,6 +262,14 @@ fn fixture() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
 fn orientation_is_source_owned_and_restored_without_changing_grade_on_load() {
     let (mut editor, _send, receiver) = fixture();
     let id = editor.current_source.unwrap();
+    editor.photo = PhotoSettings {
+        contrast: 0.4,
+        pivot: 0.25,
+        contrast_colour_mix: 0.75,
+        saturation: 1.3,
+        saturation_density: 0.25,
+        ..PhotoSettings::default()
+    };
     editor.roll_orientation.horizontal = true;
     editor.roll_orientation.turn_clockwise();
     editor.photo_orientation.turn_clockwise();
@@ -281,7 +289,27 @@ fn orientation_is_source_owned_and_restored_without_changing_grade_on_load() {
         editor.document.project.source(id).unwrap().orientation,
         orientation
     );
+    let mut other = editor.document.project.source(id).unwrap().clone();
+    other.path = "second.ARW".into();
+    other.orientation = PhotoOrientation::default();
+    other.crop = None;
+    other.photo = PhotoSettings {
+        contrast: 1.6,
+        saturation: 0.7,
+        contrast_colour_mix: 0.25,
+        saturation_density: 0.75,
+        ..PhotoSettings::default()
+    };
+    let other_photo = other.photo;
+    let other_id = editor.document.project.add_source(other).unwrap();
+    editor.load("second.ARW".into());
+    assert_eq!(editor.current_source, Some(other_id));
+    assert_eq!(editor.photo, other_photo);
+    editor.load("fixture.ARW".into());
+    assert_eq!(editor.current_source, Some(id));
+    assert_eq!((editor.roll, editor.photo, editor.dmin, editor.dmax), grade);
     editor.load("temporary-reference.ARW".into());
+    assert_eq!(editor.photo, PhotoSettings::default());
     assert_eq!(editor.photo_orientation, PhotoOrientation::default());
     assert!(editor.crop.is_none());
     editor.load("fixture.ARW".into());
@@ -351,7 +379,15 @@ fn save_snapshot_flushes_current_photo_and_retains_other_source_settings() {
     let mut other = editor.document.project.source(one).unwrap().clone();
     other.path = "unvisited.ARW".into();
     let two = editor.document.project.add_source(other).unwrap();
-    editor.photo.exposure = 7.123456789012345;
+    editor.photo = PhotoSettings {
+        exposure: 7.123456789012345,
+        contrast: 1.6,
+        pivot: 0.25,
+        contrast_colour_mix: 0.75,
+        saturation: 1.3,
+        saturation_density: 0.25,
+        ..PhotoSettings::default()
+    };
     editor.roll.exposure = -0.23456789012345678;
     editor.queue_save("candidate.json".into(), crate::project::Save::New, None);
     let Command::Document(_, work) = receiver.recv().unwrap() else {

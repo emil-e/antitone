@@ -1,6 +1,6 @@
 # Contrast and saturation in a scene-referred photographic pipeline
 
-Status: retained research/comparison evidence, not the production specification. The selected simple endpoint families and blend semantics are now defined in the [processing contract](../contracts/processing-model.md#photo-contrastpivot-and-saturation) and [decision](../decisions/photographic-grading.md). The [focused plan](../plans/contrast-and-saturation.md) owns implementation/acceptance status; early shortlist proposals below are historical.
+Status: retained research/comparison evidence, not the production specification. The selected simple endpoint families and blend semantics are now defined in the [processing contract](../contracts/processing-model.md#photo-contrastpivot-and-saturation) and [decision](../decisions/photographic-grading.md). The [completed implementation](../plans/completed/contrast-and-saturation.md) records verification; [completion](../plans/completion.md#photographic-controls-and-bw-handling) tracks remaining acceptance; early shortlist proposals below are historical.
 
 ## Conclusions for Antitone
 
