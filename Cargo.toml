@@ -68,11 +68,6 @@ path = "src/bin/gpu_probe.rs"
 required-features = ["gpu"]
 
 [[bin]]
-name = "antitone-export-probe"
-path = "src/bin/export_probe.rs"
-required-features = ["raw", "export"]
-
-[[bin]]
 name = "antitone-rendering-probe"
 path = "src/bin/rendering_probe.rs"
 required-features = ["render"]

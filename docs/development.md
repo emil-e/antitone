@@ -42,6 +42,8 @@ cargo test --locked --features editor --lib --test scopes --test viewer
 
 The [authored RAW fixtures](../tests/fixtures/raw/README.md) are repository data, not private camera samples. They cover RAW/Scan/export, measured inversion anchors, sensor-clipping rejection, LibRaw matrix/flooring gates, correction/map persistence, roll sampling and named Editor/JPEG worker flows. They do not establish native-dialog interaction, general composed-UI behavior or photographic quality. Tests read them directly and use temporary export/project outputs; they never generate or download their inputs. The fixture README explains the patch expectations and deterministic maintenance recipe.
 
+The opt-in [ImageIO export check](diagnostics.md#export) adds independent TIFF storage/profile reopening without private files or a prebuilt helper. It compiles the native checker into temporary storage; ordinary tests leave it ignored.
+
 The photographic tests use an independent scalar oracle in [test support](../tests/support/photographic_reference.rs). Numerical gates live in the tests; do not loosen them merely to make a new implementation agree. A missing Metal device is a verification limit, not a numerical pass.
 
 After native setup, use broader integration/lints when the change warrants them:

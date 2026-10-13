@@ -352,19 +352,14 @@ fn authored_raw_rejects_sensor_white_and_black_references_without_mutating_sourc
 }
 
 #[cfg(feature = "export")]
-#[test]
-fn authored_dng_model4_exports_reopen_as_rgb16_tiff_and_ap0_exr() {
+fn authored_export_image() -> (
+    antitone::export::ImageSize,
+    antitone::processing::Response,
+    Vec<DVec3>,
+) {
     use antitone::{
-        color::ap1_to_ap0,
-        export::{self, ExrPrecision, ImageSize, Overwrite},
+        export::ImageSize,
         processing::{Calibration, PhotoSettings, Pipeline, RollSettings},
-        profiles,
-        rendering::{CpuRenderer, OutputTarget},
-    };
-    use exr::prelude::{FlatSamples, read_first_flat_layer_from_file};
-    use tiff::{
-        decoder::{Decoder, DecodingResult},
-        tags::Tag,
     };
     let mut scan = Scan::open(&fixture(), Some(WB)).unwrap();
     let calibration = Calibration {
@@ -406,11 +401,29 @@ fn authored_dng_model4_exports_reopen_as_rgb16_tiff_and_ap0_exr() {
         width: scan.area.width,
         height: scan.area.height,
     };
+    (size, roll.response, working)
+}
+
+#[cfg(feature = "export")]
+#[test]
+fn authored_dng_model4_exports_reopen_as_rgb16_tiff_and_ap0_exr() {
+    use antitone::{
+        color::ap1_to_ap0,
+        export::{self, ExrPrecision, Overwrite},
+        profiles,
+        rendering::{CpuRenderer, OutputTarget},
+    };
+    use exr::prelude::{FlatSamples, read_first_flat_layer_from_file};
+    use tiff::{
+        decoder::{Decoder, DecodingResult},
+        tags::Tag,
+    };
+    let (size, response, working) = authored_export_image();
     let pixel = |x: u32, y: u32| Ok(working[(y * size.width + x) as usize]);
     let directory = tempfile::tempdir().unwrap();
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
         let path = directory.path().join(format!("{target:?}.tif"));
-        export::tiff(&path, size, target, Overwrite::Refuse, roll.response, pixel).unwrap();
+        export::tiff(&path, size, target, Overwrite::Refuse, response, pixel).unwrap();
         let mut decoder = Decoder::new(fs::File::open(path).unwrap()).unwrap();
         assert_eq!(decoder.dimensions().unwrap(), (size.width, size.height));
         assert_eq!(
@@ -434,15 +447,7 @@ fn authored_dng_model4_exports_reopen_as_rgb16_tiff_and_ap0_exr() {
     }
     for precision in [ExrPrecision::Half, ExrPrecision::Full] {
         let path = directory.path().join(format!("{precision:?}.exr"));
-        export::exr(
-            &path,
-            size,
-            precision,
-            Overwrite::Refuse,
-            roll.response,
-            pixel,
-        )
-        .unwrap();
+        export::exr(&path, size, precision, Overwrite::Refuse, response, pixel).unwrap();
         let image = read_first_flat_layer_from_file(path).unwrap();
         assert_eq!(
             image.layer_data.size,
@@ -473,4 +478,121 @@ fn authored_dng_model4_exports_reopen_as_rgb16_tiff_and_ap0_exr() {
             }
         }
     }
+}
+
+#[cfg(feature = "export")]
+#[test]
+#[ignore = "independent macOS ImageIO reference; compiles with Apple Clang"]
+fn authored_dng_tiffs_reopen_with_independent_imageio_storage_and_profiles() {
+    use antitone::{
+        export::{self, ImageSize, Overwrite},
+        rendering::OutputTarget,
+    };
+    use std::{path::Path, process::Command};
+    let directory = tempfile::tempdir().unwrap();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let checker = directory.path().join("tiff-reference");
+    let compiled = Command::new("/usr/bin/clang++")
+        .args(["-std=c++17", "-O2"])
+        .arg(root.join("native/tiff_reference.mm"))
+        .args([
+            "-framework",
+            "Foundation",
+            "-framework",
+            "CoreGraphics",
+            "-framework",
+            "ImageIO",
+            "-o",
+        ])
+        .arg(&checker)
+        .output()
+        .unwrap();
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let check = |path: &Path, width: u32, height: u32, profile: &Path| {
+        Command::new(&checker)
+            .arg(path)
+            .arg(width.to_string())
+            .arg(height.to_string())
+            .arg(profile)
+            .output()
+            .unwrap()
+    };
+    let (size, response, working) = authored_export_image();
+    let small = ImageSize {
+        width: 7,
+        height: 19,
+    };
+    let mut synthetic = Vec::new();
+    for y in 0..small.height {
+        for x in 0..small.width {
+            synthetic.push(DVec3::new(
+                f64::from(x) * 0.2 - 0.1,
+                f64::from(y) * 0.1,
+                0.18,
+            ));
+        }
+    }
+    for (size, working) in [(size, working), (small, synthetic)] {
+        for (suffix, other, target) in [
+            ("srgb", "display-p3", OutputTarget::Srgb),
+            ("display-p3", "srgb", OutputTarget::DisplayP3),
+        ] {
+            let path = directory
+                .path()
+                .join(format!("{}x{}-{suffix}.tif", size.width, size.height));
+            let profile = root.join(format!("assets/profiles/antitone-{suffix}-v1.icc"));
+            export::tiff(&path, size, target, Overwrite::Refuse, response, |x, y| {
+                Ok(working[(y * size.width + x) as usize])
+            })
+            .unwrap();
+            let result = check(&path, size.width, size.height, &profile);
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            println!("{}", String::from_utf8_lossy(&result.stdout).trim());
+            assert!(String::from_utf8_lossy(&result.stdout).contains("pinned_ICC=exact"));
+            let wrong_size = check(&path, size.width + 1, size.height, &profile);
+            assert_eq!(wrong_size.status.code(), Some(3), "{wrong_size:?}");
+            let wrong_profile = check(
+                &path,
+                size.width,
+                size.height,
+                &root.join(format!("assets/profiles/antitone-{other}-v1.icc")),
+            );
+            assert_eq!(wrong_profile.status.code(), Some(4), "{wrong_profile:?}");
+        }
+    }
+    let profile = root.join("assets/profiles/antitone-srgb-v1.icc");
+    let malformed = directory.path().join("malformed.tif");
+    fs::write(&malformed, b"not a TIFF").unwrap();
+    assert_eq!(check(&malformed, 1, 1, &profile).status.code(), Some(2));
+    let rgb8 = directory.path().join("rgb8.tif");
+    tiff::encoder::TiffEncoder::new(fs::File::create(&rgb8).unwrap())
+        .unwrap()
+        .write_image::<tiff::encoder::colortype::RGB8>(1, 1, &[64, 128, 192])
+        .unwrap();
+    assert_eq!(check(&rgb8, 1, 1, &profile).status.code(), Some(3));
+    let multiple = directory.path().join("multiple.tif");
+    let mut encoder =
+        tiff::encoder::TiffEncoder::new(fs::File::create(&multiple).unwrap()).unwrap();
+    for _ in 0..2 {
+        encoder
+            .write_image::<tiff::encoder::colortype::RGB16>(1, 1, &[0; 3])
+            .unwrap();
+    }
+    drop(encoder);
+    assert_eq!(check(&multiple, 1, 1, &profile).status.code(), Some(2));
+    assert_eq!(check(&rgb8, 0, 1, &profile).status.code(), Some(1));
+    assert_eq!(
+        check(&rgb8, 1, 1, &directory.path().join("missing.icc"))
+            .status
+            .code(),
+        Some(1)
+    );
 }

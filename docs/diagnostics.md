@@ -223,23 +223,19 @@ CPU/GPU agreement, profile/transfer checks and independent ColorSync/Core Image 
 
 ## Export
 
-```sh
-cargo run --locked --offline --release --features raw,export --bin antitone-export-probe -- \
-  samples/DSC04397.ARW 4000 5644 128 32 \
-  samples/DSC04378.ARW 4000 2600 128 128 \
-  samples/DSC04416.ARW .cache/probes/NEW_OUTPUT_DIRECTORY
-```
+The ordinary [export tests](../tests/export.rs) check exact TIFF codes/profile/compression, signed/HDR AP0 EXR and destination safety. The [authored RAW tests](development.md#feature-specific-checks) additionally exercise actual decoding, calibration and model-4 processing before export.
 
-The export CLI uses diagnostic settings and full developed dimensions; editor exports use accepted composition. Large exports can consume substantial time/memory. For full TIFF/ImageIO reopening:
+ImageIO supplies a separate decoder boundary. Run its named opt-in check with:
 
 ```sh
-/usr/bin/clang++ -std=c++17 -O2 native/tiff_reference.mm \
-  -framework Foundation -framework CoreGraphics -framework ImageIO \
-  -o .cache/probes/tiff-reference
-.cache/probes/tiff-reference .cache/probes/NEW_OUTPUT_DIRECTORY
+cargo test --locked --offline --features raw,export --test raw_dng \
+  authored_dng_tiffs_reopen_with_independent_imageio_storage_and_profiles \
+  -- --ignored --nocapture
 ```
 
-The ImageIO helper checks the fixed diagnostic filenames/dimensions, 16-bit storage and ICC identity, not every pixel. Numerical pixel reopening has separate Rust tests; neither boundary proves photographic interoperability.
+This compiles [the native checker](../native/tiff_reference.mm) with Apple Clang and creates all executable/export products in an isolated temporary directory. It reopens both targets from the authored DNG and an awkward-aspect synthetic image, checking dimensions, RGB16 decoding and exact pinned ICC bytes. It also exercises rejection of wrong dimensions/profiles, malformed or multi-image TIFFs and RGB8 storage. No private photograph or cached export is required.
+
+ImageIO storage/profile agreement is not a pixel-rendering or photographic-quality oracle. Numerical tests remain responsible for pixels; large-file/resource and Lightroom/Resolve acceptance remain separate.
 
 ## macOS presentation
 

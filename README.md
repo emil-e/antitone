@@ -1,6 +1,6 @@
 # Antitone
 
-A macOS editor for camera-scanned film negatives. Analyze a roll to establish shared colour and individual exposures, then refine the photographs manually and export TIFF or EXR.
+An editor for camera-scanned film negatives. Analyze a roll to establish shared colour and individual exposures, then refine the photographs manually and export TIFF or EXR.
 
 Antitone works from linear camera measurements rather than inverting a displayed JPEG. Calibration and response are shared across a roll; Photo adjustments provide individual grading. [How processing works](docs/processing.md) and [how Analyze chooses a starting grade](docs/roll-analysis.md) explain those two separate jobs.
 
@@ -8,7 +8,7 @@ The current photo input is ARW RAW, with Sony ILCE-1M2 lossless-compressed ARW a
 
 ## Prerequisites
 
-The current development platform is **macOS on Apple Silicon**. Broader device testing and macOS 14 acceptance remain open; see [project status](PLAN.md).
+The long-term goal is a cross-platform application. The implemented desktop application and development workflow currently target **macOS on Apple Silicon**; other platforms are not yet supported. Broader device testing and macOS 14 acceptance remain open; see [project status](PLAN.md).
 
 Install these tools using your normal developer setup:
 
