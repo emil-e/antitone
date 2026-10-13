@@ -20,6 +20,8 @@ developed camera RGB
 
 LibRaw develops the RAW into linear camera RGB using a fixed roll white balance. These are the camera's three channels, not sRGB and not three isolated film dyes. Keeping development fixed means a roll's calibration refers to the same kind of measurement in every photo.
 
+LibRaw recognizes more RAW formats than Antitone's developer accepts. This path currently needs three-colour integer Bayer data without repeated black-level patterns; X-Trans, Foveon and linear DNG do not fit it. Both photo and reference pickers offer common camera RAW extensions, but decoded contents, the camera matrix and WB—not the filename—determine whether a source can be used. [Broader LibRaw compatibility](plans/raw-compatibility.md) is future work.
+
 Inversion must happen before the camera-to-working-space matrix. A matrix mixes channels; inversion applies a different nonlinear response to each channel. Mixing first and inverting afterward would produce a different model. This is the reason for the [native-camera boundary](decisions/native-camera-inversion.md), not simply an implementation preference.
 
 An optional [flat-field map](flat-field.md) corrects scan illumination in these same camera coordinates before inversion.

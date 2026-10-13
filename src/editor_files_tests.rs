@@ -1,5 +1,18 @@
 use super::*;
 
+#[test]
+fn raw_picker_offers_common_camera_formats_not_only_arw() {
+    for extension in [
+        "arw", "cr2", "cr3", "dng", "nef", "orf", "pef", "raf", "rw2", "srw",
+    ] {
+        assert!(RAW_EXTENSIONS.contains(&extension), "{extension}");
+    }
+    assert!(RAW_EXTENSIONS.windows(2).all(|pair| pair[0] < pair[1]));
+    for extension in ["gpr", "jpg", "png", "tif", "tiff", "x3f"] {
+        assert!(!RAW_EXTENSIONS.contains(&extension), "{extension}");
+    }
+}
+
 fn ui_frame(
     editor: &mut Editor,
     context: &egui::Context,

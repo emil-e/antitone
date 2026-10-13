@@ -5,6 +5,12 @@ use super::*;
 #[path = "editor_files_tests.rs"]
 mod tests;
 
+// Picker hints only; decoded sensor data and metadata determine compatibility.
+pub(super) const RAW_EXTENSIONS: &[&str] = &[
+    "3fr", "arw", "bay", "cr2", "cr3", "crw", "dcr", "dng", "erf", "fff", "iiq", "kdc", "mef",
+    "mos", "mrw", "nef", "nrw", "orf", "pef", "raf", "raw", "rw2", "rwl", "sr2", "srf", "srw",
+];
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum FileAction {
     New,
@@ -104,7 +110,7 @@ impl Editor {
             }
             FileAction::Add => {
                 if let Some(paths) = rfd::FileDialog::new()
-                    .add_filter("Camera RAW", &["arw"])
+                    .add_filter("Camera RAW", RAW_EXTENSIONS)
                     .pick_files()
                 {
                     self.add_raws(paths);

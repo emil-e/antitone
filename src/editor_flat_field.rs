@@ -106,7 +106,7 @@ impl Editor {
                             .clicked()
                             && let Some(path) = rfd::FileDialog::new()
                                 .set_title("Bare light source · same setup, without film")
-                                .add_filter("Camera RAW", &["arw"])
+                                .add_filter("Camera RAW", files::RAW_EXTENSIONS)
                                 .pick_file()
                         {
                             self.begin_flat_edit(path, None);
