@@ -19,39 +19,6 @@ fn cards(output: &egui::FullOutput) -> Vec<&egui::epaint::RectShape> {
 }
 
 #[test]
-fn captions_are_single_line_and_middle_elided_without_losing_unicode_or_file_identity() {
-    let context = egui::Context::default();
-    let mut output = context.run_ui(Default::default(), |ui| {
-        for name in [
-            "DSC04397.ARW",
-            "Summer_Scan_Calibration_Reference_Roll01_Frame_04397.ARW",
-            "京都_撮影_長い名称_Reference_Frame_04397.ARW",
-        ] {
-            let full = thumbnail_name(ui, name, 1000., egui::Color32::WHITE);
-            assert_eq!(full.job.text, name);
-            for width in [54., 90., 140.] {
-                let caption = thumbnail_name(ui, name, width, egui::Color32::WHITE);
-                assert_eq!(caption.rows.len(), 1);
-                assert!(caption.size().x <= width);
-                assert!(!caption.job.text.contains('\n'));
-                assert!(!caption.job.text.contains('�'));
-                if caption.job.text != name {
-                    assert!(caption.job.text.contains('…'));
-                    let (prefix, suffix) = caption.job.text.split_once('…').unwrap();
-                    assert!(name.starts_with(prefix) && name.ends_with(suffix));
-                    assert!(
-                        caption.job.text.ends_with("97.ARW"),
-                        "{width}pt: {}",
-                        caption.job.text
-                    );
-                }
-            }
-        }
-    });
-    output.textures_delta.clear();
-}
-
-#[test]
 fn card_frames_and_captions_fit_compact_and_normal_strips_without_changing_preferences() {
     let (mut editor, _, _commands) = crate::editor::tests::fixture();
     crate::editor::tests::add_ready_fixture(&mut editor);

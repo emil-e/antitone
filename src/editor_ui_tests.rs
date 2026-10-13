@@ -6,7 +6,7 @@ mod tool_groups;
 use super::TextAction;
 use egui::{Context, Event, FullOutput, Modifiers, Pos2, Rect, Response, Ui};
 
-fn frame<R>(
+pub(super) fn frame<R>(
     context: &Context,
     width: f32,
     enabled: bool,
@@ -53,7 +53,7 @@ fn direct(ui: &mut Ui, action: TextAction<'_>) -> Response {
     }
 }
 
-fn key(key: egui::Key) -> Vec<Event> {
+pub(super) fn key(key: egui::Key) -> Vec<Event> {
     vec![Event::Key {
         key,
         physical_key: None,
@@ -63,7 +63,7 @@ fn key(key: egui::Key) -> Vec<Event> {
     }]
 }
 
-fn pointer(position: Pos2, pressed: bool) -> Vec<Event> {
+pub(super) fn pointer(position: Pos2, pressed: bool) -> Vec<Event> {
     vec![
         Event::PointerMoved(position),
         Event::PointerButton {

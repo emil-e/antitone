@@ -1,6 +1,10 @@
 use super::icons::{self, Icon};
 use egui::{Color32, Response, Ui, Vec2};
 
+#[path = "editor_ui_cards.rs"]
+mod cards;
+pub(super) use cards::ContactSheetLayout;
+
 #[path = "editor_ui_hierarchy.rs"]
 mod hierarchy;
 pub(super) use hierarchy::{
