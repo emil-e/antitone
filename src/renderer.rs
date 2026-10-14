@@ -1,6 +1,17 @@
 use crate::{Error, gpu::ProcessingKernel, rendering::OutputTarget, resample::AveragePipelines};
 use std::{borrow::Cow, sync::Arc};
 
+const AP1_PATCH: &str = r#"
+struct Parameters { count:u32, _pad0:u32, _pad1:u32, _pad2:u32 }
+@group(0) @binding(0) var<storage,read_write> image:array<vec4f>;
+@group(0) @binding(1) var<storage,read> indices:array<u32>;
+@group(0) @binding(2) var<storage,read> values:array<vec4f>;
+@group(0) @binding(3) var<uniform> p:Parameters;
+@compute @workgroup_size(64) fn main(@builtin(global_invocation_id) id:vec3u) {
+ if id.x<p.count { image[indices[id.x]]=values[id.x]; }
+}
+"#;
+
 pub(crate) const VERTEX: &str = r#"
 struct Vertex { @builtin(position) position: vec4f, @location(0) uv: vec2f }
 @vertex fn main(@builtin(vertex_index) i:u32) -> Vertex {
@@ -55,6 +66,7 @@ pub(crate) struct TargetResources {
 /// Image storage and processing signatures remain image-owned.
 pub struct GpuRenderer {
     pub(crate) kernel: ProcessingKernel,
+    pub(crate) ap1_patch: wgpu::ComputePipeline,
     pub(crate) display: wgpu::RenderPipeline,
     targets: [TargetResources; 2],
     pub(crate) average: Arc<AveragePipelines>,
@@ -64,6 +76,18 @@ impl GpuRenderer {
         let kernel = ProcessingKernel::new(device).await?;
         let average = Arc::new(AveragePipelines::new(device).await?);
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let patch = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("AP1 repair patch"),
+            source: wgpu::ShaderSource::Wgsl(AP1_PATCH.into()),
+        });
+        let ap1_patch = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("AP1 repair patch"),
+            layout: None,
+            module: &patch,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
         let vertex = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("image fullscreen triangle"),
             source: wgpu::ShaderSource::Wgsl(VERTEX.into()),
@@ -78,6 +102,7 @@ impl GpuRenderer {
         }
         Ok(Arc::new(Self {
             kernel,
+            ap1_patch,
             display,
             targets,
             average,

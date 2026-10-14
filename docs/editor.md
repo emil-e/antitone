@@ -14,6 +14,16 @@ Tools deliberately use different views. Dmin/Dmax expose uncropped oriented sour
 
 Those views must not overwrite the working Photo's accepted crop or settings. Starting a precision pick preserves navigation; temporary source selection preserves a separate return context. [Geometry](geometry.md) explains the shared source/frame/canvas mappings.
 
+### Provisional dust repair
+
+Photo's stage toolbox opens a deliberately transient dust-repair prototype. Clicking an active Crop or Dust button again exits that tool; a Crop draft is cancelled, while Dust ends the continuing cleanup session. Dust expands a contextual inspector: each unmodified click or brush stroke on unoccupied image content creates and commits one binary source-pixel repair on release, immediately ready for the next defect. The brush initially scales to the negative's shorter active dimension; the inspector slider or scrolling over the image then changes its full-resolution diameter; ordinary zoom remains available through Cmd/Ctrl-scroll or pinch, and Space-drag or middle-drag pans. There is no separate per-repair edit mode: clicking a repair selects it, Shift-drag adds to its support and Option-drag removes from it. Every stroke commits on release. Done exits the session into a clean result view. Supports may not overlap, so painting skips pixels owned by another repair.
+
+Accepted repairs show their exact support outlines: the selected repair is bright and unrelated repairs are subdued. The canvas is the only per-repair interaction surface: clicking a support or its outline selects that repair, and Delete or Backspace removes the selection. The resolved donor repeats the selected target's exact support outline at its translated source position rather than drawing source or target bounding boxes; dragging that outline previews the heal and commits its manual override on release. The inspector controls outline visibility, holding H provides a momentary unobstructed view, and Done hides outlines automatically. Its reset action removes every repair for the current photo without introducing a list that scales with repair count. Inspector guidance, viewer help and modifier-sensitive brush colours teach the direct gestures without slowing the repeated create/select/edit workflow. Other repairs remain independent.
+
+Every enabled repair is evaluated on the backend from the same unrepaired, full-resolution signed/HDR AP1 produced by the current calibration, correction and grade. A repair never consumes another repair's pixels. Changing the grade, correction or loaded source makes old evaluations ineligible and reevaluates enabled repairs without changing their identities or masks. Stale source/settings/results cannot install. Manual masks are authoritative and pass directly to the healer; detector thresholds are not part of this path, and automatic proposals are not wired yet.
+
+This prototype does not change accepted project state or mark a document dirty. It patches AP1 before ACES only in the settled selected-photo viewer. Approximate/cached previews, filmstrip thumbnails, scopes and TIFF/EXR export remain unrepaired. Save omits the repair sets, and New/Open or application exit discards them. A viewport or repair change drops the settled repaired texture and falls back to an unrepaired provisional image while rebuilding. Persistent GPU repair-content retention and explicit UI disclosure of the unsaved/unexported limit remain open in the [continuity plan](plans/dust-repair.md).
+
 In crop editing, handles resize the frame and dragging inside moves the image beneath it. Hovering outside the frame, away from its handles, uses a curved double-headed OS cursor oriented tangentially around the crop centre. A straightening drag retains that cursor, oriented around its original pivot, until release—even when the pointer moves inside the frame. Popovers, disabled input and leaving the canvas restore the ordinary cursor.
 
 ## Numeric edits own their input
@@ -64,13 +74,15 @@ GPU infrastructure is shared, but mutable image storage, revision and processing
 
 Use the existing component families rather than copying their painting or interaction logic:
 
-- [Presentation](../src/editor_ui.rs): application header/branding, labelled rows, text actions and viewer tool groups.
+- [Presentation](../src/editor_ui.rs): application header/branding, labelled rows, text actions, stage tool shelves and viewer tool groups.
 - [Hierarchy](../src/editor_ui_hierarchy.rs): sections, disclosure/reset and stage tabs.
 - [Cards](../src/editor_ui_cards.rs): contact-sheet geometry, captions and supplied-state artwork.
 - [Icons](../src/editor_icons.rs): semantic actions and artwork.
 - [Controls](../src/editor_controls.rs): photographic values, precision and calibration/balance adapters.
 
-Presentation receives display-ready state and returns responses. Controllers still own availability, IDs, accepted/draft state, resets and dispatch. Cards receive selection/availability, and their caption supplies the unelided semantic filename; they do not own images, selection, virtualization or workers. Pinned section titles expose label semantics without disclosure/focus behavior. The fixed viewer bar hosts tool identity and Apply/Cancel without resizing the canvas; only selection/frame artwork belongs over the photograph.
+Presentation receives display-ready state and returns responses. Controllers still own availability, IDs, accepted/draft state, resets and dispatch. Cards receive selection/availability, and their caption supplies the unelided semantic filename; they do not own images, selection, virtualization or workers. Pinned section titles expose label semantics without disclosure/focus behavior.
+
+Stage tool shelves sit directly below the tabs. They distinguish immediate image commands from canvas tools, keep the active tool visibly selected and expose changed state without owning either operation. The active tool's expanded controls occupy a non-collapsible contextual inspector at the top of that stage's scrolling content. Persistent photographic adjustments remain in sections below it. The fixed viewer bar keeps navigation on the left and reserves its right side for shared tool identity plus Apply/Cancel or Done; it does not duplicate the contextual controls or resize the canvas. Only direct-manipulation selection/frame artwork belongs over the photograph.
 
 ### Colour roles
 

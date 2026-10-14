@@ -9,6 +9,9 @@ impl Editor {
         if self.crop_edit.is_some() {
             return Some((icons::Icon::Crop, "Crop"));
         }
+        if self.dust.cleanup {
+            return None;
+        }
         self.pick.map(|pick| match pick {
             Pick::Dmin => (icons::Icon::Pick, "Dmin"),
             Pick::Dmax => (icons::Icon::Pick, "Dmax"),
@@ -17,19 +20,22 @@ impl Editor {
             Pick::Wb => (icons::Icon::Pick, "WB neutral"),
             Pick::Flat => (icons::Icon::Crop, "Flat-field"),
             Pick::Analysis => (icons::Icon::Crop, "Picture area"),
+            Pick::Dust => (icons::Icon::Dust, "Dust repair"),
         })
     }
 
     pub(super) fn viewer_bar(&mut self, ui: &mut egui::Ui) -> Option<f32> {
         use icons::Icon;
         use presentation::{
-            TextAction, ToolGroup, ToolIdentity, VIEWER_BAR_HEIGHT, VIEWER_ITEM_GAP,
+            SessionToolGroup, TextAction, ToolGroup, ToolIdentity, VIEWER_BAR_HEIGHT,
+            VIEWER_ITEM_GAP,
         };
         let mut zoom_action = None;
         let cropping = self.crop_edit.is_some();
         let tool = self.viewer_tool();
         let mut cancel = false;
         let mut apply = false;
+        let mut finish_dust = false;
         let calibrated = self.calibration().is_some();
         if !calibrated {
             self.source = true;
@@ -41,7 +47,16 @@ impl Editor {
             cancel_enabled: !self.busy,
             apply_enabled: navigating && (cropping || self.region.is_some()),
         });
-        let inspecting = navigating && calibrated && tool.is_none();
+        let dust_session = self.dust.cleanup && !self.source;
+        let session_group = dust_session.then_some(SessionToolGroup {
+            identity: ToolIdentity {
+                icon: Icon::Dust,
+                title: "Dust cleanup",
+            },
+            busy: self.busy,
+            done_enabled: !self.busy && self.pick.is_none() && self.dust.donor_draft.is_none(),
+        });
+        let inspecting = navigating && calibrated && tool.is_none() && !dust_session;
         egui::Panel::bottom("viewer-bar")
             .exact_size(VIEWER_BAR_HEIGHT)
             .show_separator_line(false)
@@ -54,10 +69,14 @@ impl Editor {
                     let state = format!("{target}{quality}");
                     let trailing_width = if let Some(group) = tool_group {
                         group.width(ui)
+                    } else if let Some(group) = session_group {
+                        group.width(ui)
                     } else {
                         ui.painter().layout_no_wrap(state.clone(), egui::TextStyle::Small.resolve(ui.style()), ui.visuals().text_color()).size().x
                     };
-                    let show_zoom_steps = tool.is_none() || ui.available_width() >= trailing_width + if self.source { 224. } else { 192. };
+                    let show_zoom_steps = tool.is_none()
+                        || ui.available_width()
+                            >= trailing_width + if self.source { 224. } else { 192. };
                     if icons::button(ui, Icon::Fit, navigating, if cropping { "Fit source" } else { "Fit" }, "Fit the image (Z); crop mode fits the full source.").clicked() {
                         self.viewport.fit();
                     }
@@ -106,13 +125,23 @@ impl Editor {
                         .show(|ui| {
                             ui.set_width(290.);
                             ui.label(egui::RichText::new("Viewer navigation").strong());
-                            ui.small("Scroll pans · Cmd/Ctrl-scroll or pinch zooms");
+                            ui.small(if self.dust.cleanup {
+                                "Scroll changes brush size · Cmd/Ctrl-scroll or pinch zooms"
+                            } else {
+                                "Scroll pans · Cmd/Ctrl-scroll or pinch zooms"
+                            });
                             ui.small("Click: Fit / 100% · Z: Fit");
                             ui.small("Zoomed drag pans · Space-drag / middle-drag always pans");
                             if cropping {
                                 ui.separator();
                                 ui.small("Crop: drag inside to move the image, edges/corners to resize, outside to straighten.");
                                 ui.small("Enter applies · Escape cancels");
+                            } else if dust_session {
+                                ui.separator();
+                                ui.small("Draw for a new heal · click an outline to select another heal.");
+                                ui.small("Shift-drag adds to selected · Option-drag removes · Delete removes selected.");
+                                ui.small("Drag the selected source outline to move it · release commits every change.");
+                                ui.small("Scroll changes brush size · Cmd/Ctrl-scroll zooms · hold H to hide outlines.");
                             } else if let Some(kind) = self.pick {
                                 ui.separator();
                                 ui.small("Click a patch or drag an area; drag its edges/corners to resize.");
@@ -130,13 +159,18 @@ impl Editor {
                             let actions = group.show(ui).inner;
                             cancel = actions.cancel.clicked();
                             apply = actions.apply.clicked();
+                        } else if let Some(group) = session_group {
+                            finish_dust = group.show(ui).inner.clicked();
                         } else {
                             ui.add(egui::Label::new(egui::RichText::new(state).small().weak()).truncate()).on_hover_text("Shared preview / thumbnail / scope / TIFF target · 100 nit. EXR is scene-linear AP0. Cached preview remains provisional while the full-resolution RAW develops.");
                         }
                     });
                 });
             });
-        if cancel {
+        if finish_dust {
+            self.finish_dust_cleanup();
+            ui.ctx().request_repaint();
+        } else if cancel {
             if cropping {
                 self.finish_crop(false);
             } else {

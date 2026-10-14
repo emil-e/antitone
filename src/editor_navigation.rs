@@ -21,6 +21,13 @@ impl Editor {
                 input.key_down(egui::Key::Space),
             )
         });
+        let dust_interaction = self.tab == 1
+            && (self.dust.cleanup
+                || self.dust.donor_draft.is_some()
+                || self.pick == Some(Pick::Dust));
+        let canvas_pick = self
+            .pick
+            .filter(|pick| *pick != Pick::Dust || self.tab == 1);
         let gesture_inside = touch.is_some_and(|touch| geometry.canvas.contains(touch.center_pos));
         if response.hovered() || gesture_inside {
             if zoom != 1.
@@ -54,7 +61,10 @@ impl Editor {
         let panning = response.dragged_by(egui::PointerButton::Middle)
             || response.dragged_by(egui::PointerButton::Primary)
                 && (space
-                    || self.pick.is_none() && self.viewport.zoom.is_some() && can_pan(geometry));
+                    || canvas_pick.is_none()
+                        && !dust_interaction
+                        && self.viewport.zoom.is_some()
+                        && can_pan(geometry));
         if panning && can_pan(geometry) {
             self.viewport
                 .pan(geometry, pixels_per_point, response.drag_delta());
@@ -64,45 +74,71 @@ impl Editor {
                 pixels_per_point,
             );
         }
-        if self.pick.is_none()
+        if canvas_pick.is_none()
+            && !(self.tab == 1 && self.dust.donor_draft.is_some())
             && !space
             && response.clicked_by(egui::PointerButton::Primary)
             && let Some(point) = response
                 .interact_pointer_pos()
                 .filter(|point| geometry.image.contains(*point))
         {
-            if self.viewport.zoom.is_none() {
-                self.viewport.zoom_at(geometry, pixels_per_point, 1., point);
-            } else {
-                self.viewport.fit();
+            if let Some(id) = self.dust_repair_at(geometry, point) {
+                self.select_dust_repair(id);
+            } else if !dust_interaction {
+                if self.viewport.zoom.is_none() {
+                    self.viewport.zoom_at(geometry, pixels_per_point, 1., point);
+                } else {
+                    self.viewport.fit();
+                }
+                geometry = self.viewport.layout_composition(
+                    geometry.canvas,
+                    geometry.composition,
+                    pixels_per_point,
+                );
             }
-            geometry = self.viewport.layout_composition(
-                geometry.canvas,
-                geometry.composition,
-                pixels_per_point,
-            );
         }
         if response.hovered() || response.dragged() {
-            let cursor = if panning {
+            let focused_donor =
+                self.selected_dust_repair().is_some() && self.dust_donor_regions().is_some();
+            let cursor = if panning
+                || focused_donor
+                    && self.dust_donor_dragging()
+                    && response.dragged_by(egui::PointerButton::Primary)
+            {
                 egui::CursorIcon::Grabbing
-            } else if space
-                || self.pick.is_none() && self.viewport.zoom.is_some() && can_pan(geometry)
+            } else if focused_donor
+                && pointer.is_some_and(|point| self.dust_donor_at(geometry, point))
             {
                 egui::CursorIcon::Grab
-            } else if self.pick.is_some() && !self.busy {
-                pointer
-                    .map(|point| {
-                        picker_cursor(
-                            geometry,
-                            point,
-                            self.region,
-                            self.pick_drag,
-                            response.dragged_by(egui::PointerButton::Primary),
-                        )
-                    })
-                    .unwrap_or(egui::CursorIcon::Crosshair)
+            } else if canvas_pick.is_none()
+                && !(self.tab == 1 && self.dust.donor_draft.is_some())
+                && pointer.is_some_and(|point| self.dust_repair_at(geometry, point).is_some())
+            {
+                egui::CursorIcon::PointingHand
+            } else if self.tab == 1 && self.dust.cleanup && self.dust.donor_draft.is_none() {
+                egui::CursorIcon::Crosshair
+            } else if space
+                || canvas_pick.is_none() && self.viewport.zoom.is_some() && can_pan(geometry)
+            {
+                egui::CursorIcon::Grab
+            } else if let Some(pick) = canvas_pick.filter(|_| !self.busy) {
+                if pick == Pick::Dust {
+                    egui::CursorIcon::Crosshair
+                } else {
+                    pointer
+                        .map(|point| {
+                            picker_cursor(
+                                geometry,
+                                point,
+                                self.region,
+                                self.pick_drag,
+                                response.dragged_by(egui::PointerButton::Primary),
+                            )
+                        })
+                        .unwrap_or(egui::CursorIcon::Crosshair)
+                }
             } else if pointer.is_some_and(|point| geometry.image.contains(point))
-                && self.pick.is_none()
+                && canvas_pick.is_none()
             {
                 if self.viewport.zoom.is_none() {
                     egui::CursorIcon::ZoomIn

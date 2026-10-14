@@ -17,6 +17,7 @@ pub(super) enum Icon {
     FlipVertical,
     Crop,
     Pick,
+    Dust,
     Swap,
     Guides,
     ChevronRight,
@@ -145,6 +146,11 @@ impl Icon {
                 ]);
                 line(&[[8., 3.], [13., 8.]]);
                 line(&[[10., 4.], [12., 2.], [14., 4.], [12., 6.]]);
+            }
+            Self::Dust => {
+                ui.painter().circle_stroke(point(5., 10.), 3., stroke);
+                ui.painter().circle_stroke(point(11., 6.), 3., stroke);
+                line(&[[7., 8.], [9., 7.]]);
             }
             Self::Swap => {
                 line(&[[2., 5.], [14., 5.], [11., 2.]]);

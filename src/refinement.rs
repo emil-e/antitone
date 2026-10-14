@@ -24,6 +24,7 @@ pub fn refine(
     device: &wgpu::Device,
     (queue, submissions): (&wgpu::Queue, &crate::platform::SubmissionGate),
     (scan, field): (&Scan, Option<Arc<GpuFlatField>>),
+    repairs: &[Arc<crate::dust_repair::EvaluatedRepair>],
     parameters: ProcessingParameters,
     target: OutputTarget,
     (generation, expected): (&AtomicU64, u64),
@@ -34,6 +35,7 @@ pub fn refine(
         device,
         (queue, submissions),
         (scan, field),
+        repairs,
         parameters,
         target,
         (generation, expected),
@@ -48,6 +50,7 @@ pub(crate) fn refine_with_depth(
     device: &wgpu::Device,
     (queue, submissions): (&wgpu::Queue, &crate::platform::SubmissionGate),
     (scan, field): (&Scan, Option<Arc<GpuFlatField>>),
+    repairs: &[Arc<crate::dust_repair::EvaluatedRepair>],
     parameters: ProcessingParameters,
     target: OutputTarget,
     (generation, expected): (&AtomicU64, u64),
@@ -118,8 +121,10 @@ pub(crate) fn refine_with_depth(
                     )?,
                 )?;
             }
+            let (indices, values) =
+                repair_patch(repairs, view.area, [x, y], [tile_width, tile_height]);
             let mut encoder = device.create_command_encoder(&Default::default());
-            tile.encode(device, &mut encoder, parameters);
+            tile.encode_ap1_patch(device, &mut encoder, parameters, &indices, &values);
             average.accumulate(device, &mut encoder, &tile.linear, [x, y]);
             pending.push_back(submissions.submit(queue, [encoder.finish()]));
             // Queue order permits reuse of the tile buffers; only upload staging is outstanding.
@@ -149,6 +154,32 @@ pub(crate) fn refine_with_depth(
     );
     Ok(Some(Arc::new(output)))
 }
+fn repair_patch(
+    repairs: &[Arc<crate::dust_repair::EvaluatedRepair>],
+    area: crate::raw::Rect,
+    tile: [u32; 2],
+    tile_size: [u32; 2],
+) -> (Vec<u32>, Vec<[f32; 4]>) {
+    let origin = [area.x + tile[0], area.y + tile[1]];
+    let right = (origin[0] + tile_size[0]).min(area.x + area.width);
+    let bottom = (origin[1] + tile_size[1]).min(area.y + area.height);
+    let mut indices = Vec::new();
+    let mut values = Vec::new();
+    for repair in repairs {
+        for (point, value) in repair.pixels() {
+            if point[0] >= origin[0]
+                && point[0] < right
+                && point[1] >= origin[1]
+                && point[1] < bottom
+            {
+                indices.push(point[0] - origin[0] + (point[1] - origin[1]) * tile_size[0]);
+                values.push([value[0], value[1], value[2], 0.]);
+            }
+        }
+    }
+    (indices, values)
+}
+
 fn wait_for(device: &wgpu::Device, submission: wgpu::SubmissionIndex) -> Result<(), Error> {
     device
         .poll(wgpu::PollType::Wait {
@@ -157,4 +188,62 @@ fn wait_for(device: &wgpu::Device, submission: wgpu::SubmissionIndex) -> Result<
         })
         .map_err(|e| Error::Gpu(e.to_string()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        dust_repair::{DonorChoice, Repair, RepairId, RepairOrigin, SupportMask},
+        geometry::SourceRegion,
+    };
+
+    #[test]
+    fn repair_patch_uses_tile_local_indices_and_ap1_values() {
+        let size = [96, 96];
+        let image = (0..size[0] * size[1])
+            .map(|index| {
+                let x = index % size[0];
+                let y = index / size[0];
+                [x as f32 * 0.001, y as f32 * 0.002, 1. + x as f32 * 0.003]
+            })
+            .collect::<Vec<_>>();
+        let support = SupportMask::new([46, 46], [5, 5], vec![true; 25]).unwrap();
+        let repair = Repair {
+            id: RepairId(1),
+            enabled: true,
+            origin: RepairOrigin::Manual,
+            support,
+            donor: DonorChoice::Offset([-20, 0]),
+        };
+        let evaluated = crate::dust_repair::evaluate(
+            &repair,
+            SourceRegion {
+                x: 0,
+                y: 0,
+                width: size[0],
+                height: size[1],
+            },
+            |[x, y]| Ok(image[(y * size[0] + x) as usize]),
+        )
+        .unwrap();
+        let repairs = [Arc::new(evaluated)];
+        let (indices, values) = repair_patch(
+            &repairs,
+            crate::raw::Rect {
+                x: 0,
+                y: 0,
+                width: size[0],
+                height: size[1],
+            },
+            [32, 32],
+            [32, 32],
+        );
+        assert_eq!(indices.len(), 25);
+        assert_eq!(indices[0], 14 + 14 * 32);
+        assert_eq!(indices[24], 18 + 18 * 32);
+        assert_eq!(values[12][3], 0.);
+        let repaired = repairs[0].pixel([48, 48], [0.; 3]);
+        assert_eq!(&values[12][..3], repaired.as_slice());
+    }
 }

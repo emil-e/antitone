@@ -159,8 +159,14 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
             Pick::RollWb,
             Pick::Wb,
             Pick::Analysis,
+            Pick::Dust,
         ] {
-            editor.begin_pick(pick);
+            if pick == Pick::Dust {
+                editor.source = false;
+                editor.begin_dust_cleanup();
+            } else {
+                editor.begin_pick(pick);
+            }
             for tab in 0..3 {
                 editor.tab = tab;
                 warm(&mut editor, &context, size);
@@ -172,7 +178,12 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                     .unwrap()
                     .canvas;
                 let output = frame(&mut editor, &context, size, vec![]);
-                for name in ["Cancel", "Apply"] {
+                let actions = if pick == Pick::Dust {
+                    vec!["Done"]
+                } else {
+                    vec!["Cancel", "Apply"]
+                };
+                for name in &actions {
                     let bounds = output
                         .platform_output
                         .accesskit_update
@@ -181,13 +192,16 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                         .nodes
                         .iter()
                         .find(|(_, node)| node.label() == Some(name))
-                        .unwrap()
+                        .unwrap_or_else(|| panic!("{size:?} {pick:?} {tab}: {name}"))
                         .1
                         .bounds()
                         .unwrap();
                     assert_eq!(bounds.y1 - bounds.y0, 28.);
                     assert!(bounds.y0 as f32 >= canvas.bottom());
-                    assert!(bounds.x1 as f32 <= canvas.right() + 4.);
+                    assert!(
+                        bounds.x1 as f32 <= canvas.right() + 4.,
+                        "{size:?} {pick:?} {tab}: {name} {bounds:?} / {canvas:?}"
+                    );
                 }
                 let text = ui_labels(output);
                 let title = match pick {
@@ -197,6 +211,7 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                     Pick::RollWb => "Roll WB neutral",
                     Pick::Wb => "WB neutral",
                     Pick::Analysis => "Picture area",
+                    Pick::Dust => "Dust cleanup",
                     Pick::Flat => unreachable!(),
                 };
                 let identity = text
@@ -205,7 +220,7 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                     .unwrap()
                     .1;
                 assert!(
-                    text.iter().find(|(s, _)| s == "Cancel").unwrap().1.left() - identity.right()
+                    text.iter().find(|(s, _)| s == actions[0]).unwrap().1.left() - identity.right()
                         >= 11.5
                 );
                 assert!(!text.iter().any(|(s, _)| s.starts_with("Move tool toolbar")));
@@ -214,7 +229,7 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                         .iter()
                         .any(|(s, rect)| s == title && canvas.contains_rect(*rect))
                 );
-                for name in ["Cancel", "Apply"] {
+                for name in actions {
                     let rect = text.iter().find(|(s, _)| s == name).unwrap().1;
                     assert!(
                         rect.top() >= canvas.bottom(),
@@ -229,33 +244,42 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                             .any(|(s, rect)| s == name && canvas.contains_rect(*rect))
                     );
                 }
-                let cancel = text.iter().find(|(s, _)| s == "Cancel").unwrap().1;
-                let apply = text.iter().find(|(s, _)| s == "Apply").unwrap().1;
-                assert_eq!(cancel.center().y, apply.center().y);
-                assert!(cancel.right() < apply.left());
-                assert!(apply.right() - cancel.left() < 120.);
-                assert_eq!(identity.center().y, cancel.center().y);
-                let tint = context
-                    .global_style()
-                    .visuals
-                    .selection
-                    .bg_fill
-                    .linear_multiply(0.15);
-                let output = frame(&mut editor, &context, size, vec![]);
-                assert!(
-                    output
-                        .platform_output
-                        .accesskit_update
-                        .as_ref()
-                        .unwrap()
-                        .nodes
-                        .iter()
-                        .any(|(_, node)| node.value()
-                            == Some(format!("Active tool: {title}").as_str()))
-                );
-                assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Rect(rect) if rect.fill == tint && rect.rect.contains_rect(identity) && rect.rect.contains_rect(apply))));
+                if pick == Pick::Dust {
+                    let done = text.iter().find(|(s, _)| s == "Done").unwrap().1;
+                    assert_eq!(identity.center().y, done.center().y);
+                } else {
+                    let cancel = text.iter().find(|(s, _)| s == "Cancel").unwrap().1;
+                    let apply = text.iter().find(|(s, _)| s == "Apply").unwrap().1;
+                    assert_eq!(cancel.center().y, apply.center().y);
+                    assert!(cancel.right() < apply.left());
+                    assert!(apply.right() - cancel.left() < 120.);
+                    assert_eq!(identity.center().y, cancel.center().y);
+                    let tint = context
+                        .global_style()
+                        .visuals
+                        .selection
+                        .bg_fill
+                        .linear_multiply(0.15);
+                    let output = frame(&mut editor, &context, size, vec![]);
+                    assert!(
+                        output
+                            .platform_output
+                            .accesskit_update
+                            .as_ref()
+                            .unwrap()
+                            .nodes
+                            .iter()
+                            .any(|(_, node)| node.value()
+                                == Some(format!("Active tool: {title}").as_str()))
+                    );
+                    assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Rect(rect) if rect.fill == tint && rect.rect.contains_rect(identity) && rect.rect.contains_rect(apply))));
+                }
             }
-            editor.finish_pick();
+            if pick == Pick::Dust {
+                editor.finish_dust_cleanup();
+            } else {
+                editor.finish_pick();
+            }
         }
     }
 }
@@ -1082,7 +1106,7 @@ fn sampling_rejects_sources_that_are_not_in_the_roll_without_changing_the_pick()
 }
 
 #[test]
-fn composition_actions_remain_visible_but_disabled_during_a_crop() {
+fn photo_tool_shelf_keeps_only_the_active_crop_button_available_during_a_crop() {
     let (mut editor, _send, _receiver) = fixture();
     add_ready_fixture(&mut editor);
     editor.tab = 1;
@@ -1097,7 +1121,7 @@ fn composition_actions_remain_visible_but_disabled_during_a_crop() {
         "Turn right",
         "Flip horizontal",
         "Flip vertical",
-        "Crop…",
+        "Dust repair",
     ] {
         assert!(
             nodes
@@ -1108,6 +1132,13 @@ fn composition_actions_remain_visible_but_disabled_during_a_crop() {
                 .is_disabled()
         );
     }
+    let crop = &nodes
+        .iter()
+        .find(|(_, node)| node.label() == Some("Crop & straighten"))
+        .unwrap()
+        .1;
+    assert!(!crop.is_disabled());
+    assert_eq!(crop.is_selected(), Some(true));
 }
 
 #[test]

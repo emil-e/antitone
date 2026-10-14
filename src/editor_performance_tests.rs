@@ -105,6 +105,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
                     &device,
                     (&queue, &crate::platform::SubmissionGate::default()),
                     (&scan, Some(gpu_field.clone())),
+                    &[],
                     parameters,
                     target,
                     (&generation, 0),
@@ -146,6 +147,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
                         &device,
                         (&queue, &crate::platform::SubmissionGate::default()),
                         (&scan, Some(gpu_field.clone())),
+                        &[],
                         parameters,
                         target,
                         (&generation, 1),
@@ -164,6 +166,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
                         &device,
                         (&queue, &crate::platform::SubmissionGate::default()),
                         (&scan, Some(gpu_field.clone())),
+                        &[],
                         parameters,
                         target,
                         (&generation, 0),
@@ -382,6 +385,61 @@ fn project_relative_locator_cold_thumbnail() {
             thumbnails.ready_count(&document, OutputTarget::DisplayP3),
             1
         );
+    });
+}
+
+#[test]
+fn ap1_repair_patch_precedes_aces_without_changing_other_pixels() {
+    use crate::rendering::CpuRenderer;
+    pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let renderer = RendererCache::default().get(&device, &queue).unwrap();
+        let source = [[16384, 8192, 4096, 65535], [6000, 12000, 18000, 65535]];
+        let target = OutputTarget::Srgb;
+        let image = GpuImage::new_shared(
+            &renderer,
+            &device,
+            2,
+            1,
+            &source,
+            glam::DMat3::IDENTITY,
+            target,
+        )
+        .await
+        .unwrap();
+        let replacement = [-0.03, 0.25, 1.4];
+        let mut encoder = device.create_command_encoder(&Default::default());
+        image.encode_ap1_patch(
+            &device,
+            &mut encoder,
+            ProcessingParameters::source(),
+            &[1],
+            &[[replacement[0], replacement[1], replacement[2], 0.]],
+        );
+        queue.submit([encoder.finish()]);
+        let bytes = pixels(&device, &queue, &image);
+        let actual: &[[f32; 4]] = bytemuck::cast_slice(&bytes);
+        let expected = CpuRenderer::new(target)
+            .unwrap()
+            .render(&[
+                DVec3::new(
+                    source[0][0] as f64,
+                    source[0][1] as f64,
+                    source[0][2] as f64,
+                ) / 65535.,
+                DVec3::from_array(replacement.map(f64::from)),
+            ])
+            .unwrap();
+        for (actual, expected) in actual.iter().zip(expected) {
+            for channel in 0..3 {
+                assert!((actual[channel] - expected[channel]).abs() < 2e-5);
+            }
+        }
     });
 }
 
@@ -635,6 +693,7 @@ fn import_and_refinement_latency() {
                         &device,
                         (&queue, &crate::platform::SubmissionGate::default()),
                         (&scan, None),
+                        &[],
                         parameters,
                         OutputTarget::DisplayP3,
                         (&generation, 0),

@@ -28,3 +28,5 @@ The current platform is macOS on Apple Silicon. Local RAWs and generated photogr
 ## Understand the choices and unfinished work
 
 [Decisions](decisions/README.md) explain consequential tradeoffs. [PLAN.md](../PLAN.md) gives current priorities, [work plans](plans/README.md) describe substantial unfinished packages, and [feedback](feedback.md) collects unresolved observations. A proposed feature in a plan is not implemented behavior.
+
+For the provisional Dust tool, read the [editor workflow](editor.md#provisional-dust-repair) and [unfinished rendering-continuity plan](plans/dust-repair.md). The [dust detection and repair research](research/dust-removal.md) and its [comparison tools](../scripts/dust-experiments/README.md) document experimental evidence rather than accepted product behavior.

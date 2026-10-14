@@ -60,6 +60,7 @@ fn refinement_worker_uses_the_submission_gate_supplied_to_the_host() {
                 .send(Command::Refine(
                     editor.id,
                     revision,
+                    Vec::new(),
                     ProcessingParameters::source(),
                     OutputTarget::Srgb,
                     view,
@@ -575,6 +576,66 @@ fn stopped_pick_worker_clears_busy_and_stale_samples_do_not_apply() {
     editor.receive();
     assert_eq!(editor.photo, old);
 }
+#[test]
+fn dust_mask_tool_is_transient_photo_state() {
+    let (mut editor, _send, _receiver) = fixture();
+    add_ready_fixture(&mut editor);
+    editor.tab = 1;
+    editor.source = false;
+    let project = editor.document.project.clone();
+    let dirty = editor.document.dirty();
+    let context = egui::Context::default();
+    click_control(&mut editor, &context, "Dust repair");
+    assert!(editor.dust.cleanup);
+    assert!(editor.pick.is_none());
+    assert!(editor.selected_dust_repair().is_none());
+    assert_eq!(editor.document.project, project);
+    assert_eq!(editor.document.dirty(), dirty);
+    editor.finish_dust_cleanup();
+    assert!(!editor.dust.cleanup);
+    assert_eq!(editor.document.project, project);
+    assert_eq!(editor.document.dirty(), dirty);
+}
+
+#[test]
+fn selected_dust_donor_rejects_invalid_manual_offsets() {
+    let support = crate::dust_repair::SupportMask::new([50, 50], [1, 1], vec![true]).unwrap();
+    let active = crate::geometry::SourceRegion {
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+    };
+    assert!(
+        super::dust::validate_dust_donor(
+            crate::dust_repair::DonorChoice::Offset([30, 0]),
+            &support,
+            active,
+        )
+        .is_ok()
+    );
+    assert!(
+        super::dust::validate_dust_donor(
+            crate::dust_repair::DonorChoice::Offset([0, 0]),
+            &support,
+            active,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("intersects required pixels")
+    );
+    assert!(
+        super::dust::validate_dust_donor(
+            crate::dust_repair::DonorChoice::Offset([100, 0]),
+            &support,
+            active,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("outside source")
+    );
+}
+
 pub(super) fn add_ready_fixture(editor: &mut Editor) {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::METAL,
@@ -699,10 +760,10 @@ fn crop_inspector_settings_remain_photo_only_without_transaction_buttons() {
             let heading = if tab == 0 {
                 "Scan orientation"
             } else {
-                "Composition"
+                "Crop & straighten"
             };
             let hidden = if tab == 0 {
-                "Composition"
+                "Crop & straighten"
             } else {
                 "Scan orientation"
             };
@@ -714,7 +775,7 @@ fn crop_inspector_settings_remain_photo_only_without_transaction_buttons() {
                 assert_eq!(
                     text.iter().any(|(s, _)| s == label),
                     tab == 1,
-                    "{label} belongs only to Photo Composition"
+                    "{label} belongs only to the active Photo crop tool"
                 );
             }
             for label in ["Cancel", "Apply"] {
@@ -801,9 +862,9 @@ fn tab_clicks_show_only_the_selected_scope_without_changing_view_or_crop_draft()
             editor.last_layout.unwrap().0.image
         };
         for (tab, label, heading, hidden) in [
-            (0, "Roll", "Scan orientation", "Composition"),
-            (1, "Photo", "Composition", "Scan orientation"),
-            (2, "Rendering", "Target", "Composition"),
+            (0, "Roll", "Scan orientation", "Crop & straighten"),
+            (1, "Photo", "Crop & straighten", "Scan orientation"),
+            (2, "Rendering", "Target", "Crop & straighten"),
         ] {
             let labels = app_frame(&mut editor, &context, vec![]);
             let button = labels.iter().find(|(s, _)| s == label).unwrap().1.center();
@@ -969,7 +1030,7 @@ fn crop_button_and_enter_escape_keys_apply_or_restore_the_starting_view() {
         let labels = app_frame(&mut editor, &context, vec![]);
         let button = labels
             .iter()
-            .find(|(label, _)| label == "Crop…")
+            .find(|(label, _)| label == "Crop & straighten")
             .unwrap_or_else(|| panic!("crop control missing: {labels:?}"))
             .1
             .center();
@@ -1432,7 +1493,7 @@ fn orientation_buttons_transform_displayed_photo_and_preserve_crop_and_other_sco
         )
         .unwrap();
         editor.viewport.zoom = Some(2.);
-        click_section_button(&mut editor, &context, "Composition", label);
+        click_control(&mut editor, &context, label);
         assert!(editor.viewport.zoom.is_none());
         let after = Composition::with_crop(
             editor.ready.as_ref().unwrap().area,
@@ -1507,7 +1568,14 @@ fn flip_buttons_are_repeatable_scoped_actions_and_disabled_when_busy_or_picking(
         );
         for label in ["Flip horizontal", "Flip vertical"] {
             let before = (editor.roll_orientation, editor.photo_orientation);
-            click_section_button(&mut editor, &context, section, label);
+            let click = |editor: &mut Editor| {
+                if section == "Composition" {
+                    click_control(editor, &context, label);
+                } else {
+                    click_section_button(editor, &context, section, label);
+                }
+            };
+            click(&mut editor);
             let mut expected = before;
             match (section, label) {
                 ("Composition", "Flip horizontal") => expected.1.flips.horizontal ^= true,
@@ -1520,20 +1588,20 @@ fn flip_buttons_are_repeatable_scoped_actions_and_disabled_when_busy_or_picking(
                 expected
             );
             editor.busy = true;
-            click_section_button(&mut editor, &context, section, label);
+            click(&mut editor);
             assert_eq!(
                 (editor.roll_orientation, editor.photo_orientation),
                 expected
             );
             editor.busy = false;
             editor.begin_pick(Pick::Wb);
-            click_section_button(&mut editor, &context, section, label);
+            click(&mut editor);
             assert_eq!(
                 (editor.roll_orientation, editor.photo_orientation),
                 expected
             );
             editor.finish_pick();
-            click_section_button(&mut editor, &context, section, label);
+            click(&mut editor);
             assert_eq!((editor.roll_orientation, editor.photo_orientation), before);
         }
         if section == "Composition" {
@@ -1768,32 +1836,6 @@ fn shared_roll_turns_apply_to_new_photos_and_export_snapshots() {
     assert_eq!(composition.source_pixel([0, 0]).unwrap(), [12, 582]);
 }
 #[test]
-fn photo_geometry_reset_is_scoped_and_disabled_during_picking() {
-    let (mut editor, _send, _receiver) = fixture();
-    editor.crop = Some(Crop::from_region(Rect {
-        x: 100,
-        y: 70,
-        width: 301,
-        height: 203,
-    }));
-    editor.photo_orientation.turn_clockwise();
-    editor.roll_orientation.horizontal = true;
-    add_ready_fixture(&mut editor);
-    editor.tab = 1;
-    let grade = (editor.roll, editor.photo, editor.dmin, editor.dmax);
-    let context = egui::Context::default();
-    editor.begin_pick(Pick::Wb);
-    click_section_reset(&mut editor, &context, "Composition");
-    assert!(!editor.photo_orientation.is_identity());
-    assert!(editor.crop.is_some());
-    editor.finish_pick();
-    click_section_reset(&mut editor, &context, "Composition");
-    assert!(editor.photo_orientation.is_identity());
-    assert!(editor.crop.is_none());
-    assert!(editor.roll_orientation.horizontal);
-    assert_eq!((editor.roll, editor.photo, editor.dmin, editor.dmax), grade);
-}
-#[test]
 fn navigation_invalidates_pending_overwrite() {
     let (mut editor, _send, receiver) = fixture();
     editor.overwrite = Some((
@@ -1950,6 +1992,35 @@ fn click_section_header(editor: &mut Editor, context: &egui::Context, section: &
     }
 }
 
+fn click_control(editor: &mut Editor, context: &egui::Context, label: &str) {
+    for _ in 0..3 {
+        controls_frame(editor, context, 315., vec![]);
+    }
+    let position = controls_frame(editor, context, 315., vec![])
+        .into_iter()
+        .filter(|(candidate, _)| candidate == label)
+        .min_by(|(_, a), (_, b)| a.top().total_cmp(&b.top()))
+        .unwrap_or_else(|| panic!("missing control {label}"))
+        .1
+        .center();
+    for pressed in [true, false] {
+        controls_frame(
+            editor,
+            context,
+            315.,
+            vec![
+                egui::Event::PointerMoved(position),
+                egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+    }
+}
+
 fn click_section_button(editor: &mut Editor, context: &egui::Context, section: &str, label: &str) {
     for _ in 0..3 {
         controls_frame(editor, context, 315., vec![]);
@@ -2050,7 +2121,12 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
                     "Exposure",
                 ]
             } else if tab == 1 {
-                vec!["Composition", "White balance", "Exposure"]
+                vec![
+                    "Crop & straighten",
+                    "Dust repair",
+                    "White balance",
+                    "Exposure",
+                ]
             } else {
                 vec!["Target", "Display P3", "Preview + TIFF · 100 nit"]
             };
@@ -2062,13 +2138,13 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
                 assert!(!labels.contains(&"Toe") && !labels.contains(&"Shoulder"));
             }
             assert!(!labels.contains(&if tab == 0 {
-                "Composition"
+                "Crop & straighten"
             } else {
                 "Scan orientation"
             }));
             let heading = match tab {
                 0 => "Scan orientation",
-                1 => "Composition",
+                1 => "Crop & straighten",
                 _ => "Target",
             };
             let tabs = text.iter().find(|(label, _)| label == "Roll").unwrap().1;
@@ -2090,7 +2166,7 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
                     "Exposure",
                 ]
             } else if tab == 1 {
-                vec!["Composition", "White balance", "Exposure"]
+                vec!["Crop & straighten", "White balance", "Exposure"]
             } else {
                 vec!["Target"]
             };
@@ -2179,16 +2255,15 @@ fn collapsed_calibration_keeps_missing_measurements_visible() {
 }
 
 #[test]
-fn crop_draft_controls_stay_visible_when_composition_was_collapsed() {
+fn crop_tool_controls_expand_below_the_fixed_photo_tool_shelf() {
     let context = egui::Context::default();
     let (mut editor, _send, _receiver) = fixture();
     add_ready_fixture(&mut editor);
     editor.tab = 1;
-    click_section_header(&mut editor, &context, "Composition");
     assert!(
-        !controls_frame(&mut editor, &context, 315., vec![])
+        controls_frame(&mut editor, &context, 315., vec![])
             .iter()
-            .any(|(label, _)| label == "Crop…")
+            .any(|(label, _)| label == "Crop & straighten")
     );
     let before = (
         editor.crop,
@@ -2209,9 +2284,9 @@ fn crop_draft_controls_stay_visible_when_composition_was_collapsed() {
     }
     editor.finish_crop(false);
     assert!(
-        !controls_frame(&mut editor, &context, 315., vec![])
+        controls_frame(&mut editor, &context, 315., vec![])
             .iter()
-            .any(|(label, _)| label == "Crop…")
+            .any(|(label, _)| label == "Crop & straighten")
     );
     assert_eq!(
         (

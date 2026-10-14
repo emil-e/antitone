@@ -11,7 +11,9 @@ developed camera RGB
   → camera-to-AP1 colour conversion
   → exposure and photographic white balance
   → Photo contrast and saturation
-  → working positive, ready for rendering or EXR
+  → working positive
+       ├→ optional transient dust patch → settled-view rendering
+       └→ normal rendering or EXR
 ```
 
 [Colour and output](colour-and-output.md) explains what happens after the working positive. Display rendering is not part of negative inversion.
@@ -79,6 +81,8 @@ See the [grading rationale](decisions/photographic-grading.md) for why these ope
 The current model is **4**. Calibration must be finite and satisfy `Dmin > Dmax >= input_floor > 0` per camera channel. A roll retains its camera model and matrix; incompatible native-camera bases cannot share its calibration.
 
 Unsupported domains fail validation rather than being repaired with an extra clamp, pedestal or CPU interactive fallback. Display-rendering limits belong at the [output boundary](colour-and-output.md), not in the working positive. Scalar/GPU agreement checks numerical implementation, not physical colour accuracy.
+
+The provisional dust tool evaluates supplied support after the complete Photo grade in signed/HDR AP1. Its settled viewer patch occurs before ACES rendering and never modifies known pixels in the evaluated AP1 patch. This is currently transient display behavior: export, thumbnails, scopes and approximate previews do not consume repairs, so it is not yet an output-processing contract.
 
 ## Working on this area
 

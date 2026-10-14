@@ -279,6 +279,17 @@ impl GpuImage {
         encoder: &mut wgpu::CommandEncoder,
         parameters: ProcessingParameters,
     ) {
+        self.encode_ap1_patch(device, encoder, parameters, &[], &[]);
+    }
+    pub(crate) fn encode_ap1_patch(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        parameters: ProcessingParameters,
+        indices: &[u32],
+        values: &[[f32; 4]],
+    ) {
+        assert_eq!(indices.len(), values.len());
         let processing = self
             .processing
             .as_ref()
@@ -290,6 +301,54 @@ impl GpuImage {
             &processing.working,
             parameters,
         );
+        if !indices.is_empty() {
+            let patch_count = indices.len() as u32;
+            let indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("AP1 repair indices"),
+                contents: bytemuck::cast_slice(indices),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+            let values = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("AP1 repair values"),
+                contents: bytemuck::cast_slice(values),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+            let count = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("AP1 repair count"),
+                contents: bytemuck::cast_slice(&[patch_count, 0, 0, 0]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+            let patch = &processing.renderer.ap1_patch;
+            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("AP1 repair patch"),
+                layout: &patch.get_bind_group_layout(0),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: processing.working.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: indices.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: values.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: count.as_entire_binding(),
+                    },
+                ],
+            });
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("AP1 repair patch"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(patch);
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups(patch_count.div_ceil(64), 1, 1);
+        }
         let view = self.linear.create_view(&Default::default());
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("ACES target rendering"),

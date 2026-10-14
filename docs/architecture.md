@@ -11,6 +11,7 @@ For the photographic model, start with [processing](processing.md). This page is
 | Processing | [processing](../src/processing.rs), [photographic](../src/photographic.rs), [colour](../src/color.rs) | Scalar reference, response and positive grading |
 | RAW source | [raw](../src/raw.rs), [scan](../src/scan.rs), [native bridge](../native/raw_bridge.cpp) | LibRaw ownership, camera RGB and original capture diagnostics |
 | Scan correction | [flat-field](../src/flat_field.rs), [GPU map](../src/gpu_flat_field.rs) | Source-coordinate illumination gains |
+| Dust-repair prototype | [repair model](../src/dust_repair.rs), [editor controller](../src/editor_dust.rs) | Transient source-owned masks, independent bounded AP1 evaluation and settled-view patching |
 | Roll analysis | [estimator](../src/roll_analysis.rs), [fitter](../src/roll_analysis_gamma.rs) | Sample-derived starting settings, separate from pixel processing |
 | GPU | [processing](../src/gpu.rs), [renderer](../src/renderer.rs) | Interactive processing and reusable rendering resources |
 | Rendering/output | [rendering](../src/rendering.rs), [export](../src/export.rs), [native transform](../native/rendering_transform.h) | ACES, file encoding and output safety |
@@ -38,7 +39,7 @@ Worker results are proposals. Request IDs, generations and source/settings snaps
 
 [Shared presentation](editor.md#build-ui-from-shared-presentation) lays out supplied state and returns responses. Photographic adapters own value semantics; feature controllers own state, availability and dispatch. This keeps a presentation change from acquiring processing or persistence responsibility.
 
-Accepted photographic state lives in [projects](projects.md). Tool drafts and viewport state are transient; durable UI preferences are stored independently. [Editor](editor.md) explains preview/cache distinctions and the input/transaction model.
+Accepted photographic state lives in [projects](projects.md). Tool drafts and viewport state are transient; durable UI preferences are stored independently. The dust-repair prototype is separately keyed by `SourceId`, never marks `Document` dirty and has no project-schema representation. Its backend evaluations derive independently from immutable unrepaired AP1; only matching evaluations patch the settled selected-photo rendering before ACES. Approximate previews, scopes, thumbnails and export remain unrepaired. [Editor](editor.md) explains preview/cache distinctions and the input/transaction model.
 
 ## UI test boundary
 

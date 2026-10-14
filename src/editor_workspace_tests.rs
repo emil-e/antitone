@@ -169,6 +169,7 @@ fn successful_new_from_photo_or_rendering_selects_roll_and_opens_calibration_onl
                 reuse_ready: false,
                 correction: None,
                 preserve_view: false,
+                reset_repairs: true,
             })),
         ))
         .unwrap();
@@ -235,6 +236,7 @@ fn failed_new_and_open_or_import_do_not_reset_the_selected_tab() {
         DocumentWork::Open("project.json".into()),
         DocumentWork::Import(Document::default(), vec![], None),
     ] {
+        let reset_repairs = matches!(&work, DocumentWork::Open(_));
         editor.start_document(work);
         send.send(Message::Prepared(
             editor.document_pending.unwrap(),
@@ -245,6 +247,7 @@ fn failed_new_and_open_or_import_do_not_reset_the_selected_tab() {
                 reuse_ready: false,
                 correction: None,
                 preserve_view: false,
+                reset_repairs,
             })),
         ))
         .unwrap();
@@ -336,7 +339,8 @@ fn all_three_stage_controls_are_reachable_at_normal_and_narrow_inspector_sizes()
             (
                 1,
                 vec![
-                    "Composition",
+                    "Crop & straighten",
+                    "Dust repair",
                     "White balance",
                     "Warmth",
                     "Tint",
@@ -411,7 +415,7 @@ fn all_three_stage_controls_are_reachable_at_normal_and_narrow_inspector_sizes()
 }
 
 #[test]
-fn crop_inspector_retains_composition_actions_without_owning_transaction_controls() {
+fn crop_inspector_keeps_the_shared_tool_shelf_without_owning_transaction_controls() {
     let (mut editor, _send, _receiver) = fixture();
     add_ready_fixture(&mut editor);
     editor.tab = 1;
@@ -420,13 +424,13 @@ fn crop_inspector_retains_composition_actions_without_owning_transaction_control
     for (width, height) in [(315., 800.), (270., 600.)] {
         let context = egui::Context::default();
         let labels = controls_frame_sized(&mut editor, &context, width, height, vec![]);
-        assert!(labels.iter().any(|(s, _)| s == "Composition"));
         for action in [
             "Turn left",
             "Turn right",
             "Flip horizontal",
             "Flip vertical",
-            "Crop…",
+            "Crop & straighten",
+            "Dust repair",
         ] {
             assert!(labels.iter().any(|(s, _)| s == action));
         }

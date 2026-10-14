@@ -2,6 +2,7 @@
 
 [PLAN.md](../../PLAN.md) owns priorities. These packages describe open scope, questions and acceptance—not implemented behavior:
 
+- [Dust-repair rendering continuity](dust-repair.md)
 - [Analyze photographic acceptance](roll-assistance.md)
 - [Verification tools, RAW fixtures and UI automation](verification-tooling.md)
 - [Broader LibRaw source compatibility](raw-compatibility.md)

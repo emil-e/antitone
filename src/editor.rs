@@ -57,6 +57,8 @@ use flat::{Correction, FlatEdit, FlatPreview};
 #[path = "editor_crop.rs"]
 mod crop_editor;
 use crop_editor::CropEdit;
+#[path = "editor_dust.rs"]
+mod dust;
 #[path = "editor_memory.rs"]
 mod memory;
 #[path = "editor_navigation.rs"]
@@ -85,6 +87,7 @@ enum Pick {
     Wb,
     Flat,
     Analysis,
+    Dust,
 }
 struct PickReturn {
     path: PathBuf,
@@ -96,6 +99,14 @@ struct PickView {
     viewport: Viewport,
     anchored: Viewport,
 }
+type PreviewSignature = (
+    [u8; ProcessingParameters::BYTE_LEN],
+    OutputTarget,
+    Option<ViewRequest>,
+    Composition,
+    u64,
+);
+
 struct Ready {
     thumbnail: Option<(thumbnails::FileKey, Arc<thumbnails::Proxy>)>,
     path: PathBuf,
@@ -120,10 +131,19 @@ struct Prepared {
     reuse_ready: bool,
     correction: Option<Arc<Correction>>,
     preserve_view: bool,
+    reset_repairs: bool,
 }
 enum Command {
     Analyze(u64, Box<analysis::Request>),
-    Refine(u64, u64, ProcessingParameters, OutputTarget, ViewRequest),
+    Dust(dust::Request),
+    Refine(
+        u64,
+        u64,
+        Vec<Arc<crate::dust_repair::EvaluatedRepair>>,
+        ProcessingParameters,
+        OutputTarget,
+        ViewRequest,
+    ),
     Load(
         u64,
         PathBuf,
@@ -173,6 +193,7 @@ enum Measurement {
 enum Message {
     AnalysisProgress(u64, usize, usize),
     Analyzed(u64, Result<Option<Box<analysis::Outcome>>, String>),
+    Dust(u64, Result<Box<dust::Response>, String>),
     Refined(u64, Result<Option<Arc<GpuImage>>, String>),
     Ready(u64, Result<Box<Ready>, String>),
     Picked(u64, Pick, Result<Measurement, String>),
@@ -275,7 +296,8 @@ fn prepare_document(
     work: DocumentWork,
     previous_correction: Option<&Arc<Correction>>,
 ) -> Result<Prepared, Error> {
-    let preserve_view = matches!(work, DocumentWork::Correction(..));
+    let preserve_view = matches!(&work, DocumentWork::Correction(..));
+    let reset_repairs = matches!(&work, DocumentWork::Open(_) | DocumentWork::New);
     let selected_override = match &work {
         DocumentWork::Correction(_, selected) => Some(*selected),
         _ => None,
@@ -311,6 +333,7 @@ fn prepare_document(
             reuse_ready: true,
             correction,
             preserve_view,
+            reset_repairs,
         });
     }
     let selected = selected_override.unwrap_or_else(|| document.project.order.first().copied());
@@ -352,6 +375,7 @@ fn prepare_document(
         reuse_ready: false,
         correction,
         preserve_view,
+        reset_repairs,
     })
 }
 
@@ -392,7 +416,28 @@ fn backend(
                     break;
                 }
             }
-            Command::Refine(id, revision, parameters, target, view) => {
+            Command::Dust(request) => {
+                let request_id = request.request;
+                let result = match source
+                    .as_ref()
+                    .filter(|(loaded, _)| *loaded == request.loaded)
+                {
+                    Some((_, scan))
+                        if generation.load(std::sync::atomic::Ordering::Relaxed)
+                            == request.revision =>
+                    {
+                        dust::evaluate(scan, &request)
+                            .map(Box::new)
+                            .map_err(|error| error.to_string())
+                    }
+                    Some(_) => Err("dust repair became stale before evaluation".into()),
+                    None => Err("source changed before dust repair".into()),
+                };
+                if messages.send(Message::Dust(request_id, result)).is_err() {
+                    break;
+                }
+            }
+            Command::Refine(id, revision, repairs, parameters, target, view) => {
                 let active = match &flat_preview {
                     Some((loaded, scan, _)) if *loaded == id => Some((scan, None)),
                     _ => source
@@ -409,6 +454,7 @@ fn backend(
                                 &device,
                                 (&queue, &submissions),
                                 context,
+                                &repairs,
                                 parameters,
                                 target,
                                 (&generation, revision),
@@ -569,7 +615,7 @@ fn backend(
                                 roll,
                             )
                             .map(Measurement::Balance),
-                        Pick::Flat | Pick::Analysis => Err(Error::InvalidParameter(
+                        Pick::Flat | Pick::Analysis | Pick::Dust => Err(Error::InvalidParameter(
                             "area acceptance uses a separate transaction",
                         )),
                         Pick::RollWb => scan
@@ -660,12 +706,7 @@ pub struct Editor {
     thumbnails: Thumbnails,
     scopes: Scopes,
     generation: Arc<std::sync::atomic::AtomicU64>,
-    signature: Option<(
-        [u8; ProcessingParameters::BYTE_LEN],
-        OutputTarget,
-        Option<ViewRequest>,
-        Composition,
-    )>,
+    signature: Option<PreviewSignature>,
     settled: Option<(u64, ViewRequest, Arc<GpuImage>)>,
     refining: Option<(u64, ViewRequest)>,
     viewport: Viewport,
@@ -715,6 +756,7 @@ pub struct Editor {
     overwrite: Option<(PathBuf, OutputFormat)>,
     correction: Option<Arc<Correction>>,
     flat_edit: Option<FlatEdit>,
+    dust: dust::State,
 }
 impl Editor {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, initial: Option<PathBuf>) -> Self {
@@ -823,6 +865,7 @@ impl Editor {
             overwrite: None,
             correction: None,
             flat_edit: None,
+            dust: dust::State::default(),
         }
     }
     pub fn restore_ui_preferences(&mut self) {
@@ -1001,6 +1044,9 @@ impl Editor {
             selecting_photo.then(|| Arc::new(SelectionTiming::new(self.id, started)));
         self.region = None;
         self.pick = None;
+        self.cancel_dust_mask();
+        self.dust.cleanup = false;
+        self.dust.donor_draft = None;
         self.source = self.calibration().is_none();
         self.busy = true;
         self.status = "Developing full-resolution RAW…".into();
@@ -1068,6 +1114,9 @@ impl Editor {
                     }
                 }
                 Message::Analyzed(id, result) => self.analysis_result(id, result),
+                Message::Dust(request, result) => {
+                    self.receive_dust(request, result.map(|response| *response))
+                }
                 Message::Refined(revision, result) => {
                     let view = self
                         .refining
@@ -1182,7 +1231,8 @@ impl Editor {
                             match kind {
                                 Pick::Gamma => roll.balance = balance,
                                 Pick::RollWb => roll.wb = balance,
-                                _ => photo.wb = balance,
+                                Pick::Wb => photo.wb = balance,
+                                _ => unreachable!("non-balance pick returned balance"),
                             }
                             if let Some(cal) = self.calibration()
                                 && let Err(error) = self.positive_parameters(cal, roll, photo)
@@ -1206,6 +1256,9 @@ impl Editor {
                     match result {
                         Ok(prepared) => {
                             let flat_context = self.flat_edit.take();
+                            if prepared.reset_repairs {
+                                self.dust = dust::State::default();
+                            }
                             self.correction = prepared.correction;
                             self.document = prepared.document;
                             if new_project {
@@ -1336,6 +1389,10 @@ impl Editor {
             self.finish_flat_edit();
             return;
         }
+        if self.pick == Some(Pick::Dust) {
+            self.cancel_dust_mask();
+            self.dust.donor_draft = None;
+        }
         let view = self.pick_view.take();
         let source = view.map_or(self.calibration().is_none(), |view| view.source);
         let returning = self.pick_return.is_some();
@@ -1365,6 +1422,9 @@ impl Editor {
         self.source = self.calibration().is_none() || source;
     }
     fn begin_pick(&mut self, kind: Pick) {
+        if kind != Pick::Dust {
+            self.dust.cleanup = false;
+        }
         if self.pick.is_some() {
             self.finish_pick();
         }
@@ -1438,6 +1498,10 @@ impl Editor {
         self.source = true;
     }
     fn apply_pick(&mut self) {
+        if self.pick == Some(Pick::Dust) {
+            self.apply_dust_mask();
+            return;
+        }
         if self.pick == Some(Pick::Analysis) {
             self.apply_analysis_area();
             return;
@@ -1527,13 +1591,18 @@ impl Editor {
             });
             ui.ctx().request_repaint();
         }
+        if self.tab == 1 {
+            self.photo_tool_shelf(ui);
+        }
         let editable = !self.busy
             && self.crop_edit.is_none()
             && self.flat_edit.is_none()
+            && !self.dust.cleanup
             && self.calibration().is_some();
         let can_pick = !self.busy
             && self.crop_edit.is_none()
             && self.flat_edit.is_none()
+            && !self.dust.cleanup
             && self.ready.is_some();
         let mut start_pick = None;
         egui::ScrollArea::vertical().id_salt(("inspector", self.tab)).show(ui, |ui| {
@@ -1541,7 +1610,8 @@ impl Editor {
                 let geometry_editable = !self.busy
                     && self.crop_edit.is_none()
                     && self.ready.is_some()
-                    && self.pick.is_none();
+                    && self.pick.is_none()
+                    && self.dust.donor_draft.is_none();
                 ui.push_id("roll", |ui| {
                     ui.add_enabled_ui(geometry_editable, |ui| {
                         let changed = !self.roll_orientation.is_identity();
@@ -1646,7 +1716,8 @@ impl Editor {
                     });
                 });
             } else if self.tab == 1 {
-                self.composition_controls(ui);
+                self.crop_controls(ui);
+                self.dust_controls(ui);
                 ui.push_id("photo", |ui| {
                     ui.add_enabled_ui(editable, |ui| {
                         if controls::color(
@@ -1698,7 +1769,11 @@ impl Editor {
                     });
                 });
             } else {
-                ui.add_enabled_ui(self.crop_edit.is_none() && self.flat_edit.is_none(), |ui| {
+                ui.add_enabled_ui(
+                    self.crop_edit.is_none()
+                        && self.flat_edit.is_none()
+                        && self.dust.donor_draft.is_none(),
+                    |ui| {
                     let changed = self.target != OutputTarget::DisplayP3;
                     let (_, reset) = presentation::section(ui, "rendering-target", "Target", SectionHeader {
                         summary: if self.target == OutputTarget::DisplayP3 { "Display P3 · 100 nit" } else { "sRGB · 100 nit" },
@@ -1719,7 +1794,8 @@ impl Editor {
                         );
                     });
                     if reset { self.target = OutputTarget::DisplayP3; }
-                });
+                },
+                );
             }
         });
         self.preferences.sections = presentation::collect_expansion(ui.ctx());
@@ -1789,6 +1865,7 @@ impl host::App for Editor {
         let available = !self.busy
             && self.pick.is_none()
             && self.crop_edit.is_none()
+            && self.dust.donor_draft.is_none()
             && self.overwrite.is_none()
             && self.transition.is_none()
             && self.project_overwrite.is_none()
@@ -1852,6 +1929,14 @@ impl host::App for Editor {
             if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Z)) {
                 self.viewport.fit();
             }
+            if self.dust.cleanup
+                && ui.input_mut(|input| {
+                    input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
+                        || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
+                })
+            {
+                self.delete_selected_dust_repair();
+            }
             if self.pick.is_some()
                 && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
             {
@@ -1860,10 +1945,18 @@ impl host::App for Editor {
                 self.region = None;
             }
             if self.pick.is_some()
+                && self.pick != Some(Pick::Dust)
                 && self.region.is_some()
                 && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
             {
                 self.apply_pick();
+            }
+            if self.dust.cleanup
+                && self.pick.is_none()
+                && self.dust.donor_draft.is_none()
+                && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+            {
+                self.finish_dust_cleanup();
             }
             if self.crop_edit.is_some() {
                 if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
@@ -1877,6 +1970,7 @@ impl host::App for Editor {
             }
             if self.pick.is_none()
                 && self.crop_edit.is_none()
+                && self.dust.donor_draft.is_none()
                 && !self.document.project.order.is_empty()
             {
                 let previous = ui.input_mut(|input| {
@@ -2078,6 +2172,9 @@ impl host::App for Editor {
                     .layout_composition(layout_canvas, composition, pixels_per_point)
             };
             geometry.canvas = canvas;
+            if canvas_input && self.tab == 1 {
+                self.adjust_dust_brush_from_scroll(ui, geometry);
+            }
             if response.drag_started_by(egui::PointerButton::Primary) {
                 self.pick_drag = None;
             }
@@ -2088,6 +2185,49 @@ impl host::App for Editor {
             } else {
                 self.navigate(ui, &response, geometry, pixels_per_point)
             };
+            let dust_modifiers = ui.input(|input| {
+                input
+                    .raw
+                    .events
+                    .iter()
+                    .find_map(|event| match event {
+                        egui::Event::PointerButton {
+                            button: egui::PointerButton::Primary,
+                            modifiers,
+                            ..
+                        } => Some(*modifiers),
+                        _ => None,
+                    })
+                    .unwrap_or(input.modifiers)
+            });
+            let modifies_selected_dust = dust_modifiers.shift || dust_modifiers.alt;
+            let dust_start = response
+                .drag_started_by(egui::PointerButton::Primary)
+                .then(|| ui.input(|input| input.pointer.press_origin()))
+                .flatten()
+                .or_else(|| response.interact_pointer_pos());
+            if self.tab == 1
+                && self.dust.cleanup
+                && self.pick.is_none()
+                && self.dust.donor_draft.is_none()
+                && canvas_input
+                && !panning
+                && !ui.input(|input| input.key_down(egui::Key::Space))
+                && (response.clicked_by(egui::PointerButton::Primary)
+                    || response.drag_started_by(egui::PointerButton::Primary))
+                && let Some(point) = dust_start
+                && geometry.image.contains(point)
+            {
+                if modifies_selected_dust {
+                    if let Some(id) = self.selected_dust_repair() {
+                        self.begin_dust_mask(Some(id));
+                    }
+                } else if self.dust_repair_at(geometry, point).is_none()
+                    && !self.dust_donor_at(geometry, point)
+                {
+                    self.begin_dust_mask(None);
+                }
+            }
             if cropping && canvas_input {
                 self.crop_rotation_cursor(ui, &response, geometry);
             }
@@ -2129,11 +2269,13 @@ impl host::App for Editor {
                     }
                 }
             };
+            let parameter_signature = bytemuck::bytes_of(&parameters).try_into().unwrap();
             let signature = (
-                bytemuck::bytes_of(&parameters).try_into().unwrap(),
+                parameter_signature,
                 self.target,
                 view,
                 composition,
+                self.dust.display_revision(),
             );
             if self.signature != Some(signature) {
                 self.signature = Some(signature);
@@ -2143,6 +2285,10 @@ impl host::App for Editor {
                 self.settled = None;
             }
             let revision = self.generation.load(std::sync::atomic::Ordering::Relaxed);
+            if !self.source {
+                self.schedule_dust(parameter_signature, revision);
+            }
+            let repairs = self.dust_evaluations(parameter_signature);
             if !self.busy
                 && self.analysis_confirmation.is_none()
                 && self.crop_edit.is_none()
@@ -2157,6 +2303,7 @@ impl host::App for Editor {
                     .send(Command::Refine(
                         self.id,
                         revision,
+                        repairs,
                         parameters,
                         self.target,
                         view,
@@ -2200,33 +2347,90 @@ impl host::App for Editor {
                 ));
             if cropping {
                 self.paint_crop(ui, geometry);
+            } else {
+                self.paint_dust(ui, geometry);
+            }
+            let donor_press = ui.input(|input| input.pointer.press_origin());
+            let donor_hit = self.tab == 1
+                && !modifies_selected_dust
+                && self.selected_dust_repair().is_some()
+                && donor_press
+                    .or_else(|| response.interact_pointer_pos())
+                    .is_some_and(|point| self.dust_donor_at(geometry, point));
+            let donor_interaction = self.tab == 1
+                && !modifies_selected_dust
+                && self.selected_dust_repair().is_some()
+                && self.dust_donor_regions().is_some()
+                && (self.dust_donor_dragging()
+                    || donor_hit
+                        && (response.drag_started_by(egui::PointerButton::Primary)
+                            || response.clicked_by(egui::PointerButton::Primary)));
+            if donor_interaction
+                && canvas_input
+                && !panning
+                && !ui.input(|input| input.key_down(egui::Key::Space))
+            {
+                if response.drag_started_by(egui::PointerButton::Primary)
+                    && let Some(point) = donor_press
+                {
+                    self.begin_dust_donor_drag(geometry, point);
+                }
+                if response.dragged_by(egui::PointerButton::Primary)
+                    && let Some(point) = response.interact_pointer_pos()
+                {
+                    self.drag_dust_donor(geometry, point);
+                }
             }
             if self.pick.is_some()
+                && (self.pick != Some(Pick::Dust) || self.tab == 1)
                 && !self.busy
                 && canvas_input
                 && !panning
                 && !ui.input(|input| input.key_down(egui::Key::Space))
             {
-                if response.clicked_by(egui::PointerButton::Primary)
-                    && let Some(point) = response.interact_pointer_pos()
-                    && geometry.image.contains(point)
-                {
-                    self.region = Some(geometry.pick_patch(point, 32));
-                }
-                if response.drag_started_by(egui::PointerButton::Primary) {
-                    self.pick_drag = response
-                        .interact_pointer_pos()
-                        .filter(|point| geometry.image.contains(*point))
-                        .map(|point| PickDrag::begin(geometry, point, self.region));
-                }
-                if response.dragged_by(egui::PointerButton::Primary)
-                    && let (Some(drag), Some(end)) =
-                        (self.pick_drag, response.interact_pointer_pos())
-                {
-                    self.region = Some(drag.update(geometry, end));
+                if self.pick == Some(Pick::Dust) && !donor_interaction {
+                    let temporary_erase = dust_modifiers.alt;
+                    if response.drag_started_by(egui::PointerButton::Primary) {
+                        self.begin_dust_stroke();
+                        if let Some(point) = response.interact_pointer_pos() {
+                            self.paint_dust_stroke(geometry, point, temporary_erase);
+                        }
+                    } else if response.dragged_by(egui::PointerButton::Primary)
+                        && let Some(point) = response.interact_pointer_pos()
+                    {
+                        self.paint_dust_stroke(geometry, point, temporary_erase);
+                    }
+                    if response.clicked_by(egui::PointerButton::Primary)
+                        && let Some(point) = response.interact_pointer_pos()
+                    {
+                        self.begin_dust_stroke();
+                        self.paint_dust_stroke(geometry, point, temporary_erase);
+                        self.commit_dust_mask();
+                    }
+                } else {
+                    if response.clicked_by(egui::PointerButton::Primary)
+                        && let Some(point) = response.interact_pointer_pos()
+                        && geometry.image.contains(point)
+                    {
+                        self.region = Some(geometry.pick_patch(point, 32));
+                    }
+                    if response.drag_started_by(egui::PointerButton::Primary) {
+                        self.pick_drag = response
+                            .interact_pointer_pos()
+                            .filter(|point| geometry.image.contains(*point))
+                            .map(|point| PickDrag::begin(geometry, point, self.region));
+                    }
+                    if response.dragged_by(egui::PointerButton::Primary)
+                        && let (Some(drag), Some(end)) =
+                            (self.pick_drag, response.interact_pointer_pos())
+                    {
+                        self.region = Some(drag.update(geometry, end));
+                    }
                 }
             }
-            if let Some(region) = self.region {
+            if self.pick != Some(Pick::Dust)
+                && let Some(region) = self.region
+            {
                 ui.painter().with_clip_rect(canvas).rect_stroke(
                     geometry.screen_coverage(region),
                     0.,
@@ -2249,6 +2453,9 @@ impl host::App for Editor {
             }
             if response.drag_stopped_by(egui::PointerButton::Primary) {
                 self.pick_drag = None;
+                self.end_dust_stroke();
+                self.end_dust_donor_drag();
+                self.commit_dust_mask();
             }
         });
         let text_focused = ui.ctx().text_edit_focused();

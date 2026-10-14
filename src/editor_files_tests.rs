@@ -116,25 +116,24 @@ fn command_save_commits_pending_numeric_text_before_snapshot() {
         )
         .unwrap();
     editor.tab = 1;
-    // Keep the pending Exposure edit visible rather than scrolling past it.
-    for section in ["photo-contrast", "photo-saturation"] {
+    // Keep the pending Exposure edit visible; scrolling is unrelated to this contract.
+    for section in ["photo-white-balance", "photo-contrast", "photo-saturation"] {
         editor.preferences.sections.insert(section.into(), false);
     }
     let context = egui::Context::default();
-    ui_frame(&mut editor, &context, vec![]);
-    for frame in 0..60 {
-        let events = if frame == 0 {
+    for frame in 0..12 {
+        let events = if frame == 3 {
             vec![
                 egui::Event::PointerMoved(egui::pos2(950., 550.)),
                 egui::Event::MouseWheel {
                     unit: egui::MouseWheelUnit::Point,
                     phase: egui::TouchPhase::Move,
-                    delta: egui::vec2(0., -600.),
+                    delta: egui::vec2(0., -100.),
                     modifiers: egui::Modifiers::NONE,
                 },
             ]
         } else {
-            vec![]
+            Vec::new()
         };
         ui_frame(&mut editor, &context, events);
     }
@@ -152,6 +151,10 @@ fn command_save_commits_pending_numeric_text_before_snapshot() {
         .1
         .center();
     click(&mut editor, &context, number);
+    assert!(
+        context.text_edit_focused(),
+        "numeric field was not focused: {shapes:?}"
+    );
     ui_frame(
         &mut editor,
         &context,
@@ -435,6 +438,7 @@ fn new_resets_development_and_rejects_previous_document_messages() {
             reuse_ready: false,
             correction: None,
             preserve_view: false,
+            reset_repairs: true,
         })),
     ))
     .unwrap();

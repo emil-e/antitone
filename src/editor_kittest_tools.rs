@@ -1,4 +1,5 @@
 use super::*;
+use crate::dust_repair::RepairId;
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -38,7 +39,11 @@ fn stage(harness: &mut Harness<'_, Editor>, name: &str) {
     harness.try_run_realtime().unwrap();
 }
 
-fn click_patch(harness: &mut Harness<'_, Editor>, point: egui::Pos2) {
+fn click_source_with_modifiers(
+    harness: &mut Harness<'_, Editor>,
+    point: egui::Pos2,
+    modifiers: egui::Modifiers,
+) {
     let at = harness.state().last_layout.unwrap().0.screen_point(point);
     harness.hover_at(at);
     for pressed in [true, false] {
@@ -46,10 +51,18 @@ fn click_patch(harness: &mut Harness<'_, Editor>, point: egui::Pos2) {
             pos: at,
             button: egui::PointerButton::Primary,
             pressed,
-            modifiers: egui::Modifiers::NONE,
+            modifiers,
         });
     }
     harness.step();
+}
+
+fn click_source(harness: &mut Harness<'_, Editor>, point: egui::Pos2) {
+    click_source_with_modifiers(harness, point, egui::Modifiers::NONE);
+}
+
+fn click_patch(harness: &mut Harness<'_, Editor>, point: egui::Pos2) {
+    click_source(harness, point);
     assert!(harness.state().region.is_some());
 }
 
@@ -91,12 +104,20 @@ fn capture_tool(harness: &mut Harness<'_, Editor>, name: &str, size: egui::Vec2)
 }
 
 fn crop_draft(harness: &mut Harness<'_, Editor>) -> Crop {
-    harness.get_by_label("Crop…").scroll_to_me();
-    harness.try_run_realtime().unwrap();
-    harness.get_by_label("Crop…").click();
+    harness.step();
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Crop & straighten")
+        .click();
     harness.step();
     assert!(harness.state().crop_edit.is_some());
     harness.step();
+    assert_eq!(
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, "Crop & straighten")
+            .accesskit_node()
+            .is_selected(),
+        Some(true)
+    );
     harness.get_by_label("Angle").click();
     harness.step();
     harness.event(egui::Event::Text("2.3".into()));
@@ -138,7 +159,9 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
         crop_draft(&mut harness);
         assert_eq!(harness.state().document.project, before);
         capture_tool(&mut harness, &format!("crop-{layout}-offscreen"), size);
-        harness.get_by_label("Cancel").click();
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, "Crop & straighten")
+            .click();
         harness.step();
         assert!(harness.state().crop_edit.is_none());
         assert_eq!(harness.state().document.project, before);
@@ -153,6 +176,14 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
             .unwrap()
             .crop = Some(draft);
         assert_eq!(harness.state().document.project, expected);
+        harness.step();
+        assert_eq!(
+            harness
+                .get_by_role_and_label(egui::accesskit::Role::Button, "Crop & straighten")
+                .accesskit_node()
+                .description(),
+            Some("Modified".into())
+        );
 
         harness.get_by_label("Scopes").click();
         harness.step();
@@ -214,6 +245,214 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
         }
         assert!(harness.state().preference_store.is_none());
     }
+}
+
+#[test]
+fn dust_cleanup_commits_each_new_mask_without_changing_the_document() {
+    let mut harness = calibrated_harness();
+    stage(&mut harness, "Photo");
+    let project = harness.state().document.project.clone();
+    let dirty = harness.state().document.dirty();
+    harness.get_by_label("Dust repair").click();
+    harness.step();
+    harness.step();
+    assert!(harness.state().dust.cleanup);
+    assert!(harness.state().pick.is_none());
+    set_layout(&mut harness, egui::vec2(800., 600.), 270.);
+    for label in [
+        "Fit",
+        "100%",
+        "Zoom out",
+        "Zoom in",
+        "Viewer help",
+        "Show repair outlines",
+        "Done",
+    ] {
+        let rect = harness.get_by_label(label).rect();
+        assert!(
+            rect.left() >= 0. && rect.right() <= 800.,
+            "{label}: {rect:?}"
+        );
+    }
+    set_layout(&mut harness, egui::vec2(1100., 800.), 315.);
+    let source = harness.state().current_source.unwrap();
+    stage(&mut harness, "Roll");
+    click_source(&mut harness, egui::pos2(30., 30.));
+    assert!(harness.state().dust.repairs(source).is_none());
+    harness.get_by_label("Fit").click();
+    harness.step();
+    stage(&mut harness, "Photo");
+
+    let viewport = harness.state().viewport;
+    let brush_size = harness.state().dust.brush_size;
+    let hover = harness.state().last_layout.unwrap().0.image.center();
+    harness.hover_at(hover);
+    harness.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0., 24.),
+        modifiers: egui::Modifiers::NONE,
+        phase: egui::TouchPhase::Move,
+    });
+    harness.step();
+    assert!(harness.state().dust.brush_size > brush_size);
+    for _ in 0..3 {
+        harness.step();
+        assert_eq!(harness.state().viewport, viewport);
+    }
+
+    click_source(&mut harness, egui::pos2(96., 32.));
+    assert!(harness.state().pick.is_none());
+    assert_eq!(
+        harness
+            .state()
+            .dust
+            .repairs(source)
+            .unwrap()
+            .repairs()
+            .len(),
+        1
+    );
+    let support = harness.state().dust.repairs(source).unwrap().repairs()[0]
+        .support
+        .clone();
+    assert!(support.bits().iter().any(|selected| !selected));
+    assert_eq!(harness.state().document.project, project);
+    assert_eq!(harness.state().document.dirty(), dirty);
+
+    harness.get_by_label("Show repair outlines").click();
+    harness.step();
+    assert!(!harness.state().dust.show_masks);
+    harness.get_by_label("Show repair outlines").click();
+    harness.step();
+    assert!(harness.state().dust.show_masks);
+
+    wait_for(&mut harness, |editor| {
+        let parameters = editor
+            .positive_parameters(editor.calibration().unwrap(), editor.roll, editor.photo)
+            .unwrap();
+        let signature = bytemuck::bytes_of(&parameters).try_into().unwrap();
+        !editor.dust_evaluations(signature).is_empty()
+    });
+    click_source(&mut harness, egui::pos2(96., 32.));
+    harness.step();
+    assert!(harness.state().pick.is_none());
+    assert_eq!(harness.state().selected_dust_repair(), Some(RepairId(1)));
+    let (target, donor) = harness.state().dust_donor_regions().unwrap();
+    let old_offset = [
+        donor.x as i32 - target.x as i32,
+        donor.y as i32 - target.y as i32,
+    ];
+    let point = support.selected_points().next().unwrap();
+    let center = egui::pos2(
+        point[0] as f32 + old_offset[0] as f32 + 0.5,
+        point[1] as f32 + old_offset[1] as f32 + 0.5,
+    );
+    let desired_offset = [50, 50];
+    let layout = harness.state().last_layout.unwrap().0;
+    assert!(
+        harness
+            .state()
+            .dust_donor_at(layout, layout.screen_point(center))
+    );
+    drag(
+        &mut harness,
+        layout.screen_point(center),
+        layout.screen_point(
+            center
+                + egui::vec2(
+                    (desired_offset[0] - old_offset[0]) as f32,
+                    (desired_offset[1] - old_offset[1]) as f32,
+                ),
+        ),
+    );
+    assert!(harness.state().dust.donor_draft.is_none());
+    assert_eq!(
+        harness.state().dust.repairs(source).unwrap().repairs()[0].donor,
+        crate::dust_repair::DonorChoice::Offset(desired_offset),
+        "{}",
+        harness.state().status
+    );
+    wait_for(&mut harness, |editor| {
+        let parameters = editor
+            .positive_parameters(editor.calibration().unwrap(), editor.roll, editor.photo)
+            .unwrap();
+        let signature = bytemuck::bytes_of(&parameters).try_into().unwrap();
+        editor
+            .dust_evaluations(signature)
+            .first()
+            .and_then(|repair| repair.donors.first())
+            .is_some_and(|donor| {
+                donor.source[0] as i32 - donor.target[0] as i32 == desired_offset[0]
+                    && donor.source[1] as i32 - donor.target[1] as i32 == desired_offset[1]
+            })
+    });
+
+    harness.state_mut().dust.brush_size = 4;
+    let before_erase = harness.state().dust.repairs(source).unwrap().repairs()[0]
+        .support
+        .bits()
+        .iter()
+        .filter(|selected| **selected)
+        .count();
+    click_source_with_modifiers(&mut harness, egui::pos2(96., 32.), egui::Modifiers::ALT);
+    let after_erase = harness.state().dust.repairs(source).unwrap().repairs()[0]
+        .support
+        .bits()
+        .iter()
+        .filter(|selected| **selected)
+        .count();
+    assert!(
+        after_erase < before_erase,
+        "before={before_erase} after={after_erase} status={} pick={:?}",
+        harness.state().status,
+        harness.state().pick
+    );
+    assert!(harness.state().pick.is_none());
+    click_source_with_modifiers(&mut harness, egui::pos2(96., 32.), egui::Modifiers::SHIFT);
+    let after_add = harness.state().dust.repairs(source).unwrap().repairs()[0]
+        .support
+        .bits()
+        .iter()
+        .filter(|selected| **selected)
+        .count();
+    assert!(after_add > after_erase);
+    assert!(harness.state().pick.is_none());
+
+    click_source(&mut harness, egui::pos2(32., 96.));
+    let repairs = harness.state().dust.repairs(source).unwrap();
+    assert_eq!(repairs.repairs().len(), 2);
+    assert_eq!(repairs.selected(), Some(RepairId(2)));
+    let viewport = harness.state().viewport;
+    click_source(&mut harness, egui::pos2(96., 32.));
+    assert_eq!(harness.state().viewport, viewport);
+    assert_eq!(
+        harness.state().dust.repairs(source).unwrap().selected(),
+        Some(RepairId(1))
+    );
+    assert!(harness.state().pick.is_none());
+    harness.event(egui::Event::Key {
+        key: egui::Key::Delete,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.step();
+    let repairs = harness.state().dust.repairs(source).unwrap();
+    assert_eq!(repairs.repairs().len(), 1);
+    assert_eq!(repairs.selected(), None);
+    harness.get_by_label("Reset dust repairs").scroll_to_me();
+    harness.try_run_realtime().unwrap();
+    harness.get_by_label("Reset dust repairs").click();
+    harness.step();
+    assert!(harness.state().dust.repairs(source).is_none());
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
+        .click();
+    harness.step();
+    assert!(!harness.state().dust.cleanup);
+    assert!(!harness.state().dust.show_masks);
+    assert_eq!(harness.state().document.project, project);
 }
 
 #[test]
