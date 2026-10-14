@@ -2,7 +2,9 @@ use super::{direct, frame, key, pointer};
 use crate::editor::{
     controls,
     icons::{self, Icon},
-    presentation::{TextAction, ToolActions, ToolGroup, ToolIdentity},
+    presentation::{
+        SessionToolGroup, TextAction, ToolActions, ToolButton, ToolGroup, ToolIdentity, ToolShelf,
+    },
 };
 use egui::{Context, FullOutput, Ui};
 
@@ -150,6 +152,54 @@ fn node<'a>(output: &'a FullOutput, label: &str) -> &'a egui::accesskit::Node {
             )
         })
         .1
+}
+
+#[test]
+fn stage_tool_shelf_distinguishes_commands_active_tools_and_changed_state() {
+    let context = Context::default();
+    let ((turn, crop, dust), output) = frame(&context, 315., true, vec![], |ui| {
+        ToolShelf::show(ui, |ui| {
+            let turn = ToolButton::command(Icon::TurnLeft, "Turn left", "Turn the photo.").show(ui);
+            ui.separator();
+            let crop =
+                ToolButton::tool(Icon::Crop, "Crop & straighten", "Edit crop.", true).show(ui);
+            let dust = ToolButton::tool(Icon::Dust, "Dust repair", "Remove dust.", false)
+                .changed(true)
+                .show(ui);
+            (turn, crop, dust)
+        })
+    });
+    assert!(turn.enabled());
+    assert!(crop.enabled());
+    assert!(dust.enabled());
+    assert_eq!(node(&output, "Crop & straighten").is_selected(), Some(true));
+    assert_eq!(turn.rect.height(), 28.);
+    assert_eq!(crop.rect.height(), 28.);
+    assert_eq!(dust.rect.height(), 28.);
+}
+
+#[test]
+fn session_group_measures_and_returns_one_right_aligned_done_action() {
+    let context = Context::default();
+    for enabled in [true, false] {
+        frame(&context, 315., true, vec![], |ui| {
+            let group = SessionToolGroup {
+                identity: ToolIdentity {
+                    icon: Icon::Dust,
+                    title: "Dust cleanup",
+                },
+                busy: !enabled,
+                done_enabled: enabled,
+            };
+            let next = ui.next_auto_id();
+            let measured = group.width(ui);
+            assert_eq!(ui.next_auto_id(), next);
+            let response = group.show(ui);
+            assert!((response.response.rect.width() - measured).abs() < 1e-5);
+            assert_eq!(response.response.rect.height(), 28.);
+            assert_eq!(response.inner.enabled(), enabled);
+        });
+    }
 }
 
 #[test]

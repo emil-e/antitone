@@ -800,21 +800,7 @@ fn photo_numeric_focus_commit_precedes_analysis_area_preparation_snapshot() {
         editor.preferences.sections.insert(section.into(), false);
     }
     let ctx = egui::Context::default();
-    super::super::tests::app_frame(&mut editor, &ctx, vec![]);
-    super::super::tests::app_frame(
-        &mut editor,
-        &ctx,
-        vec![
-            egui::Event::PointerMoved(egui::pos2(950., 550.)),
-            egui::Event::MouseWheel {
-                unit: egui::MouseWheelUnit::Point,
-                phase: egui::TouchPhase::Move,
-                delta: egui::vec2(0., -200.),
-                modifiers: egui::Modifiers::NONE,
-            },
-        ],
-    );
-    for _ in 0..60 {
+    for _ in 0..4 {
         super::super::tests::app_frame(&mut editor, &ctx, vec![]);
     }
     let labels = super::super::tests::app_frame(&mut editor, &ctx, vec![]);

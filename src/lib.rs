@@ -1,6 +1,7 @@
 pub mod color;
 pub mod coverage;
 pub mod crop;
+pub mod dust_repair;
 #[cfg(feature = "editor")]
 pub mod editor;
 #[cfg(feature = "export")]

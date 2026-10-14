@@ -1,0 +1,467 @@
+use super::*;
+use crate::{
+    color::{Balance, wb_matrix},
+    dust_repair::{DonorChoice, Repair, RepairId, RepairOrigin, SupportMask},
+    gpu::repairs::{Patch, Snapshot},
+    local_adjustments::PhotoGradeSnapshot,
+};
+
+fn repaired(
+    scan: &Scan,
+    device: &wgpu::Device,
+) -> (Snapshot, Arc<crate::dust_repair::EvaluatedRepair>) {
+    let roll = RollSettings::new_grade();
+    let scalar = crate::processing::Pipeline::new(
+        calibration(),
+        roll,
+        PhotoSettings::default(),
+        scan.camera_to_ap1,
+    )
+    .unwrap();
+    let support =
+        SupportMask::new([124, 40], [9, 9], (0..81).map(|i| i % 3 != 0).collect()).unwrap();
+    let repair = Repair {
+        id: RepairId(1),
+        enabled: true,
+        origin: RepairOrigin::Manual,
+        donor: DonorChoice::Offset([-50, 50]),
+        support,
+    };
+    let evaluated = Arc::new(
+        crate::dust_repair::evaluate(&repair, scan.area, |p| {
+            Ok(scalar
+                .apply(scan.pixel(p[0], p[1])?)?
+                .rgb
+                .as_vec3()
+                .to_array())
+        })
+        .unwrap(),
+    );
+    let original = evaluated
+        .pixels()
+        .map(|(p, _)| {
+            scalar
+                .apply(scan.pixel(p[0], p[1]).unwrap())
+                .unwrap()
+                .rgb
+                .as_vec3()
+                .to_array()
+        })
+        .collect::<Vec<_>>();
+    (
+        Snapshot(vec![
+            Patch::new(device, evaluated.clone(), &original).unwrap(),
+        ]),
+        evaluated,
+    )
+}
+fn render_repaired(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    source: Arc<ViewSource>,
+    snapshot: &Snapshot,
+    (roll, photo): (RollSettings, PhotoSettings),
+    target: OutputTarget,
+    previous: Option<&Arc<RenderedView>>,
+) -> Arc<RenderedView> {
+    let mut input: ProcessingInput =
+        ProcessingParameters::positive(calibration(), roll, photo, source.spec.matrix)
+            .unwrap()
+            .into();
+    input.repairs = snapshot.clone();
+    let view = RenderedView::new(
+        device,
+        source,
+        calibration(),
+        roll,
+        PhotoGradeSnapshot::new(photo, vec![]).unwrap(),
+        &input,
+        target,
+        previous,
+    )
+    .unwrap();
+    view.ensure_submitted(
+        device,
+        queue,
+        &SubmissionGate::default(),
+        &egui::Context::default(),
+    );
+    view
+}
+
+#[test]
+fn sparse_repair_projection_retains_signed_hdr_and_repair_values_extend_range_preflight() {
+    pollster::block_on(async {
+        let (device, queue, renderer, kernels) = context().await;
+        let area = crate::geometry::SourceRegion {
+            x: 11,
+            y: 17,
+            width: 64,
+            height: 48,
+        };
+        let frame = FrameRaster::full(
+            Composition::new(area, Default::default(), Default::default()).unwrap(),
+        )
+        .unwrap();
+        let support = SupportMask::new([32, 32], [5, 5], vec![true; 25]).unwrap();
+        let values = (0..64 * 48)
+            .map(|i| {
+                let point = [area.x + i % 64, area.y + i / 64];
+                if support.contains(point) {
+                    [0.7, 0.9, 5., 11.]
+                } else {
+                    [-0.02 + (i % 64) as f32 * 0.0001, 0.1, 4., 11.]
+                }
+            })
+            .collect::<Vec<_>>();
+        let repair = Repair {
+            id: RepairId(1),
+            enabled: true,
+            origin: RepairOrigin::Manual,
+            donor: DonorChoice::Offset([20, 0]),
+            support,
+        };
+        let evaluated = Arc::new(
+            crate::dust_repair::evaluate(&repair, area, |p| {
+                let v = values[((p[1] - area.y) * area.width + p[0] - area.x) as usize];
+                Ok([v[0], v[1], v[2]])
+            })
+            .unwrap(),
+        );
+        let original = evaluated
+            .pixels()
+            .map(|(p, _)| {
+                let v = values[((p[1] - area.y) * area.width + p[0] - area.x) as usize];
+                [v[0], v[1], v[2]]
+            })
+            .collect::<Vec<_>>();
+        let patches = Snapshot(vec![
+            Patch::new(&device, evaluated.clone(), &original).unwrap(),
+        ]);
+        let source = colour::authored_source(&device, renderer, kernels, &values, frame);
+        let roll = RollSettings {
+            gamma: 0.65,
+            ..RollSettings::new_grade()
+        };
+        let mut input: ProcessingInput = ProcessingParameters::positive(
+            calibration(),
+            roll,
+            PhotoSettings::default(),
+            source.spec.matrix,
+        )
+        .unwrap()
+        .into();
+        input.repairs = patches;
+        let view = RenderedView::new(
+            &device,
+            source.clone(),
+            calibration(),
+            roll,
+            PhotoGradeSnapshot::new(PhotoSettings::default(), vec![]).unwrap(),
+            &input,
+            OutputTarget::Srgb,
+            None,
+        )
+        .unwrap();
+        view.ensure_submitted(
+            &device,
+            &queue,
+            &SubmissionGate::default(),
+            &egui::Context::default(),
+        );
+        let actual = read(
+            &device,
+            &queue,
+            &view
+                .graded
+                .as_ref()
+                .unwrap()
+                .repaired
+                .as_ref()
+                .unwrap()
+                .pixels,
+        );
+        for (i, (pixel, base)) in actual.iter().zip(&values).enumerate() {
+            let point = [area.x + i as u32 % 64, area.y + i as u32 / 64];
+            if evaluated.support().contains(point) {
+                let expected = evaluated.pixel(point, [0.; 3]);
+                assert!(pixel[0] < 0. && pixel[2] > 1.);
+                for c in 0..3 {
+                    assert!((pixel[c] - expected[c]).abs() < 1e-6);
+                }
+            } else {
+                assert_eq!(pixel.map(f32::to_bits), base.map(f32::to_bits));
+            }
+            assert_eq!(pixel[3], base[3]);
+        }
+        let roll = RollSettings {
+            exposure: 16.,
+            ..roll
+        };
+        let photo = PhotoSettings {
+            exposure: 16.,
+            ..Default::default()
+        };
+        ProcessingParameters::positive(calibration(), roll, photo, source.spec.matrix).unwrap();
+        assert!(
+            GpuPhotoGrade::validate_repaired(
+                &device,
+                calibration(),
+                roll,
+                &PhotoGradeSnapshot::new(photo, vec![]).unwrap(),
+                source.spec.matrix,
+                area,
+                DVec3::splat(1e30)
+            )
+            .is_err()
+        );
+    });
+}
+
+#[test]
+fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_content() {
+    pollster::block_on(async {
+        let (device, queue, renderer, kernels) = context().await;
+        let scan = scan();
+        let (patches, evaluated) = repaired(&scan, &device);
+        let scalar = crate::processing::Pipeline::new(
+            calibration(),
+            RollSettings::new_grade(),
+            PhotoSettings::default(),
+            scan.camera_to_ap1,
+        )
+        .unwrap();
+        let native = frame(&scan);
+        let mut rotated = native;
+        rotated.composition = Composition::with_crop(
+            scan.area,
+            Default::default(),
+            Default::default(),
+            Some(crate::crop::Crop {
+                center: [128., 88.],
+                size: [180, 120],
+                angle: 0.19,
+            }),
+        )
+        .unwrap();
+        rotated = FrameRaster::full(rotated.composition).unwrap();
+        rotated.output = [31, 23];
+        for frame in [native, rotated] {
+            let spec = ViewSourceSpec::new(
+                1,
+                frame,
+                calibration(),
+                RollSettings::new_grade(),
+                scan.camera_to_ap1,
+                None,
+            )
+            .unwrap();
+            let source = ViewSource::acquire(
+                &device,
+                &queue,
+                &SubmissionGate::default(),
+                renderer.clone(),
+                kernels.clone(),
+                &scan,
+                None,
+                spec,
+                || false,
+            )
+            .unwrap()
+            .unwrap();
+            let baseline = read(&device, &queue, &source.pixels);
+            let first = render_repaired(
+                &device,
+                &queue,
+                source.clone(),
+                &patches,
+                (RollSettings::new_grade(), PhotoSettings::default()),
+                OutputTarget::Srgb,
+                None,
+            );
+            let layer = first.graded.as_ref().unwrap().repaired.as_ref().unwrap();
+            let actual = read(&device, &queue, &layer.pixels);
+            let mut touched = 0;
+            for (i, pixel) in actual.iter().enumerate() {
+                let footprint = frame
+                    .footprint([(i as u32) % frame.output[0], (i as u32) / frame.output[0]])
+                    .unwrap();
+                let mut expected = DVec3::ZERO;
+                let mut repaired = false;
+                for (p, w) in footprint.pixels(scan.area).unwrap() {
+                    let base = scalar.apply(scan.pixel(p[0], p[1]).unwrap()).unwrap().rgb;
+                    if evaluated.support().contains(p) {
+                        expected +=
+                            DVec3::from_array(evaluated.pixel(p, [0.; 3]).map(f64::from)) * w;
+                        repaired = true;
+                    } else {
+                        expected += base * w;
+                    }
+                }
+                expected /= footprint.area();
+                assert_eq!(pixel[3], baseline[i][3]);
+                if !repaired {
+                    assert_eq!(pixel.map(f32::to_bits), baseline[i].map(f32::to_bits));
+                } else {
+                    touched += 1;
+                    for c in 0..3 {
+                        assert!(
+                            (pixel[c] as f64 - expected[c]).abs()
+                                <= 2e-6 + 2e-5 * expected[c].abs(),
+                            "{i}/{c}: {pixel:?} vs {expected:?}"
+                        );
+                    }
+                }
+            }
+            assert!(touched > 0);
+            assert_eq!(read(&device, &queue, &source.pixels), baseline);
+            let roll = RollSettings {
+                exposure: 0.7,
+                wb: Balance {
+                    warmth: 0.07,
+                    tint: -0.03,
+                },
+                ..RollSettings::new_grade()
+            };
+            let photo = PhotoSettings {
+                exposure: 0.4,
+                contrast: 1.1,
+                saturation: 0.8,
+                ..PhotoSettings::default()
+            };
+            let graded = render_repaired(
+                &device,
+                &queue,
+                source.clone(),
+                &patches,
+                (roll, photo),
+                OutputTarget::Srgb,
+                Some(&first),
+            );
+            let same_layer = graded.graded.as_ref().unwrap().repaired.as_ref().unwrap();
+            assert!(Arc::ptr_eq(layer, same_layer));
+            let values = read(&device, &queue, &graded.graded.as_ref().unwrap().pixels);
+            let post = wb_matrix(photo.wb).unwrap()
+                * wb_matrix(roll.wb).unwrap()
+                * (roll.exposure + photo.exposure).exp2();
+            let grade = crate::photographic::Grade::new(photo).unwrap();
+            for (neutral, pixel) in actual.iter().zip(values) {
+                let expected = grade
+                    .apply(
+                        post * DVec3::new(neutral[0] as f64, neutral[1] as f64, neutral[2] as f64),
+                    )
+                    .unwrap();
+                for c in 0..3 {
+                    assert!(
+                        (pixel[c] as f64 - expected[c]).abs() <= 2e-5 + 2e-4 * expected[c].abs()
+                    );
+                }
+            }
+            let p3 = render_repaired(
+                &device,
+                &queue,
+                source.clone(),
+                &patches,
+                (roll, photo),
+                OutputTarget::DisplayP3,
+                Some(&graded),
+            );
+            assert!(Arc::ptr_eq(
+                graded.graded.as_ref().unwrap(),
+                p3.graded.as_ref().unwrap()
+            ));
+            let cleared = render_repaired(
+                &device,
+                &queue,
+                source.clone(),
+                &Snapshot::default(),
+                (roll, photo),
+                OutputTarget::DisplayP3,
+                Some(&p3),
+            );
+            assert!(cleared.graded.as_ref().unwrap().repaired.is_none());
+            assert_eq!(read(&device, &queue, &source.pixels), baseline);
+        }
+    });
+}
+
+#[cfg(feature = "ocio-reference")]
+#[test]
+fn original_reference_repairs_are_pre_grade_and_leave_other_rendered_pixels_bit_exact() {
+    pollster::block_on(async {
+        let (device, queue, renderer, _) = context().await;
+        let scan = scan();
+        let (patches, evaluated) = repaired(&scan, &device);
+        let roll = RollSettings {
+            exposure: 0.8,
+            wb: Balance {
+                warmth: 0.06,
+                tint: -0.04,
+            },
+            ..RollSettings::new_grade()
+        };
+        let photo = PhotoSettings {
+            exposure: 0.3,
+            contrast: 1.15,
+            saturation: 0.8,
+            ..PhotoSettings::default()
+        };
+        let mut input = processing_input(calibration(), roll, photo, &scan);
+        let frame = frame(&scan);
+        let request = crate::refinement::ViewRequest {
+            area: scan.area,
+            output: frame.output,
+            frame: Some(frame),
+        };
+        let generation = AtomicU64::new(1);
+        let render = |input| {
+            crate::refinement::refine(
+                &renderer,
+                &device,
+                (&queue, &SubmissionGate::default()),
+                (&scan, None),
+                input,
+                OutputTarget::Srgb,
+                (&generation, 1),
+                request,
+            )
+            .unwrap()
+            .unwrap()
+        };
+        let before = image(&device, &queue, &render(input.clone()));
+        input.repairs = patches;
+        let actual = image(&device, &queue, &render(input));
+        let post = wb_matrix(photo.wb).unwrap()
+            * wb_matrix(roll.wb).unwrap()
+            * (roll.exposure + photo.exposure).exp2();
+        let grade = crate::photographic::Grade::new(photo).unwrap();
+        let cpu = crate::rendering::CpuRenderer::new(OutputTarget::Srgb).unwrap();
+        let values = evaluated
+            .pixels()
+            .map(|(_, v)| {
+                grade
+                    .apply(post * DVec3::from_array(v.map(f64::from)))
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let expected = cpu.render(&values).unwrap();
+        for (i, ((point, _), expected)) in evaluated.pixels().zip(expected).enumerate() {
+            let at = (point[1] - scan.area.y) * scan.area.width + point[0] - scan.area.x;
+            for c in 0..3 {
+                assert!(
+                    (actual[at as usize][c] - expected[c]).abs() < 0.001,
+                    "patch {i}/{c}"
+                );
+            }
+        }
+        for (i, (a, b)) in actual.iter().zip(before).enumerate() {
+            let point = [
+                scan.area.x + (i as u32) % scan.area.width,
+                scan.area.y + (i as u32) / scan.area.width,
+            ];
+            if !evaluated.support().contains(point) {
+                assert_eq!(a.map(f32::to_bits), b.map(f32::to_bits));
+            }
+        }
+    });
+}

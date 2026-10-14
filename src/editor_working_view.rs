@@ -20,7 +20,7 @@ struct MailboxState {
 pub(super) struct Mailbox(Mutex<MailboxState>);
 #[derive(Default)]
 pub(super) struct WorkingView {
-    device: Option<wgpu::Device>,
+    pub(super) device: Option<wgpu::Device>,
     intent: Option<(u64, FrameRaster, ProcessingSignature, OutputTarget)>,
     revision: u64,
     changed_at: Option<std::time::Instant>,

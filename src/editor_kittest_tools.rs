@@ -57,9 +57,13 @@ fn capture_tool(harness: &mut Harness<'_, Editor>, name: &str, size: egui::Vec2)
 }
 
 pub(super) fn crop_draft(harness: &mut Harness<'_, Editor>) -> Crop {
-    harness.get_by_label("Crop…").scroll_to_me();
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Crop & straighten")
+        .scroll_to_me();
     harness.try_run_realtime().unwrap();
-    harness.get_by_label("Crop…").click();
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Crop & straighten")
+        .click();
     harness.step();
     assert!(harness.state().crop_edit.is_some());
     harness.step();

@@ -128,6 +128,18 @@ impl RollSettings {
         }
     }
 
+    /// The ungraded positive includes negative interpretation, not photographic Roll controls.
+    /// Spell out every field so future controls require an explicit stage-placement decision.
+    pub fn inversion_only(self) -> Self {
+        Self {
+            response: self.response,
+            gamma: self.gamma,
+            balance: self.balance,
+            wb: Balance::default(),
+            exposure: 0.,
+        }
+    }
+
     pub fn channel_gammas(self) -> Result<DVec3, Error> {
         self.response.shape()?;
         if !self.gamma.is_finite() || !(MIN_GAMMA..=MAX_GAMMA).contains(&self.gamma) {
@@ -290,6 +302,21 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
+    /// Full-resolution signed/HDR AP1 after correction/inversion/camera conversion, before grades.
+    /// The caller supplies camera samples corrected in the same basis as `calibration`.
+    pub fn ungraded(
+        calibration: Calibration,
+        roll: RollSettings,
+        camera_to_ap1: DMat3,
+    ) -> Result<Self, Error> {
+        Self::new(
+            calibration,
+            roll.inversion_only(),
+            PhotoSettings::default(),
+            camera_to_ap1,
+        )
+    }
+
     pub fn new(
         calibration: Calibration,
         roll: RollSettings,

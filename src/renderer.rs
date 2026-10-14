@@ -80,6 +80,8 @@ pub(crate) struct TargetResources {
 /// Image storage and processing signatures remain image-owned.
 pub struct GpuRenderer {
     pub(crate) kernel: ProcessingKernel,
+    #[cfg(feature = "editor")]
+    pub(crate) repairs: crate::gpu::repairs::Kernels,
     #[cfg(feature = "ui")]
     pub(crate) display: wgpu::RenderPipeline,
     targets: [TargetResources; 2],
@@ -98,6 +100,8 @@ impl GpuRenderer {
         let kernel = ProcessingKernel::new_with_submissions(device, queue, submissions).await?;
         #[cfg(feature = "ui")]
         let average = Arc::new(AveragePipelines::new(device).await?);
+        #[cfg(feature = "editor")]
+        let repairs = crate::gpu::repairs::Kernels::new(device).await?;
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let vertex = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("image fullscreen triangle"),
@@ -114,6 +118,8 @@ impl GpuRenderer {
         }
         Ok(Arc::new(Self {
             kernel,
+            #[cfg(feature = "editor")]
+            repairs,
             #[cfg(feature = "ui")]
             display,
             targets,

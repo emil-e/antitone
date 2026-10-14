@@ -36,11 +36,29 @@ impl Editor {
 
     pub(super) fn viewer_bar(&mut self, ui: &mut egui::Ui) -> Option<f32> {
         use icons::Icon;
-        use presentation::{TextAction, ToolGroup, ToolIdentity, VIEWER_ITEM_GAP};
+        use presentation::{
+            SessionToolGroup, TextAction, ToolGroup, ToolIdentity, VIEWER_ITEM_GAP,
+        };
         let mut zoom_action = None;
         let fullscreen = self.fullscreen.is_some();
         let cropping = !fullscreen && self.crop_edit.is_some();
-        let tool = (!fullscreen).then(|| self.viewer_tool()).flatten();
+        let dust_session = !fullscreen && self.dust.cleanup && !self.source;
+        let tool = (!fullscreen && !dust_session)
+            .then(|| self.viewer_tool())
+            .flatten();
+        let session_group = dust_session.then_some(SessionToolGroup {
+            identity: ToolIdentity {
+                icon: Icon::Dust,
+                title: "Dust cleanup",
+            },
+            busy: self.busy,
+            done_enabled: !self.busy,
+        });
+        let has_repairs = self
+            .current_source
+            .and_then(|s| self.dust.repairs(s))
+            .is_some_and(|s| !s.repairs().is_empty());
+        let mut finish_dust = false;
         let mut cancel = false;
         let mut apply = false;
         let calibrated = self.calibration().is_some();
@@ -60,7 +78,7 @@ impl Editor {
             cancel_enabled: !self.busy || reviewing && self.analysis_pending.is_none(),
             apply_enabled: navigating && review_ready && (cropping || self.region.is_some()),
         });
-        let inspecting = navigating && calibrated && tool.is_none();
+        let inspecting = navigating && calibrated && tool.is_none() && !dust_session;
         let bar = if fullscreen {
             presentation::ViewerBar::Overlay
         } else {
@@ -83,13 +101,16 @@ impl Editor {
                             else if self.working.displayed.is_some() { " · Working view" }
                             else { " · Acquiring view" }
                         } else if self.original.refining.is_some() { " · Refining" } else if self.original.settled.is_none() { " · Approximate" } else { "" };
-                    let state = format!("{target}{quality}");
+                    let repair_work = if !self.source && self.dust_updating() { " · Updating repairs" } else { "" };
+                    let state = if has_repairs { format!("{target}{quality}{repair_work} · Unsaved repairs") } else { format!("{target}{quality}") };
                     let trailing_width = presentation::CONTROL_HEIGHT + VIEWER_ITEM_GAP + if let Some(group) = tool_group {
                         if reviewing { group.width_named(ui, apply_label) } else { group.width(ui) }
+                    } else if let Some(group) = session_group {
+                        group.width(ui)
                     } else {
                         ui.painter().layout_no_wrap(state.clone(), egui::TextStyle::Small.resolve(ui.style()), ui.visuals().text_color()).size().x
                     };
-                    let show_zoom_steps = tool.is_none() || ui.available_width() >= trailing_width + presentation::CONTROL_HEIGHT + VIEWER_ITEM_GAP + if self.source { 224. } else { 192. };
+                    let show_zoom_steps = tool.is_none() && !dust_session || ui.available_width() >= trailing_width + presentation::CONTROL_HEIGHT + VIEWER_ITEM_GAP + if self.source { 224. } else { 192. };
                     if icons::button(ui, Icon::Fit, navigating, if cropping { "Fit source" } else { "Fit" }, "Fit the image (Z); crop mode fits the full source.").clicked() {
                         self.viewport.fit();
                     }
@@ -149,14 +170,20 @@ impl Editor {
                         .show(|ui| {
                             ui.set_width(290.);
                             ui.label(egui::RichText::new("Viewer navigation").strong());
-                            ui.small("Scroll pans · Cmd/Ctrl-scroll or pinch zooms");
-                            ui.small("Click: Fit / 100% · Z: Fit · F: Fullscreen");
+                            ui.small(if dust_session { "Scroll changes brush size · Cmd/Ctrl-scroll or pinch zooms" } else { "Scroll pans · Cmd/Ctrl-scroll or pinch zooms" });
+                            ui.small("Click: Fit / 100% outside cleanup · Z: Fit · F: Fullscreen");
                             ui.small("Zoomed drag pans · Space-drag / middle-drag always pans");
                             if fullscreen { ui.small("F or Escape: return to the workspace"); }
                             if cropping {
                                 ui.separator();
                                 ui.small("Crop: drag inside to move the image, edges/corners to resize, outside to straighten.");
                                 ui.small("Enter applies · Escape cancels");
+                            } else if dust_session {
+                                ui.separator();
+                                ui.small("Draw for a new heal · click an outline to select another heal.");
+                                ui.small("Shift-drag adds to selected · Option-drag removes · Delete removes selected.");
+                                ui.small("Drag the source outline to move it · release commits changes · H hides outlines.");
+                                ui.small("Preview only: repairs are not saved or exported.");
                             } else if !fullscreen && let Some(kind) = self.pick {
                                 ui.separator();
                                 ui.small("Click a patch or drag an area; drag its edges/corners to resize.");
@@ -174,13 +201,20 @@ impl Editor {
                             let actions = if reviewing { group.show_named(ui, apply_label) } else { group.show(ui) }.inner;
                             cancel = actions.cancel.clicked();
                             apply = actions.apply.clicked();
+                        } else if let Some(group) = session_group {
+                            finish_dust = group.show(ui).inner.clicked();
                         } else {
-                            ui.add(egui::Label::new(egui::RichText::new(state).small().weak()).truncate()).on_hover_text("Shared preview / thumbnail / scope / TIFF target · 100 nit. EXR is scene-linear AP0. Cached preview remains provisional while the full-resolution RAW develops.");
+                            ui.add(egui::Label::new(egui::RichText::new(state).small().weak()).truncate()).on_hover_text(if has_repairs {
+                                "Preview-only dust repairs: not saved or exported. New/Open or quitting discards them. Thumbnails remain unrepaired; scopes follow the accepted viewer result."
+                            } else { "Shared preview / thumbnail / scope / TIFF target · 100 nit. EXR is scene-linear AP0. Cached preview remains provisional while the full-resolution RAW develops." });
                         }
                     });
                 });
             });
-        if cancel {
+        if finish_dust {
+            self.finish_dust_cleanup();
+            ui.ctx().request_repaint();
+        } else if cancel {
             if cropping {
                 self.finish_crop(false);
             } else {

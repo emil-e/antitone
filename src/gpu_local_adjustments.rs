@@ -91,6 +91,28 @@ impl GpuPhotoGrade {
         })
     }
 
+    #[cfg(feature = "editor")]
+    pub(crate) fn validate_repaired(
+        device: &wgpu::Device,
+        calibration: Calibration,
+        roll: RollSettings,
+        snapshot: &PhotoGradeSnapshot,
+        camera_to_ap1: DMat3,
+        area: SourceRegion,
+        neutral_bound: DVec3,
+    ) -> Result<(), Error> {
+        Self::prepare_with_neutral_bound(
+            device,
+            calibration,
+            roll,
+            snapshot,
+            camera_to_ap1,
+            area,
+            neutral_bound,
+        )
+        .map(|_| ())
+    }
+
     fn prepare(
         device: &wgpu::Device,
         calibration: Calibration,
@@ -99,12 +121,36 @@ impl GpuPhotoGrade {
         camera_to_ap1: DMat3,
         area: SourceRegion,
     ) -> Result<Prepared, Error> {
+        Self::prepare_with_neutral_bound(
+            device,
+            calibration,
+            roll,
+            snapshot,
+            camera_to_ap1,
+            area,
+            DVec3::ZERO,
+        )
+    }
+
+    fn prepare_with_neutral_bound(
+        device: &wgpu::Device,
+        calibration: Calibration,
+        roll: RollSettings,
+        snapshot: &PhotoGradeSnapshot,
+        camera_to_ap1: DMat3,
+        area: SourceRegion,
+        neutral_bound: DVec3,
+    ) -> Result<Prepared, Error> {
+        if !neutral_bound.is_finite() || neutral_bound.min_element() < 0. {
+            return Err(Error::Gpu("invalid neutral repair bound".into()));
+        }
         let area = area.validate()?;
-        let (parameters, mut bound) = ProcessingParameters::positive_with_bound(
+        let (parameters, mut bound) = ProcessingParameters::positive_with_neutral_bound(
             calibration,
             roll,
             snapshot.global(),
             camera_to_ap1,
+            neutral_bound,
         )?;
         let active = u32::try_from(snapshot.locals().iter().filter(|a| a.is_active()).count())
             .map_err(|_| Error::Gpu("too many local adjustments".into()))?;

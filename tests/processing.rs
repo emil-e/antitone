@@ -10,6 +10,45 @@ use antitone::processing::{
 use antitone::sampling::{mean, photo_neutral, roll_neutral};
 
 #[test]
+fn ungraded_positive_excludes_photographic_roll_controls_but_preserves_inversion_and_signed_hdr() {
+    let cal = calibration();
+    let matrix = DMat3::from_diagonal(DVec3::new(0.8, 1.1, 1.3));
+    let interpretation = RollSettings {
+        gamma: 0.75,
+        balance: Balance {
+            warmth: 0.06,
+            tint: -0.03,
+        },
+        ..RollSettings::new_grade()
+    };
+    let graded_roll = RollSettings {
+        exposure: 3.,
+        wb: Balance {
+            warmth: -0.2,
+            tint: 0.1,
+        },
+        ..interpretation
+    };
+    let neutral = Pipeline::ungraded(cal, graded_roll, matrix).unwrap();
+    let reference = Inversion::new(cal, interpretation).unwrap();
+    for input in [cal.dmin * 1.1, cal.dmin, cal.dmax, cal.dmax * 0.5] {
+        let actual = neutral.apply(input).unwrap();
+        let inverted = reference.apply(input).unwrap();
+        assert_eq!(actual.floored, inverted.floored);
+        assert_eq!(actual.rgb, matrix * inverted.rgb);
+        assert_eq!(
+            actual,
+            Pipeline::ungraded(cal, interpretation, matrix)
+                .unwrap()
+                .apply(input)
+                .unwrap()
+        );
+    }
+    assert!(neutral.apply(cal.dmin * 1.1).unwrap().rgb.min_element() < 0.);
+    assert!(neutral.apply(cal.dmax * 0.5).unwrap().rgb.max_element() > 1.);
+}
+
+#[test]
 fn weighted_neutral_picks_match_repeated_full_resolution_pixels_not_bounding_box_means() {
     use antitone::sampling::{photo_neutral_weighted, roll_neutral_weighted, weighted_mean};
     let cal = calibration();

@@ -281,6 +281,127 @@ const TOOL_ICON_SIZE: f32 = 16.;
 const TOOL_FRAME_MARGIN: i8 = 6;
 const TOOL_ACTION_SPACE: f32 = 8.;
 
+/// Fixed stage-level home for immediate image commands and canvas-tool launchers.
+pub(super) struct ToolShelf;
+
+impl ToolShelf {
+    pub(super) fn show<R>(ui: &mut Ui, contents: impl FnOnce(&mut Ui) -> R) -> R {
+        ui.push_id("tool-shelf", |ui| {
+            ui.add_space(6.);
+            ui.spacing_mut().item_spacing.x = 4.;
+            let result = icons::row(ui, contents).inner;
+            ui.add_space(6.);
+            ui.separator();
+            result
+        })
+        .inner
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct ToolButton<'a> {
+    icon: Icon,
+    name: &'a str,
+    help: &'a str,
+    enabled: bool,
+    active: bool,
+    changed: bool,
+}
+
+impl<'a> ToolButton<'a> {
+    pub(super) fn command(icon: Icon, name: &'a str, help: &'a str) -> Self {
+        Self {
+            icon,
+            name,
+            help,
+            enabled: true,
+            active: false,
+            changed: false,
+        }
+    }
+
+    pub(super) fn tool(icon: Icon, name: &'a str, help: &'a str, active: bool) -> Self {
+        Self {
+            active,
+            ..Self::command(icon, name, help)
+        }
+    }
+
+    pub(super) fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    pub(super) fn changed(mut self, changed: bool) -> Self {
+        self.changed = changed;
+        self
+    }
+
+    pub(super) fn show(self, ui: &mut Ui) -> Response {
+        let response = icons::button(ui, self.icon, self.enabled, self.name, self.help);
+        if self.active {
+            ui.painter().rect_stroke(
+                response.rect.shrink(1.),
+                4.,
+                egui::Stroke::new(1., ui.visuals().selection.stroke.color),
+                egui::StrokeKind::Inside,
+            );
+        } else if self.changed {
+            ui.painter().circle_filled(
+                response.rect.right_top() + egui::vec2(-4., 4.),
+                2.5,
+                ui.visuals().selection.stroke.color,
+            );
+        }
+        if self.active || self.changed {
+            ui.ctx().accesskit_node_builder(response.id, |node| {
+                node.set_selected(self.active);
+                if self.changed {
+                    node.set_description("Modified");
+                }
+            });
+        }
+        response
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct SessionToolGroup<'a> {
+    pub(super) identity: ToolIdentity<'a>,
+    pub(super) busy: bool,
+    pub(super) done_enabled: bool,
+}
+
+impl SessionToolGroup<'_> {
+    fn done(self) -> TextAction<'static> {
+        TextAction::new("Done")
+            .enabled(self.done_enabled)
+            .primary()
+            .toolbar(0.)
+            .help("Finish the active tool (Escape).")
+    }
+
+    fn content_width(self, ui: &Ui) -> f32 {
+        tool_identity_width(ui, self.identity)
+            + self.done().width(ui)
+            + 2. * ui.spacing().item_spacing.x
+            + TOOL_ACTION_SPACE
+    }
+
+    pub(super) fn width(self, ui: &Ui) -> f32 {
+        self.content_width(ui) + 2. * f32::from(TOOL_FRAME_MARGIN)
+    }
+
+    pub(super) fn show(self, ui: &mut Ui) -> egui::InnerResponse<Response> {
+        let width = self.content_width(ui);
+        tool_group_frame(ui, width, |ui| {
+            paint_tool_identity(ui, self.identity, self.busy);
+            ui.add_space(TOOL_ACTION_SPACE);
+            self.done().show(ui)
+        })
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct ToolIdentity<'a> {
     pub(super) icon: Icon,
@@ -338,6 +459,52 @@ pub(super) struct ToolActions {
     pub(super) apply: Response,
 }
 
+fn tool_identity_width(ui: &Ui, identity: ToolIdentity<'_>) -> f32 {
+    egui::WidgetText::into_galley(
+        identity.viewer_title().into(),
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
+        egui::TextStyle::Body,
+    )
+    .size()
+    .x + TOOL_ICON_SIZE
+}
+
+fn paint_tool_identity(ui: &mut Ui, identity: ToolIdentity<'_>, busy: bool) {
+    identity.icon(ui, busy);
+    let label = ui.add(egui::Label::new(identity.viewer_title()));
+    label.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Label,
+            label.enabled(),
+            format!(
+                "Active tool: {}{}",
+                identity.title,
+                if busy { " · Working" } else { "" }
+            ),
+        )
+    });
+}
+
+fn tool_group_frame<R>(
+    ui: &mut Ui,
+    width: f32,
+    contents: impl FnOnce(&mut Ui) -> R,
+) -> egui::InnerResponse<R> {
+    egui::Frame::NONE
+        .fill(active_tool_fill(ui))
+        .inner_margin(egui::Margin::symmetric(TOOL_FRAME_MARGIN, 0))
+        .show(ui, |ui| {
+            ui.allocate_ui_with_layout(
+                egui::vec2(width, CONTROL_HEIGHT),
+                egui::Layout::left_to_right(egui::Align::Center),
+                contents,
+            )
+            .inner
+        })
+}
+
 impl ToolGroup<'_> {
     fn cancel(self) -> TextAction<'static> {
         TextAction::new("Cancel")
@@ -355,18 +522,7 @@ impl ToolGroup<'_> {
     }
 
     fn content_width(self, ui: &Ui, apply_label: &'static str) -> f32 {
-        let title = self.identity.viewer_title().into();
-        let title_width = egui::WidgetText::into_galley(
-            title,
-            ui,
-            Some(egui::TextWrapMode::Extend),
-            f32::INFINITY,
-            egui::TextStyle::Body,
-        )
-        .size()
-        .x;
-        TOOL_ICON_SIZE
-            + title_width
+        tool_identity_width(ui, self.identity)
             + self.cancel().width(ui)
             + self.apply(apply_label).width(ui)
             + 3. * ui.spacing().item_spacing.x
@@ -392,36 +548,14 @@ impl ToolGroup<'_> {
         apply_label: &'static str,
     ) -> egui::InnerResponse<ToolActions> {
         let width = self.content_width(ui, apply_label);
-        egui::Frame::NONE
-            .fill(active_tool_fill(ui))
-            .inner_margin(egui::Margin::symmetric(TOOL_FRAME_MARGIN, 0))
-            .show(ui, |ui| {
-                ui.allocate_ui_with_layout(
-                    egui::vec2(width, CONTROL_HEIGHT),
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |ui| {
-                        self.identity.icon(ui, self.busy);
-                        let label = ui.add(egui::Label::new(self.identity.viewer_title()));
-                        label.widget_info(|| {
-                            egui::WidgetInfo::labeled(
-                                egui::WidgetType::Label,
-                                label.enabled(),
-                                format!(
-                                    "Active tool: {}{}",
-                                    self.identity.title,
-                                    if self.busy { " · Working" } else { "" }
-                                ),
-                            )
-                        });
-                        ui.add_space(TOOL_ACTION_SPACE);
-                        ToolActions {
-                            cancel: self.cancel().show(ui),
-                            apply: self.apply(apply_label).show(ui),
-                        }
-                    },
-                )
-                .inner
-            })
+        tool_group_frame(ui, width, |ui| {
+            paint_tool_identity(ui, self.identity, self.busy);
+            ui.add_space(TOOL_ACTION_SPACE);
+            ToolActions {
+                cancel: self.cancel().show(ui),
+                apply: self.apply(apply_label).show(ui),
+            }
+        })
     }
 }
 

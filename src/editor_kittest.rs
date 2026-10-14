@@ -11,6 +11,8 @@ mod activity;
 mod analyze;
 #[path = "editor_kittest_correction.rs"]
 mod correction;
+#[path = "editor_kittest_dust.rs"]
+mod dust;
 #[path = "editor_kittest_fullscreen.rs"]
 mod fullscreen;
 #[path = "editor_kittest_project.rs"]
@@ -894,8 +896,8 @@ fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
     ] {
         set_layout(&mut harness, size, width);
         for (index, stage, heading, absent) in [
-            (0, "Roll", "Scan orientation", "Composition"),
-            (1, "Photo", "Composition", "Target"),
+            (0, "Roll", "Scan orientation", "Crop & straighten"),
+            (1, "Photo", "Crop & straighten", "Target"),
             (2, "Rendering", "Target", "Scan orientation"),
         ] {
             harness

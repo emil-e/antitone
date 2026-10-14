@@ -18,6 +18,18 @@ Those views must not overwrite the working Photo's accepted crop or settings. St
 
 In crop editing, handles resize the frame and dragging inside moves the image beneath it. Hovering outside the frame, away from its handles, uses a curved double-headed OS cursor oriented tangentially around the crop centre. A straightening drag retains that cursor, oriented around its original pivot, until release—even when the pointer moves inside the frame. Popovers, disabled input and leaving the canvas restore the ordinary cursor.
 
+### Provisional dust cleanup
+
+Photo's fixed tool shelf sits below the stage tabs. Immediate turn/flip commands are distinct from persistent Crop and Dust tools; active controls expand at the top of the stage inspector. Clicking active Crop cancels its draft; clicking active Dust finishes cleanup. Viewer navigation stays left and tool lifecycle actions stay right, using the shared framing and typography.
+
+Dust is direct canvas work, not a per-repair Apply/Cancel transaction. An unmodified click or stroke on free image content creates a source-pixel mask and commits on release. Clicking an existing support or outline selects it; Shift adds to the selected mask, Option removes, and Delete/Backspace deletes that repair rather than removing roll photos. Separate supports cannot overlap. Selected target and donor share exact-support geometry, while unrelated outlines are subdued. Dragging the donor previews an explicit offset and commits it on release. The inspector owns brush size, outline visibility and a contextual reset for the photo's repairs, not a repair list. Ordinary wheel input resizes the brush; Cmd/Ctrl-wheel or pinch zooms and Space/middle-drag pans. Inspector guidance, viewer help and modifier-sensitive cursors teach the gestures. Hold H to hide artwork momentarily; Done exits and hides outlines. Fullscreen suspends tool gestures/artwork and restores cleanup on return.
+
+Repairs evaluate asynchronously from the same immutable, full-resolution **ungraded AP1**: correction, negative inversion and camera conversion are upstream; Roll/Photo photographic exposure/WB, creative grading and locals are downstream. Roll gamma, gamma balance, toe/shoulder, calibration, correction or source changes invalidate evaluated values. Ordinary grading, targets and navigation reuse them. Cancellation is not a failed heal, and stale source/settings/repair replies cannot install. Manual masks bypass detector thresholds; automatic proposals remain unwired.
+
+Sparse immutable GPU patches retain repaired and original support values. Original values are used only to replace the appropriate contribution during view reconstruction, never as hidden inputs to the healer. Physical detail and coarse underlay keep their unrepaired neutral sources; a repaired view copy adds independently filtered repair-minus-original contributions before grading. This avoids both whole-photo reacquisition for another heal and recursive resampling of a repaired preview. Original-resolution tool/reference rendering applies the same repaired neutral values before photographic grading and ACES. Scopes consume the accepted viewer result, not an independently unrepaired image. Incompatible upstream changes show updating feedback rather than treating old patches as current.
+
+This is still a preview-only prototype. Repair sets are transient and keyed by `SourceId`; they never dirty `Document` or change project schema. Save omits them, and New/Open or application exit discards them. TIFF/EXR exports and thumbnails remain unrepaired, as do provisional camera-proxy fallback images before working support is ready. The inspector and viewer status identify unsaved/unexported cleanup. [Remaining acceptance](plans/dust-repair.md) includes photographic stage correspondence, resource/latency evidence and physical-input use.
+
 ## Numeric edits own their input
 
 A displayed number is not necessarily a rounded stored value. Controls must preserve precise values while the user reads or redraws them, and only a deliberate edit may change processing.
@@ -158,7 +170,7 @@ GPU infrastructure is shared, but mutable image storage, revision and processing
 
 Use the existing component families rather than copying their painting or interaction logic:
 
-- [Presentation](../src/editor_ui.rs): application header/branding, labelled rows, text actions and viewer tool groups.
+- [Presentation](../src/editor_ui.rs): application header/branding, labelled rows, text actions, stage tool shelves and viewer tool/session groups.
 - [Viewer framing](../src/editor_ui_viewer.rs): docked/auto-hiding controls and full-canvas presentation, separate from navigation and native window state.
 - [Hierarchy](../src/editor_ui_hierarchy.rs): sections, disclosure/reset and stage tabs.
 - [Decisions](../src/editor_ui_dialogs.rs): shared modal framing, actions and dismissal.
@@ -169,7 +181,7 @@ Use the existing component families rather than copying their painting or intera
 - [Icons](../src/editor_icons.rs): semantic actions and artwork.
 - [Controls](../src/editor_controls.rs): photographic values, precision and calibration/balance adapters.
 
-Presentation receives display-ready state and returns responses. Controllers still own availability, IDs, accepted/draft state, resets and dispatch. Cards receive selected/active/availability state, and their caption supplies the unelided semantic filename; they do not own images, selection, virtualization or workers. Pinned section titles expose label semantics without disclosure/focus behavior. In the workspace, the fixed viewer bar hosts tool identity and Apply/Cancel without resizing the canvas; only selection/frame artwork belongs over the photograph. Photo-only inspection uses the shared floating-bar variant rather than moving tool transactions onto the image.
+Presentation receives display-ready state and returns responses. Controllers still own availability, IDs, accepted/draft state, resets and dispatch. Cards receive selected/active/availability state, and their caption supplies the unelided semantic filename; they do not own images, selection, virtualization or workers. Pinned section titles expose label semantics without disclosure/focus behavior. Stage tool shelves use `ToolShelf`/`ToolButton` for immediate commands and selected canvas tools, and `ToolIdentity::inspector` for expanded contextual controls. In the workspace, the fixed viewer bar hosts tool identity and Apply/Cancel or session Done without resizing the canvas; only selection/frame artwork belongs over the photograph. Photo-only inspection uses the shared floating-bar variant rather than moving tool transactions onto the image.
 
 ### Typography roles
 

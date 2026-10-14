@@ -1,8 +1,8 @@
 //! Immutable physical-view acquisition and rendering. Originals remain reference/export authority.
 use super::*;
 use crate::{
-    color::Balance, frame_raster::FrameRaster, geometry::TextureMapping,
-    local_adjustments::PhotoGradeSnapshot, rendering::OutputTarget, scan::Scan, viewer::GpuImage,
+    frame_raster::FrameRaster, geometry::TextureMapping, local_adjustments::PhotoGradeSnapshot,
+    rendering::OutputTarget, scan::Scan, viewer::GpuImage,
 };
 use std::sync::{
     Arc, Mutex,
@@ -61,11 +61,7 @@ impl ViewSourceSpec {
     ) -> Result<Self, Error> {
         let neutral = ProcessingParameters::positive(
             calibration,
-            RollSettings {
-                exposure: 0.,
-                wb: Balance::default(),
-                ..roll
-            },
+            roll.inversion_only(),
             PhotoSettings::default(),
             matrix,
         )?;
@@ -349,7 +345,11 @@ impl ViewKernels {
                 },
                 wgpu::BindGroupEntry {
                     binding: 11,
-                    resource: graded.source.pixels.as_entire_binding(),
+                    resource: graded
+                        .repaired
+                        .as_ref()
+                        .map_or(&graded.source.pixels, |r| &r.pixels)
+                        .as_entire_binding(),
                 },
             ],
         });
@@ -578,8 +578,16 @@ impl ViewSource {
     }
 }
 
+struct RepairedSource {
+    source: Arc<ViewSource>,
+    repairs: super::repairs::Snapshot,
+    pixels: wgpu::Buffer,
+    submitted: Mutex<bool>,
+}
+
 struct GradedView {
     source: Arc<ViewSource>,
+    repaired: Option<Arc<RepairedSource>>,
     // None is the linear source-inspection bypass, never an identity photographic grade.
     grade: Option<Arc<GpuPhotoGrade>>,
     pixels: wgpu::Buffer,
@@ -638,13 +646,14 @@ impl RenderedView {
         }
         let processing = input.signature();
         // Validate the entire candidate even for target-only reuse, before allocating/publishing it.
-        GpuPhotoGrade::validate(
+        GpuPhotoGrade::validate_repaired(
             device,
             calibration,
             roll,
             &snapshot,
             source.spec.matrix,
             source.spec.area,
+            input.repairs.bound(),
         )?;
         let graded = previous
             .filter(|p| p.spec == source.spec && p.processing == processing)
@@ -652,6 +661,25 @@ impl RenderedView {
         let graded = match graded {
             Some(graded) => graded,
             None => Arc::new(GradedView {
+                repaired: if input.repairs.0.is_empty() {
+                    None
+                } else {
+                    previous
+                        .and_then(|p| p.graded.as_ref())
+                        .and_then(|g| g.repaired.as_ref())
+                        .filter(|r| Arc::ptr_eq(&r.source, &source) && r.repairs == input.repairs)
+                        .cloned()
+                        .map(Ok)
+                        .unwrap_or_else(|| {
+                            Ok::<_, Error>(Arc::new(RepairedSource {
+                                source: source.clone(),
+                                repairs: input.repairs.clone(),
+                                pixels: float_buffer(device, source.spec.frame.output)?,
+                                submitted: Mutex::new(false),
+                            }))
+                        })?
+                        .into()
+                },
                 pixels: float_buffer(device, source.spec.frame.output)?,
                 grade: Some(Arc::new(GpuPhotoGrade::new(
                     device,
@@ -713,6 +741,7 @@ impl RenderedView {
                         ..bytemuck::Zeroable::zeroed()
                     },
                     source: source.clone(),
+                    repaired: None,
                     submitted: Mutex::new(false),
                 }))
             })?;
@@ -834,12 +863,37 @@ impl RenderedView {
             return;
         }
         let mut initialized = self.graded.as_ref().map(|g| g.submitted.lock().unwrap());
+        let repaired = self.graded.as_ref().and_then(|g| g.repaired.as_ref());
+        let mut repair_initialized = repaired.map(|r| r.submitted.lock().unwrap());
         let mut encoder = device.create_command_encoder(&Default::default());
         if let Some(composite) = &self.composite {
             composite.ensure_parents(device, queue, submissions, context);
             composite.encode(&mut encoder, &self.image);
         } else {
             let graded = self.graded.as_ref().expect("unsubmitted working view");
+            if let Some(repaired) = repaired
+                && !**repair_initialized.as_ref().unwrap()
+            {
+                encoder.copy_buffer_to_buffer(
+                    &repaired.source.pixels,
+                    0,
+                    &repaired.pixels,
+                    0,
+                    repaired.pixels.size(),
+                );
+                repaired
+                    .source
+                    .renderer
+                    .repairs
+                    .filtered(
+                        device,
+                        &mut encoder,
+                        &repaired.pixels,
+                        repaired.source.spec.frame,
+                        &repaired.repairs,
+                    )
+                    .expect("validated physical repair frame");
+            }
             if !**initialized.as_ref().unwrap() {
                 graded.source.kernels.grade(device, &mut encoder, graded);
             }
@@ -870,6 +924,9 @@ impl RenderedView {
             context.request_repaint();
         });
         if let Some(initialized) = initialized.as_mut() {
+            **initialized = true;
+        }
+        if let Some(initialized) = repair_initialized.as_mut() {
             **initialized = true;
         }
         *submitted = true;
@@ -907,7 +964,9 @@ fn float_buffer(device: &wgpu::Device, size: [u32; 2]) -> Result<wgpu::Buffer, E
     Ok(device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("physical-view signed/HDR AP1"),
         size: bytes,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     }))
 }

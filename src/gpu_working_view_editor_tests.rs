@@ -1,5 +1,8 @@
 use super::*;
-use crate::geometry::{Composition, FramePoint};
+use crate::{
+    color::Balance,
+    geometry::{Composition, FramePoint},
+};
 use std::sync::atomic::AtomicU64;
 
 #[path = "gpu_working_view_colour_tests.rs"]
@@ -8,6 +11,8 @@ mod colour;
 mod inspection;
 #[path = "gpu_working_view_performance_tests.rs"]
 mod performance;
+#[path = "gpu_repair_view_tests.rs"]
+mod repairs;
 #[path = "gpu_working_view_underlay_tests.rs"]
 mod underlay;
 

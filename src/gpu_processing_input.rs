@@ -10,12 +10,16 @@ use std::sync::Arc;
 pub struct ProcessingInput {
     parameters: ProcessingParameters,
     grade: Option<Arc<GpuPhotoGrade>>,
+    #[cfg(feature = "editor")]
+    pub(crate) repairs: super::repairs::Snapshot,
 }
 impl From<ProcessingParameters> for ProcessingInput {
     fn from(parameters: ProcessingParameters) -> Self {
         Self {
             parameters,
             grade: None,
+            #[cfg(feature = "editor")]
+            repairs: super::repairs::Snapshot::default(),
         }
     }
 }
@@ -24,6 +28,8 @@ impl From<Arc<GpuPhotoGrade>> for ProcessingInput {
         Self {
             parameters: grade.parameters,
             grade: Some(grade),
+            #[cfg(feature = "editor")]
+            repairs: super::repairs::Snapshot::default(),
         }
     }
 }
@@ -32,6 +38,8 @@ impl ProcessingInput {
         ProcessingSignature {
             parameters: bytemuck::bytes_of(&self.parameters).try_into().unwrap(),
             grade: self.grade.clone(),
+            #[cfg(feature = "editor")]
+            repairs: self.repairs.clone(),
         }
     }
 }
@@ -56,9 +64,15 @@ impl ProcessingInput {
 pub struct ProcessingSignature {
     parameters: [u8; ProcessingParameters::BYTE_LEN],
     grade: Option<Arc<GpuPhotoGrade>>,
+    #[cfg(feature = "editor")]
+    repairs: super::repairs::Snapshot,
 }
 impl PartialEq for ProcessingSignature {
     fn eq(&self, other: &Self) -> bool {
+        #[cfg(feature = "editor")]
+        if self.repairs != other.repairs {
+            return false;
+        }
         self.parameters == other.parameters
             && match (&self.grade, &other.grade) {
                 (None, None) => true,

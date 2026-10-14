@@ -395,6 +395,24 @@ impl GpuImage {
                 input.parameters(),
             ),
         }
+        #[cfg(feature = "editor")]
+        if !input.repairs.0.is_empty() {
+            let geometry = processing.source.geometry().ok_or_else(|| {
+                Error::Gpu("repair rendering needs original source geometry".into())
+            })?;
+            if geometry.region().width == geometry.size()[0]
+                && geometry.region().height == geometry.size()[1]
+            {
+                processing.renderer.repairs.original(
+                    device,
+                    encoder,
+                    &processing.renderer.kernel,
+                    &processing.working,
+                    input,
+                    geometry,
+                );
+            }
+        }
         let view = self.linear.create_view(&Default::default());
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("ACES target rendering"),

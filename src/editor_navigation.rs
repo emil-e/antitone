@@ -13,6 +13,7 @@ impl Editor {
             return (geometry, false);
         }
         let picking = self.pick.is_some() && self.fullscreen.is_none();
+        let dusting = self.dust.cleanup && self.tab == 1 && self.fullscreen.is_none();
         let (zoom, translation, touch, pointer, space) = ui.input(|input| {
             (
                 input.zoom_delta(),
@@ -54,7 +55,8 @@ impl Editor {
         }
         let panning = response.dragged_by(egui::PointerButton::Middle)
             || response.dragged_by(egui::PointerButton::Primary)
-                && (space || !picking && self.viewport.zoom.is_some() && can_pan(geometry));
+                && (space
+                    || !picking && !dusting && self.viewport.zoom.is_some() && can_pan(geometry));
         if panning && can_pan(geometry) {
             self.viewport
                 .pan(geometry, pixels_per_point, response.drag_delta());
@@ -65,6 +67,7 @@ impl Editor {
             );
         }
         if !picking
+            && !dusting
             && !space
             && response.clicked_by(egui::PointerButton::Primary)
             && let Some(point) = response
@@ -85,6 +88,16 @@ impl Editor {
         if response.hovered() || response.dragged() {
             let cursor = if panning {
                 egui::CursorIcon::Grabbing
+            } else if dusting && !space {
+                if self.dust_donor_dragging() {
+                    egui::CursorIcon::Grabbing
+                } else if !ui.input(|i| i.modifiers.alt || i.modifiers.shift)
+                    && pointer.is_some_and(|p| self.dust_donor_at(geometry, p))
+                {
+                    egui::CursorIcon::Grab
+                } else {
+                    egui::CursorIcon::Crosshair
+                }
             } else if space || !picking && self.viewport.zoom.is_some() && can_pan(geometry) {
                 egui::CursorIcon::Grab
             } else if picking && !self.busy {

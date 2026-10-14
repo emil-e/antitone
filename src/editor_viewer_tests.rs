@@ -1083,7 +1083,7 @@ fn sampling_rejects_sources_that_are_not_in_the_roll_without_changing_the_pick()
 }
 
 #[test]
-fn composition_actions_remain_visible_but_disabled_during_a_crop() {
+fn photo_tool_shelf_keeps_only_the_active_crop_button_available_during_a_crop() {
     let (mut editor, _send, _receiver) = fixture();
     add_ready_fixture(&mut editor);
     editor.tab = 1;
@@ -1098,7 +1098,7 @@ fn composition_actions_remain_visible_but_disabled_during_a_crop() {
         "Turn right",
         "Flip horizontal",
         "Flip vertical",
-        "Crop…",
+        "Dust repair",
     ] {
         assert!(
             nodes
@@ -1109,6 +1109,13 @@ fn composition_actions_remain_visible_but_disabled_during_a_crop() {
                 .is_disabled()
         );
     }
+    let crop = &nodes
+        .iter()
+        .find(|(_, n)| n.label() == Some("Crop & straighten"))
+        .unwrap()
+        .1;
+    assert!(!crop.is_disabled());
+    assert_eq!(crop.is_selected(), Some(true));
 }
 
 #[test]

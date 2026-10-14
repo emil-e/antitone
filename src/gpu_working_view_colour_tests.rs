@@ -69,7 +69,7 @@ fn source_with_kernel(source: &Arc<ViewSource>, kernels: Arc<ViewKernels>) -> Ar
         kernels,
     })
 }
-fn authored_source(
+pub(super) fn authored_source(
     device: &wgpu::Device,
     renderer: Arc<crate::renderer::GpuRenderer>,
     kernels: Arc<ViewKernels>,

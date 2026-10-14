@@ -1,0 +1,2055 @@
+use super::*;
+use crate::{
+    dust_repair::{
+        DonorChoice, EvaluatedRepair, Repair, RepairId, RepairOrigin, RepairSet, SupportMask,
+    },
+    geometry::SourceRegion,
+    processing::Pipeline,
+};
+use std::collections::{BTreeSet, HashMap};
+
+#[cfg(test)]
+#[path = "editor_dust_lifecycle_tests.rs"]
+mod lifecycle_tests;
+
+const MAX_MASK_SIDE: u32 = 512;
+const MAX_MASK_PIXELS: usize = 65_536;
+
+fn initial_brush_size(active: SourceRegion) -> u32 {
+    ((active.width.min(active.height) as f64 * 0.01).round() as u32).clamp(4, 128)
+}
+
+pub(super) fn validate_dust_donor(
+    choice: DonorChoice,
+    support: &SupportMask,
+    active: SourceRegion,
+) -> Result<(), Error> {
+    let DonorChoice::Offset([dx, dy]) = choice else {
+        return Ok(());
+    };
+    let mut points = support.selected_points();
+    let first = points
+        .next()
+        .ok_or(Error::InvalidParameter("empty repair mask"))?;
+    let (mut min_x, mut max_x, mut min_y, mut max_y) = (first[0], first[0], first[1], first[1]);
+    for [x, y] in points {
+        min_x = min_x.min(x);
+        max_x = max_x.max(x);
+        min_y = min_y.min(y);
+        max_y = max_y.max(y);
+    }
+    let target = SourceRegion {
+        x: min_x.saturating_sub(10).max(active.x),
+        y: min_y.saturating_sub(10).max(active.y),
+        width: max_x.saturating_add(11).min(active.x + active.width)
+            - min_x.saturating_sub(10).max(active.x),
+        height: max_y.saturating_add(11).min(active.y + active.height)
+            - min_y.saturating_sub(10).max(active.y),
+    };
+    let source_x = i64::from(target.x) + i64::from(dx);
+    let source_y = i64::from(target.y) + i64::from(dy);
+    let source_right = source_x + i64::from(target.width);
+    let source_bottom = source_y + i64::from(target.height);
+    if source_x < i64::from(active.x)
+        || source_y < i64::from(active.y)
+        || source_right > i64::from(active.x + active.width)
+        || source_bottom > i64::from(active.y + active.height)
+    {
+        return Err(Error::InvalidParameter("manual donor outside source"));
+    }
+    if support.selected_points().any(|[x, y]| {
+        i64::from(x) >= source_x
+            && i64::from(x) < source_right
+            && i64::from(y) >= source_y
+            && i64::from(y) < source_bottom
+    }) {
+        return Err(Error::InvalidParameter(
+            "manual donor intersects required pixels",
+        ));
+    }
+    Ok(())
+}
+
+pub(super) type Signature = [u8; ProcessingParameters::BYTE_LEN];
+
+#[derive(Clone)]
+pub(super) struct Request {
+    pub request: u64,
+    pub loaded: u64,
+    pub source: SourceId,
+    pub signature: Signature,
+    pub repair: Repair,
+    pub calibration: Calibration,
+    pub roll: RollSettings,
+}
+
+pub(super) struct Response {
+    pub request: u64,
+    pub loaded: u64,
+    pub source: SourceId,
+    pub signature: Signature,
+    pub repair: Repair,
+    pub evaluated: Arc<EvaluatedRepair>,
+    pub original: Vec<[f32; 3]>,
+}
+
+fn repair_bound(repair: &EvaluatedRepair) -> DVec3 {
+    repair.pixels().fold(DVec3::ZERO, |bound, (_, value)| {
+        bound.max(DVec3::from_array(value.map(f64::from)).abs())
+    })
+}
+
+struct Cached {
+    loaded: u64,
+    signature: Signature,
+    repair: Repair,
+    evaluated: Arc<EvaluatedRepair>,
+    original: Vec<[f32; 3]>,
+    bound: DVec3,
+}
+
+struct Failed {
+    loaded: u64,
+    signature: Signature,
+    repair: Repair,
+}
+
+#[derive(Clone)]
+struct Pending {
+    request: u64,
+    loaded: u64,
+    source: SourceId,
+    signature: Signature,
+    repair: Repair,
+}
+
+#[derive(Clone, Copy)]
+struct DonorDrag {
+    source: [f64; 2],
+    offset: [i32; 2],
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct DonorDraft {
+    pub repair: RepairId,
+    pub offset: [i32; 2],
+    choice: DonorChoice,
+    drag: Option<DonorDrag>,
+}
+
+#[derive(Clone)]
+struct MaskDraft {
+    target: Option<RepairId>,
+    pixels: BTreeSet<[u32; 2]>,
+    last: Option<[f64; 2]>,
+}
+
+impl MaskDraft {
+    fn new(target: Option<RepairId>, support: Option<&SupportMask>) -> Self {
+        Self {
+            target,
+            pixels: support
+                .into_iter()
+                .flat_map(SupportMask::selected_points)
+                .collect(),
+            last: None,
+        }
+    }
+
+    fn support(&self) -> Result<SupportMask, Error> {
+        let min = [
+            self.pixels.iter().map(|point| point[0]).min(),
+            self.pixels.iter().map(|point| point[1]).min(),
+        ];
+        let max = [
+            self.pixels.iter().map(|point| point[0]).max(),
+            self.pixels.iter().map(|point| point[1]).max(),
+        ];
+        let (Some(min_x), Some(min_y), Some(max_x), Some(max_y)) = (min[0], min[1], max[0], max[1])
+        else {
+            return Err(Error::InvalidParameter("empty repair mask"));
+        };
+        let size = [max_x - min_x + 1, max_y - min_y + 1];
+        if size[0] > MAX_MASK_SIDE || size[1] > MAX_MASK_SIDE || self.pixels.len() > MAX_MASK_PIXELS
+        {
+            return Err(Error::InvalidParameter("dust repair mask is too large"));
+        }
+        let mut bits = vec![false; (size[0] * size[1]) as usize];
+        for [x, y] in &self.pixels {
+            bits[((y - min_y) * size[0] + x - min_x) as usize] = true;
+        }
+        SupportMask::new([min_x, min_y], size, bits)
+    }
+
+    fn clear_stroke(&mut self) {
+        self.last = None;
+    }
+}
+
+pub(super) struct State {
+    repairs: HashMap<SourceId, RepairSet>,
+    cached: HashMap<(SourceId, RepairId), Cached>,
+    preview_cached: HashMap<(SourceId, RepairId), Cached>,
+    failed: HashMap<(SourceId, RepairId), Failed>,
+    pending: Option<Pending>,
+    revision: u64,
+    mask_draft: Option<MaskDraft>,
+    pub brush_size: u32,
+    brush_source: Option<SourceId>,
+    pub cleanup: bool,
+    pub show_masks: bool,
+    pub donor_draft: Option<DonorDraft>,
+    gpu: HashMap<RepairId, Arc<crate::gpu::repairs::Patch>>,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            repairs: HashMap::new(),
+            cached: HashMap::new(),
+            preview_cached: HashMap::new(),
+            failed: HashMap::new(),
+            pending: None,
+            revision: 0,
+            mask_draft: None,
+            brush_size: 12,
+            brush_source: None,
+            cleanup: false,
+            show_masks: true,
+            donor_draft: None,
+            gpu: HashMap::new(),
+        }
+    }
+}
+
+impl State {
+    pub(super) fn release_gpu(&mut self) {
+        self.gpu.clear();
+    }
+
+    pub fn repairs(&self, source: SourceId) -> Option<&RepairSet> {
+        self.repairs.get(&source)
+    }
+
+    fn repairs_mut(&mut self, source: SourceId) -> &mut RepairSet {
+        self.repairs.entry(source).or_default()
+    }
+
+    fn changed(&mut self, source: SourceId, repair: RepairId) {
+        self.failed.remove(&(source, repair));
+        if let Some(preview) = self.preview_cached.remove(&(source, repair))
+            && self
+                .repairs(source)
+                .is_some_and(|set| set.repairs().contains(&preview.repair))
+        {
+            self.cached.insert((source, repair), preview);
+        }
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    fn removed(&mut self, source: SourceId, repair: RepairId) {
+        self.cached.remove(&(source, repair));
+        self.gpu.remove(&repair);
+        self.preview_cached.remove(&(source, repair));
+        self.failed.remove(&(source, repair));
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    fn clear_repairs(&mut self, source: SourceId) {
+        self.repairs.remove(&source);
+        self.cached.retain(|(candidate, _), _| *candidate != source);
+        self.preview_cached
+            .retain(|(candidate, _), _| *candidate != source);
+        self.failed.retain(|(candidate, _), _| *candidate != source);
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.source == source)
+        {
+            self.pending = None;
+        }
+        self.mask_draft = None;
+        self.donor_draft = None;
+        self.gpu.clear();
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    #[cfg(all(test, feature = "ui-tests"))]
+    pub fn evaluations(
+        &self,
+        source: SourceId,
+        loaded: u64,
+        signature: Signature,
+        repairs: &[Repair],
+    ) -> Vec<Arc<EvaluatedRepair>> {
+        repairs
+            .iter()
+            .filter(|repair| repair.enabled)
+            .filter_map(|repair| {
+                self.preview_cached
+                    .get(&(source, repair.id))
+                    .filter(|cached| cached.repair == *repair)
+                    .or_else(|| {
+                        self.cached
+                            .get(&(source, repair.id))
+                            .filter(|cached| cached.repair == *repair)
+                    })
+            })
+            .filter(|cached| cached.loaded == loaded && cached.signature == signature)
+            .map(|cached| cached.evaluated.clone())
+            .collect()
+    }
+
+    fn next_stale(
+        &self,
+        source: SourceId,
+        loaded: u64,
+        signature: Signature,
+        repairs: &[Repair],
+    ) -> Option<Repair> {
+        if self.pending.is_some() {
+            return None;
+        }
+        repairs
+            .iter()
+            .filter(|repair| repair.enabled)
+            .find(|repair| {
+                let current = |record_loaded, record_signature, record: &Repair| {
+                    record_loaded == loaded && record_signature == signature && record == *repair
+                };
+                let cached = self
+                    .preview_cached
+                    .get(&(source, repair.id))
+                    .filter(|cached| current(cached.loaded, cached.signature, &cached.repair))
+                    .or_else(|| {
+                        self.cached.get(&(source, repair.id)).filter(|cached| {
+                            current(cached.loaded, cached.signature, &cached.repair)
+                        })
+                    });
+                cached.is_none()
+                    && !self.failed.get(&(source, repair.id)).is_some_and(|failed| {
+                        current(failed.loaded, failed.signature, &failed.repair)
+                    })
+            })
+            .cloned()
+    }
+
+    fn start(&mut self, request: &Request) {
+        self.pending = Some(Pending {
+            request: request.request,
+            loaded: request.loaded,
+            source: request.source,
+            signature: request.signature,
+            repair: request.repair.clone(),
+        });
+    }
+
+    fn accept(&mut self, response: Response, expected: Option<&Repair>) -> bool {
+        let Some(pending) = self.pending.take_if(|p| p.request == response.request) else {
+            return false;
+        };
+        if pending.request != response.request
+            || pending.loaded != response.loaded
+            || pending.source != response.source
+            || pending.signature != response.signature
+            || pending.repair != response.repair
+            || expected != Some(&response.repair)
+        {
+            return false;
+        }
+        self.failed.remove(&(response.source, response.repair.id));
+        let accepted = self
+            .repairs(response.source)
+            .is_some_and(|set| set.repairs().contains(&response.repair));
+        let cache = if accepted {
+            &mut self.cached
+        } else {
+            &mut self.preview_cached
+        };
+        cache.insert(
+            (response.source, response.repair.id),
+            Cached {
+                loaded: response.loaded,
+                signature: response.signature,
+                repair: response.repair,
+                bound: repair_bound(&response.evaluated),
+                evaluated: response.evaluated,
+                original: response.original,
+            },
+        );
+        self.revision = self.revision.wrapping_add(1);
+        true
+    }
+
+    fn fail(&mut self, request: u64) -> bool {
+        let Some(pending) = self.pending.take_if(|pending| pending.request == request) else {
+            return false;
+        };
+        self.failed.insert(
+            (pending.source, pending.repair.id),
+            Failed {
+                loaded: pending.loaded,
+                signature: pending.signature,
+                repair: pending.repair,
+            },
+        );
+        true
+    }
+}
+
+pub(super) fn evaluate(scan: &Scan, request: &Request) -> Result<Response, Error> {
+    let pipeline = Pipeline::ungraded(
+        scan.processing_calibration(request.calibration)?,
+        request.roll,
+        scan.camera_to_ap1,
+    )?;
+    let active = SourceRegion {
+        x: scan.area.x,
+        y: scan.area.y,
+        width: scan.area.width,
+        height: scan.area.height,
+    };
+    let evaluated = crate::dust_repair::evaluate(&request.repair, active, |[x, y]| {
+        let rgb = pipeline.apply(scan.pixel(x, y)?)?.rgb;
+        let value = rgb.as_vec3().to_array();
+        if value.iter().all(|channel| channel.is_finite()) {
+            Ok(value)
+        } else {
+            Err(Error::NumericalOverflow)
+        }
+    })?;
+    // Original support values are used only for view replacement, never as healer inputs.
+    let original = evaluated
+        .pixels()
+        .map(|(point, _)| {
+            Ok(pipeline
+                .apply(scan.pixel(point[0], point[1])?)?
+                .rgb
+                .as_vec3()
+                .to_array())
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    Ok(Response {
+        request: request.request,
+        loaded: request.loaded,
+        source: request.source,
+        signature: request.signature,
+        repair: request.repair.clone(),
+        evaluated: Arc::new(evaluated),
+        original,
+    })
+}
+
+fn brush_dab(
+    draft: &mut MaskDraft,
+    center: [f64; 2],
+    size: u32,
+    erase: bool,
+    active: SourceRegion,
+    blocked: &[SupportMask],
+) -> Result<(bool, bool), Error> {
+    let radius = (f64::from(size) * 0.5).max(0.75);
+    let x0 = (center[0] - radius).floor() as i64;
+    let y0 = (center[1] - radius).floor() as i64;
+    let x1 = (center[0] + radius).ceil() as i64;
+    let y1 = (center[1] + radius).ceil() as i64;
+    let active_x0 = i64::from(active.x);
+    let active_y0 = i64::from(active.y);
+    let active_x1 = active_x0 + i64::from(active.width);
+    let active_y1 = active_y0 + i64::from(active.height);
+    let mut candidates = BTreeSet::new();
+    let mut touched_blocked = false;
+    for y in y0.max(active_y0)..y1.min(active_y1) {
+        for x in x0.max(active_x0)..x1.min(active_x1) {
+            let dx = x as f64 + 0.5 - center[0];
+            let dy = y as f64 + 0.5 - center[1];
+            if dx * dx + dy * dy > radius * radius {
+                continue;
+            }
+            let point = [x as u32, y as u32];
+            if !erase && blocked.iter().any(|support| support.contains(point)) {
+                touched_blocked = true;
+            } else {
+                candidates.insert(point);
+            }
+        }
+    }
+    if erase {
+        let before = draft.pixels.len();
+        for point in candidates {
+            draft.pixels.remove(&point);
+        }
+        return Ok((draft.pixels.len() != before, false));
+    }
+    let added = candidates
+        .iter()
+        .filter(|point| !draft.pixels.contains(*point))
+        .count();
+    if added == 0 {
+        return Ok((false, touched_blocked));
+    }
+    let min_x = draft
+        .pixels
+        .iter()
+        .chain(candidates.iter())
+        .map(|point| point[0])
+        .min()
+        .unwrap();
+    let min_y = draft
+        .pixels
+        .iter()
+        .chain(candidates.iter())
+        .map(|point| point[1])
+        .min()
+        .unwrap();
+    let max_x = draft
+        .pixels
+        .iter()
+        .chain(candidates.iter())
+        .map(|point| point[0])
+        .max()
+        .unwrap();
+    let max_y = draft
+        .pixels
+        .iter()
+        .chain(candidates.iter())
+        .map(|point| point[1])
+        .max()
+        .unwrap();
+    if max_x - min_x + 1 > MAX_MASK_SIDE
+        || max_y - min_y + 1 > MAX_MASK_SIDE
+        || draft.pixels.len() + added > MAX_MASK_PIXELS
+    {
+        return Err(Error::InvalidParameter("dust repair mask is too large"));
+    }
+    draft.pixels.extend(candidates);
+    Ok((true, touched_blocked))
+}
+
+fn brush_stroke(
+    draft: &mut MaskDraft,
+    point: [f64; 2],
+    size: u32,
+    erase: bool,
+    active: SourceRegion,
+    blocked: &[SupportMask],
+) -> Result<(bool, bool), Error> {
+    let start = draft.last.unwrap_or(point);
+    draft.last = Some(point);
+    let distance = ((point[0] - start[0]).powi(2) + (point[1] - start[1]).powi(2)).sqrt();
+    let steps = (distance / (f64::from(size) * 0.25).max(1.)).ceil() as usize;
+    let mut changed = false;
+    let mut touched_blocked = false;
+    for step in 0..=steps.max(1) {
+        let t = step as f64 / steps.max(1) as f64;
+        let center = [
+            start[0] + (point[0] - start[0]) * t,
+            start[1] + (point[1] - start[1]) * t,
+        ];
+        let result = brush_dab(draft, center, size, erase, active, blocked)?;
+        changed |= result.0;
+        touched_blocked |= result.1;
+    }
+    Ok((changed, touched_blocked))
+}
+
+#[cfg(test)]
+fn screen_polygon(geometry: crate::viewport::CanvasLayout, coverage: Coverage) -> Vec<egui::Pos2> {
+    coverage
+        .corners()
+        .into_iter()
+        .map(|point| geometry.screen_frame_point(geometry.composition.source_to_frame(point)))
+        .collect()
+}
+
+fn support_boundary_segments(support: &SupportMask) -> Vec<[[f64; 2]; 2]> {
+    let origin = support.origin();
+    let size = support.size();
+    let selected = |x: i64, y: i64| {
+        x >= 0
+            && y >= 0
+            && x < i64::from(size[0])
+            && y < i64::from(size[1])
+            && support.contains([origin[0] + x as u32, origin[1] + y as u32])
+    };
+    let mut segments = Vec::new();
+    for y in 0..=size[1] {
+        let mut x = 0;
+        while x < size[0] {
+            while x < size[0]
+                && selected(i64::from(x), i64::from(y) - 1) == selected(i64::from(x), i64::from(y))
+            {
+                x += 1;
+            }
+            let start = x;
+            while x < size[0]
+                && selected(i64::from(x), i64::from(y) - 1) != selected(i64::from(x), i64::from(y))
+            {
+                x += 1;
+            }
+            if start < x {
+                segments.push([
+                    [f64::from(origin[0] + start), f64::from(origin[1] + y)],
+                    [f64::from(origin[0] + x), f64::from(origin[1] + y)],
+                ]);
+            }
+        }
+    }
+    for x in 0..=size[0] {
+        let mut y = 0;
+        while y < size[1] {
+            while y < size[1]
+                && selected(i64::from(x) - 1, i64::from(y)) == selected(i64::from(x), i64::from(y))
+            {
+                y += 1;
+            }
+            let start = y;
+            while y < size[1]
+                && selected(i64::from(x) - 1, i64::from(y)) != selected(i64::from(x), i64::from(y))
+            {
+                y += 1;
+            }
+            if start < y {
+                segments.push([
+                    [f64::from(origin[0] + x), f64::from(origin[1] + start)],
+                    [f64::from(origin[0] + x), f64::from(origin[1] + y)],
+                ]);
+            }
+        }
+    }
+    segments
+}
+
+fn screen_source_point(geometry: crate::viewport::CanvasLayout, point: [f64; 2]) -> egui::Pos2 {
+    geometry.screen_frame_point(
+        geometry
+            .composition
+            .source_to_frame(crate::geometry::SourcePoint(point)),
+    )
+}
+
+fn paint_support_outline(
+    painter: &egui::Painter,
+    geometry: crate::viewport::CanvasLayout,
+    support: &SupportMask,
+    offset: [f64; 2],
+    color: egui::Color32,
+    width: f32,
+) {
+    for [mut start, mut end] in support_boundary_segments(support) {
+        start[0] += offset[0];
+        start[1] += offset[1];
+        end[0] += offset[0];
+        end[1] += offset[1];
+        let points = [
+            screen_source_point(geometry, start),
+            screen_source_point(geometry, end),
+        ];
+        painter.line_segment(
+            points,
+            egui::Stroke::new(
+                width + 1.,
+                egui::Color32::from_black_alpha((u16::from(color.a()) * 2 / 3) as u8),
+            ),
+        );
+        painter.line_segment(points, egui::Stroke::new(width, color));
+    }
+}
+
+fn support_anchor(support: &SupportMask) -> [f64; 2] {
+    let origin = support.origin();
+    let size = support.size();
+    let center = [
+        f64::from(origin[0]) + f64::from(size[0]) * 0.5,
+        f64::from(origin[1]) + f64::from(size[1]) * 0.5,
+    ];
+    support
+        .selected_points()
+        .min_by(|a, b| {
+            let distance = |point: [u32; 2]| {
+                (f64::from(point[0]) + 0.5 - center[0]).powi(2)
+                    + (f64::from(point[1]) + 0.5 - center[1]).powi(2)
+            };
+            distance(*a).total_cmp(&distance(*b))
+        })
+        .map_or(center, |point| {
+            [f64::from(point[0]) + 0.5, f64::from(point[1]) + 0.5]
+        })
+}
+
+fn distance_to_segment(point: egui::Pos2, start: egui::Pos2, end: egui::Pos2) -> f32 {
+    let segment = end - start;
+    let length_squared = segment.length_sq();
+    if length_squared == 0. {
+        return point.distance(start);
+    }
+    let along = ((point - start).dot(segment) / length_squared).clamp(0., 1.);
+    point.distance(start + along * segment)
+}
+
+fn repair_outline_hit(
+    geometry: crate::viewport::CanvasLayout,
+    support: &SupportMask,
+    point: egui::Pos2,
+) -> bool {
+    support_boundary_segments(support)
+        .into_iter()
+        .any(|segment| {
+            distance_to_segment(
+                point,
+                screen_source_point(geometry, segment[0]),
+                screen_source_point(geometry, segment[1]),
+            ) <= 8.
+        })
+}
+
+impl Editor {
+    pub(super) fn dust_controls(&mut self, ui: &mut egui::Ui) {
+        use presentation::ToolIdentity;
+        if !self.dust.cleanup {
+            return;
+        }
+        let Some(source) = self.current_source else {
+            return;
+        };
+        let repairs = self
+            .dust
+            .repairs(source)
+            .map(|set| set.repairs().to_vec())
+            .unwrap_or_default();
+        let available = !self.busy
+            && self.ready.is_some()
+            && self.pick.is_none()
+            && self.dust.donor_draft.is_none();
+        let mut reset_repairs = false;
+        ToolIdentity {
+            icon: icons::Icon::Dust,
+            title: "Dust repair",
+        }
+        .inspector(
+            ui,
+            |ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let reset = presentation::reset_button(
+                        ui,
+                        available && !repairs.is_empty(),
+                        "dust repairs",
+                    )
+                    .on_hover_text("Remove every dust repair from this photo.");
+                    ui.weak(format!("{} repairs", repairs.len()));
+                    reset
+                })
+                .inner
+            },
+            |ui, reset| {
+                ui.horizontal(|ui| {
+                    ui.label("Brush size").on_hover_text(
+                        "Full-resolution source-pixel diameter; scroll over the image to resize.",
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.weak(format!("{} px", self.dust.brush_size));
+                    });
+                });
+                ui.scope(|ui| {
+                    ui.spacing_mut().slider_width = ui.available_width();
+                    ui.add(
+                        egui::Slider::new(&mut self.dust.brush_size, 1..=128)
+                            .show_value(false)
+                            .step_by(1.),
+                    );
+                });
+                ui.small("Preview only · repairs are not saved or exported.");
+                ui.checkbox(&mut self.dust.show_masks, "Show repair outlines")
+                    .on_hover_text("Hold H for a momentary unobstructed preview.");
+                ui.small(if self
+                    .dust
+                    .repairs(source)
+                    .and_then(RepairSet::selected)
+                    .is_some()
+                {
+                    "Draw for a new heal · Shift adds to selected · Option removes · drag its source."
+                } else {
+                    "Draw for a new heal · click an outline to select it · Delete removes selected."
+                });
+                if repairs.is_empty() {
+                    ui.small("Manual masks only · automatic proposals are not wired yet");
+                }
+                reset_repairs = reset.clicked();
+            },
+        );
+        if reset_repairs {
+            self.dust.clear_repairs(source);
+            self.status = "Dust repairs reset".into();
+            self.invalidate_settled();
+        }
+    }
+
+    fn invalidate_settled(&mut self) {
+        self.original.invalidate();
+    }
+
+    pub(super) fn dust_interaction(
+        &mut self,
+        ui: &egui::Ui,
+        response: &egui::Response,
+        geometry: crate::viewport::CanvasLayout,
+        canvas_input: bool,
+        panning: bool,
+    ) {
+        if !self.dust.cleanup || self.tab != 1 || self.fullscreen.is_some() || self.source {
+            return;
+        }
+        let modifies = ui.input(|input| {
+            input
+                .raw
+                .events
+                .iter()
+                .find_map(|event| match event {
+                    egui::Event::PointerButton {
+                        button: egui::PointerButton::Primary,
+                        modifiers,
+                        ..
+                    } => Some(*modifiers),
+                    _ => None,
+                })
+                .unwrap_or(input.modifiers)
+        });
+        let allowed = canvas_input
+            && !panning
+            && !self.busy
+            && self.pick.is_none()
+            && self.crop_edit.is_none()
+            && self.flat_edit.is_none()
+            && self.analysis_review.is_none()
+            && ui.is_enabled()
+            && !ui.input(|i| i.key_down(egui::Key::Space));
+        if allowed {
+            let started = response.drag_started_by(egui::PointerButton::Primary);
+            let clicked = response.clicked_by(egui::PointerButton::Primary);
+            let start = started
+                .then(|| ui.input(|i| i.pointer.press_origin()))
+                .flatten()
+                .or_else(|| response.interact_pointer_pos());
+            if (started || clicked)
+                && self.dust.mask_draft.is_none()
+                && !self.dust_donor_dragging()
+                && let Some(point) = start.filter(|p| geometry.image.contains(*p))
+            {
+                if modifies.alt || modifies.shift {
+                    if let Some(id) = self.selected_dust_repair() {
+                        self.begin_dust_mask(Some(id));
+                    }
+                } else if let Some(id) = self.dust_repair_at(geometry, point) {
+                    self.select_dust_repair(id);
+                } else if self.dust_donor_at(geometry, point) {
+                    if started {
+                        self.begin_dust_donor_drag(geometry, point);
+                    }
+                } else {
+                    self.begin_dust_mask(None);
+                }
+                if self.dust.mask_draft.is_some() {
+                    self.begin_dust_stroke();
+                    self.paint_dust_stroke(geometry, point, modifies.alt);
+                }
+            }
+            if response.dragged_by(egui::PointerButton::Primary)
+                && let Some(point) = response.interact_pointer_pos()
+            {
+                if self.dust_donor_dragging() {
+                    self.drag_dust_donor(geometry, point);
+                } else if self.dust.mask_draft.is_some() {
+                    self.paint_dust_stroke(geometry, point, modifies.alt);
+                }
+            }
+            if clicked {
+                self.commit_dust_mask();
+            }
+        }
+        if response.drag_stopped_by(egui::PointerButton::Primary) {
+            self.end_dust_stroke();
+            self.end_dust_donor_drag();
+            self.commit_dust_mask();
+        }
+    }
+
+    pub(super) fn begin_dust_cleanup(&mut self) {
+        if self.dust.brush_source != self.current_source
+            && let (Some(source), Some(active)) = (
+                self.current_source,
+                self.ready.as_ref().map(|ready| ready.area),
+            )
+        {
+            self.dust.brush_size = initial_brush_size(active);
+            self.dust.brush_source = Some(source);
+        }
+        self.dust.cleanup = true;
+        self.dust.show_masks = true;
+    }
+
+    pub(super) fn finish_dust_cleanup(&mut self) {
+        self.cancel_dust_mask();
+        self.dust.cleanup = false;
+        self.dust.show_masks = false;
+        self.dust.donor_draft = None;
+    }
+
+    pub(super) fn begin_dust_mask(&mut self, target: Option<RepairId>) {
+        self.dust.cleanup = true;
+        self.dust.show_masks = true;
+        self.dust.donor_draft = None;
+        let support = target.and_then(|id| {
+            let source = self.current_source?;
+            self.dust
+                .repairs(source)?
+                .repairs()
+                .iter()
+                .find(|repair| repair.id == id)
+                .map(|repair| repair.support.clone())
+        });
+        self.dust.mask_draft = Some(MaskDraft::new(target, support.as_ref()));
+    }
+
+    pub(super) fn cancel_dust_mask(&mut self) {
+        self.dust.mask_draft = None;
+        self.dust.donor_draft = None;
+    }
+
+    pub(super) fn selected_dust_repair(&self) -> Option<RepairId> {
+        let source = self.current_source?;
+        self.dust.repairs(source)?.selected()
+    }
+
+    pub(super) fn commit_dust_mask(&mut self) {
+        let Some(draft) = self.dust.mask_draft.as_ref() else {
+            return;
+        };
+        let target = draft.target;
+        if draft.pixels.is_empty() {
+            self.cancel_dust_mask();
+            if target.is_some() {
+                self.delete_selected_dust_repair();
+            }
+        } else {
+            self.apply_dust_mask();
+        }
+    }
+
+    pub(super) fn adjust_dust_brush_from_scroll(
+        &mut self,
+        ui: &egui::Ui,
+        geometry: crate::viewport::CanvasLayout,
+    ) {
+        if !self.dust.cleanup {
+            return;
+        }
+        let delta = ui.input_mut(|input| {
+            if input
+                .pointer
+                .hover_pos()
+                .is_none_or(|point| !geometry.image.contains(point))
+            {
+                return 0.;
+            }
+            let delta = input
+                .raw
+                .events
+                .iter()
+                .filter_map(|event| match event {
+                    egui::Event::MouseWheel {
+                        delta, modifiers, ..
+                    } if !modifiers.command && !modifiers.ctrl => Some(delta.x + delta.y),
+                    _ => None,
+                })
+                .sum();
+            // Egui smooths wheel input across later frames. Cleanup owns an ordinary
+            // wheel gesture for brush sizing, so suppress both its first pan and tail.
+            input.smooth_scroll_delta = egui::Vec2::ZERO;
+            delta
+        });
+        if delta.abs() < f32::EPSILON {
+            return;
+        }
+        let step = ((delta.abs() / 12.).round() as u32).max(1);
+        self.dust.brush_size = if delta > 0. {
+            self.dust.brush_size.saturating_add(step).min(128)
+        } else {
+            self.dust.brush_size.saturating_sub(step).max(1)
+        };
+    }
+
+    pub(super) fn apply_dust_mask(&mut self) {
+        let Some(source) = self.current_source else {
+            self.cancel_dust_mask();
+            return;
+        };
+        let Some(draft) = &self.dust.mask_draft else {
+            return;
+        };
+        let target = draft.target;
+        let donor = self
+            .dust
+            .donor_draft
+            .filter(|donor| Some(donor.repair) == target)
+            .map(|donor| donor.choice);
+        let effective_donor = donor.or_else(|| {
+            let id = target?;
+            self.dust
+                .repairs(source)?
+                .repairs()
+                .iter()
+                .find(|repair| repair.id == id)
+                .map(|repair| repair.donor)
+        });
+        let result = draft.support().and_then(|support| {
+            if let Some(choice) = effective_donor {
+                let active = self
+                    .ready
+                    .as_ref()
+                    .map(|ready| ready.area)
+                    .ok_or(Error::InvalidParameter("manual donor unavailable"))?;
+                validate_dust_donor(choice, &support, active)?;
+            }
+            if let Some(id) = target {
+                self.dust.repairs_mut(source).set_support(id, support)?;
+                if let Some(choice) = donor {
+                    self.dust.repairs_mut(source).set_donor(id, choice)?;
+                }
+                Ok(id)
+            } else {
+                self.dust.repairs_mut(source).insert(
+                    support,
+                    RepairOrigin::Manual,
+                    DonorChoice::Automatic,
+                )
+            }
+        });
+        match result {
+            Ok(id) => {
+                self.dust.changed(source, id);
+                self.status = "Dust repair queued for full-resolution evaluation".into();
+                self.invalidate_settled();
+                self.cancel_dust_mask();
+            }
+            Err(error) => {
+                self.status = format!("Dust mask rejected: {error}");
+                self.cancel_dust_mask();
+            }
+        }
+    }
+
+    fn dust_source_position(
+        &self,
+        geometry: crate::viewport::CanvasLayout,
+        point: egui::Pos2,
+    ) -> Option<[f64; 2]> {
+        if !geometry.image.contains(point) {
+            return None;
+        }
+        let source = geometry
+            .composition
+            .frame_to_source(geometry.frame_point(point))
+            .0;
+        let active = self.ready.as_ref()?.area;
+        (source[0] >= f64::from(active.x)
+            && source[1] >= f64::from(active.y)
+            && source[0] < f64::from(active.x + active.width)
+            && source[1] < f64::from(active.y + active.height))
+        .then_some(source)
+    }
+
+    pub(super) fn begin_dust_stroke(&mut self) {
+        if let Some(draft) = &mut self.dust.mask_draft {
+            draft.clear_stroke();
+        }
+    }
+
+    pub(super) fn paint_dust_stroke(
+        &mut self,
+        geometry: crate::viewport::CanvasLayout,
+        point: egui::Pos2,
+        temporary_erase: bool,
+    ) {
+        let Some(position) = self.dust_source_position(geometry, point) else {
+            self.end_dust_stroke();
+            return;
+        };
+        let Some(source) = self.current_source else {
+            return;
+        };
+        let Some(target) = self.dust.mask_draft.as_ref().map(|draft| draft.target) else {
+            return;
+        };
+        let blocked = self
+            .dust
+            .repairs(source)
+            .into_iter()
+            .flat_map(RepairSet::repairs)
+            .filter(|repair| Some(repair.id) != target)
+            .map(|repair| repair.support.clone())
+            .collect::<Vec<_>>();
+        let active = self.ready.as_ref().unwrap().area;
+        let erase = temporary_erase;
+        let result = brush_stroke(
+            self.dust.mask_draft.as_mut().unwrap(),
+            position,
+            self.dust.brush_size,
+            erase,
+            active,
+            &blocked,
+        );
+        match result {
+            Ok((_, true)) => self.status = "Dust masks cannot overlap another repair".into(),
+            Ok(_) => {}
+            Err(error) => self.status = format!("Dust mask rejected: {error}"),
+        }
+    }
+
+    pub(super) fn end_dust_stroke(&mut self) {
+        if let Some(draft) = &mut self.dust.mask_draft {
+            draft.clear_stroke();
+        }
+    }
+
+    pub(super) fn dust_repair_at(
+        &self,
+        geometry: crate::viewport::CanvasLayout,
+        point: egui::Pos2,
+    ) -> Option<RepairId> {
+        if self.busy
+            || self.tab != 1
+            || self.source
+            || !self.dust.show_masks
+            || self.pick.is_some()
+            || self.dust.donor_draft.is_some()
+        {
+            return None;
+        }
+        let source_point = self.dust_source_position(geometry, point)?;
+        let pixel = [
+            source_point[0].floor() as u32,
+            source_point[1].floor() as u32,
+        ];
+        let source = self.current_source?;
+        let set = self.dust.repairs(source)?;
+        let selected = set.selected();
+        set.repairs()
+            .iter()
+            .filter(|repair| Some(repair.id) == selected)
+            .chain(
+                set.repairs()
+                    .iter()
+                    .rev()
+                    .filter(|repair| Some(repair.id) != selected),
+            )
+            .find(|repair| {
+                repair.support.contains(pixel)
+                    || repair_outline_hit(geometry, &repair.support, point)
+            })
+            .map(|repair| repair.id)
+    }
+
+    pub(super) fn select_dust_repair(&mut self, id: RepairId) {
+        if let Some(source) = self.current_source {
+            let _ = self.dust.repairs_mut(source).select(Some(id));
+        }
+    }
+
+    pub(super) fn delete_selected_dust_repair(&mut self) {
+        let Some(source) = self.current_source else {
+            return;
+        };
+        let Some(id) = self.dust.repairs(source).and_then(RepairSet::selected) else {
+            return;
+        };
+        self.cancel_dust_mask();
+        if self.dust.repairs_mut(source).remove(id).is_ok() {
+            self.dust.removed(source, id);
+            self.status = "Dust repair deleted".into();
+            self.invalidate_settled();
+        }
+    }
+
+    pub(super) fn dust_donor_regions(&self) -> Option<(SourceRegion, SourceRegion)> {
+        let source = self.current_source?;
+        let repair_id = self
+            .dust
+            .donor_draft
+            .map(|draft| draft.repair)
+            .or_else(|| self.dust.mask_draft.as_ref().and_then(|draft| draft.target))
+            .or_else(|| {
+                (self.dust.cleanup && self.dust.mask_draft.is_none())
+                    .then(|| self.selected_dust_repair())
+                    .flatten()
+            })?;
+        let signature = self.dust_signature()?;
+        let set = self.dust.repairs(source)?;
+        let repair = set.repairs().iter().find(|repair| repair.id == repair_id)?;
+        let effective = self.effective_dust_repair(source, repair_id)?;
+        let cached = self
+            .dust
+            .preview_cached
+            .get(&(source, repair_id))
+            .filter(|cached| {
+                cached.loaded == self.id
+                    && cached.signature == signature
+                    && cached.repair == effective
+            })
+            .or_else(|| {
+                self.dust.cached.get(&(source, repair_id)).filter(|cached| {
+                    cached.loaded == self.id
+                        && cached.signature == signature
+                        && cached.repair == *repair
+                })
+            })?;
+        let donor = cached.evaluated.donors.first()?;
+        let automatic_offset = [
+            i64::from(donor.source[0])
+                .checked_sub(i64::from(donor.target[0]))?
+                .try_into()
+                .ok()?,
+            i64::from(donor.source[1])
+                .checked_sub(i64::from(donor.target[1]))?
+                .try_into()
+                .ok()?,
+        ];
+        let accepted_offset = match repair.donor {
+            DonorChoice::Automatic => automatic_offset,
+            DonorChoice::Offset(offset) => offset,
+        };
+        let offset = self
+            .dust
+            .donor_draft
+            .filter(|draft| draft.repair == repair_id)
+            .map_or(accepted_offset, |draft| draft.offset);
+        let target = SourceRegion {
+            x: donor.target[0],
+            y: donor.target[1],
+            width: donor.target[2],
+            height: donor.target[3],
+        };
+        let source_x = u32::try_from(i64::from(target.x) + i64::from(offset[0])).ok()?;
+        let source_y = u32::try_from(i64::from(target.y) + i64::from(offset[1])).ok()?;
+        Some((
+            target,
+            SourceRegion {
+                x: source_x,
+                y: source_y,
+                width: target.width,
+                height: target.height,
+            },
+        ))
+    }
+
+    pub(super) fn dust_donor_at(
+        &self,
+        geometry: crate::viewport::CanvasLayout,
+        point: egui::Pos2,
+    ) -> bool {
+        if !self.dust.show_masks {
+            return false;
+        }
+        let Some(position) = self.dust_source_position(geometry, point) else {
+            return false;
+        };
+        let Some((target, donor)) = self.dust_donor_regions() else {
+            return false;
+        };
+        let Some(source) = self.current_source else {
+            return false;
+        };
+        let Some(repair) = self
+            .dust
+            .donor_draft
+            .map(|draft| draft.repair)
+            .or_else(|| self.dust.mask_draft.as_ref().and_then(|draft| draft.target))
+            .or_else(|| {
+                self.dust
+                    .mask_draft
+                    .is_none()
+                    .then(|| self.selected_dust_repair())
+                    .flatten()
+            })
+            .and_then(|id| self.effective_dust_repair(source, id))
+        else {
+            return false;
+        };
+        let support = repair.support;
+        let offset = [
+            f64::from(donor.x) - f64::from(target.x),
+            f64::from(donor.y) - f64::from(target.y),
+        ];
+        let target_point = [position[0] - offset[0], position[1] - offset[1]];
+        let over_support = target_point[0] >= 0.
+            && target_point[1] >= 0.
+            && support.contains([
+                target_point[0].floor() as u32,
+                target_point[1].floor() as u32,
+            ]);
+        over_support
+            || screen_source_point(geometry, {
+                let anchor = support_anchor(&support);
+                [anchor[0] + offset[0], anchor[1] + offset[1]]
+            })
+            .distance(point)
+                <= 10.
+    }
+
+    pub(super) fn begin_dust_donor_drag(
+        &mut self,
+        geometry: crate::viewport::CanvasLayout,
+        point: egui::Pos2,
+    ) {
+        if !self.dust_donor_at(geometry, point) {
+            return;
+        }
+        let Some(source_point) = self.dust_source_position(geometry, point) else {
+            return;
+        };
+        if self.dust.donor_draft.is_none() {
+            let Some(repair) = self.selected_dust_repair() else {
+                return;
+            };
+            let choice = self
+                .current_source
+                .and_then(|source| self.dust.repairs(source))
+                .and_then(|set| {
+                    set.repairs()
+                        .iter()
+                        .find(|candidate| candidate.id == repair)
+                })
+                .map_or(DonorChoice::Automatic, |repair| repair.donor);
+            let Some((target, donor)) = self.dust_donor_regions() else {
+                return;
+            };
+            let (Ok(offset_x), Ok(offset_y)) = (
+                i32::try_from(i64::from(donor.x) - i64::from(target.x)),
+                i32::try_from(i64::from(donor.y) - i64::from(target.y)),
+            ) else {
+                return;
+            };
+            let offset = [offset_x, offset_y];
+            self.dust.donor_draft = Some(DonorDraft {
+                repair,
+                offset,
+                choice,
+                drag: None,
+            });
+        }
+        if let Some(draft) = &mut self.dust.donor_draft {
+            draft.drag = Some(DonorDrag {
+                source: source_point,
+                offset: draft.offset,
+            });
+        }
+    }
+
+    pub(super) fn drag_dust_donor(
+        &mut self,
+        geometry: crate::viewport::CanvasLayout,
+        point: egui::Pos2,
+    ) {
+        let Some(position) = self.dust_source_position(geometry, point) else {
+            return;
+        };
+        let Some((target, _)) = self.dust_donor_regions() else {
+            return;
+        };
+        let Some(active) = self.ready.as_ref().map(|ready| ready.area) else {
+            return;
+        };
+        let Some(draft) = &mut self.dust.donor_draft else {
+            return;
+        };
+        let Some(drag) = draft.drag else {
+            return;
+        };
+        let requested = [
+            i64::from(drag.offset[0]) + (position[0] - drag.source[0]).round() as i64,
+            i64::from(drag.offset[1]) + (position[1] - drag.source[1]).round() as i64,
+        ];
+        let minimum = [
+            i64::from(active.x) - i64::from(target.x),
+            i64::from(active.y) - i64::from(target.y),
+        ];
+        let maximum = [
+            i64::from(active.x + active.width) - i64::from(target.x + target.width),
+            i64::from(active.y + active.height) - i64::from(target.y + target.height),
+        ];
+        let offset = [
+            requested[0].clamp(minimum[0], maximum[0]) as i32,
+            requested[1].clamp(minimum[1], maximum[1]) as i32,
+        ];
+        if draft.offset != offset {
+            draft.offset = offset;
+            draft.choice = DonorChoice::Offset(offset);
+            self.dust.revision = self.dust.revision.wrapping_add(1);
+            self.invalidate_settled();
+        }
+    }
+
+    pub(super) fn dust_donor_dragging(&self) -> bool {
+        self.dust
+            .donor_draft
+            .is_some_and(|draft| draft.drag.is_some())
+    }
+
+    pub(super) fn end_dust_donor_drag(&mut self) {
+        let Some(draft) = self.dust.donor_draft.take() else {
+            return;
+        };
+        if draft.drag.is_none() || draft.choice == DonorChoice::Automatic {
+            return;
+        }
+        let Some(source) = self.current_source else {
+            return;
+        };
+        let Some((support, accepted_donor)) = self
+            .dust
+            .repairs(source)
+            .and_then(|set| {
+                set.repairs()
+                    .iter()
+                    .find(|repair| repair.id == draft.repair)
+            })
+            .map(|repair| (repair.support.clone(), repair.donor))
+        else {
+            return;
+        };
+        if draft.choice == accepted_donor {
+            return;
+        }
+        let result = self
+            .ready
+            .as_ref()
+            .map(|ready| ready.area)
+            .ok_or(Error::InvalidParameter("manual donor unavailable"))
+            .and_then(|active| validate_dust_donor(draft.choice, &support, active))
+            .and_then(|()| {
+                self.dust
+                    .repairs_mut(source)
+                    .set_donor(draft.repair, draft.choice)
+            });
+        match result {
+            Ok(()) => {
+                self.dust.changed(source, draft.repair);
+                self.status = "Dust source updated".into();
+            }
+            Err(error) => {
+                self.dust.revision = self.dust.revision.wrapping_add(1);
+                self.status = format!("Dust source rejected: {error}");
+            }
+        }
+        self.invalidate_settled();
+    }
+
+    fn effective_dust_repairs(&self, source: SourceId) -> Vec<Repair> {
+        let target = self.dust.mask_draft.as_ref().and_then(|draft| draft.target);
+        let support = self
+            .dust
+            .mask_draft
+            .as_ref()
+            .filter(|draft| draft.target.is_some())
+            .and_then(|draft| draft.support().ok());
+        self.dust
+            .repairs(source)
+            .into_iter()
+            .flat_map(RepairSet::repairs)
+            .filter_map(|repair| {
+                let mut repair = repair.clone();
+                if Some(repair.id) == target {
+                    repair.support = support.clone()?;
+                }
+                if let Some(donor) = self
+                    .dust
+                    .donor_draft
+                    .filter(|donor| donor.repair == repair.id)
+                {
+                    repair.donor = donor.choice;
+                }
+                Some(repair)
+            })
+            .collect()
+    }
+
+    fn effective_dust_repair(&self, source: SourceId, id: RepairId) -> Option<Repair> {
+        self.effective_dust_repairs(source)
+            .into_iter()
+            .find(|repair| repair.id == id)
+    }
+
+    pub(super) fn dust_updating(&self) -> bool {
+        let Some(source) = self.current_source else {
+            return false;
+        };
+        let Some(signature) = self.dust_signature() else {
+            return false;
+        };
+        self.dust.pending.is_some()
+            || self
+                .dust
+                .next_stale(
+                    source,
+                    self.id,
+                    signature,
+                    &self.effective_dust_repairs(source),
+                )
+                .is_some()
+    }
+
+    pub(super) fn dust_signature(&self) -> Option<Signature> {
+        self.dust_signature_for(self.calibration()?, self.roll).ok()
+    }
+
+    fn dust_signature_for(
+        &self,
+        calibration: Calibration,
+        roll: RollSettings,
+    ) -> Result<Signature, Error> {
+        let ready = self
+            .ready
+            .as_ref()
+            .ok_or(Error::InvalidParameter("dust source unavailable"))?;
+        let matrix = glam::DMat3::from_cols_array_2d(&ready.record.development.camera_to_ap1);
+        let parameters = ProcessingParameters::positive(
+            self.processing_calibration(calibration)?,
+            roll.inversion_only(),
+            PhotoSettings::default(),
+            matrix,
+        )?;
+        Ok(bytemuck::bytes_of(&parameters).try_into().unwrap())
+    }
+
+    pub(super) fn dust_validate_processing(
+        &self,
+        calibration: Calibration,
+        roll: RollSettings,
+        photo: PhotoSettings,
+    ) -> Result<(), Error> {
+        self.validate_dust_bound(calibration, roll, photo, DVec3::ZERO)
+    }
+
+    fn validate_dust_bound(
+        &self,
+        calibration: Calibration,
+        roll: RollSettings,
+        photo: PhotoSettings,
+        mut bound: DVec3,
+    ) -> Result<(), Error> {
+        let (Some(device), Some(source), Some(ready)) =
+            (&self.working.device, self.current_source, &self.ready)
+        else {
+            return Ok(());
+        };
+        if bound == DVec3::ZERO
+            && self
+                .dust
+                .repairs(source)
+                .is_none_or(|set| set.repairs().iter().all(|r| !r.enabled))
+        {
+            return Ok(());
+        }
+        let signature = self.dust_signature_for(calibration, roll)?;
+        for repair in self
+            .effective_dust_repairs(source)
+            .iter()
+            .filter(|r| r.enabled)
+        {
+            let matches = |c: &&Cached| {
+                c.loaded == self.id && c.signature == signature && c.repair == *repair
+            };
+            if let Some(cached) = self
+                .dust
+                .preview_cached
+                .get(&(source, repair.id))
+                .filter(matches)
+                .or_else(|| self.dust.cached.get(&(source, repair.id)).filter(matches))
+            {
+                bound = bound.max(cached.bound);
+            }
+        }
+        if bound == DVec3::ZERO {
+            return Ok(());
+        }
+        let locals = self
+            .document
+            .project
+            .source(source)?
+            .grade_snapshot()?
+            .locals()
+            .to_vec();
+        crate::gpu::GpuPhotoGrade::validate_repaired(
+            device,
+            self.processing_calibration(calibration)?,
+            roll,
+            &PhotoGradeSnapshot::new(photo, locals)?,
+            glam::DMat3::from_cols_array_2d(&ready.record.development.camera_to_ap1),
+            ready.area,
+            bound,
+        )
+    }
+
+    pub(super) fn dust_gpu_snapshot(&mut self) -> Result<crate::gpu::repairs::Snapshot, Error> {
+        let Some(signature) = self.dust_signature() else {
+            return Ok(Default::default());
+        };
+        let Some(source) = self.current_source else {
+            return Ok(Default::default());
+        };
+        let Some(device) = self.working.device.clone() else {
+            return Ok(Default::default());
+        };
+        let repairs = self.effective_dust_repairs(source);
+        let mut patches = Vec::new();
+        for repair in &repairs {
+            if !repair.enabled {
+                continue;
+            }
+            let current = |c: &&Cached| {
+                c.loaded == self.id && c.signature == signature && c.repair == *repair
+            };
+            let cached = self
+                .dust
+                .preview_cached
+                .get(&(source, repair.id))
+                .filter(current)
+                .or_else(|| self.dust.cached.get(&(source, repair.id)).filter(current));
+            let Some(cached) = cached else {
+                continue;
+            };
+            let patch = match self
+                .dust
+                .gpu
+                .get(&repair.id)
+                .filter(|p| Arc::ptr_eq(&p.evaluated, &cached.evaluated))
+            {
+                Some(patch) => patch.clone(),
+                None => {
+                    let patch = crate::gpu::repairs::Patch::new(
+                        &device,
+                        cached.evaluated.clone(),
+                        &cached.original,
+                    )?;
+                    self.dust.gpu.insert(repair.id, patch.clone());
+                    patch
+                }
+            };
+            patches.push(patch);
+        }
+        self.dust
+            .gpu
+            .retain(|_, patch| patches.iter().any(|p| Arc::ptr_eq(p, patch)));
+        Ok(crate::gpu::repairs::Snapshot(patches))
+    }
+
+    pub(super) fn schedule_dust(&mut self, signature: Signature) {
+        if self.busy || self.document_pending.is_some() {
+            return;
+        }
+        let (Some(source), Some(calibration)) = (self.current_source, self.calibration()) else {
+            return;
+        };
+        let repairs = self.effective_dust_repairs(source);
+        let Some(repair) = self.dust.next_stale(source, self.id, signature, &repairs) else {
+            return;
+        };
+        let request = Request {
+            request: self.request_id(),
+            loaded: self.id,
+            source,
+            signature,
+            repair,
+            calibration,
+            roll: self.roll.inversion_only(),
+        };
+        if self.commands.send(Command::Dust(request.clone())).is_ok() {
+            self.dust.start(&request);
+            self.status = "Evaluating full-resolution dust repair…".into();
+        } else {
+            self.status = "RAW worker stopped".into();
+        }
+    }
+
+    pub(super) fn receive_dust(&mut self, request: u64, result: Result<Option<Response>, String>) {
+        match result {
+            Ok(Some(response)) => {
+                let current = response.loaded == self.id
+                    && Some(response.source) == self.current_source
+                    && Some(response.signature) == self.dust_signature();
+                if !current {
+                    self.dust.pending.take_if(|p| p.request == request);
+                    return;
+                }
+                if let Some(calibration) = self.calibration()
+                    && let Err(error) = self.validate_dust_bound(
+                        calibration,
+                        self.roll,
+                        self.photo,
+                        repair_bound(&response.evaluated),
+                    )
+                {
+                    if self.dust.fail(request) {
+                        self.status = format!("Dust repair rejected by GPU range checks: {error}");
+                    }
+                    return;
+                }
+                let expected = self.effective_dust_repair(response.source, response.repair.id);
+                if self.dust.accept(response, expected.as_ref()) {
+                    self.status = "Dust repair ready".into();
+                    self.invalidate_settled();
+                }
+            }
+            Ok(None) => {
+                self.dust.pending.take_if(|p| p.request == request);
+            }
+            Err(error) => {
+                if self.dust.fail(request) {
+                    self.status = format!("Dust repair failed: {error}");
+                }
+            }
+        }
+    }
+
+    #[cfg(all(test, feature = "ui-tests"))]
+    pub(super) fn dust_evaluations(&self, signature: Signature) -> Vec<Arc<EvaluatedRepair>> {
+        self.current_source.map_or_else(Vec::new, |source| {
+            let repairs = self.effective_dust_repairs(source);
+            self.dust.evaluations(source, self.id, signature, &repairs)
+        })
+    }
+
+    pub(super) fn paint_dust(&self, ui: &egui::Ui, geometry: crate::viewport::CanvasLayout) {
+        let Some(source) = self.current_source else {
+            return;
+        };
+        if self.tab != 1 || self.fullscreen.is_some() {
+            return;
+        }
+        let set = self.dust.repairs(source);
+        let selected = set.and_then(RepairSet::selected);
+        let signature = self.dust_signature();
+        let mask_target = self.dust.mask_draft.as_ref().and_then(|draft| draft.target);
+        let painter = ui.painter().with_clip_rect(geometry.canvas);
+        let overlays_hidden = ui.ctx().input(|input| input.key_down(egui::Key::H));
+        if self.dust.show_masks && !overlays_hidden {
+            for repair in set.into_iter().flat_map(RepairSet::repairs) {
+                if mask_target == Some(repair.id) {
+                    continue;
+                }
+                let pending = self.dust.pending.as_ref().is_some_and(|pending| {
+                    pending.loaded == self.id
+                        && pending.source == source
+                        && Some(pending.signature) == signature
+                        && pending.repair == *repair
+                });
+                let failed = self
+                    .dust
+                    .failed
+                    .get(&(source, repair.id))
+                    .is_some_and(|failed| {
+                        failed.loaded == self.id
+                            && Some(failed.signature) == signature
+                            && failed.repair == *repair
+                    });
+                let active = selected == Some(repair.id);
+                let color = if mask_target.is_some() {
+                    egui::Color32::from_white_alpha(45)
+                } else if !repair.enabled {
+                    egui::Color32::from_white_alpha(65)
+                } else if failed {
+                    ui.visuals().error_fg_color.linear_multiply(0.7)
+                } else if pending {
+                    egui::Color32::from_rgb(235, 180, 80).linear_multiply(0.7)
+                } else if active {
+                    egui::Color32::from_rgb(100, 220, 240)
+                } else {
+                    egui::Color32::from_white_alpha(85)
+                };
+                paint_support_outline(
+                    &painter,
+                    geometry,
+                    &repair.support,
+                    [0., 0.],
+                    color,
+                    if active { 1.5 } else { 1. },
+                );
+            }
+        }
+        if !overlays_hidden
+            && let Some(mask) = self
+                .dust
+                .mask_draft
+                .as_ref()
+                .and_then(|draft| draft.support().ok())
+        {
+            paint_support_outline(
+                &painter,
+                geometry,
+                &mask,
+                [0., 0.],
+                egui::Color32::from_rgb(100, 220, 240),
+                1.,
+            );
+        }
+        let (point, add, erase, hide_cursor) = ui.ctx().input(|input| {
+            (
+                input.pointer.hover_pos(),
+                input.modifiers.shift,
+                input.modifiers.alt,
+                input.key_down(egui::Key::H) || input.key_down(egui::Key::Space),
+            )
+        });
+        if self.dust.cleanup
+            && !self.source
+            && !self.dust_donor_dragging()
+            && !hide_cursor
+            && let Some(point) = point
+            && (add || erase || !self.dust_donor_at(geometry, point))
+            && let Some(source_point) = self.dust_source_position(geometry, point)
+        {
+            let center = screen_source_point(geometry, source_point);
+            let radius = (self.dust.brush_size as f32 * 0.5 * geometry.scale).max(2.);
+            painter.circle_stroke(
+                center,
+                radius + 0.5,
+                egui::Stroke::new(2., egui::Color32::from_black_alpha(170)),
+            );
+            painter.circle_stroke(
+                center,
+                radius,
+                egui::Stroke::new(
+                    1.5,
+                    if erase {
+                        egui::Color32::from_rgb(240, 120, 100)
+                    } else if add {
+                        egui::Color32::from_rgb(100, 220, 240)
+                    } else {
+                        egui::Color32::WHITE
+                    },
+                ),
+            );
+        }
+        if overlays_hidden || !self.dust.show_masks {
+            return;
+        }
+        let Some((target, donor)) = self.dust_donor_regions() else {
+            return;
+        };
+        let Some(repair) = self
+            .selected_dust_repair()
+            .and_then(|id| self.effective_dust_repair(source, id))
+        else {
+            return;
+        };
+        let support = repair.support;
+        let offset = [
+            f64::from(donor.x) - f64::from(target.x),
+            f64::from(donor.y) - f64::from(target.y),
+        ];
+        paint_support_outline(
+            &painter,
+            geometry,
+            &support,
+            [0., 0.],
+            egui::Color32::WHITE,
+            2.,
+        );
+        paint_support_outline(
+            &painter,
+            geometry,
+            &support,
+            offset,
+            egui::Color32::from_rgb(100, 220, 240),
+            2.,
+        );
+        let target_anchor = support_anchor(&support);
+        let donor_anchor = [target_anchor[0] + offset[0], target_anchor[1] + offset[1]];
+        painter.line_segment(
+            [
+                screen_source_point(geometry, target_anchor),
+                screen_source_point(geometry, donor_anchor),
+            ],
+            egui::Stroke::new(1., egui::Color32::from_gray(220)),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn initial_brush_tracks_the_negative_short_side_with_practical_bounds() {
+        let area = |width, height| SourceRegion {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        };
+        assert_eq!(initial_brush_size(area(240, 176)), 4);
+        assert_eq!(initial_brush_size(area(6_000, 4_000)), 40);
+        assert_eq!(initial_brush_size(area(40_000, 30_000)), 128);
+    }
+
+    #[test]
+    fn brush_dab_becomes_an_authoritative_nonrectangular_source_mask() {
+        let active = SourceRegion {
+            x: 100,
+            y: 200,
+            width: 40,
+            height: 30,
+        };
+        let mut draft = MaskDraft::new(None, None);
+        assert!(
+            brush_dab(&mut draft, [110., 208.], 6, false, active, &[])
+                .unwrap()
+                .0
+        );
+        let support = draft.support().unwrap();
+        assert_eq!(support.origin(), [107, 205]);
+        assert_eq!(support.size(), [6, 6]);
+        assert!(support.contains([110, 208]));
+        assert!(!support.contains([107, 205]));
+    }
+
+    #[test]
+    fn support_boundary_follows_the_mask_instead_of_its_bounding_box() {
+        let support = SupportMask::new([10, 20], [2, 2], vec![true, true, true, false]).unwrap();
+        let segments = support_boundary_segments(&support);
+        assert!(segments.contains(&[[11., 21.], [12., 21.]]));
+        assert!(segments.contains(&[[11., 21.], [11., 22.]]));
+        assert!(!segments.contains(&[[10., 22.], [12., 22.]]));
+    }
+
+    #[test]
+    fn brush_strokes_are_continuous_erasable_and_skip_other_repairs() {
+        let active = SourceRegion {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 100,
+        };
+        let mut draft = MaskDraft::new(None, None);
+        brush_stroke(&mut draft, [10.5, 10.5], 4, false, active, &[]).unwrap();
+        brush_stroke(&mut draft, [30.5, 10.5], 4, false, active, &[]).unwrap();
+        for x in 10..=30 {
+            assert!(draft.pixels.contains(&[x, 10]));
+        }
+        draft.clear_stroke();
+        brush_stroke(&mut draft, [20.5, 10.5], 4, true, active, &[]).unwrap();
+        assert!(!draft.pixels.contains(&[20, 10]));
+
+        let blocked = SupportMask::new([40, 10], [1, 1], vec![true]).unwrap();
+        draft.clear_stroke();
+        let (_, touched_blocked) =
+            brush_stroke(&mut draft, [40.5, 10.5], 1, false, active, &[blocked]).unwrap();
+        assert!(touched_blocked);
+        assert!(!draft.pixels.contains(&[40, 10]));
+    }
+
+    #[test]
+    fn transient_repair_sets_are_independent_per_source() {
+        let mut state = State::default();
+        let mask = || SupportMask::new([20, 20], [3, 3], vec![true; 9]).unwrap();
+        let first = state
+            .repairs_mut(SourceId(1))
+            .insert(mask(), RepairOrigin::Manual, DonorChoice::Automatic)
+            .unwrap();
+        let second = state
+            .repairs_mut(SourceId(2))
+            .insert(mask(), RepairOrigin::Detected, DonorChoice::Offset([4, -2]))
+            .unwrap();
+        assert_eq!(first, RepairId(1));
+        assert_eq!(second, RepairId(1));
+        state
+            .repairs_mut(SourceId(1))
+            .set_enabled(first, false)
+            .unwrap();
+        assert!(!state.repairs(SourceId(1)).unwrap().repairs()[0].enabled);
+        assert!(state.repairs(SourceId(2)).unwrap().repairs()[0].enabled);
+    }
+
+    #[test]
+    fn unchanged_failure_is_not_retried_or_allowed_to_block_later_repairs() {
+        let mut state = State::default();
+        let source = SourceId(1);
+        for origin in [[20, 20], [30, 30]] {
+            state
+                .repairs_mut(source)
+                .insert(
+                    SupportMask::new(origin, [2, 2], vec![true; 4]).unwrap(),
+                    RepairOrigin::Manual,
+                    DonorChoice::Automatic,
+                )
+                .unwrap();
+        }
+        let first = state.repairs(source).unwrap().repairs()[0].clone();
+        state.pending = Some(Pending {
+            request: 4,
+            loaded: 8,
+            source,
+            signature: [3; ProcessingParameters::BYTE_LEN],
+            repair: first,
+        });
+        assert!(state.fail(4));
+        let repairs = state.repairs(source).unwrap().repairs().to_vec();
+        assert_eq!(
+            state
+                .next_stale(source, 8, [3; ProcessingParameters::BYTE_LEN], &repairs)
+                .unwrap()
+                .id,
+            RepairId(2)
+        );
+        assert_eq!(
+            state
+                .next_stale(source, 8, [4; ProcessingParameters::BYTE_LEN], &repairs)
+                .unwrap()
+                .id,
+            RepairId(1)
+        );
+    }
+
+    #[test]
+    fn straightened_overlay_keeps_source_rectangle_as_a_quadrilateral() {
+        let area = SourceRegion {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 80,
+        };
+        let composition = crate::geometry::Composition::with_crop(
+            area,
+            Default::default(),
+            Default::default(),
+            Some(crate::crop::Crop {
+                center: [50., 40.],
+                size: [60, 40],
+                angle: 0.2,
+            }),
+        )
+        .unwrap();
+        let geometry = crate::viewport::CanvasLayout {
+            canvas: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100., 80.)),
+            image: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(60., 40.)),
+            area: crate::raw::Rect {
+                x: 0,
+                y: 0,
+                width: 100,
+                height: 80,
+            },
+            composition,
+            scale: 1.,
+        };
+        let points = screen_polygon(
+            geometry,
+            Coverage::rectangle(SourceRegion {
+                x: 20,
+                y: 20,
+                width: 10,
+                height: 5,
+            }),
+        );
+        assert_ne!(points[0].y, points[1].y);
+        assert_ne!(points[1].x, points[2].x);
+    }
+}

@@ -9,6 +9,7 @@ developed camera RGB
   → optional scan-illumination correction
   → per-channel negative inversion
   → camera-to-AP1 colour conversion
+  → ungraded working positive (optional preview-only dust repair here)
   → exposure and photographic white balance
   → Photo contrast and saturation
   → ordered source-anchored local grades, when present
@@ -66,6 +67,14 @@ Manual gamma-neutral fitting uses individually inverted, full-resolution samples
 After inversion, the metadata-derived camera matrix maps the positive to AP1/ACEScg with a D60 white. This gives grading and rendering a common basis. It is a pragmatic positive colour conversion, not proof that the original scene's spectra or film dyes have been recovered.
 
 Roll and Photo exposure add in stops. Roll WB is followed by Photo WB, then Photo contrast and saturation. The working result retains signed and above-one values. A negative AP1 component can result from colour conversion or grading; it is not, by itself, a failed scan.
+
+### Ungraded positive and repair placement
+
+The ungraded positive is full-resolution signed/HDR AP1 after scan correction, calibrated inversion and camera conversion, but before photographic Roll or Photo controls. `RollSettings::inversion_only` explicitly separates response/gamma/balance from exposure/WB; adding a future Roll field requires a stage-placement decision rather than silently changing repair input. `Pipeline::ungraded` is the scalar boundary, shared semantically with neutral GPU view acquisition.
+
+The provisional Dust tool heals here. Fixed RAW-development WB and gamma balance are upstream, unlike photographic Roll WB. Calibration, response, correction or development changes legitimately require asynchronous reevaluation; exposure, photographic WB, contrast, saturation and downstream locals do not. This is an interpretation-stable working positive, not proof of recovered scene-linear truth. Every independent repair reads the same unrepaired input, preserves known f32 values and never clamps signed/HDR data.
+
+Pre-grade placement is a deliberate change from the earlier post-grade editor experiment: healing and nonlinear grading do not commute, and donor matching may change. The solver remains frozen; [research evidence](research/dust-removal.md) is not all-grade photographic acceptance. Full-resolution repair composition precedes view filtering or original-sample output reconstruction; it is not painting into an already downsampled proxy. Production TIFF/EXR and thumbnails do not yet consume transient repairs; [the editor guide](editor.md#provisional-dust-cleanup) owns those user-visible limits.
 
 ### Photo contrast and saturation
 

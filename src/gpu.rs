@@ -126,6 +126,16 @@ impl ProcessingParameters {
         photo: PhotoSettings,
         camera_to_ap1: DMat3,
     ) -> Result<(Self, f64), Error> {
+        Self::positive_with_neutral_bound(calibration, roll, photo, camera_to_ap1, DVec3::ZERO)
+    }
+
+    fn positive_with_neutral_bound(
+        calibration: Calibration,
+        roll: RollSettings,
+        photo: PhotoSettings,
+        camera_to_ap1: DMat3,
+        additional_neutral: DVec3,
+    ) -> Result<(Self, f64), Error> {
         validate_camera_matrix(camera_to_ap1)?;
         CameraMatrix::new(camera_to_ap1)?;
         let inversion = Inversion::new(calibration, roll)?;
@@ -143,9 +153,10 @@ impl ProcessingParameters {
             .anchor_exponents
             .map(|a| (-log_abs_expm1(a) / toe).exp());
         let largest = floor_bound.max(negative_bound) * gain;
-        let working_bound = camera_to_ap1.x_axis.abs() * largest.x
+        let working_bound = (camera_to_ap1.x_axis.abs() * largest.x
             + camera_to_ap1.y_axis.abs() * largest.y
-            + camera_to_ap1.z_axis.abs() * largest.z;
+            + camera_to_ap1.z_axis.abs() * largest.z)
+            .max(additional_neutral * gain);
         let bound = matrix.x_axis.abs() * working_bound.x
             + matrix.y_axis.abs() * working_bound.y
             + matrix.z_axis.abs() * working_bound.z;
@@ -310,6 +321,10 @@ impl CameraMatrix {
     }
 }
 
+#[cfg(feature = "editor")]
+#[path = "gpu_repairs.rs"]
+pub(crate) mod repairs;
+
 pub struct ProcessingSource {
     input: wgpu::Buffer,
     matrix: wgpu::Buffer,
@@ -383,6 +398,11 @@ impl ProcessingSource {
 
     pub fn byte_len(&self) -> u64 {
         self.input.size()
+    }
+
+    #[cfg(feature = "editor")]
+    pub(crate) fn geometry(&self) -> Option<SourceGeometry> {
+        self.geometry
     }
 }
 

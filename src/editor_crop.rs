@@ -94,6 +94,7 @@ fn reframe_crop(
 
 impl Editor {
     pub(super) fn begin_crop(&mut self) {
+        self.finish_dust_cleanup();
         if self.busy || self.pick.is_some() || self.crop_edit.is_some() {
             return;
         }
@@ -132,130 +133,146 @@ impl Editor {
         self.last_layout = None;
         self.original.invalidate();
     }
-    pub(super) fn composition_controls(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn photo_tool_shelf(&mut self, ui: &mut egui::Ui) {
         use icons::Icon;
+        use presentation::{ToolButton, ToolShelf};
+
         let cropping = self.crop_edit.is_some();
-        let editable = !self.busy && self.ready.is_some() && self.pick.is_none() && !cropping;
-        let mut begin = false;
-        let mut reset_crop = false;
-        let mut reset = false;
-        ui.add_enabled_ui(editable || cropping, |ui| {
-            (_, reset) = presentation::section(
-                ui,
-                "photo-composition",
-                "Composition",
-                presentation::SectionHeader {
-                    summary: if cropping {
-                        "Crop active"
-                    } else if self.crop.is_some() {
-                        "Cropped"
-                    } else {
-                        "Full frame"
-                    },
-                    changed: !self.photo_orientation.is_identity() || self.crop.is_some(),
-                    reset: Some(
-                        editable && (!self.photo_orientation.is_identity() || self.crop.is_some()),
+        let dusting = self.dust.cleanup;
+        let tool_active = cropping || dusting || self.flat_edit.is_some();
+        let ready = !self.busy && self.ready.is_some();
+        let commands_enabled = ready && !tool_active && self.pick.is_none();
+        let crop_enabled = cropping || ready && self.pick.is_none() && !tool_active;
+        let dust_enabled = dusting
+            || ready
+                && self.calibration().is_some()
+                && !self.source
+                && self.pick.is_none()
+                && !tool_active;
+        let repairs_changed = self
+            .current_source
+            .and_then(|source| self.dust.repairs(source))
+            .is_some_and(|set| !set.repairs().is_empty());
+        let mut action = None;
+        enum Action {
+            TurnLeft,
+            TurnRight,
+            FlipHorizontal,
+            FlipVertical,
+            Crop,
+            Dust,
+        }
+
+        ToolShelf::show(ui, |ui| {
+            for (candidate, button) in [
+                (
+                    Action::TurnLeft,
+                    ToolButton::command(
+                        Icon::TurnLeft,
+                        "Turn left",
+                        "Turn the displayed photo 90° left.",
                     ),
-                    default_open: if cropping { None } else { Some(true) },
+                ),
+                (
+                    Action::TurnRight,
+                    ToolButton::command(
+                        Icon::TurnRight,
+                        "Turn right",
+                        "Turn the displayed photo 90° right.",
+                    ),
+                ),
+                (
+                    Action::FlipHorizontal,
+                    ToolButton::command(
+                        Icon::FlipHorizontal,
+                        "Flip horizontal",
+                        "Flip the displayed photo left/right.",
+                    ),
+                ),
+                (
+                    Action::FlipVertical,
+                    ToolButton::command(
+                        Icon::FlipVertical,
+                        "Flip vertical",
+                        "Flip the displayed photo top/bottom.",
+                    ),
+                ),
+            ] {
+                if button.enabled(commands_enabled).show(ui).clicked() {
+                    action = Some(candidate);
+                }
+            }
+            ui.separator();
+            if ToolButton::tool(
+                Icon::Crop,
+                "Crop & straighten",
+                if cropping {
+                    "Exit crop without applying the draft."
+                } else {
+                    "Edit this photo's crop and straighten."
                 },
-                |ui| {
-                    ui.add_enabled_ui(editable, |ui| {
-                        ui.horizontal(|ui| {
-                            if icons::button(
-                                ui,
-                                Icon::TurnLeft,
-                                true,
-                                "Turn left",
-                                "Turn the displayed photo 90° left.",
-                            )
-                            .clicked()
-                            {
-                                self.photo_orientation.turn_counterclockwise();
-                            }
-                            if icons::button(
-                                ui,
-                                Icon::TurnRight,
-                                true,
-                                "Turn right",
-                                "Turn the displayed photo 90° right.",
-                            )
-                            .clicked()
-                            {
-                                self.photo_orientation.turn_clockwise();
-                            }
-                            if icons::button(
-                                ui,
-                                Icon::FlipHorizontal,
-                                true,
-                                "Flip horizontal",
-                                "Flip the displayed photo left/right.",
-                            )
-                            .clicked()
-                            {
-                                self.photo_orientation.flips.horizontal ^= true;
-                            }
-                            if icons::button(
-                                ui,
-                                Icon::FlipVertical,
-                                true,
-                                "Flip vertical",
-                                "Flip the displayed photo top/bottom.",
-                            )
-                            .clicked()
-                            {
-                                self.photo_orientation.flips.vertical ^= true;
-                            }
-                            let crop = icons::button(
-                                ui,
-                                Icon::Crop,
-                                true,
-                                "Crop…",
-                                "Edit this photo's crop and straighten.",
-                            );
-                            if cropping {
-                                ui.painter().rect_stroke(
-                                    crop.rect.shrink(1.),
-                                    4.,
-                                    egui::Stroke::new(1., ui.visuals().selection.stroke.color),
-                                    egui::StrokeKind::Inside,
-                                );
-                            }
-                            begin = crop.clicked();
-                            if self.crop.is_some() {
-                                reset_crop = icons::button(
-                                    ui,
-                                    Icon::Reset,
-                                    true,
-                                    "Reset crop",
-                                    "Reset framing; keeps orientation and colour.",
-                                )
-                                .clicked();
-                            }
-                        });
-                    });
-                    if cropping {
-                        ui.add_enabled_ui(!self.busy, |ui| {
-                            controls::active_tool(
-                                ui,
-                                Icon::Crop,
-                                "Crop & straighten",
-                                Some(true),
-                                |ui, reset| self.crop_tool_controls(ui, reset),
-                            );
-                        });
-                    }
+                cropping,
+            )
+            .enabled(crop_enabled)
+            .changed(self.crop.is_some())
+            .show(ui)
+            .clicked()
+            {
+                action = Some(Action::Crop);
+            }
+            if ToolButton::tool(
+                Icon::Dust,
+                "Dust repair",
+                if dusting {
+                    "Finish dust cleanup."
+                } else {
+                    "Open continuing dust cleanup for this photo."
                 },
-            );
+                dusting,
+            )
+            .enabled(dust_enabled)
+            .changed(repairs_changed)
+            .show(ui)
+            .clicked()
+            {
+                action = Some(Action::Dust);
+            }
         });
-        if reset {
-            self.photo_orientation = PhotoOrientation::default();
-            self.crop = None;
-            self.viewport.fit();
-        } else if reset_crop {
-            self.crop = None;
-            self.viewport.fit();
-        } else if begin {
-            self.begin_crop();
+
+        match action {
+            Some(Action::TurnLeft) => self.photo_orientation.turn_counterclockwise(),
+            Some(Action::TurnRight) => self.photo_orientation.turn_clockwise(),
+            Some(Action::FlipHorizontal) => self.photo_orientation.flips.horizontal ^= true,
+            Some(Action::FlipVertical) => self.photo_orientation.flips.vertical ^= true,
+            Some(Action::Crop) => {
+                if cropping {
+                    self.finish_crop(false);
+                } else {
+                    self.begin_crop();
+                }
+            }
+            Some(Action::Dust) => {
+                if dusting {
+                    self.finish_dust_cleanup();
+                } else {
+                    self.begin_dust_cleanup();
+                }
+            }
+            None => {}
+        }
+    }
+
+    pub(super) fn crop_controls(&mut self, ui: &mut egui::Ui) {
+        if self.crop_edit.is_some() {
+            ui.add_enabled_ui(!self.busy, |ui| {
+                controls::active_tool(
+                    ui,
+                    icons::Icon::Crop,
+                    "Crop & straighten",
+                    Some(true),
+                    |ui, reset| self.crop_tool_controls(ui, reset),
+                );
+            });
         }
     }
     pub(super) fn crop_tool_controls(&mut self, ui: &mut egui::Ui, reset: bool) {

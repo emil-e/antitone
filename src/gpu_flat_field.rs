@@ -41,6 +41,10 @@ impl SourceGeometry {
     pub fn region(&self) -> crate::geometry::SourceRegion {
         self.raster.region()
     }
+    #[cfg(feature = "editor")]
+    pub(crate) fn size(&self) -> [u32; 2] {
+        self.raster.size()
+    }
     pub(super) fn pixels(&self) -> u32 {
         let size = self.raster.size();
         size[0] * size[1]
