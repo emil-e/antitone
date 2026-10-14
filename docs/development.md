@@ -86,6 +86,8 @@ These headless Metal checks verify submission exclusion during surface configura
 
 Read [shared presentation](editor.md#build-ui-from-shared-presentation) before adding a widget. Check the component **and** its composed consumer: paint equivalence alone does not verify state or input ownership.
 
+App-level fixtures must run production startup before injecting events and bring controls into view before clicking; painted text bounds alone do not establish an interactive target. Resource-policy tests supply explicit budgets/pressure rather than depending on the host's current pressure.
+
 ```sh
 cargo test --locked --features editor --lib editor::presentation
 cargo test --locked --features editor --lib editor::activity::tests

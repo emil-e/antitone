@@ -307,9 +307,6 @@ impl Thumbnails {
     fn release_selected(&mut self) {
         self.sources.lock().unwrap().protect(Vec::new());
     }
-    fn update_memory(&mut self) {
-        self.apply_budgets(memory::CacheBudgets::current());
-    }
     fn apply_budgets(&mut self, budgets: memory::CacheBudgets) {
         if budgets == self.budgets {
             return;
@@ -684,6 +681,9 @@ impl Editor {
             self.thumbnails.repaint.get_or_init(|| ui.ctx().clone());
             self.thumbnails.memory_watch = Some(memory::PressureWatch::new(ui.ctx().clone()));
         }
+        self.filmstrip_with_budgets(ui, memory::CacheBudgets::current());
+    }
+    fn filmstrip_with_budgets(&mut self, ui: &mut egui::Ui, budgets: memory::CacheBudgets) {
         if self.ready.is_none() && self.pending_preview.is_none() && self.flat_edit.is_none() {
             self.thumbnails.release_selected();
         }
@@ -692,7 +692,7 @@ impl Editor {
             .as_ref()
             .map(|c| FieldKey(c.settings.map.clone()));
         self.thumbnails.cache.retain(|key, _| key.field == field);
-        self.thumbnails.update_memory();
+        self.thumbnails.apply_budgets(budgets);
         self.thumbnails.embedded.receive(&self.document, ui.ctx());
         let visible_allowed = !self.busy
             && self.thumbnails.budgets.pressure != memory::Pressure::Critical

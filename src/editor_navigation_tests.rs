@@ -16,12 +16,11 @@ impl Harness {
     fn new() -> Self {
         let (commands, receiver) = mpsc::channel();
         let (_send, messages) = mpsc::channel();
-        let mut editor = Editor::state(
+        let editor = Editor::state(
             commands,
             messages,
             Arc::new(std::sync::atomic::AtomicU64::new(0)),
         );
-        editor.started = true;
         Self {
             editor,
             context: egui::Context::default(),
@@ -314,6 +313,7 @@ fn middle_and_space_primary_drag_pan_during_picking() {
 #[test]
 fn z_fits_without_text_focus_but_does_not_intercept_numeric_text() {
     let mut h = Harness::new();
+    super::super::tests::app_frame(&mut h.editor, &h.context, vec![]);
     h.native();
     let key = || egui::Event::Key {
         key: egui::Key::Z,

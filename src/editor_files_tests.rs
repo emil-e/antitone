@@ -224,6 +224,7 @@ fn command_save_commits_pending_numeric_text_before_snapshot() {
 fn viewport_close_is_vetoed_until_the_dirty_document_decision() {
     let (mut editor, _send, receiver) = fixture();
     let context = egui::Context::default();
+    ui_frame(&mut editor, &context, vec![]);
     let mut input = egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
             egui::Pos2::ZERO,
@@ -465,7 +466,6 @@ fn fixture() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
         messages,
         Arc::new(std::sync::atomic::AtomicU64::new(0)),
     );
-    editor.started = true;
     editor
         .document
         .register(
@@ -744,8 +744,19 @@ fn command_save_uses_the_current_document_after_control_processing() {
             crate::project::Save::New,
         )
         .unwrap();
-    editor.photo.exposure = 7.123456789012345;
     let context = egui::Context::default();
+    ui_frame(&mut editor, &context, vec![]);
+    editor.photo.exposure = 7.123456789012345;
+    assert_eq!(
+        editor
+            .document
+            .project
+            .source(editor.current_source.unwrap())
+            .unwrap()
+            .photo
+            .exposure,
+        0.,
+    );
     let mut output = context.run_ui(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(

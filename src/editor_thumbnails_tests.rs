@@ -736,8 +736,7 @@ fn worker_completion_requests_immediate_repaint() {
     });
 }
 
-#[test]
-fn idle_roll_prefetch_reaches_unshown_photos_after_visible_work() {
+fn idle_prefetch_fixture() -> (Editor, mpsc::Receiver<Job>, mpsc::Sender<Outcome>) {
     let (commands, _) = mpsc::channel();
     let (_, messages) = mpsc::channel();
     let mut editor = Editor::state(
@@ -764,18 +763,32 @@ fn idle_roll_prefetch_reaches_unshown_photos_after_visible_work() {
     let (completed, outcomes) = mpsc::channel();
     editor.thumbnails.commands = Some(commands);
     editor.thumbnails.messages = Some(outcomes);
-    editor.refinement_error = Some(0);
+    editor.refinement_error = Some(editor.generation.load(std::sync::atomic::Ordering::Relaxed));
     editor.last_edit = std::time::Instant::now() - Duration::from_secs(1);
-    let context = egui::Context::default();
-    let input = || egui::RawInput {
-        screen_rect: Some(egui::Rect::from_min_size(
-            egui::Pos2::ZERO,
-            egui::vec2(1100., 800.),
-        )),
-        ..Default::default()
-    };
-    let mut output = context.run_ui(input(), |ui| editor.filmstrip(ui));
+    (editor, jobs, completed)
+}
+
+fn filmstrip_frame(editor: &mut Editor, context: &egui::Context, budgets: memory::CacheBudgets) {
+    let mut output = context.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1100., 800.),
+            )),
+            ..Default::default()
+        },
+        |ui| editor.filmstrip_with_budgets(ui, budgets),
+    );
     output.textures_delta.clear();
+}
+
+#[test]
+fn idle_roll_prefetch_reaches_unshown_photos_after_visible_work() {
+    let (mut editor, jobs, completed) = idle_prefetch_fixture();
+    let last = *editor.document.project.order.last().unwrap();
+    let context = egui::Context::default();
+    let budgets = memory::CacheBudgets::for_memory(48 << 30, memory::Pressure::Normal);
+    filmstrip_frame(&mut editor, &context, budgets);
     let job = jobs.try_recv().unwrap();
     assert_eq!(
         job.key.source.id, last,
@@ -786,8 +799,7 @@ fn idle_roll_prefetch_reaches_unshown_photos_after_visible_work() {
         .thumbnails
         .generation
         .load(std::sync::atomic::Ordering::Relaxed);
-    let mut output = context.run_ui(input(), |ui| editor.filmstrip(ui));
-    output.textures_delta.clear();
+    filmstrip_frame(&mut editor, &context, budgets);
     assert_eq!(
         editor
             .thumbnails
@@ -806,8 +818,7 @@ fn idle_roll_prefetch_reaches_unshown_photos_after_visible_work() {
         .unwrap();
     editor.thumbnails.receive(&editor.document);
     editor.last_edit = std::time::Instant::now() - Duration::from_secs(1);
-    let mut output = context.run_ui(input(), |ui| editor.filmstrip(ui));
-    output.textures_delta.clear();
+    filmstrip_frame(&mut editor, &context, budgets);
     assert_eq!(jobs.try_recv().unwrap().key.source.id, last);
     let first = editor.document.project.order[0];
     editor
@@ -818,8 +829,7 @@ fn idle_roll_prefetch_reaches_unshown_photos_after_visible_work() {
         .thumbnails
         .generation
         .load(std::sync::atomic::Ordering::Relaxed);
-    let mut output = context.run_ui(input(), |ui| editor.filmstrip(ui));
-    output.textures_delta.clear();
+    filmstrip_frame(&mut editor, &context, budgets);
     assert_eq!(
         editor
             .thumbnails
@@ -832,6 +842,50 @@ fn idle_roll_prefetch_reaches_unshown_photos_after_visible_work() {
         jobs.try_recv().is_err(),
         "cancellation must not create an unbounded backlog"
     );
+}
+
+#[test]
+fn memory_pressure_suspends_idle_prefetch_without_blocking_allowed_visible_work() {
+    for pressure in [
+        memory::Pressure::Normal,
+        memory::Pressure::Warning,
+        memory::Pressure::Critical,
+    ] {
+        let (mut editor, jobs, _completed) = idle_prefetch_fixture();
+        let context = egui::Context::default();
+        let budgets = memory::CacheBudgets::for_memory(48 << 30, pressure);
+        filmstrip_frame(&mut editor, &context, budgets);
+        if pressure == memory::Pressure::Normal {
+            let job = jobs
+                .try_recv()
+                .expect("normal pressure admits idle prefetch");
+            assert_eq!(
+                job.key.source.id,
+                *editor.document.project.order.last().unwrap()
+            );
+        } else {
+            assert!(jobs.try_recv().is_err(), "{pressure:?} must not prefetch");
+            assert!(editor.thumbnails.pending.is_none());
+            let first = editor.document.project.order[0];
+            editor
+                .thumbnails
+                .cache
+                .retain(|key, _| key.source.id != first);
+            filmstrip_frame(&mut editor, &context, budgets);
+            if pressure == memory::Pressure::Warning {
+                let job = jobs
+                    .try_recv()
+                    .expect("warning pressure still admits visible work");
+                assert_eq!(job.key.source.id, first);
+            } else {
+                assert!(
+                    jobs.try_recv().is_err(),
+                    "critical pressure stops visible work too"
+                );
+                assert!(editor.thumbnails.pending.is_none());
+            }
+        }
+    }
 }
 
 #[test]
