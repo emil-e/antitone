@@ -65,26 +65,8 @@ fn draw_picture(harness: &mut Harness<'_, Editor>, area: Rect) {
 fn settled_targets(harness: &mut Harness<'_, Editor>, case: &str) {
     let mut project = harness.state().document.project.clone();
     stage(harness, "Rendering");
-    for (name, target) in [
-        ("sRGB", OutputTarget::Srgb),
-        ("Display P3", OutputTarget::DisplayP3),
-    ] {
-        let current = if harness.state().target == OutputTarget::DisplayP3 {
-            "Display P3"
-        } else {
-            "sRGB"
-        };
-        harness
-            .get_by(|node| {
-                node.role() == egui::accesskit::Role::ComboBox
-                    && node.value().as_deref() == Some(current)
-            })
-            .click();
-        harness.step();
-        harness.step();
-        harness.get_by_label(name).click();
-        harness.step();
-        assert_eq!(harness.state().target, target);
+    for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
+        select_target(harness, target);
         project.output.tiff = if target == OutputTarget::Srgb {
             crate::project::TiffTarget::Srgb
         } else {

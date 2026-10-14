@@ -6,30 +6,18 @@ Run from the repository root after the relevant [setup](../README.md#build-and-r
 
 A numerical comparison, a scripted visible window and physical photographic acceptance are different evidence. Missing hardware or zero submitted frames does not become a pass. Sample-dependent probes can be expensive; run the relevant recipe, not this entire page.
 
-## Editor and layout smoke
+## Editor and layout checks
 
-Build the editor, then supply diagnostic calibration or open a saved project:
+Build the editor and open a saved project for real-use inspection:
 
 ```sh
 cargo build-app --offline
 target/release/antitone /path/to/grade.antitone.json
-target/release/antitone --smoke \
-  samples/DSC04397.ARW 4000 5644 128 32 \
-  samples/DSC04378.ARW 4000 2600 128 128 samples/DSC04416.ARW
 ```
 
-`--smoke` exercises the GPU/worker path. Diagnostic anchors are not a user's saved or physically measured grade. Normal/narrow Roll/Photo/Rendering interaction and named offscreen captures use the authored [framework UI tests](development.md#framework-ui-regressions), without private photographs or desktop capture permission. They do not establish native resize/presentation; the visible smoke and [macOS presentation](#macos-presentation) checks remain separate.
+Calibration, grade/source controls, native-pixel refinement, picker-source return and normal/narrow stage interaction use authored [framework UI tests](development.md#framework-ui-regressions), without private photographs or desktop capture permission. These offscreen checks do not establish native resize/presentation; [native-host](development.md#explicit-native-host-checks) and [macOS presentation](#macos-presentation) checks remain separate.
 
-For scripted Save/Open, include an unvisited source:
-
-```sh
-target/release/antitone --smoke-project \
-  samples/DSC04397.ARW 4000 5644 128 32 \
-  samples/DSC04378.ARW 4000 2600 128 128 \
-  samples/DSC04416.ARW samples/DSC04393.ARW
-```
-
-This uses temporary projects and checks restored settings/pixels and failed-Open preservation. It requires submitted visible frames, but ordinary/project smoke has no explicit completed-success result: early closure after a frame can return success before the scenario finishes. These routes drive editor state directly, not full widget input. [Verification restructuring](plans/verification-tooling.md) tracks those gaps; the flat-field route rejects early closure.
+Authored [project UI regressions](development.md#framework-ui-regressions) cover Save/New, transition decisions, exact restored settings/pixels and failed-Save/Open preservation with real workers and temporary files. Native file dialogs and photographic Save/Open inspection remain separate real-use checks.
 
 ### Viewer-tool evidence
 
@@ -54,12 +42,14 @@ cargo test --locked --offline --release --all-features --lib \
   -- --ignored --nocapture
 ```
 
-For visible reference/area transitions and both settled targets:
+For authored reference/area transitions, corrected picker measurements, both settled targets/thumbnails, Enabled/Clear and Save/Open:
 
 ```sh
-target/release/antitone --smoke-flat-field samples/DSC01737.ARW samples/DSC01739.ARW
-target/release/antitone --smoke-flat-field samples/DSC01811.ARW samples/DSC01813.ARW
+cargo test --locked --offline --features ui-tests --lib \
+  editor::kittest_tests::correction -- --test-threads=1
 ```
+
+This is offscreen framework input, not native dialogs or physical reference acceptance. For a supplied negative/reference pair, use the normal editor to choose the reference, inspect support, re-pick calibration, compare both targets and Save/Open.
 
 The full-size export/reopen exercise is more expensive:
 
@@ -121,12 +111,12 @@ The diagnostic drives actual import/correction/Analyze and renders approximate c
 ```sh
 cargo test --locked --offline --features editor --test scopes \
   scope_reduction_latency -- --ignored --nocapture
-ANTITONE_SMOKE_SCOPES=1 target/release/antitone --smoke \
-  samples/DSC04397.ARW 4000 5644 128 32 \
-  samples/DSC04378.ARW 4000 2600 128 128 samples/DSC04416.ARW
+cargo test --locked --offline --features ui-tests --lib \
+  scope_plot_scale_and_target_widgets_produce_valid_completed_reductions \
+  -- --test-threads=1
 ```
 
-The latency test times reductions, not end-to-end gestures. The window route exercises [scope modes and amplification](scopes.md); physical interpretation remains separate.
+The latency test times reductions, not end-to-end gestures. The authored framework test exercises [scope modes and amplification](scopes.md) through real widgets and completed GPU reductions in both targets, without a desktop window. Physical interpretation and native appearance remain separate.
 
 ## Rendering/import performance probes
 

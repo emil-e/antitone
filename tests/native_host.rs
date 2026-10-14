@@ -1,5 +1,6 @@
 //! Explicit native host lifecycle check; ordinary Cargo test invocations never open its window.
-//! Run with --run [lifecycle|early-close|timeout|process-timeout]. Requires macOS/Metal and a desktop, no RAWs.
+//! Run with --run [lifecycle|editor|early-close|timeout|process-timeout]. Requires macOS/Metal and a desktop.
+//! The editor case additionally needs the editor feature/native setup and uses an authored temporary project.
 //! Checks focus/size forwarding, native resize, submitted frames, clean exit and explicit completion.
 //! Early close, timeout, absent completion or zero frames fail. A process watchdog bounds hangs.
 //! Does not establish physical gestures, native dialogs, monitor colour or broader-device acceptance.
@@ -9,9 +10,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(feature = "editor")]
+#[path = "native_host/editor.rs"]
+mod editor;
+
 #[derive(Clone, Copy, PartialEq)]
 enum Mode {
     Lifecycle,
+    Editor,
     EarlyClose,
     Timeout,
     ProcessTimeout,
@@ -210,6 +216,7 @@ fn main() -> host::Result<()> {
         [run] if run == "--run" => Mode::Lifecycle,
         [run, case] if run == "--run" => match case.as_str() {
             "lifecycle" => Mode::Lifecycle,
+            "editor" => Mode::Editor,
             "early-close" => Mode::EarlyClose,
             "timeout" => Mode::Timeout,
             "process-timeout" => Mode::ProcessTimeout,
@@ -217,9 +224,26 @@ fn main() -> host::Result<()> {
         },
         _ => {
             return Err(
-                "usage: native_host --run [lifecycle|early-close|timeout|process-timeout]".into(),
+                "usage: native_host --run [lifecycle|editor|early-close|timeout|process-timeout]"
+                    .into(),
             );
         }
+    };
+    if mode == Mode::Editor && !cfg!(feature = "editor") {
+        return Err("native Editor case requires --features editor".into());
+    }
+    #[cfg(feature = "editor")]
+    let editor_fixture = if mode == Mode::Editor {
+        let directory = tempfile::tempdir()?;
+        // Safety: this harness-free executable has not started threads or the native host.
+        // Isolate Editor's default thumbnail cache; no personal preferences are restored.
+        unsafe {
+            std::env::set_var("HOME", directory.path());
+        }
+        let path = editor::fixture_project(directory.path())?;
+        Some((directory, path))
+    } else {
+        None
     };
     let report = Arc::new(Mutex::new(Report::default()));
     let outcome = report.clone();
@@ -238,16 +262,36 @@ fn main() -> host::Result<()> {
             std::process::exit(1);
         }
     });
-    let result = host::run("Antitone native host tests", move |_device, _queue| {
-        Ok(NativeApp {
-            submissions: SubmissionGate::default(),
-            report: outcome,
-            mode,
-            start: Instant::now(),
-            requested: false,
-            index: 0,
+    let result = if mode == Mode::Editor {
+        #[cfg(feature = "editor")]
+        {
+            let path = editor_fixture.as_ref().unwrap().1.clone();
+            host::run("Antitone native Editor test", move |device, queue| {
+                Ok(editor::EditorApp {
+                    editor: antitone::editor::Editor::new(device, queue, Some(path)),
+                    report: outcome,
+                    start: Instant::now(),
+                    requested: false,
+                    index: 0,
+                })
+            })
+        }
+        #[cfg(not(feature = "editor"))]
+        {
+            unreachable!("editor feature checked before launch")
+        }
+    } else {
+        host::run("Antitone native host tests", move |_device, _queue| {
+            Ok(NativeApp {
+                submissions: SubmissionGate::default(),
+                report: outcome,
+                mode,
+                start: Instant::now(),
+                requested: false,
+                index: 0,
+            })
         })
-    });
+    };
     stop.send(()).unwrap();
     watchdog.join().unwrap();
     let presented = result?;

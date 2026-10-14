@@ -57,24 +57,18 @@ use flat::{Correction, FlatEdit, FlatPreview};
 #[path = "editor_crop.rs"]
 mod crop_editor;
 use crop_editor::CropEdit;
+#[cfg(all(test, feature = "ui-tests"))]
+#[path = "editor_kittest.rs"]
+mod kittest_tests;
 #[path = "editor_memory.rs"]
 mod memory;
 #[path = "editor_navigation.rs"]
 mod navigation;
-#[path = "editor_smoke.rs"]
-mod smoke;
-#[path = "editor_viewer.rs"]
-mod viewer_ui;
-pub use smoke::SmokeEditor;
-#[path = "editor_flat_field_smoke.rs"]
-mod flat_smoke;
-pub use flat_smoke::FlatFieldSmoke;
-#[cfg(all(test, feature = "ui-tests"))]
-#[path = "editor_kittest.rs"]
-mod kittest_tests;
 #[cfg(test)]
 #[path = "editor_tests.rs"]
 mod tests;
+#[path = "editor_viewer.rs"]
+mod viewer_ui;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Pick {

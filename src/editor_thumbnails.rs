@@ -344,6 +344,11 @@ impl Thumbnails {
             disk::DiskCache::default_location(),
         )
     }
+    #[cfg(all(test, feature = "ui-tests"))]
+    pub(super) fn without_disk(&self) -> Self {
+        let (device, queue, renderers) = self.gpu.as_ref().expect("thumbnail GPU resources");
+        Self::with_disk(device.clone(), queue.clone(), renderers.clone(), None)
+    }
     fn with_disk(
         device: wgpu::Device,
         queue: wgpu::Queue,
@@ -369,6 +374,7 @@ impl Thumbnails {
         });
         state
     }
+    #[cfg(test)]
     pub(super) fn ready_count(&self, document: &Document, target: OutputTarget) -> usize {
         self.cache
             .entries

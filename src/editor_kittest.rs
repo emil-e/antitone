@@ -7,8 +7,14 @@ use std::{cell::RefCell, rc::Rc, time::Instant};
 
 #[path = "editor_kittest_analysis.rs"]
 mod analyze;
+#[path = "editor_kittest_correction.rs"]
+mod correction;
+#[path = "editor_kittest_project.rs"]
+mod project;
 #[path = "editor_kittest_tools.rs"]
 mod tools;
+#[path = "editor_kittest_workflow.rs"]
+mod workflow;
 
 #[test]
 fn parameter_reset_click_respects_disabled_state() {
@@ -20,6 +26,17 @@ fn parameter_reset_click_respects_disabled_state() {
         },
         (1.4, true),
     );
+    for role in [
+        egui::accesskit::Role::Slider,
+        egui::accesskit::Role::SpinButton,
+    ] {
+        assert!(
+            !harness
+                .get_by_role_and_label(role, "Contrast")
+                .accesskit_node()
+                .is_disabled()
+        );
+    }
     harness.get_by_label("Reset Contrast").click();
     harness.run();
     assert_eq!(harness.state().0, 1.);
@@ -31,6 +48,17 @@ fn parameter_reset_click_respects_disabled_state() {
             .accesskit_node()
             .is_disabled()
     );
+    for role in [
+        egui::accesskit::Role::Slider,
+        egui::accesskit::Role::SpinButton,
+    ] {
+        assert!(
+            harness
+                .get_by_role_and_label(role, "Contrast")
+                .accesskit_node()
+                .is_disabled()
+        );
+    }
     harness.get_by_label("Reset Contrast").click();
     harness.run();
     assert_eq!(harness.state().0, 1.4);
@@ -538,6 +566,12 @@ fn wait_for_with_timeout(
 }
 
 fn editor_harness() -> (Harness<'static, Editor>, Rc<RefCell<FloatCapture>>) {
+    editor_harness_with_thumbnails(false)
+}
+
+fn editor_harness_with_thumbnails(
+    thumbnails: bool,
+) -> (Harness<'static, Editor>, Rc<RefCell<FloatCapture>>) {
     let (device, queue) = pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,
@@ -550,7 +584,11 @@ fn editor_harness() -> (Harness<'static, Editor>, Rc<RefCell<FloatCapture>>) {
         adapter.request_device(&Default::default()).await.unwrap()
     });
     let mut editor = Editor::new(&device, &queue, None);
-    editor.thumbnails = Thumbnails::default();
+    editor.thumbnails = if thumbnails {
+        editor.thumbnails.without_disk()
+    } else {
+        Thumbnails::default()
+    };
     let capture = Rc::new(RefCell::new(FloatCapture::default()));
     let renderer = FloatRenderer::new(
         &device,
@@ -677,6 +715,31 @@ fn stage(harness: &mut Harness<'_, Editor>, name: &str) {
     harness.try_run_realtime().unwrap();
 }
 
+fn select_target(harness: &mut Harness<'_, Editor>, target: OutputTarget) {
+    let current = if harness.state().target == OutputTarget::DisplayP3 {
+        "Display P3"
+    } else {
+        "sRGB"
+    };
+    harness
+        .get_by(|node| {
+            node.role() == egui::accesskit::Role::ComboBox
+                && node.value().as_deref() == Some(current)
+        })
+        .click();
+    harness.step();
+    harness.step();
+    harness
+        .get_by_label(if target == OutputTarget::DisplayP3 {
+            "Display P3"
+        } else {
+            "sRGB"
+        })
+        .click();
+    harness.step();
+    assert_eq!(harness.state().target, target);
+}
+
 fn drag(harness: &mut Harness<'_, Editor>, start: egui::Pos2, end: egui::Pos2) {
     harness.hover_at(start);
     harness.event(egui::Event::PointerButton {
@@ -706,6 +769,73 @@ fn set_layout(harness: &mut Harness<'_, Editor>, size: egui::Vec2, width: f32) {
         .ctx
         .data_mut(|data| data.insert_persisted(egui::Id::new("controls"), panel));
     harness.step();
+}
+
+fn file_menu(harness: &mut Harness<'_, Editor>, action: &str) {
+    harness.get_by_label("File").click();
+    harness.step();
+    harness.step();
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, action)
+        .click();
+    harness.step();
+}
+
+fn save_existing_project(harness: &mut Harness<'_, Editor>) {
+    let path = harness
+        .state()
+        .document
+        .path
+        .clone()
+        .expect("fixture save destination");
+    let project = harness.state().document.project.clone();
+    let request = harness.state().next_request;
+    file_menu(harness, "Save");
+    assert!(
+        harness.state().next_request > request,
+        "Save did not dispatch"
+    );
+    wait_for(harness, |e| !e.busy && e.document_pending.is_none());
+    assert!(
+        !harness.state().document.dirty(),
+        "{}",
+        harness.state().status
+    );
+    assert_eq!(harness.state().document.project, project);
+    assert_eq!(crate::project::Project::load(&path).unwrap(), project);
+}
+
+// Supply the native chooser's result; exercise the real transition guard and worker.
+fn open_project(harness: &mut Harness<'_, Editor>, path: PathBuf) {
+    let context = harness.ctx.clone();
+    harness
+        .state_mut()
+        .guard_transition(files::Transition::Open(path), &context);
+    harness.step();
+    harness.step();
+}
+
+fn draw_region(harness: &mut Harness<'_, Editor>, area: Rect) {
+    harness.get_by_label("Fit").click();
+    harness.step();
+    let geometry = harness.state().last_layout.unwrap().0;
+    assert!(harness.state().region.is_none());
+    drag(
+        harness,
+        geometry.screen_point(egui::pos2(area.x as f32, area.y as f32)),
+        geometry.screen_point(egui::pos2(
+            (area.x + area.width) as f32,
+            (area.y + area.height) as f32,
+        )),
+    );
+    assert_eq!(
+        harness
+            .state()
+            .region
+            .unwrap()
+            .exact_rectangle(harness.state().ready.as_ref().unwrap().area),
+        Some(area)
+    );
 }
 
 fn save_capture(png: &image::RgbaImage, name: &str) {

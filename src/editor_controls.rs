@@ -128,7 +128,7 @@ pub fn parameter(ui: &mut Ui, kind: Parameter, value: &mut f64) -> (Response, Re
             Parameter::Density => "0: constant AP1 luminance. 1: HSV-like maximum anchor (darkening on saturation increase). Intermediate values blend endpoint outputs, not print-film simulation.",
             _ => "",
         };
-        let (numeric, reset) = labelled_row(ui, kind.label(), (!help.is_empty()).then_some(help), |ui| {
+        let (numeric, reset, label) = labelled_row(ui, kind.label(), (!help.is_empty()).then_some(help), |ui, label| {
             let reset = reset_button(ui, *value != kind.default(), kind.label());
             if reset.clicked() {
                 *value = kind.default();
@@ -150,7 +150,7 @@ pub fn parameter(ui: &mut Ui, kind: Parameter, value: &mut f64) -> (Response, Re
                     "Click to enter a value; drag to adjust. Shift-drag for fine adjustment. Enter commits; Escape cancels.",
                 )
             }).inner;
-            (numeric, reset)
+            (numeric.labelled_by(label), reset, label)
         }).inner;
         let step = kind.step() * if ui.input(|i| i.modifiers.shift) { 0.1 } else { 1. };
         let slider = ui.scope(|ui| {
@@ -167,7 +167,7 @@ pub fn parameter(ui: &mut Ui, kind: Parameter, value: &mut f64) -> (Response, Re
             } else {
                 "Arrow keys adjust the focused slider. Hold Shift for finer steps."
             })
-        }).inner;
+        }).inner.labelled_by(label);
         ui.add_space(6.);
         (slider, numeric, reset)
     }).inner
@@ -182,7 +182,7 @@ pub fn calibration(
     meaning: &str,
 ) -> bool {
     ui.push_id(id, |ui| {
-        let pick = labelled_row(ui, label, Some(meaning), |ui| {
+        let pick = labelled_row(ui, label, Some(meaning), |ui, _| {
             let name = format!("Pick {label}");
             icons::button(ui, Icon::Pick, enabled, &name, meaning).clicked()
         })

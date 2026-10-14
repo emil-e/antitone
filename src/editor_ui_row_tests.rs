@@ -68,7 +68,7 @@ fn labelled_rows_preserve_direct_layout_paint_ids_and_inherited_disable() {
                             frame(&context, width, enabled, vec![], |ui| {
                                 ui.push_id("caller", |ui| {
                                     let row = if shared {
-                                        labelled_row(ui, label, help, |ui| contents(ui, numeric))
+                                        labelled_row(ui, label, help, |ui, _| contents(ui, numeric))
                                     } else {
                                         direct_row(ui, label, help, numeric)
                                     };
@@ -102,7 +102,7 @@ fn labelled_rows_return_caller_responses_and_keep_focus_and_activation() {
         let context = Context::default();
         let render = |events| {
             frame(&context, 270., enabled, events, |ui| {
-                labelled_row(ui, "Caller label", None, |ui| {
+                labelled_row(ui, "Caller label", None, |ui, _| {
                     [ui.button("First"), ui.button("Second")]
                 })
                 .inner

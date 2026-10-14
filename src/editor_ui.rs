@@ -87,20 +87,23 @@ pub(super) fn active_tool_fill(ui: &Ui) -> Color32 {
     ui.visuals().selection.bg_fill.linear_multiply(0.15)
 }
 
-/// One label and a right-aligned caller-owned control group; no additional ID scope.
+/// One label and a right-aligned control group; supplies the label ID without an extra ID scope.
 pub(super) fn labelled_row<R>(
     ui: &mut Ui,
     label: &str,
     help: Option<&str>,
-    controls: impl FnOnce(&mut Ui) -> R,
+    controls: impl FnOnce(&mut Ui, egui::Id) -> R,
 ) -> egui::InnerResponse<R> {
     icons::row(ui, |ui| {
         let label = ui.label(label);
+        let label_id = label.id;
         if let Some(help) = help {
             label.on_hover_text(help);
         }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), controls)
-            .inner
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            controls(ui, label_id)
+        })
+        .inner
     })
 }
 

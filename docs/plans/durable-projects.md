@@ -14,4 +14,4 @@ No catalog, automatic schema migration, derived images in project JSON or silent
 
 Select and design one slice. Start with focused state tests, then exercise exact settings/output reopening, worker-active transitions, stale replies and the selected recovery/undo decisions. Legal values outside a slider's normal span must survive.
 
-Likely owners are [document transitions](../../src/editor_document.rs), [file actions](../../src/editor_files.rs) and [project validation](../../src/project.rs). Use [development checks](../development.md) before a sample-dependent Save/Open smoke.
+Likely owners are [document transitions](../../src/editor_document.rs), [file actions](../../src/editor_files.rs) and [project validation](../../src/project.rs). Use [development checks](../development.md) before a sample-dependent Save/Open exercise.
