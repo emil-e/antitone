@@ -1,12 +1,15 @@
 # Read-only RAW development diagnostic
 
-[`native/raw_development_probe.cpp`](../native/raw_development_probe.cpp) calls the production bridge/settings with one roll-fixed WB reference. It reports open/unpack/process timings and hashes every developed RGB16 code, ignoring the fourth slot. It emits no photographic output and leaves RAWs untouched. [Rationale](decisions/established-raw-development.md).
+Use [`native/raw_development_probe.cpp`](../native/raw_development_probe.cpp) when investigating production LibRaw/OpenMP thread policy or sensor-diagnostic immutability, not as a prerequisite for ordinary changes. It calls the production bridge/settings with one roll-fixed WB reference, reports open/unpack/process timings and hashes every developed RGB16 code, ignoring the fourth slot. It emits no photographic output and leaves RAWs untouched. [Rationale](decisions/established-raw-development.md).
+
+The source must contain the diagnostic sensor rectangle `(4000,2600,128,128)`; the WB reference must supply valid explicit gains for the production bridge. The example paths are supplied read-only inputs, not repository fixtures or files installed by setup. Cross-budget digests compare repeated production development, not an independent demosaicing/calibration oracle.
 
 ## Build and run
 
 Run from the repository root after [native setup](../README.md#build-and-run). The pinned LLVM OpenMP 22.1.8 and LibRaw 0.22.0 builds use private `.cache/native-deps`, arm64/macOS-14 targets and checkout-local runtime paths.
 
 ```sh
+mkdir -p .cache/probes
 /usr/bin/clang++ -std=c++17 -O3 -Wall -Wextra -Werror \
   -Wno-deprecated-declarations -mmacosx-version-min=14.0 -Xclang -fopenmp \
   -Inative -I.cache/native-deps/LibRaw-0.22.0-openmp \
@@ -15,16 +18,16 @@ Run from the repository root after [native setup](../README.md#build-and-run). T
   .cache/native-deps/LibRaw-0.22.0-openmp/lib/libraw_r.a \
   -L.cache/native-deps/openmp-22.1.8-install/lib \
   -Wl,-rpath,"$PWD/.cache/native-deps/openmp-22.1.8-install/lib" \
-  -lomp -lz -o .cache/native-deps/probe
+  -lomp -lz -o .cache/probes/raw-development-probe
 for threads in 1 2 4 8; do
-  .cache/native-deps/probe samples/DSC04393.ARW samples/DSC04397.ARW \
+  .cache/probes/raw-development-probe /absolute/source.ARW /absolute/roll-wb.ARW \
     "$threads" --decode-only
 done
 ```
 
 `--decode-only` excludes whole-frame statistics from unpack timing, but still uses validated production decode. Regional/full statistics are requested afterward for equality checks. Default mode includes explicit full statistics in unpack timing. The tool asserts scoped OpenMP thread/dynamic/blocktime settings are restored; invalid budgets reject. Hashing/equality reads are outside development timing.
 
-Compare version, dimensions, maxima/warnings, RGB/metadata/pre-multipliers and full/region sensor hashes across thread budgets with the same WB reference. Regional diagnostics must survive development unchanged. Thread policy must not alter development/cache identity. Complete-source comparisons do not establish arbitrary-camera support, photographic correctness or physical responsiveness; timings vary with load/thermals.
+A nonzero exit reports bridge, immutable-diagnostic or OpenMP-restoration failure. A successful exit does not automatically compare separate runs: inspect version, dimensions, maxima/warnings and RGB/metadata/pre-multipliers/full/region sensor hashes across thread budgets with the same WB reference. Regional diagnostics must survive development unchanged. Thread policy must not alter development/cache identity. Complete-source comparisons do not establish arbitrary-camera support, photographic correctness or physical responsiveness; timings vary with load/thermals.
 
 ## Reusing native builds
 

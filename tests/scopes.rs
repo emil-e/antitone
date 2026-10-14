@@ -5,7 +5,7 @@ use antitone::{
     gpu::ProcessingParameters,
     gpu_scopes::{GpuScopes, ScopePaint},
     rendering::OutputTarget,
-    scopes::{self, BINS, PLANE_LEN, Plot, Settings},
+    scopes::{self, PLANE_LEN, Plot, Settings},
     viewer::GpuImage,
 };
 use egui_wgpu::CallbackTrait;
@@ -821,51 +821,5 @@ fn rapid_requests_and_hide_show_coalesce_until_completion_and_luma_reuses_bins()
             gpu.status(&image, parameters, full_frame([7, 3]), waveform)
         );
         queue.submit([encoder.finish()]);
-    });
-}
-
-#[test]
-#[ignore = "bounded 1024-square Metal responsiveness checkpoint"]
-fn scope_reduction_latency_for_flat_and_varied_whole_frame_proxies() {
-    pollster::block_on(async {
-        let (device, queue) = device().await;
-        let gpu = GpuScopes::new(&device).await.unwrap();
-        for flat in [true, false] {
-            let pixels: Vec<_> = (0..1024 * 1024)
-                .map(|i| {
-                    if flat {
-                        [0.18, 0.18, 0.18, 1.]
-                    } else {
-                        [
-                            ((i * 13) % 997) as f32 / 997.,
-                            ((i * 19) % 991) as f32 / 991.,
-                            ((i * 23) % 983) as f32 / 983.,
-                            1.,
-                        ]
-                    }
-                })
-                .collect();
-            let image = texture(&device, &queue, [1024, 1024], &pixels);
-            for plot in [Plot::Rgb, Plot::Vector] {
-                let settings = Settings {
-                    plot,
-                    ..Default::default()
-                };
-                let mut times = Vec::new();
-                for _ in 0..6 {
-                    let tick = std::time::Instant::now();
-                    let mut encoder = device.create_command_encoder(&Default::default());
-                    gpu.encode(&device, &mut encoder, &image, settings).unwrap();
-                    queue.submit([encoder.finish()]);
-                    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-                    times.push(tick.elapsed().as_secs_f64() * 1000.);
-                }
-                println!(
-                    "scope_latency flat={flat} plot={plot:?} samples={} times_ms={times:?} retained_bytes={}",
-                    BINS * BINS * 16,
-                    gpu.bins.size() + gpu.totals.size()
-                );
-            }
-        }
     });
 }

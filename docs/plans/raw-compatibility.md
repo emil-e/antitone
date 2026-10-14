@@ -1,12 +1,14 @@
 # Broader LibRaw source compatibility
 
-Status: future work. Investigate support for more sources already decoded by pinned LibRaw, rather than treating the current Bayer bridge as a permanent product boundary. This does not change the [roadmap](../../PLAN.md) priority or authorize a decoder expansion during [verification restructuring](verification-tooling.md).
+Status: future work. Investigate support for more sources already decoded by pinned LibRaw, rather than treating the current Bayer bridge as a permanent product boundary. [The roadmap](../../PLAN.md) owns priority; no decoder expansion is selected.
 
 ## Goal and current limits
 
 Keep established LibRaw development while accepting additional sensor layouts and black-level representations that can supply a consistent three-channel linear camera-RGB source. File-picker extensions are hints, not a compatibility guarantee; [processing](../processing.md#start-with-the-cameras-measurements) owns the current supported boundary.
 
 The bridge currently assumes integer Bayer sensor storage, Bayer filter-mask diagnostics and scalar/per-channel black levels. It explicitly excludes X-Trans and non-CFA images and rejects any declared repeated black pattern, including a 1×1 declaration. These are implementation constraints, not demonstrated requirements of downstream RGB inversion or AP1 grading. Some sources may also require different LibRaw development settings; supporting them is not simply removing guards.
+
+A separate entry-point gap remains: `Editor::new` recognizes only ARW as an initial RAW path; other suffixes route as projects. Picker extension support does not establish CLI startup support. Aligning that routing is distinct from expanding the decoder's accepted representations.
 
 ## Scope and non-goals
 

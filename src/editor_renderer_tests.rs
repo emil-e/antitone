@@ -1,9 +1,6 @@
 use super::*;
 use crate::renderer::RendererCache;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-
-#[path = "editor_import_tests.rs"]
-mod import;
+use std::sync::atomic::AtomicU64;
 
 #[test]
 #[ignore = "read-only local RAW/Metal corrected affine shared-renderer integration"]
@@ -180,8 +177,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
 }
 
 #[test]
-#[ignore = "read-only local RAW/Metal cold import prewarm measurement"]
-fn initial_import_with_renderer_prewarm() {
+fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,
@@ -190,15 +186,15 @@ fn initial_import_with_renderer_prewarm() {
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let renderers = Arc::new(RendererCache::default());
-        let started = std::time::Instant::now();
         renderers.prewarm(device.clone(), queue.clone());
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw");
         let paths = [
-            "DSC04397.ARW",
-            "DSC04378.ARW",
-            "DSC04416.ARW",
-            "DSC04393.ARW",
+            "patches.dng",
+            "illuminated-patches.dng",
+            "roll-0.dng",
+            "roll-1.dng",
         ]
-        .map(|name| PathBuf::from("samples").join(name));
+        .map(|name| root.join(name));
         let mut document = Document::default();
         document.import(&paths).unwrap();
         let source = document.project.source(document.project.order[2]).unwrap();
@@ -214,10 +210,6 @@ fn initial_import_with_renderer_prewarm() {
         )
         .unwrap();
         assert!(ready.thumbnail.is_some());
-        println!(
-            "initial_import_probe prewarm=true registered_sources=4 total_seconds={:.6}",
-            started.elapsed().as_secs_f64()
-        );
         let directory = tempfile::tempdir().unwrap();
         let mut seeded = Thumbnails::with_disk(
             device.clone(),
@@ -332,23 +324,21 @@ fn initial_import_with_renderer_prewarm() {
 }
 
 #[test]
-#[ignore = "read-only local RAW cold thumbnail with project-relative locator"]
-fn project_relative_locator_cold_thumbnail() {
+fn authored_project_relative_locator_develops_a_cold_thumbnail() {
     pollster::block_on(async {
         let directory = tempfile::tempdir().unwrap();
         std::fs::create_dir(directory.path().join("inputs")).unwrap();
         std::fs::create_dir(directory.path().join("grades")).unwrap();
-        let input = std::env::current_dir()
-            .unwrap()
-            .join("samples/DSC04393.ARW");
-        std::os::unix::fs::symlink(input, directory.path().join("inputs/scan.ARW")).unwrap();
+        let input =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
+        std::fs::copy(input, directory.path().join("inputs/scan.dng")).unwrap();
         let mut document = Document::default();
         document.path = Some(directory.path().join("grades/project.json"));
         document
-            .import(&[directory.path().join("inputs/scan.ARW")])
+            .import(&[directory.path().join("inputs/scan.dng")])
             .unwrap();
         let id = document.project.order[0];
-        document.project.source_mut(id).unwrap().path = "../inputs/scan.ARW".into();
+        document.project.source_mut(id).unwrap().path = "../inputs/scan.dng".into();
         let source = document.project.source(id).unwrap().clone();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,
@@ -431,238 +421,4 @@ fn pixels(device: &wgpu::Device, queue: &wgpu::Queue, image: &GpuImage) -> Vec<u
         .chunks(row as usize)
         .flat_map(|line| line[..width as usize * 16].iter().copied())
         .collect()
-}
-
-#[test]
-#[ignore = "read-only native RAW thread-depth/foreground Metal contention; build native probe first"]
-fn native_development_foreground_contention() {
-    pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
-        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let renderer = crate::renderer::GpuRenderer::new(&device, &queue)
-            .await
-            .unwrap();
-        let scan = Scan::open(&PathBuf::from("samples/DSC04393.ARW"), None).unwrap();
-        let (width, height, codes) = scan.preview_source(1024).unwrap();
-        let image = GpuImage::new_shared(
-            &renderer,
-            &device,
-            width,
-            height,
-            &codes,
-            scan.camera_to_ap1,
-            OutputTarget::DisplayP3,
-        )
-        .await
-        .unwrap();
-        let params = ProcessingParameters::positive(
-            Calibration {
-                dmin: DVec3::new(0.28, 0.23, 0.25),
-                dmax: DVec3::new(0.01, 0.005, 0.001),
-                input_floor: scan.input_floor,
-            },
-            RollSettings::new_grade(),
-            PhotoSettings::default(),
-            scan.camera_to_ap1,
-        )
-        .unwrap();
-        for threads in [1, 2, 4, 8, 2] {
-            let finished = AtomicBool::new(false);
-            let mut latencies = std::thread::scope(|scope| {
-                let foreground = scope.spawn(|| {
-                    let mut latencies = Vec::new();
-                    while !finished.load(Ordering::Acquire) {
-                        let tick = std::time::Instant::now();
-                        let mut encoder = device.create_command_encoder(&Default::default());
-                        image.encode(&device, &mut encoder, params);
-                        queue.submit([encoder.finish()]);
-                        wait(&device, &queue);
-                        latencies.push(tick.elapsed().as_secs_f64());
-                        std::thread::sleep(
-                            Duration::from_millis(16).saturating_sub(tick.elapsed()),
-                        );
-                    }
-                    latencies
-                });
-                let output = std::process::Command::new(".cache/native-deps/probe")
-                    .args([
-                        "samples/DSC04393.ARW",
-                        "samples/DSC04397.ARW",
-                        &threads.to_string(),
-                        "--decode-only",
-                    ])
-                    .output()
-                    .unwrap();
-                finished.store(true, Ordering::Release);
-                assert!(
-                    output.status.success(),
-                    "{}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-                println!("{}", String::from_utf8_lossy(&output.stdout));
-                foreground.join().unwrap()
-            });
-            latencies.sort_by(f64::total_cmp);
-            println!(
-                "native_contention threads={threads} foreground_samples={} p95_ms={:.6} max_ms={:.6}",
-                latencies.len(),
-                latencies[latencies.len().saturating_sub(1) * 95 / 100] * 1000.,
-                latencies.last().unwrap() * 1000.
-            );
-        }
-    });
-}
-
-#[test]
-#[ignore = "read-only local RAW/Metal import and contended refinement measurements"]
-fn import_and_refinement_latency() {
-    pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
-        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                required_limits: crate::platform::device_limits(adapter.limits()),
-                ..Default::default()
-            })
-            .await
-            .unwrap();
-        println!(
-            "performance adapter={:?} budgets={:?}",
-            adapter.get_info(),
-            memory::CacheBudgets::current()
-        );
-        let paths = [
-            "DSC04397.ARW",
-            "DSC04378.ARW",
-            "DSC04416.ARW",
-            "DSC04393.ARW",
-        ]
-        .map(|name| PathBuf::from("samples").join(name));
-        let mut document = Document::default();
-        document.import(&paths).unwrap();
-        let renderers = RendererCache::default();
-        let source = document.project.source(document.project.order[2]).unwrap();
-        let (ready, scan) = prepare_source(
-            &renderers,
-            &device,
-            &queue,
-            paths[2].clone(),
-            Some(document.project.development.as_ref().unwrap().fixed_wb),
-            Some(source),
-            None,
-            document.project.camera_basis.as_ref(),
-        )
-        .unwrap();
-        let renderer = renderers.get(&device, &queue).unwrap();
-        assert!(Arc::ptr_eq(
-            &renderer,
-            &renderers.get(&device, &queue).unwrap()
-        ));
-        let mut thumbnails = Thumbnails::new(device.clone(), queue.clone(), Arc::new(renderers));
-        let (file, proxy) = ready.thumbnail.clone().unwrap();
-        thumbnails.seed(source, &ready.development, file.clone(), proxy);
-        let key = thumbnails::ImageKey {
-            source: thumbnails::SourceKey::new(source, &ready.development, file),
-            target: OutputTarget::DisplayP3,
-            field: None,
-        };
-        thumbnails.request(key, paths[2].clone(), source.clone(), None);
-        while thumbnails.pending.is_some() {
-            thumbnails.receive(&document);
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        assert_eq!(
-            thumbnails.ready_count(&document, OutputTarget::DisplayP3),
-            1
-        );
-        let parameters = ProcessingParameters::positive(
-            Calibration {
-                dmin: DVec3::new(0.28, 0.23, 0.25),
-                dmax: DVec3::new(0.01, 0.005, 0.001),
-                input_floor: scan.input_floor,
-            },
-            RollSettings::new_grade(),
-            PhotoSettings::default(),
-            scan.camera_to_ap1,
-        )
-        .unwrap();
-        let foreground = ready.images[1].clone();
-        let mut encoder = device.create_command_encoder(&Default::default());
-        foreground.encode(&device, &mut encoder, parameters);
-        queue.submit([encoder.finish()]);
-        wait(&device, &queue);
-        let view = ViewRequest {
-            area: scan.area,
-            output: [1538, 1026],
-            frame: None,
-        };
-        let mut reference = None;
-        for contended in [false, true] {
-            for depth in [1, 2, 3, 1] {
-                let finished = AtomicBool::new(false);
-                let started = std::time::Instant::now();
-                let (image, mut latencies) = std::thread::scope(|scope| {
-                    let job = scope.spawn(|| {
-                        let mut latencies = Vec::new();
-                        while !finished.load(Ordering::Acquire) {
-                            if contended {
-                                let tick = std::time::Instant::now();
-                                let mut encoder =
-                                    device.create_command_encoder(&Default::default());
-                                foreground.encode(&device, &mut encoder, parameters);
-                                queue.submit([encoder.finish()]);
-                                wait(&device, &queue);
-                                latencies.push(tick.elapsed().as_secs_f64());
-                                std::thread::sleep(
-                                    Duration::from_millis(16).saturating_sub(tick.elapsed()),
-                                );
-                            } else {
-                                std::thread::sleep(Duration::from_millis(1));
-                            }
-                        }
-                        latencies
-                    });
-                    let generation = AtomicU64::new(0);
-                    let image = crate::refinement::refine_with_depth(
-                        &renderer,
-                        &device,
-                        (&queue, &crate::platform::SubmissionGate::default()),
-                        (&scan, None),
-                        parameters,
-                        OutputTarget::DisplayP3,
-                        (&generation, 0),
-                        view,
-                        depth,
-                    );
-                    finished.store(true, Ordering::Release);
-                    wait(&device, &queue);
-                    (image.unwrap().unwrap(), job.join().unwrap())
-                });
-                let seconds = started.elapsed().as_secs_f64();
-                latencies.sort_by(f64::total_cmp);
-                let p95 = latencies
-                    .get(latencies.len().saturating_sub(1) * 95 / 100)
-                    .copied()
-                    .unwrap_or(0.);
-                let max = latencies.last().copied().unwrap_or(0.);
-                let actual = pixels(&device, &queue, &image);
-                if let Some(expected) = &reference {
-                    assert!(&actual == expected, "depth changes reconstruction");
-                } else {
-                    reference = Some(actual);
-                }
-                println!(
-                    "refinement_probe contended={contended} depth={depth} seconds={seconds:.6} foreground_frames={} foreground_p95_seconds={p95:.6} foreground_max_seconds={max:.6}",
-                    latencies.len()
-                );
-            }
-        }
-    });
 }

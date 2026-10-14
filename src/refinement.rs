@@ -29,34 +29,6 @@ pub fn refine(
     (generation, expected): (&AtomicU64, u64),
     view: ViewRequest,
 ) -> Result<Option<Arc<GpuImage>>, Error> {
-    refine_with_depth(
-        renderer,
-        device,
-        (queue, submissions),
-        (scan, field),
-        parameters,
-        target,
-        (generation, expected),
-        view,
-        1,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn refine_with_depth(
-    renderer: &Arc<crate::renderer::GpuRenderer>,
-    device: &wgpu::Device,
-    (queue, submissions): (&wgpu::Queue, &crate::platform::SubmissionGate),
-    (scan, field): (&Scan, Option<Arc<GpuFlatField>>),
-    parameters: ProcessingParameters,
-    target: OutputTarget,
-    (generation, expected): (&AtomicU64, u64),
-    view: ViewRequest,
-    depth: usize,
-) -> Result<Option<Arc<GpuImage>>, Error> {
-    if !(1..=3).contains(&depth) {
-        return Err(Error::InvalidParameter("invalid refinement queue depth"));
-    }
     let start = std::time::Instant::now();
     if generation.load(Ordering::Relaxed) != expected {
         return Ok(None);
@@ -98,7 +70,6 @@ pub(crate) fn refine_with_depth(
     };
     let mut sampling = std::time::Duration::ZERO;
     let mut gpu = std::time::Duration::ZERO;
-    let mut pending = std::collections::VecDeque::new();
     for y in (0..view.area.height).step_by(tile_height as usize) {
         for x in (0..view.area.width).step_by(tile_width as usize) {
             if generation.load(Ordering::Relaxed) != expected {
@@ -121,24 +92,15 @@ pub(crate) fn refine_with_depth(
             let mut encoder = device.create_command_encoder(&Default::default());
             tile.encode(device, &mut encoder, parameters);
             average.accumulate(device, &mut encoder, &tile.linear, [x, y]);
-            pending.push_back(submissions.submit(queue, [encoder.finish()]));
-            // Queue order permits reuse of the tile buffers; only upload staging is outstanding.
-            if pending.len() >= depth {
-                wait_for(device, pending.pop_front().unwrap())?;
-            }
+            wait_for(device, submissions.submit(queue, [encoder.finish()]))?;
             gpu += tick.elapsed();
         }
     }
-    let tick = std::time::Instant::now();
-    for submission in pending {
-        wait_for(device, submission)?;
-    }
-    gpu += tick.elapsed();
     let mut encoder = device.create_command_encoder(&Default::default());
     average.finish(device, &mut encoder, &output.linear);
     submissions.submit(queue, [encoder.finish()]);
     println!(
-        "settled_preview source={}x{} output={}x{} target={target:?} depth={depth} seconds={:.3} sampling_seconds={:.3} gpu_seconds={:.3}",
+        "settled_preview source={}x{} output={}x{} target={target:?} seconds={:.3} sampling_seconds={:.3} gpu_seconds={:.3}",
         view.area.width,
         view.area.height,
         width,

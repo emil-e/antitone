@@ -4,6 +4,8 @@ Use [development checks](development.md) for the ordinary contributor loop. Thes
 
 Run from the repository root after the relevant [setup](../README.md#build-and-run). Examples use `--offline` with populated caches. RAW names refer to read-only local samples, not downloadable fixtures. Keep outputs under ignored `.cache/` and use fresh export/report directories.
 
+Choose a diagnostic for a concrete question. A command's presence here, repeated use or successful output does not make it a routine gate. Ordinary regressions belong in [development checks](development.md); independent references check an external implementation or consumer; supplied-photo reports aid inspection. Timings and captures are observations, not acceptance thresholds or approved baselines.
+
 A numerical comparison, a scripted visible window and physical photographic acceptance are different evidence. Missing hardware or zero submitted frames does not become a pass. Sample-dependent probes can be expensive; run the relevant recipe, not this entire page.
 
 ## Editor and layout checks
@@ -23,24 +25,7 @@ Authored [project UI regressions](development.md#framework-ui-regressions) cover
 
 [Framework tool tests](development.md#framework-ui-regressions) render authored Crop/Dmin/WB and flat-field support states at normal/narrow sizes. Optional `ANTITONE_UI_CAPTURE` outputs are labelled offscreen evidence, not native-window appearance approval. [Explicit native-host checks](development.md#explicit-native-host-checks) separately exercise focus, size forwarding, surface paint and completion/close failures. Physical tool interaction and composed Editor-in-window appearance remain real-use checks; do not automate Lightroom/Resolve or bypass window occlusion.
 
-### Camera-roll fixtures
-
-```sh
-cargo test --locked --offline --features editor --lib \
-  capture_camera_roll_review_fixtures -- --ignored --nocapture
-```
-
-The fixture writes synthetic GPU-painted cards to `.cache/probes/camera-roll`. It checks composed painting at normal/compact strip heights, not native presentation, photographs or VoiceOver.
-
 ## Flat-field correction
-
-The headless editor/worker regression uses temporary projects and small corrected exports:
-
-```sh
-cargo test --locked --offline --release --all-features --lib \
-  editor::flat::tests::real_reference_editor_save_open_and_corrected_exports \
-  -- --ignored --nocapture
-```
 
 For authored reference/area transitions, corrected picker measurements, both settled targets/thumbnails, Enabled/Clear and Save/Open:
 
@@ -62,15 +47,17 @@ These check the implemented [correction](flat-field.md), not physical reference 
 
 ## Analyze roll
 
-Run the [synthetic checks](development.md#roll-analysis) first. Explicit worker regressions use the two local twelve-frame scan sets:
+Use [authored analysis checks](development.md#roll-analysis) for transaction and estimator regressions. They cover picture-area controls, confirmation/cancellation/failure, atomic initialization, Save/Open and settled rendering in both targets, including real correction. They are offscreen; [native-host completion checks](development.md#explicit-native-host-checks) are separate.
+
+One optional feedback-case regression checks opening recovery and holder-tail exclusion on a particular twelve-frame scan set:
 
 ```sh
-ANTITONE_SAMPLES="$PWD/samples" cargo test --locked --offline --release \
-  --features editor --lib editor::analysis::tests::real_ \
+ANTITONE_SAMPLES=/absolute/samples cargo test --locked --offline --release \
+  --features editor --lib real_ambiguous_first_frame_uses_roll_opening_instead_of_holder \
   -- --ignored --nocapture --test-threads=1
 ```
 
-[Framework Analyze tests](development.md#roll-analysis) exercise authored picture-area transactions, confirmation/cancellation/failure, atomic initialization and settled rendering in both targets, including real correction. They are offscreen; [native-host completion checks](development.md#explicit-native-host-checks) are separate. Neither these nor the sample-dependent worker checks certify [photographic success](plans/roll-assistance.md) or composed Editor-in-window appearance. For other supplied rolls, use the explicit case manifest below or the normal editor; no scripted Analyze application route is maintained.
+Its named files and area/Dmax assertions apply only to that feedback case, not general camera/roll acceptance. For other supplied rolls, use the explicit case manifest below or the normal editor. Neither the authored checks nor this case certify [photographic success](plans/roll-assistance.md), a general opening detector or composed Editor-in-window appearance.
 
 ### Private all-roll contacts
 
@@ -109,29 +96,20 @@ The diagnostic drives actual import/correction/Analyze and renders approximate c
 ## Responsive image scopes
 
 ```sh
-cargo test --locked --offline --features editor --test scopes \
-  scope_reduction_latency -- --ignored --nocapture
 cargo test --locked --offline --features ui-tests --lib \
   scope_plot_scale_and_target_widgets_produce_valid_completed_reductions \
   -- --test-threads=1
 ```
 
-The latency test times reductions, not end-to-end gestures. The authored framework test exercises [scope modes and amplification](scopes.md) through real widgets and completed GPU reductions in both targets, without a desktop window. Physical interpretation and native appearance remain separate.
+The authored framework test exercises [scope modes and amplification](scopes.md) through real widgets and completed GPU reductions in both targets, without a desktop window. Physical interpretation, responsiveness and native appearance remain separate.
 
-## Rendering/import performance probes
+## Investigating responsiveness
 
-Run one ignored editor probe with:
+Use runtime import/development, selected-preview/switch, thumbnail and refinement logs to investigate a reported workload. Compare matching phases and inputs; filesystem caching is uncontrolled, and backend Ready or paint-command recording is not GPU completion or physical presentation. No minimum hardware target or general latency threshold is established; [real-use/resource acceptance](plans/visual-feedback.md) remains separate.
 
-```sh
-cargo test --locked --offline --release --features editor --lib \
-  selected_proxy_switching_latency -- --ignored --nocapture
-```
+For cache and worker correctness, use the `authored_` [worker checks](development.md#feature-specific-checks), backed by repository fixtures and isolated temporary storage. Their wait deadlines bound stalled tests; they are not latency acceptance thresholds.
 
-Other filters are `visible_thumbnail_import_latency`, `import_switching_latency`, `import_and_refinement_latency`, `initial_import_with_renderer_prewarm` and `project_relative_locator_cold_thumbnail`. Their code defines measured phases and workload. Cache readiness, backend Ready and paint-command recording are not GPU completion or physical presentation; filesystem caching is uncontrolled.
-
-`raw_byte_edits_reopen_without_identity_rejection_and_old_seed_keeps_its_revision` uses a **temporary RAW copy**, not an original sample. `embedded_jpeg_does_not_unpack_or_change_camera_development` checks sampled development independence from preview extraction. `development_and_region_picks` and `native_development_foreground_contention` check native diagnostics/priority; the latter requires the [native probe](native-development.md).
-
-Runtime logs expose import, development, selected-preview/switch, thumbnail and refinement phases. Compare matching workloads and boundaries; a timing field is not necessarily a hardware timestamp. Worktrees use ordinary Cargo caches and may [reuse pinned native builds](native-development.md#reusing-native-builds).
+For native thread-policy or immutable-sensor investigation, use the optional [RAW diagnostic](native-development.md). Worktrees may [reuse pinned native builds](native-development.md#reusing-native-builds).
 
 ## RAW and complete GPU chain
 

@@ -911,11 +911,11 @@ impl Editor {
 #[path = "editor_thumbnail_clipping_tests.rs"]
 mod clipping_tests;
 #[cfg(test)]
-#[path = "editor_thumbnail_latency_tests.rs"]
-mod latency_tests;
+#[path = "editor_renderer_tests.rs"]
+mod renderer_tests;
 #[cfg(test)]
-#[path = "editor_performance_tests.rs"]
-mod performance;
+#[path = "editor_source_revision_tests.rs"]
+mod revision_tests;
 #[cfg(test)]
 #[path = "editor_selected_preview_tests.rs"]
 mod selected_tests;

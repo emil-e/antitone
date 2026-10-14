@@ -93,6 +93,35 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
         );
         assert_eq!(editor.document.project, sparse);
         editor.document.project.analysis_area = accepted.analysis_area;
+        let unvisited = editor.document.project.order[1];
+        let camera = editor
+            .document
+            .project
+            .source(unvisited)
+            .unwrap()
+            .development
+            .camera_model
+            .clone();
+        editor
+            .document
+            .project
+            .source_mut(unvisited)
+            .unwrap()
+            .development
+            .camera_model = "incompatible-camera".into();
+        let incompatible = editor.document.project.clone();
+        editor.begin_analysis();
+        assert!(editor.busy);
+        wait_with_limit(&mut editor, Duration::from_secs(60));
+        assert!(editor.status.contains("failed"), "{}", editor.status);
+        assert_eq!(editor.document.project, incompatible);
+        editor
+            .document
+            .project
+            .source_mut(unvisited)
+            .unwrap()
+            .development
+            .camera_model = camera;
         let before_cancel = editor.document.project.clone();
         editor.begin_analysis();
         assert!(editor.analysis_pending.is_some());
@@ -603,138 +632,6 @@ fn sparse_eligibility_is_rejected_before_any_grade_installation() {
     assert!(require_statistics(2048, &[enough]).is_ok()); // Film adequacy is pooled, never per-frame.
 }
 
-#[test]
-#[ignore = "read-only 120 RAW/Metal editor integration; run explicitly in release"]
-fn real_roll_analyze_cancel_failure_and_save_open() {
-    pollster::block_on(async {
-        let root = std::env::var_os("ANTITONE_SAMPLES")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("samples"));
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
-        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let mut editor = Editor::new(&device, &queue, None);
-        editor.add_raws(
-            (4299..=4310)
-                .map(|n| root.join(format!("DSC0{n}.ARW")))
-                .collect(),
-        );
-        wait(&mut editor);
-        assert!(editor.ready.is_some(), "{}", editor.status);
-        let selected = editor.current_source;
-        editor.photo.exposure = 0.321;
-        editor.photo.wb = Balance {
-            warmth: 0.2,
-            tint: -0.1,
-        };
-        editor.photo.contrast = 1.2;
-        editor.photo.pivot = 0.3;
-        editor.photo.contrast_colour_mix = 0.4;
-        editor.photo.saturation = 0.8;
-        editor.photo.saturation_density = 0.6;
-        editor.roll.wb = Balance {
-            warmth: -0.3,
-            tint: 0.15,
-        };
-        editor.roll_orientation.turn_clockwise();
-        editor.photo_orientation.flips.horizontal = true;
-        editor.crop = Some(crate::crop::Crop {
-            center: [4352., 2892.],
-            size: [4800, 3600],
-            angle: 0.05,
-        });
-        editor.roll.gamma = 0.7;
-        editor.roll.exposure = 0.;
-        editor.sync_document();
-        let before = editor.document.project.clone();
-        click_analyze(&mut editor);
-        assert!(editor.analysis_pending.is_some());
-        editor.cancel_analysis();
-        wait(&mut editor);
-        assert_eq!(editor.document.project, before);
-        editor.document.project.analysis_area = Some([1372, 46, 8, 8]);
-        let sparse = editor.document.project.clone();
-        editor.begin_analysis();
-        wait(&mut editor);
-        assert_eq!(editor.document.project, sparse);
-        assert!(
-            editor.status.contains("picture samples"),
-            "{}",
-            editor.status
-        );
-        editor.document.project.analysis_area = None;
-        let camera = editor.document.project.sources[11]
-            .development
-            .camera_model
-            .clone();
-        editor.document.project.sources[11].development.camera_model = "incompatible-camera".into();
-        let failure = editor.document.project.clone();
-        editor.begin_analysis();
-        wait(&mut editor);
-        assert_eq!(editor.document.project, failure);
-        assert!(editor.status.contains("failed"), "{}", editor.status);
-        editor.document.project.sources[11].development.camera_model = camera;
-        editor.begin_analysis();
-        wait(&mut editor);
-        assert!(
-            editor.status.starts_with("Analyzed 12"),
-            "{}",
-            editor.status
-        );
-        assert_eq!(editor.current_source, selected);
-        assert_ne!(editor.photo.exposure, 0.321);
-        assert_eq!(editor.photo.wb, Balance::default());
-        let initialized_photo = editor.photo;
-        assert_eq!(editor.roll.gamma, 0.7);
-        assert_eq!(editor.roll.response, before.roll.response);
-        for (mut after, prior) in editor
-            .document
-            .project
-            .sources
-            .clone()
-            .into_iter()
-            .zip(&before.sources)
-        {
-            assert_eq!(after.photo.wb, Balance::default());
-            after.photo = prior.photo;
-            assert_eq!(&after, prior);
-        }
-        assert!(editor.calibration().is_some());
-        assert!(!editor.source);
-        // Exercise the actual host UI/preview callback preparation headlessly.
-        let ctx = egui::Context::default();
-        use crate::platform::host::App;
-        let mut output = ctx.run_ui(
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(1100., 800.),
-                )),
-                ..Default::default()
-            },
-            |ui| editor.ui(ui),
-        );
-        output.textures_delta.clear();
-        let accepted = editor.document.project.clone();
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("analyzed.antitone.json");
-        editor.queue_save(path.clone(), crate::project::Save::New, None);
-        wait(&mut editor);
-        assert!(!editor.document.dirty(), "{}", editor.status);
-        editor.start_document(DocumentWork::Open(path));
-        wait(&mut editor);
-        assert_eq!(editor.document.project, accepted);
-        assert_eq!(editor.roll.gamma, 0.7);
-        assert_eq!(editor.photo, initialized_photo);
-        println!(
-            "Editor Analyze: 12 frames, cancel/failure/atomic reinitialization/geometry preservation/UI/Save/Open passed; EV={}",
-            editor.roll.exposure
-        );
-    });
-}
 #[test]
 #[ignore = "read-only blue-cast feedback roll/Metal; run explicitly in release"]
 fn real_ambiguous_first_frame_uses_roll_opening_instead_of_holder() {

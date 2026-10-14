@@ -12,4 +12,4 @@ The [editor guide](../editor.md#fast-feedback-is-not-authoritative-data) explain
 
 Exercise physical scrolling/grading with cold camera placeholders and developed thumbnails, inspect replacement, and assess foreground latency and real memory pressure. Keep this separate from loading-state design.
 
-Verify stale-work rejection, resize/scroll clipping and foreground isolation without changing measurement/export inputs or retaining a full RAW per thumbnail. [Performance diagnostics](../diagnostics.md#renderingimport-performance-probes) provide bounded software measurements, not physical-presentation acceptance.
+Verify stale-work rejection, resize/scroll clipping and foreground isolation without changing measurement/export inputs or retaining a full RAW per thumbnail. Use [runtime phase logs](../diagnostics.md#investigating-responsiveness) for a concrete reported workload, not as physical-presentation acceptance or a general latency gate.

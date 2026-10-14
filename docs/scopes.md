@@ -40,4 +40,4 @@ Plot controls do not change photographic processing. Visibility and plot sizing 
 
 [Scope tests](../tests/scopes.rs) cover measurement and GPU agreement; [geometry tests](../tests/scopes/geometry.rs) cover final-frame mapping. The skin guide's exact convention and drawing constants live in code, not a second prose specification.
 
-Use [scope diagnostics](diagnostics.md#responsive-image-scopes) for explicit performance/window exercises. [Remaining acceptance](plans/completion.md#scopes) includes photographic interpretation and physical use; a synthetic plot test does not establish either.
+Use [authored scope widget checks](diagnostics.md#responsive-image-scopes) for composed controls and completed GPU reductions, not native-window or responsiveness acceptance. [Remaining acceptance](plans/completion.md#scopes) includes photographic interpretation and physical use; a synthetic plot test does not establish either.

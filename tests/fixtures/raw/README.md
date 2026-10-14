@@ -52,6 +52,8 @@ All six DNGs total 1,740,935 bytes (about 1.66 MiB).
 
 ## Checks and maintenance
 
+Cache regressions use temporary copies of these fixtures to distinguish saved development identity from disposable cache freshness: appending bytes changes the cache revision without rejecting the saved project, and old selected seeds retain their old revision. Other worker checks develop project-relative cold thumbnails and verify that prewarm, selected processing, completed scopes and disk thumbnails reuse existing work. These are correctness checks, not latency budgets.
+
 From the repository root, after normal native setup:
 
 ```sh
@@ -80,4 +82,4 @@ Pinned LibRaw supplies `[1,1,1,0]` for this three-plane DNG's raw metadata WB. A
 
 Tag choices follow [DNG definitions](https://www.adobe.com/go/dng_spec) and were checked against pinned LibRaw's parser. Adobe DNG Validator acceptance is not established. Successful LibRaw decoding is not general DNG conformance.
 
-No proprietary-camera preview behavior, photographic correction/Analyze quality, GPU/desktop presentation, physical colour or realistic resource/performance acceptance follows. Named [framework UI regressions](../../../docs/development.md#framework-ui-regressions) cover authored transactions, not general interaction/native appearance. Framework project/correction tests add exact Save/Open, failed-transition preservation, corrected picker measurements, map-keyed thumbnail readiness in both targets and missing-reference reopening. Broader corrected-thumbnail coordination and native boundaries remain explicit in the [verification plan](../../../docs/plans/verification-tooling.md).
+No proprietary-camera preview behavior, photographic correction/Analyze quality, GPU/desktop presentation, physical colour or realistic resource/performance acceptance follows. Named [framework UI regressions](../../../docs/development.md#framework-ui-regressions) cover authored transactions, not general interaction/native appearance. Framework project/correction tests add exact Save/Open, failed-transition preservation, corrected picker measurements, map-keyed thumbnail readiness in both targets and missing-reference reopening. Broader [thumbnail coordination/real-use acceptance](../../../docs/plans/visual-feedback.md) and [native/physical interaction](../../../docs/plans/inspection-and-interaction.md) remain open.
