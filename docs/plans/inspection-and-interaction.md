@@ -19,7 +19,7 @@ These are unfinished fixes and design questions. [The roadmap](../../PLAN.md) ow
 ### Roll workflow
 
 - **RAW drag/drop:** settle supported-file feedback, busy drops, duplicates and all-or-nothing failure through staged import/compatibility checks.
-- **Selection/removal:** clarify selection modes, active/last-photo removal, next selection and in-flight work. Removal changes the project, never deletes RAWs or resamples calibration; undo is separate.
+- **Selection/removal acceptance:** exercise [multi-selection and confirmed project-only removal](../editor.md#select-and-remove-roll-photos) with physical Cmd/Shift input, focused cards, context menus, VoiceOver and display scaling. Controller/authored-RAW checks cover same-index fallback, empty Save/Open/reimport, retained correction/calibration and input/transaction gates; they do not establish native interaction or appearance. Undo remains separate.
 
 ### Layout and controls
 

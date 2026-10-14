@@ -48,6 +48,8 @@ Worker results are proposals. Request IDs, generations and source/settings snaps
 
 [Photo-only inspection](../src/editor_fullscreen.rs) retains the temporary workspace/view context and suspends tools without promoting drafts. The host owns window geometry and menu/Dock presentation, independent of native fullscreen Spaces, and acknowledges restoration before the controller restores its snapshot on the next UI frame. [Shared viewer framing](../src/editor_ui_viewer.rs) owns docked/auto-hiding controls and the full-canvas surface; it does not own image mappings, transactions or window state.
 
+[Roll selection](../src/editor_roll_selection.rs) owns transient membership/anchor state and confirmed project-only removal. Filmstrip cards present supplied selected/active state; temporary picker browsing retains the working selection. Empty-roll removal invalidates image work and releases the backend Scan without resetting the retained processing basis.
+
 Accepted photographic state lives in [projects](projects.md). Tool drafts and viewport state are transient; durable UI preferences, including fixed CPU/GPU cache limits, are stored independently. Defaults use installed RAM and static GPU facts only at initialization/reset; pressure changes effective optional retention, not saved limits. [Editor](editor.md) explains preview/cache distinctions and the input/transaction model.
 
 ## UI test boundary

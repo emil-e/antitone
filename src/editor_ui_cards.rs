@@ -46,6 +46,7 @@ impl ContactSheetLayout {
         origin: egui::Pos2,
         id: Id,
         selected: bool,
+        active: bool,
         enabled: bool,
     ) -> ContactSheetCard {
         let cell = Rect::from_min_size(origin, self.size);
@@ -53,7 +54,9 @@ impl ContactSheetLayout {
             ui.interact(cell, id, egui::Sense::click())
         });
         let hovered = response.hovered();
-        let fill = Color32::from_gray(if selected {
+        let fill = Color32::from_gray(if active {
+            48
+        } else if selected {
             30
         } else if hovered {
             28
@@ -90,6 +93,7 @@ impl ContactSheetLayout {
             caption_rect,
             text_color,
             selected,
+            active,
         }
     }
 }
@@ -101,6 +105,7 @@ pub struct ContactSheetCard {
     caption_rect: Rect,
     text_color: Color32,
     selected: bool,
+    active: bool,
 }
 
 impl ContactSheetCard {
@@ -153,6 +158,11 @@ impl ContactSheetCard {
                 name,
             )
         });
+        if self.active {
+            ui.ctx().accesskit_node_builder(self.response.id, |node| {
+                node.set_description("Active photo")
+            });
+        }
         let galley = caption_name(ui, name, self.caption_rect.width(), self.text_color);
         ui.painter()
             .with_clip_rect(self.caption_rect.intersect(ui.clip_rect()))

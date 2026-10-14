@@ -156,7 +156,7 @@ fn render(
         let layout = ContactSheetLayout::new(height - 12., height < 90.);
         let id = ui.id().with("caller-card");
         let (response, image_rect) = if shared {
-            let card = layout.begin(ui, origin, id, selected, true);
+            let card = layout.begin(ui, origin, id, selected, false, true);
             match content {
                 Content::Empty => (),
                 Content::Loading => card.loading(ui),
@@ -293,6 +293,7 @@ fn card_availability_preserves_ids_and_full_caption_semantics_without_disabling_
                 egui::pos2(40., 10.),
                 ui.id().with("card"),
                 selected,
+                false,
                 enabled,
             );
             card.caption(ui, name);
@@ -351,6 +352,101 @@ fn layout_measurement_does_not_allocate_widgets_change_ids_or_consume_available_
         assert_eq!(ui.next_auto_id(), id);
         assert_eq!(ui.available_rect_before_wrap(), available);
     });
+}
+
+#[test]
+fn active_background_preserves_geometry_selection_outline_and_filename_semantics() {
+    for scale in [1., 2.] {
+        for height in [52., 80., 140., 240.] {
+            for enabled in [false, true] {
+                let context = Context::default();
+                context.set_pixels_per_point(scale);
+                let draw = |active| {
+                    frame(&context, 315., enabled, vec![], |ui| {
+                        let layout = ContactSheetLayout::new(height - 12., height < 90.);
+                        let next_id = ui.next_auto_id();
+                        let available = ui.available_rect_before_wrap();
+                        let card = layout.begin(
+                            ui,
+                            egui::pos2(240., 10.),
+                            ui.id().with("active-card"),
+                            true,
+                            active,
+                            true,
+                        );
+                        card.caption(ui, "full-source-filename.ARW");
+                        assert_eq!(ui.next_auto_id(), next_id);
+                        assert_eq!(ui.available_rect_before_wrap(), available);
+                        (card.response, card.image_rect, card.caption_rect)
+                    })
+                };
+                draw(false);
+                let (baseline, before) = draw(false);
+                let (active, output) = draw(true);
+                assert_eq!(active.0.id, baseline.0.id);
+                assert_eq!(active.0.rect, baseline.0.rect);
+                assert_eq!(active.0.enabled(), baseline.0.enabled());
+                assert_eq!(active.1, baseline.1);
+                assert_eq!(active.2, baseline.2);
+                let card_frame = |output: &FullOutput| {
+                    output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            egui::Shape::Rect(rect) if rect.rect == active.0.rect => {
+                                Some((rect.clone(), shape.clip_rect))
+                            }
+                            _ => None,
+                        })
+                        .unwrap()
+                };
+                let (normal_frame, clip) = card_frame(&before);
+                let (active_frame, active_clip) = card_frame(&output);
+                let opacity = if enabled {
+                    1.
+                } else {
+                    context.global_style().visuals.disabled_alpha
+                };
+                assert_eq!(
+                    normal_frame.fill,
+                    Color32::from_gray(30).gamma_multiply(opacity)
+                );
+                assert_eq!(
+                    active_frame.fill,
+                    Color32::from_gray(48).gamma_multiply(opacity)
+                );
+                assert_eq!(normal_frame.stroke, active_frame.stroke);
+                assert_eq!(clip, active_clip);
+                assert!(
+                    active_frame.rect.contains_rect(active.2),
+                    "caption shares the active background"
+                );
+                assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+                    egui::Shape::Rect(rect) if rect.rect == active.1 && rect.fill == Color32::from_gray(14).gamma_multiply(opacity))), "image well remains dark");
+                assert_eq!(output.shapes.len(), before.shapes.len());
+                assert!(
+                    !output
+                        .shapes
+                        .iter()
+                        .any(|shape| matches!(shape.shape, egui::Shape::Circle(_))),
+                    "no active dot"
+                );
+                let (_, node) = output
+                    .platform_output
+                    .accesskit_update
+                    .as_ref()
+                    .unwrap()
+                    .nodes
+                    .iter()
+                    .find(|(node_id, _)| *node_id == active.0.id.accesskit_id())
+                    .unwrap();
+                assert_eq!(node.label(), Some("full-source-filename.ARW"));
+                assert_eq!(node.toggled(), Some(egui::accesskit::Toggled::True));
+                assert_eq!(node.is_disabled(), !enabled);
+                assert_eq!(node.description(), Some("Active photo"));
+            }
+        }
+    }
 }
 
 #[test]

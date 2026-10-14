@@ -77,11 +77,14 @@ mod kittest_tests;
 mod memory;
 #[path = "editor_navigation.rs"]
 mod navigation;
+#[path = "editor_roll_selection.rs"]
+mod roll_selection;
 #[cfg(test)]
 #[path = "editor_tests.rs"]
 mod tests;
 #[path = "editor_viewer.rs"]
 mod viewer_ui;
+use roll_selection::RollSelection;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Pick {
@@ -160,6 +163,7 @@ impl LoadCache {
     }
 }
 enum Command {
+    Unload,
     Analyze(u64, Box<analysis::Request>),
     AnalysisSupport(u64, u64),
     Refine(u64, u64, ProcessingParameters, OutputTarget, ViewRequest),
@@ -621,6 +625,9 @@ fn backend(
                     break;
                 }
             }
+            Command::Unload => {
+                source = None;
+            }
             Command::Load(id, path, wb, expected, field, basis, cache) => {
                 let result = prepare_source_scheduled(
                     &renderers,
@@ -930,6 +937,8 @@ pub struct Editor {
     project_overwrite: Option<(PathBuf, Option<Transition>)>,
     allow_close: bool,
     selected: usize,
+    roll_selection: RollSelection,
+    removal_pending: Option<Vec<SourceId>>,
     overwrite: Option<(PathBuf, OutputFormat)>,
     correction: Option<Arc<Correction>>,
     flat_edit: Option<FlatEdit>,
@@ -1067,6 +1076,8 @@ impl Editor {
             project_overwrite: None,
             allow_close: false,
             selected: 0,
+            roll_selection: RollSelection::default(),
+            removal_pending: None,
             overwrite: None,
             correction: None,
             flat_edit: None,
@@ -1287,6 +1298,10 @@ impl Editor {
         self.thumbnails.cancel();
         self.sync_document();
         self.current_source = self.document.find_source(&path);
+        if selecting_photo {
+            self.roll_selection
+                .reconcile(&self.document.project.order, self.current_source);
+        }
         self.photo = self
             .current_source
             .and_then(|id| self.document.project.source(id).ok())
@@ -1585,6 +1600,11 @@ impl Editor {
                             }
                             self.id = id;
                             self.current_source = prepared.selected;
+                            if !prepared.reuse_ready && !prepared.preserve_view {
+                                self.roll_selection = RollSelection::default();
+                            }
+                            self.roll_selection
+                                .reconcile(&self.document.project.order, self.current_source);
                             self.selected = prepared
                                 .selected
                                 .and_then(|id| {
@@ -2212,7 +2232,8 @@ impl host::App for Editor {
             && self.transition.is_none()
             && self.project_overwrite.is_none()
             && self.resume_transition.is_none()
-            && self.analysis_confirmation.is_none();
+            && self.analysis_confirmation.is_none()
+            && self.removal_pending.is_none();
         let mut file_action = None;
         if !self.allow_close && ui.input(|input| input.viewport().close_requested()) {
             ui.ctx()
@@ -2265,6 +2286,7 @@ impl host::App for Editor {
             && !fullscreen_was_active
             && self.failure.is_none()
             && self.analysis_confirmation.is_none()
+            && self.removal_pending.is_none()
             && !(text_was_focused && ui.input(|input| input.key_pressed(egui::Key::Escape)))
             && self.overwrite.is_none()
             && self.transition.is_none()
@@ -2275,6 +2297,7 @@ impl host::App for Editor {
             if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Z)) {
                 self.viewport.fit();
             }
+            self.select_active_shortcut(ui.ctx());
             if self.pick.is_some()
                 && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
             {
@@ -2298,6 +2321,14 @@ impl host::App for Editor {
                     self.finish_crop(true);
                 }
             }
+            if self.roll_edit_available()
+                && ui.input_mut(|input| {
+                    input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
+                        || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
+                })
+            {
+                file_action = Some(FileAction::Remove);
+            }
             if self.pick.is_none()
                 && self.crop_edit.is_none()
                 && !self.document.project.order.is_empty()
@@ -2316,11 +2347,7 @@ impl host::App for Editor {
                     self.selected
                 };
                 if index != self.selected {
-                    self.selected = index;
-                    let id = self.document.project.order[index];
-                    if let Ok(path) = self.document.source_path(id) {
-                        self.load(path);
-                    }
+                    self.select_roll_photo(index, egui::Modifiers::NONE);
                 }
             }
         }
@@ -2335,6 +2362,7 @@ impl host::App for Editor {
             || self.project_overwrite.is_some()
             || self.resume_transition.is_some()
             || self.analysis_confirmation.is_some()
+            || self.removal_pending.is_some()
         {
             ui.disable();
         }
@@ -2422,6 +2450,9 @@ impl host::App for Editor {
                     }
                 });
             self.filmstrip(ui);
+            if self.removal_pending.is_some() {
+                ui.disable();
+            }
         }
         let (scope_slot, analyze) = if self.fullscreen.is_none() {
             egui::Panel::right("controls")
@@ -2722,6 +2753,7 @@ impl host::App for Editor {
         }
         self.document_dialogs(ui.ctx(), dialog_escape_available);
         self.analysis_dialog(ui.ctx(), dialog_escape_available);
+        self.removal_dialog(ui.ctx(), dialog_escape_available);
         if let Some((path, format)) = self.overwrite.clone() {
             let detail = path.display().to_string();
             let choice = presentation::DecisionDialog::new(

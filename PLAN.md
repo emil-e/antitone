@@ -12,6 +12,8 @@ Immutable full-resolution source reuse, persistent CPU/GPU optional byte limits,
 
 Photo-only full-display inspection uses current-Space borderless window coverage, zoom-group entry and auto-hiding shared controls. Controller/composed checks and the bounded native display-frame/active-Space/paint/window-restoration gate pass. [Broader native lifecycle, physical input and display acceptance](docs/plans/inspection-and-interaction.md#layout-and-controls) remain open.
 
+Roll multi-selection and confirmed project-only removal preserve RAWs, retained source grades and Roll calibration/correction. The active photo has distinct card framing, and empty rolls can be saved/reopened and repopulated. [Physical-input and accessibility acceptance](docs/plans/inspection-and-interaction.md#roll-workflow) remains open; undo is separate.
+
 Current focus is [Analyze photographic acceptance](docs/plans/roll-assistance.md). Analyze uses the shared UI components with full Photo-grade reset and conditional confirmation. Recovery/relink/undo remains lower priority than interaction and photographic acceptance.
 
 ## Remaining work, in priority order

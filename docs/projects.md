@@ -4,7 +4,7 @@ A project is a saved description of an accepted grade, not a copy of the RAW pho
 
 ## Separate sources from the filmstrip
 
-Each registered source has a stable ID and owns its Photo settings and composition. Filmstrip order is a separate list of those IDs. Removing a photo from that list does not erase its record or invalidate a stored calibration value.
+Each registered source has a stable ID and owns its Photo settings and composition. Filmstrip order is a separate list of those IDs. Removing a photo from that list does not erase its record or invalidate a stored calibration value. Even an empty roll retains its camera basis, calibration, correction and Roll settings. Adding a previously removed compatible RAW restores its existing source record and Photo settings; [selection/removal](editor.md#select-and-remove-roll-photos) is controlled by the editor.
 
 A bare-light reference can be registered without appearing as a photograph. Dmin/Dmax themselves are RGB values: their continued use does not depend on reopening the photo from which they were picked. A saved flat-field map similarly remains usable without its nonordered reference; editing it is a different operation.
 
@@ -14,7 +14,7 @@ Paths locate external files. Relative paths resolve beside the project document,
 
 The project retains calibration, Roll and Photo grading, source/development identity, orientation/crop, accepted correction, picture-analysis area and output settings. These are the choices that determine its processing.
 
-It does not retain canvas navigation, source-inspection exposure, picker return context, tool drafts, GPU objects or caches. Inspector expansion and scope/filmstrip sizing are application preferences saved independently; they are not part of a photographic grade.
+It does not retain active/multi-selection, canvas navigation, source-inspection exposure, picker return context, tool drafts, GPU objects or caches. Inspector expansion and scope/filmstrip sizing are application preferences saved independently; they are not part of a photographic grade.
 
 This distinction defines dirty state. Accepted project changes are compared with the last successful Save/Open snapshot. Looking around, selecting a photo or cancelling a draft does not make a project modified. Accepting a statistics area does, even though it does not immediately recalculate the grade.
 

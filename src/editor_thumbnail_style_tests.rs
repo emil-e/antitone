@@ -62,7 +62,7 @@ fn card_frames_and_captions_fit_compact_and_normal_strips_without_changing_prefe
                         .color
                 );
                 assert_eq!(cards[0].stroke.width, 1.5);
-                assert_eq!(cards[0].fill, egui::Color32::from_gray(30));
+                assert_eq!(cards[0].fill, egui::Color32::from_gray(48));
                 let captions: Vec<_> = output
                     .shapes
                     .iter()
@@ -122,5 +122,5 @@ fn hover_is_neutral_and_distinct_from_selection_without_changing_cell_geometry()
     assert_eq!(hover[1].fill, egui::Color32::from_gray(28));
     assert_eq!(hover[1].stroke.color, egui::Color32::from_gray(65));
     assert_ne!(hover[1].stroke, hover[0].stroke);
-    assert_eq!(hover[0].fill, egui::Color32::from_gray(30));
+    assert_eq!(hover[0].fill, egui::Color32::from_gray(48));
 }

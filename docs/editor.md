@@ -103,7 +103,18 @@ A pending preview can show the current grade from a retained compatible RGB16 pr
 
 An embedded JPEG is different again: it is already camera-rendered and can show different framing/colour. Its Camera badge makes that distinction visible. It never becomes the selected processing image or a source for inversion, correction, measurement or export. Developed thumbnail completion supersedes it; authoritative RAW errors take precedence.
 
-Filmstrip selection follows the current source identity, not pixel readiness: its outline remains during cold loading, JPEG placeholders and failure. Cards expose their full filename and selected state to accessibility. Selected-photo preparation keeps mouse/keyboard navigation available: a newer selection retires its predecessor's waiter and ignores stale Ready messages. Other busy operations, crop drafts and reference-support edits still disable selection and keyboard focus; ordered-roll Dmin/Dmax source selection remains available when not busy. Pending previews remain non-authoritative, so picks, crop and export still wait for Ready.
+## Select and remove roll photos
+
+Selection is temporary workspace state, separate from each source's accepted Photo settings. The active photo always belongs to the selected set and has a lighter neutral card background, including the caption area, as well as the selection outline. Cards expose their full filename, selection and active-photo description to accessibility; these states do not depend on pixel readiness.
+
+- Plain click makes that photo active. If it was already selected, the selection is retained; otherwise it becomes the sole selection. Arrow navigation uses the same rule.
+- Cmd-click toggles membership without changing the active photo unless it is deselected. Then a selected successor becomes active, or the last selected predecessor. Cmd-click on the sole selected photo does nothing.
+- Shift-click selects the contiguous range from the last plain-click anchor and makes that anchor active.
+- Shift–Cmd–A reduces the selection to the active photo, which becomes the new range anchor. It does not unload or reload the photograph and leaves photographic state unchanged. Text editing, popups and tool drafts retain input ownership.
+
+Use **Remove selected photos…** in a selected card's context menu, or Delete/Backspace outside text editing and popups. Removal requires confirmation because there is no undo. It changes only filmstrip membership: RAW files, retained source settings, calibration and correction remain untouched. After removal, the active position is the old index in the shortened roll, clamped to its last photo—not necessarily the next surviving identity. An empty roll has no active photo and can be saved, reopened and repopulated without resetting its retained camera basis or Roll settings.
+
+Selected-photo preparation keeps mouse/keyboard navigation available: a newer active photo retires its predecessor's waiter and ignores stale Ready messages. Removal still waits for foreground work to finish. Other busy operations, crop drafts and reference-support edits disable selection and keyboard focus. Ordered-roll Dmin/Dmax browsing remains available when not busy, but is temporary sampling context: it does not change the working multi-selection or its anchor. Removal cannot accept or cancel a tool draft. Pending previews remain non-authoritative, so picks, crop and export still wait for Ready.
 
 ## Responsiveness and optional caches
 
@@ -130,7 +141,7 @@ Use the existing component families rather than copying their painting or intera
 - [Icons](../src/editor_icons.rs): semantic actions and artwork.
 - [Controls](../src/editor_controls.rs): photographic values, precision and calibration/balance adapters.
 
-Presentation receives display-ready state and returns responses. Controllers still own availability, IDs, accepted/draft state, resets and dispatch. Cards receive selection/availability, and their caption supplies the unelided semantic filename; they do not own images, selection, virtualization or workers. Pinned section titles expose label semantics without disclosure/focus behavior. In the workspace, the fixed viewer bar hosts tool identity and Apply/Cancel without resizing the canvas; only selection/frame artwork belongs over the photograph. Photo-only inspection uses the shared floating-bar variant rather than moving tool transactions onto the image.
+Presentation receives display-ready state and returns responses. Controllers still own availability, IDs, accepted/draft state, resets and dispatch. Cards receive selected/active/availability state, and their caption supplies the unelided semantic filename; they do not own images, selection, virtualization or workers. Pinned section titles expose label semantics without disclosure/focus behavior. In the workspace, the fixed viewer bar hosts tool identity and Apply/Cancel without resizing the canvas; only selection/frame artwork belongs over the photograph. Photo-only inspection uses the shared floating-bar variant rather than moving tool transactions onto the image.
 
 ### Typography roles
 

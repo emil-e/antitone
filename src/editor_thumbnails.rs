@@ -300,7 +300,7 @@ impl Thumbnails {
             eprintln!("Selected proxy cache admission rejected: {error}");
         }
     }
-    fn release_selected(&mut self) {
+    pub(super) fn release_selected(&mut self) {
         self.selected_key = None;
         self.protect_cpu();
     }
@@ -665,6 +665,7 @@ impl Editor {
             && self.project_overwrite.is_none()
             && self.overwrite.is_none()
             && self.analysis_confirmation.is_none()
+            && self.removal_pending.is_none()
     }
     pub(super) fn hidden_filmstrip(&mut self, ui: &egui::Ui) {
         self.thumbnails.refresh_hidden_memory();
@@ -737,13 +738,16 @@ impl Editor {
         let mut camera_wanted = Vec::new();
         let mut visible = Vec::new();
         let mut select = None;
+        let mut remove = false;
         let selected_loading = self.ready.is_none()
             && self.selection_timing.is_some()
             && self.document_pending.is_none()
             && self.pick.is_none();
         let selection_enabled = (!self.busy || selected_loading)
             && self.flat_edit.is_none()
-            && self.crop_edit.is_none();
+            && self.crop_edit.is_none()
+            && (self.pick.is_none() || matches!(self.pick, Some(Pick::Dmin | Pick::Dmax)))
+            && self.removal_pending.is_none();
         let height = self
             .preferences
             .filmstrip_height
@@ -782,9 +786,10 @@ impl Editor {
                     let id = self.document.project.order[index];
                     let source = self.document.project.source(id).expect("filmstrip source");
                     let path = self.document.source_path(id).expect("filmstrip locator");
-                    let selected = self.current_source == Some(id);
+                    let active = self.current_source == Some(id);
+                    let selected = if self.pick.is_some() { active } else { active || self.roll_selection.contains(id) };
                     let response_id = ui.id().with(id.0);
-                    let card = layout.begin(ui,content.min+egui::vec2(index as f32*pitch,0.),response_id,selected,selection_enabled);
+                    let card = layout.begin(ui,content.min+egui::vec2(index as f32*pitch,0.),response_id,selected,active,selection_enabled);
                     let image_rect = card.image_rect;
                     let key = self.document.project.development.as_ref().map(|development|ImageKey { source:SourceKey::new(source,development,FileKey::new(&path)),target:self.target,field:self.correction.as_ref().map(|c|FieldKey(c.settings.map.clone())) });
                     if let Some(key) = &key { protected.push(key.clone()); }
@@ -842,14 +847,34 @@ impl Editor {
                     if error.is_some() { card.error(ui); }
                     let name = path.file_name().unwrap_or_default().to_string_lossy();
                     card.caption(ui,&name);
-                    if card.response.clicked() && selection_enabled { select = Some(index); }
-                    let help = error.unwrap_or_else(||format!("{}\nCamera previews show embedded, ungraded camera framing until the developed thumbnail is ready. Drag the strip's top edge to resize.",path.display()));
+                    if card.response.clicked() && selection_enabled { select = Some((index, ui.input(|input| input.modifiers))); }
+                    if self.roll_edit_available() && card.response.secondary_clicked() && !selected {
+                        select = Some((index, egui::Modifiers::NONE));
+                    }
+                    if self.roll_edit_available() && card.response.enabled() && card.response.has_focus()
+                        && !egui::Popup::is_any_open(ui.ctx()) {
+                        self.select_active_shortcut(ui.ctx());
+                        if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
+                            || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)) {
+                            remove = true;
+                        }
+                    }
+                    card.response.context_menu(|ui| {
+                        if ui.add_enabled(self.roll_edit_available() && selected, egui::Button::new("Remove selected photos…")).clicked() {
+                            remove = true;
+                            ui.close();
+                        }
+                    });
+                    let help = error.unwrap_or_else(||format!("{}\nCamera previews show embedded, ungraded camera framing until the developed thumbnail is ready. Drag the strip's top edge to resize.\nShift–Cmd–A: select active photo only.",path.display()));
                     card.response.on_hover_text(&help).on_disabled_hover_text(help);
                 }
             });
         });
         if (strip.response.rect.height() - height).abs() > 0.5 {
             self.preferences.filmstrip_height = strip.response.rect.height().clamp(52., 240.);
+        }
+        if remove {
+            self.request_removal();
         }
         let mut eligible = protected.clone();
         // Finish each source even at zero optional GPU retention. Offscreen GPU work
@@ -904,22 +929,17 @@ impl Editor {
             .collect();
         self.thumbnails.protect_cpu();
         self.thumbnails.cache.protect(protected);
-        self.thumbnails
-            .embedded
-            .request_visible(&camera_wanted, visible_allowed && select.is_none());
-        if let Some(index) = select {
-            let id = self.document.project.order[index];
-            let path = self
-                .document
-                .source_path(id)
-                .expect("selected filmstrip locator");
+        self.thumbnails.embedded.request_visible(
+            &camera_wanted,
+            visible_allowed && select.is_none() && !remove,
+        );
+        if let Some((index, modifiers)) = select {
             if matches!(self.pick, Some(Pick::Dmin | Pick::Dmax)) {
-                self.pick_roll_source(id);
+                self.pick_roll_source(self.document.project.order[index]);
             } else {
-                self.selected = index;
-                self.load(path);
+                self.select_roll_photo(index, modifiers);
             }
-        } else if visible_allowed {
+        } else if visible_allowed && !remove {
             wanted.sort_by_key(|(index, _, _, _)| {
                 let distance = visible
                     .iter()
@@ -974,6 +994,9 @@ mod selection_tests;
 #[cfg(test)]
 #[path = "editor_source_cache_tests.rs"]
 mod source_cache_tests;
+#[cfg(test)]
+#[path = "editor_thumbnail_style_tests.rs"]
+mod style_tests;
 #[cfg(all(test, target_os = "macos"))]
 #[path = "../native/editor_switching_observation.rs"]
 mod switch_observation;

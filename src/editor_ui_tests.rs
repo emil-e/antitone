@@ -202,7 +202,7 @@ fn shared_components_inherit_interaction_colours_without_tinting_photographic_su
                 .inspector(ui, |_| (), |ui, ()| ui.label("Tool details"));
                 let layout = super::ContactSheetLayout::new(100., false);
                 let (id, cell) = ui.allocate_space(layout.size());
-                let card = layout.begin(ui, cell.min, id, true, true);
+                let card = layout.begin(ui, cell.min, id, true, false, true);
                 rectangles = Some((action.rect, card.response.rect));
             },
         );

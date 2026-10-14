@@ -15,6 +15,8 @@ mod correction;
 mod fullscreen;
 #[path = "editor_kittest_project.rs"]
 mod project;
+#[path = "editor_kittest_roll_selection.rs"]
+mod roll_selection;
 #[path = "editor_kittest_tools.rs"]
 mod tools;
 #[path = "editor_typography_kittest.rs"]

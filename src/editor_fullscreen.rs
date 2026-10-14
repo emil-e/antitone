@@ -21,6 +21,7 @@ impl Editor {
             || self.resume_transition.is_some()
             || self.overwrite.is_some()
             || self.analysis_confirmation.is_some()
+            || self.removal_pending.is_some()
     }
 
     pub(super) fn fullscreen_available(&self) -> bool {

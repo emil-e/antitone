@@ -492,7 +492,7 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
             .unwrap();
         assert_eq!(selected.1.toggled(), Some(egui::accesskit::Toggled::True));
         assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
-            egui::Shape::Rect(rect) if rect.stroke.width == 1.5 && rect.fill == egui::Color32::from_gray(30))));
+            egui::Shape::Rect(rect) if rect.stroke.width == 1.5 && rect.fill == egui::Color32::from_gray(48))));
         output
             .shapes
             .into_iter()

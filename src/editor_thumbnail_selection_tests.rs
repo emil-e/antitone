@@ -2,6 +2,17 @@ use super::*;
 use egui::{Event, FullOutput, Key, Modifiers, Pos2};
 
 fn frame(editor: &mut Editor, context: &egui::Context, events: Vec<Event>) -> FullOutput {
+    frame_with_modifiers(editor, context, events, Modifiers::NONE)
+}
+
+fn frame_with_modifiers(
+    editor: &mut Editor,
+    context: &egui::Context,
+    events: Vec<Event>,
+    modifiers: Modifiers,
+) -> FullOutput {
+    let mut events = events;
+    events.insert(0, Event::ModifiersChanged(modifiers));
     context.enable_accesskit();
     let mut output = context.run_ui(
         egui::RawInput {
@@ -67,7 +78,7 @@ fn key(key: Key) -> Vec<Event> {
     }]
 }
 
-fn selected_outline(output: &FullOutput, point: Pos2) {
+fn selected_outline(output: &FullOutput, point: Pos2, active: bool) {
     let card = output
         .shapes
         .iter()
@@ -78,7 +89,10 @@ fn selected_outline(output: &FullOutput, point: Pos2) {
             _ => None,
         })
         .expect("selected card outline");
-    assert_eq!(card.fill, egui::Color32::from_gray(30));
+    assert_eq!(
+        card.fill,
+        egui::Color32::from_gray(if active { 48 } else { 30 })
+    );
 }
 
 #[test]
@@ -105,7 +119,7 @@ fn cold_loading_and_failed_selected_raw_retain_selection_and_filename() {
         !node(&output, name).1.is_disabled(),
         "loading a photo must not block navigation"
     );
-    selected_outline(&output, point(&output, name));
+    selected_outline(&output, point(&output, name), true);
     assert!(editor.ready.is_none() && editor.pending_preview.is_none());
     assert_eq!(editor.document.project, before);
     send.send(Message::Ready(editor.id, Err("RAW unavailable".into())))
@@ -113,7 +127,7 @@ fn cold_loading_and_failed_selected_raw_retain_selection_and_filename() {
     editor.receive();
     assert!(!editor.busy && editor.ready.is_none() && editor.pending_preview.is_none());
     let output = frame(&mut editor, &context, vec![]);
-    selected_outline(&output, point(&output, name));
+    selected_outline(&output, point(&output, name), true);
     assert_eq!(
         node(&output, name).1.toggled(),
         Some(egui::accesskit::Toggled::True)
@@ -140,7 +154,7 @@ fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus(
     let output = frame(&mut editor, &context, vec![]);
     let target = node(&output, "photo-0.ARW").0;
     let point = point(&output, "photo-0.ARW");
-    for state in ["busy", "crop", "flat"] {
+    for state in ["busy", "crop", "flat", "pick"] {
         let mut focused = false;
         for _ in 0..12 {
             frame(&mut editor, &context, key(Key::Tab));
@@ -157,6 +171,7 @@ fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus(
         match state {
             "busy" => editor.busy = true,
             "crop" => editor.begin_crop(),
+            "pick" => editor.pick = Some(Pick::Gamma),
             "flat" => {
                 editor.flat_edit = Some(crate::editor::flat::FlatEdit {
                     id: editor.id,
@@ -196,6 +211,7 @@ fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus(
         editor.busy = false;
         editor.finish_crop(false);
         editor.flat_edit = None;
+        editor.pick = None;
         frame(&mut editor, &context, vec![]);
     }
     frame(&mut editor, &context, pointer(point, true));
@@ -355,4 +371,78 @@ fn pending_photo_loading_accepts_mouse_and_keyboard_replacement_and_ignores_old_
         editor.begin_crop();
         assert!(editor.pick.is_none() && editor.crop_edit.is_none());
     }
+}
+
+#[test]
+fn modifier_clicks_expose_selection_separately_from_the_active_photo() {
+    let (mut editor, send, commands) = crate::editor::tests::fixture();
+    editor.document = super::tests::fixture();
+    editor.document.project.order.truncate(3);
+    editor.current_source = Some(editor.document.project.order[0]);
+    let context = egui::Context::default();
+    frame(&mut editor, &context, vec![]);
+    let output = frame(&mut editor, &context, vec![]);
+    let click = |editor: &mut Editor, index: usize, modifiers| {
+        let point = point(&output, &format!("photo-{index}.ARW"));
+        for pressed in [true, false] {
+            let mut events = pointer(point, pressed);
+            if let Event::PointerButton {
+                modifiers: event_modifiers,
+                ..
+            } = &mut events[1]
+            {
+                *event_modifiers = modifiers;
+            }
+            frame_with_modifiers(editor, &context, events, modifiers);
+        }
+    };
+    click(&mut editor, 2, Modifiers::COMMAND);
+    assert!(
+        commands.try_recv().is_err(),
+        "extending selection does not load a RAW"
+    );
+    let result = frame(&mut editor, &context, vec![]);
+    for index in 0..3 {
+        let name = format!("photo-{index}.ARW");
+        let (_, node) = node(&result, &name);
+        if index != 1 {
+            selected_outline(&result, point(&result, &name), index == 0);
+        }
+        assert_eq!(
+            node.toggled(),
+            Some(if index == 1 {
+                egui::accesskit::Toggled::False
+            } else {
+                egui::accesskit::Toggled::True
+            })
+        );
+        assert_eq!(
+            node.description(),
+            if index == 0 {
+                Some("Active photo")
+            } else {
+                None
+            }
+        );
+    }
+    click(&mut editor, 0, Modifiers::COMMAND);
+    assert!(matches!(commands.try_recv().unwrap(), Command::Load(..)));
+    assert_eq!(
+        editor.current_source,
+        Some(editor.document.project.order[2])
+    );
+    send.send(Message::Ready(editor.id, Err("fixture unavailable".into())))
+        .unwrap();
+    editor.receive();
+    click(&mut editor, 2, Modifiers::COMMAND);
+    assert!(
+        commands.try_recv().is_err(),
+        "sole selected card is a no-op"
+    );
+    click(&mut editor, 1, Modifiers::NONE);
+    assert!(matches!(commands.try_recv().unwrap(), Command::Load(..)));
+    assert_eq!(
+        editor.current_source,
+        Some(editor.document.project.order[1])
+    );
 }
