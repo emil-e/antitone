@@ -59,8 +59,9 @@ fn branded_header_preserves_composed_menu_availability_and_processing_state() {
 }
 
 #[test]
-fn stage_tabs_have_equal_named_hit_regions_selection_and_keyboard_activation() {
+fn stage_tabs_balance_label_padding_with_named_hit_regions_selection_and_keyboard_activation() {
     let context = egui::Context::default();
+    presentation::configure_fonts(&context);
     context.enable_accesskit();
     let mut selected = 0;
     let mut frame = |events| {
@@ -93,6 +94,7 @@ fn stage_tabs_have_equal_named_hit_regions_selection_and_keyboard_activation() {
     nodes.sort_by(|(_, a), (_, b)| a.bounds().unwrap().x0.total_cmp(&b.bounds().unwrap().x0));
     assert_eq!(nodes.len(), 3);
     let mut widths = Vec::new();
+    let mut side_padding = Vec::new();
     for ((_, node), name) in nodes.into_iter().zip(["Roll", "Photo", "Rendering"]) {
         assert_eq!(node.label(), Some(name));
         assert_eq!(node.is_selected(), Some(name == "Roll"));
@@ -100,8 +102,26 @@ fn stage_tabs_have_equal_named_hit_regions_selection_and_keyboard_activation() {
         assert_eq!(bounds.y1 - bounds.y0, 28.);
         assert!(bounds.x0 >= 0. && bounds.x1 <= 270.);
         widths.push(bounds.x1 - bounds.x0);
+        let uppercase = name.to_uppercase();
+        let text = first
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text == uppercase => Some(text),
+                _ => None,
+            })
+            .unwrap();
+        let left = f64::from(text.pos.x) - bounds.x0;
+        let right = bounds.x1 - f64::from(text.pos.x + text.galley.size().x);
+        assert!(left >= 12. && right >= 12.);
+        assert!((left - right).abs() < 0.001);
+        side_padding.push(left);
     }
-    assert!((widths[0] - widths[1]).abs() < 0.001 && (widths[1] - widths[2]).abs() < 0.001);
+    assert!(widths[0] < widths[1] && widths[1] < widths[2]);
+    assert!(
+        (side_padding[0] - side_padding[1]).abs() < 0.001
+            && (side_padding[1] - side_padding[2]).abs() < 0.001
+    );
     let key = |key| {
         vec![egui::Event::Key {
             key,

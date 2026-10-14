@@ -1805,8 +1805,12 @@ impl host::App for Editor {
         if !self.started {
             self.started = true;
             presentation::configure_branding(ui);
+            presentation::configure_fonts(ui.ctx());
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1100., 800.)));
+            // Named font families become available at the start of the next pass.
+            ui.ctx().request_discard("Initialize editor typography");
+            return;
         }
         // egui popups close on Escape without consuming it; preserve their input ownership.
         let dialog_escape_available = !egui::Popup::is_any_open(ui.ctx());

@@ -32,6 +32,7 @@ def main():
     resources.mkdir()
     shutil.copy2(binary, executable / "antitone")
     shutil.copy2(root / "assets" / "branding" / "icon.icns", resources / "Antitone.icns")
+    shutil.copy2(root / "assets" / "fonts" / "OFL.txt", resources / "IBM-Plex-OFL.txt")
     info = {
         "CFBundleDevelopmentRegion": "en",
         "CFBundleDisplayName": "Antitone",

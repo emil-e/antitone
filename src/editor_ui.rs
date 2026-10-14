@@ -25,6 +25,45 @@ pub(super) const VIEWER_ITEM_GAP: f32 = 4.;
 const HEADER_HEIGHT: f32 = 32.;
 const INSCRIPTION: Color32 = Color32::from_rgb(223, 170, 96);
 
+const READING_FONT: &str = "plex-text";
+const INSTRUMENT_FONT: &str = "plex-medium";
+
+pub(super) fn configure_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        READING_FONT.into(),
+        egui::FontData::from_static(include_bytes!("../assets/fonts/IBMPlexSans-Text.ttf")).into(),
+    );
+    fonts.font_data.insert(
+        INSTRUMENT_FONT.into(),
+        egui::FontData::from_static(include_bytes!("../assets/fonts/IBMPlexSans-Medium.ttf"))
+            .into(),
+    );
+    let proportional = fonts
+        .families
+        .get_mut(&egui::FontFamily::Proportional)
+        .unwrap();
+    proportional.insert(0, READING_FONT.into());
+    let mut instrument = proportional.clone();
+    instrument.insert(0, INSTRUMENT_FONT.into());
+    fonts
+        .families
+        .insert(egui::FontFamily::Name(INSTRUMENT_FONT.into()), instrument);
+    ctx.set_fonts(fonts);
+}
+
+fn instrument_font(size: f32) -> egui::FontId {
+    egui::FontId::new(size, egui::FontFamily::Name(INSTRUMENT_FONT.into()))
+}
+
+pub(super) fn instrument_readout(text: &str, size: f32) -> egui::RichText {
+    egui::RichText::new(text).font(instrument_font(size))
+}
+
+pub(super) fn instrument_label(text: &str, size: f32) -> egui::RichText {
+    instrument_readout(&text.to_uppercase(), size).extra_letter_spacing(size * 0.045)
+}
+
 pub(super) fn configure_branding(ui: &mut Ui) {
     let mut visuals = egui::Visuals::dark();
     visuals.panel_fill = Color32::from_rgb(34, 36, 38);
@@ -120,6 +159,7 @@ pub(super) struct TextAction<'a> {
     help: Option<&'a str>,
     enabled: bool,
     primary: bool,
+    readout: bool,
     toolbar_width: Option<f32>,
 }
 
@@ -131,6 +171,7 @@ impl<'a> TextAction<'a> {
             help: None,
             enabled: true,
             primary: false,
+            readout: false,
             toolbar_width: None,
         }
     }
@@ -142,6 +183,11 @@ impl<'a> TextAction<'a> {
 
     pub(super) fn primary(mut self) -> Self {
         self.primary = true;
+        self
+    }
+
+    pub(super) fn readout(mut self) -> Self {
+        self.readout = true;
         self
     }
 
@@ -167,7 +213,16 @@ impl<'a> TextAction<'a> {
     }
 
     fn button(&self, ui: &Ui) -> egui::Button<'a> {
-        let mut button = egui::Button::new(self.label).min_size(self.min_size());
+        let text: egui::WidgetText = if self.readout {
+            let style = ui.style().button_style(
+                &egui::widget_style::Classes::default(),
+                egui::widget_style::WidgetState::Inactive,
+            );
+            instrument_readout(self.label, style.text_style.font_id.size).into()
+        } else {
+            self.label.into()
+        };
+        let mut button = egui::Button::new(text).min_size(self.min_size());
         if self.primary {
             button = button.fill(ui.visuals().selection.bg_fill);
         }
@@ -188,7 +243,11 @@ impl<'a> TextAction<'a> {
         };
         let text = ui.painter().layout_no_wrap(
             self.label.into(),
-            style.text_style.font_id,
+            if self.readout {
+                instrument_font(style.text_style.font_id.size)
+            } else {
+                style.text_style.font_id
+            },
             style.text_style.color,
         );
         (text.size().x + margin).max(self.min_size().x)
@@ -230,9 +289,7 @@ impl ToolIdentity<'_> {
     }
 
     fn viewer_title(self) -> egui::RichText {
-        egui::RichText::new(self.title)
-            .font(egui::FontId::proportional(12.))
-            .strong()
+        instrument_label(self.title, 12.).strong()
     }
 
     /// Inline inspector framing; the caller supplies header actions and body state.

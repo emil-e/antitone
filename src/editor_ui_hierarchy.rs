@@ -29,33 +29,100 @@ pub fn stage_tabs(ui: &mut Ui, selected: &mut usize) {
         egui::vec2(ui.available_width(), CONTROL_HEIGHT),
         egui::Sense::hover(),
     );
-    let width = (bar.width() - 24.) / 3.;
-    for (index, (label, help)) in [
-        ("Roll", "Shared scanning setup, calibration and negative inversion."),
-        ("Photo", "Composition and photographic grade for this image."),
-        ("Rendering", "Shared rendered appearance: matching preview, thumbnails, scopes and TIFF target; not the monitor profile. EXR bypasses it."),
-    ].into_iter().enumerate() {
-        let rect = egui::Rect::from_min_size(bar.min + egui::vec2(index as f32 * (width + 12.), 0.), egui::vec2(width, bar.height()));
+    let tabs = [
+        (
+            "Roll",
+            "Shared scanning setup, calibration and negative inversion.",
+        ),
+        (
+            "Photo",
+            "Composition and photographic grade for this image.",
+        ),
+        (
+            "Rendering",
+            "Shared rendered appearance: matching preview, thumbnails, scopes and TIFF target; not the monitor profile. EXR bypasses it.",
+        ),
+    ];
+    let size = egui::TextStyle::Button.resolve(ui.style()).size;
+    let texts: Vec<_> = tabs
+        .iter()
+        .map(|(label, _)| {
+            egui::WidgetText::from(
+                super::instrument_label(label, size).extra_letter_spacing(size * 0.02),
+            )
+            .into_galley(
+                ui,
+                Some(egui::TextWrapMode::Extend),
+                f32::INFINITY,
+                egui::TextStyle::Button,
+            )
+        })
+        .collect();
+    let breathing_room =
+        (bar.width() - 24. - texts.iter().map(|text| text.size().x).sum::<f32>()) / 3.;
+    let mut left = bar.left();
+    for (index, ((label, help), text)) in tabs.into_iter().zip(texts).enumerate() {
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(left, bar.top()),
+            egui::vec2(text.size().x + breathing_room, bar.height()),
+        );
+        left = rect.right() + 12.;
         if index != 0 {
-            Icon::ChevronRight.paint(ui, egui::Rect::from_center_size(rect.left_center() - egui::vec2(6., 0.), egui::vec2(10., 10.)), ui.visuals().widgets.noninteractive.fg_stroke);
+            Icon::ChevronRight.paint(
+                ui,
+                egui::Rect::from_center_size(
+                    rect.left_center() - egui::vec2(6., 0.),
+                    egui::vec2(10., 10.),
+                ),
+                ui.visuals().widgets.noninteractive.fg_stroke,
+            );
         }
-        let response = ui.interact(rect, ui.make_persistent_id(("inspector-tab", index)), egui::Sense::click());
-        if response.clicked() { *selected = index; }
+        let response = ui.interact(
+            rect,
+            ui.make_persistent_id(("inspector-tab", index)),
+            egui::Sense::click(),
+        );
+        if response.clicked() {
+            *selected = index;
+        }
         let active = *selected == index;
         let visuals = ui.style().interact(&response);
         if response.hovered() || response.has_focus() || response.is_pointer_button_down_on() {
-            ui.painter().rect(rect, 4., visuals.weak_bg_fill, visuals.bg_stroke, egui::StrokeKind::Inside);
+            ui.painter().rect(
+                rect,
+                4.,
+                visuals.weak_bg_fill,
+                visuals.bg_stroke,
+                egui::StrokeKind::Inside,
+            );
         }
-        let color = if active { ui.visuals().strong_text_color() } else { visuals.fg_stroke.color };
-        let text = ui.painter().layout_no_wrap(label.into(), egui::TextStyle::Button.resolve(ui.style()), color);
-        ui.painter().galley(rect.center() - text.size() * 0.5, text, color);
-        response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, response.enabled(), active, label));
+        let color = if active {
+            ui.visuals().strong_text_color()
+        } else {
+            visuals.fg_stroke.color
+        };
+        ui.painter().galley_with_override_text_color(
+            rect.center() - text.size() * 0.5,
+            text,
+            color,
+        );
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::SelectableLabel,
+                response.enabled(),
+                active,
+                label,
+            )
+        });
         ui.ctx().accesskit_node_builder(response.id, |node| {
             node.set_role(egui::accesskit::Role::Tab);
             node.set_selected(active);
         });
         if active {
-            ui.painter().line_segment([rect.left_bottom(), rect.right_bottom()], egui::Stroke::new(2., ui.visuals().selection.stroke.color));
+            ui.painter().line_segment(
+                [rect.left_bottom(), rect.right_bottom()],
+                egui::Stroke::new(2., ui.visuals().selection.stroke.color),
+            );
         }
         response.on_hover_text(help);
     }

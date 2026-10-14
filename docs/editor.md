@@ -90,6 +90,14 @@ Use the existing component families rather than copying their painting or intera
 
 Presentation receives display-ready state and returns responses. Controllers still own availability, IDs, accepted/draft state, resets and dispatch. Cards receive selection/availability, and their caption supplies the unelided semantic filename; they do not own images, selection, virtualization or workers. Pinned section titles expose label semantics without disclosure/focus behavior. The fixed viewer bar hosts tool identity and Apply/Cancel without resizing the canvas; only selection/frame artwork belongs over the photograph.
 
+### Typography roles
+
+Reading text should be quiet; short instrument markings give the workspace its camera-body character. The editor embeds [IBM Plex Sans](../assets/fonts/README.md): Text for ordinary controls, explanations, filenames and numeric entry; Medium for stage tabs, active viewer-tool names and compact zoom/source-EV readouts. The Arimo wordmark remains separate artwork. Default glyph fallbacks and monospace text are retained.
+
+[Presentation](../src/editor_ui.rs) installs the fonts during editor startup and owns `instrument_label`, `instrument_readout` and `TextAction::readout`. Use these roles rather than naming fonts or overriding feature-local styles. Instrument labels are uppercase with restrained spacing; readouts retain their supplied formatting without extra tracking. Do not apply the instrument role to every heading, button or number. Ordinary `strong` text changes semantic emphasis, not font weight.
+
+Stage tabs share equal breathing room around their labels rather than equal widths, so Rendering has room beside its chevron at the narrow inspector size. Their full bar remains fixed-width and fixed-height; accessible names, stage order and keyboard activation do not depend on uppercase lettering. Typography does not change numeric precision, disabled snapshots, processing or persistence.
+
 ### Colour roles
 
 Colour expresses interaction state, not feature ownership. Presentation installs the editor theme once; ordinary egui widgets and the shared components inherit its selection, active-state and link colours. Choose semantic variants such as a primary action rather than choosing amber or overriding widget visuals in a feature controller.

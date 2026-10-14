@@ -13,6 +13,8 @@ mod correction;
 mod project;
 #[path = "editor_kittest_tools.rs"]
 mod tools;
+#[path = "editor_typography_kittest.rs"]
+mod typography;
 #[path = "editor_kittest_workflow.rs"]
 mod workflow;
 

@@ -2,6 +2,8 @@
 mod rows;
 #[path = "editor_tool_group_tests.rs"]
 mod tool_groups;
+#[path = "editor_ui_typography_tests.rs"]
+mod typography;
 
 use super::{INSCRIPTION, TextAction, app_header, configure_branding};
 use egui::{Context, Event, FullOutput, Modifiers, Pos2, Rect, Response, Ui};
@@ -13,6 +15,7 @@ pub(super) fn frame<R>(
     events: Vec<Event>,
     mut draw: impl FnMut(&mut Ui) -> R,
 ) -> (R, FullOutput) {
+    super::configure_fonts(context);
     context.enable_accesskit();
     let mut result = None;
     let mut output = context.run_ui(
@@ -171,6 +174,7 @@ fn brand_assets_have_the_expected_sizes_and_self_contained_wordmarks() {
 fn shared_components_inherit_interaction_colours_without_tinting_photographic_surfaces() {
     for accent in [INSCRIPTION, egui::Color32::from_rgb(71, 143, 207)] {
         let context = Context::default();
+        super::configure_fonts(&context);
         let mut rectangles = None;
         let mut output = context.run_ui(
             egui::RawInput {

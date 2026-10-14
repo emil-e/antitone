@@ -623,6 +623,7 @@ pub(super) fn app_frame(
     context: &egui::Context,
     events: Vec<egui::Event>,
 ) -> Vec<(String, egui::Rect)> {
+    presentation::configure_fonts(context);
     context.enable_accesskit();
     let mut output = context.run_ui(
         egui::RawInput {
@@ -1906,6 +1907,7 @@ fn controls_frame_sized(
     height: f32,
     events: Vec<egui::Event>,
 ) -> Vec<(String, egui::Rect)> {
+    presentation::configure_fonts(context);
     context.enable_accesskit();
     let mut output = context.run_ui(
         egui::RawInput {

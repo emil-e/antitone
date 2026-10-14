@@ -9,6 +9,7 @@ fn frame(
     mut events: Vec<egui::Event>,
     modifiers: egui::Modifiers,
 ) -> (Response, Response, Response) {
+    super::super::presentation::configure_fonts(context);
     let mut responses = None;
     events.insert(0, egui::Event::ModifiersChanged(modifiers));
     let mut output = context.run_ui(

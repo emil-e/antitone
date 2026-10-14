@@ -63,7 +63,7 @@ impl Editor {
                     }
                     let layout = self.crop_edit.as_ref().and_then(|edit| edit.layout).or(self.last_layout.map(|(layout, _)| layout));
                     let zoom = layout.map_or("—".into(), |layout| format!("{:.0}%", 100. * layout.scale * ui.ctx().pixels_per_point()));
-                    let zoom = TextAction::new(&zoom).enabled(navigating).toolbar(50.).name("100%").help("Show 100%: one source pixel per physical display pixel.").show(ui);
+                    let zoom = TextAction::new(&zoom).readout().enabled(navigating).toolbar(50.).name("100%").help("Show 100%: one source pixel per physical display pixel.").show(ui);
                     if zoom.clicked() { zoom_action = Some(1.); }
                     if show_zoom_steps {
                         for (icon, name, factor) in [(Icon::ZoomOut, "Zoom out", 1. / 1.25), (Icon::ZoomIn, "Zoom in", 1.25)] {
@@ -92,9 +92,10 @@ impl Editor {
                                 });
                                 ui.small("Preview brightness only · not saved");
                             });
-                        let exposure_width = ui.painter().layout_no_wrap(exposure.clone(), egui::TextStyle::Small.resolve(ui.style()), ui.visuals().text_color()).size().x;
+                        let readout = presentation::instrument_readout(&exposure, egui::TextStyle::Small.resolve(ui.style()).size);
+                        let exposure_width = egui::WidgetText::from(readout.clone()).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Small).size().x;
                         if ui.available_width() >= trailing_width + exposure_width + 40. {
-                            ui.small(exposure);
+                            ui.label(readout);
                         }
                     } else {
                         egui::Popup::close_id(ui.ctx(), inspection_id);

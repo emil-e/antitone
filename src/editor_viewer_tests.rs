@@ -199,9 +199,10 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                     Pick::Analysis => "Picture area",
                     Pick::Flat => unreachable!(),
                 };
+                let marking = title.to_uppercase();
                 let identity = text
                     .iter()
-                    .find(|(s, rect)| s == title && rect.top() >= canvas.bottom())
+                    .find(|(s, rect)| s == &marking && rect.top() >= canvas.bottom())
                     .unwrap()
                     .1;
                 assert!(
@@ -212,7 +213,7 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                 assert!(
                     !text
                         .iter()
-                        .any(|(s, rect)| s == title && canvas.contains_rect(*rect))
+                        .any(|(s, rect)| s == &marking && canvas.contains_rect(*rect))
                 );
                 for name in ["Cancel", "Apply"] {
                     let rect = text.iter().find(|(s, _)| s == name).unwrap().1;
@@ -286,7 +287,7 @@ fn bar_inspector_and_help_own_pointer_drag_wheel_and_escape_before_the_canvas() 
                 s == if cropping {
                     "Crop & straighten"
                 } else {
-                    "WB neutral"
+                    "WB NEUTRAL"
                 }
             })
             .unwrap()
@@ -771,7 +772,7 @@ fn geometry_tools_use_trailing_viewer_bar_actions_and_only_their_own_inspector()
                     let identity = text
                         .iter()
                         .find(|(s, rect)| {
-                            s == if cropping { "Crop" } else { "Flat-field" }
+                            s == if cropping { "CROP" } else { "FLAT-FIELD" }
                                 && rect.top() >= canvas.bottom()
                         })
                         .unwrap()

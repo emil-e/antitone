@@ -23,7 +23,7 @@ fn group(title: &str, busy: bool, apply_enabled: bool) -> ToolGroup<'_> {
 }
 
 fn direct_viewer(ui: &mut Ui, group: ToolGroup<'_>) -> egui::InnerResponse<ToolActions> {
-    let font = egui::FontId::proportional(12.);
+    let title = crate::editor::presentation::instrument_label(group.identity.title, 12.).strong();
     let cancel = TextAction::new("Cancel")
         .enabled(group.cancel_enabled)
         .toolbar(0.)
@@ -33,12 +33,12 @@ fn direct_viewer(ui: &mut Ui, group: ToolGroup<'_>) -> egui::InnerResponse<ToolA
         .primary()
         .toolbar(0.)
         .help("Apply the active tool (Enter).");
-    let title_width = ui
-        .painter()
-        .layout_no_wrap(
-            group.identity.title.into(),
-            font.clone(),
-            ui.visuals().text_color(),
+    let title_width = egui::WidgetText::from(title.clone())
+        .into_galley(
+            ui,
+            Some(egui::TextWrapMode::Extend),
+            f32::INFINITY,
+            egui::TextStyle::Body,
         )
         .size()
         .x;
@@ -67,11 +67,7 @@ fn direct_viewer(ui: &mut Ui, group: ToolGroup<'_>) -> egui::InnerResponse<ToolA
                             .icon
                             .paint(ui, rect, ui.visuals().selection.stroke);
                     }
-                    let label = ui.add(egui::Label::new(
-                        egui::RichText::new(group.identity.title)
-                            .font(font)
-                            .strong(),
-                    ));
+                    let label = ui.add(egui::Label::new(title));
                     label.widget_info(|| {
                         egui::WidgetInfo::labeled(
                             egui::WidgetType::Label,
