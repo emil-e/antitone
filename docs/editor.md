@@ -73,7 +73,7 @@ The task slot and mutable progress state are private. Analyze uses this same lif
 
 ## Source inspection is a view
 
-Developed-source inspection bypasses inversion and photographic grading. Its exposure adjustment affects that source preview only. It does not alter RAW development, calibration, fitting, exports or generated filmstrip thumbnails, and it is not saved in the project.
+Developed-source inspection bypasses inversion and photographic grading, but retains camera-to-AP1 conversion and ACES. Its [default display normalization](colour-and-output.md#source-inspection-has-its-own-exposure-convention) is shared with uncalibrated developed thumbnails. The exposure control adjusts the selected source preview relative to that default; zero restores the default, not the unscaled RAW buffer. This manual adjustment does not alter RAW development, calibration, fitting, exports or generated filmstrip thumbnails, and it is not saved in the project.
 
 Normal inspection retains accepted composition. Temporary calibration/reference tools may reveal another source domain, then restore the working view. Hidden inspection retains its transient EV; the positive ignores it.
 

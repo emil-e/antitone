@@ -644,7 +644,7 @@ impl Editor {
             source.photo
         };
         self.calibration().map_or_else(
-            || Ok(ProcessingParameters::source()),
+            || self.source_parameters(0.),
             |calibration| {
                 self.positive_parameters_for_matrix(
                     calibration,

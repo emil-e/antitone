@@ -22,6 +22,101 @@ fn source_inspection_is_zero_default_and_changes_only_the_source_post_matrix() {
     }
 }
 
+#[test]
+fn source_preview_restores_green_referenced_headroom_and_keeps_inspection_relative() {
+    for (wb, headroom) in [
+        ([1.; 4], 1.),
+        ([2., 1., 1.5, 1.], 2.),
+        ([0.25, 1., 0.5, 1.], 1.),
+        ([1., 2., 4., 2.], 2.),
+        ([1., 1., 0.5, 3.5], 3.5),
+        ([1024., 512., 768., 512.], 2.),
+    ] {
+        for exposure in [-16.0_f64, -2., 0., 2., 16.] {
+            let adjusted = ProcessingParameters::source_preview(Some(wb), exposure).unwrap();
+            assert_eq!(
+                adjusted.post,
+                matrix_columns(DMat3::IDENTITY * (2. * headroom * exposure.exp2()))
+            );
+            let base = ProcessingParameters::source();
+            let unchanged = ProcessingParameters {
+                post: base.post,
+                post_low: base.post_low,
+                ..adjusted
+            };
+            assert_eq!(bytemuck::bytes_of(&unchanged), bytemuck::bytes_of(&base));
+        }
+    }
+    for exposure in [f64::NAN, f64::INFINITY, -17., 17.] {
+        assert!(ProcessingParameters::source_preview(Some([1.; 4]), exposure).is_err());
+    }
+    // Preserve the low-level identity constructor for processing diagnostics.
+    assert_eq!(
+        ProcessingParameters::source().post,
+        matrix_columns(DMat3::IDENTITY)
+    );
+}
+
+#[test]
+fn source_preview_falls_back_without_repairing_missing_or_unusable_wb() {
+    for wb in [
+        None,
+        Some([0.; 4]),
+        Some([1., 1., 1., 0.]),
+        Some([1., 0., 1., 1.]),
+        Some([1., f64::NAN, 1., 1.]),
+        Some([f64::INFINITY, 1., 1., 1.]),
+        Some([-1., 1., 1., 1.]),
+        Some([f64::MAX, 1., 1., 1.]),
+        Some([f64::MIN_POSITIVE; 4]),
+        Some([1e-6; 4]),
+        Some([1., 1e-30, 1., 1.]),
+        Some([65537., 1., 1., 1.]),
+    ] {
+        for exposure in [-16.0_f64, 0., 16.] {
+            let parameters = ProcessingParameters::source_preview(wb, exposure).unwrap();
+            assert_eq!(
+                parameters.post,
+                matrix_columns(DMat3::IDENTITY * (2. * exposure.exp2()))
+            );
+        }
+    }
+    assert_eq!(source_preview_gain(Some([65536., 1., 1., 1.])), 131072.);
+}
+
+#[cfg(feature = "raw")]
+#[test]
+fn authored_source_preview_scale_agrees_with_actual_libraw_development_gains() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
+    for wb in [
+        [1.; 4],
+        [2.13, 1., 1.77, 1.],
+        [0.5, 1., 0.25, 0.75],
+        [1., 1., 0.5, 3.5],
+    ] {
+        let scan = crate::scan::Scan::open(&path, Some(wb)).unwrap();
+        let before = scan
+            .source()
+            .camera_image()
+            .unwrap()
+            .pixel_codes(32, 32)
+            .unwrap();
+        let image = scan.source().camera_image().unwrap();
+        let gain = 2. / image.pre_mul[1];
+        let parameters = ProcessingParameters::source_preview(Some(scan.fixed_wb), 0.).unwrap();
+        assert!((f64::from(parameters.post[0].x) - gain).abs() < 1e-6 * gain);
+        assert_eq!(
+            scan.source()
+                .camera_image()
+                .unwrap()
+                .pixel_codes(32, 32)
+                .unwrap(),
+            before
+        );
+    }
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn source_inspection_gpu_matches_scaled_camera_to_ap1_with_zero_diagnostic_flags() {
@@ -57,15 +152,29 @@ fn source_inspection_gpu_matches_scaled_camera_to_ap1_with_zero_diagnostic_flags
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        for exposure in [-16.0_f64, -2., 0., 2., 16.] {
+        let cases = [-16.0_f64, -2., 0., 2., 16.]
+            .into_iter()
+            .flat_map(|exposure| {
+                [
+                    (
+                        ProcessingParameters::source_inspection(exposure).unwrap(),
+                        exposure.exp2(),
+                    ),
+                    (
+                        ProcessingParameters::source_preview(Some([2., 1., 1.5, 1.]), exposure)
+                            .unwrap(),
+                        4. * exposure.exp2(),
+                    ),
+                    (
+                        ProcessingParameters::source_preview(Some([0.5, 1., 0.25, 1.]), exposure)
+                            .unwrap(),
+                        2. * exposure.exp2(),
+                    ),
+                ]
+            });
+        for (parameters, gain) in cases {
             let mut encoder = device.create_command_encoder(&Default::default());
-            kernel.encode(
-                &device,
-                &mut encoder,
-                &source,
-                &output,
-                ProcessingParameters::source_inspection(exposure).unwrap(),
-            );
+            kernel.encode(&device, &mut encoder, &source, &output, parameters);
             encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, 64);
             queue.submit([encoder.finish()]);
             let (send, receive) = std::sync::mpsc::channel();
@@ -80,7 +189,7 @@ fn source_inspection_gpu_matches_scaled_camera_to_ap1_with_zero_diagnostic_flags
             let values: &[Vec4] = bytemuck::cast_slice(&mapped);
             for (pixel, actual) in codes.iter().zip(values) {
                 let camera = DVec3::new(pixel[0] as f64, pixel[1] as f64, pixel[2] as f64) / 65535.;
-                let expected = matrix * camera * exposure.exp2();
+                let expected = matrix * camera * gain;
                 for channel in 0..3 {
                     assert!(
                         (actual[channel] as f64 - expected[channel]).abs()

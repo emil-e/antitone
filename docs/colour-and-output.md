@@ -27,6 +27,14 @@ Selecting P3 changes the actual rendering/limiting primaries, not just the file'
 
 Generated GPU algorithms and tables implement the same rendering as the CPU reference/export path. This is why changes must be checked across both paths rather than adjusted in a shader alone. [Pinned OCIO artifacts](../assets/ocio/README.md) and [ICC profiles](../assets/profiles/README.md) own generation and provenance.
 
+## Source inspection has its own exposure convention
+
+The undeveloped negative is not a graded working positive. LibRaw's highlight-safe development divides fixed WB gains by their maximum, which can leave green below sensor white. Source presentation alone restores a green-referenced scale with the scalar `max(fixed WB) / green WB`, then applies a common **+1 EV** ACES preview baseline. This makes the default less dark without changing the RAW buffer or camera-to-AP1 conversion. The baseline is a rendering convention, not a camera exposure calibration; neither it nor WB normalization promises camera-JPEG/LCD matching across cameras or ISOs.
+
+Selected source views (including provisional and settled views and calibration/reference tools) and uncalibrated developed thumbnails use the same default. Missing, invalid or pathological WB falls back to the baseline alone; exact defensive limits follow the implementation. No histogram, embedded JPEG or manufacturer-specific exposure constant participates. Signed and above-one values still reach the existing ACES rendering boundary without an added source clamp.
+
+Manual source-inspection EV is relative to that default and affects only the selected view. Positive previews, scopes, calibration/fitting, analysis and exports retain their existing numerical inputs and processing. Embedded camera JPEG placeholders remain independently camera-rendered. See [source inspection](editor.md#source-inspection-is-a-view) for transient editor state.
+
 ## Let the OS handle the monitor
 
 The preview converts linear target RGB to extended-sRGB, encodes it once and submits it to an explicitly extended-sRGB-tagged macOS layer. P3 colours outside ordinary sRGB remain representable on this floating-point path. The layer is SDR, with EDR disabled.

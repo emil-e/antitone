@@ -147,6 +147,101 @@ pub(super) fn wait_settled(harness: &mut Harness<'_, Editor>) {
 }
 
 #[test]
+fn uncalibrated_source_preview_uses_saved_roll_wb_in_provisional_and_settled_targets() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut harness, capture) = editor_harness_with_thumbnails(true);
+    let wb = [2., 1., 1.5, 1.];
+    harness.state_mut().document.project.development =
+        Some(Development::new(crate::raw::version(), wb));
+    harness.state_mut().add_raws(vec![fixture("patches.dng")]);
+    wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+    assert!(
+        harness.state().ready.is_some(),
+        "{}",
+        harness.state().status
+    );
+    let path = directory.path().join("source.antitone.json");
+    let saved = harness
+        .state()
+        .document
+        .save(&path, crate::project::Save::New)
+        .unwrap();
+    harness.state_mut().document = saved;
+    let project = harness.state().document.project.clone();
+    open_project(&mut harness, path);
+    wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+    assert_eq!(harness.state().document.project, project);
+    assert!(harness.state().source);
+    assert!(harness.state().calibration().is_none());
+    let scan = Scan::open(&fixture("patches.dng"), Some(wb)).unwrap();
+    stage(&mut harness, "Rendering");
+    for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
+        select_target(&mut harness, target);
+        for ev in [0.0_f64, 2.] {
+            harness
+                .get_by_role_and_label(egui::accesskit::Role::Button, "Source inspection")
+                .click();
+            harness.step();
+            enter_numeric(&mut harness, "Exposure", &ev.to_string());
+            harness
+                .get_by_role_and_label(egui::accesskit::Role::Button, "Source inspection")
+                .click();
+            harness.step();
+            assert_eq!(harness.state().source_exposure, ev);
+            harness.state_mut().settled = None;
+            harness.state_mut().last_edit = Instant::now();
+            harness.step();
+            assert!(harness.state().settled.is_none());
+            for settled in [false, true] {
+                if settled {
+                    wait_settled(&mut harness);
+                }
+                harness.render().unwrap();
+                let geometry = harness.state().last_layout.unwrap().0;
+                let output = capture.borrow();
+                for [x, y] in [[96, 32], [32, 160], [224, 32]] {
+                    let point = geometry.screen_point(egui::pos2(x as f32, y as f32));
+                    let pixel = output.pixels[point.y.floor() as usize * output.size[0] as usize
+                        + point.x.floor() as usize];
+                    // max(WB)/green = 2, plus one preview stop, then relative manual EV.
+                    let working = scan.camera_to_ap1 * scan.pixel(x, y).unwrap() * (4. * ev.exp2());
+                    let linear = target.linear_to_srgb()
+                        * crate::rendering::CpuRenderer::new(target)
+                            .unwrap()
+                            .render(&[working])
+                            .unwrap()[0]
+                            .as_dvec3();
+                    for c in 0..3 {
+                        let value = linear[c].abs();
+                        let expected = linear[c].signum()
+                            * if value <= 0.0031308 {
+                                value * 12.92
+                            } else {
+                                1.055 * value.powf(1. / 2.4) - 0.055
+                            };
+                        assert!(pixel[c].is_finite());
+                        assert!(
+                            (f64::from(pixel[c]) - expected).abs() <= 0.001,
+                            "{target:?}, EV {ev}, settled={settled}: {pixel:?} vs {expected}"
+                        );
+                    }
+                }
+            }
+            let mut expected = project.clone();
+            expected.output.tiff = if target == OutputTarget::Srgb {
+                crate::project::TiffTarget::Srgb
+            } else {
+                crate::project::TiffTarget::DisplayP3
+            };
+            assert_eq!(harness.state().document.project, expected);
+        }
+        wait_for(&mut harness, |e| {
+            e.thumbnails.ready_count(&e.document, target) == 1
+        });
+    }
+}
+
+#[test]
 fn calibration_grade_source_inspection_and_native_pixel_picker_return_use_widgets() {
     let (mut harness, capture, _directory) = calibrated_workflow();
     stage(&mut harness, "Rendering");
@@ -185,7 +280,7 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_return_use_widget
     let metadata = crate::raw::RawFile::open(&fixture("roll-0.dng"))
         .unwrap()
         .metadata;
-    let working = metadata.camera_to_ap1().unwrap() * DVec3::splat(4. * 3000. / 4031.);
+    let working = metadata.camera_to_ap1().unwrap() * DVec3::splat(8. * 3000. / 4031.);
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
         select_target(&mut harness, target);
         let timing = Arc::new(SelectionTiming::new(harness.state().id, Instant::now()));

@@ -5,6 +5,17 @@ pub(super) fn surface() -> egui::Color32 {
 }
 
 impl Editor {
+    pub(super) fn source_parameters(&self, exposure: f64) -> Result<ProcessingParameters, Error> {
+        ProcessingParameters::source_preview(
+            self.document
+                .project
+                .development
+                .as_ref()
+                .map(|d| d.fixed_wb),
+            exposure,
+        )
+    }
+
     fn viewer_tool(&self) -> Option<(icons::Icon, &'static str)> {
         if self.crop_edit.is_some() {
             return Some((icons::Icon::Crop, "Crop"));
@@ -98,7 +109,7 @@ impl Editor {
                                 ui.add_enabled_ui(navigating, |ui| {
                                     controls::parameter(ui, controls::Parameter::Exposure, &mut self.source_exposure);
                                 });
-                                ui.small("Preview brightness only · not saved");
+                                ui.small("Relative to default source preview · not saved");
                             });
                         let readout = presentation::instrument_readout(&exposure, egui::TextStyle::Small.resolve(ui.style()).size);
                         let exposure_width = egui::WidgetText::from(readout.clone()).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Small).size().x;

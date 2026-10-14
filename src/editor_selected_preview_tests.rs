@@ -173,7 +173,7 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                 draw(&device, &queue, &context, &mut renderer, output);
                 assert!(cached_caption);
                 let expected = if source {
-                    ProcessingParameters::source_inspection(2.).unwrap()
+                    editor.source_parameters(2.).unwrap()
                 } else {
                     editor
                         .positive_parameters(
@@ -224,7 +224,7 @@ fn cached_selected_images_do_not_alias_filmstrip_processing() {
         let selected = editor.selected_view().unwrap().1;
         assert!(!Arc::ptr_eq(&image, &selected));
         let mut encoder = device.create_command_encoder(&Default::default());
-        let source = ProcessingParameters::source_inspection(2.).unwrap();
+        let source = editor.source_parameters(2.).unwrap();
         let positive = editor
             .positive_parameters(editor.calibration().unwrap(), editor.roll, editor.photo)
             .unwrap();

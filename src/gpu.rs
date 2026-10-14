@@ -32,6 +32,30 @@ pub struct ProcessingParameters {
     creative_low: [Vec4; 3],
 }
 
+// A common ACES source-display convention, not a camera exposure calibration or JPEG fit.
+const SOURCE_PREVIEW_EXPOSURE: f64 = 1.0;
+
+fn source_preview_gain(fixed_wb: Option<[f64; 4]>) -> f64 {
+    let headroom = fixed_wb.and_then(|wb| {
+        // Match the bridge's f32 gains and pinned LibRaw highlight=1 normalization.
+        // Sensor black/white scaling is already in RGB16 and cancels from this ratio.
+        let wb = wb.map(|v| v as f32);
+        if wb.iter().any(|v| !v.is_finite() || *v <= 0.) {
+            return None;
+        }
+        let maximum = wb.into_iter().fold(0_f32, f32::max);
+        if f64::from(maximum) <= 0.00001 {
+            // LibRaw does not normalize gains in this degenerate scaling branch.
+            return None;
+        }
+        let gain = f64::from(maximum) / f64::from(wb[1]);
+        // A pathological WB must not introduce unbounded display gain. This is only
+        // a preview fallback; RAW/project WB validation and measurements are unchanged.
+        (gain.is_finite() && gain <= crate::processing::MAX_EXPOSURE.exp2()).then_some(gain)
+    });
+    headroom.unwrap_or(1.) * SOURCE_PREVIEW_EXPOSURE.exp2()
+}
+
 impl ProcessingParameters {
     pub const BYTE_LEN: usize = std::mem::size_of::<Self>();
 
@@ -45,8 +69,18 @@ impl ProcessingParameters {
         }
     }
 
+    /// Display-only source convention; inspection EV is relative to the preview baseline.
+    /// `fixed_wb` must describe the development, not each photo's as-shot WB.
+    pub fn source_preview(fixed_wb: Option<[f64; 4]>, exposure: f64) -> Result<Self, Error> {
+        let gain = source_preview_gain(fixed_wb) * exposure_multiplier(exposure)?;
+        Ok(Self::source_with_gain(gain))
+    }
+
     pub fn source_inspection(exposure: f64) -> Result<Self, Error> {
-        let gain = exposure_multiplier(exposure)?;
+        Ok(Self::source_with_gain(exposure_multiplier(exposure)?))
+    }
+
+    fn source_with_gain(gain: f64) -> Self {
         let matrix = DMat3::IDENTITY * gain;
         let mut result = Self {
             post: matrix_columns(matrix),
@@ -58,7 +92,7 @@ impl ProcessingParameters {
                 .as_vec3()
                 .extend(0.)
         });
-        Ok(result)
+        result
     }
 
     pub fn positive(

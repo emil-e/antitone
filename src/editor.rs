@@ -2583,8 +2583,7 @@ impl host::App for Editor {
                 frame: (!composition.is_exact()).then(|| geometry.frame_raster(pixels_per_point)),
             });
             let parameters = if self.source {
-                let source_parameters =
-                    ProcessingParameters::source_inspection(self.source_exposure);
+                let source_parameters = self.source_parameters(self.source_exposure);
                 match source_parameters {
                     Ok(parameters) => parameters,
                     Err(error) => {

@@ -692,7 +692,7 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
         let pixel = output.pixels
             [position.y.floor() as usize * output.size[0] as usize + position.x.floor() as usize];
         // Source inspection bypasses inversion, not ACES or managed presentation encoding.
-        let working = metadata.camera_to_ap1().unwrap() * DVec3::splat(code / 4031.);
+        let working = metadata.camera_to_ap1().unwrap() * DVec3::splat(2. * code / 4031.);
         let linear = target.linear_to_srgb() * cpu.render(&[working]).unwrap()[0].as_dvec3();
         for c in 0..3 {
             let value = linear[c].abs();
