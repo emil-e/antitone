@@ -1,77 +1,60 @@
 # Working on Antitone
 
-## Context and authorization
+## Find your bearings
 
-1. Read [PLAN.md](PLAN.md) for current focus, priority and blockers.
-2. Use [docs/README.md](docs/README.md) to find topic guides, important behavioral boundaries and unfinished work. Read [architecture](docs/architecture.md) when tracing unfamiliar boundaries.
-3. Read relevant [decision rationale](docs/decisions/README.md) before changing those choices.
-4. Inspect actual code/tests before editing. If code and contract disagree, investigate rather than silently declaring either correct.
+Read [PLAN.md](PLAN.md) for current priorities and blockers. Use [docs/README.md](docs/README.md) to find the guides relevant to your task—not to read everything.
 
-The latest user request determines authorization. Roadmaps, decisions and broad plans do not authorize unrelated implementation, commits, pushes, global installs or remote actions. Confirm ambiguous/risky scope; keep routine changes focused. Use a separate worktree for substantive changes and preserve unrelated working changes.
+Consult [architecture](docs/architecture.md) and [decision rationale](docs/decisions/README.md) when changing unfamiliar boundaries or consequential choices. Investigate disagreements between documentation and implementation.
 
-## Documentation policy
+## Work independently, within scope
 
-The checkout describes the current system and unfinished work, not how the project got here.
+Follow the global collaboration instructions. Roadmaps and plans provide context, not additional authorization.
 
-- `README.md` is for humans: introduction, prerequisites, normal build/run/check commands and contributor navigation. Agent authorization and handoff procedures belong only in root `AGENTS.md`.
-- Write for a prospective contributor, not an agent handoff. Topic guides begin with the problem and mental model, teach why the system works as it does in easy-to-follow prose, and use a small diagram/example where helpful. Keep behavioral boundaries concise. Architecture maps implemented ownership; decisions preserve selective rationale, without superseded instructions or approval narration.
-- Leave implementation inventories, literals, equations' numerical evaluation, serialization mechanics and exhaustive cases to code/comments/tests. Preserve important behavioral guarantees in the owning guide; do not build a second API specification or silently discard reasoning that code does not explain. Use one primary explanation per topic and link rather than repeating it.
-- Plans contain only genuinely unfinished scope, open questions, acceptance and next actions. Remove completed steps; delete a finished plan after transferring current behavior and remaining requirements to their proper homes.
-- Delete obsolete tools, superseded decisions, duplicate notes and execution records. Do not create archives, completed-plan collections, compiler transcripts, approval histories or session/worktree narratives. Git preserves removed versions; do not retrieve them to resurrect designs or tools unless the user explicitly requests historical investigation.
-- Keep a technical explanation only if it helps a contributor understand or maintain the current system. Introduce the idea before terminology and details. Write the insight directly, not the sequence of experiments that produced it; avoid dense qualification-heavy prose and repeated facts across guides, plans and roadmaps.
-- Keep maintained tools in `scripts/` or `native/`, with current commands in the contributor guides. Do not keep unsupported snapshots for hypothetical agent use.
-- Proposed designs are not policy. Distinguish open hypotheses from established behavior and do not promote feedback or a passing consistency check into a design decision or physical acceptance claim.
+Use a separate worktree for substantive changes. Keep work isolated from other agents and preserve unrelated changes. At substantial milestones and before integration, refresh current guidance and inspect relevant changes on main.
 
-## Documentation roles and handoff
+Within delegated work, continue through routine implementation and verification checkpoints. Stop when you need a decision or have meaningful results to demonstrate—not merely because a batch finished.
 
-- `PLAN.md`: short current status, ordered roadmap and blockers.
-- `docs/README.md`: contributor entry points by question/task.
-- `docs/development.md`: everyday/feature checks; `docs/diagnostics.md`: supported numerical/reference, RAW, export and presentation recipes; `docs/native-development.md`: production RAW diagnostic and native-build reuse.
-- `docs/architecture.md`: implementation map and ownership, distinguished from unwired foundations.
-- `docs/{processing,roll-analysis,flat-field,colour-and-output,geometry,editor,projects,scopes}.md`: focused models and their important behavior/invariants/compatibility. Processing explains pixels transformed by supplied settings; roll analysis explains estimating those settings. Update the owning guide when an authorized change changes its guarantees; exact implementation details belong with code/tests.
-- Follow the topic/task structure in `docs/README.md`. Extend the owning guide before adding a new page; add one only for a distinct contributor question. Do not recreate catch-all processing documents, a parallel `contracts/` tree or separate introduction/contract/API pages for every feature. Repair navigation and links when moving material.
-- `docs/decisions/`: selective rationale for consequential current choices, not repeated specifications.
-- `docs/plans/`: substantial unfinished packages. Record scope/non-goals, open design/approval questions, acceptance, current limits and exact next action. Small changes need no plan file.
+Tie experiments to the requested outcome. Prefer a simple useful baseline, and add sophistication only when observed failures justify it.
 
-At a meaningful checkpoint or handoff, update unfinished scope, verification limits and next action; do not append a session log. Update the roadmap only when focus/status/order/blockers change. Run proportional checks and repair affected links. Report checks actually run and unverified acceptance without inflating a snapshot into a general guarantee.
+## Preserve the product's guarantees
 
-## Wrap-up procedure
+Follow the relevant [processing](docs/processing.md), [colour/output](docs/colour-and-output.md), [project compatibility](docs/projects.md) and decision guides. Code and tests own exact defaults, formats and numerical gates.
 
-An explicit wrap-up request authorizes local delivery of agreed work, never a push:
+Do not weaken checks or alter development behavior to improve an experiment's appearance. Software agreement is not proof of photographic quality, physical interaction or monitor correctness.
 
-1. Checkpoint-commit agreed changes if needed, then rebase/integrate onto current main, preserving unrelated changes/worktrees. Inspect new main behavior, owning guides and tests, including semantic interactions that merge without conflicts. Discuss material new design/scope before expanding work.
-2. Update current topic guides, architecture and roadmap; remove completed plans and repair links. Keep deferred work/unperformed acceptance explicit, without a closure journal.
-3. Verify the integrated result proportionally and inspect the final diff. Report unresolved failures and limits.
-4. Commit only agreed changes and fast-forward main to the verified result. If already on main, commit there; do not rewrite unrelated history.
-5. Report the main commit, checks and remaining limits. Push only when separately requested.
+Distinguish established requirements from implementation choices and experimental hypotheses. Keep source storage compact; judge additional caching by measured benefit, memory cost and lifetime rather than assuming all retained intermediates are forbidden.
 
-## Engineering boundaries
+## Build on the shared UI
 
-- macOS/Apple Silicon first; no minimum chip/RAM target is established. Resource policy follows observed problems. Actual macOS 14, broader devices and physical monitors require separate acceptance.
-- Reuse pinned LibRaw development. No custom demosaicer, camera-specific repair, CPU interactive fallback, approximate ACES replacement or weakened numerical gate.
-- Preserve native-camera calibration/inversion, signed/HDR AP1 working data and AP0 EXR. AP0 otherwise belongs only inside ACES. Camera model/matrix identity must match the roll's retained basis. Preview/TIFF targets are matching 100-nit sRGB/Display P3 with managed extended-sRGB SDR presentation.
-- Dmin/Dmax are RGB-only values. Picker context is transient; thumbnail-cache freshness and development compatibility are separate. Do not introduce RAW content hashing or capture identity without a new requirement. Invalid/cancelled picks and rejected edits change no processing state.
-- Processing model is 4; project schema is 5 with no RAW fingerprints. Unsupported schemas/AP0 grades reject without migration. New grades use toe 2.5/shoulder off; the classic toe-1 curve uses the same camera model.
-- One RGB16 production source path: 8 bytes/pixel. Higher precision belongs in temporaries/small constants, not a wide retained source cache.
-- Samples are read-only, ignored and never committed. Do not automate Lightroom/Resolve or add correction workflows without a request. No hidden pedestal/clamp or development changes to improve inspection.
+Follow [the editor guide](docs/editor.md#build-ui-from-shared-presentation) and existing components for layout, controls, viewer tools, dialogs and task feedback. Reuse their visual and interaction language.
 
-## UI engineering
+Presentation receives state and returns actions; domain semantics and transactions remain with their owners. Extend shared components for real supported variants. Keep genuinely one-off UI local without copying an existing family or creating speculative abstractions.
 
-For new or changed editor UI, use the shared code rather than copy feature-local layout, painting or interaction logic:
+Verify both the component and its composed feature.
 
-- Inspect [presentation metrics, actions and labelled rows](src/editor_ui.rs), [docked/auto-hiding viewer framing](src/editor_ui_viewer.rs), [sections/stage tabs](src/editor_ui_hierarchy.rs), [contact-sheet cards/captions](src/editor_ui_cards.rs), [decision dialogs](src/editor_ui_dialogs.rs), [severity-aware feedback](src/editor_ui_feedback.rs), [task lifecycle](src/editor_activity.rs), [working presentation](src/editor_ui_progress.rs), [icon actions](src/editor_icons.rs) and [photographic control adapters](src/editor_controls.rs) first. Use their applicable APIs and inherited colour/interaction roles; preserve natural versus toolbar sizing. Follow the [colour-role guidance](docs/editor.md#colour-roles) rather than defining feature-local palettes, and the [typography roles](docs/editor.md#typography-roles) rather than choosing feature-local fonts or weights. Follow the [editor model](docs/editor.md) and [workspace boundaries](docs/architecture.md#editor-workspace).
-- Presentation owns layout/actions, tool framing and UI-only hierarchy. Use `labelled_row` for a left label with right-aligned supplied controls, `section`/`SectionHeader` for disclosure/reset chrome and `ToolGroup` for complete viewer identity/action measurement. `controls` retains parameter/calibration/balance semantics, including defaults, precision and disabled snapshots; feature controllers retain availability, reset scope and dispatch. Preserve deliberately different crop grids and scope chrome rather than forcing them through a labelled row. Use `ContactSheetLayout` for card geometry and `begin` with caller-owned IDs; paint supplied image content before the card's badge/placeholder and caption. Image fitting/mapping, content precedence, virtualization, selection and scheduling remain caller-owned.
-- Use `DecisionDialog` for blocking Save/Discard, overwrite and reset choices instead of feature-local `Window`/`Modal` chrome; follow the [decision and input policy](docs/editor.md#decisions-are-not-operation-failures). Use `FeedbackDialog` for acknowledged operation failures, with explicit severity and controller-owned lifetime; never derive severity from status-string prefixes. Native file choosers and help popovers remain outside these families.
-- For foreground work, use `TaskActivity` with a typed `Task`/`TaskRequest`: `begin` before dispatch, `report` actual counted or indeterminate work, `cancelling` after signalling supported cancellation, and `finish` on matching success, failure or send failure. Follow the [task integration pattern and surface policy](docs/editor.md#working-feedback-follows-what-remains-usable). Task definitions own working copy, surface and cancellation presentation; do not add feature-local progress chrome, mutable activity fields or status/pending-state inference. Render through `TaskView`, whose action response carries the matching request; `ProgressContent` is its shared presentation implementation. Controllers retain execution, availability and transactions. Keep optional background work local.
-- Extend a shared component for a real supported variant instead of bypassing it with local style/interaction overrides. Do not unify deliberately different tab/card/tool treatments or specialized image visualization merely because they share an accent.
-- Keep domain values/defaults, availability decisions, transactions, processing, workers and persistence in their existing owners. Components present supplied state and return responses; preserve accessible names, focus/keyboard precedence, disabled safety and geometry/IDs.
-- A local implementation is acceptable only for a genuinely one-off requirement that does not fit an existing component family. State the concrete reason when proposing it and keep it within the shared UX language. When a second consumer needs that pattern, promote it into a shared component rather than copy it. Native egui menu/selection controls and specialized visualization need not become generic text actions.
-- Verify the affected component contract and composed consumer. Avoid speculative abstractions, a parallel widget/state framework and unrelated migrations. Keep these entry-point links current as shared families evolve.
+## Keep documentation useful
 
-## Build and generated storage
+Write for prospective contributors: explain the problem, mental model, rationale and important guarantees. Leave implementation inventories and exhaustive detail to code and tests.
 
-Dogfood the human workflow: ordinary Cargo from the repository root, project rustup selection and Apple Clang from `.cargo/config.toml`. Follow [README](README.md), `./scripts/setup-native.sh`, `cargo build-app` and `cargo app`. Do not maintain an agent bootstrap or Cargo wrapper. Sandbox-required environment overrides are local execution details, not a second workflow.
+Maintain one explanation per topic. Extend the owning guide before adding a page. Keep workflow instructions here, not in the human README.
 
-`.cache/` is disposable storage for dependencies, build/probe products, generated/private photographic outputs and downloaded third-party inputs. Maintained source and current rationale belong in the checkout; generated logs/screenshots do not. Never promote user photographs, copied upstream experiments or copyrighted documents automatically.
+Plans describe unfinished scope, acceptance and next actions—not execution history. Remove completed steps and finished plans after transferring useful current knowledge. Delete obsolete tools and superseded material; do not create archives or resurrect old designs without a historical-investigation request.
 
-Setup/downloads require permission when the environment requires it. No system/Homebrew installations, sample edits, commits/main integration or pushes are authorized by this file; commits/integration require a user request, including explicit wrap-up as defined above.
+Update affected guides and links when behavior changes. Update the roadmap only when priorities, status or blockers change.
+
+## Build and deliver
+
+Use the normal [contributor build workflow](README.md#build-and-run), including shared native setup. Do not maintain an agent-only bootstrap or Cargo wrapper.
+
+Use `.cache/` for disposable experiments, dependencies and generated outputs. Maintained tools belong in `scripts/` or `native/`. Do not automatically promote downloaded material into maintained source.
+
+Samples are private, read-only, ignored and never committed. System installations and automation of other applications require explicit authorization; respect environment approval requirements for setup and downloads.
+
+An explicit wrap-up request authorizes local delivery of agreed work:
+
+1. Checkpoint-commit as needed and rebase onto current main, preserving unrelated work.
+2. Inspect semantic interactions, update affected documentation and verify the integrated result proportionally.
+3. Commit the agreed result and fast-forward main. If already on main, commit there; do not rewrite unrelated history.
+4. Report the main commit, checks and remaining limits.
+
+Push only when separately requested.
