@@ -13,6 +13,10 @@ pub(super) use dialogs::{DecisionDialog, DialogChoice};
 mod feedback;
 pub(super) use feedback::{FeedbackDialog, Severity};
 
+#[path = "editor_ui_progress.rs"]
+mod progress;
+pub(super) use progress::{ACTIVITY_BAR_HEIGHT, Progress, ProgressContent};
+
 #[path = "editor_ui_hierarchy.rs"]
 mod hierarchy;
 pub(super) use hierarchy::{

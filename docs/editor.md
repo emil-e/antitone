@@ -40,7 +40,36 @@ These decisions block editor input. Cancel receives initial focus; Escape cancel
 
 These messages use the same centred shell as decisions. OK or Escape acknowledges the message without retrying, accepting a draft or changing the document; popovers retain Escape precedence and outside clicks do not dismiss. Editor input is blocked until acknowledgement. A pending Save/Discard decision is retained but waits behind the failure message, so the failed save cannot be hidden under another prompt.
 
-[Operation controllers](../src/editor_feedback.rs) retain the typed failure separately from status text. Acknowledgement or a matching successful result retires it; merely starting another job, updating unrelated status or receiving stale/cancelled results does not. Presentation returns acknowledgement only. Other loading/import/analysis/background messages and progress remain on their existing surfaces; [broader feedback work](plans/completion.md#operation-feedback) is separate. No notification bus or status-prefix severity inference is used.
+[Operation controllers](../src/editor_feedback.rs) retain the typed failure separately from status text. Acknowledgement or a matching successful result retires it; merely starting another job, updating unrelated status or receiving stale/cancelled results does not. Presentation returns acknowledgement only. Other loading/import/analysis failures remain passive status rather than acknowledged messages; [remaining coverage and native acceptance](plans/completion.md#operation-feedback) are separate. No notification bus or status-prefix severity inference is used.
+
+## Working feedback follows what remains usable
+
+Working feedback answers two questions: **what is happening, and what can I still do?** It is neutral activity, not a warning, error or request for approval. Choose its prominence from the operation's actual input restrictions, not the editor's `busy` flag alone.
+
+| Work | Presentation and retained use |
+| --- | --- |
+| RAW import, project Open/New/Save, correction application | A centred working modal after a brief delay: a short title and progress bar, without paths or implementation detail. The document transaction already blocks the workspace; short jobs avoid flashing a dialog. |
+| Export | Quiet status-bar activity labelled “Exporting…”, without a floating panel or format-specific copy. Editing and source switching remain blocked, but canvas inspection, stage switching and preferences remain usable. |
+| Selected RAW preparation | A large spinner centred on the empty canvas, without visible explanatory text. A compatible cached pending preview stays visible when available. Neither that preview nor a camera JPEG becomes a ready processing source. |
+| Reference preparation and picker measurement | Local tool/viewer feedback and a quiet activity strip; no extra global dialog. |
+| Analyze | Real sampling counts, then indeterminate activity. Progress and its genuine Cancel action stay in the activity strip across every stage. |
+| Refinement, thumbnails, camera previews and scopes | Existing in-place image/card/scope feedback. Optional background work must not seize focus or create global notification noise. |
+
+The fixed-height activity strip keeps the viewer geometry stable. It shows the active operation rather than incidental status text; long passive status remains available through its tooltip and accessibility text. Working modals yield to acknowledged failures. They have no OK, close or backdrop-dismiss action, and Escape does not pretend to cancel them. Native file choosers remain separate.
+
+Dialogs use a moving indeterminate bar when duration is unknown; local activity uses a spinner. Import/Open report completed-file counts while reading/checking files, then return to indeterminate preparation. Analyze reports sampled-frame counts similarly. These fractions describe counted work, not a percentage of the entire job; reaching the final file does not finish validation or promote the document. Do not invent time estimates, native/GPU progress or Cancel actions. Analyze cancellation is cooperative: “Cancelling analysis…” retains a spinner and removes Cancel until the worker's terminal reply; afterward “Analysis cancelled” is passive text without a spinner.
+
+[Task activity](../src/editor_activity.rs) is the foreground integration point. Begin a typed task using the controller's existing request ID; its definition supplies concise copy, progress eligibility, surface and any genuine cancellation action. Report counted or indeterminate work through the same API, then finish the matching request on success, failure or send failure:
+
+```rust
+self.tasks.begin(Task::Import(id));
+self.tasks.report(TaskRequest::Document(id), TaskProgress::Counted { completed, total });
+self.tasks.finish(TaskRequest::Document(id));
+```
+
+Request keys scope IDs by operation: a photo-load result cannot finish an export that happens to use the same number. Stale reports and finishes are ignored; completed counts return to indeterminate without finishing the task. Beginning new activity replaces only its presentation, so the controller must supersede the old execution first. Cancellation similarly has two responsibilities: the controller signals the real worker, then marks the matching task `cancelling`. That state removes measured progress and Cancel, ignores late counts and stays visible until matching completion. It does not infer cancellation from status text or processing generations.
+
+The task slot and mutable progress state are private. Analyze uses this same lifecycle; its separate pending request retains only execution identity and validation snapshots. Controllers still own availability, worker dispatch, generation checks and atomic promotion. [Working presentation](../src/editor_ui_progress.rs) renders supplied task views across modal/inline/compact surfaces and the centred viewer spinner, returning a request-bound cancellation action for the controller to validate. New foreground work should extend this path, not add its own activity fields or progress window. Optional background work remains local; there is no task executor, registry or parallel event system.
 
 ## Source inspection is a view
 
@@ -84,6 +113,8 @@ Use the existing component families rather than copying their painting or intera
 - [Hierarchy](../src/editor_ui_hierarchy.rs): sections, disclosure/reset and stage tabs.
 - [Decisions](../src/editor_ui_dialogs.rs): shared modal framing, actions and dismissal.
 - [Feedback](../src/editor_ui_feedback.rs): explicit severity, acknowledged messages and technical details.
+- [Tasks](../src/editor_activity.rs): typed foreground begin/report/cancelling/finish lifecycle and coherent feedback policy.
+- [Working](../src/editor_ui_progress.rs): supplied task-view progress/activity and optional cancellation, using the surface appropriate to retained usability.
 - [Cards](../src/editor_ui_cards.rs): contact-sheet geometry, captions and supplied-state artwork.
 - [Icons](../src/editor_icons.rs): semantic actions and artwork.
 - [Controls](../src/editor_controls.rs): photographic values, precision and calibration/balance adapters.

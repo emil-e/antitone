@@ -34,11 +34,11 @@ B&W scope is unresolved: monochrome film captured by an RGB camera, colour-negat
 
 ## Operation feedback
 
-Shared decision prompts and acknowledged flat-field/save/export failure messages are implemented; [the editor guide](../editor.md#decisions-are-not-operation-failures) owns their input and lifetime policy. Native keyboard/pointer, VoiceOver and display-scaling acceptance remain open. Other loading/import/analysis/background messages still use their existing surfaces, without a selected broader migration.
+Shared decisions, acknowledged flat-field/save/export failures and usability-based working feedback are implemented; the [editor guide](../editor.md#working-feedback-follows-what-remains-usable) owns the current policy. Native keyboard/pointer, VoiceOver, display scaling and real-operation appearance/latency acceptance remain open. Component/controller checks and composed working-state captures do not establish these.
 
-Next: select one remaining operation for feedback/progress design, or agree native acceptance of the implemented messages. Preserve accepted-state transactions, stale-result rejection, foreground priority and destination safety.
+Loading/import/picker/Analyze failures still use passive status. Broader acknowledged-failure coverage, additional native/export progress and additional cancellation remain unselected; do not infer capabilities from activity animation. Import/Open now report completed-file work, not whole-job percentages.
 
-Loading/export progress remains a separate design slice. Inventory operation ownership and available phases before choosing determinate progress or cancellation; opaque native/GPU phases cannot be interrupted immediately, and animation must stop on completion. Coordinate with [thumbnail follow-up](visual-feedback.md#triaged-thumbnail-follow-up).
+Next: exercise document work, export inspection and Analyze cancellation in the native editor. Preserve accepted-state transactions, stale-result rejection, foreground priority and destination safety. Coordinate optional background presentation with [thumbnail follow-up](visual-feedback.md#triaged-thumbnail-follow-up).
 
 ## Code readability and style
 

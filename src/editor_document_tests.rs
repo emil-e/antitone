@@ -59,6 +59,45 @@ fn authored_dng_import_selects_as_shot_wb_and_open_preserves_saved_gains() {
 }
 
 #[test]
+fn file_progress_reports_only_completed_reads_including_duplicates() {
+    let raw = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
+    let directory = tempfile::tempdir().unwrap();
+    let one = directory.path().join("one.dng");
+    let two = directory.path().join("two.dng");
+    std::fs::copy(&raw, &one).unwrap();
+    std::fs::copy(&raw, &two).unwrap();
+    let mut document = Document::default();
+    let mut progress = Vec::new();
+    document
+        .import_with_progress(&[one.clone(), two.clone(), one.clone()], |done, total| {
+            progress.push((done, total))
+        })
+        .unwrap();
+    assert_eq!(progress, [(0, 3), (1, 3), (2, 3), (3, 3)]);
+    assert_eq!(document.project.order.len(), 2);
+    let project = directory.path().join("project.json");
+    let saved = document.save(&project, Save::New).unwrap();
+    progress.clear();
+    let opened =
+        Document::open_with_progress(&project, |done, total| progress.push((done, total))).unwrap();
+    assert_eq!(progress, [(0, 2), (1, 2), (2, 2)]);
+    assert_eq!(opened.project, saved.project);
+    std::fs::remove_file(&two).unwrap();
+    progress.clear();
+    assert!(
+        Document::open_with_progress(&project, |done, total| progress.push((done, total))).is_err()
+    );
+    assert_eq!(progress, [(0, 2), (1, 2)]);
+    progress.clear();
+    assert!(
+        Document::default()
+            .import_with_progress(&[one, two], |done, total| progress.push((done, total)))
+            .is_err()
+    );
+    assert_eq!(progress, [(0, 2), (1, 2)]);
+}
+
+#[test]
 fn stable_identity_keeps_photo_edits_independent_of_order_and_locator() {
     let directory = tempfile::tempdir().unwrap();
     let mut document = fixture(directory.path());

@@ -40,6 +40,9 @@ use files::{FileAction, Transition};
 #[path = "editor_feedback.rs"]
 mod feedback;
 use feedback::{Failure, FailureKind};
+#[path = "editor_activity.rs"]
+mod activity;
+use activity::{Task, TaskActivity, TaskProgress, TaskRequest};
 #[path = "editor_thumbnails.rs"]
 mod thumbnails;
 use thumbnails::Thumbnails;
@@ -165,6 +168,7 @@ enum Measurement {
     Balance(Balance),
 }
 enum Message {
+    DocumentProgress(u64, usize, usize),
     AnalysisProgress(u64, usize, usize),
     Analyzed(u64, Result<Option<Box<analysis::Outcome>>, String>),
     Refined(u64, Result<Option<Arc<GpuImage>>, String>),
@@ -268,6 +272,7 @@ fn prepare_document(
     id: u64,
     work: DocumentWork,
     previous_correction: Option<&Arc<Correction>>,
+    progress: impl FnMut(usize, usize),
 ) -> Result<Prepared, Error> {
     let preserve_view = matches!(work, DocumentWork::Correction(..));
     let selected_override = match &work {
@@ -276,10 +281,10 @@ fn prepare_document(
     };
     let (document, reuse) = match work {
         DocumentWork::Import(mut document, paths, reuse) => {
-            document.import(&paths)?;
+            document.import_with_progress(&paths, progress)?;
             (document, reuse)
         }
-        DocumentWork::Open(path) => (Document::open(&path)?, None),
+        DocumentWork::Open(path) => (Document::open_with_progress(&path, progress)?, None),
         DocumentWork::New => (Document::default(), None),
         DocumentWork::Correction(document, _) => (document, None),
         DocumentWork::Save(..) => unreachable!("save does not prepare a RAW"),
@@ -501,6 +506,7 @@ fn backend(
                         id,
                         DocumentWork::Correction(*document, selected),
                         correction.as_ref(),
+                        |_, _| {},
                     )?;
                     correction = prepared.correction.clone();
                     flat_preview = None;
@@ -530,6 +536,9 @@ fn backend(
                             id,
                             work,
                             correction.as_ref(),
+                            |done, total| {
+                                let _ = messages.send(Message::DocumentProgress(id, done, total));
+                            },
                         )
                         .map(|prepared| {
                             correction = prepared.correction.clone();
@@ -673,6 +682,7 @@ pub struct Editor {
     selection_timing: Option<Arc<SelectionTiming>>,
     busy: bool,
     status: String,
+    tasks: TaskActivity,
     failure: Option<Failure>,
     document_failure: Option<FailureKind>,
     return_notice: Option<String>,
@@ -783,6 +793,7 @@ impl Editor {
             selection_timing: None,
             busy: false,
             status: "Add a RAW to begin".into(),
+            tasks: TaskActivity::default(),
             failure: None,
             document_failure: None,
             return_notice: None,
@@ -914,6 +925,13 @@ impl Editor {
         self.generation
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.document_pending = Some(id);
+        self.tasks.begin(match &work {
+            DocumentWork::Import(..) => Task::Import(id),
+            DocumentWork::Open(_) => Task::Open(id),
+            DocumentWork::New => Task::New(id),
+            DocumentWork::Save(..) => Task::Save(id),
+            DocumentWork::Correction(..) => Task::Correction(id),
+        });
         self.document_failure = match &work {
             DocumentWork::Save(..) => Some(FailureKind::Save),
             DocumentWork::Correction(..) => Some(FailureKind::FlatCorrection),
@@ -929,6 +947,7 @@ impl Editor {
         {
             self.document_pending = None;
             self.new_project_pending = false;
+            self.tasks.finish(TaskRequest::Document(id));
             self.busy = false;
             self.status = "RAW worker stopped".into();
             if let Some(kind) = self.document_failure.take() {
@@ -1010,6 +1029,7 @@ impl Editor {
         self.source = self.calibration().is_none();
         self.busy = true;
         self.status = "Developing full-resolution RAW…".into();
+        self.tasks.begin(Task::Photo(self.id));
         if self
             .commands
             .send(Command::Load(
@@ -1023,6 +1043,7 @@ impl Editor {
             .is_err()
         {
             self.busy = false;
+            self.tasks.finish(TaskRequest::Photo(self.id));
             self.selection_timing = None;
             self.status = "RAW worker stopped".into();
         } else if selecting_photo
@@ -1055,11 +1076,28 @@ impl Editor {
     fn receive(&mut self) {
         while let Ok(message) = self.messages.try_recv() {
             match message {
+                Message::DocumentProgress(id, done, total) => {
+                    if self.document_pending == Some(id) {
+                        self.tasks.report(
+                            TaskRequest::Document(id),
+                            TaskProgress::Counted {
+                                completed: done,
+                                total,
+                            },
+                        );
+                    }
+                }
                 Message::AnalysisProgress(id, done, total) => {
                     if let Some(pending) = &mut self.analysis_pending
                         && pending.id == id
                     {
-                        pending.progress = (done, total);
+                        self.tasks.report(
+                            TaskRequest::Analyze(id),
+                            TaskProgress::Counted {
+                                completed: done,
+                                total,
+                            },
+                        );
                         if self
                             .analysis_generation
                             .load(std::sync::atomic::Ordering::Relaxed)
@@ -1096,6 +1134,7 @@ impl Editor {
                     }
                 }
                 Message::Ready(id, result) if id == self.id && self.document_pending.is_none() => {
+                    self.tasks.finish(TaskRequest::Photo(id));
                     self.pending_preview = None;
                     if let Some(timing) = &self.selection_timing {
                         println!(
@@ -1143,6 +1182,7 @@ impl Editor {
                 Message::Picked(id, kind, result)
                     if id == self.id && self.document_pending.is_none() =>
                 {
+                    self.tasks.finish(TaskRequest::Measurement(id, kind));
                     self.busy = false;
                     match result {
                         Ok(Measurement::Reference(value)) => {
@@ -1206,6 +1246,7 @@ impl Editor {
                     self.finish_pick();
                 }
                 Message::Prepared(id, result) if self.document_pending == Some(id) => {
+                    self.tasks.finish(TaskRequest::Document(id));
                     let new_project = std::mem::take(&mut self.new_project_pending);
                     let failure_kind = self.document_failure.take();
                     self.document_pending = None;
@@ -1303,6 +1344,7 @@ impl Editor {
                     }
                 }
                 Message::FlatPreview(id, result) if id == self.id && self.flat_edit.is_some() => {
+                    self.tasks.finish(TaskRequest::Reference(id));
                     self.busy = false;
                     match result {
                         Ok(preview) => {
@@ -1319,6 +1361,7 @@ impl Editor {
                     }
                 }
                 Message::Saved(id, result) if self.document_pending == Some(id) => {
+                    self.tasks.finish(TaskRequest::Document(id));
                     self.document_pending = None;
                     self.document_failure = None;
                     self.busy = false;
@@ -1339,6 +1382,7 @@ impl Editor {
                 Message::Exported(id, result)
                     if id == self.id && self.document_pending.is_none() =>
                 {
+                    self.tasks.finish(TaskRequest::Export(id));
                     self.busy = false;
                     match result {
                         Ok(path) => {
@@ -1474,6 +1518,7 @@ impl Editor {
             self.thumbnails.cancel();
             self.busy = true;
             self.status = "Measuring full-resolution patch…".into();
+            self.tasks.begin(Task::Measurement(self.id, kind));
             if self
                 .commands
                 .send(Command::Pick(
@@ -1487,6 +1532,7 @@ impl Editor {
                 .is_err()
             {
                 self.busy = false;
+                self.tasks.finish(TaskRequest::Measurement(self.id, kind));
                 self.finish_pick();
                 self.status = "RAW worker stopped".into();
             }
@@ -1514,6 +1560,7 @@ impl Editor {
             self.thumbnails.cancel();
             self.busy = true;
             self.status = "Exporting full-resolution source; preview pixels are not used…".into();
+            self.tasks.begin(Task::Export(self.id));
             if self
                 .commands
                 .send(Command::Export(
@@ -1529,6 +1576,7 @@ impl Editor {
                 .is_err()
             {
                 self.busy = false;
+                self.tasks.finish(TaskRequest::Export(self.id));
                 self.status = "RAW worker stopped".into();
                 self.report_failure(FailureKind::Export, self.status.clone());
             }
@@ -2018,9 +2066,18 @@ impl host::App for Editor {
                 }
             });
         }
-        egui::Panel::bottom("status").show(ui, |ui| {
-            ui.label(&self.status);
-        });
+        egui::Panel::bottom("status")
+            .exact_size(presentation::ACTIVITY_BAR_HEIGHT)
+            .show(ui, |ui| {
+                if let Some(view) = self.tasks.view() {
+                    if let Some(request) = view.compact(ui) {
+                        self.cancel_task(request);
+                    }
+                } else {
+                    ui.add(egui::Label::new(&self.status).truncate())
+                        .on_hover_text(&self.status);
+                }
+            });
         self.filmstrip(ui);
         let (scope_slot, analyze) = egui::Panel::right("controls")
             .default_size(315.)
@@ -2046,17 +2103,21 @@ impl host::App for Editor {
             let (canvas, response) =
                 ui.allocate_exact_size(available, egui::Sense::click_and_drag());
             let Some((area, provisional, pending)) = self.selected_view() else {
-                ui.painter().text(
-                    canvas.center(),
-                    egui::Align2::CENTER_CENTER,
-                    if self.busy {
-                        "Developing…"
-                    } else {
-                        "Add a RAW to begin"
-                    },
-                    egui::FontId::proportional(14.),
-                    ui.visuals().text_color(),
-                );
+                if let Some(view) = self.tasks.view() {
+                    view.viewer(ui, canvas);
+                } else {
+                    ui.painter().text(
+                        canvas.center(),
+                        egui::Align2::CENTER_CENTER,
+                        if self.busy {
+                            "Working…"
+                        } else {
+                            "Add a RAW to begin"
+                        },
+                        egui::FontId::proportional(14.),
+                        ui.visuals().text_color(),
+                    );
+                }
                 return;
             };
             let pixels_per_point = ui.ctx().pixels_per_point();
@@ -2326,6 +2387,10 @@ impl host::App for Editor {
                 }
                 _ => {}
             }
+        }
+        if self.failure.is_none() {
+            self.tasks
+                .modal(ui.ctx(), egui::Id::new("working-document"));
         }
         if self.failure.is_some() {
             // A decision action can fail after this frame's feedback check.

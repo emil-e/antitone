@@ -68,7 +68,11 @@ impl Document {
         }
         Ok(())
     }
+    #[cfg(test)]
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_with_progress(path, |_, _| {})
+    }
+    pub fn open_with_progress(path: &Path, mut progress: impl FnMut(usize, usize)) -> Result<Self> {
         let path = absolute(path)?;
         let project = Project::load(&path)?;
         let document = Self {
@@ -77,16 +81,28 @@ impl Document {
             path: Some(path),
         };
         document.validate()?;
-        for id in &document.project.order {
+        let total = document.project.order.len();
+        progress(0, total);
+        for (index, id) in document.project.order.iter().enumerate() {
             let path = document.source_path(*id)?;
             let (actual, _) = read_source(&path)?;
             verify_source(document.project.source(*id)?, &actual)?;
+            progress(index + 1, total);
         }
         Ok(document)
     }
+    #[cfg(test)]
     pub fn import(&mut self, paths: &[PathBuf]) -> Result<()> {
+        self.import_with_progress(paths, |_, _| {})
+    }
+    pub fn import_with_progress(
+        &mut self,
+        paths: &[PathBuf],
+        mut progress: impl FnMut(usize, usize),
+    ) -> Result<()> {
         let started = std::time::Instant::now();
-        for path in paths {
+        progress(0, paths.len());
+        for (index, path) in paths.iter().enumerate() {
             let (source, wb) = read_source(path)?;
             if let Some(id) = self.find_source(&source.path) {
                 verify_source(self.project.source(id)?, &source)?;
@@ -94,9 +110,10 @@ impl Document {
                     self.project.order.push(id);
                 }
                 self.project.source_mut(id)?.reference_only = false;
-                continue;
+            } else {
+                self.register(source, Development::new(crate::raw::version(), wb))?;
             }
-            self.register(source, Development::new(crate::raw::version(), wb))?;
+            progress(index + 1, paths.len());
         }
         self.validate()?;
         println!(

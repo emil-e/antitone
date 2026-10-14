@@ -130,7 +130,7 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
         wait_with_limit(&mut editor, Duration::from_secs(60));
         assert!(editor.analysis_pending.is_none());
         assert!(!editor.busy);
-        assert_eq!(editor.status, "Analysis cancelled; grade unchanged");
+        assert_eq!(editor.status, "Analysis cancelled");
         assert_eq!(editor.document.project, before_cancel);
         assert!(editor.ready.is_some());
     });
@@ -204,8 +204,15 @@ fn pending(editor: &mut Editor) -> u64 {
             film: Some(rect([12, 12, 800, 600])),
             picture: Some(rect([52, 42, 720, 540])),
         },
-        progress: (0, 1),
     });
+    editor.tasks.begin(Task::Analyze(id));
+    editor.tasks.report(
+        TaskRequest::Analyze(id),
+        TaskProgress::Counted {
+            completed: 0,
+            total: 1,
+        },
+    );
     editor.busy = true;
     id
 }

@@ -21,7 +21,6 @@ pub(super) struct Request {
 pub(super) struct Pending {
     pub id: u64,
     pub request: Request,
-    pub progress: (usize, usize),
 }
 // Resolve the 0.5% picture tail and 1.5% film band with more than singleton ranks.
 const MIN_PICTURE_SAMPLES: usize = 512;
@@ -268,22 +267,12 @@ impl Editor {
                 default_open: None,
             },
             |ui| {
-                if let Some(pending) = &self.analysis_pending {
-                    let (done, total) = pending.progress;
-                    if done < total {
-                        ui.add(
-                            egui::ProgressBar::new(done as f32 / total.max(1) as f32)
-                                .text(format!("Sampling {done} / {total} frames")),
-                        );
-                    } else {
-                        ui.horizontal(|ui| {
-                            ui.spinner();
-                            ui.label("Fitting and validating grade…");
-                        });
-                    }
-                    if TextAction::new("Cancel analysis").show(ui).clicked() {
-                        self.cancel_analysis();
-                    }
+                if self.analysis_pending.is_some() {
+                    let view = self
+                        .tasks
+                        .view()
+                        .expect("pending analysis has presentation");
+                    view.inline(ui);
                 } else {
                     ui.add_enabled_ui(
                         !self.busy
@@ -369,7 +358,7 @@ impl Editor {
             return;
         };
         if !accept {
-            self.status = "Analysis cancelled; grade unchanged".into();
+            self.status = "Analysis cancelled".into();
             return;
         }
         self.sync_document();
@@ -424,10 +413,17 @@ impl Editor {
                 *settled_revision = revision;
             }
         }
+        self.tasks.begin(Task::Analyze(id));
+        self.tasks.report(
+            TaskRequest::Analyze(id),
+            TaskProgress::Counted {
+                completed: 0,
+                total: request.document.project.order.len(),
+            },
+        );
         self.analysis_pending = Some(Pending {
             id,
             request: request.clone(),
-            progress: (0, request.document.project.order.len()),
         });
         self.busy = true;
         self.status = "Analyzing roll…".into();
@@ -437,13 +433,17 @@ impl Editor {
             .is_err()
         {
             self.analysis_pending = None;
+            self.tasks.finish(TaskRequest::Analyze(id));
             self.busy = false;
             self.status = "RAW worker stopped".into();
         }
     }
     pub(super) fn cancel_analysis(&mut self) {
         self.analysis_generation.fetch_add(1, Ordering::Relaxed);
-        self.status = "Cancelling analysis; grade unchanged…".into();
+        if let Some(pending) = &self.analysis_pending {
+            self.tasks.cancelling(TaskRequest::Analyze(pending.id));
+        }
+        self.status = "Cancelling analysis…".into();
     }
     pub(super) fn analysis_result(
         &mut self,
@@ -454,11 +454,12 @@ impl Editor {
             return;
         }
         let pending = self.analysis_pending.take().unwrap();
+        self.tasks.finish(TaskRequest::Analyze(id));
         self.busy = false;
         self.sync_document();
         let snapshot = &pending.request;
         if self.analysis_generation.load(Ordering::Relaxed) != snapshot.revision {
-            self.status = "Analysis cancelled; grade unchanged".into();
+            self.status = "Analysis cancelled".into();
             return;
         }
         if self.id != snapshot.loaded
@@ -504,7 +505,7 @@ impl Editor {
                     outcome.frames
                 );
             }
-            Ok(None) => self.status = "Analysis cancelled; grade unchanged".into(),
+            Ok(None) => self.status = "Analysis cancelled".into(),
             Err(error) => self.status = format!("Analysis failed: {error}. Grade unchanged."),
         }
     }

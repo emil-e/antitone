@@ -141,15 +141,23 @@ pub(super) fn modal<R>(
     id: Id,
     contents: impl FnOnce(&mut Ui) -> R,
 ) -> egui::ModalResponse<R> {
-    let width =
-        (context.content_rect().width() - 2. * f32::from(FRAME_MARGIN) - 16.).clamp(1., BODY_WIDTH);
     egui::Modal::new(id)
-        .frame(egui::Frame::popup(&context.global_style()).inner_margin(FRAME_MARGIN))
+        .frame(frame(context))
         .show(context, |ui| {
-            ui.set_width(width);
-            ui.spacing_mut().item_spacing = egui::vec2(ITEM_GAP, ITEM_GAP);
+            body(ui);
             contents(ui)
         })
+}
+
+pub(super) fn frame(context: &Context) -> egui::Frame {
+    egui::Frame::popup(&context.global_style()).inner_margin(FRAME_MARGIN)
+}
+
+pub(super) fn body(ui: &mut Ui) {
+    let width = (ui.ctx().content_rect().width() - 2. * f32::from(FRAME_MARGIN) - 16.)
+        .clamp(1., BODY_WIDTH);
+    ui.set_width(width);
+    ui.spacing_mut().item_spacing = egui::vec2(ITEM_GAP, ITEM_GAP);
 }
 
 pub(super) fn focus_default(ui: &Ui, action: &egui::Response) {

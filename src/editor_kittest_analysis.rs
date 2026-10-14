@@ -150,10 +150,7 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
     harness.step();
     assert!(harness.state().analysis_confirmation.is_none());
     assert!(harness.state().analysis_pending.is_none());
-    assert_eq!(
-        harness.state().status,
-        "Analysis cancelled; grade unchanged"
-    );
+    assert_eq!(harness.state().status, "Analysis cancelled");
     assert_eq!(harness.state().document.project, before);
 
     show_confirmation(harness);
@@ -171,10 +168,7 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
     harness.state_mut().messages = replies;
     wait_for(harness, |editor| !editor.busy);
     assert!(harness.state().analysis_pending.is_none());
-    assert_eq!(
-        harness.state().status,
-        "Analysis cancelled; grade unchanged"
-    );
+    assert_eq!(harness.state().status, "Analysis cancelled");
     assert_eq!(harness.state().document.project, before);
 
     show_confirmation(harness);

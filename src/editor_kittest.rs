@@ -5,6 +5,8 @@ use egui_kittest::{
 };
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
+#[path = "editor_kittest_activity.rs"]
+mod activity;
 #[path = "editor_kittest_analysis.rs"]
 mod analyze;
 #[path = "editor_kittest_correction.rs"]

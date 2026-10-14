@@ -88,12 +88,8 @@ impl Editor {
                         "Flat-field area",
                         None,
                         |ui, _| {
-                            if self.busy {
-                                ui.small(if self.ready.is_none() {
-                                    "Preparing reference…"
-                                } else {
-                                    "Applying correction…"
-                                });
+                            if let Some(view) = self.tasks.view() {
+                                view.inline(ui);
                             }
                         },
                     );
@@ -200,6 +196,7 @@ impl Editor {
             .as_ref()
             .map(|d| d.fixed_wb);
         self.status = "Preparing uncorrected flat-field reference…".into();
+        self.tasks.begin(Task::Reference(self.id));
         if self
             .commands
             .send(Command::FlatPreview(
@@ -212,6 +209,7 @@ impl Editor {
             .is_err()
         {
             self.busy = false;
+            self.tasks.finish(TaskRequest::Reference(self.id));
             self.status = "RAW worker stopped".into();
             self.finish_flat_edit();
             self.report_failure(FailureKind::FlatReference, self.status.clone());
@@ -221,6 +219,7 @@ impl Editor {
         let Some(context) = self.flat_edit.take() else {
             return;
         };
+        self.tasks.finish(TaskRequest::Reference(self.id));
         let _ = self.commands.send(Command::CancelFlat(self.id));
         self.id = context.id;
         self.ready = context.ready;
@@ -252,6 +251,7 @@ impl Editor {
         self.busy = true;
         self.document_pending = Some(self.id);
         self.document_failure = Some(FailureKind::FlatCorrection);
+        self.tasks.begin(Task::Correction(self.id));
         self.status = "Estimating and validating full-resolution correction…".into();
         if self
             .commands
@@ -265,6 +265,7 @@ impl Editor {
         {
             self.document_pending = None;
             self.document_failure = None;
+            self.tasks.finish(TaskRequest::Document(self.id));
             self.busy = false;
             self.finish_flat_edit();
             self.status = "RAW worker stopped".into();
