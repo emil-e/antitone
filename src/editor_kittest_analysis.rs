@@ -10,7 +10,8 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
     assert!(harness.state().analysis_confirmation.is_some());
     assert!(harness.state().analysis_pending.is_none());
     assert!(!harness.state().busy);
-    harness.get_by_label("Reset Photo adjustments?");
+    harness.get_by_label("Replace Photo adjustments?");
+    harness.get_by_label("Warning");
 }
 
 fn confirm(harness: &mut Harness<'_, Editor>) {

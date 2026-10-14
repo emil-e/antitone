@@ -18,7 +18,7 @@ The reference workflow opens an uncorrected view, temporarily bypassing photo co
 
 The estimator compares local full-resolution camera statistics with a centre-luminance, AP1-neutral target. It rejects clipped or unusable support and smooths the resulting field. Compatibility checks cannot establish that lighting, aperture, focus and positioning physically match the roll; the reference must actually represent its scanning setup.
 
-Apply prepares the corrected candidate before accepting it. Cancel or failure restores the working photo and accepted state. Reference-only sources do not become filmstrip photographs.
+Apply prepares the corrected candidate before accepting it. Cancel or failure restores the working photo and accepted state. Reference-only sources do not become filmstrip photographs. Rejected support changes leave the area and processing unchanged; reference/preparation failures retain an [acknowledged feedback message](editor.md#decisions-are-not-operation-failures), not a partially accepted map.
 
 ## Apply gains before inversion
 

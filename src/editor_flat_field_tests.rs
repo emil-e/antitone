@@ -71,6 +71,14 @@ fn flat_preview_cancel_failure_and_stale_messages_preserve_document_and_working_
     assert!(editor.pick.is_none());
     assert!(editor.flat_edit.is_none());
     assert_eq!(editor.document.project, original);
+    assert_eq!(
+        editor.failure.as_ref().unwrap().kind,
+        FailureKind::FlatReference
+    );
+    assert_eq!(
+        editor.failure.as_ref().unwrap().details,
+        "reference unavailable"
+    );
     receiver.recv().unwrap();
     editor.begin_flat_edit("other.ARW".into(), None);
     let current = editor.id;
@@ -80,11 +88,19 @@ fn flat_preview_cancel_failure_and_stale_messages_preserve_document_and_working_
     editor.receive();
     assert!(editor.busy);
     assert_eq!(editor.id, current);
+    assert_eq!(
+        editor.failure.as_ref().unwrap().details,
+        "reference unavailable"
+    );
     editor.busy = false;
     editor.finish_pick();
     assert_eq!(editor.id, 12);
     assert_eq!(editor.roll, roll);
     assert_eq!(editor.document.project, original);
+    assert_eq!(
+        editor.failure.as_ref().unwrap().details,
+        "reference unavailable"
+    );
 }
 #[test]
 fn failed_map_acceptance_restores_transient_edit_without_accepting_document_changes() {
@@ -119,6 +135,14 @@ fn failed_map_acceptance_restores_transient_edit_without_accepting_document_chan
     assert!(editor.pick.is_none());
     assert!(!editor.busy);
     assert_eq!(editor.document.project, original);
+    assert_eq!(
+        editor.failure.as_ref().unwrap().kind,
+        FailureKind::FlatCorrection
+    );
+    assert_eq!(
+        editor.failure.as_ref().unwrap().details,
+        "invalid correction"
+    );
 }
 
 #[test]

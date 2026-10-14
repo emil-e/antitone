@@ -94,7 +94,7 @@ fn menu_row_and_cancel_discard_dialog_dispatch_use_the_existing_header() {
     let modal = ui_frame(&mut editor, &context, vec![]);
     let discard = modal
         .iter()
-        .find(|(label, _)| label == "Discard")
+        .find(|(label, _)| label == "Discard changes")
         .unwrap()
         .1
         .center();
@@ -104,6 +104,41 @@ fn menu_row_and_cancel_discard_dialog_dispatch_use_the_existing_header() {
     };
     assert!(matches!(*work, DocumentWork::New));
 }
+#[test]
+fn save_transition_prompts_are_neutral_and_make_edit_loss_conditional_on_not_saving() {
+    for (transition, explanation) in [
+        (
+            Transition::New,
+            "Creating a new project without saving will discard unsaved edits in this project.",
+        ),
+        (
+            Transition::Open(PathBuf::from("another.antitone.json")),
+            "Opening another project without saving will discard unsaved edits in this project.",
+        ),
+        (
+            Transition::Close,
+            "Closing Antitone without saving will discard unsaved edits in this project.",
+        ),
+    ] {
+        let (mut editor, _send, _receiver) = fixture();
+        let context = egui::Context::default();
+        editor.transition = Some(transition);
+        ui_frame(&mut editor, &context, vec![]);
+        let labels = ui_frame(&mut editor, &context, vec![]);
+        assert!(
+            labels
+                .iter()
+                .any(|(label, _)| label == "Save changes to this project?")
+        );
+        assert!(labels.iter().any(|(label, _)| label == explanation));
+        assert!(
+            !labels
+                .iter()
+                .any(|(label, _)| matches!(label.as_str(), "Warning" | "Information" | "Error"))
+        );
+    }
+}
+
 #[test]
 fn command_save_commits_pending_numeric_text_before_snapshot() {
     let (mut editor, _send, receiver) = fixture();
@@ -202,6 +237,18 @@ fn viewport_close_is_vetoed_until_the_dirty_document_decision() {
         .unwrap()
         .events
         .push(egui::ViewportEvent::Close);
+    let mut output = context.run_ui(input.clone(), |ui| {
+        egui::CentralPanel::default().show(ui, |ui| host::App::ui(&mut editor, ui));
+    });
+    output.textures_delta.clear();
+    assert!(
+        output.viewport_output[&egui::ViewportId::ROOT]
+            .commands
+            .contains(&egui::ViewportCommand::CancelClose)
+    );
+    assert_eq!(editor.transition, Some(Transition::Close));
+    assert!(!editor.allow_close);
+    assert!(receiver.try_recv().is_err());
     let mut output = context.run_ui(input, |ui| {
         egui::CentralPanel::default().show(ui, |ui| host::App::ui(&mut editor, ui));
     });
@@ -233,7 +280,183 @@ fn export_cannot_replace_the_open_project_document() {
     assert!(receiver.try_recv().is_err());
     assert_eq!(std::fs::read(path).unwrap(), before);
     assert!(!editor.busy);
+    assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Export);
 }
+#[test]
+fn document_and_export_decisions_ignore_outside_clicks_and_cancel_without_dispatch() {
+    use super::super::presentation::tests::key;
+    for decision in 0..3 {
+        for cancel_key in [egui::Key::Escape, egui::Key::Enter] {
+            let (mut editor, _send, receiver) = fixture();
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("existing-file");
+            std::fs::write(&path, b"unchanged destination").unwrap();
+            let before = editor.document.project.clone();
+            match decision {
+                0 => editor.transition = Some(Transition::Close),
+                1 => editor.project_overwrite = Some((path.clone(), Some(Transition::New))),
+                _ => editor.overwrite = Some((path.clone(), OutputFormat::Exr(ExrPrecision::Half))),
+            }
+            let context = egui::Context::default();
+            ui_frame(&mut editor, &context, vec![]);
+            ui_frame(&mut editor, &context, vec![]);
+            click(&mut editor, &context, egui::pos2(30., 15.));
+            assert!(
+                editor.transition.is_some()
+                    || editor.project_overwrite.is_some()
+                    || editor.overwrite.is_some()
+            );
+            assert!(receiver.try_recv().is_err());
+            ui_frame(&mut editor, &context, key(cancel_key));
+            assert!(
+                editor.transition.is_none()
+                    && editor.project_overwrite.is_none()
+                    && editor.overwrite.is_none()
+            );
+            assert!(receiver.try_recv().is_err());
+            assert!(!editor.allow_close && !editor.busy);
+            assert_eq!(editor.document.project, before);
+            assert_eq!(std::fs::read(path).unwrap(), b"unchanged destination");
+        }
+    }
+}
+
+#[test]
+fn save_decision_queues_the_snapshot_with_its_original_continuation() {
+    let (mut editor, _send, receiver) = fixture();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("project.antitone.json");
+    editor.document = editor
+        .document
+        .save(&path, crate::project::Save::New)
+        .unwrap();
+    editor.photo.exposure = 1.25;
+    let context = egui::Context::default();
+    editor.guard_transition(Transition::Close, &context);
+    ui_frame(&mut editor, &context, vec![]);
+    let labels = ui_frame(&mut editor, &context, vec![]);
+    let point = labels
+        .iter()
+        .find(|(label, _)| label == "Save changes")
+        .unwrap()
+        .1
+        .center();
+    click(&mut editor, &context, point);
+    assert!(editor.transition.is_none());
+    assert_eq!(editor.after_save, Some(Transition::Close));
+    assert!(!editor.allow_close);
+    let Command::Document(_, work) = receiver.try_recv().unwrap() else {
+        panic!()
+    };
+    let DocumentWork::Save(snapshot, destination, policy) = *work else {
+        panic!()
+    };
+    assert_eq!(destination, path);
+    assert!(matches!(policy, crate::project::Save::Replace));
+    assert_eq!(snapshot.project, editor.document.project);
+    assert_eq!(
+        snapshot
+            .project
+            .source(editor.current_source.unwrap())
+            .unwrap()
+            .photo
+            .exposure,
+        1.25
+    );
+    assert!(receiver.try_recv().is_err());
+}
+
+#[test]
+fn project_replace_decision_preserves_destination_snapshot_and_continuation() {
+    let (mut editor, _send, receiver) = fixture();
+    let path = PathBuf::from("existing.antitone.json");
+    editor.project_overwrite = Some((path.clone(), Some(Transition::New)));
+    let context = egui::Context::default();
+    ui_frame(&mut editor, &context, vec![]);
+    let labels = ui_frame(&mut editor, &context, vec![]);
+    let point = labels
+        .iter()
+        .find(|(label, _)| label == "Replace project")
+        .unwrap()
+        .1
+        .center();
+    click(&mut editor, &context, point);
+    assert!(editor.project_overwrite.is_none());
+    assert_eq!(editor.after_save, Some(Transition::New));
+    let Command::Document(_, work) = receiver.try_recv().unwrap() else {
+        panic!()
+    };
+    let DocumentWork::Save(snapshot, destination, policy) = *work else {
+        panic!()
+    };
+    assert_eq!(destination, path);
+    assert_eq!(snapshot.project, editor.document.project);
+    assert!(matches!(policy, crate::project::Save::Replace));
+    assert!(receiver.try_recv().is_err());
+}
+
+#[test]
+fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_grade_once() {
+    for format in [
+        OutputFormat::Tiff(OutputTarget::Srgb),
+        OutputFormat::Tiff(OutputTarget::DisplayP3),
+        OutputFormat::Exr(ExrPrecision::Half),
+        OutputFormat::Exr(ExrPrecision::Full),
+    ] {
+        let (mut editor, _send, receiver) = super::super::tests::fixture();
+        super::super::tests::add_ready_fixture(&mut editor);
+        editor.crop = Some(Crop::from_region(Rect {
+            x: 20,
+            y: 20,
+            width: 100,
+            height: 80,
+        }));
+        editor.sync_document();
+        let path = PathBuf::from("existing-output");
+        editor.overwrite = Some((path.clone(), format));
+        let before = editor.document.project.clone();
+        let context = egui::Context::default();
+        ui_frame(&mut editor, &context, vec![]);
+        let labels = ui_frame(&mut editor, &context, vec![]);
+        let point = labels
+            .iter()
+            .find(|(label, _)| label == "Replace file")
+            .unwrap()
+            .1
+            .center();
+        click(&mut editor, &context, point);
+        assert!(editor.overwrite.is_none());
+        let Command::Export(
+            id,
+            destination,
+            dispatched,
+            calibration,
+            roll,
+            photo,
+            composition,
+            policy,
+        ) = receiver.try_recv().unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(id, editor.id);
+        assert_eq!(destination, path);
+        match (dispatched, format) {
+            (OutputFormat::Tiff(a), OutputFormat::Tiff(b)) => assert_eq!(a, b),
+            (OutputFormat::Exr(ExrPrecision::Half), OutputFormat::Exr(ExrPrecision::Half))
+            | (OutputFormat::Exr(ExrPrecision::Full), OutputFormat::Exr(ExrPrecision::Full)) => {}
+            _ => panic!("staged export format changed"),
+        }
+        assert_eq!(calibration, editor.calibration().unwrap());
+        assert_eq!(roll, editor.roll);
+        assert_eq!(photo, editor.photo);
+        assert_eq!(composition.crop(), editor.crop.unwrap());
+        assert!(matches!(policy, Overwrite::Confirmed));
+        assert_eq!(editor.document.project, before);
+        assert!(receiver.try_recv().is_err());
+    }
+}
+
 fn fixture() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
     let (commands, receiver) = mpsc::channel();
     let (send, messages) = mpsc::channel();

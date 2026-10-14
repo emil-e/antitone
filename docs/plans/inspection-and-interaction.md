@@ -13,7 +13,7 @@ These are unfinished fixes and design questions. [The roadmap](../../PLAN.md) ow
 
 ### Focused fixes
 
-- **Save prompt:** settle owner-relative placement and modality without changing Save/Discard/Cancel behavior.
+- **Decision-dialog acceptance:** exercise the shared Save/Discard, project/output replacement and Analyze prompts, plus acknowledged flat-field/save/export failures, with native keyboard/pointer input, VoiceOver and display scaling. Component/event/float-capture checks establish layout and transaction boundaries, not physical appearance or native chooser ownership. [Current policy](../editor.md#decisions-are-not-operation-failures).
 - **Wheel accessibility:** settle a named pointer-only surface with adjacent keyboard-editable numeric controls versus a dedicated wheel keyboard interface. Preserve the numerical mapping; do not introduce an inert focus stop. Physical/VoiceOver acceptance remains separate from card/title semantic and input checks.
 
 ### Roll workflow
@@ -24,7 +24,7 @@ These are unfinished fixes and design questions. [The roadmap](../../PLAN.md) ow
 ### Layout and controls
 
 - **Scopes disclosure:** decide whether disclosure-style hiding improves the persistent visibility control without changing canvas/resource behavior.
-- **Native shell:** app menus and owner-relative dialogs need design; no framework choice is established.
+- **Native shell:** native app menus and ownership of native file choosers need design; no native-shell framework choice is established.
 - **Operation feedback:** coordinate progress/errors with [the feedback slice](completion.md#operation-feedback), preserving transactions and cancellation boundaries.
 - **Crop cursor acceptance:** exercise the native rotation cursor around edges/corners, through straightening/move/resize, and across popup, canvas/window-exit and monitor transitions. Headless checks establish bitmap/output mechanics, not native tracking, DPI appearance or photographic acceptance.
 - **Wheel feel/mapping:** exercise normal/Shift-fine dragging and modifier transitions with physical input; reproduce any directional asymmetry before changing mapping. Gamma and Bradford WB have different processing responses despite similar artwork; [processing](../processing.md#curve-balance-is-not-white-balance) explains why. Further sensitivity/keyboard changes must not quietly change numerical mapping.

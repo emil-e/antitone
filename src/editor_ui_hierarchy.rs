@@ -76,22 +76,75 @@ pub fn section<R>(
     header: SectionHeader<'_>,
     contents: impl FnOnce(&mut Ui) -> R,
 ) -> (Option<R>, bool) {
+    section_impl(
+        ui,
+        id,
+        title,
+        header,
+        SectionPresentation::Inspector,
+        contents,
+    )
+}
+
+/// Compact dialog disclosure; expansion remains session state, not inspector preferences.
+pub fn dialog_disclosure<R>(
+    ui: &mut Ui,
+    id: &str,
+    title: &str,
+    contents: impl FnOnce(&mut Ui) -> R,
+) -> Option<R> {
+    section_impl(
+        ui,
+        id,
+        title,
+        SectionHeader {
+            summary: "",
+            changed: false,
+            reset: None,
+            default_open: Some(false),
+        },
+        SectionPresentation::Dialog,
+        contents,
+    )
+    .0
+}
+
+const DIALOG_DISCLOSURE_HEIGHT: f32 = 22.;
+
+#[derive(Clone, Copy)]
+enum SectionPresentation {
+    Inspector,
+    Dialog,
+}
+
+fn section_impl<R>(
+    ui: &mut Ui,
+    id: &str,
+    title: &str,
+    header: SectionHeader<'_>,
+    presentation: SectionPresentation,
+    contents: impl FnOnce(&mut Ui) -> R,
+) -> (Option<R>, bool) {
     let SectionHeader {
         summary,
         changed,
         reset: reset_enabled,
         default_open,
     } = header;
+    let inspector = matches!(presentation, SectionPresentation::Inspector);
     ui.push_id(id, |ui| {
-        ui.add_space(8.);
-        ui.separator();
+        if inspector {
+            ui.add_space(8.);
+            ui.separator();
+        }
         let state_id = ui.make_persistent_id("expanded");
         let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
             ui.ctx(),
             state_id,
             default_open.unwrap_or(true),
         );
-        if default_open.is_some()
+        if inspector
+            && default_open.is_some()
             && let Some(open) = ui.ctx().data_mut(|data| {
                 data.get_temp::<SectionExpansion>(egui::Id::new("inspector-expansion"))
                     .and_then(|sections| sections.0.get(id).copied())
@@ -101,15 +154,39 @@ pub fn section<R>(
         }
         let open = default_open.is_none() || state.is_open();
         let mut reset = false;
-        let header = icons::row(ui, |ui| {
+        let draw_header = |ui: &mut Ui| {
+            let text_color = if inspector {
+                ui.visuals().strong_text_color()
+            } else {
+                ui.visuals().text_color()
+            };
+            let text = ui.painter().layout_no_wrap(
+                title.into(),
+                if inspector {
+                    egui::TextStyle::Button
+                } else {
+                    egui::TextStyle::Body
+                }
+                .resolve(ui.style()),
+                text_color,
+            );
             let reset_width = if reset_enabled.is_some() {
                 CONTROL_HEIGHT + ui.spacing().item_spacing.x
             } else {
                 0.
             };
-            let width = (ui.available_width() - reset_width).max(1.);
-            let (rect, _) =
-                ui.allocate_exact_size(egui::vec2(width, CONTROL_HEIGHT), egui::Sense::hover());
+            let width = if inspector {
+                ui.available_width() - reset_width
+            } else {
+                (text.size().x + 28.).min(ui.available_width())
+            }
+            .max(1.);
+            let height = if inspector {
+                CONTROL_HEIGHT
+            } else {
+                DIALOG_DISCLOSURE_HEIGHT
+            };
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
             let response = ui.interact(
                 rect,
                 ui.make_persistent_id("disclosure"),
@@ -144,7 +221,11 @@ pub fn section<R>(
                         rect.left_center() + egui::vec2(10., 0.),
                         egui::vec2(16., 16.),
                     ),
-                    ui.style().interact(&response).fg_stroke,
+                    if inspector {
+                        ui.style().interact(&response).fg_stroke
+                    } else {
+                        egui::Stroke::new(1.5, text_color)
+                    },
                 );
                 response.widget_info(|| {
                     egui::WidgetInfo::labeled(
@@ -160,17 +241,12 @@ pub fn section<R>(
             }
             let left = rect.left() + if default_open.is_some() { 24. } else { 0. };
             let marker_width = if changed { 12. } else { 0. };
-            let text = ui.painter().layout_no_wrap(
-                title.into(),
-                egui::TextStyle::Button.resolve(ui.style()),
-                ui.visuals().strong_text_color(),
-            );
             let mut clip = rect;
             clip.max.x -= marker_width;
             ui.painter().with_clip_rect(clip).galley(
                 egui::pos2(left, rect.center().y - text.size().y * 0.5),
                 text,
-                ui.visuals().strong_text_color(),
+                text_color,
             );
             if changed {
                 ui.painter().circle_filled(
@@ -183,13 +259,25 @@ pub fn section<R>(
                 reset = reset_button(ui, enabled, title).clicked();
             }
             response
-        })
-        .inner;
+        };
+        let header = if inspector {
+            icons::row(ui, draw_header).inner
+        } else {
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), DIALOG_DISCLOSURE_HEIGHT),
+                egui::Layout::left_to_right(egui::Align::Center),
+                draw_header,
+            )
+            .inner
+        };
         if header.clicked() {
             state.toggle(ui);
+            if !inspector {
+                header.request_focus();
+            }
         }
         state.store(ui.ctx());
-        if default_open.is_some() {
+        if inspector && default_open.is_some() {
             ui.ctx().data_mut(|data| {
                 let key = egui::Id::new("inspector-expansion");
                 if data.get_temp::<SectionExpansion>(key).is_some() {

@@ -389,29 +389,19 @@ impl Editor {
         self.start_analysis(request);
     }
 
-    pub(super) fn analysis_dialog(&mut self, context: &egui::Context) {
-        use presentation::TextAction;
+    pub(super) fn analysis_dialog(&mut self, context: &egui::Context, escape_available: bool) {
+        use presentation::{DecisionDialog, DialogChoice};
         if self.analysis_confirmation.is_none() {
             return;
         }
-        let response = egui::Modal::new(egui::Id::new("confirm-roll-analysis")).show(context, |ui| {
-            ui.set_max_width(400.);
-            ui.heading("Reset Photo adjustments?");
-            ui.label("Analyze will replace existing Photo adjustments with a new baseline.");
-            ui.label("Exposure will be initialized; WB and all other Photo grading controls reset to defaults.");
-            ui.small("Crop, orientation and correction are kept.");
-            ui.horizontal(|ui| {
-                let cancel = TextAction::new("Cancel").show(ui).clicked();
-                let analyze = TextAction::new("Analyze roll").primary().show(ui).clicked();
-                if cancel { Some(false) }
-                else if analyze { Some(true) }
-                else { None }
-            }).inner
-        });
-        if let Some(accept) = response.inner {
-            self.finish_analysis_confirmation(accept);
-        } else if response.should_close() {
-            self.finish_analysis_confirmation(false);
+        let choice = DecisionDialog::new(
+            "Replace Photo adjustments?",
+            "Analyze roll will initialize shared Roll settings and replace existing Photo adjustments. Exposure is estimated; Photo white balance and other grading controls return to their defaults.",
+            "Analyze roll",
+        ).warning().detail("Crop, orientation and flat-field correction are kept.")
+            .show(context, egui::Id::new("confirm-roll-analysis"), escape_available);
+        if let Some(choice) = choice {
+            self.finish_analysis_confirmation(choice == DialogChoice::Confirm);
         }
     }
 

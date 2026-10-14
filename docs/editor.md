@@ -28,6 +28,20 @@ Colour wheels normally position the marker under the pointer. Hold Shift while d
 
 Disabled controls must be genuinely read-only. In particular, focus loss must not commit old pending text when an operation makes the control unavailable. Parameter domains and complete GPU preflight decide whether a proposed edit is acceptable; rejected edits restore the previous grade rather than switching to another processing path.
 
+## Decisions are not operation failures
+
+A decision asks permission before changing or replacing something; a failure explains why an attempted operation did not complete. Save/Discard, project/output replacement and Analyze's Photo reset use the shared [decision dialog](../src/editor_ui_dialogs.rs). Save/Discard is a routine choice about keeping edits and has no severity banner. Project/output replacement and Analyze's Photo reset warn before replacing existing work; their warning icon, written severity and heading provide meaning without relying on colour alone. A required choice is not itself a warning, and none of these confirmations is an operation failure.
+
+Decision dialogs are centred in the editor with consistent padding, wrapped explanatory text and right-aligned natural-size actions separated from the text by a little extra space. Copy names the consequence and what is preserved; destination paths remain readable context. At narrow widths, actions stack rather than clip. Controllers supply the copy and stable IDs, retain staged paths/continuations and dispatch the returned choice. Presentation never saves, exports, resets or validates a request itself.
+
+These decisions block editor input. Cancel receives initial focus; Escape cancels after any open popover has had its turn. Outside clicks do not dismiss or accept the decision. There is no dialog-wide Enter-to-confirm binding: an explicitly focused action retains ordinary button keyboard activation. Closing the application still goes through the document transition, not an implicit dialog acceptance. Native file choosers remain native, and help/source-inspection popovers are not decision dialogs.
+
+[Feedback presentation](../src/editor_ui_feedback.rs) distinguishes information, warning and error with a named severity, different glyph and restrained colour. Flat-field reference/correction failures, project-save failures and TIFF/EXR export failures use acknowledged messages; a rejected non-integer reference area is a warning, not a failed correction. The explanation states what did not happen and what remains intact. Full diagnostic details are selectable behind a compact, subdued **Details** disclosure without a section divider. Its expansion is transient, with bounded scrolling for long diagnostics; keyboard focus remains clearly visible.
+
+These messages use the same centred shell as decisions. OK or Escape acknowledges the message without retrying, accepting a draft or changing the document; popovers retain Escape precedence and outside clicks do not dismiss. Editor input is blocked until acknowledgement. A pending Save/Discard decision is retained but waits behind the failure message, so the failed save cannot be hidden under another prompt.
+
+[Operation controllers](../src/editor_feedback.rs) retain the typed failure separately from status text. Acknowledgement or a matching successful result retires it; merely starting another job, updating unrelated status or receiving stale/cancelled results does not. Presentation returns acknowledgement only. Other loading/import/analysis/background messages and progress remain on their existing surfaces; [broader feedback work](plans/completion.md#operation-feedback) is separate. No notification bus or status-prefix severity inference is used.
+
 ## Source inspection is a view
 
 Developed-source inspection bypasses inversion and photographic grading. Its exposure adjustment affects that source preview only. It does not alter RAW development, calibration, fitting, exports or generated filmstrip thumbnails, and it is not saved in the project.
@@ -68,6 +82,8 @@ Use the existing component families rather than copying their painting or intera
 
 - [Presentation](../src/editor_ui.rs): application header/branding, labelled rows, text actions and viewer tool groups.
 - [Hierarchy](../src/editor_ui_hierarchy.rs): sections, disclosure/reset and stage tabs.
+- [Decisions](../src/editor_ui_dialogs.rs): shared modal framing, actions and dismissal.
+- [Feedback](../src/editor_ui_feedback.rs): explicit severity, acknowledged messages and technical details.
 - [Cards](../src/editor_ui_cards.rs): contact-sheet geometry, captions and supplied-state artwork.
 - [Icons](../src/editor_icons.rs): semantic actions and artwork.
 - [Controls](../src/editor_controls.rs): photographic values, precision and calibration/balance adapters.

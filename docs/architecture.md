@@ -36,7 +36,7 @@ Worker results are proposals. Request IDs, generations and source/settings snaps
 
 ## Editor workspace
 
-[Shared presentation](editor.md#build-ui-from-shared-presentation) lays out supplied state and returns responses. Photographic adapters own value semantics; feature controllers own state, availability and dispatch. This keeps a presentation change from acquiring processing or persistence responsibility.
+[Shared presentation](editor.md#build-ui-from-shared-presentation) lays out supplied state and returns responses. Photographic adapters own value semantics; feature controllers own state, availability and dispatch. This keeps a presentation change from acquiring processing or persistence responsibility. [Decision dialogs](../src/editor_ui_dialogs.rs) own framing, button focus and dismissal; document, export and analysis controllers retain the decision payloads and transaction dispatch. [Feedback presentation](../src/editor_ui_feedback.rs) shares that shell and supplies severity/details; [operation feedback](../src/editor_feedback.rs) owns failure copy, acknowledgement and resolution without acquiring worker or persistence responsibility.
 
 Accepted photographic state lives in [projects](projects.md). Tool drafts and viewport state are transient; durable UI preferences are stored independently. [Editor](editor.md) explains preview/cache distinctions and the input/transaction model.
 

@@ -99,6 +99,8 @@ For wordmark/icon changes, also [regenerate the branding assets](../assets/brand
 
 For feature-specific transactions, use the `editor::analysis::tests`, `editor::flat::tests`, `editor::files::tests`, `editor::navigation::tests`, `editor::preferences::tests` or `editor::scopes::tests` filter. Use [native layout and GPU fixtures](diagnostics.md#editor-and-layout-smoke) when painting/layout changes.
 
+The presentation dialog suite checks neutral versus explicit warning semantics, text/action spacing, normal/narrow layout, safe initial focus, explicit choices, blocked backdrop clicks and popup-first Escape. Files and analysis tests cover decision cancellation/acceptance, staged destinations/continuations, unchanged accepted state and stale confirmation rejection. `editor::feedback::tests` covers typed worker/send failures, persistent acknowledgement, matching resolution and pending save decisions. Component feedback tests cover all severity cues, selectable/bounded technical details, disclosure focus and isolation from inspector preferences.
+
 The thumbnail suite includes composed cold-load/error selection, JPEG placeholder semantics, disabled focus/input and ordered-roll picker return checks. [Wheel accessibility](plans/inspection-and-interaction.md#focused-fixes) remains unsettled. Physical pointer/trackpad behavior, VoiceOver and preference relaunch also need real-use checks; headless events cannot establish them.
 
 ### Framework UI regressions
@@ -116,6 +118,10 @@ cargo clippy --locked --features ui-tests --lib --tests -- -D warnings
 A test-only renderer shares the Editor’s device/queue and submission gate, and paints the production selected-image callback into RGBA16Float. Finite readback and two neutral patches are checked against the CPU source-rendering reference at `0.001`; this is implementation agreement, not a new independent ACES oracle. Existing OCIO and native presentation checks remain necessary. Preferences are never restored and disk thumbnails are disabled.
 
 `stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts` clicks all three stage tabs at 1100×800/315-point sidebar and 800×600/270-point sidebar sizes. It checks selected-tab semantics, tab/header bounds, stage-specific contents, unchanged project/source selection, settled preview and completed scope diagnostics before rendering all six states. `unfinished_editor_operation_fails_at_wait_deadline` checks that unfinished work fails at the wait deadline rather than passing.
+
+`decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports` uses the authored DNG and the same float renderer to inspect all four prompts at normal/narrow sizes. It checks each controller's neutral/warning classification, enabled semantic actions, popup-first Escape in the composed viewer and unchanged project/selection after Cancel. Use its filter with `ANTITONE_UI_CAPTURE` to write `dialog-{save,project-replace,output-replace,analyze}-{normal,narrow}-offscreen.png`.
+
+`operation_failures_are_acknowledged_without_promoting_failed_candidates` uses the authored DNG to exercise missing-reference and rejected correction workers, support validation, failed save and export-destination rejection. It checks unchanged project, selection, dirty state and saved bytes after acknowledgement. With the capture environment it writes `feedback-{reference,support,correction,save,export}-{normal,narrow}-offscreen.png` and expanded save-detail captures.
 
 For optional named inspection artifacts:
 

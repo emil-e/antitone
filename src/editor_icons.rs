@@ -11,6 +11,9 @@ pub(super) enum Icon {
     Source,
     Inspection,
     Help,
+    Warning,
+    Information,
+    Error,
     TurnLeft,
     TurnRight,
     FlipHorizontal,
@@ -101,6 +104,23 @@ impl Icon {
                 ]);
                 ui.painter()
                     .circle_filled(point(8., 12.5), 0.8, stroke.color);
+            }
+            Self::Warning => {
+                line(&[[8., 1.], [15., 14.], [1., 14.], [8., 1.]]);
+                line(&[[8., 5.], [8., 9.]]);
+                ui.painter()
+                    .circle_filled(point(8., 11.5), 0.8, stroke.color);
+            }
+            Self::Information => {
+                ui.painter().circle_stroke(point(8., 8.), 7., stroke);
+                line(&[[8., 7.], [8., 11.]]);
+                ui.painter()
+                    .circle_filled(point(8., 4.5), 0.8, stroke.color);
+            }
+            Self::Error => {
+                ui.painter().circle_stroke(point(8., 8.), 7., stroke);
+                line(&[[5., 5.], [11., 11.]]);
+                line(&[[5., 11.], [11., 5.]]);
             }
             Self::TurnLeft | Self::TurnRight => {
                 let mirror = matches!(self, Self::TurnRight);

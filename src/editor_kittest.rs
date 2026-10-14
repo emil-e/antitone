@@ -209,6 +209,309 @@ impl TestRenderer for FloatRenderer {
     }
 }
 
+#[test]
+fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
+    let (device, queue) = pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = instance
+            .request_adapter(&Default::default())
+            .await
+            .expect("dialog captures require Metal");
+        adapter.request_device(&Default::default()).await.unwrap()
+    });
+    let mut editor = Editor::new(&device, &queue, None);
+    editor.thumbnails = Thumbnails::default();
+    let capture = Rc::new(RefCell::new(FloatCapture::default()));
+    let renderer = FloatRenderer::new(
+        &device,
+        &queue,
+        host::App::submission_gate(&editor).clone(),
+        capture,
+    );
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1100., 800.))
+        .with_max_steps(240)
+        .with_step_dt(1. / 60.)
+        .renderer(renderer)
+        .build_ui_state(|ui, editor| host::App::ui(editor, ui), editor);
+    harness.state_mut().add_raws(vec![
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
+    ]);
+    wait_for(&mut harness, |editor| {
+        !editor.busy && editor.document_pending.is_none()
+    });
+    assert!(
+        harness.state().ready.is_some(),
+        "{}",
+        harness.state().status
+    );
+    harness.state_mut().photo.exposure = 1.25;
+    harness.state_mut().sync_document();
+    let before = harness.state().document.project.clone();
+    let selected = harness.state().current_source;
+    harness.get_by_label("Viewer help").click();
+    harness.run();
+    assert!(egui::Popup::is_any_open(&harness.ctx));
+    harness.state_mut().transition = Some(Transition::New);
+    harness.run();
+    harness.event(super::presentation::tests::key(egui::Key::Escape).remove(0));
+    harness.step();
+    assert!(!egui::Popup::is_any_open(&harness.ctx));
+    assert!(
+        harness.state().transition.is_some(),
+        "popover Escape also cancelled the decision"
+    );
+    harness.event(super::presentation::tests::key(egui::Key::Escape).remove(0));
+    harness.step();
+    assert!(harness.state().transition.is_none());
+    for (layout, size) in [
+        ("normal", egui::vec2(1100., 800.)),
+        ("narrow", egui::vec2(800., 600.)),
+    ] {
+        harness.set_size(size);
+        for (decision, name, confirm) in [
+            (0, "save", "Save changes"),
+            (1, "project-replace", "Replace project"),
+            (2, "output-replace", "Replace file"),
+            (3, "analyze", "Analyze roll"),
+        ] {
+            match decision {
+                0 => harness.state_mut().transition = Some(Transition::New),
+                1 => {
+                    harness.state_mut().project_overwrite = Some((
+                        PathBuf::from("/projects/Scans/照片-long-project-name.antitone.json"),
+                        Some(Transition::New),
+                    ))
+                }
+                2 => {
+                    harness.state_mut().overwrite = Some((
+                        PathBuf::from("/exports/Scans/照片-long-exported-filename.tiff"),
+                        OutputFormat::Tiff(OutputTarget::Srgb),
+                    ))
+                }
+                _ => harness.state_mut().request_analysis(),
+            }
+            harness.hover_at(egui::pos2(10., size.y - 10.));
+            harness.run();
+            assert_eq!(harness.query_by_label("Warning").is_some(), decision != 0);
+            assert!(harness.query_by_label("Information").is_none());
+            assert!(harness.query_by_label("Error").is_none());
+            let cancel = harness.get_by_label("Cancel");
+            assert!(!cancel.accesskit_node().is_disabled());
+            assert!(
+                harness
+                    .get_all_by_label(confirm)
+                    .any(|node| !node.accesskit_node().is_disabled())
+            );
+            let bounds = cancel.rect();
+            assert!(bounds.min.x >= 0. && bounds.max.x <= size.x && bounds.max.y <= size.y);
+            let png = harness.render().unwrap();
+            assert_eq!(png.dimensions(), (size.x as u32, size.y as u32));
+            if let Some(directory) = std::env::var_os("ANTITONE_UI_CAPTURE") {
+                let directory = PathBuf::from(directory);
+                std::fs::create_dir_all(&directory).unwrap();
+                png.save(directory.join(format!("dialog-{name}-{layout}-offscreen.png")))
+                    .unwrap();
+            }
+            harness.get_by_label("Cancel").click();
+            harness.run();
+            assert!(
+                harness.state().transition.is_none()
+                    && harness.state().project_overwrite.is_none()
+                    && harness.state().overwrite.is_none()
+                    && harness.state().analysis_confirmation.is_none()
+            );
+            assert!(!harness.state().busy);
+            assert_eq!(harness.state().document.project, before);
+            assert_eq!(harness.state().current_source, selected);
+        }
+    }
+}
+
+#[test]
+fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
+    let (device, queue) = pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = instance
+            .request_adapter(&Default::default())
+            .await
+            .expect("feedback captures require Metal");
+        adapter.request_device(&Default::default()).await.unwrap()
+    });
+    let mut editor = Editor::new(&device, &queue, None);
+    editor.thumbnails = Thumbnails::default();
+    let renderer = FloatRenderer::new(
+        &device,
+        &queue,
+        host::App::submission_gate(&editor).clone(),
+        Rc::new(RefCell::new(FloatCapture::default())),
+    );
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1100., 800.))
+        .with_max_steps(240)
+        .with_step_dt(1. / 60.)
+        .renderer(renderer)
+        .build_ui_state(|ui, editor| host::App::ui(editor, ui), editor);
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
+    harness.state_mut().add_raws(vec![fixture.clone()]);
+    wait_for(&mut harness, |editor| {
+        !editor.busy && editor.document_pending.is_none()
+    });
+    assert!(
+        harness.state().ready.is_some(),
+        "{}",
+        harness.state().status
+    );
+    harness.state_mut().photo.exposure = 1.25;
+    harness.state_mut().sync_document();
+    let directory = tempfile::tempdir().unwrap();
+    let project_path = directory.path().join("project.json");
+    harness.state_mut().document = harness
+        .state()
+        .document
+        .save(&project_path, crate::project::Save::New)
+        .unwrap();
+    let saved_bytes = std::fs::read(&project_path).unwrap();
+    harness.state_mut().photo.exposure = 2.;
+    harness.state_mut().sync_document();
+    let before = harness.state().document.project.clone();
+    let selected = harness.state().current_source;
+    for (layout, size) in [
+        ("normal", egui::vec2(1100., 800.)),
+        ("narrow", egui::vec2(800., 600.)),
+    ] {
+        harness.set_size(size);
+        for kind in [
+            FailureKind::FlatReference,
+            FailureKind::FlatSupport,
+            FailureKind::FlatCorrection,
+            FailureKind::Save,
+            FailureKind::Export,
+        ] {
+            match kind {
+                FailureKind::FlatReference => harness
+                    .state_mut()
+                    .begin_flat_edit(directory.path().join("missing-reference.dng"), None),
+                FailureKind::FlatSupport | FailureKind::FlatCorrection => {
+                    harness.state_mut().begin_flat_edit(fixture.clone(), None);
+                    wait_for(&mut harness, |editor| !editor.busy);
+                    assert!(harness.state().flat_edit.is_some());
+                    let area = harness.state().ready.as_ref().unwrap().area;
+                    harness.state_mut().region = Some(if kind == FailureKind::FlatSupport {
+                        let x = f64::from(area.x) + 0.25;
+                        let y = f64::from(area.y);
+                        Coverage::new(
+                            [[x, y], [x + 2., y], [x + 2., y + 2.], [x, y + 2.]]
+                                .map(crate::geometry::SourcePoint),
+                        )
+                        .unwrap()
+                    } else {
+                        Coverage::rectangle(Rect {
+                            x: area.x,
+                            y: area.y,
+                            width: 2,
+                            height: 2,
+                        })
+                    });
+                    harness.state_mut().apply_flat_edit();
+                }
+                FailureKind::Save => harness.state_mut().queue_save(
+                    directory.path().join("missing-parent/project.json"),
+                    crate::project::Save::New,
+                    Some(Transition::Close),
+                ),
+                FailureKind::Export => {
+                    let path = harness.state().document.path.clone().unwrap();
+                    harness.state_mut().export(
+                        path,
+                        OutputFormat::Exr(ExrPrecision::Full),
+                        Overwrite::Confirmed,
+                    );
+                }
+            }
+            wait_for(&mut harness, |editor| {
+                !editor.busy && editor.failure.is_some()
+            });
+            assert_eq!(harness.state().failure.as_ref().unwrap().kind, kind);
+            assert_eq!(harness.state().document.project, before);
+            harness.hover_at(egui::pos2(10., size.y - 10.));
+            harness.run();
+            assert!(!harness.get_by_label("OK").accesskit_node().is_disabled());
+            let name = match kind {
+                FailureKind::FlatReference => "reference",
+                FailureKind::FlatSupport => "support",
+                FailureKind::FlatCorrection => "correction",
+                FailureKind::Save => "save",
+                FailureKind::Export => "export",
+            };
+            let png = harness.render().unwrap();
+            if let Some(output) = std::env::var_os("ANTITONE_UI_CAPTURE") {
+                let output = PathBuf::from(output);
+                std::fs::create_dir_all(&output).unwrap();
+                png.save(output.join(format!("feedback-{name}-{layout}-offscreen.png")))
+                    .unwrap();
+            }
+            if kind == FailureKind::Save {
+                assert!(harness.query_by_label("Save changes").is_none());
+                if harness
+                    .get_by_label("Details")
+                    .accesskit_node()
+                    .data()
+                    .is_expanded()
+                    != Some(true)
+                {
+                    harness.get_by_label("Details").click();
+                    harness.run();
+                }
+                assert_eq!(
+                    harness
+                        .get_by_label("Details")
+                        .accesskit_node()
+                        .data()
+                        .is_expanded(),
+                    Some(true)
+                );
+                harness.hover_at(egui::pos2(10., size.y - 10.));
+                harness.run();
+                let png = harness.render().unwrap();
+                if let Some(output) = std::env::var_os("ANTITONE_UI_CAPTURE") {
+                    png.save(
+                        PathBuf::from(output)
+                            .join(format!("feedback-save-details-{layout}-offscreen.png")),
+                    )
+                    .unwrap();
+                }
+            }
+            harness.get_by_label("OK").click();
+            harness.run();
+            assert!(harness.state().failure.is_none());
+            if kind == FailureKind::Save {
+                assert_eq!(harness.state().transition, Some(Transition::Close));
+                harness.get_by_label("Cancel").click();
+                harness.run();
+                assert!(!harness.state().allow_close);
+            }
+            if kind == FailureKind::FlatSupport {
+                assert!(harness.state().flat_edit.is_some());
+                harness.get_by_label("Cancel").click();
+                harness.run();
+            }
+            assert_eq!(harness.state().document.project, before);
+            assert_eq!(harness.state().current_source, selected);
+            assert!(harness.state().flat_edit.is_none());
+            assert_eq!(harness.state().document.path.as_ref(), Some(&project_path));
+            assert!(harness.state().document.dirty());
+            assert_eq!(std::fs::read(&project_path).unwrap(), saved_bytes);
+        }
+    }
+}
+
 fn wait_for(harness: &mut Harness<'_, Editor>, done: impl Fn(&Editor) -> bool) {
     wait_for_with_timeout(harness, Duration::from_secs(60), done);
 }

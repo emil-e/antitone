@@ -1,4 +1,4 @@
-use super::presentation::TextAction;
+use super::presentation::{DecisionDialog, DialogChoice};
 use super::*;
 
 #[cfg(test)]
@@ -120,48 +120,58 @@ impl Editor {
             FileAction::SaveAs => self.save_dialog(true, None),
         }
     }
-    pub(super) fn document_dialogs(&mut self, context: &egui::Context) {
+    pub(super) fn document_dialogs(&mut self, context: &egui::Context, escape_available: bool) {
         if let Some(transition) = self.transition.clone() {
-            egui::Window::new("Save project changes?")
-                .collapsible(false)
-                .resizable(false)
-                .show(context, |ui| {
-                    ui.label("Save this project's changes before continuing?");
-                    ui.horizontal(|ui| {
-                        if TextAction::new("Cancel").show(ui).clicked() {
-                            self.transition = None;
-                        }
-                        if TextAction::new("Discard").show(ui).clicked() {
-                            self.transition = None;
-                            self.perform_transition(transition.clone(), context);
-                        }
-                        if TextAction::new("Save").show(ui).clicked() {
-                            self.transition = None;
-                            self.save_dialog(false, Some(transition.clone()));
-                        }
-                    });
-                });
+            let explanation = match &transition {
+                Transition::New => {
+                    "Creating a new project without saving will discard unsaved edits in this project."
+                }
+                Transition::Open(_) => {
+                    "Opening another project without saving will discard unsaved edits in this project."
+                }
+                Transition::Close => {
+                    "Closing Antitone without saving will discard unsaved edits in this project."
+                }
+            };
+            let choice =
+                DecisionDialog::new("Save changes to this project?", explanation, "Save changes")
+                    .detail("Your RAW files are not changed.")
+                    .alternative("Discard changes")
+                    .show(
+                        context,
+                        egui::Id::new("Save project changes?"),
+                        escape_available,
+                    );
+            match choice {
+                Some(DialogChoice::Cancel) => self.transition = None,
+                Some(DialogChoice::Alternative) => {
+                    self.transition = None;
+                    self.perform_transition(transition, context);
+                }
+                Some(DialogChoice::Confirm) => {
+                    self.transition = None;
+                    self.save_dialog(false, Some(transition));
+                }
+                None => {}
+            }
+            // A save chooser can stage an overwrite; show that decision on the next frame.
+            return;
         }
         if let Some((path, after)) = self.project_overwrite.clone() {
-            egui::Window::new("Replace existing project?")
-                .collapsible(false)
-                .resizable(false)
-                .show(context, |ui| {
-                    ui.label(path.display().to_string());
-                    ui.horizontal(|ui| {
-                        if TextAction::new("Cancel").show(ui).clicked() {
-                            self.project_overwrite = None;
-                        }
-                        if TextAction::new("Replace").show(ui).clicked() {
-                            self.project_overwrite = None;
-                            self.queue_save(
-                                path.clone(),
-                                crate::project::Save::Replace,
-                                after.clone(),
-                            );
-                        }
-                    });
-                });
+            let detail = path.display().to_string();
+            let choice = DecisionDialog::new(
+                "Replace this project file?",
+                "A project already exists at this location. Replacing it overwrites the saved project, not its RAW files.",
+                "Replace project",
+            ).warning().detail(&detail).show(context, egui::Id::new("Replace existing project?"), escape_available);
+            match choice {
+                Some(DialogChoice::Cancel) => self.project_overwrite = None,
+                Some(DialogChoice::Confirm) => {
+                    self.project_overwrite = None;
+                    self.queue_save(path, crate::project::Save::Replace, after);
+                }
+                _ => {}
+            }
         }
     }
 }

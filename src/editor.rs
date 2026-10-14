@@ -37,6 +37,9 @@ use document::Document;
 #[path = "editor_files.rs"]
 mod files;
 use files::{FileAction, Transition};
+#[path = "editor_feedback.rs"]
+mod feedback;
+use feedback::{Failure, FailureKind};
 #[path = "editor_thumbnails.rs"]
 mod thumbnails;
 use thumbnails::Thumbnails;
@@ -676,6 +679,8 @@ pub struct Editor {
     selection_timing: Option<Arc<SelectionTiming>>,
     busy: bool,
     status: String,
+    failure: Option<Failure>,
+    document_failure: Option<FailureKind>,
     return_notice: Option<String>,
     dmin: Option<DVec3>,
     dmax: Option<DVec3>,
@@ -784,6 +789,8 @@ impl Editor {
             selection_timing: None,
             busy: false,
             status: "Add a RAW to begin".into(),
+            failure: None,
+            document_failure: None,
             return_notice: None,
             dmin: None,
             dmax: None,
@@ -913,6 +920,11 @@ impl Editor {
         self.generation
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.document_pending = Some(id);
+        self.document_failure = match &work {
+            DocumentWork::Save(..) => Some(FailureKind::Save),
+            DocumentWork::Correction(..) => Some(FailureKind::FlatCorrection),
+            _ => None,
+        };
         self.new_project_pending = matches!(work, DocumentWork::New);
         self.busy = true;
         self.status = "Preparing project…".into();
@@ -925,6 +937,9 @@ impl Editor {
             self.new_project_pending = false;
             self.busy = false;
             self.status = "RAW worker stopped".into();
+            if let Some(kind) = self.document_failure.take() {
+                self.report_failure(kind, self.status.clone());
+            }
         }
     }
     fn add_raws(&mut self, paths: Vec<PathBuf>) {
@@ -1198,6 +1213,7 @@ impl Editor {
                 }
                 Message::Prepared(id, result) if self.document_pending == Some(id) => {
                     let new_project = std::mem::take(&mut self.new_project_pending);
+                    let failure_kind = self.document_failure.take();
                     self.document_pending = None;
                     self.busy = false;
                     match result {
@@ -1279,10 +1295,16 @@ impl Editor {
                                 self.source = context.source;
                             }
                             self.status = if self.document.project.flat_field.is_some() || prepared.preserve_view {"Project ready. Flat-field changes keep Dmin/Dmax RGB; re-pick calibration for this setup."} else {"Project ready"}.into();
+                            if let Some(kind) = failure_kind {
+                                self.resolve_failure(kind);
+                            }
                         }
                         Err(error) => {
                             self.status = format!("Project: {error}");
                             self.finish_flat_edit();
+                            if let Some(kind) = failure_kind {
+                                self.report_failure(kind, error);
+                            }
                         }
                     }
                 }
@@ -1292,26 +1314,31 @@ impl Editor {
                         Ok(preview) => {
                             self.region = self.region.or(preview.region.map(Coverage::rectangle));
                             self.ready = Some(preview.ready);
+                            self.resolve_failure(FailureKind::FlatReference);
                             self.status=if self.region.is_some(){"Proposed illuminated rectangle: adjust edges, then Apply."}else{"Illuminated area is ambiguous; draw a rectangle around the usable light."}.into();
                         }
                         Err(error) => {
-                            self.status = error;
+                            self.status = error.clone();
                             self.finish_flat_edit();
+                            self.report_failure(FailureKind::FlatReference, error);
                         }
                     }
                 }
                 Message::Saved(id, result) if self.document_pending == Some(id) => {
                     self.document_pending = None;
+                    self.document_failure = None;
                     self.busy = false;
                     match result {
                         Ok(document) => {
                             self.document = *document;
                             self.status = "Project saved".into();
+                            self.resolve_failure(FailureKind::Save);
                             self.resume_transition = self.after_save.take();
                         }
                         Err(error) => {
                             self.status = format!("Save failed: {error}");
                             self.transition = self.after_save.take();
+                            self.report_failure(FailureKind::Save, error);
                         }
                     }
                 }
@@ -1319,10 +1346,16 @@ impl Editor {
                     if id == self.id && self.document_pending.is_none() =>
                 {
                     self.busy = false;
-                    self.status = match result {
-                        Ok(path) => format!("Exported {}", path.display()),
-                        Err(error) => error,
-                    };
+                    match result {
+                        Ok(path) => {
+                            self.status = format!("Exported {}", path.display());
+                            self.resolve_failure(FailureKind::Export);
+                        }
+                        Err(error) => {
+                            self.status = error.clone();
+                            self.report_failure(FailureKind::Export, error);
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -1473,6 +1506,7 @@ impl Editor {
             .is_some_and(|project| document::same_path(project, &path))
         {
             self.status = "Export destination is the current project document".into();
+            self.report_failure(FailureKind::Export, self.status.clone());
             return;
         }
         if let (Some(calibration), Some(ready)) = (self.calibration(), &self.ready) {
@@ -1502,6 +1536,7 @@ impl Editor {
             {
                 self.busy = false;
                 self.status = "RAW worker stopped".into();
+                self.report_failure(FailureKind::Export, self.status.clone());
             }
         }
     }
@@ -1779,11 +1814,14 @@ impl host::App for Editor {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1100., 800.)));
         }
+        // egui popups close on Escape without consuming it; preserve their input ownership.
+        let dialog_escape_available = !egui::Popup::is_any_open(ui.ctx());
         self.receive();
         self.seed_thumbnail();
         self.thumbnails.receive(&self.document);
         self.validate_pending_preview();
         let available = !self.busy
+            && self.failure.is_none()
             && self.pick.is_none()
             && self.crop_edit.is_none()
             && self.overwrite.is_none()
@@ -1838,6 +1876,7 @@ impl host::App for Editor {
                 .unwrap_or(false)
         });
         if !self.busy
+            && self.failure.is_none()
             && self.analysis_confirmation.is_none()
             && !(text_was_focused && ui.input(|input| input.key_pressed(egui::Key::Escape)))
             && self.overwrite.is_none()
@@ -1902,7 +1941,8 @@ impl host::App for Editor {
         let previous_photo = self.photo;
         let was_dirty = self.document.dirty();
         let calibration = self.calibration();
-        if self.overwrite.is_some()
+        if self.failure.is_some()
+            || self.overwrite.is_some()
             || self.document_pending.is_some()
             || self.transition.is_some()
             || self.project_overwrite.is_some()
@@ -2267,24 +2307,31 @@ impl host::App for Editor {
             // Inspect the validated, focus-committed Photo state before confirming a reset.
             self.request_analysis();
         }
-        self.document_dialogs(ui.ctx());
-        self.analysis_dialog(ui.ctx());
+        if self.failure.is_some() {
+            self.feedback_dialog(ui.ctx(), dialog_escape_available);
+            return;
+        }
+        self.document_dialogs(ui.ctx(), dialog_escape_available);
+        self.analysis_dialog(ui.ctx(), dialog_escape_available);
         if let Some((path, format)) = self.overwrite.clone() {
-            egui::Window::new("Replace existing output?")
-                .collapsible(false)
-                .resizable(false)
-                .show(ui.ctx(), |ui| {
-                    ui.label(path.display().to_string());
-                    ui.horizontal(|ui| {
-                        if presentation::TextAction::new("Cancel").show(ui).clicked() {
-                            self.overwrite = None;
-                        }
-                        if presentation::TextAction::new("Replace").show(ui).clicked() {
-                            self.overwrite = None;
-                            self.export(path, format, Overwrite::Confirmed);
-                        }
-                    });
-                });
+            let detail = path.display().to_string();
+            let choice = presentation::DecisionDialog::new(
+                "Replace this exported file?",
+                "A file already exists at this location. Exporting will overwrite it. The project and RAW files are not changed.",
+                "Replace file",
+            ).warning().detail(&detail).show(ui.ctx(), egui::Id::new("Replace existing output?"), dialog_escape_available);
+            match choice {
+                Some(presentation::DialogChoice::Cancel) => self.overwrite = None,
+                Some(presentation::DialogChoice::Confirm) => {
+                    self.overwrite = None;
+                    self.export(path, format, Overwrite::Confirmed);
+                }
+                _ => {}
+            }
+        }
+        if self.failure.is_some() {
+            // A decision action can fail after this frame's feedback check.
+            ui.ctx().request_repaint();
         }
     }
 }

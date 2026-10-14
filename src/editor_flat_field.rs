@@ -214,6 +214,7 @@ impl Editor {
             self.busy = false;
             self.status = "RAW worker stopped".into();
             self.finish_flat_edit();
+            self.report_failure(FailureKind::FlatReference, self.status.clone());
         }
     }
     pub(super) fn finish_flat_edit(&mut self) {
@@ -244,11 +245,13 @@ impl Editor {
         };
         let Some(region) = coverage.exact_rectangle(ready.area) else {
             self.status = "Flat-field support must be an integer source rectangle".into();
+            self.report_failure(FailureKind::FlatSupport, self.status.clone());
             return;
         };
         self.sync_document();
         self.busy = true;
         self.document_pending = Some(self.id);
+        self.document_failure = Some(FailureKind::FlatCorrection);
         self.status = "Estimating and validating full-resolution correction…".into();
         if self
             .commands
@@ -261,9 +264,11 @@ impl Editor {
             .is_err()
         {
             self.document_pending = None;
+            self.document_failure = None;
             self.busy = false;
             self.finish_flat_edit();
             self.status = "RAW worker stopped".into();
+            self.report_failure(FailureKind::FlatCorrection, self.status.clone());
         }
     }
     pub(super) fn positive_parameters(

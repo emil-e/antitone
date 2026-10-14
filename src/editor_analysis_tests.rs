@@ -926,7 +926,7 @@ fn analyze_ui_warns_only_for_adjusted_photos_and_cancel_or_accept_is_single_acti
         let ctx = egui::Context::default();
         let fresh = super::super::tests::app_frame(&mut editor, &ctx, vec![]);
         assert!(!fresh.iter().any(|(label, _)| label.contains("reset Photo")
-            || label.contains("Reset Photo")
+            || label.contains("Replace Photo")
             || label.contains("replace existing Photo")));
         editor.photo.pivot = 0.3; // Contrast 1 is identity, but the complete settings are adjusted.
         click_label(&mut editor, &ctx, "Analyze roll");
@@ -937,12 +937,12 @@ fn analyze_ui_warns_only_for_adjusted_photos_and_cancel_or_accept_is_single_acti
         assert!(
             labels
                 .iter()
-                .any(|(label, _)| label == "Reset Photo adjustments?")
+                .any(|(label, _)| label == "Replace Photo adjustments?")
         );
         assert!(
             labels
                 .iter()
-                .any(|(label, _)| label.contains("Crop, orientation and correction"))
+                .any(|(label, _)| label.contains("Crop, orientation and flat-field correction"))
         );
         assert!(
             !receiver
@@ -991,6 +991,35 @@ fn analyze_ui_warns_only_for_adjusted_photos_and_cancel_or_accept_is_single_acti
             revision + u64::from(accept)
         );
         editor.finish_analysis_confirmation(true);
+        assert!(receiver.try_recv().is_err());
+    }
+}
+
+#[test]
+fn analyze_decision_requires_explicit_acceptance_and_keyboard_cancel_keeps_accepted_state() {
+    use super::super::presentation::tests::{key, pointer};
+    for cancel_key in [egui::Key::Escape, egui::Key::Enter] {
+        let (mut editor, _send, receiver) = ready_state();
+        editor.photo.exposure = 1.25;
+        editor.sync_document();
+        let before = editor.document.project.clone();
+        editor.request_analysis();
+        let context = egui::Context::default();
+        super::super::tests::app_frame(&mut editor, &context, vec![]);
+        super::super::tests::app_frame(&mut editor, &context, vec![]);
+        for pressed in [true, false] {
+            super::super::tests::app_frame(
+                &mut editor,
+                &context,
+                pointer(egui::pos2(30., 15.), pressed),
+            );
+        }
+        assert!(editor.analysis_confirmation.is_some());
+        assert!(receiver.try_recv().is_err());
+        super::super::tests::app_frame(&mut editor, &context, key(cancel_key));
+        assert!(editor.analysis_confirmation.is_none() && editor.analysis_pending.is_none());
+        assert!(!editor.busy);
+        assert_eq!(editor.document.project, before);
         assert!(receiver.try_recv().is_err());
     }
 }

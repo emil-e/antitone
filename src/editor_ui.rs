@@ -5,6 +5,14 @@ use egui::{Color32, Response, Ui, Vec2};
 mod cards;
 pub(super) use cards::ContactSheetLayout;
 
+#[path = "editor_ui_dialogs.rs"]
+mod dialogs;
+pub(super) use dialogs::{DecisionDialog, DialogChoice};
+
+#[path = "editor_ui_feedback.rs"]
+mod feedback;
+pub(super) use feedback::{FeedbackDialog, Severity};
+
 #[path = "editor_ui_hierarchy.rs"]
 mod hierarchy;
 pub(super) use hierarchy::{
@@ -338,4 +346,4 @@ impl ToolGroup<'_> {
 
 #[cfg(test)]
 #[path = "editor_ui_tests.rs"]
-mod tests;
+pub(super) mod tests;
