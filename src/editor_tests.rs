@@ -642,7 +642,7 @@ pub(super) fn app_frame(
     ui_labels(output)
 }
 
-fn ui_labels(output: egui::FullOutput) -> Vec<(String, egui::Rect)> {
+pub(super) fn ui_labels(output: egui::FullOutput) -> Vec<(String, egui::Rect)> {
     let mut labels: Vec<_> = output
         .shapes
         .into_iter()

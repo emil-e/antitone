@@ -1,5 +1,5 @@
 //! Explicit native host lifecycle check; ordinary Cargo test invocations never open its window.
-//! Run with --run [lifecycle|editor|early-close|timeout|process-timeout]. Requires macOS/Metal and a desktop.
+//! Run with --run [lifecycle|fullscreen|editor|early-close|timeout|process-timeout]. Requires macOS/Metal and a desktop.
 //! The editor case additionally needs the editor feature/native setup and uses an authored temporary project.
 //! Checks focus/size forwarding, native resize, submitted frames, clean exit and explicit completion.
 //! Early close, timeout, absent completion or zero frames fail. A process watchdog bounds hangs.
@@ -17,6 +17,7 @@ mod editor;
 #[derive(Clone, Copy, PartialEq)]
 enum Mode {
     Lifecycle,
+    Fullscreen,
     Editor,
     EarlyClose,
     Timeout,
@@ -31,6 +32,11 @@ struct Report {
     focused: bool,
     sizes: usize,
     painted: [bool; SIZES.len()],
+    fullscreen_entered: bool,
+    fullscreen_returned: bool,
+    presentation_restored: bool,
+    desktop_rect: Option<egui::Rect>,
+    presentation_before: Option<objc2_app_kit::NSApplicationPresentationOptions>,
 }
 
 impl Report {
@@ -52,6 +58,13 @@ impl Report {
         }
         if !self.painted.into_iter().all(|painted| painted) || presented < SIZES.len() as u64 {
             return Err("native host did not paint and present every requested size");
+        }
+        Ok(())
+    }
+    fn validate_fullscreen(&self, presented: u64) -> Result<(), &'static str> {
+        self.validate(presented)?;
+        if !(self.fullscreen_entered && self.fullscreen_returned && self.presentation_restored) {
+            return Err("photo-only fullscreen round trip incomplete");
         }
         Ok(())
     }
@@ -87,6 +100,9 @@ impl host::App for NativeApp {
     fn submission_gate(&self) -> &SubmissionGate {
         &self.submissions
     }
+    fn photo_fullscreen(&self) -> bool {
+        self.mode == Mode::Fullscreen && self.index == 1
+    }
     fn on_exit(&mut self) {
         self.report.lock().unwrap().exited = true;
     }
@@ -106,6 +122,12 @@ impl host::App for NativeApp {
             Duration::from_secs(10)
         };
         if self.start.elapsed() >= deadline {
+            eprintln!(
+                "native deadline: stage={} viewport={:?} painted={:?}",
+                self.index,
+                ui.input(|input| input.viewport().clone()),
+                self.report.lock().unwrap().painted
+            );
             self.report.lock().unwrap().timed_out = true;
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             return;
@@ -122,6 +144,86 @@ impl host::App for NativeApp {
         });
         let mut report = self.report.lock().unwrap();
         report.focused |= focused;
+        if self.mode == Mode::Fullscreen {
+            let native = ui.input(|input| input.viewport().fullscreen);
+            let monitor = ui.input(|input| input.viewport().monitor_size);
+            let at_original_size = size.is_some_and(|size| {
+                (size - egui::vec2(SIZES[0][0], SIZES[0][1]))
+                    .abs()
+                    .max_elem()
+                    <= 1.
+            });
+            let outer = ui.input(|input| input.viewport().outer_rect);
+            let app = objc2_app_kit::NSApplication::sharedApplication(
+                objc2::MainThreadMarker::new().unwrap(),
+            );
+            let options = app.presentationOptions();
+            if self.index == 0 && report.desktop_rect.is_none() {
+                report.desktop_rect = outer;
+                report.presentation_before = Some(options);
+            }
+            let bounds_restored = outer
+                .zip(report.desktop_rect)
+                .is_some_and(|(outer, before)| {
+                    (outer.min - before.min).abs().max_elem() <= 1.
+                        && (outer.max - before.max).abs().max_elem() <= 1.
+                });
+            let display_covered = app
+                .keyWindow()
+                .and_then(|window| {
+                    let screen = window.screen()?;
+                    let frame = window.frame();
+                    let target = screen.frame();
+                    Some(
+                        (frame.origin.x - target.origin.x).abs() <= 1.
+                            && (frame.origin.y - target.origin.y).abs() <= 1.
+                            && (frame.size.width - target.size.width).abs() <= 1.
+                            && (frame.size.height - target.size.height).abs() <= 1.
+                            && window.isOnActiveSpace()
+                            && !window
+                                .styleMask()
+                                .contains(objc2_app_kit::NSWindowStyleMask::FullScreen),
+                    )
+                })
+                .unwrap_or(false);
+            let at_fullscreen_size = display_covered
+                && native == Some(false)
+                && options
+                    == (objc2_app_kit::NSApplicationPresentationOptions::AutoHideDock
+                        | objc2_app_kit::NSApplicationPresentationOptions::AutoHideMenuBar)
+                && outer
+                    .zip(size)
+                    .is_some_and(|(outer, inner)| (outer.size() - inner).abs().max_elem() <= 1.)
+                && size
+                    .zip(monitor)
+                    .is_some_and(|(size, monitor)| (size - monitor).abs().max_elem() <= 1.);
+            let ready = if self.index == 1 {
+                at_fullscreen_size && focused
+            } else {
+                native == Some(false) && at_original_size && bounds_restored && focused
+            };
+            if self.index < SIZES.len() && ready {
+                if report.painted[self.index] {
+                    if self.index == 1 {
+                        report.fullscreen_entered = true;
+                    }
+                    if self.index == 2 {
+                        report.fullscreen_returned = true;
+                        report.presentation_restored = report.presentation_before == Some(options);
+                    }
+                    self.index += 1;
+                    report.sizes = self.index;
+                } else {
+                    ui.painter().add(egui_wgpu::Callback::new_paint_callback(
+                        ui.ctx().content_rect(),
+                        PaintAck {
+                            report: self.report.clone(),
+                            index: self.index,
+                        },
+                    ));
+                }
+            }
+        }
         if self.mode == Mode::Lifecycle
             && self.index < SIZES.len()
             && size.is_some_and(|s| {
@@ -196,6 +298,18 @@ fn check_result_contract() {
         Err("native host did not paint and present every requested size")
     );
     assert_eq!(report.validate(4), Ok(()));
+    assert_eq!(
+        report.validate_fullscreen(4),
+        Err("photo-only fullscreen round trip incomplete")
+    );
+    report.fullscreen_entered = true;
+    report.fullscreen_returned = true;
+    assert_eq!(
+        report.validate_fullscreen(4),
+        Err("photo-only fullscreen round trip incomplete")
+    );
+    report.presentation_restored = true;
+    assert_eq!(report.validate_fullscreen(4), Ok(()));
     report.timed_out = true;
     assert_eq!(report.validate(4), Err("native host timed out"));
 }
@@ -216,6 +330,7 @@ fn main() -> host::Result<()> {
         [run] if run == "--run" => Mode::Lifecycle,
         [run, case] if run == "--run" => match case.as_str() {
             "lifecycle" => Mode::Lifecycle,
+            "fullscreen" => Mode::Fullscreen,
             "editor" => Mode::Editor,
             "early-close" => Mode::EarlyClose,
             "timeout" => Mode::Timeout,
@@ -224,7 +339,7 @@ fn main() -> host::Result<()> {
         },
         _ => {
             return Err(
-                "usage: native_host --run [lifecycle|editor|early-close|timeout|process-timeout]"
+                "usage: native_host --run [lifecycle|fullscreen|editor|early-close|timeout|process-timeout]"
                     .into(),
             );
         }
@@ -295,9 +410,19 @@ fn main() -> host::Result<()> {
     stop.send(()).unwrap();
     watchdog.join().unwrap();
     let presented = result?;
-    report.lock().unwrap().validate(presented)?;
+    let report = report.lock().unwrap();
+    if mode == Mode::Fullscreen {
+        report.validate_fullscreen(presented)?;
+    } else {
+        report.validate(presented)?;
+    }
+    let states = if mode == Mode::Fullscreen {
+        "fullscreen paint states"
+    } else {
+        "sizes"
+    };
     println!(
-        "native host completed: focus, {} sizes, {presented} presented frames, clean close",
+        "native host completed: focus, {} {states}, {presented} presented frames, clean close",
         SIZES.len()
     );
     Ok(())

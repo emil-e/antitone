@@ -307,6 +307,10 @@ impl Thumbnails {
     fn release_selected(&mut self) {
         self.sources.lock().unwrap().protect(Vec::new());
     }
+    pub(super) fn refresh_hidden_memory(&mut self) {
+        self.cache.protect(Vec::new());
+        self.apply_budgets(memory::CacheBudgets::current());
+    }
     fn apply_budgets(&mut self, budgets: memory::CacheBudgets) {
         if budgets == self.budgets {
             return;

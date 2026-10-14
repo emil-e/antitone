@@ -79,6 +79,14 @@ Normal inspection retains accepted composition. Temporary calibration/reference 
 
 Missing calibration forces source-only presentation, not an explicit inspection choice. When a successful Dmin/Dmax pick completes the first usable pair, the editor returns to the positive. Inspection deliberately enabled with usable calibration is restored instead; failed/cancelled picks preserve calibration and the required source-only view.
 
+## Photo-only fullscreen inspection
+
+The fullscreen action beside the zoom controls, or F, turns the current photograph into a full-display inspection view. The host makes the existing window borderless and covers its current display without moving into a native fullscreen Space. It retains the same managed image renderer. An already-native-fullscreen window stays native fullscreen; macOS's ordinary fullscreen button remains separate from photo-only presentation.
+
+Shared zoom/source controls float over the image, then fade after inactivity. Moving near the bottom or pressing Tab reveals them; hovering over the bar, dragging a control, keyboard focus, numeric editing and open popovers keep them visible. Moving or panning elsewhere over the photograph does not reveal chrome. A hidden bar leaves no invisible canvas hitbox. F/Escape remain available while it is hidden, after text and popovers have had their turn.
+
+Image tools are suspended, not applied or cancelled. A controller-owned snapshot retains workspace navigation and source inspection; it is restored on the frame after the host acknowledges window restoration. The host owns prior window geometry/decorations and application menu/Dock presentation, restoring presentation when focus leaves and on exit. OS-adjusted window bounds cannot strand the controller in a pending exit. Accepted photographs, drafts and independent workspace preferences are unchanged. [Remaining native and physical acceptance](plans/inspection-and-interaction.md#layout-and-controls) is separate from supplied-viewport fixtures.
+
 ## Fast feedback is not authoritative data
 
 The editor uses several image representations for different jobs:
@@ -110,6 +118,7 @@ GPU infrastructure is shared, but mutable image storage, revision and processing
 Use the existing component families rather than copying their painting or interaction logic:
 
 - [Presentation](../src/editor_ui.rs): application header/branding, labelled rows, text actions and viewer tool groups.
+- [Viewer framing](../src/editor_ui_viewer.rs): docked/auto-hiding controls and full-canvas presentation, separate from navigation and native window state.
 - [Hierarchy](../src/editor_ui_hierarchy.rs): sections, disclosure/reset and stage tabs.
 - [Decisions](../src/editor_ui_dialogs.rs): shared modal framing, actions and dismissal.
 - [Feedback](../src/editor_ui_feedback.rs): explicit severity, acknowledged messages and technical details.
@@ -119,7 +128,7 @@ Use the existing component families rather than copying their painting or intera
 - [Icons](../src/editor_icons.rs): semantic actions and artwork.
 - [Controls](../src/editor_controls.rs): photographic values, precision and calibration/balance adapters.
 
-Presentation receives display-ready state and returns responses. Controllers still own availability, IDs, accepted/draft state, resets and dispatch. Cards receive selection/availability, and their caption supplies the unelided semantic filename; they do not own images, selection, virtualization or workers. Pinned section titles expose label semantics without disclosure/focus behavior. The fixed viewer bar hosts tool identity and Apply/Cancel without resizing the canvas; only selection/frame artwork belongs over the photograph.
+Presentation receives display-ready state and returns responses. Controllers still own availability, IDs, accepted/draft state, resets and dispatch. Cards receive selection/availability, and their caption supplies the unelided semantic filename; they do not own images, selection, virtualization or workers. Pinned section titles expose label semantics without disclosure/focus behavior. In the workspace, the fixed viewer bar hosts tool identity and Apply/Cancel without resizing the canvas; only selection/frame artwork belongs over the photograph. Photo-only inspection uses the shared floating-bar variant rather than moving tool transactions onto the image.
 
 ### Typography roles
 

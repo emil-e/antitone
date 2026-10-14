@@ -12,6 +12,7 @@ impl Editor {
         if !ui.is_enabled() {
             return (geometry, false);
         }
+        let picking = self.pick.is_some() && self.fullscreen.is_none();
         let (zoom, translation, touch, pointer, space) = ui.input(|input| {
             (
                 input.zoom_delta(),
@@ -53,8 +54,7 @@ impl Editor {
         }
         let panning = response.dragged_by(egui::PointerButton::Middle)
             || response.dragged_by(egui::PointerButton::Primary)
-                && (space
-                    || self.pick.is_none() && self.viewport.zoom.is_some() && can_pan(geometry));
+                && (space || !picking && self.viewport.zoom.is_some() && can_pan(geometry));
         if panning && can_pan(geometry) {
             self.viewport
                 .pan(geometry, pixels_per_point, response.drag_delta());
@@ -64,7 +64,7 @@ impl Editor {
                 pixels_per_point,
             );
         }
-        if self.pick.is_none()
+        if !picking
             && !space
             && response.clicked_by(egui::PointerButton::Primary)
             && let Some(point) = response
@@ -85,11 +85,9 @@ impl Editor {
         if response.hovered() || response.dragged() {
             let cursor = if panning {
                 egui::CursorIcon::Grabbing
-            } else if space
-                || self.pick.is_none() && self.viewport.zoom.is_some() && can_pan(geometry)
-            {
+            } else if space || !picking && self.viewport.zoom.is_some() && can_pan(geometry) {
                 egui::CursorIcon::Grab
-            } else if self.pick.is_some() && !self.busy {
+            } else if picking && !self.busy {
                 pointer
                     .map(|point| {
                         picker_cursor(
@@ -101,9 +99,7 @@ impl Editor {
                         )
                     })
                     .unwrap_or(egui::CursorIcon::Crosshair)
-            } else if pointer.is_some_and(|point| geometry.image.contains(point))
-                && self.pick.is_none()
-            {
+            } else if pointer.is_some_and(|point| geometry.image.contains(point)) && !picking {
                 if self.viewport.zoom.is_none() {
                     egui::CursorIcon::ZoomIn
                 } else {

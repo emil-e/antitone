@@ -1,6 +1,6 @@
 use super::*;
 
-fn calibrated_harness() -> Harness<'static, Editor> {
+pub(super) fn calibrated_harness() -> Harness<'static, Editor> {
     let (mut harness, _) = editor_harness();
     harness.state_mut().add_raws(vec![fixture("patches.dng")]);
     wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
@@ -56,7 +56,7 @@ fn capture_tool(harness: &mut Harness<'_, Editor>, name: &str, size: egui::Vec2)
     save_capture(&png, name);
 }
 
-fn crop_draft(harness: &mut Harness<'_, Editor>) -> Crop {
+pub(super) fn crop_draft(harness: &mut Harness<'_, Editor>) -> Crop {
     harness.get_by_label("Crop…").scroll_to_me();
     harness.try_run_realtime().unwrap();
     harness.get_by_label("Crop…").click();

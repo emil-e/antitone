@@ -30,7 +30,7 @@ image = { version = "=0.25.10", optional = true, default-features = false, featu
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { version = "=0.6.5", optional = true }
-objc2-app-kit = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder"] }
+objc2-app-kit = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder", "NSWindow", "NSScreen"] }
 objc2-foundation = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "NSData"] }
 objc2-core-foundation = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "CFString"] }
 objc2-core-graphics = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "CGColorSpace"] }
@@ -38,9 +38,9 @@ objc2-quartz-core = { version = "=0.3.2", optional = true, default-features = fa
 
 [features]
 ui-tests = ["editor", "dep:egui_kittest", "image/png"]
-editor = ["ui", "raw", "export", "project", "dep:rfd", "dep:blake3", "dep:image", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation"]
+editor = ["ui", "raw", "export", "project", "dep:rfd", "dep:blake3", "dep:image", "dep:objc2-foundation"]
 project = ["dep:serde", "dep:serde_json", "dep:tempfile", "glam/serde"]
-ui = ["gpu", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:winit", "dep:half", "dep:objc2-core-foundation", "dep:objc2-core-graphics", "dep:objc2-quartz-core"]
+ui = ["gpu", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:winit", "dep:half", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-core-foundation", "dep:objc2-core-graphics", "dep:objc2-quartz-core"]
 raw = ["dep:cc", "dep:libc"]
 render = ["dep:cc", "dep:lcms2"]
 export = ["render", "dep:tiff", "dep:exr", "dep:tempfile", "dep:libc", "dep:half"]

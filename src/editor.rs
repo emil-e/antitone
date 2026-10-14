@@ -43,6 +43,9 @@ use feedback::{Failure, FailureKind};
 #[path = "editor_activity.rs"]
 mod activity;
 use activity::{Task, TaskActivity, TaskProgress, TaskRequest};
+#[path = "editor_fullscreen.rs"]
+mod fullscreen;
+use fullscreen::FullscreenView;
 #[path = "editor_thumbnails.rs"]
 mod thumbnails;
 use thumbnails::Thumbnails;
@@ -672,6 +675,7 @@ pub struct Editor {
     settled: Option<(u64, ViewRequest, Arc<GpuImage>)>,
     refining: Option<(u64, ViewRequest)>,
     viewport: Viewport,
+    fullscreen: Option<FullscreenView>,
     last_edit: std::time::Instant,
     refinement_error: Option<u64>,
     commands: mpsc::Sender<Command>,
@@ -782,6 +786,7 @@ impl Editor {
             settled: None,
             refining: None,
             viewport: Viewport::default(),
+            fullscreen: None,
             last_edit: std::time::Instant::now(),
             refinement_error: None,
             started: false,
@@ -1838,6 +1843,12 @@ impl Editor {
 }
 
 impl host::App for Editor {
+    fn photo_fullscreen(&self) -> bool {
+        self.fullscreen_requested()
+    }
+    fn photo_fullscreen_changed(&mut self, active: bool) {
+        self.fullscreen_changed(active);
+    }
     fn submission_gate(&self) -> &crate::platform::SubmissionGate {
         &self.submissions
     }
@@ -1866,6 +1877,8 @@ impl host::App for Editor {
         self.seed_thumbnail();
         self.thumbnails.receive(&self.document);
         self.validate_pending_preview();
+        let fullscreen_was_active = self.fullscreen.is_some();
+        self.update_fullscreen(ui.ctx());
         let available = !self.busy
             && self.failure.is_none()
             && self.pick.is_none()
@@ -1921,7 +1934,10 @@ impl host::App for Editor {
             data.get_temp::<bool>(ui.id().with("editor-text-focus"))
                 .unwrap_or(false)
         });
+        self.fullscreen_shortcuts(ui, text_was_focused, dialog_escape_available);
         if !self.busy
+            && self.fullscreen.is_none()
+            && !fullscreen_was_active
             && self.failure.is_none()
             && self.analysis_confirmation.is_none()
             && !(text_was_focused && ui.input(|input| input.key_pressed(egui::Key::Escape)))
@@ -1998,92 +2014,99 @@ impl host::App for Editor {
             ui.disable();
         }
         let mut export_action = None;
-        presentation::app_header(ui, |ui| {
-            ui.add_enabled_ui(available, |ui| {
-                ui.menu_button("File", |ui| {
-                    for (label, action) in [
-                        ("New", FileAction::New),
-                        ("Open…", FileAction::Open),
-                        ("Add RAWs…", FileAction::Add),
-                        ("Save", FileAction::Save),
-                        ("Save As…", FileAction::SaveAs),
-                    ] {
-                        if ui.button(label).clicked() {
-                            file_action = Some(action);
-                            ui.close();
-                        }
-                    }
-                });
-            });
-            ui.add_enabled_ui(
-                available && calibration.is_some() && self.ready.is_some(),
-                |ui| {
-                    ui.menu_button("Export", |ui| {
-                        for (label, format) in [
-                            ("TIFF…", OutputFormat::Tiff(self.target)),
-                            ("EXR half…", OutputFormat::Exr(ExrPrecision::Half)),
-                            ("EXR full…", OutputFormat::Exr(ExrPrecision::Full)),
+        if self.fullscreen.is_none() {
+            presentation::app_header(ui, |ui| {
+                ui.add_enabled_ui(available, |ui| {
+                    ui.menu_button("File", |ui| {
+                        for (label, action) in [
+                            ("New", FileAction::New),
+                            ("Open…", FileAction::Open),
+                            ("Add RAWs…", FileAction::Add),
+                            ("Save", FileAction::Save),
+                            ("Save As…", FileAction::SaveAs),
                         ] {
                             if ui.button(label).clicked() {
-                                export_action = Some(format);
+                                file_action = Some(action);
                                 ui.close();
                             }
                         }
                     });
-                },
-            );
-            ui.separator();
-            let name = self
-                .document
-                .path
-                .as_ref()
-                .and_then(|path| path.file_name())
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "Untitled".into());
-            ui.add(
-                egui::Label::new(format!(
-                    "{name}{}",
-                    if self.document.dirty() {
-                        " • Modified"
-                    } else {
-                        ""
-                    }
-                ))
-                .truncate(),
-            )
-            .on_hover_text(
-                self.document
+                });
+                ui.add_enabled_ui(
+                    available && calibration.is_some() && self.ready.is_some(),
+                    |ui| {
+                        ui.menu_button("Export", |ui| {
+                            for (label, format) in [
+                                ("TIFF…", OutputFormat::Tiff(self.target)),
+                                ("EXR half…", OutputFormat::Exr(ExrPrecision::Half)),
+                                ("EXR full…", OutputFormat::Exr(ExrPrecision::Full)),
+                            ] {
+                                if ui.button(label).clicked() {
+                                    export_action = Some(format);
+                                    ui.close();
+                                }
+                            }
+                        });
+                    },
+                );
+                ui.separator();
+                let name = self
+                    .document
                     .path
                     .as_ref()
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_else(|| "Save to create a project document".into()),
-            );
-        });
-        if file_action.is_some() {
-            ui.ctx().memory_mut(|memory| {
-                if let Some(id) = memory.focused() {
-                    memory.surrender_focus(id);
-                }
+                    .and_then(|path| path.file_name())
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "Untitled".into());
+                ui.add(
+                    egui::Label::new(format!(
+                        "{name}{}",
+                        if self.document.dirty() {
+                            " • Modified"
+                        } else {
+                            ""
+                        }
+                    ))
+                    .truncate(),
+                )
+                .on_hover_text(
+                    self.document
+                        .path
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| "Save to create a project document".into()),
+                );
             });
-        }
-        egui::Panel::bottom("status")
-            .exact_size(presentation::ACTIVITY_BAR_HEIGHT)
-            .show(ui, |ui| {
-                if let Some(view) = self.tasks.view() {
-                    if let Some(request) = view.compact(ui) {
-                        self.cancel_task(request);
+            if file_action.is_some() {
+                ui.ctx().memory_mut(|memory| {
+                    if let Some(id) = memory.focused() {
+                        memory.surrender_focus(id);
                     }
-                } else {
-                    ui.add(egui::Label::new(&self.status).truncate())
-                        .on_hover_text(&self.status);
-                }
-            });
-        self.filmstrip(ui);
-        let (scope_slot, analyze) = egui::Panel::right("controls")
-            .default_size(315.)
-            .min_size(270.)
-            .show(ui, |ui| self.controls(ui))
-            .inner;
+                });
+            }
+            egui::Panel::bottom("status")
+                .exact_size(presentation::ACTIVITY_BAR_HEIGHT)
+                .show(ui, |ui| {
+                    if let Some(view) = self.tasks.view() {
+                        if let Some(request) = view.compact(ui) {
+                            self.cancel_task(request);
+                        }
+                    } else {
+                        ui.add(egui::Label::new(&self.status).truncate())
+                            .on_hover_text(&self.status);
+                    }
+                });
+            self.filmstrip(ui);
+        }
+        let (scope_slot, analyze) = if self.fullscreen.is_none() {
+            egui::Panel::right("controls")
+                .default_size(315.)
+                .min_size(270.)
+                .show(ui, |ui| self.controls(ui))
+                .inner
+        } else {
+            self.thumbnails.refresh_hidden_memory();
+            (None, false)
+        };
         if let Some(calibration) = self.calibration()
             && let Err(error) = self.positive_parameters(calibration, self.roll, self.photo)
         {
@@ -2092,9 +2115,8 @@ impl host::App for Editor {
             self.status = format!("Edit rejected: {error}");
         }
         let zoom_action = self.viewer_bar(ui);
-        let viewer = egui::CentralPanel::default()
-            .frame(egui::Frame::central_panel(ui.style()).fill(viewer_ui::surface()));
-        viewer.show(ui, |ui| {
+        let fullscreen = self.fullscreen.is_some();
+        presentation::viewer_surface(ui, fullscreen, |ui| {
             let available = ui
                 .available_rect_before_wrap()
                 .intersect(ui.clip_rect())
@@ -2122,15 +2144,16 @@ impl host::App for Editor {
             };
             let pixels_per_point = ui.ctx().pixels_per_point();
             let canvas_input = self.canvas_input_allowed(ui, canvas);
+            let active_pick = self.pick;
             let crop = if matches!(
-                self.pick,
+                active_pick,
                 Some(Pick::Dmin | Pick::Dmax | Pick::Flat | Pick::Analysis)
             ) {
                 None
             } else {
                 self.crop_edit.as_ref().map(|edit| edit.draft).or(self.crop)
             };
-            let composition = if matches!(self.pick, Some(Pick::Flat | Pick::Analysis)) {
+            let composition = if matches!(active_pick, Some(Pick::Flat | Pick::Analysis)) {
                 Composition::new(
                     area,
                     RollOrientation::default(),
@@ -2141,12 +2164,12 @@ impl host::App for Editor {
             }
             .expect("accepted crop belongs to the loaded source");
             let inset = 20_f32.min((canvas.width().min(canvas.height()) - 1.).max(0.) * 0.5);
-            let layout_canvas = if self.crop_edit.is_some() {
+            let cropping = !fullscreen && self.crop_edit.is_some();
+            let layout_canvas = if cropping {
                 canvas.shrink(inset)
             } else {
                 canvas
             };
-            let cropping = self.crop_edit.is_some();
             let mut geometry = if cropping {
                 self.viewport
                     .layout_crop(layout_canvas, composition, pixels_per_point)
@@ -2179,7 +2202,7 @@ impl host::App for Editor {
             }
             let (geometry, panning) = if !canvas_input {
                 (geometry, false)
-            } else if self.crop_edit.is_some() {
+            } else if cropping {
                 (self.crop_interaction(ui, &response, geometry), false)
             } else {
                 self.navigate(ui, &response, geometry, pixels_per_point)
@@ -2187,7 +2210,7 @@ impl host::App for Editor {
             if cropping && canvas_input {
                 self.crop_rotation_cursor(ui, &response, geometry);
             }
-            if self.crop_edit.is_none() {
+            if !cropping {
                 self.last_layout = Some((geometry, pixels_per_point));
             }
             let composition = geometry.composition;
@@ -2241,7 +2264,7 @@ impl host::App for Editor {
             let revision = self.generation.load(std::sync::atomic::Ordering::Relaxed);
             if !self.busy
                 && self.analysis_confirmation.is_none()
-                && self.crop_edit.is_none()
+                && !cropping
                 && self.refining.is_none()
                 && self.settled.is_none()
                 && self.refinement_error != Some(revision)
@@ -2297,7 +2320,8 @@ impl host::App for Editor {
             if cropping {
                 self.paint_crop(ui, geometry);
             }
-            if self.pick.is_some()
+            if !fullscreen
+                && active_pick.is_some()
                 && !self.busy
                 && canvas_input
                 && !panning
@@ -2323,7 +2347,7 @@ impl host::App for Editor {
                     self.region = Some(drag.update(geometry, end));
                 }
             }
-            if let Some(region) = self.region {
+            if !fullscreen && let Some(region) = self.region {
                 ui.painter().with_clip_rect(canvas).rect_stroke(
                     geometry.screen_coverage(region),
                     0.,

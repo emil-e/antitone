@@ -6,6 +6,8 @@ use egui::{Rect, Response, Stroke, Ui, Vec2};
 pub(super) enum Icon {
     Reset,
     Fit,
+    Fullscreen,
+    ExitFullscreen,
     ZoomOut,
     ZoomIn,
     Source,
@@ -55,6 +57,23 @@ impl Icon {
                     [[14., 10.], [14., 14.], [10., 14.]],
                 ] {
                     line(&points);
+                }
+            }
+            Self::Fullscreen | Self::ExitFullscreen => {
+                for (x, y) in [(1., 1.), (-1., 1.), (1., -1.), (-1., -1.)] {
+                    let (tip, tail) = if matches!(self, Self::Fullscreen) {
+                        (6., 2.)
+                    } else {
+                        (2., 6.)
+                    };
+                    let p = |a: f32, b: f32| [8. + x * a, 8. + y * b];
+                    line(&[p(tail, tail), p(tip, tip)]);
+                    let base = if matches!(self, Self::Fullscreen) {
+                        tip - 3.
+                    } else {
+                        tip + 3.
+                    };
+                    line(&[p(base, tip), p(tip, tip), p(tip, base)]);
                 }
             }
             Self::ZoomOut | Self::ZoomIn => {

@@ -6,7 +6,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
-use super::{SubmissionGate, macos};
+use super::{SubmissionGate, fullscreen::PhotoFullscreen, macos};
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -14,6 +14,12 @@ pub trait App {
     /// The same gate used by every background submitter on this host's queue.
     fn submission_gate(&self) -> &SubmissionGate;
     fn ui(&mut self, ui: &mut egui::Ui);
+    /// Photo-only display coverage, independent of macOS's native fullscreen Space.
+    fn photo_fullscreen(&self) -> bool {
+        false
+    }
+    /// Delivered after window presentation is changed; UI restoration uses the next frame's bounds.
+    fn photo_fullscreen_changed(&mut self, _active: bool) {}
     fn on_exit(&mut self) {}
 }
 
@@ -42,6 +48,7 @@ pub fn run<A: App + 'static>(
     };
     let outcome = event_loop.run_app(&mut host);
     if let Some(state) = &mut host.state {
+        state.fullscreen.update(&state.gpu.window, false)?;
         state.app.on_exit();
     }
     outcome?;
@@ -101,6 +108,7 @@ impl<A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<A>> ApplicationHan
                 app,
                 input,
                 viewport,
+                fullscreen: PhotoFullscreen::default(),
             })
         };
         match initialize() {
@@ -142,6 +150,10 @@ impl<A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<A>> ApplicationHan
                 );
                 Ok(())
             }
+            WindowEvent::Focused(focused) => {
+                state.fullscreen.focus_changed(focused);
+                Ok(())
+            }
             WindowEvent::RedrawRequested => state.draw(&self.context, event_loop),
             _ => Ok(()),
         };
@@ -175,6 +187,7 @@ struct State<A> {
     app: A,
     input: egui_winit::State,
     viewport: egui::ViewportInfo,
+    fullscreen: PhotoFullscreen,
 }
 
 impl<A: App> State<A> {
@@ -309,6 +322,12 @@ impl<A: App> State<A> {
                 self.input.egui_input_mut().events.push(event);
                 self.gpu.window.request_redraw();
             }
+        }
+        if let Some(active) = self
+            .fullscreen
+            .update(&self.gpu.window, self.app.photo_fullscreen())?
+        {
+            self.app.photo_fullscreen_changed(active);
         }
         if self.viewport.close_requested() {
             event_loop.exit();

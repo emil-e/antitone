@@ -50,6 +50,12 @@ impl host::App for EditorApp {
     fn submission_gate(&self) -> &SubmissionGate {
         self.editor.submission_gate()
     }
+    fn photo_fullscreen(&self) -> bool {
+        self.editor.photo_fullscreen()
+    }
+    fn photo_fullscreen_changed(&mut self, active: bool) {
+        self.editor.photo_fullscreen_changed(active);
+    }
     fn on_exit(&mut self) {
         self.editor.on_exit();
         self.report.lock().unwrap().exited = true;

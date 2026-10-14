@@ -1,4 +1,6 @@
 #[cfg(target_os = "macos")]
+mod fullscreen;
+#[cfg(target_os = "macos")]
 pub mod host;
 #[cfg(target_os = "macos")]
 pub mod macos;

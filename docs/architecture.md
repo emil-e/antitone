@@ -19,7 +19,7 @@ For the photographic model, start with [processing](processing.md). This page is
 | Scopes | [measurement](../src/scopes.rs), [GPU reduction](../src/gpu_scopes.rs) | Approximate whole-frame output statistics |
 | Editor | [editor](../src/editor.rs) and its feature modules | Live state, controls, transactions and worker dispatch |
 | Persistence | [project](../src/project.rs), [document](../src/editor_document.rs) | Accepted state and compatibility |
-| Host | [host](../src/platform/host.rs), [macOS](../src/platform/macos.rs) | Event loop, surface, managed SDR presentation and native application icon |
+| Host | [host](../src/platform/host.rs), [macOS](../src/platform/macos.rs), [full-display inspection](../src/platform/fullscreen.rs) | Event loop, surface, managed SDR presentation, native icon and reversible current-Space window coverage |
 | Branding | [assets](../assets/branding/README.md), [generator](../native/branding_assets.swift), [macOS packaging](../scripts/package-macos.py) | Portable artwork and checkout-local application bundle |
 
 ## Ownership and execution
@@ -39,6 +39,8 @@ Worker results are proposals. Request IDs, generations and source/settings snaps
 [Shared presentation](editor.md#build-ui-from-shared-presentation) lays out supplied state and returns responses, and owns the editor's [colour](editor.md#colour-roles) and [typography](editor.md#typography-roles) roles. Photographic adapters own value semantics; feature controllers own state, availability and dispatch. This keeps a presentation change from acquiring processing or persistence responsibility. [Decision dialogs](../src/editor_ui_dialogs.rs) own framing, button focus and dismissal; document, export and analysis controllers retain the decision payloads and transaction dispatch. [Feedback presentation](../src/editor_ui_feedback.rs) shares that shell and supplies severity/details; [operation feedback](../src/editor_feedback.rs) owns failure copy, acknowledgement and resolution without acquiring worker or persistence responsibility.
 
 [Task activity](../src/editor_activity.rs) owns one private foreground presentation lifecycle: typed requests, progress/cancellation state and feedback policy, including Analyze. [Working presentation](../src/editor_ui_progress.rs) renders its supplied views. Feature controllers retain pending snapshots, worker protocols, cancellation signals and atomic promotion; task completion changes presentation only.
+
+[Photo-only inspection](../src/editor_fullscreen.rs) retains the temporary workspace/view context and suspends tools without promoting drafts. The host owns window geometry and menu/Dock presentation, independent of native fullscreen Spaces, and acknowledges restoration before the controller restores its snapshot on the next UI frame. [Shared viewer framing](../src/editor_ui_viewer.rs) owns docked/auto-hiding controls and the full-canvas surface; it does not own image mappings, transactions or window state.
 
 Accepted photographic state lives in [projects](projects.md). Tool drafts and viewport state are transient; durable UI preferences are stored independently. [Editor](editor.md) explains preview/cache distinctions and the input/transaction model.
 

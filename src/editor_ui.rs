@@ -26,6 +26,11 @@ pub(super) use hierarchy::{
 pub(super) const CONTROL_HEIGHT: f32 = 28.;
 pub(super) const VIEWER_BAR_HEIGHT: f32 = 40.;
 pub(super) const VIEWER_ITEM_GAP: f32 = 4.;
+
+#[path = "editor_ui_viewer.rs"]
+mod viewer;
+pub(super) use viewer::{ViewerBar, viewer_surface};
+
 const HEADER_HEIGHT: f32 = 32.;
 const INSCRIPTION: Color32 = Color32::from_rgb(223, 170, 96);
 

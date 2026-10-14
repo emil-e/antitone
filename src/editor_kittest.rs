@@ -11,6 +11,8 @@ mod activity;
 mod analyze;
 #[path = "editor_kittest_correction.rs"]
 mod correction;
+#[path = "editor_kittest_fullscreen.rs"]
+mod fullscreen;
 #[path = "editor_kittest_project.rs"]
 mod project;
 #[path = "editor_kittest_tools.rs"]
