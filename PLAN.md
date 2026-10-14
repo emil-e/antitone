@@ -8,6 +8,8 @@ The workspace uses Roll → Photo → Rendering stages, collapsible inspector se
 
 Memory-256 cached pending selected previews and visible-thumbnail admission/repaint are implemented and accepted for current use. Filmstrip-only embedded camera-preview placeholders provide navigation while proper thumbnails develop, preserving card layout and edge clipping. [Broader interaction/resource and photographic acceptance](docs/plans/visual-feedback.md) remain open. No selected-view JPEG adoption or persistent JPEG cache is selected.
 
+Immutable full-resolution source reuse, persistent CPU/GPU optional byte limits, eager proper CPU/disk thumbnails and one native priority worker are implemented. Lazy support hints and navigation during pending photo loads pass authored/controller/composed tests and a bounded retained-hit exercise. Broader normal-budget residency, pressure/aggregate-memory and hardware acceptance remain [resource follow-up](docs/plans/visual-feedback.md); the dedicated Preferences dialog is deferred.
+
 Photo-only full-display inspection uses current-Space borderless window coverage, zoom-group entry and auto-hiding shared controls. Controller/composed checks and the bounded native display-frame/active-Space/paint/window-restoration gate pass. [Broader native lifecycle, physical input and display acceptance](docs/plans/inspection-and-interaction.md#layout-and-controls) remain open.
 
 Current focus is [Analyze photographic acceptance](docs/plans/roll-assistance.md). Analyze uses the shared UI components with full Photo-grade reset and conditional confirmation. Recovery/relink/undo remains lower priority than interaction and photographic acceptance.

@@ -202,6 +202,7 @@ fn pending(editor: &mut Editor) -> u64 {
             document: editor.document.clone(),
             selected: editor.current_source.unwrap(),
             film: Some(rect([12, 12, 800, 600])),
+            local_support: false,
             picture: Some(rect([52, 42, 720, 540])),
         },
     });

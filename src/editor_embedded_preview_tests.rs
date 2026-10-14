@@ -508,7 +508,7 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
             .any(|label| label == "Camera preview")
     );
     assert!(editor.ready.is_none() && editor.pending_preview.is_none());
-    assert!(editor.thumbnails.sources.lock().unwrap().entries.is_empty());
+    assert_eq!(editor.thumbnails.sources.proxy_count(), 0);
     assert_eq!(editor.document.project, original);
     editor.floor = editor.document.project.input_floor.unwrap();
     editor.dmin = Some(glam::DVec3::splat(0.5));
@@ -544,15 +544,19 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
         [8, 4]
     );
     assert!(editor.ready.is_none() && editor.pending_preview.is_none());
-    editor.thumbnails.sources.lock().unwrap().insert(
-        image_key.source.clone(),
-        Arc::new(Proxy {
-            width: 8,
-            height: 4,
-            pixels: vec![[1000, 2000, 3000, 0]; 32],
-            matrix: glam::DMat3::IDENTITY,
-        }),
-    );
+    editor
+        .thumbnails
+        .sources
+        .publish_proxy(
+            image_key.source.store_key().unwrap(),
+            Arc::new(Proxy {
+                width: 8,
+                height: 4,
+                pixels: vec![[1000, 2000, 3000, 0]; 32],
+                matrix: glam::DMat3::IDENTITY,
+            }),
+        )
+        .unwrap();
     assert!(
         frame(&mut editor)
             .iter()

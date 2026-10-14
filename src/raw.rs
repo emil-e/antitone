@@ -9,6 +9,10 @@ use crate::Error;
 use crate::color::{AP1_TO_XYZ, BRADFORD};
 use crate::sampling::mean;
 
+#[cfg(all(test, feature = "project"))]
+#[path = "../tests/support/raw_fixture.rs"]
+pub(crate) mod fixture;
+
 const SRGB_TO_XYZ: DMat3 = DMat3::from_cols(
     DVec3::new(0.4124564, 0.2126729, 0.0193339),
     DVec3::new(0.3575761, 0.7151522, 0.1191920),
@@ -179,7 +183,7 @@ unsafe extern "C" {
         size: usize,
     ) -> c_int;
     fn antitone_raw_sensor_diagnostics(
-        handle: *mut c_void,
+        handle: *const c_void,
         diagnostics: *mut SensorDiagnostics,
         error: *mut c_char,
         size: usize,
@@ -194,7 +198,7 @@ unsafe extern "C" {
         size: usize,
     ) -> c_int;
     fn antitone_raw_region_diagnostics(
-        handle: *mut c_void,
+        handle: *const c_void,
         x: u32,
         y: u32,
         width: u32,
@@ -203,6 +207,7 @@ unsafe extern "C" {
         error: *mut c_char,
         size: usize,
     ) -> c_int;
+    fn antitone_raw_retained_bytes(handle: *mut c_void) -> u64;
     fn antitone_raw_close(handle: *mut c_void);
 }
 
@@ -239,6 +244,15 @@ impl DevelopmentPriority {
     }
 }
 
+/// Mutable SDK ownership stays worker-local, unlike a consumed frozen source.
+/// ```compile_fail
+/// fn send<T: Send>() {}
+/// send::<antitone::raw::RawFile>();
+/// ```
+/// ```compile_fail
+/// fn sync<T: Sync>() {}
+/// sync::<antitone::raw::RawFile>();
+/// ```
 pub struct RawFile {
     handle: NonNull<c_void>,
     pub metadata: Metadata,
@@ -308,7 +322,7 @@ impl RawFile {
     pub fn set_development_priority(&mut self, priority: DevelopmentPriority) {
         self.priority = priority;
     }
-    fn ensure_unpacked(&mut self) -> Result<(), Error> {
+    pub(crate) fn ensure_unpacked(&mut self) -> Result<(), Error> {
         if self.unpacked {
             return Ok(());
         }
@@ -334,9 +348,15 @@ impl RawFile {
             return Ok(diagnostics);
         }
         self.ensure_unpacked()?;
+        let diagnostics = self.sensor_diagnostics()?;
+        self.diagnostics = Some(diagnostics);
+        Ok(diagnostics)
+    }
+
+    fn sensor_diagnostics(&self) -> Result<SensorDiagnostics, Error> {
         let mut diagnostics = SensorDiagnostics::default();
         let mut error = [0; 512];
-        // The handle is uniquely owned; the bridge does not retain the output buffers.
+        // No SDK calls or mutation: the bridge reads capture data into caller-owned buffers.
         let code = unsafe {
             antitone_raw_sensor_diagnostics(
                 self.handle.as_ptr(),
@@ -348,12 +368,15 @@ impl RawFile {
         if code != 0 {
             return Err(native_error("unpack", &error));
         }
-        self.diagnostics = Some(diagnostics);
         Ok(diagnostics)
     }
 
     pub fn region_sensor_diagnostics(&mut self, area: Rect) -> Result<SensorDiagnostics, Error> {
         self.ensure_unpacked()?;
+        self.unpacked_region_sensor_diagnostics(area)
+    }
+
+    fn unpacked_region_sensor_diagnostics(&self, area: Rect) -> Result<SensorDiagnostics, Error> {
         let mut diagnostics = SensorDiagnostics::default();
         let mut error = [0; 512];
         // The bridge reads the immutable RAW snapshot, including its original CFA and black/white levels.
@@ -429,6 +452,24 @@ impl RawFile {
         self.borrow_view(view)
     }
 
+    pub(crate) fn freeze(self) -> Result<FrozenRaw, Error> {
+        if !self.unpacked {
+            return Err(Error::Raw("cannot freeze a source before unpacking".into()));
+        }
+        let image = self.camera_image()?;
+        if (image.width, image.height) != (self.metadata.width, self.metadata.height) {
+            return Err(Error::Raw(
+                "camera development dimensions disagree with metadata".into(),
+            ));
+        }
+        // Unique ownership still holds here; snapshot before immutable publication.
+        let bytes = unsafe { antitone_raw_retained_bytes(self.handle.as_ptr()) };
+        Ok(FrozenRaw {
+            raw: self,
+            retained_bytes: (bytes != 0).then_some(bytes),
+        })
+    }
+
     /// Borrows the cached camera development without rerunning LibRaw.
     pub fn camera_image(&self) -> Result<Developed<'_>, Error> {
         self.borrow_view(
@@ -463,6 +504,42 @@ impl Drop for RawFile {
     fn drop(&mut self) {
         // This is the handle's sole owner; all image borrows end before drop.
         unsafe { antitone_raw_close(self.handle.as_ptr()) };
+    }
+}
+
+/// Private, consumed native ownership with no path back to mutable SDK access.
+pub(crate) struct FrozenRaw {
+    raw: RawFile,
+    retained_bytes: Option<u64>,
+}
+
+// SAFETY: construction consumes the unique RawFile after successful unpack/camera
+// development and view validation. No method exposes RawFile, its handle or mutable
+// SDK access. RGB borrows keep this owner alive; diagnostics only read retained CFA
+// through const bridge loops, with per-call output/error buffers and no LibRaw calls.
+// Safe Rust publication provides synchronization. The pinned libraw_r instance owns
+// its unpacker/TLS data; destruction frees instance-owned resources without creator-
+// thread affinity, and can occur only after the last owner/borrow has retired.
+unsafe impl Send for FrozenRaw {}
+unsafe impl Sync for FrozenRaw {}
+
+impl FrozenRaw {
+    pub(crate) fn retained_bytes(&self) -> Option<u64> {
+        self.retained_bytes
+    }
+    pub(crate) fn metadata(&self) -> Metadata {
+        self.raw.metadata
+    }
+    pub(crate) fn camera_image(&self) -> Result<Developed<'_>, Error> {
+        self.raw.camera_image()
+    }
+    pub(crate) fn sensor_diagnostics(&self) -> Result<SensorDiagnostics, Error> {
+        self.raw
+            .diagnostics
+            .map_or_else(|| self.raw.sensor_diagnostics(), Ok)
+    }
+    pub(crate) fn region_sensor_diagnostics(&self, area: Rect) -> Result<SensorDiagnostics, Error> {
+        self.raw.unpacked_region_sensor_diagnostics(area)
     }
 }
 
@@ -795,6 +872,43 @@ mod tests {
             pixel
         );
         assert_eq!(before, raw.region_sensor_diagnostics(area).unwrap());
+    }
+
+    #[cfg(feature = "project")]
+    #[test]
+    fn freeze_requires_valid_camera_development_and_keeps_the_original_allocation() {
+        let file = fixture::bayer_dng();
+        let raw = RawFile::open(file.path()).unwrap();
+        assert_eq!(raw.metadata.width, fixture::SIDE);
+        assert!(raw.freeze().is_err());
+        let mut raw = RawFile::open(file.path()).unwrap();
+        raw.ensure_unpacked().unwrap();
+        assert!(raw.freeze().is_err());
+        let mut raw = RawFile::open(file.path()).unwrap();
+        raw.develop_srgb_reference([1.0; 4]).unwrap();
+        assert!(raw.freeze().is_err());
+        let mut raw = RawFile::open(file.path()).unwrap();
+        raw.develop_camera([1.0; 4]).unwrap();
+        raw.metadata.width -= 1;
+        assert!(raw.freeze().is_err());
+        let mut raw = RawFile::open(file.path()).unwrap();
+        raw.develop_camera([1.0; 4]).unwrap();
+        let pointer = raw.camera_image().unwrap().pixels.as_ptr();
+        assert!(raw.diagnostics.is_none());
+        let frozen = raw.freeze().unwrap();
+        assert!(frozen.raw.diagnostics.is_none());
+        assert_eq!(frozen.camera_image().unwrap().pixels.as_ptr(), pointer);
+        let a = Rect {
+            x: 8,
+            y: 8,
+            width: 16,
+            height: 16,
+        };
+        let before = frozen.region_sensor_diagnostics(a).unwrap();
+        frozen.sensor_diagnostics().unwrap();
+        assert_eq!(frozen.region_sensor_diagnostics(a).unwrap(), before);
+        assert!(frozen.raw.diagnostics.is_none());
+        assert_eq!(frozen.camera_image().unwrap().pixels.as_ptr(), pointer);
     }
 
     #[test]

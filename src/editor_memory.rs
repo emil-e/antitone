@@ -1,3 +1,4 @@
+use super::cache_limits::CacheLimits;
 pub(super) use crate::resources::MemoryPressure as Pressure;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -7,14 +8,12 @@ pub(super) struct CacheBudgets {
     pub pressure: Pressure,
 }
 impl CacheBudgets {
-    pub fn for_memory(bytes: u64, pressure: Pressure) -> Self {
-        let mib = 1024 * 1024;
-        let sources = (bytes / 1024).clamp(16 * mib, 64 * mib) as usize;
-        let images = (bytes / 256).clamp(32 * mib, 256 * mib) as usize;
+    pub fn new(limits: CacheLimits, pressure: Pressure) -> Self {
+        assert!(limits.valid());
+        // Emergency backoff drops optional ownership, without rewriting chosen preferences.
         let (sources, images) = match pressure {
-            Pressure::Normal => (sources, images),
-            Pressure::Warning => (sources / 4, images / 4),
-            Pressure::Critical => (0, 0),
+            Pressure::Normal => (limits.cpu_bytes as usize, limits.gpu_bytes as usize),
+            Pressure::Warning | Pressure::Critical => (0, 0),
         };
         Self {
             sources,
@@ -22,10 +21,16 @@ impl CacheBudgets {
             pressure,
         }
     }
-    pub fn current() -> Self {
-        let memory = crate::resources::physical_memory();
-        let pressure = crate::resources::memory_pressure();
-        Self::for_memory(memory, pressure)
+    #[cfg(test)]
+    pub fn for_memory(bytes: u64, pressure: Pressure) -> Self {
+        Self::new(
+            super::cache_limits::Hardware {
+                ram_bytes: Some(bytes),
+                gpu: super::cache_limits::GpuMemory::Unified,
+            }
+            .defaults(),
+            pressure,
+        )
     }
 }
 pub(super) struct PressureWatch {
@@ -35,14 +40,14 @@ impl PressureWatch {
     pub fn new(context: egui::Context) -> Self {
         let alive = std::sync::Arc::new(());
         let weak = std::sync::Arc::downgrade(&alive);
-        let mut previous = CacheBudgets::current().pressure;
+        let mut previous = crate::resources::memory_pressure();
         std::thread::spawn(move || {
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(1));
                 if weak.upgrade().is_none() {
                     break;
                 }
-                let current = CacheBudgets::current().pressure;
+                let current = crate::resources::memory_pressure();
                 if current != previous {
                     previous = current;
                     context.request_repaint();
@@ -57,16 +62,17 @@ impl PressureWatch {
 mod tests {
     use super::*;
     #[test]
-    fn optional_budgets_use_available_machine_capacity_and_shrink_on_pressure() {
-        let small = CacheBudgets::for_memory(8 << 30, Pressure::Normal);
-        let large = CacheBudgets::for_memory(48 << 30, Pressure::Normal);
-        assert!(large.images > small.images);
-        assert!(large.sources > small.sources);
-        assert!(large.sources >= 36 * 256 * 256 * 8);
-        assert!(large.images >= 72 * 256 * 256 * 40);
-        let warning = CacheBudgets::for_memory(48 << 30, Pressure::Warning);
-        assert_eq!(warning.images, large.images / 4);
-        let critical = CacheBudgets::for_memory(48 << 30, Pressure::Critical);
-        assert_eq!((critical.sources, critical.images), (0, 0));
+    fn pressure_stops_optional_retention_without_changing_or_increasing_limits() {
+        let limits = CacheLimits {
+            cpu_bytes: 1024 << 20,
+            gpu_bytes: 256 << 20,
+        };
+        let normal = CacheBudgets::new(limits, Pressure::Normal);
+        for pressure in [Pressure::Warning, Pressure::Critical] {
+            let backoff = CacheBudgets::new(limits, pressure);
+            assert_eq!((backoff.sources, backoff.images), (0, 0));
+        }
+        assert_eq!(CacheBudgets::new(limits, Pressure::Normal), normal);
+        assert_eq!(limits.cpu_bytes, 1024 << 20);
     }
 }

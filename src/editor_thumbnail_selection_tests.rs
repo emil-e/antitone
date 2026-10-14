@@ -101,7 +101,10 @@ fn cold_loading_and_failed_selected_raw_retain_selection_and_filename() {
         node(&output, name).1.toggled(),
         Some(egui::accesskit::Toggled::True)
     );
-    assert!(node(&output, name).1.is_disabled());
+    assert!(
+        !node(&output, name).1.is_disabled(),
+        "loading a photo must not block navigation"
+    );
     selected_outline(&output, point(&output, name));
     assert!(editor.ready.is_none() && editor.pending_preview.is_none());
     assert_eq!(editor.document.project, before);
@@ -204,6 +207,29 @@ fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus(
 }
 
 #[test]
+fn document_work_still_blocks_navigation_when_a_selected_load_was_pending() {
+    let (mut editor, _, commands) = crate::editor::tests::fixture();
+    editor.document = super::tests::fixture();
+    editor.document.project.order.truncate(2);
+    editor.load(
+        editor
+            .document
+            .source_path(editor.document.project.order[0])
+            .unwrap(),
+    );
+    assert!(matches!(commands.try_recv().unwrap(), Command::Load(..)));
+    editor.document_pending = Some(999);
+    let context = egui::Context::default();
+    frame(&mut editor, &context, vec![]);
+    let output = frame(&mut editor, &context, vec![]);
+    assert!(node(&output, "photo-1.ARW").1.is_disabled());
+    let point = point(&output, "photo-1.ARW");
+    frame(&mut editor, &context, pointer(point, true));
+    frame(&mut editor, &context, pointer(point, false));
+    assert!(commands.try_recv().is_err());
+}
+
+#[test]
 fn disabled_cards_keep_actionable_error_tooltips() {
     let (mut editor, _, _) = crate::editor::tests::fixture();
     editor.document = super::tests::fixture();
@@ -280,5 +306,53 @@ fn enabled_reference_cards_keep_ordered_roll_sampling_and_working_photo_return_c
         assert_eq!(editor.source, view.source);
         assert!(editor.pick.is_none());
         assert_eq!(editor.document.project, before);
+    }
+}
+
+#[test]
+fn pending_photo_loading_accepts_mouse_and_keyboard_replacement_and_ignores_old_ready() {
+    for keyboard in [false, true] {
+        let (mut editor, send, commands) = crate::editor::tests::fixture();
+        editor.document = super::tests::fixture();
+        editor.document.project.order.truncate(2);
+        let first = editor.document.project.order[0];
+        let second = editor.document.project.order[1];
+        editor.load(editor.document.source_path(first).unwrap());
+        let original = editor.id;
+        assert!(matches!(commands.try_recv().unwrap(), Command::Load(..)));
+        let context = egui::Context::default();
+        frame(&mut editor, &context, vec![]);
+        let output = frame(&mut editor, &context, vec![]);
+        let target = node(&output, "photo-1.ARW").0;
+        assert!(!node(&output, "photo-1.ARW").1.is_disabled());
+        if keyboard {
+            let mut focused = false;
+            for _ in 0..12 {
+                frame(&mut editor, &context, key(Key::Tab));
+                if context.memory(|m| m.focused()).map(|id| id.accesskit_id()) == Some(target) {
+                    focused = true;
+                    break;
+                }
+            }
+            assert!(focused);
+            frame(&mut editor, &context, key(Key::Space));
+        } else {
+            let point = point(&output, "photo-1.ARW");
+            frame(&mut editor, &context, pointer(point, true));
+            frame(&mut editor, &context, pointer(point, false));
+        }
+        assert_eq!(editor.current_source, Some(second));
+        assert_eq!(editor.selected, 1);
+        assert!(editor.busy && editor.ready.is_none());
+        assert!(editor.id > original);
+        assert!(matches!(commands.try_recv().unwrap(), Command::Load(..)));
+        send.send(Message::Ready(original, Err("obsolete failure".into())))
+            .unwrap();
+        editor.receive();
+        assert!(editor.busy && editor.current_source == Some(second));
+        assert_ne!(editor.status, "obsolete failure");
+        editor.begin_pick(Pick::Dmin);
+        editor.begin_crop();
+        assert!(editor.pick.is_none() && editor.crop_edit.is_none());
     }
 }

@@ -11,6 +11,8 @@ pub(super) struct Preferences {
     pub(super) scopes_visible: bool,
     pub(super) scope_height_ratio: f32,
     pub(super) filmstrip_height: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) cache_limits: Option<super::cache_limits::CacheLimits>,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -20,6 +22,7 @@ impl Default for Preferences {
             scopes_visible: true,
             scope_height_ratio: 0.85,
             filmstrip_height: 140.,
+            cache_limits: None,
         }
     }
 }
@@ -27,6 +30,9 @@ impl Preferences {
     fn validate(&self) -> Result<()> {
         if self.version != 1 {
             return Err(format!("unsupported UI preferences version {}", self.version).into());
+        }
+        if self.cache_limits.is_some_and(|limits| !limits.valid()) {
+            return Err("invalid cache limits: use whole MiB within the byte counter range".into());
         }
         if !self.scope_height_ratio.is_finite()
             || self.scope_height_ratio <= 0.
@@ -135,6 +141,44 @@ mod tests {
     }
 
     #[test]
+    fn chosen_cache_limits_persist_including_zero_and_survive_other_hardware_defaults() {
+        use super::super::cache_limits::{CacheLimits, GpuMemory, Hardware, MIB};
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("preferences.json");
+        std::fs::write(&path, r#"{"scopes_visible":false}"#).unwrap();
+        let (mut store, mut preferences) = Store::open(path.clone()).unwrap();
+        assert!(preferences.cache_limits.is_none());
+        let first = Hardware {
+            ram_bytes: Some(16 << 30),
+            gpu: GpuMemory::Unified,
+        }
+        .defaults();
+        preferences.cache_limits.get_or_insert(first);
+        store.save(&preferences).unwrap();
+        let (mut store, mut restored) = Store::open(path.clone()).unwrap();
+        let other = Hardware {
+            ram_bytes: Some(64 << 30),
+            gpu: GpuMemory::Unknown,
+        }
+        .defaults();
+        restored.cache_limits.get_or_insert(other);
+        assert_eq!(restored.cache_limits, Some(first));
+        assert!(!restored.scopes_visible);
+        restored.cache_limits = Some(CacheLimits {
+            cpu_bytes: 123 * MIB,
+            gpu_bytes: 0,
+        });
+        store.save(&restored).unwrap();
+        let (_, mut reopened) = Store::open(path.clone()).unwrap();
+        reopened.cache_limits.get_or_insert(other);
+        assert_eq!(reopened.cache_limits, restored.cache_limits);
+        // Explicit reset, unlike a relaunch, deliberately selects fresh defaults.
+        reopened.cache_limits = Some(other);
+        store.save(&reopened).unwrap();
+        assert_eq!(Store::open(path).unwrap().1.cache_limits, Some(other));
+    }
+
+    #[test]
     fn invalid_changes_do_not_replace_the_last_saved_preferences() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("preferences.json");
@@ -155,6 +199,10 @@ mod tests {
             r#"{"version":2}"#,
             r#"{"filmstrip_height":-1}"#,
             r#"{"scope_height_ratio":0}"#,
+            r#"{"cache_limits":{"cpu_bytes":-1,"gpu_bytes":0}}"#,
+            r#"{"cache_limits":{"cpu_bytes":1,"gpu_bytes":0}}"#,
+            r#"{"cache_limits":{"cpu_bytes":1048576}}"#,
+            r#"{"cache_limits":{"cpu_bytes":0,"gpu_bytes":0,"future":1}}"#,
         ] {
             std::fs::write(&path, content).unwrap();
             assert!(Store::open(path.clone()).is_err());

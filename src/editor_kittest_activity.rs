@@ -178,6 +178,7 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                     .load(std::sync::atomic::Ordering::Relaxed),
                 document: harness.state().document.clone(),
                 selected: source,
+                local_support: false,
                 film: None,
                 picture: None,
             },

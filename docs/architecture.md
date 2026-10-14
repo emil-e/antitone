@@ -24,9 +24,15 @@ For the photographic model, start with [processing](processing.md). This page is
 
 ## Ownership and execution
 
-The UI owns live document and view state. A backend thread serializes source loading, document preparation, picks, analysis, export and refinement. It retains the active `Scan`, whose `RawFile` owns LibRaw development and immutable original capture diagnostics.
+The UI owns live document and view state. A backend thread serializes source loading, document preparation, picks, analysis, export and refinement. Mutable `RawFile` development stays worker-local; successful camera development is consumed into private frozen native ownership. A `Scan` leases an immutable `DevelopedSource` holding the original RGB16/CFA and camera/WB metadata, while keeping its own correction context. Leases share native storage without copying RGB, and read-only capture diagnostics never unpack or mutate the SDK after publication. Final native destruction follows the last lease and image borrow, including synchronized transfer to another thread.
 
-Thumbnail and embedded-camera-preview workers are separate bounded background paths. They must not borrow the selected Scan away from foreground operations. Analysis opens/releases temporary sources while retaining only bounded statistics, rather than keeping a roll of full developments in memory.
+The [document-scoped CPU store](../src/source_store.rs) retains immutable native developments and uncorrected proxies in one byte-bounded oldest-unprotected LRU. Active leases survive eviction; closing a store rejects publication without invalidating readers. Selected/visible proxies are protected separately, while native cache ownership is always optional. Charges cover exported explicit native allocations and Rust payload, not allocator/driver footprint; unavailable accounting disables optional admission, not processing. File queries and destruction stay outside metadata locks.
+
+Candidate documents borrow compatible parent leases with zero optional retention and transfer compatible ownership only on acceptance. Thumbnail completion is separate from residency: eager CPU/disk work persists proper proxies without requiring offscreen GPU images, including while fullscreen hides cards.
+
+One [native priority worker](../src/editor_development.rs) serves foreground, visible and eager development, arbitrating between noninterruptible calls. Compatible same-family demands join with per-consumer cancellation/publication rights. Mutable RAW handles remain worker-local; completion hands off frozen sources even at zero optional budget. Paused/in-flight backing is mandatory work, not optional retention. [Scheduling rationale and diagnostics](native-development.md#editor-scheduling) describe the tradeoff; [broader resource acceptance](plans/visual-feedback.md) remains separate.
+
+[Thumbnail CPU/disk/GPU processing](../src/editor_thumbnail_worker.rs) and embedded-camera-preview extraction remain separate background paths, not additional RAW development pools. Native thumbnail tickets are asynchronous: visible misses can enter the native queue while older eager CPU/disk work is still owned. GPU processing remains serial, and obsolete GPU tickets never install images. These paths must not borrow the selected Scan away from foreground operations. Analysis joins/reuses compatible sources or requests temporary native work from the same scheduler, retaining only bounded statistics rather than a roll of mandatory full developments; analysis misses do not independently add optional native ownership. Registered flat references use document-native reuse; external unaccepted references remain uncached. Export uses its existing retained Scan.
 
 UI, backend and image workers share a wgpu device/queue and reusable immutable GPU infrastructure. Mutable processing/storage and signatures remain image/job-owned. CPU processing supplies the numerical reference, measurements and export; it is not an interactive fallback when a GPU domain is unsupported.
 
@@ -42,7 +48,7 @@ Worker results are proposals. Request IDs, generations and source/settings snaps
 
 [Photo-only inspection](../src/editor_fullscreen.rs) retains the temporary workspace/view context and suspends tools without promoting drafts. The host owns window geometry and menu/Dock presentation, independent of native fullscreen Spaces, and acknowledges restoration before the controller restores its snapshot on the next UI frame. [Shared viewer framing](../src/editor_ui_viewer.rs) owns docked/auto-hiding controls and the full-canvas surface; it does not own image mappings, transactions or window state.
 
-Accepted photographic state lives in [projects](projects.md). Tool drafts and viewport state are transient; durable UI preferences are stored independently. [Editor](editor.md) explains preview/cache distinctions and the input/transaction model.
+Accepted photographic state lives in [projects](projects.md). Tool drafts and viewport state are transient; durable UI preferences, including fixed CPU/GPU cache limits, are stored independently. Defaults use installed RAM and static GPU facts only at initialization/reset; pressure changes effective optional retention, not saved limits. [Editor](editor.md) explains preview/cache distinctions and the input/transaction model.
 
 ## UI test boundary
 

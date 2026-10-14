@@ -5,7 +5,7 @@ use crate::{
     coverage::Coverage,
     geometry::SourceRaster,
     processing::{Calibration, PhotoSettings, Pipeline, RollSettings},
-    raw::{RawFile, Rect, SensorDiagnostics},
+    raw::{Developed, FrozenRaw, Metadata, RawFile, Rect, SensorDiagnostics},
     sampling,
 };
 use glam::{DMat3, DVec3};
@@ -22,8 +22,117 @@ pub struct AnalysisSamples {
     pub rejected_floor: usize,
 }
 
+/// Immutable native development shared by independent Scan consumers.
+///
+/// Neither the native owner nor mutation APIs are exposed:
+/// ```compile_fail
+/// use antitone::scan::DevelopedSource;
+/// fn redevelop(source: &mut DevelopedSource) {
+///     source.raw.develop_camera([1.0; 4]);
+/// }
+/// ```
+/// Image borrows cannot outlive their source lease:
+/// ```compile_fail
+/// use std::sync::Arc;
+/// use antitone::scan::DevelopedSource;
+/// fn release_while_reading(source: Arc<DevelopedSource>) {
+///     let image = source.camera_image().unwrap();
+///     drop(source);
+///     image.pixel_codes(0, 0).unwrap();
+/// }
+/// ```
+pub struct DevelopedSource {
+    raw: FrozenRaw,
+    camera_to_ap1: DMat3,
+    camera_model: String,
+    area: Rect,
+    fixed_wb: [f64; 4],
+    input_floor: f64,
+}
+
+impl DevelopedSource {
+    fn from_raw(mut raw: RawFile, fixed_wb: Option<[f64; 4]>) -> Result<Self> {
+        let wb = fixed_wb.unwrap_or_else(|| raw.metadata.as_shot_wb());
+        let matrix = raw.metadata.camera_to_ap1()?;
+        let camera_model = raw.metadata.camera_model();
+        let area = raw.metadata.image_area()?;
+        raw.develop_camera(wb)?;
+        Ok(Self {
+            raw: raw.freeze()?,
+            camera_to_ap1: matrix,
+            camera_model,
+            area,
+            fixed_wb: wb,
+            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
+        })
+    }
+    /// Explicit native allocations plus this Rust payload/string capacity, charged once.
+    /// Excludes SDK-private/stdlib heap, Arc/store bookkeeping and allocator-held VM;
+    /// this is not total native heap or process footprint. None disables cache admission.
+    pub fn retained_bytes(&self) -> Option<u64> {
+        self.raw
+            .retained_bytes()?
+            .checked_add(size_of::<Self>() as u64)?
+            .checked_add(self.camera_model.capacity() as u64)
+    }
+    pub fn metadata(&self) -> Metadata {
+        self.raw.metadata()
+    }
+    pub fn camera_to_ap1(&self) -> DMat3 {
+        self.camera_to_ap1
+    }
+    pub fn camera_model(&self) -> &str {
+        &self.camera_model
+    }
+    pub fn area(&self) -> Rect {
+        self.area
+    }
+    pub fn fixed_wb(&self) -> [f64; 4] {
+        self.fixed_wb
+    }
+    pub fn input_floor(&self) -> f64 {
+        self.input_floor
+    }
+    pub fn camera_image(&self) -> Result<Developed<'_>> {
+        self.raw.camera_image()
+    }
+    pub fn sensor_diagnostics(&self) -> Result<SensorDiagnostics> {
+        self.raw.sensor_diagnostics()
+    }
+    pub fn region_sensor_diagnostics(&self, area: Rect) -> Result<SensorDiagnostics> {
+        self.raw.region_sensor_diagnostics(area)
+    }
+}
+
+/// Uncorrected camera-RGB thumbnail data; independent of native retention and rendering.
+/// The production proxy has a 256-pixel maximum edge, without upscaling.
+pub struct CameraProxy {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) pixels: Vec<[u16; 4]>,
+    pub(crate) matrix: DMat3,
+}
+impl CameraProxy {
+    pub const MAX_EDGE: u32 = 256;
+    pub fn from_scan(scan: &Scan) -> Result<Self> {
+        let (width, height, pixels) = scan.preview_source(Self::MAX_EDGE)?;
+        Ok(Self {
+            width,
+            height,
+            pixels,
+            matrix: scan.camera_to_ap1,
+        })
+    }
+    pub fn dimensions(&self) -> [u32; 2] {
+        [self.width, self.height]
+    }
+    pub fn retained_bytes(&self) -> u64 {
+        (self.pixels.capacity() * size_of::<[u16; 4]>() + size_of::<Self>()) as u64
+    }
+}
+
 pub struct Scan {
-    raw: RawFile,
+    source: Arc<DevelopedSource>,
     pub camera_to_ap1: DMat3,
     pub camera_model: String,
     pub area: Rect,
@@ -46,27 +155,32 @@ impl Scan {
         raw.set_development_priority(priority);
         Self::from_raw(raw, fixed_wb)
     }
-    pub(crate) fn from_raw(mut raw: RawFile, fixed_wb: Option<[f64; 4]>) -> Result<Self> {
-        let wb = fixed_wb.unwrap_or_else(|| raw.metadata.as_shot_wb());
-        let matrix = raw.metadata.camera_to_ap1()?;
-        let camera_model = raw.metadata.camera_model();
-        let area = raw.metadata.image_area()?;
-        raw.develop_camera(wb)?;
-        let input_floor = crate::processing::CAMERA_INPUT_FLOOR;
-        Ok(Self {
-            raw,
-            camera_to_ap1: matrix,
-            camera_model,
-            area,
-            fixed_wb: wb,
-            input_floor,
+    pub(crate) fn from_raw(raw: RawFile, fixed_wb: Option<[f64; 4]>) -> Result<Self> {
+        Ok(Self::from_source(Arc::new(DevelopedSource::from_raw(
+            raw, fixed_wb,
+        )?)))
+    }
+
+    /// Starts an independent, uncorrected consumer without developing or copying RGB.
+    pub fn from_source(source: Arc<DevelopedSource>) -> Self {
+        Self {
+            camera_to_ap1: source.camera_to_ap1,
+            camera_model: source.camera_model.clone(),
+            area: source.area,
+            fixed_wb: source.fixed_wb,
+            input_floor: source.input_floor,
+            corrected_floor: source.input_floor,
             flat_field: None,
-            corrected_floor: input_floor,
-        })
+            source,
+        }
+    }
+
+    pub fn source(&self) -> &Arc<DevelopedSource> {
+        &self.source
     }
 
     pub fn dimensions(&self) -> Result<(u32, u32)> {
-        let image = self.raw.camera_image()?;
+        let image = self.source.camera_image()?;
         Ok((image.width, image.height))
     }
     pub fn set_flat_field(&mut self, field: Option<Arc<FlatField>>) -> Result<()> {
@@ -94,7 +208,7 @@ impl Scan {
             a.width.div_ceil(side) as usize,
             a.height.div_ceil(side) as usize,
         ];
-        let image = self.raw.camera_image()?;
+        let image = self.source.camera_image()?;
         let mut sums = vec![[0u64; 3]; size[0] * size[1]];
         let mut counts = vec![0u64; sums.len()];
         for y in 0..a.height {
@@ -161,7 +275,7 @@ impl Scan {
         if size.iter().any(|n| *n < 7) {
             return Err(Error::UnusableSample("flat-field support is too narrow"));
         }
-        let image = self.raw.camera_image()?;
+        let image = self.source.camera_image()?;
         let center_camera = image.sample_mean(center, DMat3::IDENTITY)?;
         let mut means = Vec::with_capacity(size[0] * size[1]);
         for gy in 0..size[1] {
@@ -216,7 +330,7 @@ impl Scan {
     }
 
     pub fn pixel(&self, x: u32, y: u32) -> Result<DVec3> {
-        let mut camera = self.raw.camera_image()?.pixel(x, y)?;
+        let mut camera = self.source.camera_image()?.pixel(x, y)?;
         if let Some(field) = &self.flat_field {
             camera *= field.gain([x as f64 + 0.5, y as f64 + 0.5])?;
         }
@@ -224,7 +338,7 @@ impl Scan {
     }
 
     fn checked_region(&mut self, region: Rect) -> Result<SensorDiagnostics> {
-        let diagnostics = self.raw.region_sensor_diagnostics(region)?;
+        let diagnostics = self.source.region_sensor_diagnostics(region)?;
         if diagnostics.at_white.iter().any(|v| *v > 0) {
             return Err(Error::UnusableSample(
                 "patch contains sensor values at/above white",
@@ -282,7 +396,7 @@ impl Scan {
                     height: 8,
                 };
                 result.attempted += 1;
-                let diagnostic = self.raw.region_sensor_diagnostics(footprint)?;
+                let diagnostic = self.source.region_sensor_diagnostics(footprint)?;
                 if diagnostic.at_white.iter().any(|n| *n > 0)
                     || diagnostic.below_black.iter().any(|n| *n > 0)
                 {
@@ -293,8 +407,8 @@ impl Scan {
                 let mut floor = false;
                 for yy in footprint.y..footprint.y + 8 {
                     for xx in footprint.x..footprint.x + 8 {
-                        white |=
-                            self.raw.camera_image()?.pixel_codes(xx, yy)?[..3].contains(&u16::MAX);
+                        white |= self.source.camera_image()?.pixel_codes(xx, yy)?[..3]
+                            .contains(&u16::MAX);
                         let p = self.pixel(xx, yy)?;
                         if !p.is_finite() {
                             return Err(Error::NumericalOverflow);
@@ -332,7 +446,7 @@ impl Scan {
             }
             sum / (region.width as f64 * region.height as f64)
         } else {
-            self.raw
+            self.source
                 .camera_image()?
                 .sample_mean(region, DMat3::IDENTITY)?
         };
@@ -490,7 +604,7 @@ impl Scan {
         if width == 0 || height == 0 || x >= area.width || y >= area.height {
             return Err(Error::InvalidParameter("invalid source tile"));
         }
-        let image = self.raw.camera_image()?;
+        let image = self.source.camera_image()?;
         let mut pixels = vec![[0; 4]; width as usize * height as usize];
         for dy in 0..height.min(area.height - y) {
             for dx in 0..width.min(area.width - x) {
@@ -524,7 +638,7 @@ impl Scan {
     /// Unconverted camera RGB16 samples at display-grid centers for the provisional preview.
     pub fn preview_source(&self, maximum: u32) -> Result<(u32, u32, Vec<[u16; 4]>)> {
         let (width, height) = self.preview_dimensions(maximum)?;
-        let image = self.raw.camera_image()?;
+        let image = self.source.camera_image()?;
         let raster = SourceRaster::new(self.area, [width, height])?;
         let mut pixels = Vec::with_capacity(width as usize * height as usize);
         for y in 0..height {

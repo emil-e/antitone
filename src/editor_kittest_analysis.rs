@@ -34,6 +34,7 @@ fn draw_picture(harness: &mut Harness<'_, Editor>, area: Rect) {
     harness.get_by_label("Edit picture area…").click();
     harness.step();
     assert_eq!(harness.state().pick, Some(Pick::Analysis));
+    wait_for(harness, |editor| editor.analysis_area_pending.is_none());
     harness.get_by_label("Fit").click();
     harness.step();
     let geometry = harness.state().last_layout.unwrap().0;

@@ -1,7 +1,10 @@
 use super::presentation::ContactSheetLayout;
 use super::*;
 use crate::project::SourceDevelopment;
-use serde::{Deserialize, Serialize};
+pub(super) use crate::source_revision::FileKey;
+#[cfg(test)]
+use crate::source_revision::FileRevision;
+use crate::source_store::{SourceKey as NativeKey, SourceStore};
 #[path = "thumbnail_disk.rs"]
 mod disk;
 #[path = "thumbnail_lru.rs"]
@@ -9,51 +12,7 @@ mod lru;
 use lru::Cache;
 #[path = "editor_embedded_preview.rs"]
 mod embedded;
-const SOURCE_SIZE: u32 = 256;
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct FileRevision {
-    bytes: u64,
-    modified: std::time::SystemTime,
-    #[cfg(unix)]
-    device: u64,
-    #[cfg(unix)]
-    inode: u64,
-    #[cfg(unix)]
-    changed: (i64, i64),
-}
-impl FileRevision {
-    fn read(path: &std::path::Path) -> std::io::Result<Self> {
-        #[cfg(unix)]
-        use std::os::unix::fs::MetadataExt;
-        let metadata = std::fs::metadata(path)?;
-        Ok(Self {
-            bytes: metadata.len(),
-            modified: metadata.modified()?,
-            #[cfg(unix)]
-            device: metadata.dev(),
-            #[cfg(unix)]
-            inode: metadata.ino(),
-            #[cfg(unix)]
-            changed: (metadata.ctime(), metadata.ctime_nsec()),
-        })
-    }
-}
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct FileKey {
-    path: PathBuf,
-    revision: Option<FileRevision>,
-}
-impl FileKey {
-    pub(super) fn new(path: &std::path::Path) -> Self {
-        Self {
-            path: path.canonicalize().unwrap_or_else(|_| path.to_path_buf()),
-            // Unavailable stats disable disk reuse; opening/development reports source errors.
-            revision: FileRevision::read(path).ok(),
-        }
-    }
-}
+const SOURCE_SIZE: u32 = Proxy::MAX_EDGE;
 #[derive(Clone, Debug, PartialEq)]
 struct SourceKey {
     id: SourceId,
@@ -62,6 +21,12 @@ struct SourceKey {
     development: Development,
 }
 impl SourceKey {
+    fn store_key_at(&self, path: &std::path::Path) -> Option<NativeKey> {
+        NativeKey::from_revision(path, self.file.clone(), &self.source, &self.development)
+    }
+    fn store_key(&self) -> Option<NativeKey> {
+        self.store_key_at(&self.file.path)
+    }
     fn new(source: &Source, development: &Development, file: FileKey) -> Self {
         Self {
             id: source.id,
@@ -84,12 +49,7 @@ struct ImageKey {
     target: OutputTarget,
     field: Option<FieldKey>,
 }
-pub(super) struct Proxy {
-    width: u32,
-    height: u32,
-    pixels: Vec<[u16; 4]>,
-    matrix: glam::DMat3,
-}
+pub(super) use crate::scan::CameraProxy as Proxy;
 impl Proxy {
     pub(super) async fn image(
         &self,
@@ -117,15 +77,6 @@ impl Proxy {
             )?;
         }
         Ok(Arc::new(image))
-    }
-    pub(super) fn from_scan(scan: &Scan) -> Result<Self, Error> {
-        let (width, height, pixels) = scan.preview_source(SOURCE_SIZE)?;
-        Ok(Self {
-            width,
-            height,
-            pixels,
-            matrix: scan.camera_to_ap1,
-        })
     }
 }
 pub(super) struct SelectedPreview {
@@ -166,16 +117,25 @@ struct Job {
     path: PathBuf,
     source: Source,
     correction: Option<Arc<Correction>>,
+    store: Arc<SourceStore>,
+    render: bool,
+    priority: development::Priority,
 }
 struct Outcome {
     ticket: u64,
     key: ImageKey,
     image: Result<Option<Arc<GpuImage>>, String>,
+    proper: bool,
 }
 pub(super) struct Thumbnails {
     cache: Cache<ImageKey, Result<Arc<GpuImage>, String>>,
-    sources: Arc<std::sync::Mutex<Cache<SourceKey, Arc<Proxy>>>>,
+    pub(super) sources: Arc<SourceStore>,
+    selected_key: Option<NativeKey>,
+    visible_keys: Vec<NativeKey>,
+    // Demand history, not GPU residency or an availability guarantee.
+    attempted: Vec<SourceKey>,
     budgets: memory::CacheBudgets,
+    pub(super) limits: cache_limits::CacheLimits,
     memory_watch: Option<memory::PressureWatch>,
     repaint: Arc<std::sync::OnceLock<egui::Context>>,
     embedded: embedded::EmbeddedPreviews,
@@ -188,10 +148,18 @@ pub(super) struct Thumbnails {
     messages: Option<mpsc::Receiver<Outcome>>,
     generation: Arc<std::sync::atomic::AtomicU64>,
     pending: Option<(u64, ImageKey)>,
+    pending_render: bool,
+    #[cfg(test)]
+    pressure_override: Option<memory::Pressure>,
 }
 impl Default for Thumbnails {
     fn default() -> Self {
-        let budgets = memory::CacheBudgets::current();
+        let limits = cache_limits::Hardware::current(None).defaults();
+        #[cfg(not(test))]
+        let pressure = crate::resources::memory_pressure();
+        #[cfg(test)]
+        let pressure = memory::Pressure::Normal;
+        let budgets = memory::CacheBudgets::new(limits, pressure);
         Self {
             cache: Cache::new(budgets.images, |value| {
                 value.as_ref().map_or(1024, |image| {
@@ -203,11 +171,12 @@ impl Default for Thumbnails {
                         + 1024
                 })
             }),
-            sources: Arc::new(std::sync::Mutex::new(Cache::new(
-                budgets.sources,
-                |proxy: &Arc<Proxy>| proxy.pixels.len() * 8 + 1024,
-            ))),
+            sources: Arc::new(SourceStore::new(budgets.sources as u64)),
+            selected_key: None,
+            visible_keys: Vec::new(),
+            attempted: Vec::new(),
             budgets,
+            limits,
             memory_watch: None,
             repaint: Arc::default(),
             embedded: Default::default(),
@@ -216,6 +185,9 @@ impl Default for Thumbnails {
             messages: None,
             generation: Arc::default(),
             pending: None,
+            pending_render: false,
+            #[cfg(test)]
+            pressure_override: Some(memory::Pressure::Normal),
         }
     }
 }
@@ -240,7 +212,10 @@ impl Thumbnails {
         if source.reference_only || key.file.revision.is_none() {
             return Ok(None);
         }
-        let Some(proxy) = self.sources.lock().unwrap().get(&key).cloned() else {
+        let Some(native_key) = key.store_key_at(&document.source_path(id)?) else {
+            return Ok(None);
+        };
+        let Some(proxy) = self.sources.get_proxy(&native_key) else {
             return Ok(None);
         };
         let Some((device, queue, renderers)) = &self.gpu else {
@@ -272,7 +247,9 @@ impl Thumbnails {
         if !preview.current(request, document, Some(id), correction) {
             return Ok(None);
         }
-        self.sources.lock().unwrap().protect(vec![key]);
+        self.selected_key = Some(native_key.clone());
+        self.protect_cpu();
+        let _ = self.sources.get_proxy(&native_key);
         let bytes: u64 = preview
             .images
             .iter()
@@ -292,6 +269,7 @@ impl Thumbnails {
         );
         Ok(Some(preview))
     }
+    #[cfg(test)]
     pub fn seed(
         &mut self,
         source: &Source,
@@ -299,17 +277,69 @@ impl Thumbnails {
         file: FileKey,
         proxy: Arc<Proxy>,
     ) {
-        let key = SourceKey::new(source, development, file);
-        let mut sources = self.sources.lock().unwrap();
-        sources.protect(vec![key.clone()]);
-        sources.insert(key, proxy);
+        let path = file.path.clone();
+        self.seed_at(source, development, &path, file, proxy);
+    }
+    pub(super) fn seed_at(
+        &mut self,
+        source: &Source,
+        development: &Development,
+        path: &std::path::Path,
+        file: FileKey,
+        proxy: Arc<Proxy>,
+    ) {
+        let source_key = SourceKey::new(source, development, file);
+        let Some(key) = source_key.store_key_at(path) else {
+            return;
+        };
+        self.selected_key = Some(key.clone());
+        self.protect_cpu();
+        // Readmit a live candidate/selected native by-product after the accepted budget is bound.
+        let _ = self.sources.get(&key);
+        if let Err(error) = self.sources.publish_proxy(key, proxy) {
+            eprintln!("Selected proxy cache admission rejected: {error}");
+        }
     }
     fn release_selected(&mut self) {
-        self.sources.lock().unwrap().protect(Vec::new());
+        self.selected_key = None;
+        self.protect_cpu();
     }
     pub(super) fn refresh_hidden_memory(&mut self) {
         self.cache.protect(Vec::new());
-        self.apply_budgets(memory::CacheBudgets::current());
+        self.visible_keys.clear();
+        self.protect_cpu();
+        self.update_memory();
+    }
+    fn protect_cpu(&self) {
+        let mut keys = self.visible_keys.clone();
+        keys.extend(self.selected_key.clone());
+        self.sources.protect_proxies(keys);
+    }
+    pub(super) fn bind_sources(&mut self, sources: Arc<SourceStore>) {
+        if !Arc::ptr_eq(&self.sources, &sources) {
+            self.cancel();
+            self.selected_key = None;
+            self.visible_keys.clear();
+            self.attempted.clear();
+            self.sources = sources;
+        }
+        self.sources.set_budget(self.budgets.sources as u64);
+    }
+    pub(super) fn default_limits(&self) -> cache_limits::CacheLimits {
+        cache_limits::Hardware::current(self.gpu.as_ref().map(|(device, _, _)| device)).defaults()
+    }
+    pub(super) fn set_limits(&mut self, limits: cache_limits::CacheLimits) {
+        self.limits = limits;
+        self.update_memory();
+    }
+    pub(super) fn update_memory(&mut self) {
+        #[cfg(not(test))]
+        let pressure = crate::resources::memory_pressure();
+        #[cfg(test)]
+        let pressure = self
+            .pressure_override
+            .unwrap_or_else(crate::resources::memory_pressure);
+        self.apply_budgets(memory::CacheBudgets::new(self.limits, pressure));
     }
     fn apply_budgets(&mut self, budgets: memory::CacheBudgets) {
         if budgets == self.budgets {
@@ -320,10 +350,7 @@ impl Thumbnails {
             self.cancel();
         }
         self.cache.set_budget(self.budgets.images);
-        self.sources
-            .lock()
-            .unwrap()
-            .set_budget(self.budgets.sources);
+        self.sources.set_budget(self.budgets.sources as u64);
     }
     fn cancel_offscreen(&mut self, wanted: &[ImageKey]) {
         if let Some((ticket, key)) = &self.pending
@@ -337,24 +364,48 @@ impl Thumbnails {
         device: wgpu::Device,
         queue: wgpu::Queue,
         renderers: Arc<crate::renderer::RendererCache>,
+        developments: development::Scheduler,
     ) -> Self {
-        Self::with_disk(
+        Self::with_developments(
             device,
             queue,
             renderers,
             disk::DiskCache::default_location(),
+            developments,
         )
     }
     #[cfg(all(test, feature = "ui-tests"))]
-    pub(super) fn without_disk(&self) -> Self {
+    pub(super) fn without_disk(&self, developments: development::Scheduler) -> Self {
         let (device, queue, renderers) = self.gpu.as_ref().expect("thumbnail GPU resources");
-        Self::with_disk(device.clone(), queue.clone(), renderers.clone(), None)
+        Self::with_developments(
+            device.clone(),
+            queue.clone(),
+            renderers.clone(),
+            None,
+            developments,
+        )
     }
+    #[cfg(test)]
     fn with_disk(
         device: wgpu::Device,
         queue: wgpu::Queue,
         renderers: Arc<crate::renderer::RendererCache>,
         disk: Option<disk::DiskCache>,
+    ) -> Self {
+        Self::with_developments(
+            device,
+            queue,
+            renderers,
+            disk,
+            development::Scheduler::new(),
+        )
+    }
+    fn with_developments(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        renderers: Arc<crate::renderer::RendererCache>,
+        disk: Option<disk::DiskCache>,
+        developments: development::Scheduler,
     ) -> Self {
         let (commands, receiver) = mpsc::channel();
         let (send, messages) = mpsc::channel();
@@ -364,13 +415,21 @@ impl Thumbnails {
             messages: Some(messages),
             ..Default::default()
         };
+        state.set_limits(state.default_limits());
         state.embedded = embedded::EmbeddedPreviews::new(state.repaint.clone());
         let generation = state.generation.clone();
-        let sources = state.sources.clone();
         let repaint = state.repaint.clone();
         std::thread::spawn(move || {
             worker(
-                device, queue, renderers, sources, receiver, send, generation, disk, repaint,
+                device,
+                queue,
+                renderers,
+                receiver,
+                send,
+                generation,
+                disk,
+                repaint,
+                developments,
             )
         });
         state
@@ -403,6 +462,8 @@ impl Thumbnails {
             .count()
     }
     pub fn cancel(&mut self) {
+        self.pending = None;
+        self.pending_render = false;
         self.embedded.cancel();
         self.generation
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -447,6 +508,11 @@ impl Thumbnails {
                 if self.generation.load(std::sync::atomic::Ordering::Relaxed) == outcome.ticket
                     && current
                 {
+                    if (outcome.proper || outcome.image.is_err())
+                        && !self.attempted.contains(&outcome.key.source)
+                    {
+                        self.attempted.push(outcome.key.source.clone());
+                    }
                     match outcome.image {
                         Ok(Some(image)) => self.cache.insert(outcome.key, Ok(image)),
                         Err(error) => self.cache.insert(outcome.key, Err(error)),
@@ -456,12 +522,46 @@ impl Thumbnails {
             }
         }
     }
+    #[cfg(test)]
     fn request(
         &mut self,
         key: ImageKey,
         path: PathBuf,
         source: Source,
         correction: Option<Arc<Correction>>,
+    ) {
+        self.request_mode(key, path, source, correction, true);
+    }
+    #[cfg(test)]
+    fn request_mode(
+        &mut self,
+        key: ImageKey,
+        path: PathBuf,
+        source: Source,
+        correction: Option<Arc<Correction>>,
+        render: bool,
+    ) {
+        self.request_prioritized(
+            key,
+            path,
+            source,
+            correction,
+            render,
+            if render {
+                development::Priority::Visible
+            } else {
+                development::Priority::Eager
+            },
+        );
+    }
+    fn request_prioritized(
+        &mut self,
+        key: ImageKey,
+        path: PathBuf,
+        source: Source,
+        correction: Option<Arc<Correction>>,
+        render: bool,
+        priority: development::Priority,
     ) {
         if self.pending.is_some() || self.cache.get(&key).is_some() {
             return;
@@ -480,9 +580,13 @@ impl Thumbnails {
                 path,
                 source,
                 correction,
+                store: self.sources.clone(),
+                render,
+                priority,
             })
             .is_ok()
         {
+            self.pending_render = render;
             self.pending = Some((ticket, key));
         } else {
             self.cache
@@ -490,143 +594,14 @@ impl Thumbnails {
         }
     }
 }
-#[allow(clippy::too_many_arguments)]
-fn worker(
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    renderers: Arc<crate::renderer::RendererCache>,
-    sources: Arc<std::sync::Mutex<Cache<SourceKey, Arc<Proxy>>>>,
-    commands: mpsc::Receiver<Job>,
-    messages: mpsc::Sender<Outcome>,
-    generation: Arc<std::sync::atomic::AtomicU64>,
-    disk: Option<disk::DiskCache>,
-    repaint: Arc<std::sync::OnceLock<egui::Context>>,
-) {
-    while let Ok(job) = commands.recv() {
-        let started = std::time::Instant::now();
-        let cached = sources.lock().unwrap().get(&job.key.source).cloned();
-        let cache_hit = cached.is_some();
-        let mut metrics = ThumbnailMetrics::default();
-        let active = || generation.load(std::sync::atomic::Ordering::Relaxed) == job.ticket;
-        let image = (|| -> Result<Option<Arc<GpuImage>>, Error> {
-            if !active() || FileKey::new(&job.path) != job.key.source.file {
-                return Ok(None);
-            }
-            let proxy = match cached {
-                Some(proxy) => {
-                    if let Some(disk) = &disk
-                        && let Err(error) = disk.store_if_missing(&job.key.source, &proxy)
-                    {
-                        eprintln!(
-                            "thumbnail disk_cache_write_failed source_id={} reason={error}",
-                            job.source.id.0
-                        );
-                    }
-                    proxy
-                }
-                None => {
-                    if let Some(disk) = &disk {
-                        let tick = std::time::Instant::now();
-                        let cached = disk.load(&job.key.source);
-                        metrics.disk_seconds = tick.elapsed().as_secs_f64();
-                        match cached {
-                            Ok(Some(proxy)) => {
-                                metrics.disk_hit = true;
-                                sources
-                                    .lock()
-                                    .unwrap()
-                                    .insert(job.key.source.clone(), proxy.clone());
-                                return make_image(
-                                    &device,
-                                    &queue,
-                                    &renderers,
-                                    &job,
-                                    &proxy,
-                                    &active,
-                                    &mut metrics,
-                                );
-                            }
-                            Ok(None) => {}
-                            Err(error) => eprintln!(
-                                "thumbnail disk_cache_miss source_id={} reason={error}",
-                                job.source.id.0
-                            ),
-                        }
-                    }
-                    let tick = std::time::Instant::now();
-                    let scan = Scan::open_with_priority(
-                        &job.path,
-                        Some(job.key.source.development.fixed_wb),
-                        crate::raw::DevelopmentPriority::Background,
-                    )?;
-                    metrics.development_seconds = tick.elapsed().as_secs_f64();
-                    let tick = std::time::Instant::now();
-                    document::verify_scan(&job.source, &scan)?;
-                    metrics.verification_seconds = tick.elapsed().as_secs_f64();
-                    let tick = std::time::Instant::now();
-                    let proxy = Arc::new(Proxy::from_scan(&scan)?);
-                    metrics.proxy_seconds = tick.elapsed().as_secs_f64();
-                    sources
-                        .lock()
-                        .unwrap()
-                        .insert(job.key.source.clone(), proxy.clone());
-                    if let Some(disk) = &disk
-                        && let Err(error) = disk.store(&job.key.source, &proxy)
-                    {
-                        eprintln!(
-                            "thumbnail disk_cache_write_failed source_id={} reason={error}",
-                            job.source.id.0
-                        );
-                    }
-                    proxy
-                }
-            };
-            if !active() {
-                return Ok(None);
-            }
-            make_image(
-                &device,
-                &queue,
-                &renderers,
-                &job,
-                &proxy,
-                &active,
-                &mut metrics,
-            )
-        })()
-        .map_err(|error| error.to_string());
-        println!(
-            "thumbnail source_id={} target={:?} source_cache_hit={} disk_cache_hit={} cancelled={} failed={} seconds={:.6} phases={metrics:?}",
-            job.key.source.id.0,
-            job.key.target,
-            cache_hit,
-            metrics.disk_hit,
-            matches!(image, Ok(None)),
-            image.is_err(),
-            started.elapsed().as_secs_f64()
-        );
-        if messages
-            .send(Outcome {
-                ticket: job.ticket,
-                key: job.key,
-                image,
-            })
-            .is_err()
-        {
-            break;
-        }
-        if let Some(context) = repaint.get() {
-            context.request_repaint();
-        }
-    }
-    if let Some(context) = repaint.get() {
-        context.request_repaint();
-    }
-}
+#[path = "editor_thumbnail_worker.rs"]
+mod production_worker;
+use production_worker::worker;
 
 #[derive(Default, Debug)]
 struct ThumbnailMetrics {
     disk_hit: bool,
+    native_hit: bool,
     disk_seconds: f64,
     development_seconds: f64,
     verification_seconds: f64,
@@ -680,12 +655,63 @@ impl Editor {
             },
         )
     }
+    fn thumbnail_work_allowed(&self) -> bool {
+        !self.busy
+            && self.thumbnails.budgets.pressure != memory::Pressure::Critical
+            && self.pick.is_none()
+            && self.crop_edit.is_none()
+            && self.document_pending.is_none()
+            && self.transition.is_none()
+            && self.project_overwrite.is_none()
+            && self.overwrite.is_none()
+            && self.analysis_confirmation.is_none()
+    }
+    pub(super) fn hidden_filmstrip(&mut self, ui: &egui::Ui) {
+        self.thumbnails.refresh_hidden_memory();
+        if !self.thumbnail_work_allowed()
+            || self.thumbnails.budgets.pressure != memory::Pressure::Normal
+        {
+            return;
+        }
+        if let Some(development) = &self.document.project.development {
+            for id in &self.document.project.order {
+                let source = self.document.project.source(*id).expect("roll source");
+                let path = self.document.source_path(*id).expect("roll locator");
+                let key = ImageKey {
+                    source: SourceKey::new(source, development, FileKey::new(&path)),
+                    target: self.target,
+                    field: self
+                        .correction
+                        .as_ref()
+                        .map(|c| FieldKey(c.settings.map.clone())),
+                };
+                if !self.thumbnails.attempted.contains(&key.source)
+                    && !self.thumbnails.cache.contains(&key)
+                {
+                    self.thumbnails.request_prioritized(
+                        key,
+                        path,
+                        source.clone(),
+                        self.correction.clone(),
+                        false,
+                        development::Priority::Eager,
+                    );
+                    break;
+                }
+            }
+        }
+        if self.thumbnails.pending.is_some() {
+            ui.ctx().request_repaint_after(Duration::from_millis(50));
+        }
+    }
     pub(super) fn filmstrip(&mut self, ui: &mut egui::Ui) {
+        self.thumbnails.bind_sources(self.document.cache().clone());
         if self.thumbnails.memory_watch.is_none() {
             self.thumbnails.repaint.get_or_init(|| ui.ctx().clone());
             self.thumbnails.memory_watch = Some(memory::PressureWatch::new(ui.ctx().clone()));
         }
-        self.filmstrip_with_budgets(ui, memory::CacheBudgets::current());
+        self.thumbnails.update_memory();
+        self.filmstrip_with_budgets(ui, self.thumbnails.budgets);
     }
     fn filmstrip_with_budgets(&mut self, ui: &mut egui::Ui, budgets: memory::CacheBudgets) {
         if self.ready.is_none() && self.pending_preview.is_none() && self.flat_edit.is_none() {
@@ -698,15 +724,7 @@ impl Editor {
         self.thumbnails.cache.retain(|key, _| key.field == field);
         self.thumbnails.apply_budgets(budgets);
         self.thumbnails.embedded.receive(&self.document, ui.ctx());
-        let visible_allowed = !self.busy
-            && self.thumbnails.budgets.pressure != memory::Pressure::Critical
-            && self.pick.is_none()
-            && self.crop_edit.is_none()
-            && self.document_pending.is_none()
-            && self.transition.is_none()
-            && self.project_overwrite.is_none()
-            && self.overwrite.is_none()
-            && self.analysis_confirmation.is_none();
+        let visible_allowed = self.thumbnail_work_allowed();
         let idle = visible_allowed
             && (self.settled.is_some()
                 || self.refinement_error
@@ -719,7 +737,13 @@ impl Editor {
         let mut camera_wanted = Vec::new();
         let mut visible = Vec::new();
         let mut select = None;
-        let selection_enabled = !self.busy && self.flat_edit.is_none() && self.crop_edit.is_none();
+        let selected_loading = self.ready.is_none()
+            && self.selection_timing.is_some()
+            && self.document_pending.is_none()
+            && self.pick.is_none();
+        let selection_enabled = (!self.busy || selected_loading)
+            && self.flat_edit.is_none()
+            && self.crop_edit.is_none();
         let height = self
             .preferences
             .filmstrip_height
@@ -808,7 +832,7 @@ impl Editor {
                                     card.loading(ui);
                                 }
                                 if self.thumbnails.embedded.get(&key.source).is_some()
-                                    || !self.thumbnails.sources.lock().unwrap().contains(&key.source) {
+                                    || !key.source.store_key().is_some_and(|key| self.thumbnails.sources.contains_proxy(&key)) {
                                     camera_wanted.push((index,key.clone(),path.clone(),source.clone()));
                                 }
                                 wanted.push((index,key,path.clone(),source.clone()));
@@ -828,9 +852,12 @@ impl Editor {
             self.preferences.filmstrip_height = strip.response.rect.height().clamp(52., 240.);
         }
         let mut eligible = protected.clone();
-        // Idle roll prefetch never evicts retained recent/visible work to make room.
-        if self.thumbnails.budgets.pressure == memory::Pressure::Normal
-            && self.thumbnails.cache.can_retain(256 * 256 * 40 + 1024)
+        // Finish each source even at zero optional GPU retention. Offscreen GPU work
+        // needs spare space and no foreground refinement demand; CPU/disk work does not.
+        let eager_allowed =
+            visible_allowed && self.thumbnails.budgets.pressure == memory::Pressure::Normal;
+        let render_offscreen = idle && self.thumbnails.cache.can_retain(256 * 256 * 40 + 1024);
+        if eager_allowed
             && let Some(development) = &self.document.project.development
             && let (Some(first), Some(last)) = (visible.first().copied(), visible.last().copied())
         {
@@ -854,12 +881,15 @@ impl Editor {
                         .map(|c| FieldKey(c.settings.map.clone())),
                 };
                 eligible.push(key.clone());
-                if !self.thumbnails.cache.contains(&key) {
+                if !self.thumbnails.attempted.contains(&key.source)
+                    && !self.thumbnails.cache.contains(&key)
+                {
                     wanted.push((index, key, path, source.clone()));
                 }
             }
         }
-        if !idle
+        if !eager_allowed
+            || (!idle && self.thumbnails.pending_render)
             || wanted
                 .iter()
                 .any(|(index, _, _, _)| visible.contains(index))
@@ -868,6 +898,11 @@ impl Editor {
         } else {
             self.thumbnails.cancel_offscreen(&eligible);
         }
+        self.thumbnails.visible_keys = protected
+            .iter()
+            .filter_map(|key| key.source.store_key())
+            .collect();
+        self.thumbnails.protect_cpu();
         self.thumbnails.cache.protect(protected);
         self.thumbnails
             .embedded
@@ -885,9 +920,6 @@ impl Editor {
                 self.load(path);
             }
         } else if visible_allowed {
-            if !idle {
-                wanted.retain(|(index, _, _, _)| visible.contains(index));
-            }
             wanted.sort_by_key(|(index, _, _, _)| {
                 let distance = visible
                     .iter()
@@ -900,9 +932,19 @@ impl Editor {
                     index.abs_diff(self.selected),
                 )
             });
-            if let Some((_, key, path, source)) = wanted.into_iter().next() {
-                self.thumbnails
-                    .request(key, path, source, self.correction.clone());
+            if let Some((index, key, path, source)) = wanted.into_iter().next() {
+                self.thumbnails.request_prioritized(
+                    key,
+                    path,
+                    source,
+                    self.correction.clone(),
+                    visible.contains(&index) || render_offscreen,
+                    if visible.contains(&index) {
+                        development::Priority::Visible
+                    } else {
+                        development::Priority::Eager
+                    },
+                );
             }
         }
         if self.thumbnails.pending.is_some() || self.thumbnails.embedded.pending() {
@@ -914,6 +956,9 @@ impl Editor {
 #[cfg(test)]
 #[path = "editor_thumbnail_clipping_tests.rs"]
 mod clipping_tests;
+#[cfg(all(test, target_os = "macos"))]
+#[path = "../native/cache_observation.rs"]
+mod observation;
 #[cfg(test)]
 #[path = "editor_renderer_tests.rs"]
 mod renderer_tests;
@@ -927,8 +972,11 @@ mod selected_tests;
 #[path = "editor_thumbnail_selection_tests.rs"]
 mod selection_tests;
 #[cfg(test)]
-#[path = "editor_thumbnail_style_tests.rs"]
-mod style_tests;
+#[path = "editor_source_cache_tests.rs"]
+mod source_cache_tests;
+#[cfg(all(test, target_os = "macos"))]
+#[path = "../native/editor_switching_observation.rs"]
+mod switch_observation;
 #[cfg(test)]
 #[path = "editor_thumbnails_tests.rs"]
 mod tests;

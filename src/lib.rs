@@ -30,6 +30,10 @@ pub mod roll_analysis;
 pub mod sampling;
 #[cfg(feature = "raw")]
 pub mod scan;
+#[cfg(all(feature = "raw", feature = "project"))]
+mod source_revision;
+#[cfg(all(feature = "raw", feature = "project"))]
+pub mod source_store;
 #[cfg(feature = "editor")]
 pub mod viewport;
 

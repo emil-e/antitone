@@ -40,6 +40,9 @@ fn add_source(editor: &mut Editor, path: PathBuf) -> SourceId {
             development.clone(),
         )
         .unwrap();
+    editor
+        .thumbnails
+        .bind_sources(editor.document.cache().clone());
     editor.thumbnails.seed(
         editor.document.project.source(id).unwrap(),
         &development,
@@ -368,7 +371,7 @@ fn authoritative_ready_replaces_pending_and_active_proxy_survives_optional_press
                 48 << 30,
                 memory::Pressure::Critical,
             ));
-        assert_eq!(editor.thumbnails.sources.lock().unwrap().entries.len(), 1);
+        assert_eq!(editor.thumbnails.sources.proxy_count(), 1);
         editor.validate_pending_preview();
         assert!(editor.pending_preview.is_some());
         let ready = Ready {

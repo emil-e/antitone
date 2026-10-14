@@ -32,6 +32,7 @@ image = { version = "=0.25.10", optional = true, default-features = false, featu
 objc2 = { version = "=0.6.5", optional = true }
 objc2-app-kit = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder", "NSWindow", "NSScreen"] }
 objc2-foundation = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "NSData"] }
+objc2-metal = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "MTLDevice"] }
 objc2-core-foundation = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "CFString"] }
 objc2-core-graphics = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "CGColorSpace"] }
 objc2-quartz-core = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "CAMetalLayer", "objc2-core-graphics"] }
@@ -44,7 +45,7 @@ ui = ["gpu", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:winit", "dep:ha
 raw = ["dep:cc", "dep:libc"]
 render = ["dep:cc", "dep:lcms2"]
 export = ["render", "dep:tiff", "dep:exr", "dep:tempfile", "dep:libc", "dep:half"]
-gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck", "glam/bytemuck"]
+gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck", "dep:objc2-metal", "glam/bytemuck"]
 
 [build-dependencies]
 cc = { version = "=1.2.62", optional = true }

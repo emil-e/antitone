@@ -18,9 +18,9 @@ Next: agree visual acceptance before designing another analysis mode. [Current s
 
 ## Rendering and thumbnail performance
 
-[Thumbnail/resource follow-up](visual-feedback.md) owns cold scrolling, camera-preview replacement, live grading and actual OS-pressure/aggregate-memory assessment. Higher-resolution recent previews or additional cache tiers need a demonstrated quality/hit-rate benefit and measured cost; none is selected.
+Full-source reuse, persistent CPU/GPU optional byte limits, one native priority worker and eager whole-roll CPU/disk thumbnails are implemented. [Thumbnail/resource follow-up](visual-feedback.md) owns real-use scrolling/grading, normal-budget roll residency and physical pressure/aggregate-memory acceptance. Higher-resolution previews, persistent full-source storage and additional development pools are not selected.
 
-Next: reproduce a concrete issue or agree a measurement exercise. [Current preview/cache model](../editor.md#responsiveness-and-optional-caches).
+Next: agree bounded essential working-set/resource acceptance. Cache byte limits do not cap process footprint or replace minimum RAM/GPU requirements. No hardware floor is established. [Current preview/cache model](../editor.md#responsiveness-and-optional-caches).
 
 ## Roll assistance
 
@@ -47,7 +47,7 @@ Authored-source cleanup remains separate work. Agree language/tooling, file scop
 ## Export and release work
 
 - Design batch snapshots, reference-only exclusions, collision/per-photo failure handling, metadata and progress/cancellation.
-- Assess aggregate resources, broader cameras/domains, actual macOS 14 and physical monitor matching/transitions; no minimum hardware target is established.
+- Measure essential cold/steady working sets and validate published minimum RAM/GPU requirements across supported cameras/workloads; no numerical hardware floor is established yet. Broader domains, actual macOS 14 and physical monitor matching/transitions remain separate acceptance.
 - Bundle native libraries and license notices with bundle-relative loading; sign/notarize and exercise clean-machine execution. Checkout-local runtime paths are not distributable packaging.
 - Reopen outputs in Lightroom/Resolve without application automation; interoperability remains unverified.
 

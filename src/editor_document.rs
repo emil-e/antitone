@@ -4,19 +4,33 @@ use crate::{
     project::{Development, Project, Save, Source, SourceDevelopment, SourceId},
     raw::{Metadata, RawFile},
     scan::Scan,
+    source_store::{SourceKey, SourceStore},
 };
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 type Result<T> = std::result::Result<T, Error>;
 fn failure(error: impl std::fmt::Display) -> Error {
     Error::Project(error.to_string())
 }
 
+struct CacheScope(Arc<SourceStore>);
+impl Drop for CacheScope {
+    fn drop(&mut self) {
+        self.0.close();
+    }
+}
 #[derive(Clone)]
 pub(super) struct Document {
     pub project: Project,
     pub path: Option<PathBuf>,
     saved: Project,
+    cache: Arc<CacheScope>,
+    parent_cache: Option<Arc<SourceStore>>,
+    #[cfg(test)]
+    pub(super) fixture_directory: Option<Arc<tempfile::TempDir>>,
 }
 impl Default for Document {
     fn default() -> Self {
@@ -25,10 +39,49 @@ impl Default for Document {
             saved: project.clone(),
             project,
             path: None,
+            cache: Arc::new(CacheScope(Arc::new(SourceStore::new(0)))),
+            parent_cache: None,
+            #[cfg(test)]
+            fixture_directory: None,
         }
     }
 }
 impl Document {
+    pub fn cache(&self) -> &Arc<SourceStore> {
+        &self.cache.0
+    }
+    pub fn parent_cache(&self) -> Option<&Arc<SourceStore>> {
+        self.parent_cache.as_ref()
+    }
+    pub fn fork_cache(&mut self) {
+        self.parent_cache = Some(self.cache.0.clone());
+        self.cache = Arc::new(CacheScope(Arc::new(SourceStore::new(0))));
+    }
+    pub fn accept_cache(&mut self, previous: &Arc<SourceStore>) {
+        if let Some(parent) = self.parent_cache.take()
+            && Arc::ptr_eq(&parent, previous)
+        {
+            let allowed = self
+                .project
+                .development
+                .as_ref()
+                .map(|development| {
+                    self.project
+                        .sources
+                        .iter()
+                        .filter_map(|source| {
+                            SourceKey::capture(
+                                &self.source_path(source.id).ok()?,
+                                &source.development,
+                                development,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            parent.transfer_to(&self.cache.0, &allowed);
+        }
+    }
     pub fn dirty(&self) -> bool {
         self.project != self.saved
     }
@@ -79,6 +132,10 @@ impl Document {
             saved: project.clone(),
             project,
             path: Some(path),
+            cache: Arc::new(CacheScope(Arc::new(SourceStore::new(0)))),
+            parent_cache: None,
+            #[cfg(test)]
+            fixture_directory: None,
         };
         document.validate()?;
         let total = document.project.order.len();
@@ -251,18 +308,18 @@ pub(super) fn open_source(path: &Path) -> Result<(Source, RawFile)> {
         "source_registration header_seconds={:.6}",
         started.elapsed().as_secs_f64()
     );
-    Ok((
-        Source {
-            id: SourceId(0),
-            path,
-            development: metadata_development(&raw.metadata)?,
-            reference_only: false,
-            photo: Default::default(),
-            orientation: Default::default(),
-            crop: None,
-        },
-        raw,
-    ))
+    Ok((source_metadata(&path, &raw.metadata)?, raw))
+}
+pub(super) fn source_metadata(path: &Path, metadata: &Metadata) -> Result<Source> {
+    Ok(Source {
+        id: SourceId(0),
+        path: absolute(path)?,
+        development: metadata_development(metadata)?,
+        reference_only: false,
+        photo: Default::default(),
+        orientation: Default::default(),
+        crop: None,
+    })
 }
 pub(super) fn verify_source(expected: &Source, actual: &Source) -> Result<()> {
     if expected.development != actual.development {

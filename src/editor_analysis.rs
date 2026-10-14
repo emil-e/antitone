@@ -6,6 +6,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[path = "editor_analysis_diagnostics.rs"]
 mod diagnostics;
 #[cfg(test)]
+#[path = "editor_lazy_support_tests.rs"]
+mod lazy_support_tests;
+#[cfg(test)]
 #[path = "editor_analysis_tests.rs"]
 mod tests;
 
@@ -16,6 +19,7 @@ pub(super) struct Request {
     pub document: Document,
     pub selected: SourceId,
     pub film: Option<Rect>,
+    pub local_support: bool,
     pub picture: Option<Rect>,
 }
 pub(super) struct Pending {
@@ -98,6 +102,7 @@ pub(super) fn run(
     request: &Request,
     generation: &AtomicU64,
     correction: Option<&Arc<Correction>>,
+    developments: &development::Scheduler,
     mut progress: impl FnMut(usize, usize),
 ) -> Result<Option<Outcome>, Error> {
     let cancelled = || generation.load(Ordering::Relaxed) != request.revision;
@@ -135,9 +140,19 @@ pub(super) fn run(
             }
             let expected = project.source(*id)?;
             let path = request.document.source_path(*id)?;
-            let (actual, _) = document::read_source(&path)?;
+            let Some(scan) = develop_scan(
+                developments,
+                &request.document,
+                expected,
+                &path,
+                wb,
+                cancelled,
+            )?
+            else {
+                return Ok(None);
+            };
+            let actual = document::source_metadata(&path, &scan.source().metadata())?;
             document::verify_source(expected, &actual)?;
-            let scan = Scan::open(&path, Some(wb))?;
             document::verify_scan(&actual, &scan)?;
             if let Some(area) = scan.propose_flat_field_area()? {
                 support = Some(area);
@@ -166,9 +181,19 @@ pub(super) fn run(
         progress(index, project.order.len());
         let expected = project.source(*id)?;
         let path = request.document.source_path(*id)?;
-        let (actual, _) = document::read_source(&path)?;
+        let Some(mut scan) = develop_scan(
+            developments,
+            &request.document,
+            expected,
+            &path,
+            wb,
+            cancelled,
+        )?
+        else {
+            return Ok(None);
+        };
+        let actual = document::source_metadata(&path, &scan.source().metadata())?;
         document::verify_source(expected, &actual)?;
-        let mut scan = Scan::open(&path, Some(wb))?;
         document::verify_scan(&actual, &scan)?;
         project.require_camera_basis(&actual.development)?;
         if let Some(correction) = correction {
@@ -239,12 +264,46 @@ pub(super) fn run(
     }))
 }
 
+fn develop_scan(
+    developments: &development::Scheduler,
+    document: &Document,
+    expected: &Source,
+    path: &std::path::Path,
+    wb: [f64; 4],
+    cancelled: impl Fn() -> bool,
+) -> Result<Option<Scan>, Error> {
+    let cache = LoadCache::new(path, Some(expected), Some(wb), document);
+    let result = developments.load(
+        development::Request {
+            path: path.to_owned(),
+            wb: Some(wb),
+            expected: Some(expected.clone()),
+            basis: document.project.camera_basis.clone(),
+            file: cache.file,
+            key: cache.key,
+            store: Some(cache.store),
+            parent: cache.parent,
+            retain: false,
+        },
+        development::Priority::Foreground,
+        &cancelled,
+    );
+    if cancelled() {
+        return Ok(None);
+    }
+    result.map(Scan::from_source).map(Some)
+}
+
 impl Editor {
     fn analysis_support(&self) -> Option<Rect> {
         self.correction
             .as_ref()
             .map(|c| rect(c.settings.map.area()))
-            .or_else(|| self.ready.as_ref().and_then(|r| r.analysis_support))
+            .or_else(|| {
+                self.ready
+                    .as_ref()
+                    .and_then(|r| r.analysis_support.flatten())
+            })
     }
     pub(super) fn analysis_picture(&self) -> Option<Rect> {
         self.document
@@ -252,6 +311,55 @@ impl Editor {
             .analysis_area
             .map(rect)
             .or_else(|| self.analysis_support().map(suggest))
+    }
+    pub(super) fn request_analysis_support(&mut self) {
+        self.region = self.analysis_picture().map(Coverage::rectangle);
+        if self.region.is_some()
+            || self
+                .ready
+                .as_ref()
+                .is_none_or(|ready| ready.analysis_support.is_some())
+        {
+            return;
+        }
+        let request = self.request_id();
+        if self
+            .commands
+            .send(Command::AnalysisSupport(request, self.id))
+            .is_ok()
+        {
+            self.analysis_area_pending = Some(request);
+        } else {
+            self.status = "RAW worker stopped".into();
+        }
+    }
+    pub(super) fn analysis_support_result(
+        &mut self,
+        request: u64,
+        loaded: u64,
+        result: Result<Option<Rect>, String>,
+    ) {
+        if self.analysis_area_pending != Some(request)
+            || loaded != self.id
+            || self.pick != Some(Pick::Analysis)
+            || self.document_pending.is_some()
+        {
+            return;
+        }
+        self.analysis_area_pending = None;
+        let Some(ready) = &mut self.ready else {
+            return;
+        };
+        match result {
+            Ok(support) => {
+                ready.analysis_support = Some(support);
+                // A delayed suggestion must never overwrite a rectangle already drawn.
+                if self.region.is_none() && self.pick_drag.is_none() {
+                    self.region = support.map(suggest).map(Coverage::rectangle);
+                }
+            }
+            Err(error) => self.status = error,
+        }
     }
     pub(super) fn analysis_controls(&mut self, ui: &mut egui::Ui) -> bool {
         use presentation::TextAction;
@@ -285,9 +393,7 @@ impl Editor {
                                     analyze = true;
                                 }
                                 if TextAction::new("Edit picture area…").show(ui).clicked() {
-                                    let picture = self.analysis_picture();
                                     self.begin_pick(Pick::Analysis);
-                                    self.region = picture.map(Coverage::rectangle);
                                 }
                             });
                         },
@@ -296,7 +402,7 @@ impl Editor {
                         self.reset_analysis_area();
                     }
                     if self.analysis_picture().is_none() {
-                        ui.small("No local opening suggestion. Analyze searches the roll; or draw the picture area explicitly.");
+                        ui.small("Opening suggestions are calculated when needed. Analyze searches for support; or draw the picture area explicitly.");
                     }
                 }
                 ui.small("Estimate RGB references, shared colour balance and individual exposures. Keeps gamma/curve, correction and composition. Picture area controls statistics, not cropping.");
@@ -306,8 +412,9 @@ impl Editor {
     }
     pub(super) fn reset_analysis_area(&mut self) {
         self.document.project.analysis_area = None;
+        self.analysis_area_pending = None;
         if let Some(ready) = &mut self.ready {
-            ready.analysis_support = None;
+            ready.analysis_support = Some(None);
         }
         self.status = "Picture area reset; next Analyze searches the roll. Grade unchanged.".into();
     }
@@ -323,6 +430,10 @@ impl Editor {
             document: self.document.clone(),
             selected: self.current_source?,
             film: self.analysis_support(),
+            local_support: self
+                .ready
+                .as_ref()
+                .is_some_and(|ready| ready.analysis_support.is_none()),
             picture: self.document.project.analysis_area.map(rect),
         })
     }
@@ -486,7 +597,7 @@ impl Editor {
                     }
                 };
                 if let Some(ready) = &mut self.ready {
-                    ready.analysis_support = Some(outcome.support);
+                    ready.analysis_support = Some(Some(outcome.support));
                 }
                 self.document = outcome.document;
                 self.dmin = self.document.project.dmin.map(DVec3::from_array);

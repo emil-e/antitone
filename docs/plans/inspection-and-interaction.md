@@ -24,6 +24,7 @@ These are unfinished fixes and design questions. [The roadmap](../../PLAN.md) ow
 ### Layout and controls
 
 - **Scopes disclosure:** decide whether disclosure-style hiding improves the persistent visibility control without changing canvas/resource behavior.
+- **Preferences dialog:** replace the temporary CPU/GPU cache menu with a dedicated preferences surface, preserving persisted whole-MiB/zero limits, explicit reset and the distinction between optional ownership and process memory.
 - **Native shell:** native app menus and ownership of native file choosers need design; no native-shell framework choice is established.
 - **Operation feedback:** coordinate progress/errors with [the feedback slice](completion.md#operation-feedback), preserving transactions and cancellation boundaries.
 - **Fullscreen inspection acceptance:** exercise quick F/Escape entry/return, auto-hide discovery, zoom/source controls, suspended drafts and exact working-view restoration with physical input and VoiceOver. Include pre-existing native fullscreen, focus loss/return, closing while inspection is active, scaling and monitor/Space changes; verify retained system menu/Dock access and presentation restoration. The [bounded current-display/native paint gate](../development.md#explicit-native-host-checks) does not establish these broader boundaries.

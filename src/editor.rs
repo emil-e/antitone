@@ -22,8 +22,12 @@ use std::{
     time::Duration,
 };
 
+#[path = "editor_cache_limits.rs"]
+mod cache_limits;
 #[path = "editor_controls.rs"]
 mod controls;
+#[path = "editor_development.rs"]
+mod development;
 #[path = "editor_document.rs"]
 mod document;
 #[path = "editor_icons.rs"]
@@ -63,6 +67,9 @@ use flat::{Correction, FlatEdit, FlatPreview};
 #[path = "editor_crop.rs"]
 mod crop_editor;
 use crop_editor::CropEdit;
+#[cfg(test)]
+#[path = "editor_cache_preferences_tests.rs"]
+mod cache_preferences_tests;
 #[cfg(all(test, feature = "ui-tests"))]
 #[path = "editor_kittest.rs"]
 mod kittest_tests;
@@ -100,7 +107,8 @@ struct Ready {
     thumbnail: Option<(thumbnails::FileKey, Arc<thumbnails::Proxy>)>,
     path: PathBuf,
     area: Rect,
-    analysis_support: Option<Rect>,
+    // None: not requested; Some(None): no local hint (or explicit roll-search reset).
+    analysis_support: Option<Option<Rect>>,
     floor: f64,
     images: [Arc<GpuImage>; 2],
     record: Source,
@@ -121,8 +129,39 @@ struct Prepared {
     correction: Option<Arc<Correction>>,
     preserve_view: bool,
 }
+struct LoadCache {
+    store: Arc<crate::source_store::SourceStore>,
+    parent: Option<Arc<crate::source_store::SourceStore>>,
+    file: thumbnails::FileKey,
+    key: Option<crate::source_store::SourceKey>,
+}
+impl LoadCache {
+    fn new(
+        path: &std::path::Path,
+        expected: Option<&Source>,
+        wb: Option<[f64; 4]>,
+        document: &Document,
+    ) -> Self {
+        let file = thumbnails::FileKey::new(path);
+        let key = expected.zip(wb).and_then(|(source, wb)| {
+            crate::source_store::SourceKey::from_revision(
+                path,
+                file.clone(),
+                &source.development,
+                &Development::new(crate::raw::version(), wb),
+            )
+        });
+        Self {
+            store: document.cache().clone(),
+            parent: document.parent_cache().cloned(),
+            file,
+            key,
+        }
+    }
+}
 enum Command {
     Analyze(u64, Box<analysis::Request>),
+    AnalysisSupport(u64, u64),
     Refine(u64, u64, ProcessingParameters, OutputTarget, ViewRequest),
     Load(
         u64,
@@ -131,6 +170,7 @@ enum Command {
         Option<Box<Source>>,
         Option<Arc<Correction>>,
         Option<crate::project::CameraBasis>,
+        LoadCache,
     ),
     FlatPreview(
         u64,
@@ -138,6 +178,7 @@ enum Command {
         Option<[f64; 4]>,
         Option<Box<Source>>,
         Option<crate::project::CameraBasis>,
+        Option<LoadCache>,
     ),
     FlatAccept(u64, Rect, Box<Document>, Option<SourceId>),
     CancelFlat(u64),
@@ -172,6 +213,7 @@ enum Measurement {
 }
 enum Message {
     DocumentProgress(u64, usize, usize),
+    AnalysisSupport(u64, u64, Result<Option<Rect>, String>),
     AnalysisProgress(u64, usize, usize),
     Analyzed(u64, Result<Option<Box<analysis::Outcome>>, String>),
     Refined(u64, Result<Option<Arc<GpuImage>>, String>),
@@ -183,6 +225,7 @@ enum Message {
     FlatPreview(u64, Result<Box<FlatPreview>, String>),
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn prepare_source(
     renderers: &crate::renderer::RendererCache,
@@ -194,10 +237,90 @@ fn prepare_source(
     correction: Option<&Arc<Correction>>,
     basis: Option<&crate::project::CameraBasis>,
 ) -> Result<(Ready, Scan), Error> {
+    prepare_source_cached(
+        renderers, device, queue, path, wb, expected, correction, basis, None,
+    )
+}
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+fn prepare_source_cached(
+    renderers: &crate::renderer::RendererCache,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    path: PathBuf,
+    wb: Option<[f64; 4]>,
+    expected: Option<&Source>,
+    correction: Option<&Arc<Correction>>,
+    basis: Option<&crate::project::CameraBasis>,
+    cache: Option<&LoadCache>,
+) -> Result<(Ready, Scan), Error> {
+    prepare_source_scheduled(
+        renderers,
+        device,
+        queue,
+        path,
+        wb,
+        expected,
+        correction,
+        basis,
+        cache,
+        &development::Scheduler::new(),
+        &|| false,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+fn prepare_source_scheduled(
+    renderers: &crate::renderer::RendererCache,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    path: PathBuf,
+    wb: Option<[f64; 4]>,
+    expected: Option<&Source>,
+    correction: Option<&Arc<Correction>>,
+    basis: Option<&crate::project::CameraBasis>,
+    cache: Option<&LoadCache>,
+    developments: &development::Scheduler,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(Ready, Scan), Error> {
+    if cancelled() || cache.is_some_and(|cache| cache.store.is_closed()) {
+        return Err(Error::UnusableSample("document source work retired"));
+    }
     let started = std::time::Instant::now();
-    let thumbnail_file = thumbnails::FileKey::new(&path);
-    let (record, raw) = document::open_source(&path)?;
-    let registration_seconds = started.elapsed().as_secs_f64();
+    let thumbnail_file = cache.map_or_else(
+        || thumbnails::FileKey::new(&path),
+        |cache| cache.file.clone(),
+    );
+    let retained = cache.and_then(|cache| {
+        cache.key.as_ref().and_then(|key| {
+            cache
+                .store
+                .get(key)
+                .or_else(|| cache.parent.as_ref().and_then(|parent| parent.get(key)))
+        })
+    });
+    let native_hit = retained.is_some();
+    let tick = std::time::Instant::now();
+    let source = match retained {
+        Some(source) => source,
+        None => developments.load(
+            development::Request {
+                path: path.clone(),
+                wb,
+                expected: expected.cloned(),
+                basis: basis.cloned(),
+                file: thumbnail_file.clone(),
+                key: cache.and_then(|cache| cache.key.clone()),
+                store: cache.map(|cache| cache.store.clone()),
+                parent: cache.and_then(|cache| cache.parent.clone()),
+                retain: true,
+            },
+            development::Priority::Foreground,
+            cancelled,
+        )?,
+    };
+    let development_seconds = tick.elapsed().as_secs_f64();
+    let record = document::source_metadata(&path, &source.metadata())?;
+    let registration_seconds = started.elapsed().as_secs_f64() - development_seconds;
     if let Some(basis) = basis {
         basis.require_source(&record.development)?;
     }
@@ -205,21 +328,50 @@ fn prepare_source(
         document::verify_source(expected, &record)?;
     }
     let tick = std::time::Instant::now();
-    let mut scan = Scan::from_raw(raw, wb)?;
-    let development_seconds = tick.elapsed().as_secs_f64();
-    let tick = std::time::Instant::now();
+    let mut scan = Scan::from_source(source);
     document::verify_scan(&record, &scan)?;
     let verification_seconds = tick.elapsed().as_secs_f64();
+    if cancelled() {
+        return Err(Error::UnusableSample("source demand retired"));
+    }
+    if cache.is_some_and(|cache| cache.store.is_closed()) {
+        return Err(Error::UnusableSample("document source work retired"));
+    }
+    // Revisions gate cache reuse/publication, not photographic acceptance. A stale
+    // pre-work key cannot be refreshed here to relabel an authoritative development.
+    let native_key = crate::source_store::SourceKey::from_revision(
+        &path,
+        thumbnail_file.clone(),
+        &record.development,
+        &Development::new(crate::raw::version(), scan.fixed_wb),
+    );
+    if let Some(cache) = cache
+        && let Some(key) = &native_key
+        && let Some(source) = cache
+            .store
+            .publish_source(key.clone(), scan.source().clone())?
+    {
+        scan = Scan::from_source(source);
+    }
     if let Some(correction) = correction {
         correction.settings.require_source(&record.development)?;
         scan.set_flat_field(Some(correction.settings.map.clone()))?;
     }
     let tick = std::time::Instant::now();
     let (width, height, pixels) = scan.preview_source(1024)?;
-    let thumbnail = Some((
-        thumbnail_file,
-        Arc::new(thumbnails::Proxy::from_scan(&scan)?),
-    ));
+    let proxy = cache
+        .and_then(|cache| {
+            native_key
+                .as_ref()
+                .and_then(|key| cache.store.get_proxy(key))
+        })
+        .map_or_else(|| thumbnails::Proxy::from_scan(&scan).map(Arc::new), Ok)?;
+    if let Some(cache) = cache
+        && let Some(key) = &native_key
+    {
+        cache.store.publish_proxy(key.clone(), proxy.clone())?;
+    }
+    let thumbnail = Some((thumbnail_file, proxy));
     let proxy_seconds = tick.elapsed().as_secs_f64();
     let tick = std::time::Instant::now();
     let renderer = renderers.get(device, queue)?;
@@ -248,17 +400,16 @@ fn prepare_source(
         make_image(OutputTarget::Srgb)?,
         make_image(OutputTarget::DisplayP3)?,
     ];
+    let images_seconds = tick.elapsed().as_secs_f64();
     println!(
-        "selected_source seconds={:.6} registration_seconds={registration_seconds:.6} development_seconds={development_seconds:.6} verification_seconds={verification_seconds:.6} proxy_seconds={proxy_seconds:.6} renderer_seconds={renderer_seconds:.6} images_seconds={:.6}",
-        started.elapsed().as_secs_f64(),
-        tick.elapsed().as_secs_f64()
+        "selected_source native_cache_hit={native_hit} seconds={:.6} registration_seconds={registration_seconds:.6} development_seconds={development_seconds:.6} verification_seconds={verification_seconds:.6} proxy_seconds={proxy_seconds:.6} renderer_seconds={renderer_seconds:.6} images_seconds={images_seconds:.6}",
+        started.elapsed().as_secs_f64()
     );
-    let analysis_support = scan.propose_flat_field_area()?;
     let ready = Ready {
         thumbnail,
         path,
         area: scan.area,
-        analysis_support,
+        analysis_support: None,
         floor: scan.input_floor,
         images,
         record,
@@ -267,7 +418,7 @@ fn prepare_source(
     Ok((ready, scan))
 }
 #[allow(clippy::too_many_arguments)]
-fn prepare_document(
+fn prepare_document_scheduled(
     renderers: &crate::renderer::RendererCache,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -275,6 +426,8 @@ fn prepare_document(
     id: u64,
     work: DocumentWork,
     previous_correction: Option<&Arc<Correction>>,
+    developments: &development::Scheduler,
+    cancelled: &dyn Fn() -> bool,
     progress: impl FnMut(usize, usize),
 ) -> Result<Prepared, Error> {
     let preserve_view = matches!(work, DocumentWork::Correction(..));
@@ -284,12 +437,16 @@ fn prepare_document(
     };
     let (document, reuse) = match work {
         DocumentWork::Import(mut document, paths, reuse) => {
+            document.fork_cache();
             document.import_with_progress(&paths, progress)?;
             (document, reuse)
         }
         DocumentWork::Open(path) => (Document::open_with_progress(&path, progress)?, None),
         DocumentWork::New => (Document::default(), None),
-        DocumentWork::Correction(document, _) => (document, None),
+        DocumentWork::Correction(mut document, _) => {
+            document.fork_cache();
+            (document, None)
+        }
         DocumentWork::Save(..) => unreachable!("save does not prepare a RAW"),
     };
     document.validate()?;
@@ -323,7 +480,13 @@ fn prepare_document(
             .development
             .as_ref()
             .map(|value| value.fixed_wb);
-        let (ready, scan) = prepare_source(
+        let cache = LoadCache::new(
+            &path,
+            Some(document.project.source(selected)?),
+            wb,
+            &document,
+        );
+        let (ready, scan) = prepare_source_scheduled(
             renderers,
             device,
             queue,
@@ -332,6 +495,9 @@ fn prepare_document(
             Some(document.project.source(selected)?),
             correction.as_ref(),
             document.project.camera_basis.as_ref(),
+            Some(&cache),
+            developments,
+            cancelled,
         )?;
         Some((ready, scan))
     } else {
@@ -357,6 +523,7 @@ fn prepare_document(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn backend(
     renderers: Arc<crate::renderer::RendererCache>,
     device: wgpu::Device,
@@ -365,28 +532,58 @@ fn backend(
     messages: mpsc::Sender<Message>,
     generation: Arc<std::sync::atomic::AtomicU64>,
     analysis_generation: Arc<std::sync::atomic::AtomicU64>,
+    developments: development::Scheduler,
+    source_epoch: Arc<std::sync::atomic::AtomicU64>,
 ) {
     let mut source: Option<(u64, Scan)> = None;
     let mut correction: Option<Arc<Correction>> = None;
     let mut flat_preview: Option<(u64, Scan, Source)> = None;
     while let Ok(command) = commands.recv() {
         match command {
-            Command::Analyze(id, request) => {
-                let result = if source
+            Command::AnalysisSupport(request, loaded) => {
+                let result = source
                     .as_ref()
-                    .is_some_and(|(loaded, _)| *loaded == request.loaded)
+                    .filter(|(id, _)| {
+                        *id == loaded
+                            && source_epoch.load(std::sync::atomic::Ordering::Relaxed) == loaded
+                    })
+                    .map(|(_, scan)| scan.propose_flat_field_area().map_err(|e| e.to_string()))
+                    .unwrap_or_else(|| Err("source demand retired".into()));
+                if messages
+                    .send(Message::AnalysisSupport(request, loaded, result))
+                    .is_err()
                 {
-                    analysis::run(
-                        &device,
-                        &request,
-                        &analysis_generation,
-                        correction.as_ref(),
-                        |done, total| {
-                            let _ = messages.send(Message::AnalysisProgress(id, done, total));
-                        },
-                    )
-                    .map(|result| result.map(Box::new))
-                    .map_err(|e| e.to_string())
+                    break;
+                }
+            }
+            Command::Analyze(id, mut request) => {
+                let result = if let Some((_, scan)) = source
+                    .as_ref()
+                    .filter(|(loaded, _)| *loaded == request.loaded)
+                {
+                    (|| {
+                        if analysis_generation.load(std::sync::atomic::Ordering::Relaxed)
+                            != request.revision
+                        {
+                            return Ok(None);
+                        }
+                        if request.local_support && request.film.is_none() {
+                            request.film =
+                                scan.propose_flat_field_area().map_err(|e| e.to_string())?;
+                        }
+                        analysis::run(
+                            &device,
+                            &request,
+                            &analysis_generation,
+                            correction.as_ref(),
+                            &developments,
+                            |done, total| {
+                                let _ = messages.send(Message::AnalysisProgress(id, done, total));
+                            },
+                        )
+                        .map(|result| result.map(Box::new))
+                        .map_err(|e| e.to_string())
+                    })()
                 } else {
                     Err("source changed before analysis".into())
                 };
@@ -424,8 +621,8 @@ fn backend(
                     break;
                 }
             }
-            Command::Load(id, path, wb, expected, field, basis) => {
-                let result = prepare_source(
+            Command::Load(id, path, wb, expected, field, basis, cache) => {
+                let result = prepare_source_scheduled(
                     &renderers,
                     &device,
                     &queue,
@@ -434,6 +631,9 @@ fn backend(
                     expected.as_deref(),
                     field.as_ref(),
                     basis.as_ref(),
+                    Some(&cache),
+                    &developments,
+                    &|| source_epoch.load(std::sync::atomic::Ordering::Relaxed) != id,
                 )
                 .map(|(ready, scan)| {
                     source = Some((id, scan));
@@ -445,8 +645,8 @@ fn backend(
                     break;
                 }
             }
-            Command::FlatPreview(id, path, wb, expected, basis) => {
-                let result = prepare_source(
+            Command::FlatPreview(id, path, wb, expected, basis, cache) => {
+                let result = prepare_source_scheduled(
                     &renderers,
                     &device,
                     &queue,
@@ -455,6 +655,9 @@ fn backend(
                     expected.as_deref(),
                     None,
                     basis.as_ref(),
+                    cache.as_ref(),
+                    &developments,
+                    &|| source_epoch.load(std::sync::atomic::Ordering::Relaxed) != id,
                 )
                 .and_then(|(ready, scan)| {
                     let region = scan.propose_flat_field_area()?;
@@ -501,7 +704,7 @@ fn backend(
                     );
                     settings.enabled = enabled;
                     document.project.flat_field = Some(settings);
-                    let prepared = prepare_document(
+                    let prepared = prepare_document_scheduled(
                         &renderers,
                         &device,
                         &queue,
@@ -509,6 +712,8 @@ fn backend(
                         id,
                         DocumentWork::Correction(*document, selected),
                         correction.as_ref(),
+                        &developments,
+                        &|| source_epoch.load(std::sync::atomic::Ordering::Relaxed) != id,
                         |_, _| {},
                     )?;
                     correction = prepared.correction.clone();
@@ -531,7 +736,7 @@ fn backend(
                     ),
                     work => Message::Prepared(
                         id,
-                        prepare_document(
+                        prepare_document_scheduled(
                             &renderers,
                             &device,
                             &queue,
@@ -539,6 +744,8 @@ fn backend(
                             id,
                             work,
                             correction.as_ref(),
+                            &developments,
+                            &|| source_epoch.load(std::sync::atomic::Ordering::Relaxed) != id,
                             |done, total| {
                                 let _ = messages.send(Message::DocumentProgress(id, done, total));
                             },
@@ -662,6 +869,7 @@ pub struct Editor {
     submissions: crate::platform::SubmissionGate,
     analysis_generation: Arc<std::sync::atomic::AtomicU64>,
     analysis_pending: Option<analysis::Pending>,
+    analysis_area_pending: Option<u64>,
     analysis_confirmation: Option<analysis::Request>,
     thumbnails: Thumbnails,
     scopes: Scopes,
@@ -725,6 +933,8 @@ pub struct Editor {
     overwrite: Option<(PathBuf, OutputFormat)>,
     correction: Option<Arc<Correction>>,
     flat_edit: Option<FlatEdit>,
+    developments: Option<development::Scheduler>,
+    source_epoch: Arc<std::sync::atomic::AtomicU64>,
 }
 impl Editor {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, initial: Option<PathBuf>) -> Self {
@@ -732,7 +942,16 @@ impl Editor {
         let (send, messages) = mpsc::channel();
         let renderers = Arc::new(crate::renderer::RendererCache::default());
         renderers.prewarm(device.clone(), queue.clone());
-        let thumbnails = Thumbnails::new(device.clone(), queue.clone(), renderers.clone());
+        let developments = development::Scheduler::new();
+        let thumbnails = Thumbnails::new(
+            device.clone(),
+            queue.clone(),
+            renderers.clone(),
+            developments.clone(),
+        );
+        let worker_developments = developments.clone();
+        let source_epoch = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let worker_source_epoch = source_epoch.clone();
         let scopes = Scopes::new(device);
         let device = device.clone();
         let queue = queue.clone();
@@ -751,10 +970,18 @@ impl Editor {
                 send,
                 worker_generation,
                 worker_analysis_generation,
+                worker_developments,
+                worker_source_epoch,
             )
         });
         editor.analysis_generation = analysis_generation;
+        editor.developments = Some(developments);
+        editor.source_epoch = source_epoch;
         editor.thumbnails = thumbnails;
+        editor
+            .thumbnails
+            .bind_sources(editor.document.cache().clone());
+        editor.preferences.cache_limits = Some(editor.thumbnails.limits);
         editor.scopes = scopes;
         if let Some(path) = initial {
             if path
@@ -774,12 +1001,18 @@ impl Editor {
         messages: mpsc::Receiver<Message>,
         generation: Arc<std::sync::atomic::AtomicU64>,
     ) -> Self {
+        let document = Document::default();
+        let mut thumbnails = Thumbnails::default();
+        thumbnails.bind_sources(document.cache().clone());
         Self {
             submissions: crate::platform::SubmissionGate::default(),
+            developments: None,
+            source_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             analysis_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             analysis_pending: None,
+            analysis_area_pending: None,
             analysis_confirmation: None,
-            thumbnails: Thumbnails::default(),
+            thumbnails,
             scopes: Scopes::default(),
             generation,
             signature: None,
@@ -824,7 +1057,7 @@ impl Editor {
             preferences: preferences::Preferences::default(),
             preference_store: None,
             new_project_pending: false,
-            document: Document::default(),
+            document,
             current_source: None,
             next_request: 0,
             document_pending: None,
@@ -844,6 +1077,7 @@ impl Editor {
             Ok((store, preferences)) => {
                 self.apply_preferences(preferences);
                 self.preference_store = Some(store);
+                self.persist_preferences();
                 if self.document_pending.is_none() || self.new_project_pending {
                     self.preferences
                         .sections
@@ -853,10 +1087,73 @@ impl Editor {
             Err(error) => eprintln!("UI preferences not loaded (file left unchanged): {error}"),
         }
     }
-    fn apply_preferences(&mut self, preferences: preferences::Preferences) {
+    fn apply_preferences(&mut self, mut preferences: preferences::Preferences) {
+        let limits = *preferences
+            .cache_limits
+            .get_or_insert(self.thumbnails.limits);
+        self.thumbnails.set_limits(limits);
         self.scopes.visible = preferences.scopes_visible;
         self.scopes.height_ratio = preferences.scope_height_ratio;
         self.preferences = preferences;
+    }
+    fn persist_preferences(&mut self) {
+        if let Some(store) = &mut self.preference_store
+            && let Err(error) = store.save(&self.preferences)
+        {
+            self.status = format!("Unable to save application preferences: {error}");
+            eprintln!("{}", self.status);
+        }
+    }
+    fn cache_preferences(&mut self, ui: &mut egui::Ui) {
+        use cache_limits::{MAX_MIB, MIB};
+        ui.set_min_width(330.);
+        let mut limits = self.thumbnails.limits;
+        let mut changed = false;
+        for (label, bytes) in [
+            ("CPU cache", &mut limits.cpu_bytes),
+            ("GPU cache", &mut limits.gpu_bytes),
+        ] {
+            let mut mib = *bytes / MIB;
+            let response = presentation::labelled_row(
+                ui,
+                label,
+                Some("Optional retained storage; not total application memory."),
+                |ui, _| {
+                    ui.add(
+                        egui::DragValue::new(&mut mib)
+                            .range(0..=MAX_MIB)
+                            .speed(32.)
+                            .update_while_editing(false)
+                            .suffix(" MiB"),
+                    )
+                },
+            )
+            .inner;
+            response.widget_info(|| {
+                let mut info = egui::WidgetInfo::drag_value(response.enabled(), mib as f64);
+                info.label = Some(label.into());
+                info
+            });
+            if response.changed() && response.enabled() && *bytes != mib * MIB {
+                *bytes = mib * MIB;
+                changed = true;
+            }
+        }
+        if presentation::TextAction::new("Reset cache limits")
+            .show(ui)
+            .clicked()
+        {
+            limits = self.thumbnails.default_limits();
+            changed = true;
+        }
+        ui.label(
+            "0 disables optional retention. Selected and visible work may exceed these limits.",
+        );
+        if changed {
+            self.thumbnails.set_limits(limits);
+            self.preferences.cache_limits = Some(limits);
+            self.persist_preferences();
+        }
     }
     fn calibration(&self) -> Option<Calibration> {
         Calibration {
@@ -868,6 +1165,7 @@ impl Editor {
         .ok()
     }
     fn seed_thumbnail(&mut self) {
+        self.thumbnails.bind_sources(self.document.cache().clone());
         let Some(ready) = &mut self.ready else {
             return;
         };
@@ -888,7 +1186,7 @@ impl Editor {
             && self.document.project.development.as_ref() == Some(&ready.development)
         {
             self.thumbnails
-                .seed(source, &ready.development, file, proxy);
+                .seed_at(source, &ready.development, &ready.path, file, proxy);
         }
     }
     fn sync_document(&mut self) {
@@ -919,6 +1217,7 @@ impl Editor {
         self.next_request
     }
     fn start_document(&mut self, work: DocumentWork) {
+        self.analysis_area_pending = None;
         self.analysis_confirmation = None;
         self.pending_preview = None;
         self.selection_timing = None;
@@ -927,6 +1226,8 @@ impl Editor {
         }
         self.thumbnails.cancel();
         let id = self.request_id();
+        self.source_epoch
+            .store(id, std::sync::atomic::Ordering::Relaxed);
         self.generation
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.document_pending = Some(id);
@@ -976,6 +1277,7 @@ impl Editor {
         self.analysis_confirmation = None;
         let started = std::time::Instant::now();
         let selecting_photo = persistent && self.pick.is_none() && self.flat_edit.is_none();
+        self.analysis_area_pending = None;
         self.seed_thumbnail();
         self.pending_preview = None;
         self.selection_timing = None;
@@ -1026,6 +1328,8 @@ impl Editor {
         self.pick_view = None;
         self.pick_return = None;
         self.id = self.request_id();
+        self.source_epoch
+            .store(self.id, std::sync::atomic::Ordering::Relaxed);
         self.ready = None;
         self.selection_timing =
             selecting_photo.then(|| Arc::new(SelectionTiming::new(self.id, started)));
@@ -1035,6 +1339,7 @@ impl Editor {
         self.busy = true;
         self.status = "Developing full-resolution RAW…".into();
         self.tasks.begin(Task::Photo(self.id));
+        let cache = LoadCache::new(&path, expected.as_deref(), wb, &self.document);
         if self
             .commands
             .send(Command::Load(
@@ -1044,6 +1349,7 @@ impl Editor {
                 expected,
                 self.correction.clone(),
                 self.document.project.camera_basis.clone(),
+                cache,
             ))
             .is_err()
         {
@@ -1091,6 +1397,9 @@ impl Editor {
                             },
                         );
                     }
+                }
+                Message::AnalysisSupport(request, loaded, result) => {
+                    self.analysis_support_result(request, loaded, result)
                 }
                 Message::AnalysisProgress(id, done, total) => {
                     if let Some(pending) = &mut self.analysis_pending
@@ -1257,8 +1566,15 @@ impl Editor {
                     self.document_pending = None;
                     self.busy = false;
                     match result {
-                        Ok(prepared) => {
+                        Ok(mut prepared) => {
                             let flat_context = self.flat_edit.take();
+                            let previous_cache = self.document.cache().clone();
+                            self.thumbnails
+                                .bind_sources(prepared.document.cache().clone());
+                            prepared.document.accept_cache(&previous_cache);
+                            if !Arc::ptr_eq(&previous_cache, prepared.document.cache()) {
+                                previous_cache.close();
+                            }
                             self.correction = prepared.correction;
                             self.document = prepared.document;
                             if new_project {
@@ -1405,6 +1721,7 @@ impl Editor {
         }
     }
     fn finish_pick(&mut self) {
+        self.analysis_area_pending = None;
         if self.flat_edit.is_some() {
             self.finish_flat_edit();
             return;
@@ -1485,6 +1802,9 @@ impl Editor {
             viewport,
             anchored: self.viewport,
         });
+        if kind == Pick::Analysis {
+            self.request_analysis_support();
+        }
     }
     fn pick_roll_source(&mut self, id: SourceId) {
         let Some(index) = self
@@ -1854,6 +2174,11 @@ impl host::App for Editor {
     }
 
     fn on_exit(&mut self) {
+        if let Some(developments) = &self.developments {
+            developments.close();
+        }
+        self.document.cache().close();
+        self.thumbnails.cancel();
         if let Some(store) = &mut self.preference_store
             && let Err(error) = store.save(&self.preferences)
         {
@@ -1899,7 +2224,7 @@ impl host::App for Editor {
                     "Finish the current operation or cancel the pick before closing".into();
             }
         }
-        if self.busy {
+        if self.busy || self.analysis_area_pending.is_some() {
             ui.ctx().request_repaint_after(Duration::from_millis(50));
         }
         if available {
@@ -2049,6 +2374,7 @@ impl host::App for Editor {
                         });
                     },
                 );
+                ui.menu_button("Preferences", |ui| self.cache_preferences(ui));
                 ui.separator();
                 let name = self
                     .document
@@ -2104,7 +2430,7 @@ impl host::App for Editor {
                 .show(ui, |ui| self.controls(ui))
                 .inner
         } else {
-            self.thumbnails.refresh_hidden_memory();
+            self.hidden_filmstrip(ui);
             (None, false)
         };
         if let Some(calibration) = self.calibration()

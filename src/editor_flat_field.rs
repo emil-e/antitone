@@ -182,6 +182,8 @@ impl Editor {
         self.generation
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.id = self.request_id();
+        self.source_epoch
+            .store(self.id, std::sync::atomic::Ordering::Relaxed);
         self.busy = true;
         let expected = self
             .document
@@ -195,6 +197,9 @@ impl Editor {
             .development
             .as_ref()
             .map(|d| d.fixed_wb);
+        let cache = expected
+            .as_deref()
+            .map(|source| LoadCache::new(&path, Some(source), wb, &self.document));
         self.status = "Preparing uncorrected flat-field reference…".into();
         self.tasks.begin(Task::Reference(self.id));
         if self
@@ -205,6 +210,7 @@ impl Editor {
                 wb,
                 expected,
                 self.document.project.camera_basis.clone(),
+                cache,
             ))
             .is_err()
         {
@@ -222,6 +228,8 @@ impl Editor {
         self.tasks.finish(TaskRequest::Reference(self.id));
         let _ = self.commands.send(Command::CancelFlat(self.id));
         self.id = context.id;
+        self.source_epoch
+            .store(self.id, std::sync::atomic::Ordering::Relaxed);
         self.ready = context.ready;
         self.viewport = context.viewport;
         self.source = context.source;

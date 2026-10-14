@@ -1,7 +1,13 @@
 #include "raw_bridge.h"
 #include <libraw/libraw.h>
 #include <algorithm>
+#include <array>
 #include <cstdio>
+#if defined(__APPLE__)
+#include <malloc/malloc.h>
+#elif defined(__linux__) || defined(_WIN32)
+#include <malloc.h>
+#endif
 #include <memory>
 
 static_assert(sizeof(AntitoneRawMetadata) == 496);
@@ -78,6 +84,41 @@ void metadata(LibRaw &raw, AntitoneRawMetadata &out) {
 }
 }
 
+extern "C" uint64_t antitone_raw_retained_bytes(void *handle) {
+#if defined(__APPLE__) || defined(__linux__) || defined(_WIN32)
+    auto &raw = *static_cast<LibRaw *>(handle);
+    const auto &d = raw.imgdata;
+    const auto &internal = *raw.get_internal_data_pointer();
+    // Match the explicit allocations released by pinned LibRaw::recycle, plus the owner.
+    // SDK-private pools, datastream/stdlib storage and allocator-held VM are not measured.
+    std::array<const void *, 11 + LIBRAW_AFDATA_MAXCOUNT> blocks = {
+        handle, d.image, d.rawdata.raw_alloc, d.thumbnail.thumb,
+        internal.internal_data.meta_data, internal.output_data.histogram,
+        internal.output_data.oprof, d.color.profile, d.rawdata.ph1_cblack,
+        d.rawdata.ph1_rblack, d.idata.xmpdata
+    };
+    for (size_t i = 0; i < LIBRAW_AFDATA_MAXCOUNT; ++i)
+        blocks[11 + i] = d.makernotes.common.afdata[i].AFInfoData;
+    uint64_t total = 0;
+    for (size_t i = 0; i < blocks.size(); ++i) {
+        const auto *block = blocks[i];
+        if (!block || std::find(blocks.begin(), blocks.begin() + i, block) != blocks.begin() + i) continue;
+#if defined(__APPLE__)
+        const auto bytes = malloc_size(block);
+#elif defined(__linux__)
+        const auto bytes = malloc_usable_size(const_cast<void *>(block));
+#else
+        const auto bytes = _msize(const_cast<void *>(block));
+#endif
+        if (!bytes || bytes == SIZE_MAX || bytes > UINT64_MAX - total) return 0;
+        total += bytes;
+    }
+    return total;
+#else
+    return 0;
+#endif
+}
+
 extern "C" const char *antitone_raw_version() { return LibRaw::version(); }
 
 extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out, char *error, size_t size) try {
@@ -144,14 +185,14 @@ extern "C" int antitone_raw_unpack(void *handle, int threads, char *error, size_
     return 0;
 }
 
-extern "C" int antitone_raw_sensor_diagnostics(void *handle, AntitoneRawDiagnostics *out, char *error, size_t size) {
-    const auto &s = static_cast<LibRaw *>(handle)->imgdata.rawdata.sizes;
+extern "C" int antitone_raw_sensor_diagnostics(const void *handle, AntitoneRawDiagnostics *out, char *error, size_t size) {
+    const auto &s = static_cast<const LibRaw *>(handle)->imgdata.rawdata.sizes;
     return antitone_raw_region_diagnostics(handle, 0, 0, s.width, s.height, out, error, size);
 }
 
-extern "C" int antitone_raw_region_diagnostics(void *handle, uint32_t x0, uint32_t y0, uint32_t width, uint32_t height,
+extern "C" int antitone_raw_region_diagnostics(const void *handle, uint32_t x0, uint32_t y0, uint32_t width, uint32_t height,
     AntitoneRawDiagnostics *out, char *error, size_t size) {
-    const auto &d = static_cast<LibRaw *>(handle)->imgdata.rawdata;
+    const auto &d = static_cast<const LibRaw *>(handle)->imgdata.rawdata;
     const auto &s = d.sizes;
     const auto &c = d.color;
     if (!d.raw_image || !width || !height || x0 >= s.width || y0 >= s.height

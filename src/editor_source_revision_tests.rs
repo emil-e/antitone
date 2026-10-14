@@ -50,7 +50,12 @@ fn authored_raw_byte_edits_reopen_without_identity_rejection_and_old_seed_keeps_
         assert_ne!(file, current.file);
         let mut thumbnails = Thumbnails::default();
         thumbnails.seed(source, &before.development, file, proxy.clone());
-        assert!(thumbnails.sources.lock().unwrap().get(&current).is_none());
+        assert!(
+            thumbnails
+                .sources
+                .get_proxy(&current.store_key_at(&path).unwrap())
+                .is_none()
+        );
         let (after, _) = prepare_source(
             &renderers,
             &device,

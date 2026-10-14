@@ -591,7 +591,9 @@ fn editor_harness_with_thumbnails(
     });
     let mut editor = Editor::new(&device, &queue, None);
     editor.thumbnails = if thumbnails {
-        editor.thumbnails.without_disk()
+        editor
+            .thumbnails
+            .without_disk(editor.developments.as_ref().unwrap().clone())
     } else {
         Thumbnails::default()
     };

@@ -1805,7 +1805,7 @@ fn navigation_invalidates_pending_overwrite() {
     assert!(editor.overwrite.is_none());
     assert!(matches!(
         receiver.recv().unwrap(),
-        Command::Load(1, _, _, _, _, _)
+        Command::Load(1, _, _, _, _, _, _)
     ));
 }
 fn patch() -> Coverage {

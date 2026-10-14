@@ -700,7 +700,7 @@ fn navigation_and_view_state_do_not_dirty_a_saved_document() {
         .source_path(editor.current_source.unwrap())
         .unwrap();
     editor.load(source_path);
-    let Command::Load(_, _, wb, expected, _, _) = receiver.recv().unwrap() else {
+    let Command::Load(_, _, wb, expected, _, _, _) = receiver.recv().unwrap() else {
         panic!()
     };
     assert_eq!(

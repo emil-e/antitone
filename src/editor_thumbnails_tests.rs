@@ -1,12 +1,16 @@
 use super::*;
 pub(super) fn fixture() -> Document {
+    let directory = Arc::new(tempfile::tempdir().unwrap());
     let mut document = Document::default();
+    document.fixture_directory = Some(directory.clone());
     for index in 0..40 {
+        let path = directory.path().join(format!("photo-{index}.ARW"));
+        std::fs::write(&path, b"locator-only CPU/GPU fixture").unwrap();
         document
             .register(
                 Source {
                     id: SourceId(0),
-                    path: format!("photo-{index}.ARW").into(),
+                    path,
                     development: SourceDevelopment {
                         dimensions: [900, 600],
                         active_area: [0, 0, 900, 600],
@@ -55,7 +59,7 @@ fn transient_reference_with_the_same_development_cannot_seed_the_working_photo()
         }),
     ));
     editor.seed_thumbnail();
-    assert!(editor.thumbnails.sources.lock().unwrap().entries.is_empty());
+    assert_eq!(editor.thumbnails.sources.proxy_count(), 0);
 }
 
 #[test]
@@ -135,6 +139,7 @@ fn queued_thumbnail_results_do_not_install_after_file_stats_change() {
         ticket: job.ticket,
         key: job.key,
         image: Err("old outcome".into()),
+        proper: false,
     })
     .unwrap();
     thumbnails.receive(&document);
@@ -224,7 +229,7 @@ fn correction_changes_image_identity_without_invalidating_unconverted_raw_proxie
     assert_eq!(key(&document, id), plain);
 }
 #[test]
-fn one_outstanding_job_is_kept_until_cancelled_completion_and_stale_results_do_not_install() {
+fn cancelled_gpu_ticket_releases_admission_and_stale_results_do_not_install() {
     let document = fixture();
     let id = document.project.order[0];
     let (commands, receiver) = mpsc::channel();
@@ -249,17 +254,27 @@ fn one_outstanding_job_is_kept_until_cancelled_completion_and_stale_results_do_n
         document.project.source(id).unwrap().clone(),
         None,
     );
-    assert!(receiver.try_recv().is_err());
+    let replacement = receiver.try_recv().unwrap();
     assert!(thumbnails.pending.is_some());
     send.send(Outcome {
         ticket: job.ticket,
         key: job.key,
         image: Err("stale failure".into()),
+        proper: false,
+    })
+    .unwrap();
+    thumbnails.receive(&document);
+    assert!(thumbnails.pending.is_some());
+    assert!(thumbnails.cache.entries.is_empty());
+    send.send(Outcome {
+        ticket: replacement.ticket,
+        key: replacement.key,
+        image: Ok(None),
+        proper: true,
     })
     .unwrap();
     thumbnails.receive(&document);
     assert!(thumbnails.pending.is_none());
-    assert!(thumbnails.cache.entries.is_empty());
     thumbnails.request(
         image_key,
         document.source_path(id).unwrap(),
@@ -291,6 +306,7 @@ fn changed_document_identity_rejects_result_and_worker_disconnection_clears_pend
         ticket: job.ticket,
         key: job.key,
         image: Err("old WB".into()),
+        proper: false,
     })
     .unwrap();
     thumbnails.receive(&document);
@@ -592,6 +608,7 @@ fn visible_jobs_do_not_wait_for_refinement_or_grading_idle() {
     let (_, messages) = mpsc::channel();
     let mut editor = Editor::state(commands, messages, Arc::default());
     editor.document = fixture();
+    editor.thumbnails.pressure_override = Some(memory::Pressure::Normal);
     let first = editor.document.project.order[0];
     let last = *editor.document.project.order.last().unwrap();
     for id in editor
@@ -649,14 +666,92 @@ fn visible_jobs_do_not_wait_for_refinement_or_grading_idle() {
             ticket: job.ticket,
             key: job.key,
             image: Err("fixture completed".into()),
+            proper: false,
         })
         .unwrap();
     editor.thumbnails.receive(&editor.document);
     frame(&mut editor);
+    let eager = jobs
+        .try_recv()
+        .expect("unvisited CPU/disk work must not wait for grading idle");
+    assert_eq!(eager.key.source.id, last);
     assert!(
-        jobs.try_recv().is_err(),
-        "offscreen work still requires idle"
+        !eager.render,
+        "refinement keeps priority over optional offscreen GPU work"
     );
+}
+
+#[test]
+fn eager_zero_budget_pass_completes_unvisited_work_without_idle_or_eviction_loops() {
+    let (commands, _) = mpsc::channel();
+    let (_, messages) = mpsc::channel();
+    let mut editor = Editor::state(commands, messages, Arc::default());
+    editor.document = fixture();
+    editor.thumbnails.pressure_override = Some(memory::Pressure::Normal);
+    editor.thumbnails.set_limits(cache_limits::CacheLimits {
+        cpu_bytes: 0,
+        gpu_bytes: 0,
+    });
+    editor.last_edit = std::time::Instant::now();
+    let (commands, jobs) = mpsc::channel();
+    let (completed, outcomes) = mpsc::channel();
+    editor.thumbnails.commands = Some(commands);
+    editor.thumbnails.messages = Some(outcomes);
+    let context = egui::Context::default();
+    let frame = |editor: &mut Editor| {
+        let mut output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1100., 800.),
+                )),
+                ..Default::default()
+            },
+            |ui| editor.filmstrip(ui),
+        );
+        output.textures_delta.clear();
+    };
+    let mut finished = Vec::new();
+    let mut cpu_only = 0;
+    for _ in &editor.document.project.order.clone() {
+        frame(&mut editor);
+        let job = jobs
+            .try_recv()
+            .expect("finite eager pass must reach an unvisited source");
+        assert!(!finished.contains(&job.key.source.id));
+        finished.push(job.key.source.id);
+        cpu_only += usize::from(!job.render);
+        completed
+            .send(Outcome {
+                ticket: job.ticket,
+                key: job.key,
+                // Visible fixture errors stand in for protected resident results; offscreen
+                // completion deliberately has no GPU entry and must still quiesce.
+                image: if job.render {
+                    Err("fixture processed".into())
+                } else {
+                    Ok(None)
+                },
+                proper: true,
+            })
+            .unwrap();
+        editor.thumbnails.receive(&editor.document);
+    }
+    assert!(cpu_only > 0);
+    assert_eq!(finished.len(), editor.document.project.order.len());
+    assert_eq!(editor.thumbnails.sources.charges().retained, 0);
+    for _ in 0..4 {
+        frame(&mut editor);
+        assert!(jobs.try_recv().is_err());
+    }
+    let last = *editor.document.project.order.last().unwrap();
+    std::fs::write(
+        editor.document.source_path(last).unwrap(),
+        b"changed revision",
+    )
+    .unwrap();
+    frame(&mut editor);
+    assert_eq!(jobs.try_recv().unwrap().key.source.id, last);
 }
 
 #[test]
@@ -805,15 +900,29 @@ fn idle_roll_prefetch_reaches_unshown_photos_after_visible_work() {
             .thumbnails
             .generation
             .load(std::sync::atomic::Ordering::Relaxed),
-        generation + 1,
-        "resumed foreground work cancels far idle prefetch"
+        generation + 2,
+        "resumed grading replaces optional GPU demand with eager CPU-only demand"
     );
+    let cpu_only = jobs.try_recv().unwrap();
+    assert_eq!(cpu_only.key.source.id, last);
+    assert!(!cpu_only.render);
     assert!(jobs.try_recv().is_err());
     completed
         .send(Outcome {
             ticket: job.ticket,
             key: job.key,
             image: Ok(None),
+            proper: false,
+        })
+        .unwrap();
+    editor.thumbnails.receive(&editor.document);
+    assert!(editor.thumbnails.pending.is_some());
+    completed
+        .send(Outcome {
+            ticket: cpu_only.ticket,
+            key: cpu_only.key,
+            image: Ok(None),
+            proper: false,
         })
         .unwrap();
     editor.thumbnails.receive(&editor.document);
@@ -835,13 +944,11 @@ fn idle_roll_prefetch_reaches_unshown_photos_after_visible_work() {
             .thumbnails
             .generation
             .load(std::sync::atomic::Ordering::Relaxed),
-        before + 1,
-        "missing visible work preempts idle far prefetch"
+        before + 2,
+        "missing visible work is admitted ahead of the old eager waiter"
     );
-    assert!(
-        jobs.try_recv().is_err(),
-        "cancellation must not create an unbounded backlog"
-    );
+    assert_eq!(jobs.try_recv().unwrap().key.source.id, first);
+    assert!(jobs.try_recv().is_err());
 }
 
 #[test]
@@ -863,28 +970,59 @@ fn memory_pressure_suspends_idle_prefetch_without_blocking_allowed_visible_work(
                 job.key.source.id,
                 *editor.document.project.order.last().unwrap()
             );
+        } else if pressure == memory::Pressure::Warning {
+            // Zero optional ownership trims the fixture's unprotected cache entries;
+            // visible replacement remains allowed, eager demand does not.
+            let job = jobs
+                .try_recv()
+                .expect("warning pressure still admits visible work");
+            assert_eq!(job.key.source.id, editor.document.project.order[0]);
+            assert_eq!(job.priority, development::Priority::Visible);
+            assert!(jobs.try_recv().is_err());
         } else {
-            assert!(jobs.try_recv().is_err(), "{pressure:?} must not prefetch");
+            assert!(
+                jobs.try_recv().is_err(),
+                "critical pressure stops visible work too"
+            );
             assert!(editor.thumbnails.pending.is_none());
-            let first = editor.document.project.order[0];
-            editor
-                .thumbnails
-                .cache
-                .retain(|key, _| key.source.id != first);
-            filmstrip_frame(&mut editor, &context, budgets);
-            if pressure == memory::Pressure::Warning {
-                let job = jobs
-                    .try_recv()
-                    .expect("warning pressure still admits visible work");
-                assert_eq!(job.key.source.id, first);
-            } else {
-                assert!(
-                    jobs.try_recv().is_err(),
-                    "critical pressure stops visible work too"
-                );
-                assert!(editor.thumbnails.pending.is_none());
-            }
         }
+    }
+}
+
+#[test]
+fn hidden_filmstrip_keeps_cpu_only_eager_completion_and_pressure_gates() {
+    let (mut editor, jobs, completed) = idle_prefetch_fixture();
+    editor.thumbnails.cache.retain(|_, _| false);
+    editor
+        .thumbnails
+        .bind_sources(editor.document.cache().clone());
+    let context = egui::Context::default();
+    for id in editor.document.project.order.clone() {
+        let mut output = context.run_ui(Default::default(), |ui| editor.hidden_filmstrip(ui));
+        output.textures_delta.clear();
+        let job = jobs.try_recv().unwrap();
+        assert_eq!(job.key.source.id, id);
+        assert!(!job.render);
+        assert_eq!(job.priority, development::Priority::Eager);
+        completed
+            .send(Outcome {
+                ticket: job.ticket,
+                key: job.key,
+                image: Ok(None),
+                proper: true,
+            })
+            .unwrap();
+        editor.thumbnails.receive(&editor.document);
+    }
+    let mut output = context.run_ui(Default::default(), |ui| editor.hidden_filmstrip(ui));
+    output.textures_delta.clear();
+    assert!(jobs.try_recv().is_err());
+    editor.thumbnails.attempted.clear();
+    for pressure in [memory::Pressure::Warning, memory::Pressure::Critical] {
+        editor.thumbnails.pressure_override = Some(pressure);
+        let mut output = context.run_ui(Default::default(), |ui| editor.hidden_filmstrip(ui));
+        output.textures_delta.clear();
+        assert!(jobs.try_recv().is_err());
     }
 }
 
@@ -941,6 +1079,7 @@ fn crop_draft_cancels_offscreen_prefetch_and_suspends_idle_admission() {
             ticket: job.ticket,
             key: image_key,
             image: Ok(None),
+            proper: false,
         })
         .unwrap();
     // Release the cancelled request before checking that the draft admits no replacement.
@@ -1045,7 +1184,7 @@ fn critical_pressure_releases_the_seed_when_the_working_source_is_gone() {
     let document = fixture();
     let source = document.project.source(document.project.order[0]).unwrap();
     let mut thumbnails = Thumbnails::default();
-    thumbnails.sources.lock().unwrap().set_budget(0);
+    thumbnails.sources.set_budget(0);
     thumbnails.seed(
         source,
         document.project.development.as_ref().unwrap(),
@@ -1057,9 +1196,9 @@ fn critical_pressure_releases_the_seed_when_the_working_source_is_gone() {
             matrix: glam::DMat3::IDENTITY,
         }),
     );
-    assert_eq!(thumbnails.sources.lock().unwrap().entries.len(), 1);
+    assert_eq!(thumbnails.sources.proxy_count(), 1);
     thumbnails.release_selected();
-    assert!(thumbnails.sources.lock().unwrap().entries.is_empty());
+    assert_eq!(thumbnails.sources.proxy_count(), 0);
 }
 
 #[test]
@@ -1105,8 +1244,8 @@ fn obsolete_scroll_work_is_cancelled_once_without_dropping_valid_source_seeds() 
             .load(std::sync::atomic::Ordering::Relaxed),
         before + 1
     );
-    assert!(thumbnails.pending.is_some());
-    assert_eq!(thumbnails.sources.lock().unwrap().entries.len(), 1);
+    assert!(thumbnails.pending.is_none());
+    assert_eq!(thumbnails.sources.proxy_count(), 1);
 }
 
 #[test]
