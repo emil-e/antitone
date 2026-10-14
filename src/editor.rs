@@ -2214,8 +2214,9 @@ impl host::App for Editor {
                     self.region = Some(geometry.pick_patch(point, 32));
                 }
                 if response.drag_started_by(egui::PointerButton::Primary) {
-                    self.pick_drag = response
-                        .interact_pointer_pos()
+                    // Classify from the press, not the later point where egui recognizes the drag.
+                    self.pick_drag = ui
+                        .input(|input| input.pointer.press_origin())
                         .filter(|point| geometry.image.contains(*point))
                         .map(|point| PickDrag::begin(geometry, point, self.region));
                 }

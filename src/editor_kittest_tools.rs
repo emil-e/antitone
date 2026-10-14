@@ -217,6 +217,112 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
 }
 
 #[test]
+fn picker_drags_keep_press_origin_for_resize_move_and_new_selection() {
+    for oriented in [false, true] {
+        for (initial, start, end, expected) in [
+            (
+                Some(Rect {
+                    x: 64,
+                    y: 48,
+                    width: 96,
+                    height: 80,
+                }),
+                egui::pos2(64., 48.),
+                egui::pos2(96., 80.),
+                Rect {
+                    x: 96,
+                    y: 80,
+                    width: 64,
+                    height: 48,
+                },
+            ),
+            (
+                Some(Rect {
+                    x: 64,
+                    y: 48,
+                    width: 96,
+                    height: 80,
+                }),
+                egui::pos2(112., 88.),
+                egui::pos2(144., 120.),
+                Rect {
+                    x: 96,
+                    y: 80,
+                    width: 96,
+                    height: 80,
+                },
+            ),
+            (
+                None,
+                egui::pos2(48., 48.),
+                egui::pos2(176., 144.),
+                Rect {
+                    x: 48,
+                    y: 48,
+                    width: 128,
+                    height: 96,
+                },
+            ),
+        ] {
+            let mut harness = calibrated_harness();
+            if oriented {
+                let editor = harness.state_mut();
+                editor.roll_orientation.turn_clockwise();
+                editor.photo_orientation.flips.horizontal = true;
+                editor.sync_document();
+                harness.step();
+            }
+            let before = harness.state().document.project.clone();
+            harness.get_by_label("Pick Dmin (film base)").scroll_to_me();
+            harness.try_run_realtime().unwrap();
+            harness.get_by_label("Pick Dmin (film base)").click();
+            harness.step();
+            harness.state_mut().region = initial.map(Coverage::rectangle);
+            harness.step();
+            let geometry = harness.state().last_layout.unwrap().0;
+            let start = geometry.screen_point(start);
+            let end = geometry.screen_point(end);
+            assert!(start.distance(end) > 8.);
+            harness.hover_at(start);
+            harness.event(egui::Event::PointerButton {
+                pos: start,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+            // No intermediate motion: the first recognized drag is already far from the press.
+            harness.hover_at(end);
+            harness.step();
+            assert_eq!(
+                harness
+                    .state()
+                    .region
+                    .unwrap()
+                    .exact_rectangle(harness.state().ready.as_ref().unwrap().area),
+                Some(expected),
+                "oriented={oriented}, initial={initial:?}"
+            );
+            let selection = harness.state().region;
+            harness.event(egui::Event::PointerButton {
+                pos: end,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+            assert!(harness.state().pick_drag.is_none());
+            assert_eq!(harness.state().region, selection);
+            assert_eq!(harness.state().document.project, before);
+            harness.get_by_label("Cancel").click();
+            harness.step();
+            assert!(harness.state().pick.is_none());
+            assert_eq!(harness.state().document.project, before);
+        }
+    }
+}
+
+#[test]
 fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
     let (mut harness, _) = editor_harness();
     harness
