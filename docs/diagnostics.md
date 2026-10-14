@@ -29,7 +29,7 @@ target/release/antitone --smoke-project \
   samples/DSC04416.ARW samples/DSC04393.ARW
 ```
 
-This uses temporary projects and checks restored settings/pixels and failed-Open preservation. It requires submitted visible frames, but ordinary/project smoke has no explicit completed-success result: early closure after a frame can return success before the scenario finishes. These routes drive editor state directly, not full widget input. [Verification restructuring](plans/verification-tooling.md) tracks those gaps; flat-field/Analyze routes reject early closure.
+This uses temporary projects and checks restored settings/pixels and failed-Open preservation. It requires submitted visible frames, but ordinary/project smoke has no explicit completed-success result: early closure after a frame can return success before the scenario finishes. These routes drive editor state directly, not full widget input. [Verification restructuring](plans/verification-tooling.md) tracks those gaps; the flat-field route rejects early closure.
 
 ### Viewer-tool evidence
 
@@ -80,15 +80,7 @@ ANTITONE_SAMPLES="$PWD/samples" cargo test --locked --offline --release \
   -- --ignored --nocapture --test-threads=1
 ```
 
-For picture-area acceptance, atomic analysis and both settled targets in a visible window:
-
-```sh
-target/release/antitone --smoke-analysis - \
-  samples/DSC043{21,22,23,12,13,14,15,16,17,18,19,20}.ARW
-# Replace '-' with a matching bare-light reference RAW for correction.
-```
-
-Neither recipe certifies [photographic success](plans/roll-assistance.md).
+[Framework Analyze tests](development.md#roll-analysis) exercise authored picture-area transactions, confirmation/cancellation/failure, atomic initialization and settled rendering in both targets, including real correction. They are offscreen; [native-host completion checks](development.md#explicit-native-host-checks) are separate. Neither these nor the sample-dependent worker checks certify [photographic success](plans/roll-assistance.md) or composed Editor-in-window appearance. For other supplied rolls, use the explicit case manifest below or the normal editor; no scripted Analyze application route is maintained.
 
 ### Private all-roll contacts
 

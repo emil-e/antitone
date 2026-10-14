@@ -48,9 +48,6 @@ mod scopes;
 use scopes::{Scopes, Slot as ScopeSlot};
 #[path = "editor_analysis.rs"]
 mod analysis;
-#[path = "editor_analysis_smoke.rs"]
-mod analysis_smoke;
-pub use analysis_smoke::AnalysisSmoke;
 #[path = "editor_flat_field.rs"]
 mod flat;
 use flat::{Correction, FlatEdit, FlatPreview};

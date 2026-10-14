@@ -63,7 +63,15 @@ cargo test --locked --lib roll_analysis::
 cargo test --locked --features editor --lib editor::analysis::tests -- --test-threads=1
 ```
 
-The first two exercise synthetic populations and curve fitting. Editor checks additionally cover snapshots, confirmation, cancellation and atomic full-grade reset. [Real-RAW diagnostics](diagnostics.md#analyze-roll) are separate, explicit exercises.
+The first two exercise synthetic populations and curve fitting. Editor checks additionally cover snapshots, confirmation, cancellation and atomic full-grade reset.
+
+To check the actual picture-area and Analyze controls with authored RAWs, use the [framework prerequisites](#framework-ui-regressions) and run:
+
+```sh
+cargo test --locked --features ui-tests --lib editor::kittest_tests::analyze -- --test-threads=1
+```
+
+These tests cover Apply/Cancel, reset confirmation, sparse-area failure and settled sRGB/P3 rendering, with and without correction. Cancellation holds reply delivery until the Cancel widget is clicked, without replacing or stalling the worker. Optional captures are `analyze-{roll,corrected}-{srgb,p3}-offscreen.png`. [Real-RAW diagnostics](diagnostics.md#analyze-roll) remain separate.
 
 ## Shared GPU queue checks
 

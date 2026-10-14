@@ -415,6 +415,7 @@ impl Editor {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn begin_analysis(&mut self) {
         let Some(request) = self.analysis_request() else {
             return;

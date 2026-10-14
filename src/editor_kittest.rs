@@ -5,6 +5,8 @@ use egui_kittest::{
 };
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
+#[path = "editor_kittest_analysis.rs"]
+mod analyze;
 #[path = "editor_kittest_tools.rs"]
 mod tools;
 
@@ -356,6 +358,40 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
         }
     }
     save_capture(&png, "authored-dmin-offscreen");
+}
+
+fn fixture(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/raw")
+        .join(name)
+}
+
+fn stage(harness: &mut Harness<'_, Editor>, name: &str) {
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Tab, name)
+        .click();
+    harness.step();
+    harness.try_run_realtime().unwrap();
+}
+
+fn drag(harness: &mut Harness<'_, Editor>, start: egui::Pos2, end: egui::Pos2) {
+    harness.hover_at(start);
+    harness.event(egui::Event::PointerButton {
+        pos: start,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.step();
+    harness.hover_at(end);
+    harness.step();
+    harness.event(egui::Event::PointerButton {
+        pos: end,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.step();
 }
 
 fn set_layout(harness: &mut Harness<'_, Editor>, size: egui::Vec2, width: f32) {
