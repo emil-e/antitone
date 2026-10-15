@@ -17,6 +17,11 @@ use crate::{
 use glam::{DMat3, DVec3};
 use std::{collections::BTreeMap, path::Path, sync::Arc};
 use wgpu::util::DeviceExt;
+#[path = "gpu_export_cache.rs"]
+mod cache;
+#[cfg(all(test, target_os = "macos"))]
+#[path = "gpu_export_cached_tests.rs"]
+mod cached_tests;
 
 #[cfg(all(test, target_os = "macos"))]
 #[path = "gpu_export_edge_tests.rs"]
@@ -51,7 +56,7 @@ pub struct Request<'a> {
     pub format: Format,
 }
 
-/// Runs on a worker. There is exactly one submitted tile/readback at a time, with no CPU fallback.
+/// Runs on a worker. At most one tile/readback is outstanding, with no CPU fallback.
 pub fn write(
     renderer: &GpuRenderer,
     device: &wgpu::Device,
@@ -79,8 +84,36 @@ fn write_checked(
     request: Request<'_>,
     path: &Path,
     overwrite: Overwrite,
-    mut check: impl FnMut() -> Result<(), Error>,
+    check: impl FnMut() -> Result<(), Error>,
 ) -> Result<(), Error> {
+    let cache_enabled = cache_eligible(request.composition);
+    write_job(
+        renderer,
+        device,
+        (queue, submissions),
+        request,
+        (path, overwrite),
+        cache_enabled,
+        check,
+    )
+    .map(|_| ())
+}
+
+// The measured win is straightened coverage; exact compositions avoid unnecessary retention.
+fn cache_eligible(composition: Composition) -> bool {
+    !composition.is_exact()
+}
+
+// Returns tile requests, actual GPU tile reads, and peak retained CPU tile payload bytes.
+fn write_job(
+    renderer: &GpuRenderer,
+    device: &wgpu::Device,
+    (queue, submissions): (&wgpu::Queue, &SubmissionGate),
+    request: Request<'_>,
+    (path, overwrite): (&Path, Overwrite),
+    cache_enabled: bool,
+    mut check: impl FnMut() -> Result<(), Error>,
+) -> Result<(u64, u64, usize), Error> {
     check()?;
     let Request {
         scan,
@@ -116,11 +149,11 @@ fn write_checked(
         grade,
         format,
     )?;
-    let [width, height] = composition.size();
-    let size = ImageSize { width, height };
     let tile_size = tiles.size;
-    let mut read = |origin: [u32; 2]| {
-        check()?;
+    let mut requests = 0;
+    let mut reads = 0;
+    let mut load = |origin: [u32; 2]| {
+        reads += 1;
         let pixels = scan.tile_region(
             scan.area,
             origin[0] - scan.area.x,
@@ -128,10 +161,38 @@ fn write_checked(
             tile_size[0],
             tile_size[1],
         )?;
-        let pixels = tiles.read(renderer, device, queue, submissions, origin, &pixels)?;
-        check()?;
-        Ok(pixels)
+        tiles.read(renderer, device, queue, submissions, origin, &pixels)
     };
+    let mut cache = cache::TileCache::new();
+    if cache_enabled {
+        encode_output(composition, format, metadata, (path, overwrite), |origin| {
+            check()?;
+            requests += 1;
+            let pixels = cache.read(origin, &mut load)?;
+            check()?;
+            Ok(pixels)
+        })?;
+    } else {
+        encode_output(composition, format, metadata, (path, overwrite), |origin| {
+            check()?;
+            requests += 1;
+            let pixels = load(origin)?;
+            check()?;
+            Ok(pixels)
+        })?;
+    }
+    Ok((requests, reads, cache.peak_bytes()))
+}
+
+fn encode_output<P: AsRef<[[f64; 4]]>>(
+    composition: Composition,
+    format: Format,
+    metadata: ProcessingMetadata,
+    (path, overwrite): (&Path, Overwrite),
+    mut read: impl FnMut([u32; 2]) -> Result<P, Error>,
+) -> Result<(), Error> {
+    let [width, height] = composition.size();
+    let size = ImageSize { width, height };
     match format {
         Format::Tiff(target) => {
             export::tiff_encoded(path, size, target, overwrite, metadata, |origin, extent| {
@@ -151,11 +212,11 @@ fn write_checked(
 }
 
 /// Preserve the scalar coverage weights and iteration order; no f32 preview geometry is used.
-fn reconstruct(
+fn reconstruct<P: AsRef<[[f64; 4]]>>(
     composition: Composition,
     origin: [u32; 2],
     extent: [u32; 2],
-    mut read: impl FnMut([u32; 2]) -> Result<Vec<[f64; 4]>, Error>,
+    mut read: impl FnMut([u32; 2]) -> Result<P, Error>,
 ) -> Result<Vec<DVec3>, Error> {
     let area = composition.area();
     let size = tile_size(area);
@@ -188,6 +249,7 @@ fn reconstruct(
     }
     for (origin, entries) in tiles {
         let pixels = read(origin)?;
+        let pixels = pixels.as_ref();
         if pixels.len() != (size[0] * size[1]) as usize {
             return Err(Error::InvalidParameter(
                 "invalid original export tile length",

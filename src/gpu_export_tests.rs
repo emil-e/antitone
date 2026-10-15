@@ -244,6 +244,75 @@ fn original_tile_math_and_aces_preserve_existing_independent_gates() {
 }
 
 #[test]
+fn bounded_cache_reuses_transformed_neighbors_without_changing_reconstruction() {
+    let area = SourceRegion::from([10, 20, 1025, 769]);
+    for turns in [
+        QuarterTurns::Zero,
+        QuarterTurns::One,
+        QuarterTurns::Two,
+        QuarterTurns::Three,
+    ] {
+        let composition = Composition::with_crop(
+            area,
+            RollOrientation {
+                turns,
+                ..Default::default()
+            },
+            PhotoOrientation::default(),
+            Some(Crop {
+                center: [522., 404.],
+                size: [768, 512],
+                angle: 0.015,
+            }),
+        )
+        .unwrap();
+        let [width, height] = composition.size();
+        let size = tile_size(area);
+        let load = |origin: [u32; 2]| -> Result<Vec<[f64; 4]>, Error> {
+            Ok((0..size[0] * size[1])
+                .map(|i| {
+                    let x = origin[0] + i % size[0];
+                    let y = origin[1] + i / size[0];
+                    [
+                        (x * 17 + y * 31) as f64 / 65535. - 0.2,
+                        y as f64 * 0.01 - 3.,
+                        6.,
+                        ((x + y) % 8) as f64,
+                    ]
+                })
+                .collect())
+        };
+        let mut cache = super::cache::TileCache::new();
+        let mut requests = 0;
+        let mut reads = 0;
+        for y in (0..height).step_by(TILE[1] as usize) {
+            for x in (0..width).step_by(TILE[0] as usize) {
+                let extent = [TILE[0].min(width - x), TILE[1].min(height - y)];
+                let plain = reconstruct(composition, [x, y], extent, load).unwrap();
+                let cached = reconstruct(composition, [x, y], extent, |origin| {
+                    requests += 1;
+                    cache.read(origin, |origin| {
+                        reads += 1;
+                        load(origin)
+                    })
+                })
+                .unwrap();
+                assert_eq!(cached, plain);
+            }
+        }
+        println!(
+            "export_cache_trace turns={turns:?} requests={requests} reads={reads} peak_payload_bytes={}",
+            cache.peak_bytes()
+        );
+        assert!(
+            reads < requests,
+            "every turn must reuse neighboring block tiles"
+        );
+        assert!(cache.peak_bytes() <= super::cache::MAX_PAYLOAD_BYTES);
+    }
+}
+
+#[test]
 fn block_reconstruction_keeps_exact_coverage_and_native_permutations_across_tile_edges() {
     let area = SourceRegion::from([10, 20, 513, 65]);
     let rgb = |point: [u32; 2]| {
@@ -278,15 +347,33 @@ fn block_reconstruction_keeps_exact_coverage_and_native_permutations_across_tile
                 }),
             )
             .unwrap();
+            assert_eq!(cache_eligible(composition), angle != 0.);
             let raster = FrameRaster::full(composition).unwrap();
             let [width, height] = composition.size();
             let actual = reconstruct(composition, [0, 0], [width, height], |origin| {
                 Ok(tile(origin, tile_size(area))
                     .into_iter()
                     .map(|p| [p[0] as f64, p[1] as f64, p[2] as f64, 0.])
-                    .collect())
+                    .collect::<Vec<_>>())
             })
             .unwrap();
+            let mut cache = super::cache::TileCache::new();
+            for _ in 0..2 {
+                let cached = reconstruct(composition, [0, 0], [width, height], |origin| {
+                    cache.read(origin, |origin| {
+                        Ok(tile(origin, tile_size(area))
+                            .into_iter()
+                            .map(|p| [p[0] as f64, p[1] as f64, p[2] as f64, 0.])
+                            .collect())
+                    })
+                })
+                .unwrap();
+                assert_eq!(
+                    cached, actual,
+                    "cache must not change samples, weights or reduction order"
+                );
+            }
+            assert!(cache.peak_bytes() <= super::cache::MAX_PAYLOAD_BYTES);
             for y in 0..height {
                 for x in 0..width {
                     let expected = if composition.is_exact() {

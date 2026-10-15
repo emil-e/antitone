@@ -19,11 +19,32 @@ fn full_size_export_resources_with_retained_working_view() {
     observation::with_monitor(exercise).unwrap();
 }
 
+#[derive(Clone, Copy, Debug)]
+enum Backend {
+    Gpu,
+    Uncached,
+    Cached,
+    #[cfg(feature = "ocio-reference")]
+    Reference,
+}
+
 fn exercise(
     monitor: &Arc<observation::Monitor>,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
 ) -> Result<(), String> {
+    let backends: &[Backend] = match std::env::var("ANTITONE_EXPORT_RESOURCE_BACKEND").as_deref() {
+        Ok("gpu") | Err(_) => &[Backend::Gpu],
+        Ok("uncached") => &[Backend::Uncached],
+        Ok("cached") => &[Backend::Cached],
+        Ok("compare-cache") => &[Backend::Uncached, Backend::Gpu],
+        #[cfg(feature = "ocio-reference")]
+        Ok("reference") => &[Backend::Reference],
+        #[cfg(feature = "ocio-reference")]
+        Ok("compare") => &[Backend::Reference, Backend::Gpu],
+        _ => return Err("unsupported export diagnostic backend; see docs/diagnostics.md".into()),
+    };
+    println!("export_resources backends={backends:?} note=reference_is_not_a_production_fallback");
     let root = std::path::PathBuf::from(
         std::env::var_os("ANTITONE_RAW_SAMPLES").ok_or("set absolute ANTITONE_RAW_SAMPLES")?,
     );
@@ -55,6 +76,12 @@ fn exercise(
             gate.clone(),
         ))
     })?;
+    #[cfg(feature = "ocio-reference")]
+    if backends.iter().any(|b| matches!(b, Backend::Reference)) {
+        monitor.phase("reference-infrastructure", || {
+            crate::rendering::CpuRenderer::new(OutputTarget::Srgb)?.render(&[DVec3::splat(0.18)])
+        })?;
+    }
     let kernels = monitor.phase("view-infrastructure", || {
         pollster::block_on(ViewKernels::new(device))
     })?;
@@ -201,29 +228,32 @@ fn exercise(
             if tiff_only && matches!(format, Format::Exr(_)) {
                 continue;
             }
-            let path = directory.path().join("bounded-output");
-            let start = Instant::now();
-            let mut checks = 0_u64;
-            let mut tile_start = None;
-            let mut tile_time = Duration::ZERO;
-            let [width, height] = composition.size();
-            println!(
-                "export_resources begin corrected={corrected} format={format:?} output={width}x{height} encoded_frame_bytes={} source_leases={}",
-                u64::from(width)
-                    * u64::from(height)
-                    * if matches!(format, Format::Tiff(_)) {
-                        6
-                    } else {
-                        12
-                    },
-                Arc::strong_count(scan.source())
-            );
-            monitor.phase(&format!("export-corrected-{corrected}-{format:?}"), || {
-                write_checked(
-                    &renderer,
-                    device,
-                    (queue, &gate),
-                    Request {
+            for &backend in backends {
+                let path = directory.path().join("bounded-output");
+                let start = Instant::now();
+                let mut checks = 0_u64;
+                let mut tile_start = None;
+                let mut tile_time = Duration::ZERO;
+                let mut job_stats = (0_u64, 0_u64, 0_usize);
+                #[cfg(feature = "ocio-reference")]
+                let mut reference_samples = 0;
+                #[cfg(not(feature = "ocio-reference"))]
+                let reference_samples = 0;
+                let [width, height] = composition.size();
+                println!(
+                    "export_resources begin corrected={corrected} format={format:?} output={width}x{height} encoded_frame_bytes={} source_leases={}",
+                    u64::from(width)
+                        * u64::from(height)
+                        * if matches!(format, Format::Tiff(_)) {
+                            6
+                        } else {
+                            12
+                        },
+                    Arc::strong_count(scan.source())
+                );
+                let label = format!("export-{backend:?}-corrected-{corrected}-{format:?}");
+                monitor.phase(&label, || {
+                    let request = Request {
                         scan: &scan,
                         field: gpu_field.clone(),
                         calibration,
@@ -231,37 +261,63 @@ fn exercise(
                         grade: snapshot.clone(),
                         composition,
                         format,
-                    },
-                    &path,
-                    Overwrite::Refuse,
-                    || {
-                        checks += 1;
-                        if checks > 1 {
-                            if checks.is_multiple_of(2) {
-                                tile_start = Some(Instant::now());
-                            } else {
-                                tile_time += tile_start.take().unwrap().elapsed();
-                            }
-                        }
+                    };
+                    let stop = || {
                         monitor.check().map_err(Error::Gpu)?;
                         if start.elapsed() > Duration::from_secs(180) {
-                            return Err(Error::Gpu(
+                            return Err(Error::Export(
                                 "resource diagnostic reached its three-minute export bound".into(),
                             ));
                         }
                         Ok(())
-                    },
-                )
-            })?;
-            println!(
-                "export_resources file_bytes={} seconds={:.6} original_tiles={} tile_sampling_gpu_readback_seconds={:.6} reconstruction_init_encoding_seconds={:.6}",
-                std::fs::metadata(&path).map_err(|e| e.to_string())?.len(),
-                start.elapsed().as_secs_f64(),
-                (checks - 1) / 2,
-                tile_time.as_secs_f64(),
-                start.elapsed().saturating_sub(tile_time).as_secs_f64()
-            );
-            monitor.phase("reopen-full-file-with-view-retained", || -> Result<(),Error> {
+                    };
+                    match backend {
+                        Backend::Gpu | Backend::Uncached | Backend::Cached => write_job(
+                            &renderer,
+                            device,
+                            (queue, &gate),
+                            request,
+                            (&path, Overwrite::Refuse),
+                            matches!(backend, Backend::Cached)
+                                || (matches!(backend, Backend::Gpu) && cache_eligible(composition)),
+                            || {
+                                checks += 1;
+                                if checks > 1 {
+                                    if checks.is_multiple_of(2) {
+                                        tile_start = Some(Instant::now());
+                                    } else {
+                                        tile_time += tile_start.take().unwrap().elapsed();
+                                    }
+                                }
+                                stop()
+                            },
+                        )
+                        .map(|stats| job_stats = stats),
+                        #[cfg(feature = "ocio-reference")]
+                        Backend::Reference => {
+                            reference_samples = write_reference(request, &path, stop)?;
+                            Ok(())
+                        }
+                    }
+                })?;
+                let source_size = tile_size(area);
+                let gpu_samples =
+                    job_stats.1 * u64::from(source_size[0]) * u64::from(source_size[1]);
+                println!(
+                    "export_resources backend={backend:?} reference_sample_evaluations={reference_samples} gpu_sample_evaluations={gpu_samples}"
+                );
+                println!(
+                    "export_resources file_bytes={} seconds={:.6} tile_requests={} original_tiles={} cache_hits={} peak_cached_payload_bytes={} tile_access_seconds={:.6} other_job_seconds={:.6}",
+                    std::fs::metadata(&path).map_err(|e| e.to_string())?.len(),
+                    start.elapsed().as_secs_f64(),
+                    job_stats.0,
+                    job_stats.1,
+                    job_stats.0.saturating_sub(job_stats.1),
+                    job_stats.2,
+                    tile_time.as_secs_f64(),
+                    start.elapsed().saturating_sub(tile_time).as_secs_f64()
+                );
+                monitor.phase("reopen-full-file-with-view-retained", || -> Result<(),Error> {
                     match format {
                         Format::Tiff(target) => {
                             let mut decoder = tiff::decoder::Decoder::new(std::fs::File::open(&path).map_err(|e|Error::Export(e.to_string()))?).map_err(|e|Error::Export(e.to_string()))?;
@@ -295,44 +351,45 @@ fn exercise(
                     }
                     Ok(())
                 })?;
-            monitor.phase(
-                "grade-retained-detail-after-export-no-original-reacquisition",
-                || -> Result<(), Error> {
-                    let edited = PhotoGradeSnapshot::new(
-                        PhotoSettings {
-                            exposure: 0.25,
-                            ..photo
-                        },
-                        vec![],
-                    )?;
-                    let edited_input: ProcessingInput = Arc::new(GpuPhotoGrade::new(
-                        device,
-                        adjusted,
-                        roll,
-                        edited.clone(),
-                        scan.camera_to_ap1,
-                        area,
-                    )?)
-                    .into();
-                    let updated = RenderedView::new(
-                        device,
-                        sources[0].clone(),
-                        adjusted,
-                        roll,
-                        edited,
-                        &edited_input,
-                        OutputTarget::Srgb,
-                        Some(&rendered[0]),
-                    )?;
-                    updated.ensure_submitted(device, queue, &gate, &context);
-                    observation::wait(device, queue).map_err(|e| Error::Gpu(e.to_string()))?;
-                    assert!(!updated.in_flight());
-                    assert_eq!(updated.processing, edited_input.signature());
-                    assert_eq!(rendered[0].processing, input.signature());
-                    Ok(())
-                },
-            )?;
-            std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+                monitor.phase(
+                    "grade-retained-detail-after-export-no-original-reacquisition",
+                    || -> Result<(), Error> {
+                        let edited = PhotoGradeSnapshot::new(
+                            PhotoSettings {
+                                exposure: 0.25,
+                                ..photo
+                            },
+                            vec![],
+                        )?;
+                        let edited_input: ProcessingInput = Arc::new(GpuPhotoGrade::new(
+                            device,
+                            adjusted,
+                            roll,
+                            edited.clone(),
+                            scan.camera_to_ap1,
+                            area,
+                        )?)
+                        .into();
+                        let updated = RenderedView::new(
+                            device,
+                            sources[0].clone(),
+                            adjusted,
+                            roll,
+                            edited,
+                            &edited_input,
+                            OutputTarget::Srgb,
+                            Some(&rendered[0]),
+                        )?;
+                        updated.ensure_submitted(device, queue, &gate, &context);
+                        observation::wait(device, queue).map_err(|e| Error::Gpu(e.to_string()))?;
+                        assert!(!updated.in_flight());
+                        assert_eq!(updated.processing, edited_input.signature());
+                        assert_eq!(rendered[0].processing, input.signature());
+                        Ok(())
+                    },
+                )?;
+                std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+            }
         }
         drop(rendered);
         drop(sources);
@@ -340,4 +397,103 @@ fn exercise(
         monitor.phase("retire-view-before-next-correction", || Ok::<_, Error>(()))?;
     }
     Ok(())
+}
+
+#[cfg(feature = "ocio-reference")]
+#[test]
+fn reference_benchmark_counts_samples_and_preserves_bounded_stop_checks() {
+    let scan = Scan::open(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
+        None,
+    )
+    .unwrap();
+    let calibration = crate::processing::Calibration {
+        dmin: DVec3::splat(3000. / 4031.),
+        dmax: DVec3::splat(128. / 4031.),
+        input_floor: scan.input_floor,
+    };
+    let composition = Composition::new(scan.area, Default::default(), Default::default()).unwrap();
+    let request = || Request {
+        scan: &scan,
+        field: None,
+        calibration,
+        roll: RollSettings::new_grade(),
+        grade: PhotoGradeSnapshot::new(PhotoSettings::default(), vec![]).unwrap(),
+        composition,
+        format: Format::Tiff(OutputTarget::Srgb),
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("reference.tif");
+    let samples = write_reference(request(), &path, || Ok(())).unwrap();
+    assert_eq!(
+        samples,
+        u64::from(scan.area.width) * u64::from(scan.area.height)
+    );
+    assert!(std::fs::metadata(&path).unwrap().len() > 0);
+    std::fs::remove_file(&path).unwrap();
+    let mut checks = 0;
+    let result = write_reference(request(), &path, || {
+        checks += 1;
+        if checks == 3 {
+            Err(Error::Export("diagnostic stop".into()))
+        } else {
+            Ok(())
+        }
+    });
+    assert_eq!(result, Err(Error::Export("diagnostic stop".into())));
+    assert_eq!(checks, 3);
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+}
+
+#[cfg(feature = "ocio-reference")]
+fn write_reference(
+    request: Request<'_>,
+    path: &std::path::Path,
+    mut check: impl FnMut() -> Result<(), Error>,
+) -> Result<u64, Error> {
+    let Request {
+        scan,
+        calibration,
+        roll,
+        grade,
+        composition,
+        format,
+        ..
+    } = request;
+    let metadata = export::ProcessingMetadata::with_grade(roll.response, &grade);
+    let pipeline = crate::local_adjustments::SpatialPipeline::new(
+        scan.processing_calibration(calibration)?,
+        roll,
+        grade,
+        scan.camera_to_ap1,
+    )?;
+    let mut samples = 0_u64;
+    check()?;
+    let pixel = |x, y| {
+        if samples.is_multiple_of(4096) {
+            check()?;
+        }
+        samples += 1;
+        pipeline.apply(scan.pixel(x, y)?, [x, y]).map(|p| p.rgb)
+    };
+    match format {
+        Format::Tiff(target) => export::tiff_composed(
+            path,
+            composition,
+            target,
+            Overwrite::Refuse,
+            metadata,
+            pixel,
+        )?,
+        Format::Exr(precision) => export::exr_composed(
+            path,
+            composition,
+            precision,
+            Overwrite::Refuse,
+            metadata,
+            pixel,
+        )?,
+    }
+    check()?;
+    Ok(samples)
 }

@@ -76,13 +76,13 @@ cargo clippy --locked --all-features --all-targets -- -D warnings
 cargo test --locked --features editor --lib export -- --test-threads=1
 # Independent original-sample processing/reconstruction and reopened files, including correction/locals.
 cargo test --locked --features raw,gpu,export,project,ocio-reference \
-  --lib gpu_export::tests -- --test-threads=1
+  --lib gpu_export:: -- --test-threads=1
 cargo test --locked --features raw,gpu,export,project,ocio-reference \
   --test gpu_export --test export --test geometry_export --test local_adjustment_export
 cargo build --locked --release --features editor --bin antitone
 ```
 
-Photographic numerical correspondence is not bitwise identity with scalar floating-point rounding. Original-sample, coverage, pre-encoding arithmetic and final quantization are checked separately; encoder tests require exact supplied-sample serialization. GPU/readback and reconstruction work is block-bounded in both dimensions. Modest square source/destination batches avoid orientation-dependent repeated work; larger batches trade fewer submissions against more live workspace, not against image quality. The file libraries still retain their checked encoded frame buffers; those limits and per-job bounds are not an aggregate memory-pressure guarantee. Keep broader resource/photographic/device acceptance separate.
+Photographic numerical correspondence is not bitwise identity with scalar floating-point rounding. Original-sample, coverage, pre-encoding arithmetic and final quantization are checked separately; encoder tests require exact supplied-sample serialization. GPU/readback and reconstruction work is block-bounded in both dimensions; completed-tile reuse has an additional fixed job-local payload bound. Modest square source/destination batches avoid orientation-dependent repeated work; larger batches trade fewer submissions against more live workspace, not against image quality. The file libraries still retain their checked encoded frame buffers; those limits and per-job bounds are not an aggregate memory-pressure guarantee. Keep broader resource/photographic/device acceptance separate.
 
 ## Roll analysis
 

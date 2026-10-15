@@ -25,6 +25,7 @@ struct Reading {
     swapouts: u64,
     pressure: u32,
     free: u64,
+    speculative_free: u64,
 }
 #[allow(deprecated)]
 fn reading(device: &wgpu::Device) -> Result<Reading> {
@@ -89,6 +90,7 @@ fn reading(device: &wgpu::Device) -> Result<Reading> {
         swapouts: vm.swapouts,
         pressure,
         free,
+        speculative_free: u64::from(vm.speculative_count) * page,
     })
 }
 struct Status {
@@ -193,6 +195,19 @@ pub(super) fn wait(
         })
         .map(|_| ())
 }
+fn preflight(read: Reading) -> Result<()> {
+    if read.pressure != 1 || read.free < GROWTH_LIMIT {
+        return Err(format!(
+            "preflight requires Normal pressure and 2 GiB reported non-speculative free memory; pressure={} reported_free_bytes={} speculative_free_bytes={} total_free_bytes={}",
+            read.pressure,
+            read.free,
+            read.speculative_free,
+            read.free + read.speculative_free,
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn with_monitor(
     action: impl FnOnce(&Arc<Monitor>, &wgpu::Device, &wgpu::Queue) -> Result<()>,
 ) -> Result<()> {
@@ -210,12 +225,7 @@ pub(super) fn with_monitor(
             .unwrap()
     });
     let baseline = reading(&device)?;
-    if baseline.pressure != 1 || baseline.free < GROWTH_LIMIT {
-        return Err(
-            "preflight requires Normal pressure and 2 GiB reported non-speculative free memory"
-                .into(),
-        );
-    }
+    preflight(baseline)?;
     let monitor = Arc::new(Monitor {
         baseline: baseline.footprint,
         swapouts: baseline.swapouts,
@@ -244,7 +254,7 @@ pub(super) fn with_monitor(
         sampler.join().unwrap();
         let status = monitor.status.lock().unwrap();
         println!(
-            "cache_summary baseline_footprint={} sampled_peak_footprint={} sampled_growth={} sampled_peak_resident={} sampled_peak_device={} reported_swapouts={} pressure={} samples={} stopped={:?}",
+            "cache_summary baseline_footprint={} sampled_peak_footprint={} sampled_growth={} sampled_peak_resident={} sampled_peak_device={} reported_swapouts={} pressure={} samples={} stopped={:?} reported_free_bytes={} speculative_free_bytes={}",
             monitor.baseline,
             status.peak_footprint,
             status.peak_footprint.saturating_sub(monitor.baseline),
@@ -253,7 +263,9 @@ pub(super) fn with_monitor(
             status.latest.swapouts,
             status.latest.pressure,
             status.samples,
-            status.stopped
+            status.stopped,
+            status.latest.free,
+            status.latest.speculative_free,
         );
         drop(status);
         match result {
