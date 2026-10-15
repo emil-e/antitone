@@ -71,11 +71,11 @@ impl Proxy {
         .await?;
         if let Some(correction) = correction {
             correction.settings.require_source(source)?;
-            image.set_flat_field(
-                Some(correction.gpu.clone()),
-                crate::gpu::SourceGeometry::new(source.active_area, [self.width, self.height])?,
-            )?;
         }
+        image.set_flat_field(
+            correction.map(|c| c.gpu.clone()),
+            crate::gpu::SourceGeometry::new(source.active_area, [self.width, self.height])?,
+        )?;
         Ok(Arc::new(image))
     }
 }
@@ -83,7 +83,7 @@ pub(super) struct SelectedPreview {
     request: u64,
     key: SourceKey,
     field: Option<FieldKey>,
-    pub(super) images: [Arc<GpuImage>; 2],
+    pub(super) proxy: crate::viewer::GpuProxy,
 }
 impl SelectedPreview {
     pub(super) fn area(&self) -> Rect {
@@ -135,6 +135,7 @@ pub(super) struct Thumbnails {
     // Demand history, not GPU residency or an availability guarantee.
     attempted: Vec<SourceKey>,
     budgets: memory::CacheBudgets,
+    view_reservation: usize,
     pub(super) limits: cache_limits::CacheLimits,
     memory_watch: Option<memory::PressureWatch>,
     repaint: Arc<std::sync::OnceLock<egui::Context>>,
@@ -176,6 +177,7 @@ impl Default for Thumbnails {
             visible_keys: Vec::new(),
             attempted: Vec::new(),
             budgets,
+            view_reservation: 0,
             limits,
             memory_watch: None,
             repaint: Arc::default(),
@@ -222,27 +224,26 @@ impl Thumbnails {
             return Ok(None);
         };
         let renderer = renderers.get(device, queue)?;
-        // Filmstrip and source-inspection callbacks must not share mutable processing images.
+        if let Some(correction) = correction {
+            correction.settings.require_source(&source.development)?;
+        }
+        // Selected and filmstrip outputs have independent mutable processing state.
         let preview = SelectedPreview {
             request,
             key: key.clone(),
             field: correction.map(|c| FieldKey(c.settings.map.clone())),
-            images: [
-                pollster::block_on(proxy.image(
-                    &renderer,
-                    device,
-                    OutputTarget::Srgb,
-                    &source.development,
-                    correction,
-                ))?,
-                pollster::block_on(proxy.image(
-                    &renderer,
-                    device,
-                    OutputTarget::DisplayP3,
-                    &source.development,
-                    correction,
-                ))?,
-            ],
+            proxy: crate::viewer::GpuProxy::new(
+                renderer,
+                device,
+                [proxy.width, proxy.height],
+                &proxy.pixels,
+                proxy.matrix,
+                correction.map(|c| c.gpu.clone()),
+                crate::gpu::SourceGeometry::new(
+                    source.development.active_area,
+                    [proxy.width, proxy.height],
+                )?,
+            )?,
         };
         if !preview.current(request, document, Some(id), correction) {
             return Ok(None);
@@ -250,16 +251,7 @@ impl Thumbnails {
         self.selected_key = Some(native_key.clone());
         self.protect_cpu();
         let _ = self.sources.get_proxy(&native_key);
-        let bytes: u64 = preview
-            .images
-            .iter()
-            .map(|image| {
-                let (source, working) = image.processing_byte_len();
-                source
-                    + working
-                    + u64::from(image.linear.width()) * u64::from(image.linear.height()) * 16
-            })
-            .sum();
+        let bytes = preview.proxy.byte_len();
         println!(
             "selected_preview request={request} source_id={} cache=memory dimensions={}x{} gpu_pixel_bytes={bytes} preparation_ms={:.6}",
             id.0,
@@ -328,6 +320,15 @@ impl Thumbnails {
     pub(super) fn default_limits(&self) -> cache_limits::CacheLimits {
         cache_limits::Hardware::current(self.gpu.as_ref().map(|(device, _, _)| device)).defaults()
     }
+    // Optional reference retention/building shares the existing image-cache allowance.
+    // Selected working pixels remain mandatory, like selected/visible source leases.
+    pub(super) fn reserve_view(&mut self, bytes: usize) -> bool {
+        let admitted = bytes <= self.budgets.images;
+        self.view_reservation = if admitted { bytes } else { 0 };
+        self.cache
+            .set_budget(self.budgets.images.saturating_sub(self.view_reservation));
+        admitted
+    }
     pub(super) fn set_limits(&mut self, limits: cache_limits::CacheLimits) {
         self.limits = limits;
         self.update_memory();
@@ -349,7 +350,8 @@ impl Thumbnails {
         if budgets.pressure == memory::Pressure::Critical {
             self.cancel();
         }
-        self.cache.set_budget(self.budgets.images);
+        self.cache
+            .set_budget(self.budgets.images.saturating_sub(self.view_reservation));
         self.sources.set_budget(self.budgets.sources as u64);
     }
     fn cancel_offscreen(&mut self, wanted: &[ImageKey]) {
@@ -637,21 +639,16 @@ fn make_image(
 }
 
 impl Editor {
-    fn thumbnail_parameters(&self, source: &Source) -> Result<ProcessingParameters, Error> {
+    fn thumbnail_parameters(&self, source: &Source) -> Result<ProcessingInput, Error> {
         let photo = if self.current_source == Some(source.id) {
             self.photo
         } else {
             source.photo
         };
         self.calibration().map_or_else(
-            || self.source_parameters(0.),
+            || self.source_parameters(0.).map(Into::into),
             |calibration| {
-                self.positive_parameters_for_matrix(
-                    calibration,
-                    self.roll,
-                    photo,
-                    glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1),
-                )
+                self.positive_processing_for_source(calibration, self.roll, source, photo)
             },
         )
     }
@@ -727,11 +724,12 @@ impl Editor {
         self.thumbnails.embedded.receive(&self.document, ui.ctx());
         let visible_allowed = self.thumbnail_work_allowed();
         let idle = visible_allowed
-            && (self.settled.is_some()
-                || self.refinement_error
-                    == Some(self.generation.load(std::sync::atomic::Ordering::Relaxed)))
-            && self.refining.is_none()
-            && self.last_edit.elapsed() >= Duration::from_millis(250);
+            && self.original.refining.is_none()
+            && if self.working.revision().is_some() {
+                self.working.idle()
+            } else {
+                self.original.idle()
+            };
         let max_height = (ui.ctx().content_rect().height() * 0.35).clamp(52., 240.);
         let mut protected = Vec::new();
         let mut wanted = Vec::new();
@@ -819,7 +817,10 @@ impl Editor {
                                     crate::geometry::FramePoint([f64::from(fraction.x) * f64::from(dimensions[0]), f64::from(fraction.y) * f64::from(dimensions[1])])
                                 };
                                 let mapping = composition.texture_mapping(frame_point(draw_min), frame_point(draw_max), composition.area());
-                                ui.painter().with_clip_rect(draw).add(egui_wgpu::Callback::new_paint_callback(draw,ImagePaint::new(image,Some(parameters),mapping)));
+                                match processing::image_paint(image,Some(parameters),mapping) {
+                                    Ok(paint) => { ui.painter().with_clip_rect(draw).add(egui_wgpu::Callback::new_paint_callback(draw,paint)); }
+                                    Err(message) => { error = Some(message.to_string()); }
+                                }
                             }
                         }
                         (Some(Err(message)),_) => { error = Some(message); }
@@ -873,6 +874,14 @@ impl Editor {
         if (strip.response.rect.height() - height).abs() > 0.5 {
             self.preferences.filmstrip_height = strip.response.rect.height().clamp(52., 240.);
         }
+        let mut graded_sources: Vec<_> = visible
+            .iter()
+            .map(|index| self.document.project.order[*index])
+            .collect();
+        if let Some(id) = self.current_source {
+            graded_sources.push(id);
+        }
+        self.grades.retain(&graded_sources);
         if remove {
             self.request_removal();
         }

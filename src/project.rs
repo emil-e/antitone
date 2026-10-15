@@ -129,6 +129,8 @@ pub struct Source {
     pub development: SourceDevelopment,
     pub reference_only: bool,
     pub photo: PhotoSettings,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_adjustments: Option<LocalAdjustments>,
     #[serde(default, skip_serializing_if = "PhotoOrientation::is_identity")]
     pub orientation: PhotoOrientation,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -142,6 +144,9 @@ impl Source {
             crop.region(self.development.active_area.into())?;
         }
         self.photo.validate()?;
+        if let Some(locals) = &self.local_adjustments {
+            locals.validate()?;
+        }
         Ok(())
     }
 }
@@ -176,6 +181,9 @@ impl Default for Output {
 #[path = "project_flat_field.rs"]
 mod flat;
 pub use flat::FlatFieldSettings;
+#[path = "project_local_adjustments.rs"]
+mod local;
+pub use local::{AdjustmentId, AdjustmentRecord, LocalAdjustments};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -1,13 +1,19 @@
 use crate::{
     Error,
     geometry::TextureMapping,
-    gpu::{GpuFlatField, ProcessingParameters, ProcessingSource, SourceGeometry},
+    gpu::{
+        GpuFlatField, ProcessingInput, ProcessingParameters, ProcessingSignature, ProcessingSource,
+        SourceGeometry,
+    },
     renderer::GpuRenderer,
     rendering::OutputTarget,
 };
 use glam::{DMat3, Vec4};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
+#[path = "viewer_proxy.rs"]
+mod proxy;
+pub(crate) use proxy::GpuProxy;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -17,15 +23,42 @@ struct Presentation {
     uv_x: [f32; 4],
     uv_y: [f32; 4],
 }
+enum ImageSource {
+    Owned(Box<ProcessingSource>),
+    Shared(Arc<ProcessingSource>),
+}
+impl std::ops::Deref for ImageSource {
+    type Target = ProcessingSource;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Owned(source) => source,
+            Self::Shared(source) => source,
+        }
+    }
+}
+impl ImageSource {
+    fn mutable(&mut self) -> Result<&mut ProcessingSource, Error> {
+        match self {
+            Self::Owned(source) => Ok(source),
+            Self::Shared(_) => Err(Error::InvalidParameter("shared proxy source is immutable")),
+        }
+    }
+    fn write(&self, queue: &wgpu::Queue, pixels: &[[u16; 4]]) -> Result<(), Error> {
+        match self {
+            Self::Owned(source) => source.write(queue, pixels),
+            Self::Shared(_) => Err(Error::InvalidParameter("shared proxy source is immutable")),
+        }
+    }
+}
 struct ImageProcessing {
     renderer: Arc<GpuRenderer>,
     target: OutputTarget,
-    source: ProcessingSource,
+    source: ImageSource,
     working: wgpu::Buffer,
     aces_group: wgpu::BindGroup,
 }
 pub struct GpuImage {
-    last_parameters: std::sync::Mutex<Option<[u8; ProcessingParameters::BYTE_LEN]>>,
+    last_parameters: std::sync::Mutex<Option<ProcessingSignature>>,
     source_revision: std::sync::atomic::AtomicU64,
     processing: Option<ImageProcessing>,
     pub linear: wgpu::Texture,
@@ -76,7 +109,7 @@ impl GpuImage {
             device,
             width,
             height,
-            Some((renderer.clone(), source)),
+            Some((renderer.clone(), ImageSource::Owned(Box::new(source)))),
             renderer.display.clone(),
             target,
         )
@@ -120,7 +153,7 @@ impl GpuImage {
         device: &wgpu::Device,
         width: u32,
         height: u32,
-        source: Option<(Arc<GpuRenderer>, ProcessingSource)>,
+        source: Option<(Arc<GpuRenderer>, ImageSource)>,
         display: wgpu::RenderPipeline,
         target: OutputTarget,
     ) -> Result<Self, Error> {
@@ -170,6 +203,10 @@ impl GpuImage {
                     wgpu::BindGroupEntry {
                         binding: 4,
                         resource: size.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: resources.hues.as_entire_binding(),
                     },
                 ],
             });
@@ -224,6 +261,18 @@ impl GpuImage {
             .as_ref()
             .map_or((0, 0), |p| (p.source.byte_len(), p.working.size()))
     }
+    pub fn set_geometry(&mut self, geometry: SourceGeometry) -> Result<(), Error> {
+        let processing = self
+            .processing
+            .as_mut()
+            .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
+        processing.source.mutable()?.set_geometry(geometry)?;
+        self.source_revision
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        *self.last_parameters.lock().unwrap() = None;
+        Ok(())
+    }
+
     pub fn set_flat_field(
         &mut self,
         field: Option<Arc<GpuFlatField>>,
@@ -233,7 +282,10 @@ impl GpuImage {
             .processing
             .as_mut()
             .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
-        processing.source.set_flat_field(field, geometry)?;
+        processing
+            .source
+            .mutable()?
+            .set_flat_field(field, geometry)?;
         self.source_revision
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         *self.last_parameters.lock().unwrap() = None;
@@ -263,14 +315,34 @@ impl GpuImage {
         encoder: &mut wgpu::CommandEncoder,
         parameters: ProcessingParameters,
     ) -> bool {
-        let signature = bytemuck::bytes_of(&parameters).try_into().unwrap();
+        self.prepare_processing(device, encoder, &parameters.into())
+            .expect("processable image")
+    }
+
+    pub fn require_processing(&self, input: &ProcessingInput) -> Result<(), Error> {
+        let processing = self
+            .processing
+            .as_ref()
+            .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
+        input.require_source(&processing.source)
+    }
+
+    /// Prepare an immutable global/local input; invalid inputs leave the prior preparation intact.
+    pub fn prepare_processing(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        input: &ProcessingInput,
+    ) -> Result<bool, Error> {
+        self.require_processing(input)?;
+        let signature = input.signature();
         let mut previous = self.last_parameters.lock().unwrap();
-        if *previous == Some(signature) {
-            return false;
+        if previous.as_ref() == Some(&signature) {
+            return Ok(false);
         }
-        self.encode(device, encoder, parameters);
+        self.encode_processing_inner(device, encoder, input)?;
         *previous = Some(signature);
-        true
+        Ok(true)
     }
 
     pub fn encode(
@@ -279,17 +351,50 @@ impl GpuImage {
         encoder: &mut wgpu::CommandEncoder,
         parameters: ProcessingParameters,
     ) {
+        self.encode_processing(device, encoder, &parameters.into())
+            .expect("processable image");
+    }
+
+    pub fn encode_processing(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        input: &ProcessingInput,
+    ) -> Result<(), Error> {
+        self.require_processing(input)?;
+        let mut previous = self.last_parameters.lock().unwrap();
+        self.encode_processing_inner(device, encoder, input)?;
+        // An explicit dispatch must not leave a cached preparation describing another output.
+        *previous = None;
+        Ok(())
+    }
+
+    fn encode_processing_inner(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        input: &ProcessingInput,
+    ) -> Result<(), Error> {
         let processing = self
             .processing
             .as_ref()
-            .expect("rendered image cannot be processed");
-        processing.renderer.kernel.encode(
-            device,
-            encoder,
-            &processing.source,
-            &processing.working,
-            parameters,
-        );
+            .expect("validated processing source");
+        match input.grade() {
+            Some(grade) => processing.renderer.kernel.encode_grade(
+                device,
+                encoder,
+                &processing.source,
+                &processing.working,
+                grade,
+            )?,
+            None => processing.renderer.kernel.encode(
+                device,
+                encoder,
+                &processing.source,
+                &processing.working,
+                input.parameters(),
+            ),
+        }
         let view = self.linear.create_view(&Default::default());
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("ACES target rendering"),
@@ -307,6 +412,7 @@ impl GpuImage {
         pass.set_pipeline(&processing.renderer.target(processing.target).pipeline);
         pass.set_bind_group(0, &processing.aces_group, &[]);
         pass.draw(0..3, 0..1);
+        Ok(())
     }
     pub fn presentation_group(
         &self,
@@ -370,23 +476,63 @@ fn make_presentation_group(
     })
 }
 pub struct ImagePaint {
-    pub image: Arc<GpuImage>,
-    pub parameters: Option<ProcessingParameters>,
+    #[cfg(feature = "editor")]
+    rendered: Option<(
+        Arc<crate::gpu::view::RenderedView>,
+        crate::gpu::SubmissionGate,
+        egui::Context,
+    )>,
+    image: Arc<GpuImage>,
+    processing: Option<ProcessingInput>,
     uv: TextureMapping,
     group: std::sync::Mutex<Option<wgpu::BindGroup>>,
 }
 impl ImagePaint {
+    #[cfg(feature = "editor")]
+    pub(crate) fn rendered(
+        view: Arc<crate::gpu::view::RenderedView>,
+        uv: TextureMapping,
+        submissions: crate::gpu::SubmissionGate,
+        context: egui::Context,
+    ) -> Self {
+        Self {
+            image: view.image.clone(),
+            processing: None,
+            uv,
+            group: std::sync::Mutex::new(None),
+            rendered: Some((view, submissions, context)),
+        }
+    }
     pub fn new(
         image: Arc<GpuImage>,
         parameters: Option<ProcessingParameters>,
         uv: impl Into<TextureMapping>,
     ) -> Self {
         Self {
+            #[cfg(feature = "editor")]
+            rendered: None,
             image,
-            parameters,
+            processing: parameters.map(Into::into),
             uv: uv.into(),
             group: std::sync::Mutex::new(None),
         }
+    }
+    pub fn with_processing(
+        image: Arc<GpuImage>,
+        processing: Option<ProcessingInput>,
+        uv: impl Into<TextureMapping>,
+    ) -> Result<Self, Error> {
+        if let Some(input) = &processing {
+            image.require_processing(input)?;
+        }
+        Ok(Self {
+            #[cfg(feature = "editor")]
+            rendered: None,
+            image,
+            processing,
+            uv: uv.into(),
+            group: std::sync::Mutex::new(None),
+        })
     }
 }
 impl egui_wgpu::CallbackTrait for ImagePaint {
@@ -398,8 +544,14 @@ impl egui_wgpu::CallbackTrait for ImagePaint {
         encoder: &mut wgpu::CommandEncoder,
         _resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
-        if let Some(parameters) = self.parameters {
-            self.image.prepare(device, encoder, parameters);
+        #[cfg(feature = "editor")]
+        if let Some((view, submissions, context)) = &self.rendered {
+            view.ensure_submitted(device, _queue, submissions, context);
+        }
+        if let Some(input) = &self.processing {
+            self.image
+                .prepare_processing(device, encoder, input)
+                .expect("validated processing source");
         }
         if self.uv != TextureMapping::IDENTITY {
             *self.group.lock().unwrap() = Some(self.image.presentation_group(device, self.uv));

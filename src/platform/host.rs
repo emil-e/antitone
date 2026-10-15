@@ -6,7 +6,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
-use super::{SubmissionGate, fullscreen::PhotoFullscreen, macos};
+use super::{SubmissionGate, fullscreen::PhotoFullscreen, latency::Trace, macos};
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -14,6 +14,11 @@ pub trait App {
     /// The same gate used by every background submitter on this host's queue.
     fn submission_gate(&self) -> &SubmissionGate;
     fn ui(&mut self, ui: &mut egui::Ui);
+    /// Requested source and processing/view generations, not accepted GPU output.
+    /// Queried only by opt-in latency tracing.
+    fn processing_revision(&self) -> Option<(u64, u64)> {
+        None
+    }
     /// Photo-only display coverage, independent of macOS's native fullscreen Space.
     fn photo_fullscreen(&self) -> bool {
         false
@@ -47,14 +52,18 @@ pub fn run<A: App + 'static>(
         error: None,
     };
     let outcome = event_loop.run_app(&mut host);
-    if let Some(state) = &mut host.state {
+    let trace_outcome = if let Some(state) = &mut host.state {
         state.fullscreen.update(&state.gpu.window, false)?;
         state.app.on_exit();
-    }
+        state.gpu.drain_trace()
+    } else {
+        Ok(())
+    };
     outcome?;
     if let Some(error) = host.error {
         return Err(error);
     }
+    trace_outcome?;
     Ok(host.state.as_ref().map_or(0, |state| state.gpu.presented))
 }
 
@@ -129,6 +138,23 @@ impl<A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<A>> ApplicationHan
             return;
         }
         let redrawing = matches!(event, WindowEvent::RedrawRequested);
+        if matches!(
+            event,
+            WindowEvent::KeyboardInput { .. }
+                | WindowEvent::ModifiersChanged(_)
+                | WindowEvent::Ime(_)
+                | WindowEvent::CursorMoved { .. }
+                | WindowEvent::MouseInput { .. }
+                | WindowEvent::MouseWheel { .. }
+                | WindowEvent::Touch(_)
+                | WindowEvent::PinchGesture { .. }
+                | WindowEvent::PanGesture { .. }
+                | WindowEvent::DoubleTapGesture { .. }
+                | WindowEvent::RotationGesture { .. }
+        ) && let Some(trace) = &mut state.gpu.trace
+        {
+            trace.input();
+        }
         let response = state.input.on_window_event(&state.gpu.window, &event);
         let outcome = match event {
             WindowEvent::CloseRequested => {
@@ -166,19 +192,34 @@ impl<A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<A>> ApplicationHan
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if let Some(when) = self.next_repaint {
-            if when <= Instant::now() {
-                if let Some(state) = &self.state {
-                    state.gpu.window.request_redraw();
-                }
-                self.next_repaint = None;
-                event_loop.set_control_flow(ControlFlow::Wait);
-            } else {
-                event_loop.set_control_flow(ControlFlow::WaitUntil(when));
+        let mut wake = self.next_repaint;
+        if wake.is_some_and(|when| when <= Instant::now()) {
+            if let Some(state) = &self.state {
+                state.gpu.window.request_redraw();
             }
-        } else {
-            event_loop.set_control_flow(ControlFlow::Wait);
+            self.next_repaint = None;
+            wake = None;
         }
+        if let Some(state) = &self.state {
+            let pending = state.app.submission_gate().pending();
+            if (pending || state.gpu.trace.as_ref().is_some_and(|t| t.pending()))
+                && let Err(error) = state.gpu.device.poll(wgpu::PollType::Poll)
+            {
+                self.fail(event_loop, error.into());
+                return;
+            }
+            if pending {
+                let poll = Instant::now() + Duration::from_millis(8);
+                wake = Some(wake.map_or(poll, |repaint| repaint.min(poll)));
+            }
+            if let Some(trace) = &state.gpu.trace {
+                trace.flush();
+                if let Some(poll) = trace.poll_deadline() {
+                    wake = Some(wake.map_or(poll, |repaint| repaint.min(poll)));
+                }
+            }
+        }
+        event_loop.set_control_flow(wake.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
     }
 }
 
@@ -192,6 +233,7 @@ struct State<A> {
 
 impl<A: App> State<A> {
     fn draw(&mut self, context: &egui::Context, event_loop: &ActiveEventLoop) -> Result<()> {
+        let mut timing = self.gpu.trace.as_mut().map(Trace::begin);
         let size = self.gpu.window.inner_size();
         let frame = if size.width == 0 || size.height == 0 {
             None
@@ -202,7 +244,23 @@ impl<A: App> State<A> {
             {
                 self.gpu.configure(self.app.submission_gate())?;
             }
-            match self.gpu.surface.get_current_texture() {
+            if let Some(timing) = &mut timing {
+                timing.acquire_start = Some(Instant::now());
+            }
+            let acquired = self.gpu.surface.get_current_texture();
+            if let Some(timing) = &mut timing {
+                timing.acquire_end = Some(Instant::now());
+                timing.acquire_status = match &acquired {
+                    wgpu::CurrentSurfaceTexture::Success(_) => "success",
+                    wgpu::CurrentSurfaceTexture::Suboptimal(_) => "suboptimal",
+                    wgpu::CurrentSurfaceTexture::Outdated => "outdated",
+                    wgpu::CurrentSurfaceTexture::Lost => "lost",
+                    wgpu::CurrentSurfaceTexture::Timeout => "timeout",
+                    wgpu::CurrentSurfaceTexture::Occluded => "occluded",
+                    wgpu::CurrentSurfaceTexture::Validation => "validation",
+                };
+            }
+            match acquired {
                 wgpu::CurrentSurfaceTexture::Success(frame) => Some(frame),
                 wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
                     self.gpu.needs_configure = true;
@@ -234,7 +292,13 @@ impl<A: App> State<A> {
         let mut raw = self.input.take_egui_input(&self.gpu.window);
         raw.viewports
             .insert(egui::ViewportId::ROOT, self.viewport.clone());
+        if let Some(timing) = &mut timing {
+            timing.ui_start = Some(Instant::now());
+        }
         let mut output = context.run_ui(raw, |ui| self.app.ui(ui));
+        if let Some(timing) = &mut timing {
+            timing.ui_end = Some(Instant::now());
+        }
         self.input.handle_platform_output_with_event_loop(
             &self.gpu.window,
             event_loop,
@@ -249,6 +313,9 @@ impl<A: App> State<A> {
             }
         }
         if let Some(frame) = frame {
+            if let Some(timing) = &mut timing {
+                timing.encode_start = Some(Instant::now());
+            }
             let screen = egui_wgpu::ScreenDescriptor {
                 size_in_pixels: [self.gpu.config.width, self.gpu.config.height],
                 pixels_per_point: output.pixels_per_point,
@@ -280,13 +347,27 @@ impl<A: App> State<A> {
                     .renderer
                     .render(&mut pass.forget_lifetime(), &jobs, &screen);
             }
-            self.app.submission_gate().submit(
-                &self.gpu.queue,
-                commands.into_iter().chain([encoder.finish()]),
-            );
+            let commands = commands.into_iter().chain([encoder.finish()]);
+            if let (Some(trace), Some(timing)) = (&mut self.gpu.trace, &mut timing) {
+                trace.submitting(timing);
+                self.app.submission_gate().submit_with_completion(
+                    &self.gpu.queue,
+                    commands,
+                    trace.completion(timing),
+                );
+                timing.submit_end = Some(Instant::now());
+            } else {
+                self.app.submission_gate().submit(&self.gpu.queue, commands);
+            }
             self.gpu.window.pre_present_notify();
             self.gpu.queue.present(frame);
+            if let Some(timing) = &mut timing {
+                timing.present_end = Some(Instant::now());
+            }
             self.gpu.presented += 1;
+        }
+        if let (Some(trace), Some(timing)) = (&mut self.gpu.trace, timing) {
+            trace.finish(timing, self.app.processing_revision(), &self.gpu.device);
         }
         for id in output.textures_delta.free.drain() {
             self.gpu.renderer.free_texture(&id);
@@ -348,6 +429,7 @@ struct Gpu {
     renderer: egui_wgpu::Renderer,
     needs_configure: bool,
     presented: u64,
+    trace: Option<Trace>,
 }
 
 impl Gpu {
@@ -394,6 +476,7 @@ impl Gpu {
             renderer,
             needs_configure: true,
             presented: 0,
+            trace: Trace::from_env(),
         };
         // No application or background submitters exist during initial configuration.
         gpu.configure(&SubmissionGate::default())?;
@@ -405,7 +488,21 @@ impl Gpu {
         Ok(gpu)
     }
 
+    fn drain_trace(&self) -> Result<()> {
+        if let Some(trace) = &self.trace {
+            if trace.pending() {
+                self.device.poll(wgpu::PollType::Wait {
+                    submission_index: None,
+                    timeout: Some(Duration::from_secs(10)),
+                })?;
+            }
+            trace.summary();
+        }
+        Ok(())
+    }
+
     fn configure(&mut self, submissions: &SubmissionGate) -> Result<()> {
+        let trace_start = self.trace.as_ref().map(|_| Instant::now());
         if !self
             .surface
             .get_capabilities(&self.adapter)
@@ -431,6 +528,9 @@ impl Gpu {
         submissions.configure(|| self.surface.configure(&self.device, &self.config));
         macos::configure_sdr(&self.surface)?;
         self.needs_configure = false;
+        if let (Some(trace), Some(start)) = (&self.trace, trace_start) {
+            trace.configured(start, self.config.width, self.config.height);
+        }
         Ok(())
     }
 }

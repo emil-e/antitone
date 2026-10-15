@@ -450,7 +450,7 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
         }
         assert_eq!(calibration, editor.calibration().unwrap());
         assert_eq!(roll, editor.roll);
-        assert_eq!(photo, editor.photo);
+        assert_eq!(photo.global(), editor.photo);
         assert_eq!(composition.crop(), editor.crop.unwrap());
         assert!(matches!(policy, Overwrite::Confirmed));
         assert_eq!(editor.document.project, before);
@@ -481,6 +481,7 @@ fn fixture() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
                 },
                 reference_only: false,
                 photo: PhotoSettings::default(),
+                local_adjustments: None,
                 orientation: Default::default(),
                 crop: None,
             },
@@ -577,6 +578,12 @@ fn failed_and_stale_document_results_preserve_state_and_active_request() {
         .unwrap();
     editor.receive();
     assert_eq!(editor.document_pending, Some(id));
+    assert_eq!(
+        editor
+            .source_epoch
+            .load(std::sync::atomic::Ordering::Relaxed),
+        id
+    );
     assert!(editor.busy);
     assert_eq!(editor.document.project, before);
     send.send(Message::Prepared(id, Err("changed RAW".into())))
@@ -585,6 +592,12 @@ fn failed_and_stale_document_results_preserve_state_and_active_request() {
     assert!(!editor.busy);
     assert_eq!(editor.document.project, before);
     assert_eq!(editor.id, active);
+    assert_eq!(
+        editor
+            .source_epoch
+            .load(std::sync::atomic::Ordering::Relaxed),
+        active
+    );
     assert_eq!(editor.photo.exposure, 7.123456789012345);
     assert!(editor.document.dirty());
 }
@@ -606,6 +619,12 @@ fn save_failure_preserves_dirty_state_and_does_not_continue_transition() {
     assert!(editor.document.dirty());
     assert_eq!(editor.transition, Some(Transition::New));
     assert!(editor.resume_transition.is_none());
+    assert_eq!(
+        editor
+            .source_epoch
+            .load(std::sync::atomic::Ordering::Relaxed),
+        editor.id
+    );
     assert!(receiver.try_recv().is_err());
 }
 #[test]

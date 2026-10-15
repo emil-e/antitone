@@ -319,8 +319,8 @@ fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
         assert_eq!(harness.state().pick, Some(Pick::Flat));
         assert!(harness.state().flat_edit.is_some());
         wait_for(&mut harness, |e| {
-            assert!(e.refinement_error.is_none(), "{}", e.status);
-            e.settled.is_some()
+            assert!(e.original.refinement_error.is_none(), "{}", e.status);
+            e.original.settled.is_some()
         });
         let geometry = harness.state().last_layout.unwrap().0;
         let support = harness.state().region.expect("proposed support");

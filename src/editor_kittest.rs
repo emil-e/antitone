@@ -928,20 +928,18 @@ fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
             assert_eq!(harness.state().document.project, project);
             assert_eq!(harness.state().current_source, source);
             assert!(harness.state().preference_store.is_none());
-            wait_for(&mut harness, |e| {
-                assert!(e.refinement_error.is_none(), "{}", e.status);
-                e.settled.is_some()
-            });
+            workflow::wait_settled(&mut harness);
             harness.render().unwrap();
             wait_for(&mut harness, |e| {
                 let gpu = e.scopes.gpu.as_ref().expect("scope GPU resources");
-                let (image, parameters, frame) = e.scope_input().unwrap();
+                let input = e.scope_request().unwrap();
+                let frame = input.frame();
                 let settings = crate::scopes::Settings {
                     target: e.target,
                     plot: crate::scopes::Plot::Vector,
                     amplification: 1,
                 };
-                let Some(counts) = gpu.status(&image, parameters, frame, settings) else {
+                let Some(counts) = input.status(gpu, settings) else {
                     return false;
                 };
                 let counts = counts.expect("scope diagnostics");

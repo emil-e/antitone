@@ -171,10 +171,12 @@ fn paint_pixels(
 }
 
 #[test]
-fn grading_edits_keep_a_trace_but_other_sources_and_graticules_do_not() {
+fn grading_and_viewport_edits_keep_a_trace_but_other_sources_and_graticules_do_not() {
     #[derive(Clone, Copy)]
     enum Change {
         Grade,
+        Viewport,
+        Sampling,
         Target,
         Plot,
         Amplification,
@@ -193,6 +195,8 @@ fn grading_edits_keep_a_trace_but_other_sources_and_graticules_do_not() {
         let mut resources = egui_wgpu::CallbackResources::default();
         for change in [
             Change::Grade,
+            Change::Viewport,
+            Change::Sampling,
             Change::Target,
             Change::Plot,
             Change::Amplification,
@@ -235,6 +239,16 @@ fn grading_edits_keep_a_trace_but_other_sources_and_graticules_do_not() {
             let mut requested_frame = full_frame([7, 3]);
             match change {
                 Change::Grade => {}
+                Change::Viewport => {
+                    requested_frame = FrameRaster::new(
+                        requested_frame.composition,
+                        antitone::geometry::FramePoint([2., 1.]),
+                        antitone::geometry::FramePoint([5., 3.]),
+                        [3, 2],
+                    )
+                    .unwrap();
+                }
+                Change::Sampling => requested_frame.output = [3, 2],
                 Change::Target => requested_settings.target = OutputTarget::Srgb,
                 Change::Plot => requested_settings.plot = Plot::Rgb,
                 Change::Amplification => requested_settings.amplification = 8,
@@ -271,7 +285,11 @@ fn grading_edits_keep_a_trace_but_other_sources_and_graticules_do_not() {
                 }
                 Change::Suspend => gpu.invalidate(),
             }
-            let latest_parameters = ProcessingParameters::source_inspection(0.2).unwrap();
+            let latest_parameters = if matches!(change, Change::Grade) {
+                ProcessingParameters::source_inspection(0.2).unwrap()
+            } else {
+                parameters
+            };
             let latest = ScopePaint::new(
                 gpu.clone(),
                 requested_image.clone(),
@@ -305,10 +323,20 @@ fn grading_edits_keep_a_trace_but_other_sources_and_graticules_do_not() {
                     &resources,
                 );
             });
-            if matches!(change, Change::Grade) {
+            if matches!(change, Change::Grade | Change::Viewport | Change::Sampling) {
                 assert!(
                     pixels.iter().any(|rgb| rgb[..3].iter().all(|&v| v > 0.9)),
-                    "grading must not blank the held trace"
+                    "grading/navigation must not blank the held trace"
+                );
+                assert!(
+                    gpu.status(
+                        &image,
+                        latest_parameters,
+                        requested_frame,
+                        requested_settings
+                    )
+                    .is_none(),
+                    "old completion must not become the latest grade/region"
                 );
                 let mut encoder = device.create_command_encoder(&Default::default());
                 latest.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
@@ -316,11 +344,16 @@ fn grading_edits_keep_a_trace_but_other_sources_and_graticules_do_not() {
                 device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
                 assert_eq!(gpu.reduction_count(), 2);
                 assert_eq!(
-                    gpu.status(&image, latest_parameters, full_frame([7, 3]), settings)
-                        .unwrap()
-                        .unwrap()
-                        .valid,
-                    21
+                    gpu.status(
+                        &image,
+                        latest_parameters,
+                        requested_frame,
+                        requested_settings
+                    )
+                    .unwrap()
+                    .unwrap()
+                    .valid,
+                    requested_frame.output[0] * requested_frame.output[1]
                 );
             } else {
                 assert!(

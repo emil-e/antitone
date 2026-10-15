@@ -121,7 +121,7 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
             compilation_options: Default::default(),
             cache: None,
         });
-        let kernel = ProcessingKernel::new(&device).await.unwrap();
+        let kernel = ProcessingKernel::new(&device, &queue).await.unwrap();
         for (area, size) in [
             ([12, 12, 8640, 5760], [257, 173]),
             ([4000, 2600, 64, 32], [64, 32]),
@@ -154,6 +154,7 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                     .is_err()
             );
             assert!(source.flat_field.is_some());
+            assert_eq!(source.geometry, Some(geometry));
             for value in [2. * f32::MIN_POSITIVE as f64, f32::MAX as f64] {
                 let unsupported = Arc::new(
                     FlatField::from_nodes(field.area(), [2, 2], vec![DVec3::splat(value); 4])
@@ -161,7 +162,8 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                 );
                 let unsupported = Arc::new(GpuFlatField::new(&device, unsupported).unwrap());
                 assert!(source.set_flat_field(Some(unsupported), geometry).is_err());
-                assert!(Arc::ptr_eq(&source.flat_field.as_ref().unwrap().0, &gpu));
+                assert!(Arc::ptr_eq(source.flat_field.as_ref().unwrap(), &gpu));
+                assert_eq!(source.geometry, Some(geometry));
             }
             let tiny = Arc::new(
                 FlatField::from_nodes(

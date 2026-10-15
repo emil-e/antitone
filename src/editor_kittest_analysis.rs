@@ -73,19 +73,13 @@ fn settled_targets(harness: &mut Harness<'_, Editor>, case: &str) {
         } else {
             crate::project::TiffTarget::DisplayP3
         };
-        wait_for(harness, |editor| {
-            assert!(editor.refinement_error.is_none(), "{}", editor.status);
-            editor
-                .signature
-                .as_ref()
-                .is_some_and(|signature| signature.1 == target)
-                && editor.settled.as_ref().is_some_and(|(revision, _, _)| {
-                    *revision == editor.generation.load(std::sync::atomic::Ordering::Relaxed)
-                })
-        });
-        let (_, view, image) = harness.state().settled.as_ref().unwrap();
-        assert_eq!([image.linear.width(), image.linear.height()], view.output);
-        assert!(view.output.into_iter().all(|size| size > 0));
+        super::workflow::wait_settled(harness);
+        let view = harness.state().working.displayed.as_ref().unwrap();
+        assert_eq!(
+            [view.image.linear.width(), view.image.linear.height()],
+            view.spec.frame.output
+        );
+        assert!(view.spec.frame.output.into_iter().all(|size| size > 0));
         assert!(!harness.state().source);
         let timing = Arc::new(SelectionTiming::new(harness.state().id, Instant::now()));
         harness.state_mut().selection_timing = Some(timing.clone());

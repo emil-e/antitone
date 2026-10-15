@@ -34,6 +34,7 @@ fn add_source(editor: &mut Editor, path: PathBuf) -> SourceId {
                 },
                 reference_only: false,
                 photo: PhotoSettings::default(),
+                local_adjustments: None,
                 orientation: Default::default(),
                 crop: None,
             },
@@ -183,7 +184,12 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                         )
                         .unwrap()
                 };
-                let image = editor.selected_view().unwrap().1;
+                let image = editor
+                    .selected_view()
+                    .unwrap()
+                    .1
+                    .image(editor.target)
+                    .unwrap();
                 let mut encoder = device.create_command_encoder(&Default::default());
                 assert!(!image.prepare(&device, &mut encoder, expected));
                 assert!(
@@ -221,7 +227,12 @@ fn cached_selected_images_do_not_alias_filmstrip_processing() {
             .await
             .unwrap();
         editor.load(path);
-        let selected = editor.selected_view().unwrap().1;
+        let selected = editor
+            .selected_view()
+            .unwrap()
+            .1
+            .image(editor.target)
+            .unwrap();
         assert!(!Arc::ptr_eq(&image, &selected));
         let mut encoder = device.create_command_encoder(&Default::default());
         let source = editor.source_parameters(2.).unwrap();
@@ -337,15 +348,14 @@ fn correction_is_preview_owned_and_change_invalidates_only_pending_display() {
         editor.correction = Correction::prepare(&device, &editor.document, None).unwrap();
         let before = editor.document.project.clone();
         editor.load(path);
-        assert!(
-            editor
-                .pending_preview
-                .as_ref()
-                .unwrap()
-                .images
-                .iter()
-                .all(|image| image.source_revision() == 1)
-        );
+        let proxy = &editor.pending_preview.as_ref().unwrap().proxy;
+        for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
+            assert_eq!(
+                proxy.image(target).unwrap().source_revision(),
+                0,
+                "correction belongs to the immutable initial source, not a later write"
+            );
+        }
         assert_eq!(editor.document.project, before);
         editor.correction = None;
         editor.validate_pending_preview();
@@ -380,7 +390,7 @@ fn authoritative_ready_replaces_pending_and_active_proxy_survives_optional_press
             area: editor.pending_preview.as_ref().unwrap().area(),
             analysis_support: None,
             floor: editor.floor,
-            images: editor.pending_preview.as_ref().unwrap().images.clone(),
+            proxy: editor.pending_preview.as_ref().unwrap().proxy.clone(),
             record: editor.document.project.source(id).unwrap().clone(),
             development: editor.document.project.development.clone().unwrap(),
         };
@@ -391,7 +401,217 @@ fn authoritative_ready_replaces_pending_and_active_proxy_survives_optional_press
         assert!(editor.ready.is_some() && editor.pending_preview.is_none() && !editor.busy);
         assert!(!editor.selected_view().unwrap().2);
         editor.source = false;
+        assert_eq!(editor.scope_input().err(), Some("Waiting for view"));
+        editor.last_layout = Some((
+            editor.viewport.layout(
+                egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.)),
+                editor.ready.as_ref().unwrap().area,
+                1.,
+            ),
+            1.,
+        ));
         assert!(editor.scope_input().is_ok());
+    });
+}
+
+#[test]
+fn local_snapshots_reach_pending_previews_and_cached_thumbnails_without_rebuilding_sources() {
+    use crate::{
+        geometry::SourcePoint,
+        local_adjustments::{GradientMask, LocalAdjustment},
+        project::LocalAdjustments,
+    };
+    pollster::block_on(async {
+        let (device, queue) = gpu().await;
+        let directory = tempfile::tempdir().unwrap();
+        let (mut editor, _, commands) = super::super::tests::fixture();
+        let renderers = Arc::new(crate::renderer::RendererCache::default());
+        editor.thumbnails =
+            Thumbnails::with_disk(device.clone(), queue.clone(), renderers.clone(), None);
+        editor.grades = Grades::new(device.clone());
+        let path = directory.path().join("local.ARW");
+        let id = add_source(&mut editor, path.clone());
+        let source_key = SourceKey::new(
+            editor.document.project.source(id).unwrap(),
+            editor.document.project.development.as_ref().unwrap(),
+            FileKey::new(&path),
+        );
+        let retained = editor
+            .thumbnails
+            .sources
+            .get_proxy(&source_key.store_key_at(&path).unwrap())
+            .unwrap();
+        let mut locals = LocalAdjustments::default();
+        locals
+            .add(
+                "Linear".into(),
+                LocalAdjustment {
+                    mask: GradientMask::Linear {
+                        start: SourcePoint([12., 7.]),
+                        end: SourcePoint([876., 583.]),
+                    },
+                    photo: PhotoSettings {
+                        exposure: 1.,
+                        ..Default::default()
+                    },
+                    enabled: true,
+                    invert: false,
+                    strength: 0.7,
+                },
+            )
+            .unwrap();
+        editor
+            .document
+            .project
+            .source_mut(id)
+            .unwrap()
+            .local_adjustments = Some(locals);
+        editor.load(path.clone());
+        assert!(matches!(commands.try_recv().unwrap(), Command::Load(..)));
+        assert!(editor.pending_preview.is_some() && editor.busy && editor.ready.is_none());
+        let captured = editor
+            .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+            .unwrap();
+        let context = egui::Context::default();
+        let mut renderer = egui_wgpu::Renderer::new(
+            &device,
+            wgpu::TextureFormat::Rgba16Float,
+            Default::default(),
+        );
+        for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
+            editor.target = target;
+            let source = editor.document.project.source(id).unwrap();
+            let thumbnail = retained
+                .image(
+                    &renderers.get(&device, &queue).unwrap(),
+                    &device,
+                    target,
+                    &source.development,
+                    None,
+                )
+                .await
+                .unwrap();
+            let key = ImageKey {
+                source: source_key.clone(),
+                target,
+                field: None,
+            };
+            editor
+                .thumbnails
+                .cache
+                .insert(key.clone(), Ok(thumbnail.clone()));
+            let selected = editor
+                .selected_view()
+                .unwrap()
+                .1
+                .image(editor.target)
+                .unwrap();
+            assert!(!Arc::ptr_eq(&selected, &thumbnail));
+            let source_revision = selected.source_revision();
+            let thumbnail_revision = thumbnail.source_revision();
+            for source_mode in [false, true] {
+                editor.source = source_mode;
+                editor.source_exposure = 2.;
+                draw(
+                    &device,
+                    &queue,
+                    &context,
+                    &mut renderer,
+                    frame(&mut editor, &context),
+                );
+                let positive = editor
+                    .thumbnail_parameters(editor.document.project.source(id).unwrap())
+                    .unwrap();
+                assert_eq!(positive.signature(), captured.signature());
+                let expected = if source_mode {
+                    editor.source_parameters(2.).unwrap().into()
+                } else {
+                    positive.clone()
+                };
+                let mut encoder = device.create_command_encoder(&Default::default());
+                assert!(
+                    !selected
+                        .prepare_processing(&device, &mut encoder, &expected)
+                        .unwrap(),
+                    "selected callback must use the full current input"
+                );
+                assert!(
+                    !thumbnail
+                        .prepare_processing(&device, &mut encoder, &positive)
+                        .unwrap(),
+                    "filmstrip callback must apply locals independently of source inspection"
+                );
+                queue.submit([encoder.finish()]);
+                assert!(
+                    commands.try_recv().is_err(),
+                    "cached preview must not schedule full-source work"
+                );
+            }
+            editor.source = false;
+            editor
+                .document
+                .project
+                .source_mut(id)
+                .unwrap()
+                .local_adjustments
+                .as_mut()
+                .unwrap()
+                .adjustments[0]
+                .adjustment
+                .invert = true;
+            draw(
+                &device,
+                &queue,
+                &context,
+                &mut renderer,
+                frame(&mut editor, &context),
+            );
+            let edited = editor
+                .thumbnail_parameters(editor.document.project.source(id).unwrap())
+                .unwrap();
+            assert_ne!(edited.signature(), captured.signature());
+            let mut encoder = device.create_command_encoder(&Default::default());
+            assert!(
+                !selected
+                    .prepare_processing(&device, &mut encoder, &edited)
+                    .unwrap()
+            );
+            assert!(
+                !thumbnail
+                    .prepare_processing(&device, &mut encoder, &edited)
+                    .unwrap()
+            );
+            queue.submit([encoder.finish()]);
+            assert_eq!(selected.source_revision(), source_revision);
+            assert_eq!(thumbnail.source_revision(), thumbnail_revision);
+            assert!(Arc::ptr_eq(
+                editor.thumbnails.cache.get(&key).unwrap().as_ref().unwrap(),
+                &thumbnail
+            ));
+            assert!(Arc::ptr_eq(
+                &editor
+                    .thumbnails
+                    .sources
+                    .get_proxy(&source_key.store_key_at(&path).unwrap())
+                    .unwrap(),
+                &retained
+            ));
+            editor
+                .document
+                .project
+                .source_mut(id)
+                .unwrap()
+                .local_adjustments
+                .as_mut()
+                .unwrap()
+                .adjustments[0]
+                .adjustment
+                .invert = false;
+        }
+        assert!(
+            editor.document.validate().is_err(),
+            "normal Open/Save remains guarded"
+        );
     });
 }
 

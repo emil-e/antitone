@@ -45,7 +45,7 @@ Little CMS is built statically through Cargo; `LCMS2_LIB_DIR` is not a supported
 
 ## Repeated editor switching and busy input
 
-[`editor_switching_observation.rs`](../native/editor_switching_observation.rs) exercises production source-card input, backend/thumbnail workers and offscreen GPU callbacks. It keeps two 8704×6144 sources (`DSC04378.ARW`, `DSC04393.ARW`; WB header `DSC04397.ARW`) under 1100 MiB CPU/16 MiB GPU optional limits, with fresh temporary thumbnails. Two rapid pending replacements precede 17 settled selections. Native/backend workers drain before observation ends. It does not launch a window, edit samples or persist preferences.
+[`editor_switching_observation.rs`](../native/editor_switching_observation.rs) exercises production source-card input, backend/thumbnail workers and offscreen GPU callbacks. It keeps two 8704×6144 sources (`DSC04378.ARW`, `DSC04393.ARW`; WB header `DSC04397.ARW`) under 1100 MiB CPU/16 MiB GPU optional limits, with fresh temporary thumbnails. Two rapid pending replacements precede 17 accepted physical views. Native/backend workers drain before observation ends. It does not launch a window, edit samples or persist preferences.
 
 ```sh
 ANTITONE_SWITCH_SAMPLES=/absolute/path/to/samples \
@@ -56,7 +56,7 @@ ANTITONE_SWITCH_SAMPLES=/absolute/path/to/samples \
 
 Use only within agreed workload bounds. The [measurement helper](../native/cache_observation.rs) rejects sources over 600 MiB logical RGB16/CFA storage and starts only at known Normal pressure with at least 2 GiB reported non-speculative free memory. Its sampler latches unknown/elevated pressure, changed reported swap counters, stale sampling or 2 GiB footprint growth. Native calls are noninterruptible: stop thresholds are not hard allocation caps. Cached Mach counters cannot certify quiet swapping, and sampled peaks are not exact maxima. These measurements do not grant cache admission permission; [fixed preferences](editor.md#responsiveness-and-optional-caches) govern optional ownership.
 
-A bounded M5 Pro/macOS 26.6.2 snapshot with demand-only support accepted pending replacements, developed exactly two sources and reused them on all 16 subsequent selections. Warm preparation median was 3.8 ms and Ready delivery 14.4 ms, versus 163/168 ms with eager full-image support. Optional ownership stayed stable. Full-resolution GPU refinement still took about 2–3 s: native reuse does not cache the complete processed view. These offscreen/single-pass measurements do not establish physical display latency, default-budget whole-roll residency or broader pressure/hardware acceptance.
+The exercise observes native development counts, Ready delivery and accepted physical-view readiness separately, including source replacement while loading. A retained native hit does not imply cached physical AP1 or original comparison output. It uses the production working-view lifecycle and does not wait for hidden original refinement. Offscreen/single-pass measurements do not establish physical display latency, default-budget whole-roll residency or broader pressure/hardware acceptance.
 
 ## Runtime and acceptance limits
 

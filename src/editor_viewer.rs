@@ -65,7 +65,15 @@ impl Editor {
                 ui.spacing_mut().item_spacing.x = VIEWER_ITEM_GAP;
                 icons::row(ui, |ui| {
                     let target = if self.target == OutputTarget::DisplayP3 { "Display P3" } else { "sRGB" };
-                    let quality = if self.pending_preview.is_some() { " · Cached preview" } else if self.source || self.ready.is_none() { "" } else if self.refining.is_some() { " · Refining" } else if self.settled.is_none() { " · Approximate" } else { "" };
+                    let quality = if self.pending_preview.is_some() { " · Cached preview" } else if self.source || self.ready.is_none() { "" }
+                        else if self.working.enabled() && tool.is_none() {
+                            if self.working.error.is_some() { " · View unavailable" }
+                            else if self.working.compare && self.working.reference_ready() { " · Original reference" }
+                            else if self.working.compare { " · Preparing reference" }
+                            else if self.working.updating { " · Updating view" }
+                            else if self.working.displayed.is_some() { " · Working view" }
+                            else { " · Acquiring view" }
+                        } else if self.original.refining.is_some() { " · Refining" } else if self.original.settled.is_none() { " · Approximate" } else { "" };
                     let state = format!("{target}{quality}");
                     let trailing_width = presentation::CONTROL_HEIGHT + VIEWER_ITEM_GAP + if let Some(group) = tool_group {
                         group.width(ui)
@@ -95,6 +103,11 @@ impl Editor {
                             icons::toggle(ui, Icon::Source, &mut self.source, "View source", if calibrated { "Switch between the positive grade and developed source." } else { "Measure Dmin and Dmax before viewing a positive grade." });
                         });
                     }
+                    if !self.source && tool.is_none() && self.working.enabled() {
+                        ui.add_enabled_ui(inspecting, |ui| {
+                            icons::toggle(ui, Icon::Inspection, &mut self.working.compare, "Original-resolution reference", "Switch in place between the working view and original-sample GPU reference. While the current reference prepares, controls continue to show the working view. Export is unchanged.");
+                        });
+                    }
                     let inspection_id = ui.make_persistent_id("source-inspection-popup");
                     if self.source {
                         let exposure = format!("Source {:+.2} EV", self.source_exposure);
@@ -119,6 +132,7 @@ impl Editor {
                     } else {
                         egui::Popup::close_id(ui.ctx(), inspection_id);
                     }
+                    if let Some(error) = &self.working.error { ui.colored_label(egui::Color32::LIGHT_RED, "View unavailable").on_hover_text(error); }
                     let help = icons::button(ui, Icon::Help, true, "Viewer help", "Navigation and active-tool shortcuts.");
                     egui::Popup::from_toggle_button_response(&help)
                         .layout(egui::Layout::top_down(egui::Align::Min))

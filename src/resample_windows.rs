@@ -1,0 +1,85 @@
+//! Conservative affine support and bounded submission windows; neither changes sampling quality.
+pub(crate) type Window = ([u32; 2], [u32; 2]);
+pub(crate) fn affine_output(
+    affine: [[f32; 2]; 3],
+    output: [u32; 2],
+    origin: [u32; 2],
+    tile: [u32; 2],
+) -> Window {
+    let [start, dx, dy] = affine.map(|v| v.map(f64::from));
+    let det = dx[0] * dy[1] - dx[1] * dy[0];
+    debug_assert!(det.is_finite() && det != 0.);
+    let points = [
+        [origin[0], origin[1]],
+        [origin[0] + tile[0], origin[1]],
+        [origin[0], origin[1] + tile[1]],
+        [origin[0] + tile[0], origin[1] + tile[1]],
+    ]
+    .map(|p| {
+        let p = [f64::from(p[0]) - start[0], f64::from(p[1]) - start[1]];
+        [
+            (p[0] * dy[1] - p[1] * dy[0]) / det,
+            (dx[0] * p[1] - dx[1] * p[0]) / det,
+        ]
+    });
+    let lo: [u32; 2] = std::array::from_fn(|c| {
+        (points
+            .iter()
+            .map(|p| p[c])
+            .fold(f64::INFINITY, f64::min)
+            .floor()
+            .max(0.) as u32)
+            .saturating_sub(1)
+    });
+    let hi: [u32; 2] = std::array::from_fn(|c| {
+        ((points
+            .iter()
+            .map(|p| p[c])
+            .fold(f64::NEG_INFINITY, f64::max)
+            .ceil()
+            + 1.)
+            .max(0.) as u32)
+            .min(output[c])
+    });
+    (
+        lo,
+        [hi[0].saturating_sub(lo[0]), hi[1].saturating_sub(lo[1])],
+    )
+}
+pub(crate) fn bounded((origin, extent): Window) -> Vec<Window> {
+    let mut result = Vec::new();
+    for y in (0..extent[1]).step_by(128) {
+        for x in (0..extent[0]).step_by(512) {
+            result.push((
+                [origin[0] + x, origin[1] + y],
+                [512.min(extent[0] - x), 128.min(extent[1] - y)],
+            ));
+        }
+    }
+    result
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn magnified_support_is_bounded_without_changing_coverage_or_resolution() {
+        let output = [5120, 2880];
+        let full = affine_output(
+            [[0., 0.], [0.001, 0.], [0., 0.001]],
+            output,
+            [0, 0],
+            [512, 128],
+        );
+        assert_eq!(full, ([0, 0], output));
+        let windows = bounded(full);
+        assert!(windows.len() > 1);
+        assert!(windows.iter().all(|(_, n)| n[0] <= 512 && n[1] <= 128));
+        assert_eq!(
+            windows
+                .iter()
+                .map(|(_, n)| u64::from(n[0]) * u64::from(n[1]))
+                .sum::<u64>(),
+            u64::from(output[0]) * u64::from(output[1])
+        );
+    }
+}

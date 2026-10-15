@@ -64,6 +64,7 @@ fn film_exports_reopen_with_actual_response_and_unchanged_target_and_ap0_pixels(
         assert!(description.contains("shoulder=0.003210987654321"));
         assert!(description.contains("signed-root"));
         assert!(description.contains(antitone::photographic::CONTRACT));
+        assert!(!description.contains(antitone::local_adjustments::CONTRACT));
         let expected: Vec<_> = target
             .encode_u16(&CpuRenderer::new(target).unwrap().render(&working).unwrap())
             .unwrap()
@@ -109,6 +110,7 @@ fn film_exports_reopen_with_actual_response_and_unchanged_target_and_ap0_pixels(
             antitone::photographic::CONTRACT
         )))
     );
+    assert!(!attrs.contains_key(&Text::from("antitoneLocalAdjustmentProcessing")));
     for channel in &image.layer_data.channel_data.list {
         let c = match channel.name.to_string().as_str() {
             "R" => 0,

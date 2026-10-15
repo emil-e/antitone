@@ -25,9 +25,12 @@ fn field_lerp(a: Triple, b: Triple, t: Triple) -> Triple {
     let one_minus = round53(add(Triple(1.0, 0.0, 0.0), negate(t)));
     return round53(add(round53(multiply(a, one_minus)), round53(multiply(b, t))));
 }
-fn field_gains(index: u32) -> array<Triple, 3> {
+fn source_pixel(index: u32) -> vec2u {
     let xy = vec2u(index % field.dimensions.x, index / field.dimensions.x);
-    let source = field.area.xy + ((2u * xy + vec2u(1u)) * field.area.zw) / (2u * field.dimensions.xy);
+    return field.area.xy + ((2u * xy + vec2u(1u)) * field.area.zw) / (2u * field.dimensions.xy);
+}
+fn field_gains(index: u32) -> array<Triple, 3> {
+    let source = source_pixel(index);
     let identity = Triple(1.0, 0.0, 0.0);
     if any(source < field.support.xy) || any(source >= field.support.xy + field.support.zw) {
         return array<Triple, 3>(identity, identity, identity);

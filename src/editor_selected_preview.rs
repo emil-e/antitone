@@ -91,20 +91,12 @@ impl Editor {
             self.pending_preview = None;
         }
     }
-    pub(super) fn selected_view(&self) -> Option<(Rect, Arc<GpuImage>, bool)> {
+    pub(super) fn selected_view(&self) -> Option<(Rect, crate::viewer::GpuProxy, bool)> {
         if let Some(ready) = &self.ready {
-            return Some((
-                ready.area,
-                ready.images[self.target as usize].clone(),
-                false,
-            ));
+            return Some((ready.area, ready.proxy.clone(), false));
         }
-        self.pending_preview.as_ref().map(|preview| {
-            (
-                preview.area(),
-                preview.images[self.target as usize].clone(),
-                true,
-            )
-        })
+        self.pending_preview
+            .as_ref()
+            .map(|preview| (preview.area(), preview.proxy.clone(), true))
     }
 }

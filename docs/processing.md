@@ -11,6 +11,7 @@ developed camera RGB
   → camera-to-AP1 colour conversion
   → exposure and photographic white balance
   → Photo contrast and saturation
+  → ordered source-anchored local grades, when present
   → working positive, ready for rendering or EXR
 ```
 
@@ -74,6 +75,34 @@ Saturation blends between preserving AP1 luminance and anchoring the largest RGB
 
 See the [grading rationale](decisions/photographic-grading.md) for why these operators support signed working data.
 
+### Local grades change controls, not rendered pixels
+
+A linear or radial gradient determines how much of a local photographic adjustment reaches each original source pixel. Global Roll/Photo grading runs first; ordered locals then apply exposure, Bradford WB, contrast and saturation in AP1 before rendering or geometric averaging. Their order matters across nonlinear stages. Locals do not change inversion, calibration, gamma balance, correction or the output target.
+
+Coverage, inversion and strength produce a weight between zero and one. Exposure and WB amounts scale by that weight; contrast and saturation interpolate their amounts toward identity. Thus half coverage of +1 EV means +0.5 EV—not a halfway blend of two output pixels. Pivot and the secondary colour/density controls remain stage settings. Empty, disabled, identity and zero-coverage stages bypass exactly, preserving signed/HDR values and camera-floor flags.
+
+Masks are analytic cubic-smoothstep gradients, not retained mask rasters. Linear endpoints define zero/full boundaries; radial centre, radii and angle define an ellipse with a feathered boundary. [Geometry](geometry.md#source-anchored-local-masks) explains why composition and navigation must not move them.
+
+The scalar spatial pipeline and GPU grades consume immutable snapshots. Full-stack preflight propagates continuous-weight intermediate bounds forward and observable-signal sensitivity backward, rejecting both overflow and unsupported attenuation/re-amplification. The next stage receives the proven output envelope, not a scratch peak. Compensated constants/temporaries preserve inversion and photographic precision; ordinary f32 AP1 is not an exact reusable prefix. These conservative checks can reject modest stacks and passing fixtures are not universal supported-domain proof.
+
+Library processing, persistence and export paths are connected, but the normal editor still rejects nonempty local collections, including inactive records. [Admission, controls, tools and remaining acceptance](plans/local-adjustments.md) are unfinished; scalar feather endpoints are not approved UI defaults.
+
+### Compact storage can reuse expensive computation
+
+The retained source preserves the developed RGB16 codes. For uncorrected positive processing, the GPU evaluates all integer codes exactly into a bounded response table, then looks up channel values before unchanged matrix/photographic processing. There is no interpolation or code quantization. Its key covers native response constants and combined Roll/Photo exposure; WB, camera matrix, local stages, source geometry and output target remain downstream. A continuous flat-field-corrected sample still uses precise direct inversion, and inspection bypasses the table and photographic grades.
+
+This is one kernel-owned 2.5-MiB table, not an image-sized source cache. Queue-ordered initialization and immutable publication keep abandoned/reordered encoders and concurrent workers safe; in-flight commands can retain evicted versions. Physical-view AP1 reuse has separate view-scoped ownership and keys. [Diagnostics](diagnostics.md#local-processing-and-reuse) distinguish exact original processing from interactive view processing.
+
+### Physical-view processing is an approximation
+
+Ordinary source inspection also retains filtered linear AP1, but acquires corrected camera light without inversion. Only its display convention and transient inspection EV apply downstream, before pinned ACES; no calibration or photographic-grade object is required. Source/positive mode and correction are acquisition identity, whereas inspection EV and target reuse the source. Precision tools and original-sample processing remain separate.
+
+The positive editor prototype factors exposure and photographic WB downstream of neutral inversion/camera AP1. Original camera samples still receive continuous correction and calibrated inversion before exact affine-footprint filtering into signed/HDR f32 AP1. Fixed-view grading then reuses that filtered input rather than processing the whole original again. Target-only changes can reuse graded AP1. Coarse whole-composition navigation support is independently filtered from the same originals into neutral AP1. Its accepted grade/target must match regional detail before their target-linear rasters are composed; composition adds neither another photographic grade nor another ACES transform. Available detail is not replaced by the coarse raster.
+
+Filtering before nonlinear grading does **not** commute with original-sample grading before reconstruction. Nor do footprint-centre local masks equal the original-sample mask integral. These are preview approximations, not changes to the photographic model or original-resolution reference/export authority. The appearance requirement is the same photograph in the file, potentially with better-resolved detail—not changed exposure, colour, tone or local effects.
+
+Stable f32 colour uses black-relative/linear-toe formulas, analytic divided differences and targeted compensated luminance accumulation. It does not replace precise source geometry/acquisition, add a working clamp, or remove whole-stack preflight. Identical-filtered-input arithmetic tests retain the existing gates; they do not establish preview/export photographic agreement or all-device precision. [Editor ownership](editor.md#a-stable-working-view-while-grading), [diagnostics](diagnostics.md#stable-float32-view-grading) and [unfinished acceptance](plans/view-working-set.md) keep those distinctions explicit. Nonempty local collections remain rejected by the normal editor.
+
 ## Important boundaries
 
 The current model is **4**. Calibration must be finite and satisfy `Dmin > Dmax >= input_floor > 0` per camera channel. A roll retains its camera model and matrix; incompatible native-camera bases cannot share its calibration.
@@ -87,5 +116,6 @@ Unsupported domains fail validation rather than being repaired with an extra cla
 - [Photographic grading](../src/photographic.rs): contrast/saturation and stable signed evaluation.
 - [Sampling](../src/sampling.rs): manual reference and neutral fitting.
 - [GPU processing](../src/gpu.rs): the production implementation and preflight.
+- [Local grades](../src/local_adjustments.rs) and [GPU grades](../src/gpu_local_adjustments.rs): ordered masks, weighted controls, snapshots and cumulative supported-domain checks.
 
 The scalar implementation is the f64 reference. Exact equations, supported ranges and numerical gates live with the implementation and its tests: [camera inversion](../tests/camera_inversion.rs), [film response](../tests/film_response.rs), [photographic grading](../tests/photographic.rs) and [GPU processing](../tests/gpu_processing.rs). Start with the relevant [development checks](development.md#feature-specific-checks).

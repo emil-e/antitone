@@ -76,11 +76,29 @@ These tests cover Apply/Cancel, reset confirmation, sparse-area failure and sett
 ## Shared GPU queue checks
 
 ```sh
-cargo test --locked --features ui --lib platform::submission
+cargo test --locked --features gpu --lib gpu::submission
 cargo test --locked --features editor --lib refinement_worker_uses_the_submission_gate_supplied_to_the_host
 ```
 
-These headless Metal checks verify submission exclusion during surface configuration and the editor worker's use of the host's gate. Use the [native presentation stress route](diagnostics.md#macos-presentation) for real surface reconfiguration alongside background GPU work.
+These headless Metal checks verify submission exclusion during surface configuration and the editor worker's use of the host's gate. The `gpu::response::tests` suite additionally checks response-table initialization through the same hosted gate. Use the [native presentation stress route](diagnostics.md#macos-presentation) for real surface reconfiguration alongside background GPU work.
+
+## Local grading and shared consumers
+
+The [local processing foundation](processing.md#local-grades-change-controls-not-rendered-pixels) is testable without exposing the unfinished editor tools:
+
+```sh
+cargo test --locked --no-default-features --test local_adjustments
+cargo test --locked --features project --test local_adjustment_project
+cargo test --locked --features export,project --test local_adjustment_export
+cargo test --locked --features gpu --lib gpu::
+cargo test --locked --features gpu --test gpu_local_adjustments
+cargo test --locked --features editor --test local_adjustment_consumers --test viewer --test scopes
+cargo test --locked --features editor --lib editor::processing::tests -- --test-threads=1
+```
+
+These cover analytic masks, exact bypasses, signed/HDR processing, persistence/export snapshots, conservative precision rejection, content-based reuse and correction/source anchoring. The controlled supported-stack/zero-Y stress fixtures explicitly fix gamma at 0.65; they are not promises of admission under every roll response. A separate default-gamma case combines Roll/Photo/local WB. Metadata alone does not make an export a reconstructible recipe.
+
+Scope paint regressions keep a readback outstanding during navigation and grade edits: held traces remain visible but not current, latest-region counts install after a fresh reduction, and incompatible sources/graticules reject old bins. Native interaction and broader photographic/resource acceptance remain separate. [Performance/RAW diagnostics](diagnostics.md#local-processing-and-reuse) are opt-in.
 
 ## Shared editor UI checks
 
@@ -128,7 +146,9 @@ A test-only renderer shares the Editor’s device/queue and submission gate, and
 
 `operation_failures_are_acknowledged_without_promoting_failed_candidates` uses the authored DNG to exercise missing-reference and rejected correction workers, support validation, failed save and export-destination rejection. It checks unchanged project, selection, dirty state and saved bytes after acknowledgement. With the capture environment it writes `feedback-{reference,support,correction,save,export}-{normal,narrow}-offscreen.png` and expanded save-detail captures.
 
-The `editor::kittest_tests::workflow` filter covers measured Dmin/Dmax, numeric gamma/exposure/WB edits, positive and +2 EV source rendering in both targets, native-pixel settled refinement and explicit picker-source switching/Cancel return. It reuses the patch and 512² roll fixtures with temporary copies; no larger fixture or private photograph is needed. Scope widgets exercise RGB/Luma/vectorscope, 1×/2×/4×/8× amplification and both targets, requiring zero invalid samples, the exact whole-frame sample count and at least three completed GPU reductions. Source brightness, picker cancellation and scope controls preserve the project except for intentional target edits.
+The `editor::kittest_tests::workflow` filter covers measured Dmin/Dmax, numeric gamma/exposure/WB edits, positive and +2 EV source rendering in both targets, native-pixel settled refinement and explicit picker-source switching/Cancel return. It reuses the patch and 512² roll fixtures with temporary copies; no larger fixture or private photograph is needed. Scope widgets exercise RGB/Luma/vectorscope, 1×/2×/4×/8× amplification and both targets, requiring zero invalid samples, the exact requested visible-frame sample count and at least three completed GPU reductions. Source brightness, picker cancellation and scope controls preserve the project except for intentional target edits.
+
+`physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_reference_switching` uses the actual Exposure/Warmth/Tint/Contrast/Saturation widgets and a continuous Exposure slider drag. It checks unchanged acquisition through edits/idle, latest processing, target-only graded-buffer reuse, in-place original-reference switching without project changes, shared viewer/scope identity, navigation reacquisition and mandatory working detail with zero optional retention. Save/rejected-document composed checks also preserve the accepted source authority used by acquisition; stale replies cannot reset an active request. These are lifecycle/composition checks, not photographic or physical-input acceptance.
 
 The `editor::kittest_tests::project` filter covers actual Save/New menu actions, Save/Discard/Cancel protection, high-precision Film/classic response and Photo settings, stable IDs/order/unvisited defaults, saved versus automatic WB, exact working/sRGB/P3 pixel reopening and rejected ordered-source Open with unchanged document/display. A failed Save blocks New. The `editor::kittest_tests::correction` filter covers real support move/resize/Apply/Cancel, corrected Dmin/Dmax/Gamma/WB exactly matching full-resolution CPU measurements, both settled targets and thumbnail readiness, +2 EV native-pixel inspection, Enabled/Clear, exact map reopening and missing-reference preservation. Known Save destinations are fixture setup; Open and initial reference selection supply chooser results to the real guards/workers. Native file dialogs are not automated.
 

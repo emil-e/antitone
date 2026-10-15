@@ -10,6 +10,7 @@ pub mod frame_raster;
 pub mod geometry;
 #[cfg(feature = "gpu")]
 pub mod gpu;
+pub mod local_adjustments;
 pub mod photographic;
 #[cfg(feature = "ui")]
 pub mod platform;
@@ -47,6 +48,12 @@ pub mod resample;
 pub mod scopes;
 #[cfg(all(feature = "ui", feature = "render"))]
 pub mod viewer;
+
+#[cfg(all(test, feature = "raw", feature = "gpu", target_os = "macos"))]
+mod raw_test_support;
+
+#[cfg(all(test, feature = "render", target_os = "macos"))]
+mod view_sampling_tests;
 
 pub const PROCESSING_MODEL_VERSION: u32 = 4;
 

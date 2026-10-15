@@ -192,8 +192,8 @@ impl Editor {
                     .expect("remaining photo locator"),
             );
         } else {
-            self.generation
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.original.invalidate();
+            self.working.clear();
             self.id = self.request_id();
             self.source_epoch
                 .store(self.id, std::sync::atomic::Ordering::Relaxed);
@@ -205,10 +205,6 @@ impl Editor {
             self.ready = None;
             self.pending_preview = None;
             self.selection_timing = None;
-            self.signature = None;
-            self.settled = None;
-            self.refining = None;
-            self.refinement_error = None;
             self.last_layout = None;
             self.viewport.fit();
             self.photo = PhotoSettings::default();

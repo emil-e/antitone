@@ -52,7 +52,7 @@ fn refinement_worker_uses_the_submission_gate_supplied_to_the_host() {
             output: [16, 16],
             frame: None,
         };
-        let revision = editor.generation.load(std::sync::atomic::Ordering::Relaxed);
+        let revision = editor.original.revision();
         let submissions = host::App::submission_gate(&editor).clone();
         submissions.configure(|| {
             editor
@@ -60,7 +60,7 @@ fn refinement_worker_uses_the_submission_gate_supplied_to_the_host() {
                 .send(Command::Refine(
                     editor.id,
                     revision,
-                    ProcessingParameters::source(),
+                    Box::new(ProcessingParameters::source().into()),
                     OutputTarget::Srgb,
                     view,
                 ))
@@ -93,18 +93,19 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let images = [
-            Arc::new(
-                GpuImage::new_rendered(&device, &queue, 16, 16, OutputTarget::Srgb)
-                    .await
-                    .unwrap(),
-            ),
-            Arc::new(
-                GpuImage::new_rendered(&device, &queue, 16, 16, OutputTarget::DisplayP3)
-                    .await
-                    .unwrap(),
-            ),
-        ];
+        let renderer = crate::renderer::GpuRenderer::new(&device, &queue)
+            .await
+            .unwrap();
+        let proxy = crate::viewer::GpuProxy::new(
+            renderer,
+            &device,
+            [16, 16],
+            &[[1000, 1000, 1000, 0]; 256],
+            glam::DMat3::IDENTITY,
+            None,
+            crate::gpu::SourceGeometry::new([12, 12, 8640, 5760], [16, 16]).unwrap(),
+        )
+        .unwrap();
         let area = Rect {
             x: 12,
             y: 12,
@@ -134,7 +135,7 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                     area,
                     analysis_support: None,
                     floor: editor.floor,
-                    images: images.clone(),
+                    proxy: proxy.clone(),
                     record: Source {
                         id: SourceId(0),
                         path,
@@ -147,6 +148,7 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                         },
                         reference_only: true,
                         photo: Default::default(),
+                        local_adjustments: None,
                         orientation: Default::default(),
                         crop: None,
                     },
@@ -466,6 +468,7 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
             },
             reference_only: false,
             photo: Default::default(),
+            local_adjustments: None,
             orientation: Default::default(),
             crop: None,
         })
@@ -582,9 +585,17 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
     });
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
     let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
-    let images = [OutputTarget::Srgb, OutputTarget::DisplayP3].map(|target| {
-        Arc::new(pollster::block_on(GpuImage::new_rendered(&device, &queue, 1, 1, target)).unwrap())
-    });
+    let renderer = pollster::block_on(crate::renderer::GpuRenderer::new(&device, &queue)).unwrap();
+    let proxy = crate::viewer::GpuProxy::new(
+        renderer,
+        &device,
+        [1, 1],
+        &[[1000, 1000, 1000, 0]],
+        glam::DMat3::IDENTITY,
+        None,
+        crate::gpu::SourceGeometry::new([12, 7, 864, 576], [1, 1]).unwrap(),
+    )
+    .unwrap();
     let record = Source {
         id: SourceId(0),
         path: "current.ARW".into(),
@@ -597,6 +608,7 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
         },
         reference_only: false,
         photo: editor.photo,
+        local_adjustments: None,
         orientation: editor.photo_orientation,
         crop: editor.crop,
     };
@@ -613,7 +625,7 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
         area: record.development.active_area.into(),
         analysis_support: None,
         floor: editor.floor,
-        images,
+        proxy,
         record,
         development,
     });
@@ -794,7 +806,7 @@ fn tab_clicks_show_only_the_selected_scope_without_changing_view_or_crop_draft()
             editor.target,
         );
         let viewport = editor.viewport;
-        let signature = editor.signature;
+        let signature = editor.original.signature.clone();
         let draft = editor.crop_edit.as_ref().map(|edit| edit.draft);
         let image = if editing {
             editor.crop_edit.as_ref().unwrap().layout.unwrap().image
@@ -842,7 +854,7 @@ fn tab_clicks_show_only_the_selected_scope_without_changing_view_or_crop_draft()
                 state
             );
             assert_eq!(editor.viewport, viewport);
-            assert_eq!(editor.signature, signature);
+            assert_eq!(editor.original.signature, signature);
             assert_eq!(editor.crop_edit.as_ref().map(|edit| edit.draft), draft);
             let next_image = if editing {
                 editor.crop_edit.as_ref().unwrap().layout.unwrap().image
@@ -896,13 +908,13 @@ fn crop_explicit_zoom_can_leave_the_frame_offscreen_without_requesting_refinemen
         );
     }
     for _ in 0..3 {
-        editor.last_edit = std::time::Instant::now() - Duration::from_secs(1);
+        editor.original.last_edit = std::time::Instant::now() - Duration::from_secs(1);
         app_frame(&mut editor, &context, vec![]);
     }
     let explicit = editor.crop_edit.as_ref().unwrap().layout.unwrap();
     assert!(!explicit.image.intersects(explicit.canvas));
     assert_eq!(explicit.scale * context.pixels_per_point(), 1.);
-    assert!(editor.refining.is_none());
+    assert!(editor.original.refining.is_none());
     assert!(receiver.try_recv().is_err());
     let text = app_frame(&mut editor, &context, vec![]);
     let fit = text
@@ -1326,7 +1338,7 @@ fn cropped_export_snapshot_survives_later_crop_and_orientation_edits() {
     };
     assert_eq!(composition.size(), [79, 127]);
     assert_eq!(composition.source_pixel([0, 0]).unwrap(), [326, 218]);
-    assert_eq!((roll, photo), (editor.roll, editor.photo));
+    assert_eq!((roll, photo.global()), (editor.roll, editor.photo));
     editor.crop = None;
     editor.photo_orientation = PhotoOrientation::default();
     assert_eq!(composition.size(), [79, 127]);
@@ -1376,6 +1388,62 @@ fn roll_reference_source_restores_working_orientation_and_precise_viewport() {
     assert_eq!(editor.viewport, viewport);
 }
 #[test]
+fn export_owns_the_accepted_photo_snapshot_and_rejects_unpreviewable_locals() {
+    use crate::{
+        geometry::SourcePoint,
+        local_adjustments::{GradientMask, LocalAdjustment},
+        project::LocalAdjustments,
+    };
+    let (mut editor, _send, receiver) = fixture();
+    editor.photo.exposure = 1.25;
+    add_ready_fixture(&mut editor);
+    editor.export(
+        "snapshot.tif".into(),
+        OutputFormat::Tiff(OutputTarget::Srgb),
+        Overwrite::Refuse,
+    );
+    let Command::Export(_, _, _, _, _, grade, _, _) = receiver.try_recv().unwrap() else {
+        panic!()
+    };
+    editor.photo.exposure = 7.;
+    editor.sync_document();
+    assert_eq!(grade.global().exposure, 1.25);
+    assert!(grade.locals().is_empty());
+    editor.busy = false;
+    let id = editor.current_source.unwrap();
+    let mut locals = LocalAdjustments::default();
+    locals
+        .add(
+            "Linear 1".into(),
+            LocalAdjustment {
+                mask: GradientMask::Linear {
+                    start: SourcePoint([0., 0.]),
+                    end: SourcePoint([100., 0.]),
+                },
+                photo: PhotoSettings::default(),
+                enabled: false,
+                invert: false,
+                strength: 1.,
+            },
+        )
+        .unwrap();
+    editor
+        .document
+        .project
+        .source_mut(id)
+        .unwrap()
+        .local_adjustments = Some(locals);
+    editor.export(
+        "rejected.tif".into(),
+        OutputFormat::Tiff(OutputTarget::Srgb),
+        Overwrite::Refuse,
+    );
+    assert!(receiver.try_recv().is_err());
+    assert!(!editor.busy);
+    assert!(editor.status.contains("local adjustments"));
+}
+
+#[test]
 fn export_holds_the_accepted_orientation_snapshot() {
     let (mut editor, _send, receiver) = fixture();
     editor.photo_orientation.turn_clockwise();
@@ -1392,7 +1460,7 @@ fn export_holds_the_accepted_orientation_snapshot() {
     };
     assert_eq!(composition.size(), [576, 864]);
     assert_eq!(composition.source_pixel([0, 0]).unwrap(), [875, 582]);
-    assert_eq!((roll, photo), (editor.roll, editor.photo));
+    assert_eq!((roll, photo.global()), (editor.roll, editor.photo));
     editor.photo_orientation = PhotoOrientation::default();
     editor.roll_orientation = RollOrientation::default();
     assert_eq!(composition.size(), [576, 864]);
@@ -1741,7 +1809,7 @@ fn shared_roll_turns_apply_to_new_photos_and_export_snapshots() {
             area: ready.area,
             analysis_support: None,
             floor: ready.floor,
-            images: ready.images,
+            proxy: ready.proxy,
             record,
             development: ready.development,
         })),
@@ -1835,6 +1903,7 @@ fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
                     },
                     reference_only: false,
                     photo: PhotoSettings::default(),
+                    local_adjustments: None,
                     orientation: Default::default(),
                     crop: None,
                 },

@@ -2,6 +2,9 @@ use super::*;
 use crate::renderer::RendererCache;
 use std::sync::atomic::AtomicU64;
 
+#[path = "editor_local_adjustment_raw_tests.rs"]
+mod local_adjustments;
+
 #[test]
 #[ignore = "read-only local RAW/Metal corrected affine shared-renderer integration"]
 fn corrected_affine_refinement_matches_scalar_coverage() {
@@ -225,7 +228,7 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
             field: None,
         };
         use egui_wgpu::CallbackTrait;
-        let image = ready.images[OutputTarget::DisplayP3 as usize].clone();
+        let image = ready.proxy.image(OutputTarget::DisplayP3).unwrap();
         let parameters = ProcessingParameters::positive(
             Calibration {
                 dmin: DVec3::new(0.28, 0.23, 0.25),

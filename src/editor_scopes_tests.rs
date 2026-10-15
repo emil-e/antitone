@@ -381,7 +381,7 @@ fn waveform_has_no_skin_or_colour_direction_overlay() {
 }
 
 #[test]
-fn whole_proxy_scopes_are_independent_of_viewport_and_do_not_resize_the_viewer() {
+fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer() {
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,
@@ -393,20 +393,6 @@ fn whole_proxy_scopes_are_independent_of_viewport_and_do_not_resize_the_viewer()
         let shared_renderer = crate::renderer::GpuRenderer::new(&device, &queue)
             .await
             .unwrap();
-        let images = [OutputTarget::Srgb, OutputTarget::DisplayP3].map(|target| {
-            Arc::new(
-                pollster::block_on(GpuImage::new_shared(
-                    &shared_renderer,
-                    &device,
-                    7,
-                    3,
-                    &[[4000, 3000, 2000, 0]; 21],
-                    matrix,
-                    target,
-                ))
-                .unwrap(),
-            )
-        });
         let area = Rect {
             x: 12,
             y: 34,
@@ -420,7 +406,16 @@ fn whole_proxy_scopes_are_independent_of_viewport_and_do_not_resize_the_viewer()
             area,
             analysis_support: None,
             floor: crate::processing::CAMERA_INPUT_FLOOR,
-            images: images.clone(),
+            proxy: crate::viewer::GpuProxy::new(
+                shared_renderer,
+                &device,
+                [7, 3],
+                &[[4000, 3000, 2000, 0]; 21],
+                matrix,
+                None,
+                crate::gpu::SourceGeometry::new([12, 34, 7000, 3000], [7, 3]).unwrap(),
+            )
+            .unwrap(),
             record: Source {
                 id: SourceId(0),
                 path,
@@ -433,6 +428,7 @@ fn whole_proxy_scopes_are_independent_of_viewport_and_do_not_resize_the_viewer()
                 },
                 reference_only: false,
                 photo: Default::default(),
+                local_adjustments: None,
                 orientation: Default::default(),
                 crop: None,
             },
@@ -514,16 +510,45 @@ fn whole_proxy_scopes_are_independent_of_viewport_and_do_not_resize_the_viewer()
                 }
             }
             assert!(found);
-            let (input, _, _) = editor.scope_input().unwrap();
-            assert!(Arc::ptr_eq(&input, &images[editor.target as usize]));
+            let (input, _, fit_frame) = editor.scope_input().unwrap();
+            assert!(Arc::ptr_eq(
+                &input,
+                &editor
+                    .ready
+                    .as_ref()
+                    .unwrap()
+                    .proxy
+                    .image(editor.target)
+                    .unwrap()
+            ));
             prepare(with, size);
             let reductions = gpu.reduction_count();
             editor.viewport.zoom = Some(2.);
             prepare(frame(&mut editor, size), size);
-            assert_eq!(gpu.reduction_count(), reductions);
+            let zoom_frame = editor.scope_input().unwrap().2;
+            assert_ne!(zoom_frame, fit_frame);
+            assert!(zoom_frame.min.0[0] > fit_frame.min.0[0]);
+            assert!(zoom_frame.max.0[0] < fit_frame.max.0[0]);
+            assert_eq!(zoom_frame.output, [1, 1]);
+            assert_eq!(gpu.reduction_count(), reductions + 1);
+            let reductions = gpu.reduction_count();
+            prepare(frame(&mut editor, size), size);
+            assert_eq!(gpu.reduction_count(), reductions, "idle view reuses bins");
+            let (layout, ppp) = editor.last_layout.unwrap();
+            editor.viewport.pan(layout, ppp, egui::vec2(100., -60.));
+            prepare(frame(&mut editor, size), size);
+            let pan_frame = editor.scope_input().unwrap().2;
+            assert_ne!(pan_frame, zoom_frame);
+            assert_eq!(pan_frame.output, zoom_frame.output);
+            assert_eq!(gpu.reduction_count(), reductions + 1);
             editor.viewport.fit();
         }
-        let (image, parameters, scope_frame) = editor.scope_input().unwrap();
+        prepare(
+            frame(&mut editor, egui::vec2(1100., 800.)),
+            egui::vec2(1100., 800.),
+        );
+        let (image, input, scope_frame) = editor.scope_input().unwrap();
+        let parameters = input.parameters();
         let expected = ProcessingParameters::positive(
             editor.calibration().unwrap(),
             editor.roll,
@@ -558,7 +583,8 @@ fn whole_proxy_scopes_are_independent_of_viewport_and_do_not_resize_the_viewer()
             .constrained(area)
             .unwrap(),
         );
-        let (_, composed_parameters, composed_frame) = editor.scope_input().unwrap();
+        let (_, composed_input, composed_frame) = editor.scope_input().unwrap();
+        let composed_parameters = composed_input.parameters();
         assert_eq!(
             bytemuck::bytes_of(&parameters),
             bytemuck::bytes_of(&composed_parameters)
@@ -599,7 +625,10 @@ fn whole_proxy_scopes_are_independent_of_viewport_and_do_not_resize_the_viewer()
             "geometry must not rerender ACES"
         );
         editor.viewport.zoom = Some(3.);
-        assert_eq!(editor.scope_input().unwrap().2, composed_frame);
+        let zoomed_composed = editor.scope_input().unwrap().2;
+        assert_ne!(zoomed_composed, composed_frame);
+        assert_eq!(zoomed_composed.composition, composed_frame.composition);
+        assert_eq!(zoomed_composed.output, [1, 1]);
         editor.begin_crop();
         assert_eq!(
             editor.scope_input().err(),
@@ -611,7 +640,7 @@ fn whole_proxy_scopes_are_independent_of_viewport_and_do_not_resize_the_viewer()
                 .is_none()
         );
         editor.finish_crop(false);
-        assert_eq!(editor.scope_input().unwrap().2, composed_frame);
+        assert_eq!(editor.scope_input().err(), Some("Waiting for view"));
         prepare(
             frame(&mut editor, egui::vec2(1100., 800.)),
             egui::vec2(1100., 800.),

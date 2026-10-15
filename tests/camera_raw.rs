@@ -1,48 +1,18 @@
 #![cfg(all(feature = "raw", feature = "gpu", target_os = "macos"))]
-use antitone::{
+use antitone as api;
+use api::{
     color::Balance,
     gpu::{ProcessingKernel, ProcessingParameters, ProcessingSource},
-    processing::{Calibration, PhotoSettings, Pipeline, RollSettings},
-    raw::Rect,
-    scan::Scan,
+    processing::{PhotoSettings, Pipeline, RollSettings},
 };
 use glam::Vec4;
-use std::path::Path;
+#[path = "support/train_raw.rs"]
+mod train_raw;
 
 #[test]
 #[ignore = "read-only local train RAW and diagnostic calibration; run explicitly in release"]
 fn train_native_source_and_gpu_match_scalar_with_unchanged_numerical_gate() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples");
-    let mut dmax = Scan::open(&root.join("DSC04378.ARW"), None).unwrap();
-    let wb = dmax.fixed_wb;
-    let white = dmax
-        .reference(Rect {
-            x: 4000,
-            y: 2600,
-            width: 128,
-            height: 128,
-        })
-        .unwrap();
-    drop(dmax);
-    let mut dmin = Scan::open(&root.join("DSC04397.ARW"), Some(wb)).unwrap();
-    let base = dmin
-        .reference(Rect {
-            x: 4000,
-            y: 5644,
-            width: 128,
-            height: 32,
-        })
-        .unwrap();
-    drop(dmin);
-    let train = Scan::open(&root.join("DSC04524.ARW"), Some(wb)).unwrap();
-    assert_eq!(train.input_floor, 1. / 65535.);
-    let cal = Calibration {
-        dmin: base,
-        dmax: white,
-        input_floor: train.input_floor,
-    }
-    .validate()
-    .unwrap();
+    let (train, cal) = train_raw::load();
     let (_, _, codes) = train.preview_source(512).unwrap();
     let roll = RollSettings {
         exposure: 0.5,
@@ -71,7 +41,7 @@ fn train_native_source_and_gpu_match_scalar_with_unchanged_numerical_gate() {
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let source = ProcessingSource::new(&device, &codes, train.camera_to_ap1).unwrap();
         assert_eq!(source.byte_len(), codes.len() as u64 * 8);
-        let kernel = ProcessingKernel::new(&device).await.unwrap();
+        let kernel = ProcessingKernel::new(&device, &queue).await.unwrap();
         let bytes = codes.len() as u64 * 16;
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,

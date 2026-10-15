@@ -23,6 +23,65 @@ fn source_inspection_is_zero_default_and_changes_only_the_source_post_matrix() {
 }
 
 #[test]
+fn global_output_bounds_do_not_propagate_scratch_peaks_into_locals() {
+    let calibration = Calibration {
+        dmin: DVec3::new(0.19, 0.14, 0.12),
+        dmax: DVec3::new(0.008, 0.004, 0.002),
+        input_floor: 1. / 65535.,
+    };
+    let roll = RollSettings::new_grade();
+    let (_, input) = ProcessingParameters::positive_with_bound(
+        calibration,
+        roll,
+        PhotoSettings::default(),
+        DMat3::IDENTITY,
+    )
+    .unwrap();
+    for photo in [
+        PhotoSettings {
+            contrast: 1.05,
+            ..Default::default()
+        },
+        PhotoSettings {
+            saturation: 2.,
+            ..Default::default()
+        },
+        PhotoSettings {
+            contrast: 1.05,
+            saturation: 1.2,
+            ..Default::default()
+        },
+    ] {
+        let grade = crate::photographic::Grade::new(photo).unwrap();
+        let peak = grade.intermediate_bound(input);
+        let (_, output, _) = grade.weighted_bounds(input, 1.);
+        let (_, actual) =
+            ProcessingParameters::positive_with_bound(calibration, roll, photo, DMat3::IDENTITY)
+                .unwrap();
+        assert_eq!(actual, output.min(peak));
+        assert!(actual < peak, "{photo:?}: {actual} >= {peak}");
+        if photo.contrast == 1. {
+            assert_eq!(actual, 3. * input);
+        } else {
+            assert!(actual < peak / 2.);
+        }
+    }
+    let matrix = DMat3::from_diagonal(DVec3::splat(f64::from(f32::MAX) / (16. * input)));
+    let photo = PhotoSettings {
+        contrast: 0.4,
+        ..Default::default()
+    };
+    let bound = input * matrix.x_axis.x;
+    let grade = crate::photographic::Grade::new(photo).unwrap();
+    assert!(grade.weighted_bounds(bound, 1.).1 < f64::from(f32::MAX) / 4.);
+    assert!(grade.intermediate_bound(bound) > f64::from(f32::MAX) / 4.);
+    assert!(
+        ProcessingParameters::positive(calibration, roll, photo, matrix).is_err(),
+        "output fitting the range must not waive an overflowing global scratch intermediate"
+    );
+}
+
+#[test]
 fn source_preview_restores_green_referenced_headroom_and_keeps_inspection_relative() {
     for (wb, headroom) in [
         ([1.; 4], 1.),
@@ -139,7 +198,7 @@ fn source_inspection_gpu_matches_scaled_camera_to_ap1_with_zero_diagnostic_flags
             DVec3::new(0., -0.22, 1.16),
         );
         let source = ProcessingSource::new(&device, &codes, matrix).unwrap();
-        let kernel = ProcessingKernel::new(&device).await.unwrap();
+        let kernel = ProcessingKernel::new(&device, &queue).await.unwrap();
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: 64,
@@ -279,7 +338,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
             compilation_options: Default::default(),
             cache: None,
         });
-        let kernel = ProcessingKernel::new(&device).await.unwrap();
+        let kernel = ProcessingKernel::new(&device, &queue).await.unwrap();
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: codes.len() as u64 * 48,

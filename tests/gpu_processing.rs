@@ -14,7 +14,7 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let kernel = ProcessingKernel::new(&device).await.unwrap();
+        let kernel = ProcessingKernel::new(&device, &queue).await.unwrap();
         let cal = Calibration {
             dmin: DVec3::new(0.75, 0.48, 0.22),
             dmax: DVec3::new(0.003, 0.006, 0.008),
@@ -218,24 +218,27 @@ fn metal_creative_primitives_cover_zero_y_continuations_and_signed_hdr_planes() 
                     include_str!("../src/shaders/flat_field.wgsl"),
                     include_str!("../src/shaders/film_response.wgsl"),
                     include_str!("../src/shaders/photographic.wgsl"),
+                    include_str!("../src/shaders/local_adjustments.wgsl"),
+                    include_str!("../src/shaders/response_table.wgsl"),
                     include_str!("../src/shaders/processing.wgsl"),
                     r#"
 @group(0) @binding(5) var<storage, read> grade_high: array<vec4f>;
 @group(0) @binding(6) var<storage, read> grade_low: array<vec4f>;
 @group(0) @binding(7) var<storage, read_write> grade_output: array<vec4f>;
+@group(0) @binding(8) var<storage, read> grade_tail: array<vec4f>;
 @compute @workgroup_size(64)
 fn grade_test(@builtin(global_invocation_id) id: vec3u) {
     if id.x >= arrayLength(&grade_high) { return; }
     if grade_high[id.x].w > 0.5 {
-        let gain = ratio_gain(pair(0.0));
-        grade_output[id.x] = vec4f(vec3f(gain.h + gain.l), 0.0);
+        let gain = ratio_gain(number(0.0), global_creative_grade());
+        grade_output[id.x] = vec4f(vec3f(gain.h + (gain.l + gain.t)), 0.0);
         return;
     }
-    let rgb = photographic_grade(array<Pair, 3>(
-        Pair(grade_high[id.x].x, grade_low[id.x].x),
-        Pair(grade_high[id.x].y, grade_low[id.x].y),
-        Pair(grade_high[id.x].z, grade_low[id.x].z)));
-    grade_output[id.x] = vec4f(rgb[0].h + rgb[0].l, rgb[1].h + rgb[1].l, rgb[2].h + rgb[2].l, 0.0);
+    let rgb = photographic_grade(array<Triple, 3>(
+        Triple(grade_high[id.x].x, grade_low[id.x].x, grade_tail[id.x].x),
+        Triple(grade_high[id.x].y, grade_low[id.x].y, grade_tail[id.x].y),
+        Triple(grade_high[id.x].z, grade_low[id.x].z, grade_tail[id.x].z)));
+    grade_output[id.x] = finish_pixel(ProcessedPixel(rgb, 0u));
 }
 "#,
                 ]
@@ -274,6 +277,16 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
             .zip(&high)
             .map(|(v, h)| (v - h.truncate().as_dvec3()).as_vec3().extend(0.))
             .collect();
+        let tail: Vec<_> = inputs
+            .iter()
+            .zip(&high)
+            .zip(&low)
+            .map(|((v, h), l)| {
+                (v - h.truncate().as_dvec3() - l.truncate().as_dvec3())
+                    .as_vec3()
+                    .extend(0.)
+            })
+            .collect();
         let storage = |label, values: &[Vec4]| {
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(label),
@@ -283,6 +296,7 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
         };
         let high = storage("temporary synthetic AP1 high", &high);
         let low = storage("temporary synthetic AP1 low", &low);
+        let tail = storage("temporary synthetic AP1 tail", &tail);
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("creative test output"),
             size: inputs.len() as u64 * 16,
@@ -331,12 +345,17 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
                                 contents: bytemuck::bytes_of(&parameters),
                                 usage: wgpu::BufferUsages::UNIFORM,
                             });
-                        let entries = [(2, &uniform), (5, &high), (6, &low), (7, &output)].map(
-                            |(binding, buffer)| wgpu::BindGroupEntry {
-                                binding,
-                                resource: buffer.as_entire_binding(),
-                            },
-                        );
+                        let entries = [
+                            (2, &uniform),
+                            (5, &high),
+                            (6, &low),
+                            (7, &output),
+                            (8, &tail),
+                        ]
+                        .map(|(binding, buffer)| wgpu::BindGroupEntry {
+                            binding,
+                            resource: buffer.as_entire_binding(),
+                        });
                         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
                             label: Some("creative test bindings"),
                             layout: &kernel.get_bind_group_layout(0),
@@ -473,5 +492,5 @@ fn gpu_parameters_reject_overflow_instead_of_silent_cpu_fallback() {
         )
         .is_err()
     );
-    assert_eq!(std::mem::size_of::<ProcessingParameters>(), 320);
+    assert_eq!(std::mem::size_of::<ProcessingParameters>(), 464);
 }

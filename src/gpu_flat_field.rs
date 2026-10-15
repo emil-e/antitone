@@ -1,5 +1,6 @@
 use super::{CameraMatrix, split_constants};
 use crate::{Error, flat_field::FlatField, geometry::SourceRaster};
+use bytemuck::Zeroable;
 use glam::{DMat3, DVec3, Vec4};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
@@ -36,6 +37,9 @@ impl SourceGeometry {
             return Err(Error::InvalidParameter("source index outside geometry"));
         }
         self.raster.source_pixel([index % size[0], index / size[0]])
+    }
+    pub fn region(&self) -> crate::geometry::SourceRegion {
+        self.raster.region()
     }
     pub(super) fn pixels(&self) -> u32 {
         let size = self.raster.size();
@@ -114,6 +118,19 @@ pub(super) struct FieldGeometry {
     dimensions: [u32; 4],
 }
 impl FieldGeometry {
+    pub(super) fn uncorrected(source: Option<SourceGeometry>) -> Self {
+        let Some(source) = source else {
+            return Self::zeroed();
+        };
+        let area = source.raster.region();
+        let size = source.raster.size();
+        Self {
+            area: [area.x, area.y, area.width, area.height],
+            dimensions: [size[0], size[1], 0, 0],
+            ..Self::zeroed()
+        }
+    }
+
     pub(super) fn new(field: &GpuFlatField, source: SourceGeometry) -> Self {
         let grid = field.field.size();
         let area = source.raster.region();

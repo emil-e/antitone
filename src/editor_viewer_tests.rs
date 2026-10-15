@@ -555,7 +555,7 @@ fn flat_fixture(
         area: ready.area,
         analysis_support: None,
         floor: ready.floor,
-        images: ready.images.clone(),
+        proxy: ready.proxy.clone(),
         record,
         development: ready.development.clone(),
     };

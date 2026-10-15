@@ -1,6 +1,6 @@
 use crate::{
     Error,
-    gpu::{GpuFlatField, ProcessingParameters, SourceGeometry},
+    gpu::{GpuFlatField, ProcessingInput, SourceGeometry},
     rendering::OutputTarget,
     resample::AreaAverage,
     scan::Scan,
@@ -24,11 +24,12 @@ pub fn refine(
     device: &wgpu::Device,
     (queue, submissions): (&wgpu::Queue, &crate::platform::SubmissionGate),
     (scan, field): (&Scan, Option<Arc<GpuFlatField>>),
-    parameters: ProcessingParameters,
+    parameters: impl Into<ProcessingInput>,
     target: OutputTarget,
     (generation, expected): (&AtomicU64, u64),
     view: ViewRequest,
 ) -> Result<Option<Arc<GpuImage>>, Error> {
+    let input = parameters.into();
     let start = std::time::Instant::now();
     if generation.load(Ordering::Relaxed) != expected {
         return Ok(None);
@@ -41,8 +42,8 @@ pub fn refine(
     let output = pollster::block_on(GpuImage::new_rendered_shared(
         renderer, device, width, height, target,
     ))?;
-    let tile_width = 1024;
-    let tile_height = 256;
+    let tile_width = 512;
+    let tile_height = 128;
     let zeros = vec![[0; 4]; tile_width as usize * tile_height as usize];
     let mut tile = pollster::block_on(GpuImage::new_shared(
         renderer,
@@ -53,6 +54,14 @@ pub fn refine(
         scan.camera_to_ap1,
         target,
     ))?;
+    tile.set_flat_field(
+        field.clone(),
+        SourceGeometry::new(
+            [view.area.x, view.area.y, tile_width, tile_height],
+            [tile_width, tile_height],
+        )?,
+    )?;
+    tile.require_processing(&input)?;
     let average = if let Some(frame) = view.frame {
         if frame.bounds()? != view.area || frame.output != view.output {
             return Err(Error::InvalidParameter(
@@ -80,25 +89,37 @@ pub fn refine(
             sampling += tick.elapsed();
             let tick = std::time::Instant::now();
             tile.write_source(queue, &pixels)?;
-            if let Some(field) = &field {
-                tile.set_flat_field(
-                    Some(field.clone()),
-                    SourceGeometry::new(
-                        [view.area.x + x, view.area.y + y, tile_width, tile_height],
-                        [tile_width, tile_height],
-                    )?,
-                )?;
+            tile.set_geometry(SourceGeometry::new(
+                [view.area.x + x, view.area.y + y, tile_width, tile_height],
+                [tile_width, tile_height],
+            )?)?;
+            for (index, window) in average
+                .windows(&tile.linear, [x, y])
+                .into_iter()
+                .enumerate()
+            {
+                if generation.load(Ordering::Relaxed) != expected {
+                    return Ok(None);
+                }
+                let mut encoder = device.create_command_encoder(&Default::default());
+                if index == 0 {
+                    tile.encode_processing(device, &mut encoder, &input)?;
+                }
+                average.accumulate_window(device, &mut encoder, &tile.linear, [x, y], window);
+                wait_for(device, submissions.submit(queue, [encoder.finish()]))?;
             }
-            let mut encoder = device.create_command_encoder(&Default::default());
-            tile.encode(device, &mut encoder, parameters);
-            average.accumulate(device, &mut encoder, &tile.linear, [x, y]);
-            wait_for(device, submissions.submit(queue, [encoder.finish()]))?;
             gpu += tick.elapsed();
         }
     }
+    if generation.load(Ordering::Relaxed) != expected {
+        return Ok(None);
+    }
     let mut encoder = device.create_command_encoder(&Default::default());
     average.finish(device, &mut encoder, &output.linear);
-    submissions.submit(queue, [encoder.finish()]);
+    wait_for(device, submissions.submit(queue, [encoder.finish()]))?;
+    if generation.load(Ordering::Relaxed) != expected {
+        return Ok(None);
+    }
     println!(
         "settled_preview source={}x{} output={}x{} target={target:?} seconds={:.3} sampling_seconds={:.3} gpu_seconds={:.3}",
         view.area.width,

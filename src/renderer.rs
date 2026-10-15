@@ -1,5 +1,9 @@
 use crate::{Error, gpu::ProcessingKernel, rendering::OutputTarget, resample::AveragePipelines};
 use std::{borrow::Cow, sync::Arc};
+use wgpu::util::DeviceExt;
+
+#[path = "renderer_aces.rs"]
+mod aces;
 
 pub(crate) const VERTEX: &str = r#"
 struct Vertex { @builtin(position) position: vec4f, @location(0) uv: vec2f }
@@ -15,7 +19,9 @@ struct Parameters { c0:vec4f, c1:vec4f, c2:vec4f, size:vec4u, uv_x:vec4f, uv_y:v
  let mapped=p.uv_x.xy+uv.x*p.uv_x.zw+uv.y*p.uv_y.xy;
  if any(mapped<vec2f(0.)) || any(mapped>vec2f(1.)) { discard; }
  let xy=min(vec2u(max(mapped,vec2f(0.))*vec2f(p.size.xy)),p.size.xy-vec2u(1));
- let linear=mat3x3f(p.c0.xyz,p.c1.xyz,p.c2.xyz)*textureLoad(image,vec2i(xy),0).rgb;
+ let pixel=textureLoad(image,vec2i(xy),0);
+ if pixel.a<=0. { discard; }
+ let linear=mat3x3f(p.c0.xyz,p.c1.xyz,p.c2.xyz)*pixel.rgb;
  let a=abs(linear);
  let encoded=select(1.055*pow(a,vec3f(1./2.4))-.055,12.92*a,a<=vec3f(.0031308));
  return vec4f(sign(linear)*encoded,1.);
@@ -23,9 +29,18 @@ struct Parameters { c0:vec4f, c1:vec4f, c2:vec4f, size:vec4u, uv_x:vec4f, uv_y:v
 
 #[cfg(feature = "editor")]
 #[derive(Default)]
-pub(crate) struct RendererCache(std::sync::OnceLock<Result<Arc<GpuRenderer>, Error>>);
+pub(crate) struct RendererCache {
+    renderer: std::sync::OnceLock<Result<Arc<GpuRenderer>, Error>>,
+    submissions: crate::gpu::SubmissionGate,
+}
 #[cfg(feature = "editor")]
 impl RendererCache {
+    pub(crate) fn new(submissions: crate::gpu::SubmissionGate) -> Self {
+        Self {
+            submissions,
+            ..Default::default()
+        }
+    }
     pub(crate) fn prewarm(self: &Arc<Self>, device: wgpu::Device, queue: wgpu::Queue) {
         let cache = self.clone();
         // Initialization errors remain cached and are reported by the foreground get.
@@ -38,8 +53,14 @@ impl RendererCache {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> Result<Arc<GpuRenderer>, Error> {
-        self.0
-            .get_or_init(|| pollster::block_on(GpuRenderer::new(device, queue)))
+        self.renderer
+            .get_or_init(|| {
+                pollster::block_on(GpuRenderer::new_with_submissions(
+                    device,
+                    queue,
+                    self.submissions.clone(),
+                ))
+            })
             .clone()
     }
 }
@@ -49,9 +70,10 @@ pub(crate) struct TargetResources {
     pub layout: wgpu::BindGroupLayout,
     pub tables: [wgpu::TextureView; 2],
     pub sampler: wgpu::Sampler,
+    pub hues: wgpu::Buffer,
 }
 
-/// Immutable resources shared by foreground images, thumbnails and refinement.
+/// Shared processing/rendering infrastructure for foreground images, thumbnails and refinement.
 /// Image storage and processing signatures remain image-owned.
 pub struct GpuRenderer {
     pub(crate) kernel: ProcessingKernel,
@@ -61,7 +83,14 @@ pub struct GpuRenderer {
 }
 impl GpuRenderer {
     pub async fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Arc<Self>, Error> {
-        let kernel = ProcessingKernel::new(device).await?;
+        Self::new_with_submissions(device, queue, crate::gpu::SubmissionGate::default()).await
+    }
+    pub async fn new_with_submissions(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        submissions: crate::gpu::SubmissionGate,
+    ) -> Result<Arc<Self>, Error> {
+        let kernel = ProcessingKernel::new_with_submissions(device, queue, submissions).await?;
         let average = Arc::new(AveragePipelines::new(device).await?);
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let vertex = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -128,22 +157,17 @@ fn target_resources(
             ],
         ),
     };
-    let mut generated = code.to_owned();
-    for (binding, name) in [(1, "aces_reach_m_table_0"), (2, "aces_gamut_cusp_table_0")] {
-        let declaration =
-            format!("layout(set=0, binding = {binding}) uniform sampler2D {name}Sampler;");
-        if !generated.contains(&declaration) {
-            return Err(Error::Gpu(
-                "unexpected pinned OCIO resource declaration".into(),
-            ));
-        }
-        generated = generated.replace(&declaration, &format!("layout(set=0, binding = {binding}) uniform texture2D {name};\n#define {name}Sampler sampler2D({name}, aces_sampler)"));
-    }
+    let (generated, hue_values) = aces::adapt(code)?;
+    let hues = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("immutable pinned OCIO cusp hue values"),
+        contents: bytemuck::cast_slice(&hue_values),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
     let code = format!(
-        "#version 450\nlayout(set=0,binding=3) uniform sampler aces_sampler;\n{generated}\nlayout(set=0,binding=0,std430) readonly buffer Inputs {{ vec4 pixels[]; }};\nlayout(set=0,binding=4,std140) uniform Dimensions {{ uvec4 size; }};\nlayout(location=0) in vec2 uv;\nlayout(location=0) out vec4 result;\nvoid main() {{ uvec2 xy=min(uvec2(max(uv,vec2(0.0))*vec2(size.xy)),size.xy-uvec2(1)); result=antitone_render(vec4(pixels[xy.x+xy.y*size.x].rgb,1.0)); }}"
+        "#version 450\nlayout(set=0,binding=3) uniform sampler aces_sampler;\n{generated}\nlayout(set=0,binding=0,std430) readonly buffer Inputs {{ vec4 pixels[]; }};\nlayout(set=0,binding=4,std140) uniform Dimensions {{ uvec4 size; }};\nlayout(location=0) in vec2 uv;\nlayout(location=0) out vec4 result;\nvoid main() {{ uvec2 xy=min(uvec2(max(uv,vec2(0.0))*vec2(size.xy)),size.xy-uvec2(1)); vec4 pixel=pixels[xy.x+xy.y*size.x]; if (size.z!=0u && (uint(pixel.a)&8u)==0u) {{ result=vec4(0.0); return; }} result=antitone_render(vec4(pixel.rgb,1.0)); }}"
     );
     let fragment = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("pinned OCIO GLSL, binding glue only"),
+        label: Some("pinned OCIO GLSL, resource-layout adaptation only"),
         source: wgpu::ShaderSource::Glsl {
             shader: Cow::Owned(code),
             stage: wgpu::naga::ShaderStage::Fragment,
@@ -183,6 +207,7 @@ fn target_resources(
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
             },
             buffer_entry(4, wgpu::BufferBindingType::Uniform),
+            buffer_entry(5, wgpu::BufferBindingType::Storage { read_only: true }),
         ],
     });
     let pipeline = create_pipeline(
@@ -239,6 +264,7 @@ fn target_resources(
         layout,
         tables: views.try_into().unwrap(),
         sampler,
+        hues,
     })
 }
 

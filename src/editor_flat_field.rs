@@ -176,11 +176,7 @@ impl Editor {
         self.region = region.map(Coverage::rectangle);
         self.source = true;
         self.viewport.fit();
-        self.signature = None;
-        self.settled = None;
-        self.refining = None;
-        self.generation
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.original.invalidate();
         self.id = self.request_id();
         self.source_epoch
             .store(self.id, std::sync::atomic::Ordering::Relaxed);
@@ -237,11 +233,7 @@ impl Editor {
         self.region = None;
         self.pick_drag = None;
         self.last_layout = None;
-        self.signature = None;
-        self.settled = None;
-        self.refining = None;
-        self.generation
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.original.invalidate();
     }
     pub(super) fn apply_flat_edit(&mut self) {
         let Some(coverage) = self.region else {
@@ -302,19 +294,29 @@ impl Editor {
         photo: PhotoSettings,
         camera_to_ap1: glam::DMat3,
     ) -> Result<ProcessingParameters, Error> {
+        ProcessingParameters::positive(
+            self.processing_calibration(calibration)?,
+            roll,
+            photo,
+            camera_to_ap1,
+        )
+    }
+    pub(super) fn processing_calibration(
+        &self,
+        calibration: Calibration,
+    ) -> Result<Calibration, Error> {
         if calibration.input_floor != crate::processing::CAMERA_INPUT_FLOOR {
             return Err(Error::InvalidParameter(
                 "editor calibration requires the native-code base floor",
             ));
         }
-        let calibration = match &self.correction {
+        match &self.correction {
             Some(c) => Calibration {
                 input_floor: c.corrected_floor,
                 ..calibration
             }
-            .validate()?,
-            None => calibration,
-        };
-        ProcessingParameters::positive(calibration, roll, photo, camera_to_ap1)
+            .validate(),
+            None => calibration.validate(),
+        }
     }
 }

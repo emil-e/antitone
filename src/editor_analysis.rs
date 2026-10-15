@@ -517,13 +517,7 @@ impl Editor {
         request.revision = self.analysis_generation.fetch_add(1, Ordering::Relaxed) + 1;
         let id = self.request_id();
         self.thumbnails.cancel();
-        if self.refining.take().is_some() {
-            let revision = self.generation.fetch_add(1, Ordering::Relaxed) + 1;
-            // Cancel only pending work; unchanged settled pixels remain current.
-            if let Some((settled_revision, _, _)) = &mut self.settled {
-                *settled_revision = revision;
-            }
-        }
+        self.original.cancel_pending();
         self.tasks.begin(Task::Analyze(id));
         self.tasks.report(
             TaskRequest::Analyze(id),
@@ -606,11 +600,7 @@ impl Editor {
                 self.roll = self.document.project.roll;
                 self.photo = photo;
                 self.source = false;
-                self.signature = None;
-                self.settled = None;
-                self.refining = None;
-                self.refinement_error = None;
-                self.generation.fetch_add(1, Ordering::Relaxed);
+                self.original.invalidate();
                 self.status = format!(
                     "Analyzed {} frames. Adjust normally; re-pick Dmin if needed.",
                     outcome.frames

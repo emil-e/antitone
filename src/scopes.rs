@@ -131,6 +131,9 @@ pub fn reference(
     let basis = Basis::new(settings.target);
     let half_extent = basis.extent / settings.amplification as f64;
     for (i, pixel) in linear.iter().enumerate() {
+        if pixel[3] <= 0. {
+            continue;
+        }
         let mut encoded = DVec3::ZERO;
         let mut invalid = false;
         for channel in 0..3 {

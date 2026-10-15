@@ -27,7 +27,7 @@ impl Editor {
     pub(super) fn fullscreen_available(&self) -> bool {
         !self.fullscreen_blocked()
             && (self.fullscreen.is_some()
-                || self.selected_view().is_some()
+                || (self.ready.is_some() || self.pending_preview.is_some())
                     && !(self.busy && (self.pick.is_some() || self.flat_edit.is_some())))
     }
 

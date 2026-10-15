@@ -1,7 +1,6 @@
 use super::*;
 use crate::{
     frame_raster::FrameRaster,
-    geometry::FramePoint,
     gpu_scopes::{GpuScopes, ScopePaint},
     scopes::{Basis, Plot, Settings, references},
 };
@@ -97,7 +96,7 @@ impl Scopes {
         let (plot, response) =
             ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
         let mut help = String::from(
-            "Approximate whole-frame scope from nearest-centre samples, after the selected ACES output transform and target transfer. Independent of viewer zoom/pan. Calibration and exports never use these samples.",
+            "Approximate scope of the visible image from nearest-centre samples, after the selected ACES output transform and target transfer. Zoom/pan isolates the region being adjusted. Calibration and exports never use these samples.",
         );
         if self.vector {
             help.push_str("\nRim letters/ticks indicate colour direction only; small boxes mark 100% RGB/CMY references. The dashed Skin line is an approximate positive-I hue guide, not a skin-colour correctness test or a standard Display P3 axis.");
@@ -151,7 +150,71 @@ impl Scopes {
     }
 }
 
+pub(super) enum ScopeInput {
+    Proxy(Arc<GpuImage>, Box<ProcessingInput>, FrameRaster),
+    Rendered(Arc<crate::gpu::view::RenderedView>, FrameRaster),
+}
+impl ScopeInput {
+    pub(super) fn frame(&self) -> FrameRaster {
+        match self {
+            Self::Proxy(_, _, f) | Self::Rendered(_, f) => *f,
+        }
+    }
+    pub(super) fn status(
+        &self,
+        gpu: &GpuScopes,
+        settings: Settings,
+    ) -> Option<Result<crate::scopes::Counts, String>> {
+        match self {
+            Self::Proxy(image, input, frame) => {
+                gpu.status_processing(image, input, *frame, settings)
+            }
+            Self::Rendered(view, frame) => gpu.status_rendered(view, *frame, settings),
+        }
+    }
+    fn paint(
+        &self,
+        gpu: Arc<GpuScopes>,
+        settings: Settings,
+        submissions: crate::gpu::SubmissionGate,
+        context: egui::Context,
+    ) -> ScopePaint {
+        match self {
+            Self::Rendered(view, frame) => {
+                ScopePaint::rendered(gpu, view.clone(), *frame, settings, submissions, context)
+            }
+            Self::Proxy(image, input, frame) => ScopePaint::with_processing(
+                gpu,
+                image.clone(),
+                input.as_ref().clone(),
+                *frame,
+                settings,
+                context,
+            )
+            .expect("validated scope input"),
+        }
+    }
+}
 impl Editor {
+    pub(super) fn scope_request(&self) -> Result<ScopeInput, &'static str> {
+        let (ready, parameters, composition) = self.scope_basis()?;
+        if let Some(view) = &self.working.displayed
+            && let Some(visible) = self.working.current_frame()
+        {
+            // Bound scope sampling, not photographic detail. Read the accepted target raster without
+            // grading, ACES, source-proxy mapping or a second composition.
+            let scale = (f64::from(visible.output[0].max(visible.output[1])) / 1024.).max(1.);
+            let frame = FrameRaster {
+                output: visible.output.map(|v| (f64::from(v) / scale).ceil() as u32),
+                ..visible
+            };
+            Ok(ScopeInput::Rendered(view.clone(), frame))
+        } else {
+            let (image, parameters, frame) =
+                self.proxy_scope_input(ready, parameters, composition)?;
+            Ok(ScopeInput::Proxy(image, Box::new(parameters), frame))
+        }
+    }
     pub(super) fn scope_panel(&mut self, ui: &mut egui::Ui) -> Option<Slot> {
         egui::Frame::new()
             .fill(ui.visuals().faint_bg_color)
@@ -160,9 +223,14 @@ impl Editor {
             .inner
     }
 
+    #[cfg(test)]
     pub(super) fn scope_input(
         &self,
-    ) -> Result<(Arc<GpuImage>, ProcessingParameters, FrameRaster), &'static str> {
+    ) -> Result<(Arc<GpuImage>, ProcessingInput, FrameRaster), &'static str> {
+        let (ready, parameters, composition) = self.scope_basis()?;
+        self.proxy_scope_input(ready, parameters, composition)
+    }
+    fn scope_basis(&self) -> Result<(&Ready, ProcessingInput, Composition), &'static str> {
         if self.source || self.pick_return.is_some() || self.flat_edit.is_some() {
             return Err("Positive grade only");
         }
@@ -175,7 +243,7 @@ impl Editor {
         let ready = self.ready.as_ref().ok_or("No image")?;
         let calibration = self.calibration().ok_or("Calibration required")?;
         let parameters = self
-            .positive_parameters(calibration, self.roll, self.photo)
+            .positive_processing(calibration, self.roll, self.photo)
             .map_err(|_| "Positive grade unavailable")?;
         let composition = Composition::with_crop(
             ready.area,
@@ -184,19 +252,39 @@ impl Editor {
             self.crop,
         )
         .map_err(|_| "Composition unavailable")?;
-        let image = ready.images[self.target as usize].clone();
-        // Preserve the whole-source proxy's sampling pitch rather than imply finer crop detail.
+        self.last_layout.ok_or("Waiting for view")?;
+        Ok((ready, parameters, composition))
+    }
+    fn proxy_scope_input(
+        &self,
+        ready: &Ready,
+        parameters: ProcessingInput,
+        composition: Composition,
+    ) -> Result<(Arc<GpuImage>, ProcessingInput, FrameRaster), &'static str> {
+        let image = ready
+            .proxy
+            .image(self.target)
+            .map_err(|_| "View unavailable")?;
+        if parameters.grade().is_some() {
+            image
+                .require_processing(&parameters)
+                .map_err(|_| "Positive grade unavailable")?;
+        }
+        let (layout, pixels_per_point) = self.last_layout.ok_or("Waiting for view")?;
+        let mut viewport = self.viewport;
+        let visible = viewport
+            .layout_composition(layout.canvas, composition, pixels_per_point)
+            .frame_raster(pixels_per_point);
+        // Zoom changes coverage, not the retained proxy's source sampling pitch.
         let pitch = (f64::from(ready.area.width) / f64::from(image.linear.width()))
             .max(f64::from(ready.area.height) / f64::from(image.linear.height()));
-        let extent = composition.size();
-        let size = extent.map(|v| (f64::from(v) / pitch).round().clamp(1., 1024.) as u32);
-        let frame = FrameRaster::new(
-            composition,
-            FramePoint([0., 0.]),
-            FramePoint(extent.map(f64::from)),
-            size,
-        )
-        .map_err(|_| "Composition unavailable")?;
+        let size = std::array::from_fn(|i| {
+            ((visible.max.0[i] - visible.min.0[i]) / pitch)
+                .round()
+                .clamp(1., 1024.) as u32
+        });
+        let frame = FrameRaster::new(composition, visible.min, visible.max, size)
+            .map_err(|_| "Composition unavailable")?;
         Ok((image, parameters, frame))
     }
 
@@ -211,8 +299,8 @@ impl Editor {
         slot.settings.target = self.target;
         slot.painter
             .rect_filled(slot.plot, 3., egui::Color32::from_gray(6));
-        let input = self.scope_input();
-        let (image, parameters, frame) = match input {
+        let input = self.scope_request();
+        let input = match input {
             Ok(input) => input,
             Err(reason) => {
                 if let Some(gpu) = &self.scopes.gpu {
@@ -228,6 +316,7 @@ impl Editor {
                 return;
             }
         };
+        let frame = input.frame();
         let Some(gpu) = &self.scopes.gpu else {
             slot.painter.text(
                 slot.plot.center(),
@@ -247,19 +336,15 @@ impl Editor {
         } else {
             trace.min.x += 24.;
         }
+        let paint = input.paint(
+            gpu.clone(),
+            slot.settings,
+            self.submissions.clone(),
+            slot.painter.ctx().clone(),
+        );
         slot.painter
             .with_clip_rect(slot.plot)
-            .add(egui_wgpu::Callback::new_paint_callback(
-                trace,
-                ScopePaint::new(
-                    gpu.clone(),
-                    image.clone(),
-                    parameters,
-                    frame,
-                    slot.settings,
-                    slot.painter.ctx().clone(),
-                ),
-            ));
+            .add(egui_wgpu::Callback::new_paint_callback(trace, paint));
         graticule(
             &slot.painter.with_clip_rect(slot.plot),
             trace,
@@ -273,11 +358,17 @@ impl Editor {
         slot.painter.text(
             slot.caption.center_top(),
             egui::Align2::CENTER_TOP,
-            format!("{target} · Whole frame · Approximate"),
+            format!("{target} · Visible image · Approximate"),
             egui::FontId::proportional(10.),
             egui::Color32::GRAY,
         );
-        let (text, color) = match gpu.status(&image, parameters, frame, slot.settings) {
+        let status = input.status(gpu, slot.settings);
+        let status = if matches!(input, ScopeInput::Rendered(..)) && self.working.updating {
+            None
+        } else {
+            status
+        };
+        let (text, color) = match status {
             Some(Ok(counts)) if counts.invalid > 0 => (
                 format!("Invalid rendered samples: {}", counts.invalid),
                 egui::Color32::LIGHT_RED,

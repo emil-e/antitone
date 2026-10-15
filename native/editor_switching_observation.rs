@@ -210,7 +210,8 @@ fn workload(
     let worker_renderers = renderers.clone();
     let worker_device = device.clone();
     let worker_queue = queue.clone();
-    let worker_generation = editor.generation.clone();
+    editor.working = WorkingView::new(device.clone());
+    let worker_generation = editor.original.generation.clone();
     let worker_scheduler = scheduler.clone();
     let worker_submissions = editor.submissions.clone();
     let worker = std::thread::spawn(move || {
@@ -272,7 +273,7 @@ fn workload(
             let mut blocked_probe = false;
             let mut per_ui = Vec::new();
             let mut per_frame = Vec::new();
-            while editor.busy || editor.settled.is_none() || editor.refining.is_some() {
+            while editor.busy || !editor.working.idle() {
                 monitor.check()?;
                 if start.elapsed() > Duration::from_secs(90) {
                     return Err("bounded switching exercise deadline".into());
@@ -332,13 +333,13 @@ fn workload(
                 if editor.ready.is_none() && !editor.busy {
                     return Err(format!("source preparation failed: {}", editor.status));
                 }
-                if editor.refinement_error.is_some() {
+                if editor.original.refinement_error.is_some() || editor.working.error.is_some() {
                     return Err(format!("refinement failed: {}", editor.status));
                 }
                 std::thread::sleep(Duration::from_millis(8));
             }
             println!(
-                "switch_step step={step} selected={selected} ready_seconds={:.6} settled_seconds={:.6} native_before={native_before} native_after={} ui_max_ms={:.6} draw_wait_max_ms={:.6} cpu_optional={} gpu_cached_images={}",
+                "switch_step step={step} selected={selected} ready_seconds={:.6} accepted_view_seconds={:.6} native_before={native_before} native_after={} ui_max_ms={:.6} draw_wait_max_ms={:.6} cpu_optional={} gpu_cached_images={}",
                 ready.ok_or("ready boundary missing")?,
                 selection_start.elapsed().as_secs_f64(),
                 count.load(Ordering::Relaxed),
@@ -367,7 +368,8 @@ fn workload(
         );
         Ok(())
     })();
-    editor.generation.fetch_add(1, Ordering::Relaxed);
+    editor.original.invalidate();
+    editor.working.clear();
     editor.source_epoch.fetch_add(1, Ordering::Relaxed);
     editor.document.cache().close();
     editor.thumbnails.cancel();

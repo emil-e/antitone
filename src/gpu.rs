@@ -4,6 +4,20 @@ use std::{num::NonZeroU64, sync::Arc};
 #[path = "gpu_flat_field.rs"]
 mod flat;
 pub use flat::{GpuFlatField, SourceGeometry};
+#[path = "gpu_local_adjustments.rs"]
+mod local;
+pub use local::GpuPhotoGrade;
+#[path = "gpu_processing_input.rs"]
+mod input;
+pub use input::{ProcessingInput, ProcessingSignature};
+#[path = "gpu_response_table.rs"]
+mod response;
+#[path = "gpu_submission.rs"]
+mod submission;
+pub use submission::SubmissionGate;
+#[cfg(feature = "editor")]
+#[path = "gpu_working_view.rs"]
+pub(crate) mod view;
 
 use glam::{DMat3, DVec3, Vec4, Vec4Swizzles};
 use wgpu::util::DeviceExt;
@@ -30,6 +44,11 @@ pub struct ProcessingParameters {
     post_low: [Vec4; 3],
     creative: [Vec4; 3],
     creative_low: [Vec4; 3],
+    gamma_tail: Vec4,
+    shape_tail: Vec4,
+    anchor_tail: Vec4,
+    post_tail: [Vec4; 3],
+    creative_tail: [Vec4; 3],
 }
 
 // A common ACES source-display convention, not a camera exposure calibration or JPEG fit.
@@ -73,26 +92,22 @@ impl ProcessingParameters {
     /// `fixed_wb` must describe the development, not each photo's as-shot WB.
     pub fn source_preview(fixed_wb: Option<[f64; 4]>, exposure: f64) -> Result<Self, Error> {
         let gain = source_preview_gain(fixed_wb) * exposure_multiplier(exposure)?;
-        Ok(Self::source_with_gain(gain))
+        Self::source_with_gain(gain)
     }
 
     pub fn source_inspection(exposure: f64) -> Result<Self, Error> {
-        Ok(Self::source_with_gain(exposure_multiplier(exposure)?))
+        Self::source_with_gain(exposure_multiplier(exposure)?)
     }
 
-    fn source_with_gain(gain: f64) -> Self {
+    fn source_with_gain(gain: f64) -> Result<Self, Error> {
         let matrix = DMat3::IDENTITY * gain;
-        let mut result = Self {
-            post: matrix_columns(matrix),
+        let post = CameraMatrix::new(matrix)?;
+        Ok(Self {
+            post: post.high,
+            post_low: post.low,
+            post_tail: post.tail,
             ..Self::source()
-        };
-        result.post_low = std::array::from_fn(|c| {
-            let column = [matrix.x_axis, matrix.y_axis, matrix.z_axis][c];
-            (column - result.post[c].xyz().as_dvec3())
-                .as_vec3()
-                .extend(0.)
-        });
-        result
+        })
     }
 
     pub fn positive(
@@ -101,6 +116,16 @@ impl ProcessingParameters {
         photo: PhotoSettings,
         camera_to_ap1: DMat3,
     ) -> Result<Self, Error> {
+        Self::positive_with_bound(calibration, roll, photo, camera_to_ap1)
+            .map(|(parameters, _)| parameters)
+    }
+
+    fn positive_with_bound(
+        calibration: Calibration,
+        roll: RollSettings,
+        photo: PhotoSettings,
+        camera_to_ap1: DMat3,
+    ) -> Result<(Self, f64), Error> {
         validate_camera_matrix(camera_to_ap1)?;
         CameraMatrix::new(camera_to_ap1)?;
         let inversion = Inversion::new(calibration, roll)?;
@@ -135,7 +160,7 @@ impl ProcessingParameters {
             || creative_bound > f32::MAX as f64 / 4.0
         {
             return Err(Error::Gpu(
-                "settings can exceed the f32 working range in response/photographic processing"
+                "settings can exceed the f32 working range in response domain or photographic processing"
                     .into(),
             ));
         }
@@ -153,7 +178,8 @@ impl ProcessingParameters {
         let reference = split_constants(calibration.dmin, calibration.input_floor)?;
         let gamma = split_constants(gammas, toe)?;
         let logs = split_constants(inversion.anchor_exponents.map(log_abs_expm1), gain.ln())?;
-        let k = shoulder as f32;
+        let shapes = split_constants(DVec3::new(toe, shoulder, 0.), 0.)?;
+        let post = CameraMatrix::new(matrix)?;
         let weights = AP1_TO_XYZ.transpose().y_axis;
         let [contrast, colour, luminance] = [
             [photo.contrast, grade.qp, grade.q0, grade.black],
@@ -167,26 +193,25 @@ impl ProcessingParameters {
         ]
         .map(|v| split_constants(DVec3::new(v[0], v[1], v[2]), v[3]));
         let controls = [contrast?, colour?, luminance?];
-        let mut result = Self {
+        let result = Self {
             dmin_floor: reference[0],
             dmin_low: reference[1],
             dmin_tail: reference[2],
             gamma_mode: gamma[0].xyz().extend(1.),
             gamma_low: gamma[1],
-            shape: Vec4::new(toe as f32, k, gamma[1].w, (shoulder - k as f64) as f32),
+            gamma_tail: gamma[2],
+            shape: Vec4::new(shapes[0].x, shapes[0].y, shapes[1].x, shapes[1].y),
+            shape_tail: shapes[2],
             anchor: logs[0],
             anchor_low: logs[1],
-            post: matrix_columns(matrix),
+            anchor_tail: logs[2],
+            post: post.high,
+            post_low: post.low,
+            post_tail: post.tail,
             creative: std::array::from_fn(|c| controls[c][0]),
-            creative_low: std::array::from_fn(|c| controls[c][1] + controls[c][2]),
-            ..Self::zeroed()
+            creative_low: std::array::from_fn(|c| controls[c][1]),
+            creative_tail: std::array::from_fn(|c| controls[c][2]),
         };
-        result.post_low = std::array::from_fn(|c| {
-            let column = [matrix.x_axis, matrix.y_axis, matrix.z_axis][c];
-            (column - result.post[c].xyz().as_dvec3())
-                .as_vec3()
-                .extend(0.)
-        });
         if !result.dmin_floor.is_finite()
             || result.dmin_floor.w < f32::MIN_POSITIVE
             || !result.gamma_mode.is_finite()
@@ -202,7 +227,10 @@ impl ProcessingParameters {
                 "processing parameters cannot be represented in f32".into(),
             ));
         }
-        Ok(result)
+        // Scratch maxima must not become the next stage's input. Both bounds
+        // cover the actual full-strength output; keep the tighter envelope.
+        let (_, output, _) = grade.weighted_bounds(bound.max_element(), 1.);
+        Ok((result, output.min(creative_bound)))
     }
 }
 
@@ -287,7 +315,8 @@ pub struct ProcessingSource {
     matrix: wgpu::Buffer,
     pixels: u32,
     camera_to_ap1: DMat3,
-    flat_field: Option<(Arc<GpuFlatField>, SourceGeometry)>,
+    geometry: Option<SourceGeometry>,
+    flat_field: Option<Arc<GpuFlatField>>,
 }
 
 impl ProcessingSource {
@@ -316,8 +345,19 @@ impl ProcessingSource {
             }),
             pixels: count,
             camera_to_ap1,
+            geometry: None,
             flat_field: None,
         })
+    }
+
+    pub fn set_geometry(&mut self, geometry: SourceGeometry) -> Result<(), Error> {
+        if geometry.pixels() != self.pixels {
+            return Err(Error::Gpu(
+                "source geometry differs from RGB16 storage".into(),
+            ));
+        }
+        self.geometry = Some(geometry);
+        Ok(())
     }
 
     pub fn set_flat_field(
@@ -325,15 +365,11 @@ impl ProcessingSource {
         field: Option<Arc<GpuFlatField>>,
         geometry: SourceGeometry,
     ) -> Result<(), Error> {
-        if geometry.pixels() != self.pixels {
-            return Err(Error::Gpu(
-                "flat-field source geometry differs from RGB16 storage".into(),
-            ));
-        }
         if let Some(field) = &field {
             field.validate_matrix(self.camera_to_ap1)?;
         }
-        self.flat_field = field.map(|field| (field, geometry));
+        self.set_geometry(geometry)?;
+        self.flat_field = field;
         Ok(())
     }
 
@@ -352,25 +388,77 @@ impl ProcessingSource {
 
 pub struct ProcessingKernel {
     pipeline: wgpu::ComputePipeline,
+    workgroup_size: u32,
     identity: wgpu::Buffer,
+    empty_locals: wgpu::Buffer,
+    empty_local_context: wgpu::Buffer,
+    responses: Option<response::ResponseCache>,
 }
 
 impl ProcessingKernel {
-    pub async fn new(device: &wgpu::Device) -> Result<Self, Error> {
+    /// `queue` must be this device's queue used for subsequent processing submissions.
+    pub async fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Self, Error> {
+        Self::new_with_submissions(device, queue, SubmissionGate::default()).await
+    }
+
+    /// Hosted queues must share the surface's submission gate with response initialization.
+    pub async fn new_with_submissions(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        submissions: SubmissionGate,
+    ) -> Result<Self, Error> {
+        Self::new_pipeline(device, queue, true, submissions).await
+    }
+
+    #[cfg(test)]
+    async fn new_fused(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Self, Error> {
+        Self::new_pipeline(device, queue, false, SubmissionGate::default()).await
+    }
+
+    fn shader(lookup: bool) -> String {
+        let common = [
+            include_str!("shaders/camera_conversion.wgsl"),
+            include_str!("shaders/flat_field.wgsl"),
+            include_str!("shaders/film_response.wgsl"),
+            include_str!("shaders/photographic.wgsl"),
+            include_str!("shaders/local_adjustments.wgsl"),
+        ]
+        .join("\n");
+        let main = include_str!("shaders/processing.wgsl");
+        if lookup {
+            [
+                common.as_str(),
+                include_str!("shaders/response_table.wgsl"),
+                main,
+            ]
+            .join("\n")
+        } else {
+            let main = main.replace(
+                "process_positive(scans[index], index)",
+                "process_film(convert_source(scans[index], index))",
+            );
+            [common.as_str(), main.as_str()].join("\n")
+        }
+    }
+
+    async fn new_pipeline(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        lookup: bool,
+        submissions: SubmissionGate,
+    ) -> Result<Self, Error> {
+        if lookup
+            && (response::BYTE_LEN > device.limits().max_buffer_size
+                || response::BYTE_LEN > device.limits().max_storage_buffer_binding_size)
+        {
+            return Err(Error::Gpu(
+                "RGB16 response table exceeds GPU buffer limits".into(),
+            ));
+        }
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("camera RGB16 to AP1 photographic processing"),
-            source: wgpu::ShaderSource::Wgsl(
-                format!(
-                    "{}\n{}\n{}\n{}\n{}",
-                    include_str!("shaders/camera_conversion.wgsl"),
-                    include_str!("shaders/flat_field.wgsl"),
-                    include_str!("shaders/film_response.wgsl"),
-                    include_str!("shaders/photographic.wgsl"),
-                    include_str!("shaders/processing.wgsl")
-                )
-                .into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(Self::shader(lookup).into()),
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("Antitone processing"),
@@ -380,12 +468,18 @@ impl ProcessingKernel {
             compilation_options: Default::default(),
             cache: None,
         });
+        let responses =
+            lookup.then(|| response::ResponseCache::new(device, queue, &module, submissions));
         if let Some(error) = scope.pop().await {
             return Err(Error::Gpu(error.to_string()));
         }
         Ok(Self {
             pipeline,
+            workgroup_size: 64,
             identity: flat::identity_nodes(device),
+            empty_locals: local::empty_buffer(device),
+            empty_local_context: local::context_buffer(device, 0, [0; 4])?,
+            responses,
         })
     }
 
@@ -397,6 +491,46 @@ impl ProcessingKernel {
         output: &wgpu::Buffer,
         parameters: ProcessingParameters,
     ) {
+        self.encode_resources(
+            device,
+            encoder,
+            source,
+            output,
+            parameters,
+            (&self.empty_locals, &self.empty_local_context),
+        );
+    }
+
+    pub fn encode_grade(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        source: &ProcessingSource,
+        output: &wgpu::Buffer,
+        grade: &GpuPhotoGrade,
+    ) -> Result<(), Error> {
+        grade.require_source(source)?;
+        self.encode_resources(
+            device,
+            encoder,
+            source,
+            output,
+            grade.parameters,
+            (&grade.buffer, &grade.context),
+        );
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn encode_resources(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        source: &ProcessingSource,
+        output: &wgpu::Buffer,
+        parameters: ProcessingParameters,
+        (locals, context): (&wgpu::Buffer, &wgpu::Buffer),
+    ) {
         let pixels = source.pixels;
         let size = NonZeroU64::new(u64::from(pixels) * 16).unwrap();
         let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -405,47 +539,78 @@ impl ProcessingKernel {
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let (nodes, geometry) = match &source.flat_field {
-            Some((field, geometry)) => (&field.nodes, flat::FieldGeometry::new(field, *geometry)),
-            None => (&self.identity, flat::FieldGeometry::zeroed()),
+            Some(field) => (
+                &field.nodes,
+                flat::FieldGeometry::new(
+                    field,
+                    source.geometry.expect("corrected source geometry"),
+                ),
+            ),
+            None => (
+                &self.identity,
+                flat::FieldGeometry::uncorrected(source.geometry),
+            ),
         };
         let field_uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("flat-field source geometry"),
+            label: Some("processing source geometry"),
             contents: bytemuck::bytes_of(&geometry),
             usage: wgpu::BufferUsages::UNIFORM,
         });
+        let table = self.responses.as_ref().map(|responses| {
+            if parameters.gamma_mode.w > 0.5 && source.flat_field.is_none() {
+                responses.buffer(device, parameters)
+            } else {
+                responses.empty.clone()
+            }
+        });
+        let mut entries = vec![
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: source.input.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: output,
+                    offset: 0,
+                    size: Some(size),
+                }),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: source.matrix.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: nodes.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: field_uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: locals.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: context.as_entire_binding(),
+            },
+        ];
+        if let Some(table) = &table {
+            entries.push(wgpu::BindGroupEntry {
+                binding: 8,
+                resource: table.as_entire_binding(),
+            });
+        }
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("processing pixels"),
             layout: &self.pipeline.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: source.input.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: output,
-                        offset: 0,
-                        size: Some(size),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: uniform.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: source.matrix.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: nodes.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: field_uniform.as_entire_binding(),
-                },
-            ],
+            entries: &entries,
         });
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("inversion/edits"),
@@ -453,15 +618,33 @@ impl ProcessingKernel {
         });
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &group, &[]);
-        let groups = pixels.div_ceil(64);
+        let groups = pixels.div_ceil(self.workgroup_size);
         let x = groups.min(device.limits().max_compute_workgroups_per_dimension);
         pass.dispatch_workgroups(x, groups.div_ceil(x), 1);
     }
 }
 
+/// Metal resource allocation, including retained native versions; not total process memory.
+#[cfg(all(target_os = "macos", any(test, feature = "ui")))]
+pub(crate) fn allocated_resource_bytes(device: &wgpu::Device) -> Option<usize> {
+    use objc2_metal::MTLDevice;
+    // The HAL guard keeps the device alive; this query neither mutates nor destroys resources.
+    let native = unsafe { device.as_hal::<wgpu::hal::api::Metal>() }?;
+    Some(native.raw_device().currentAllocatedSize())
+}
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "gpu_arithmetic_tests.rs"]
+mod arithmetic_tests;
+#[cfg(all(test, target_os = "macos"))]
+#[path = "gpu_execution_tests.rs"]
+mod execution_tests;
 #[cfg(test)]
 #[path = "gpu_flat_field_tests.rs"]
 mod flat_tests;
+#[cfg(all(test, target_os = "macos"))]
+#[path = "gpu_reuse_tests.rs"]
+mod reuse_tests;
 #[cfg(test)]
 #[path = "gpu_tests.rs"]
 mod tests;

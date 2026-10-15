@@ -155,6 +155,7 @@ fn state() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
                 },
                 reference_only: false,
                 photo: PhotoSettings::default(),
+                local_adjustments: None,
                 orientation: Default::default(),
                 crop: None,
             },
@@ -412,12 +413,13 @@ fn area_accept_cancel_and_invalid_edits_do_not_change_calibration_or_exposure() 
     assert_eq!(editor.document.project.dmax, original.dmax);
 }
 #[test]
-fn failed_or_cancelled_analysis_keeps_settled_pixels_or_restarts_cancelled_pending_refinement() {
+fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_requested_work() {
     for (settled, outstanding) in [(false, true), (true, true), (true, false)] {
         for cancel in [false, true] {
             let (mut editor, send, receiver) = super::super::tests::fixture();
             super::super::tests::add_ready_fixture(&mut editor);
             editor.source = false;
+            editor.working.compare = true;
             let ctx = egui::Context::default();
             let frame = |editor: &mut Editor| {
                 let mut output = ctx.run_ui(
@@ -433,35 +435,40 @@ fn failed_or_cancelled_analysis_keeps_settled_pixels_or_restarts_cancelled_pendi
                 output.textures_delta.clear();
             };
             frame(&mut editor);
-            editor.last_edit = std::time::Instant::now() - Duration::from_secs(1);
+            editor.original.last_edit = std::time::Instant::now() - Duration::from_secs(1);
             frame(&mut editor);
-            let revision = editor.generation.load(Ordering::Relaxed);
-            let signature = editor.signature;
-            let view = signature.unwrap().2.unwrap();
-            let image = editor.ready.as_ref().unwrap().images[0].clone();
-            assert!(editor.refining.is_some());
+            let revision = editor.original.revision();
+            let signature = editor.original.signature.clone();
+            let view = signature.as_ref().unwrap().2.unwrap();
+            let image = editor
+                .ready
+                .as_ref()
+                .unwrap()
+                .proxy
+                .image(OutputTarget::Srgb)
+                .unwrap();
+            assert!(editor.original.refining.is_some());
             if !outstanding {
                 send.send(Message::Refined(revision, Ok(Some(image.clone()))))
                     .unwrap();
                 editor.receive();
             } else if settled {
-                editor.settled = Some((revision, view, image.clone()));
+                editor.original.settled = Some((revision, view, image.clone()));
             }
             receiver.try_iter().for_each(drop);
             let before = editor.document.project.clone();
             editor.begin_analysis();
-            assert!(editor.refining.is_none());
-            assert_eq!(editor.signature, signature);
-            assert_eq!(editor.settled.is_some(), settled);
+            assert_eq!(editor.original.signature, signature);
+            assert_eq!(editor.original.settled.is_some(), settled);
             if outstanding {
                 // A late completion from cancelled work cannot replace the accepted image.
                 send.send(Message::Refined(revision, Ok(Some(image.clone()))))
                     .unwrap();
                 editor.receive();
             } else {
-                assert_eq!(editor.generation.load(Ordering::Relaxed), revision);
+                assert_eq!(editor.original.revision(), revision);
             }
-            assert_eq!(editor.settled.is_some(), settled);
+            assert_eq!(editor.original.settled.is_some(), settled);
             frame(&mut editor);
             let pending = editor.analysis_pending.as_ref().unwrap().id;
             if cancel {
@@ -480,18 +487,19 @@ fn failed_or_cancelled_analysis_keeps_settled_pixels_or_restarts_cancelled_pendi
             assert_eq!(editor.document.project, before);
             frame(&mut editor);
             if settled {
-                let (current_revision, current_view, retained) = editor.settled.as_ref().unwrap();
-                assert_eq!(*current_revision, editor.generation.load(Ordering::Relaxed));
+                let (current_revision, current_view, retained) =
+                    editor.original.settled.as_ref().unwrap();
+                assert_eq!(*current_revision, editor.original.revision());
                 assert_eq!(*current_view, view);
                 assert!(Arc::ptr_eq(retained, &image));
-                assert!(editor.refining.is_none());
+                assert!(editor.original.refining.is_none());
                 assert!(
                     !receiver
                         .try_iter()
                         .any(|command| matches!(command, Command::Refine(..)))
                 );
             } else {
-                assert!(editor.refining.is_some());
+                assert!(editor.original.refining.is_some());
                 assert!(
                     receiver
                         .try_iter()
@@ -1025,17 +1033,24 @@ fn photo_numeric_focus_commit_precedes_analyze_confirmation_snapshot() {
 }
 
 #[test]
-fn escape_cancels_confirmation_without_invalidating_settled_preview_or_grade() {
+fn escape_cancels_confirmation_without_invalidating_original_comparison_or_grade() {
     let (mut editor, _send, receiver) = ready_state();
     editor.photo.contrast = 1.2;
     editor.source = false;
+    editor.working.compare = true;
     let ctx = egui::Context::default();
     super::super::tests::app_frame(&mut editor, &ctx, vec![]);
-    let signature = editor.signature;
-    let revision = editor.generation.load(Ordering::Relaxed);
-    let view = signature.unwrap().2.unwrap();
-    let image = editor.ready.as_ref().unwrap().images[0].clone();
-    editor.settled = Some((revision, view, image.clone()));
+    let signature = editor.original.signature.clone();
+    let revision = editor.original.revision();
+    let view = signature.as_ref().unwrap().2.unwrap();
+    let image = editor
+        .ready
+        .as_ref()
+        .unwrap()
+        .proxy
+        .image(OutputTarget::Srgb)
+        .unwrap();
+    editor.original.settled = Some((revision, view, image.clone()));
     editor.request_analysis();
     let before = editor.document.project.clone();
     super::super::tests::app_frame(&mut editor, &ctx, vec![]);
@@ -1052,9 +1067,12 @@ fn escape_cancels_confirmation_without_invalidating_settled_preview_or_grade() {
     );
     assert!(editor.analysis_confirmation.is_none() && editor.analysis_pending.is_none());
     assert_eq!(editor.document.project, before);
-    assert_eq!(editor.signature, signature);
-    assert_eq!(editor.generation.load(Ordering::Relaxed), revision);
-    assert!(Arc::ptr_eq(&editor.settled.as_ref().unwrap().2, &image));
+    assert_eq!(editor.original.signature, signature);
+    assert_eq!(editor.original.revision(), revision);
+    assert!(Arc::ptr_eq(
+        &editor.original.settled.as_ref().unwrap().2,
+        &image
+    ));
     assert!(
         !receiver
             .try_iter()

@@ -26,6 +26,7 @@ fn fixture() -> Project {
         },
         reference_only: false,
         photo: PhotoSettings::default(),
+        local_adjustments: None,
         orientation: Default::default(),
         crop: None,
     };

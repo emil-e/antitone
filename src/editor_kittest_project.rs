@@ -220,7 +220,7 @@ fn project_widgets_save_precision_order_wb_and_reject_open_atomically() {
     wait_settled(&mut harness);
     assert_eq!(compare_pixel(harness.state()), classic_pixel_edited);
     let selected = harness.state().current_source;
-    let ready = harness.state().ready.as_ref().unwrap().images[0].clone();
+    let ready = harness.state().ready.as_ref().unwrap().proxy.clone();
     for (name, id, missing) in [
         ("changed", ids[1], false),
         ("missing", ids[1], true),
@@ -247,10 +247,15 @@ fn project_widgets_save_precision_order_wb_and_reject_open_atomically() {
         );
         assert_eq!(harness.state().document.project, classic);
         assert_eq!(harness.state().current_source, selected);
-        assert!(Arc::ptr_eq(
-            &harness.state().ready.as_ref().unwrap().images[0],
-            &ready
-        ));
+        assert!(
+            harness
+                .state()
+                .ready
+                .as_ref()
+                .unwrap()
+                .proxy
+                .same_source(&ready)
+        );
         assert!(!harness.state().document.dirty());
     }
     wait_for(&mut harness, |e| {

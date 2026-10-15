@@ -6,7 +6,7 @@ This makes the plots useful for the photograph being graded while keeping them i
 
 ## Read the selected target's codes
 
-Scopes render through the same ACES target as the preview, then use its native RGB primaries and transfer. They do not first convert P3 to sRGB or apply a second display transform. Identical RGB codes in two targets need not represent identical colours.
+Scopes measure the same ACES target as the preview, then use its native RGB primaries and transfer. The positive working-view path consumes the viewer's accepted target-linear raster directly: it does not grade, apply ACES or compose it a second time. Proxy presentation retains its shared-processing path. Neither first converts P3 to sRGB. Identical RGB codes in two targets need not represent identical colours.
 
 The waveform plots encoded R/G/B or target-derived encoded luma against horizontal position in the final frame. Its vertical scale is percent of nominal encoded white—not nits, scene stops or broadcast IRE.
 
@@ -14,13 +14,13 @@ The vectorscope derives two chroma coordinates from those same encoded channels 
 
 Invalid output samples are excluded and visibly counted, not repaired into ordinary bins. That diagnostic concerns the rendered boundary; it does not declare signed AP1 working pixels invalid.
 
-## Measure the whole accepted frame
+## Measure the visible image
 
-The plots are labelled **Whole frame · Approximate**. They sample a bounded camera-RGB proxy through the accepted crop/orientation/straightening, rather than processing every source pixel.
+The plots are labelled **Visible image · Approximate**. Pan/zoom isolates the region being graded—a face, for example—while Fit covers the accepted composition. Waveform x follows left-to-right position within that visible image region, never the letterbox/canvas. Crop, orientation and straightening use the same affine composition mapping as the viewer.
 
-Sparse proxy sampling can miss a tiny highlight or colour patch. Cropping cannot create detail absent from that proxy. The result is not guaranteed to match full-resolution TIFF/EXR statistics.
+The positive prototype shares the accepted physical-view raster, including the detail/coarse-underlay composite during navigation and the explicit original-resolution reference when displayed. It never measures only the detailed patch while the viewer shows additional underlay content. Reduction remains independently bounded to a 1024-pixel edge; sparse samples can miss a tiny highlight or colour patch. Unsupported transparent coverage is excluded, not counted as black photograph. Counts are not full-resolution TIFF/EXR statistics. Initial/pending proxies use approximate source-region sampling.
 
-Viewer pan, zoom and window resizing do not change measured coverage. The settled viewer texture only represents a visible region, so it is not a substitute scope input. Source inspection, temporary reference views, unaccepted crop drafts and unavailable/busy image states suspend scopes.
+Navigation/resize updates analysis when visible coverage changes; equivalent requests reuse bins. No accepted canvas layout means **Waiting for view**. A completed navigation composite measures its full visible coverage, including the coarse underlay. While an incomplete GPU submission forces the retained accepted mapping to lag navigation, hold compatible traces instead of measuring unsupported replacement coverage. Source inspection, temporary tool/reference-source views, unaccepted crop drafts and unavailable/busy image states suspend scopes. The original-resolution comparison of the same positive is not a source-inspection tool and remains measurable.
 
 ## Magnification changes the plot, not the grade
 
@@ -30,7 +30,7 @@ RGB/CMY rim annotations indicate direction. The reference boxes indicate nominal
 
 ## Keep feedback coherent
 
-Scope work is asynchronous and bounded. While compatible results update, the previous coherent trace can remain labelled Updating. A different source, composition, target or vector scale must not inherit incompatible old bins.
+Only one reduction/diagnostic readback is outstanding. During grade, pan/zoom or sample-dimension updates, hold the previous coherent trace and its normalization labelled Updating rather than blanking it. Latest-result status still requires exact processing content and visible-frame identity, so an old completion cannot become current. Compatible holding uses logical source authority, not an immutable rendered-image pointer that changes on every edit. A different source/revision, accepted composition, target or vector scale must not inherit incompatible old bins; suspension clears them. RGB/luma selects cached planes without another reduction. No full-image readback or UI-thread GPU wait is introduced.
 
 Plot controls do not change photographic processing. Visibility and plot sizing are application preferences; plot selection, magnification and GPU diagnostics are transient.
 

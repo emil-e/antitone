@@ -81,7 +81,8 @@ fn fullscreen_widgets_fill_the_canvas_and_restore_the_workspace_at_both_densitie
             harness.step();
             assert!(harness.state().fullscreen.is_some());
             window_size(&mut harness, size);
-            harness.run();
+            // Acquisition/refinement settle on real workers and wall time, not virtual UI steps.
+            harness.try_run_realtime().unwrap();
             reveal(&mut harness);
             for label in ["File", "Export", "Scopes", "Roll", "Photo", "Rendering"] {
                 assert!(
@@ -121,7 +122,7 @@ fn fullscreen_widgets_fill_the_canvas_and_restore_the_workspace_at_both_densitie
             );
             window_size(&mut harness, windowed_size);
             harness.state_mut().fullscreen_changed(false);
-            harness.run();
+            harness.try_run_realtime().unwrap();
             assert!(harness.state().fullscreen.is_none());
             assert!(harness.query_by_label("File").is_some());
             assert!(harness.query_by_label("Scopes").is_some());

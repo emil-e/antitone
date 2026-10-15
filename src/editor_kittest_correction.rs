@@ -267,10 +267,23 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         assert_eq!(harness.state().document.project, expected);
     }
     wait_settled(&mut harness);
-    let (_, view, image) = harness.state().settled.as_ref().unwrap();
-    assert!(view.area.width < harness.state().ready.as_ref().unwrap().area.width);
-    assert_eq!(view.output, [view.area.width, view.area.height]);
-    assert_eq!([image.linear.width(), image.linear.height()], view.output);
+    let rendered = harness.state().working.displayed.as_ref().unwrap();
+    let frame = rendered.spec.frame;
+    assert!(frame.bounds().unwrap().width < harness.state().ready.as_ref().unwrap().area.width);
+    // Physical 100% fixes pixel pitch, not the integer bounding ROI: fractional window edges
+    // can require an extra original row/column without adding a display pixel.
+    let origin = glam::DVec2::from_array(frame.source_point([0., 0.]).0);
+    for point in [[1., 0.], [0., 1.]] {
+        let step = glam::DVec2::from_array(frame.source_point(point).0) - origin;
+        assert!((step.length() - 1.).abs() <= 1e-9);
+    }
+    assert_eq!(
+        [
+            rendered.image.linear.width(),
+            rendered.image.linear.height()
+        ],
+        frame.output
+    );
     let png = harness.render().unwrap();
     save_capture(&png, "correction-source-native-offscreen");
     set_layout(&mut harness, egui::vec2(1100., 800.), 315.);

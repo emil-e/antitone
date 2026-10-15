@@ -29,6 +29,7 @@ impl Input {
             path: file.path().into(),
             reference_only: false,
             photo: Default::default(),
+            local_adjustments: None,
             crop: None,
             orientation: Default::default(),
             development: SourceDevelopment {

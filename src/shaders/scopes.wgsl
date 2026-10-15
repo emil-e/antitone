@@ -26,7 +26,9 @@ fn reduce(@builtin(global_invocation_id) id: vec3u) {
     }
     let source_size = textureDimensions(image);
     let xy = min(vec2u(mapped * vec2f(source_size)), source_size - vec2u(1));
-    let rgb = textureLoad(image, vec2i(xy), 0).rgb;
+    let pixel = textureLoad(image, vec2i(xy), 0);
+    if pixel.a <= 0. { return; }
+    let rgb = pixel.rgb;
     if !all(rgb >= vec3f(0.)) || !all(rgb <= vec3f(1.)) {
         atomicAdd(&totals[1], 1u);
         return;

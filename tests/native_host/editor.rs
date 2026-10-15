@@ -31,6 +31,7 @@ pub(super) fn fixture_project(directory: &Path) -> host::Result<PathBuf> {
         },
         reference_only: false,
         photo: Default::default(),
+        local_adjustments: None,
         orientation: Default::default(),
         crop: None,
     })?;
@@ -49,6 +50,9 @@ pub(super) struct EditorApp {
 impl host::App for EditorApp {
     fn submission_gate(&self) -> &SubmissionGate {
         self.editor.submission_gate()
+    }
+    fn processing_revision(&self) -> Option<(u64, u64)> {
+        host::App::processing_revision(&self.editor)
     }
     fn photo_fullscreen(&self) -> bool {
         self.editor.photo_fullscreen()

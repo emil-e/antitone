@@ -40,10 +40,16 @@ Nonlinear processing does not commute with averaging. Averaging two negative sam
 
 The same issue applies to display rendering:
 
-- Settled preview and TIFF process/render original pixels first, then average **linear target RGB**, before output encoding.
+- Original-resolution reference/inspection refinement and TIFF process/render original pixels first, then average **linear target RGB**, before output encoding.
 - EXR averages the signed/HDR working positives and converts to AP0, without display rendering.
 
-A destination pixel inverse-maps to a source footprint. Exact intersection areas provide its reconstruction weights. Exact turns and integer framing retain simple permutation/rectangular paths; arbitrary-angle framing uses polygon coverage. Interactive previews and thumbnails deliberately use cheaper proxy approximations.
+A destination pixel inverse-maps to a source footprint. Exact intersection areas provide its reconstruction weights. Exact turns and integer framing retain simple permutation/rectangular paths; arbitrary-angle framing uses polygon coverage. Thumbnails and initial/inspection previews deliberately use cheaper proxy approximations. The positive working view instead filters neutral calibrated AP1 at the visible physical-pixel footprint before grading; [processing](processing.md#physical-view-processing-is-an-approximation) explains its noncommutativity with original-sample reconstruction. Draw bounds and raster dimensions align together to physical pixels, preserving 100% pitch. Navigation can transform retained support, but replacement acquisition always returns to originals. Original tiles alone do not bound magnified destination work; acquisition and reference reconstruction also split destination coverage into bounded windows without reducing output density.
+
+## Source-anchored local masks
+
+Local gradients remain in original developed-source coordinates. Authoritative scalar/GPU original-sample processing evaluates them at original pixel centres after Global grading, before any rendered/working reconstruction. The internal view-sized candidate evaluates precise original-coordinate masks at mapped footprint centres after filtering; this approximation has no normal-editor local admission yet. Crop, turns/flips, straightening and viewport navigation transform the photograph and its overlay, not the stored mask.
+
+Nearest-centre proxies must evaluate at the actual native source pixel chosen by their sampling raster; reusable tiles retain their origins and bypass locals in padded samples outside the declared area. Geometry is supplied independently of flat-field correction, so clearing correction must not erase it. Simply replacing a proxy crop with a rounded source rectangle can change its sampling lattice; regional processing needs explicit original-raster addressing before it can claim exact pitch-preserving reuse.
 
 ## Drafts do not change accepted composition
 

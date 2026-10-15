@@ -5,7 +5,8 @@ use crate::{
     crop::Crop,
     export::{self, ExrPrecision, Overwrite},
     geometry::{Composition, PhotoOrientation, RollOrientation},
-    gpu::ProcessingParameters,
+    gpu::{ProcessingInput, ProcessingParameters, ProcessingSignature},
+    local_adjustments::{PhotoGradeSnapshot, SpatialPipeline},
     platform::host,
     processing::{Calibration, PhotoSettings, RollSettings},
     raw::Rect,
@@ -53,6 +54,15 @@ use fullscreen::FullscreenView;
 #[path = "editor_thumbnails.rs"]
 mod thumbnails;
 use thumbnails::Thumbnails;
+#[path = "editor_processing.rs"]
+mod processing;
+use processing::Grades;
+#[path = "editor_working_view.rs"]
+mod working_view;
+use working_view::WorkingView;
+#[path = "editor_original_view.rs"]
+mod original_view;
+use original_view::{OriginalPurpose, OriginalView};
 #[path = "editor_selected_preview.rs"]
 mod selected_preview;
 use selected_preview::{SelectionPaint, SelectionTiming};
@@ -113,7 +123,7 @@ struct Ready {
     // None: not requested; Some(None): no local hint (or explicit roll-search reset).
     analysis_support: Option<Option<Rect>>,
     floor: f64,
-    images: [Arc<GpuImage>; 2],
+    proxy: crate::viewer::GpuProxy,
     record: Source,
     development: Development,
 }
@@ -166,7 +176,8 @@ enum Command {
     Unload,
     Analyze(u64, Box<analysis::Request>),
     AnalysisSupport(u64, u64),
-    Refine(u64, u64, ProcessingParameters, OutputTarget, ViewRequest),
+    Refine(u64, u64, Box<ProcessingInput>, OutputTarget, ViewRequest),
+    ViewSource(Arc<working_view::Mailbox>, egui::Context),
     Load(
         u64,
         PathBuf,
@@ -201,7 +212,7 @@ enum Command {
         OutputFormat,
         Calibration,
         RollSettings,
-        PhotoSettings,
+        PhotoGradeSnapshot,
         Composition,
         Overwrite,
     ),
@@ -286,6 +297,9 @@ fn prepare_source_scheduled(
     developments: &development::Scheduler,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<(Ready, Scan), Error> {
+    if let Some(expected) = expected {
+        document::require_supported_grade(expected)?;
+    }
     if cancelled() || cache.is_some_and(|cache| cache.store.is_closed()) {
         return Err(Error::UnusableSample("document source work retired"));
     }
@@ -381,29 +395,16 @@ fn prepare_source_scheduled(
     let renderer = renderers.get(device, queue)?;
     let renderer_seconds = tick.elapsed().as_secs_f64();
     let tick = std::time::Instant::now();
-    let make_image = |target| -> Result<Arc<GpuImage>, Error> {
-        let mut image = pollster::block_on(GpuImage::new_shared(
-            &renderer,
-            device,
-            width,
-            height,
-            &pixels,
-            scan.camera_to_ap1,
-            target,
-        ))?;
-        if let Some(correction) = correction {
-            let a = scan.area;
-            image.set_flat_field(
-                Some(correction.gpu.clone()),
-                crate::gpu::SourceGeometry::new([a.x, a.y, a.width, a.height], [width, height])?,
-            )?;
-        }
-        Ok(Arc::new(image))
-    };
-    let images = [
-        make_image(OutputTarget::Srgb)?,
-        make_image(OutputTarget::DisplayP3)?,
-    ];
+    let a = scan.area;
+    let proxy = crate::viewer::GpuProxy::new(
+        renderer,
+        device,
+        [width, height],
+        &pixels,
+        scan.camera_to_ap1,
+        correction.map(|c| c.gpu.clone()),
+        crate::gpu::SourceGeometry::new([a.x, a.y, a.width, a.height], [width, height])?,
+    )?;
     let images_seconds = tick.elapsed().as_secs_f64();
     println!(
         "selected_source native_cache_hit={native_hit} seconds={:.6} registration_seconds={registration_seconds:.6} development_seconds={development_seconds:.6} verification_seconds={verification_seconds:.6} proxy_seconds={proxy_seconds:.6} renderer_seconds={renderer_seconds:.6} images_seconds={images_seconds:.6}",
@@ -415,7 +416,7 @@ fn prepare_source_scheduled(
         area: scan.area,
         analysis_support: None,
         floor: scan.input_floor,
-        images,
+        proxy,
         record,
         development: Development::new(crate::raw::version(), scan.fixed_wb),
     };
@@ -455,7 +456,17 @@ fn prepare_document_scheduled(
     };
     document.validate()?;
     let correction = Correction::prepare(device, &document, previous_correction)?;
+    let calibration = document.project.processing_calibration()?;
     for record in &document.project.sources {
+        if let Some(calibration) = calibration {
+            processing::validate_source(
+                Some(device),
+                calibration,
+                document.project.roll,
+                record,
+                record.photo,
+            )?;
+        }
         crate::gpu::ProcessingSource::new(
             device,
             &[[0; 4]],
@@ -542,6 +553,7 @@ fn backend(
     let mut source: Option<(u64, Scan)> = None;
     let mut correction: Option<Arc<Correction>> = None;
     let mut flat_preview: Option<(u64, Scan, Source)> = None;
+    let mut view_kernels = None;
     while let Ok(command) = commands.recv() {
         match command {
             Command::AnalysisSupport(request, loaded) => {
@@ -595,6 +607,18 @@ fn backend(
                     break;
                 }
             }
+            Command::ViewSource(mailbox, context) => working_view::acquire(
+                &mailbox,
+                &context,
+                &source,
+                correction.as_ref(),
+                &renderers,
+                &mut view_kernels,
+                &device,
+                &queue,
+                &submissions,
+                &source_epoch,
+            ),
             Command::Refine(id, revision, parameters, target, view) => {
                 let active = match &flat_preview {
                     Some((loaded, scan, _)) if *loaded == id => Some((scan, None)),
@@ -612,7 +636,7 @@ fn backend(
                                 &device,
                                 (&queue, &submissions),
                                 context,
-                                parameters,
+                                *parameters,
                                 target,
                                 (&generation, revision),
                                 view,
@@ -822,7 +846,7 @@ fn backend(
                     break;
                 }
             }
-            Command::Export(id, path, format, calibration, roll, photo, composition, overwrite) => {
+            Command::Export(id, path, format, calibration, roll, grade, composition, overwrite) => {
                 let result = (|| -> Result<PathBuf, Error> {
                     let (loaded, scan) = source
                         .as_ref()
@@ -830,10 +854,11 @@ fn backend(
                     if id != *loaded {
                         return Err(Error::UnusableSample("source changed before export"));
                     }
-                    let pipeline = crate::processing::Pipeline::new(
+                    let metadata = export::ProcessingMetadata::with_grade(roll.response, &grade);
+                    let pipeline = SpatialPipeline::new(
                         scan.processing_calibration(calibration)?,
                         roll,
-                        photo,
+                        grade,
                         scan.camera_to_ap1,
                     )?;
                     if composition.area() != scan.area {
@@ -841,14 +866,14 @@ fn backend(
                             "export composition belongs to another source area",
                         ));
                     }
-                    let pixel = |x, y| pipeline.apply(scan.pixel(x, y)?).map(|p| p.rgb);
+                    let pixel = |x, y| pipeline.apply(scan.pixel(x, y)?, [x, y]).map(|p| p.rgb);
                     match format {
                         OutputFormat::Tiff(target) => export::tiff_composed(
                             &path,
                             composition,
                             target,
                             overwrite,
-                            roll.response,
+                            metadata,
                             pixel,
                         )?,
                         OutputFormat::Exr(precision) => export::exr_composed(
@@ -856,7 +881,7 @@ fn backend(
                             composition,
                             precision,
                             overwrite,
-                            roll.response,
+                            metadata,
                             pixel,
                         )?,
                     }
@@ -880,19 +905,11 @@ pub struct Editor {
     analysis_confirmation: Option<analysis::Request>,
     thumbnails: Thumbnails,
     scopes: Scopes,
-    generation: Arc<std::sync::atomic::AtomicU64>,
-    signature: Option<(
-        [u8; ProcessingParameters::BYTE_LEN],
-        OutputTarget,
-        Option<ViewRequest>,
-        Composition,
-    )>,
-    settled: Option<(u64, ViewRequest, Arc<GpuImage>)>,
-    refining: Option<(u64, ViewRequest)>,
+    grades: Grades,
+    working: WorkingView,
+    original: OriginalView,
     viewport: Viewport,
     fullscreen: Option<FullscreenView>,
-    last_edit: std::time::Instant,
-    refinement_error: Option<u64>,
     commands: mpsc::Sender<Command>,
     messages: mpsc::Receiver<Message>,
     id: u64,
@@ -949,7 +966,8 @@ impl Editor {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, initial: Option<PathBuf>) -> Self {
         let (commands, receiver) = mpsc::channel();
         let (send, messages) = mpsc::channel();
-        let renderers = Arc::new(crate::renderer::RendererCache::default());
+        let submissions = crate::platform::SubmissionGate::default();
+        let renderers = Arc::new(crate::renderer::RendererCache::new(submissions.clone()));
         renderers.prewarm(device.clone(), queue.clone());
         let developments = development::Scheduler::new();
         let thumbnails = Thumbnails::new(
@@ -962,6 +980,7 @@ impl Editor {
         let source_epoch = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let worker_source_epoch = source_epoch.clone();
         let scopes = Scopes::new(device);
+        let grades = Grades::new(device.clone());
         let device = device.clone();
         let queue = queue.clone();
         let generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -969,7 +988,8 @@ impl Editor {
         let analysis_generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let worker_analysis_generation = analysis_generation.clone();
         let mut editor = Self::state(commands, messages, generation);
-        let submissions = editor.submissions.clone();
+        editor.submissions = submissions.clone();
+        editor.working = WorkingView::new(device.clone());
         std::thread::spawn(move || {
             backend(
                 renderers,
@@ -992,6 +1012,7 @@ impl Editor {
             .bind_sources(editor.document.cache().clone());
         editor.preferences.cache_limits = Some(editor.thumbnails.limits);
         editor.scopes = scopes;
+        editor.grades = grades;
         if let Some(path) = initial {
             if path
                 .extension()
@@ -1023,14 +1044,11 @@ impl Editor {
             analysis_confirmation: None,
             thumbnails,
             scopes: Scopes::default(),
-            generation,
-            signature: None,
-            settled: None,
-            refining: None,
+            grades: Grades::default(),
+            working: WorkingView::default(),
+            original: OriginalView::new(generation),
             viewport: Viewport::default(),
             fullscreen: None,
-            last_edit: std::time::Instant::now(),
-            refinement_error: None,
             started: false,
             commands,
             messages,
@@ -1239,8 +1257,7 @@ impl Editor {
         let id = self.request_id();
         self.source_epoch
             .store(id, std::sync::atomic::Ordering::Relaxed);
-        self.generation
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.original.invalidate();
         self.document_pending = Some(id);
         self.tasks.begin(match &work {
             DocumentWork::Import(..) => Task::Import(id),
@@ -1333,10 +1350,7 @@ impl Editor {
             .development
             .as_ref()
             .map(|value| value.fixed_wb);
-        self.generation
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.signature = None;
-        self.settled = None;
+        self.original.invalidate();
         self.viewport.fit();
         self.overwrite = None;
         self.return_notice = None;
@@ -1442,24 +1456,8 @@ impl Editor {
                 }
                 Message::Analyzed(id, result) => self.analysis_result(id, result),
                 Message::Refined(revision, result) => {
-                    let view = self
-                        .refining
-                        .filter(|(running, _)| *running == revision)
-                        .map(|(_, view)| view);
-                    if view.is_some() {
-                        self.refining = None;
-                    }
-                    if self.generation.load(std::sync::atomic::Ordering::Relaxed) == revision {
-                        match result {
-                            Ok(Some(image)) => {
-                                self.settled = Some((revision, view.unwrap(), image));
-                            }
-                            Ok(None) => {}
-                            Err(error) => {
-                                self.refinement_error = Some(revision);
-                                self.status = format!("Settled preview failed: {error}");
-                            }
-                        }
+                    if let Some(error) = self.original.receive(revision, result) {
+                        self.status = error;
                     }
                 }
                 Message::Ready(id, result) if id == self.id && self.document_pending.is_none() => {
@@ -1534,7 +1532,7 @@ impl Editor {
                                     }
                                     .validate()
                                     .and_then(|cal| {
-                                        self.positive_parameters(cal, self.roll, self.photo)
+                                        self.validate_processing(cal, self.roll, self.photo)
                                             .map(|_| cal)
                                     })
                                 })
@@ -1560,7 +1558,7 @@ impl Editor {
                                 _ => photo.wb = balance,
                             }
                             if let Some(cal) = self.calibration()
-                                && let Err(error) = self.positive_parameters(cal, roll, photo)
+                                && let Err(error) = self.validate_processing(cal, roll, photo)
                             {
                                 self.status = format!("Pick rejected: {error}");
                                 self.finish_pick();
@@ -1592,6 +1590,7 @@ impl Editor {
                             }
                             self.correction = prepared.correction;
                             self.document = prepared.document;
+                            self.grades.clear();
                             if new_project {
                                 self.tab = 0;
                                 self.preferences
@@ -1662,10 +1661,7 @@ impl Editor {
                             self.pick_drag = None;
                             self.return_notice = None;
                             self.overwrite = None;
-                            self.signature = None;
-                            self.settled = None;
-                            self.refining = None;
-                            self.refinement_error = None;
+                            self.original.invalidate();
                             if let Some(context) = flat_context {
                                 self.viewport = context.viewport;
                                 self.source = context.source;
@@ -1678,6 +1674,8 @@ impl Editor {
                         Err(error) => {
                             self.status = format!("Project: {error}");
                             self.finish_flat_edit();
+                            self.source_epoch
+                                .store(self.id, std::sync::atomic::Ordering::Relaxed);
                             if let Some(kind) = failure_kind {
                                 self.report_failure(kind, error);
                             }
@@ -1702,6 +1700,9 @@ impl Editor {
                     }
                 }
                 Message::Saved(id, result) if self.document_pending == Some(id) => {
+                    // Saving retires document work, not the authoritative developed source.
+                    self.source_epoch
+                        .store(self.id, std::sync::atomic::Ordering::Relaxed);
                     self.tasks.finish(TaskRequest::Document(id));
                     self.document_pending = None;
                     self.document_failure = None;
@@ -1894,7 +1895,23 @@ impl Editor {
             self.report_failure(FailureKind::Export, self.status.clone());
             return;
         }
+        self.sync_document();
         if let (Some(calibration), Some(ready)) = (self.calibration(), &self.ready) {
+            let grade = (|| -> Result<PhotoGradeSnapshot, Error> {
+                let id = self
+                    .current_source
+                    .ok_or_else(|| Error::Project("no accepted source for export".into()))?;
+                let source = self.document.project.source(id)?;
+                document::require_supported_grade(source)?;
+                source.grade_snapshot()
+            })();
+            let grade = match grade {
+                Ok(grade) => grade,
+                Err(error) => {
+                    self.status = error.to_string();
+                    return;
+                }
+            };
             let composition = Composition::with_crop(
                 ready.area,
                 self.roll_orientation,
@@ -1914,7 +1931,7 @@ impl Editor {
                     format,
                     calibration,
                     self.roll,
-                    self.photo,
+                    grade,
                     composition,
                     overwrite,
                 ))
@@ -2193,7 +2210,17 @@ impl host::App for Editor {
         &self.submissions
     }
 
+    fn processing_revision(&self) -> Option<(u64, u64)> {
+        Some((
+            self.id,
+            self.working
+                .revision()
+                .unwrap_or_else(|| self.original.revision()),
+        ))
+    }
+
     fn on_exit(&mut self) {
+        self.working.clear();
         if let Some(developments) = &self.developments {
             developments.close();
         }
@@ -2219,6 +2246,9 @@ impl host::App for Editor {
         // egui popups close on Escape without consuming it; preserve their input ownership.
         let dialog_escape_available = !egui::Popup::is_any_open(ui.ctx());
         self.receive();
+        if self.ready.is_none() || self.working.authority().is_some_and(|id| id != self.id) {
+            self.working.clear();
+        }
         self.seed_thumbnail();
         self.thumbnails.receive(&self.document);
         self.validate_pending_preview();
@@ -2464,8 +2494,14 @@ impl host::App for Editor {
             self.hidden_filmstrip(ui);
             (None, false)
         };
-        if let Some(calibration) = self.calibration()
-            && let Err(error) = self.positive_parameters(calibration, self.roll, self.photo)
+        if (self.roll != previous_roll || self.photo != previous_photo)
+            && let Some(calibration) = self.calibration()
+            && let Err(error) = if self.roll != previous_roll {
+                self.validate_processing(calibration, self.roll, self.photo)
+            } else {
+                self.positive_processing(calibration, self.roll, self.photo)
+                    .map(|_| ())
+            }
         {
             self.roll = previous_roll;
             self.photo = previous_photo;
@@ -2481,7 +2517,7 @@ impl host::App for Editor {
                 .max(egui::vec2(1., 1.));
             let (canvas, response) =
                 ui.allocate_exact_size(available, egui::Sense::click_and_drag());
-            let Some((area, provisional, pending)) = self.selected_view() else {
+            let Some((area, proxy, pending)) = self.selected_view() else {
                 if let Some(view) = self.tasks.view() {
                     view.viewer(ui, canvas);
                 } else {
@@ -2573,19 +2609,40 @@ impl host::App for Editor {
             let composition = geometry.composition;
             let rect = geometry.image.intersect(canvas);
             // An editing frame may be offscreen at explicit zoom; no refinement raster is requested.
-            let view = (!cropping).then(|| ViewRequest {
-                area: geometry.visible_area(),
-                output: if composition.is_exact() {
-                    geometry.output_size(geometry.visible_area(), pixels_per_point)
-                } else {
-                    geometry.frame_raster(pixels_per_point).output
-                },
-                frame: (!composition.is_exact()).then(|| geometry.frame_raster(pixels_per_point)),
-            });
+            let physical_frame = if cropping {
+                crate::frame_raster::FrameRaster::full(composition).expect("accepted composition")
+            } else {
+                geometry.physical_frame_raster(pixels_per_point)
+            };
+            let normal = !cropping
+                && active_pick.is_none()
+                && !pending
+                && self.document_pending.is_none()
+                && self.flat_edit.is_none()
+                && self.pick_return.is_none();
+            let working = normal && self.working.enabled();
+            let view = if working {
+                Some(ViewRequest {
+                    area: physical_frame.bounds().expect("validated physical view"),
+                    output: physical_frame.output,
+                    frame: Some(physical_frame),
+                })
+            } else {
+                (!cropping).then(|| ViewRequest {
+                    area: geometry.visible_area(),
+                    output: if composition.is_exact() {
+                        geometry.output_size(geometry.visible_area(), pixels_per_point)
+                    } else {
+                        geometry.frame_raster(pixels_per_point).output
+                    },
+                    frame: (!composition.is_exact())
+                        .then(|| geometry.frame_raster(pixels_per_point)),
+                })
+            };
             let parameters = if self.source {
                 let source_parameters = self.source_parameters(self.source_exposure);
                 match source_parameters {
-                    Ok(parameters) => parameters,
+                    Ok(parameters) => ProcessingInput::from(parameters),
                     Err(error) => {
                         ui.label(format!("Source inspection unavailable: {error}"));
                         return;
@@ -2596,7 +2653,7 @@ impl host::App for Editor {
                     ui.label("Positive preview requires valid calibration");
                     return;
                 };
-                match self.positive_parameters(cal, self.roll, self.photo) {
+                match self.positive_processing(cal, self.roll, self.photo) {
                     Ok(p) => p,
                     Err(error) => {
                         ui.label(format!("Positive preview unavailable: {error}"));
@@ -2604,74 +2661,117 @@ impl host::App for Editor {
                     }
                 }
             };
-            let signature = (
-                bytemuck::bytes_of(&parameters).try_into().unwrap(),
-                self.target,
-                view,
-                composition,
-            );
-            if self.signature != Some(signature) {
-                self.signature = Some(signature);
-                self.generation
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                self.last_edit = std::time::Instant::now();
-                self.settled = None;
+            if working
+                && self.working.observe(
+                    self.id,
+                    physical_frame,
+                    parameters.signature(),
+                    self.target,
+                )
+            {
+                self.original.discard();
             }
-            let revision = self.generation.load(std::sync::atomic::Ordering::Relaxed);
-            if !self.busy
+            let purpose = if normal && !self.source && self.working.compare {
+                Some(OriginalPurpose::Reference)
+            } else {
+                (!cropping
+                    && !pending
+                    && (active_pick.is_some()
+                        || self.flat_edit.is_some()
+                        || self.pick_return.is_some()))
+                .then_some(OriginalPurpose::Tool)
+            };
+            if let Some(purpose) = purpose {
+                self.original.observe(
+                    purpose,
+                    (parameters.signature(), self.target, view, composition),
+                );
+            } else {
+                self.original.leave();
+            }
+            let reference_allowed = if working {
+                self.admit_view_reference(physical_frame)
+            } else {
+                self.thumbnails.reserve_view(0);
+                true
+            };
+            let revision = self.original.revision();
+            let rendered = match self.working_view(physical_frame, &parameters, ui.ctx()) {
+                Ok(view) => view,
+                Err(error) => {
+                    self.working.error = Some(error.to_string());
+                    self.working.hold(self.id, self.target)
+                }
+            };
+            if purpose.is_some()
+                && !self.busy
+                && reference_allowed
+                && (!working || self.working.support_ready())
                 && self.analysis_confirmation.is_none()
-                && !cropping
-                && self.refining.is_none()
-                && self.settled.is_none()
-                && self.refinement_error != Some(revision)
-                && self.last_edit.elapsed() >= Duration::from_millis(250)
-                && let Some(view) = view
+                && let Some(error) = self.original.schedule(
+                    self.id,
+                    &parameters,
+                    self.target,
+                    &self.commands,
+                    ui.ctx(),
+                )
             {
-                if self
-                    .commands
-                    .send(Command::Refine(
-                        self.id,
-                        revision,
-                        parameters,
-                        self.target,
-                        view,
-                    ))
-                    .is_ok()
-                {
-                    self.refining = Some((revision, view));
-                } else {
-                    self.refinement_error = Some(revision);
-                    self.status = "RAW worker stopped".into();
-                }
+                self.status = error.into();
             }
-            if self.refining.is_some()
-                || self.settled.is_none() && self.refinement_error != Some(revision)
-            {
-                ui.ctx().request_repaint_after(Duration::from_millis(50));
-            }
-            let draw = if cropping { canvas } else { rect };
-            let (image, parameters, mapping) = match &self.settled {
-                Some((settled_revision, settled_view, image))
-                    if *settled_revision == revision && !cropping =>
-                {
-                    let mapping = if settled_view.frame.is_some() {
-                        crate::geometry::TextureMapping::IDENTITY
-                    } else {
-                        geometry.uv(draw, settled_view.area)
-                    };
-                    (image.clone(), None, mapping)
+            let draw = if cropping {
+                canvas
+            } else if working {
+                geometry.physical_draw(pixels_per_point)
+            } else {
+                rect
+            };
+            let paint = if let Some(rendered) = rendered {
+                proxy.release_output();
+                let mapping = rendered.mapping(physical_frame);
+                ImagePaint::rendered(
+                    rendered,
+                    mapping,
+                    self.submissions.clone(),
+                    ui.ctx().clone(),
+                )
+            } else {
+                let provisional = match proxy.image(self.target) {
+                    Ok(image) => image,
+                    Err(error) => {
+                        ui.label(format!("View unavailable: {error}"));
+                        return;
+                    }
+                };
+                if let Err(error) = provisional.require_processing(&parameters) {
+                    ui.label(format!("Preview unavailable: {error}"));
+                    return;
                 }
-                _ => (provisional, Some(parameters), geometry.uv(draw, area)),
+                let (image, parameters, mapping) = match &self.original.settled {
+                    Some((settled_revision, settled_view, image))
+                        if *settled_revision == revision && !cropping =>
+                    {
+                        let mapping = if settled_view.frame.is_some() {
+                            crate::geometry::TextureMapping::IDENTITY
+                        } else {
+                            geometry.uv(draw, settled_view.area)
+                        };
+                        (image.clone(), None, mapping)
+                    }
+                    _ => (provisional, Some(parameters), geometry.uv(draw, area)),
+                };
+                match processing::image_paint(image, parameters, mapping) {
+                    Ok(paint) => paint,
+                    Err(error) => {
+                        ui.label(format!("Preview unavailable: {error}"));
+                        return;
+                    }
+                }
             };
             ui.painter()
                 .with_clip_rect(canvas)
                 .add(egui_wgpu::Callback::new_paint_callback(
                     draw,
-                    SelectionPaint::new(
-                        ImagePaint::new(image, parameters, mapping),
-                        self.selection_timing.clone(),
-                        pending,
-                    ),
+                    SelectionPaint::new(paint, self.selection_timing.clone(), pending),
                 ));
             if cropping {
                 self.paint_crop(ui, geometry);

@@ -158,6 +158,111 @@ impl Grade {
         peak
     }
 
+    #[cfg(feature = "gpu")]
+    pub(crate) fn weighted_bounds(&self, input: f64, strength: f64) -> (f64, f64, f64) {
+        let mut peak = input;
+        let mut output = input;
+        let mut sensitivity = 1.;
+        if self.photo.contrast != 1. {
+            let end = 1. + strength * (self.photo.contrast - 1.);
+            let low = end.min(1.);
+            let high = end.max(1.);
+            let curve = |amount| Self {
+                photo: PhotoSettings {
+                    contrast: amount,
+                    ..self.photo
+                },
+                qp: self.qp,
+                q0: self.qp + amount * (OFFSET - self.qp),
+                black: decode(self.qp + amount * (OFFSET - self.qp)),
+            };
+            let mut gain = high;
+            let mut black: f64 = 0.;
+            for amount in [low, high] {
+                let grade = curve(amount);
+                black = black.max(grade.black.abs());
+                output = output
+                    .max(grade.tone(-input).abs())
+                    .max(grade.tone(input).abs());
+            }
+            // For each amount, derivative extrema in x are at the toe or B.
+            // In the exponential decode branch, derivative versus amount is
+            // proportional to a*exp(k*a): include its interior stationary point.
+            for x in [input.min(TOE), input] {
+                let k = LOG_SCALE * (encode(x) - self.qp);
+                let stationary = if k < 0. { -1. / k } else { high };
+                for amount in [low, high, stationary.clamp(low, high)] {
+                    let grade = curve(amount);
+                    let q = grade.qp + amount * (encode(x) - grade.qp);
+                    let e = if x <= TOE {
+                        SLOPE
+                    } else {
+                        1. / (LOG_SCALE * x)
+                    };
+                    let d = if q <= CUT {
+                        1. / SLOPE
+                    } else {
+                        LOG_SCALE * decode(q)
+                    };
+                    gain = gain.max(amount * e * d);
+                }
+            }
+            output = output.max(black + gain * input);
+            peak = peak.max(SLOPE * input * high).max(output);
+            // Bound f'' on each encode/decode branch. In the positive curved
+            // branch f'' is proportional to x^(a-2), decreasing for a <= 1.6.
+            let q_toe = [low, high]
+                .map(|a| self.qp + a * (encode(TOE) - self.qp))
+                .into_iter()
+                .fold(f64::NEG_INFINITY, f64::max);
+            let curved_toe = (q_toe * 17.52 - 9.72).exp2();
+            let curvature = (high * high * SLOPE * SLOPE * LOG_SCALE * LOG_SCALE * curved_toe)
+                .max(high / (SLOPE * LOG_SCALE * TOE * TOE))
+                .max(high * (low - 1.).abs().max((high - 1.).abs()) * curved_toe / (TOE * TOE));
+            // g'(Y) = integral_0^1 t*f''(tY) dt. For increased contrast,
+            // f'' is zero below the toe, negative in log-encode/linear-decode,
+            // then positive in log-encode/exponential-decode. The latter two
+            // contributions oppose rather than add; keep the narrow crossing
+            // interval instead of applying its peak curvature to all of [-B,B].
+            let gain_slope = if low >= 1. {
+                let cut =
+                    (self.qp + (CUT - self.qp) / high) * LOG_SCALE - 9.72 * std::f64::consts::LN_2;
+                let width = (cut - TOE.ln())
+                    .max(0.)
+                    .min((input / TOE).ln().max(0.))
+                    .min(0.5);
+                let logarithmic =
+                    high / (SLOPE * LOG_SCALE * TOE * TOE) * width * (-2. * width).exp();
+                let curved = high * (high - 1.) * curved_toe / (2. * TOE * TOE);
+                // Rounded ACEScct constants can put a tiny exponential-decode
+                // interval below the encode toe, including arbitrarily near 1.
+                let start = ((CUT - curve(low).q0) / (low * SLOPE)).clamp(0., TOE);
+                let end = input.min(TOE);
+                let toe_fraction = if end > start {
+                    (end - start) * (end + start) / (end * end)
+                } else {
+                    0.
+                };
+                let linear_curved =
+                    high * high * SLOPE * SLOPE * LOG_SCALE * LOG_SCALE * curved_toe * toe_fraction
+                        / 2.;
+                logarithmic.max(curved) + linear_curved
+            } else {
+                curvature / 2.
+            };
+            // AP1 Y has positive unit-sum weights; use the infinity norm.
+            sensitivity = gain + self.photo.contrast_colour_mix * input * gain_slope;
+        }
+        if self.photo.saturation != 1. {
+            let saturation = (1. + strength * (self.photo.saturation - 1.)).max(1.);
+            peak = peak.max((1. + 2. * saturation) * output);
+            let gain = (2. * saturation - 1.).max(1.);
+            output *= gain;
+            sensitivity *= gain;
+        }
+        (peak, output, sensitivity)
+    }
+
     pub fn apply(&self, rgb: DVec3) -> Result<DVec3, Error> {
         finite(rgb)?;
         let rgb = if self.photo.contrast == 1. {
@@ -175,5 +280,89 @@ impl Grade {
         let constant_y = finite(grey + self.photo.saturation * (rgb - grey))?;
         let hsv = finite(maximum + self.photo.saturation * (rgb - maximum))?;
         finite(mix(constant_y, hsv, self.photo.saturation_density))
+    }
+}
+
+#[cfg(all(test, feature = "gpu"))]
+mod bounds_tests {
+    use super::*;
+
+    #[test]
+    fn increased_contrast_bounds_cover_signed_jacobians_at_toe_and_decode_crossings() {
+        let weights = AP1_TO_XYZ.row(1);
+        for contrast in [1. + 1e-12, 1.0001, 1.01, 1.6] {
+            for pivot in [0.01, 0.18, 1.] {
+                for input in [0.001, 0.008, 1., 20000.] {
+                    let photo = PhotoSettings {
+                        contrast,
+                        pivot,
+                        contrast_colour_mix: 1.,
+                        ..Default::default()
+                    };
+                    let (_, _, bound) = Grade::new(photo).unwrap().weighted_bounds(input, 0.6);
+                    for i in 1..=20 {
+                        let amount = 1. + 0.6 * i as f64 / 20. * (contrast - 1.);
+                        let grade = Grade::new(PhotoSettings {
+                            contrast: amount,
+                            ..photo
+                        })
+                        .unwrap();
+                        let cut = decode(grade.qp + (CUT - grade.qp) / amount);
+                        for y in [
+                            0.,
+                            TOE * (1. - 1e-12),
+                            TOE,
+                            TOE * (1. + 1e-12),
+                            cut * (1. - 1e-12),
+                            cut,
+                            cut * (1. + 1e-12),
+                            input,
+                        ] {
+                            if y > input {
+                                continue;
+                            }
+                            let gain = grade.gain(y);
+                            let delta = amount
+                                * if y <= TOE {
+                                    SLOPE * y
+                                } else {
+                                    encode(y) - OFFSET
+                                };
+                            let q = grade.q0 + delta;
+                            let derivative = amount
+                                * if y <= TOE {
+                                    SLOPE
+                                } else {
+                                    1. / (LOG_SCALE * y)
+                                }
+                                * if q <= CUT {
+                                    1. / SLOPE
+                                } else {
+                                    LOG_SCALE * decode(q)
+                                };
+                            let gain_slope = if y == 0. || (y <= TOE && q <= CUT) {
+                                0.
+                            } else {
+                                (derivative - gain) / y
+                            };
+                            for red in [-0.8 * input, 0.8 * input] {
+                                let rgb = DVec3::new(red, (y - weights.x * red) / weights.y, 0.);
+                                if rgb.abs().max_element() > input {
+                                    continue;
+                                }
+                                for row in 0..3 {
+                                    let mut jacobian = gain_slope * rgb[row] * weights;
+                                    jacobian[row] += gain;
+                                    assert!(
+                                        jacobian.abs().element_sum() <= bound * (1. + 1e-10),
+                                        "contrast={amount}, pivot={pivot}, B={input}, Y={y}: {jacobian:?} exceeds {bound}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

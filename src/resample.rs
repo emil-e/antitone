@@ -1,4 +1,6 @@
 use wgpu::util::DeviceExt;
+#[path = "resample_windows.rs"]
+pub(crate) mod windows;
 
 const SHADER: &str = r#"
 struct Parameters { source:vec2u, output:vec2u, origin:vec2u, tile:vec2u, output_origin:vec2u, extent:vec2u }
@@ -44,7 +46,12 @@ pub(crate) struct AveragePipelines {
 impl AveragePipelines {
     pub(crate) async fn new(device: &wgpu::Device) -> Result<Self, crate::Error> {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let compute = [SHADER, include_str!("shaders/affine_area.wgsl")].map(|shader| {
+        let affine = [
+            include_str!("shaders/footprint.wgsl"),
+            include_str!("shaders/affine_area.wgsl"),
+        ]
+        .join("\n");
+        let compute = [SHADER, affine.as_str()].map(|shader| {
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("post-render exact-area averaging"),
                 source: wgpu::ShaderSource::Wgsl(shader.into()),
@@ -152,6 +159,10 @@ impl AreaAverage {
             || output.contains(&0)
             || (affine.is_none() && (output[0] > source[0] || output[1] > source[1]))
             || size > device.limits().max_storage_buffer_binding_size
+            || affine.is_some_and(|a| {
+                let det = a[1][0] * a[2][1] - a[1][1] * a[2][0];
+                !det.is_finite() || det == 0.
+            })
         {
             return Err(crate::Error::Gpu(
                 "invalid area-average dimensions or GPU budget".into(),
@@ -177,17 +188,31 @@ impl AreaAverage {
         tile: &wgpu::Texture,
         origin: [u32; 2],
     ) {
-        // Affine destination footprints are not bounded by rectangular source scaling.
-        let (output_origin, extent) = if self.affine.is_some() {
-            ([0; 2], [self.dimensions[2], self.dimensions[3]])
+        for window in self.windows(tile, origin) {
+            self.accumulate_window(device, encoder, tile, origin, window);
+        }
+    }
+    pub(crate) fn windows(&self, tile: &wgpu::Texture, origin: [u32; 2]) -> Vec<windows::Window> {
+        let output = [self.dimensions[2], self.dimensions[3]];
+        windows::bounded(if let Some(affine) = self.affine {
+            windows::affine_output(affine, output, origin, [tile.width(), tile.height()])
         } else {
             overlapping_output(
                 [self.dimensions[0], self.dimensions[1]],
-                [self.dimensions[2], self.dimensions[3]],
+                output,
                 origin,
                 [tile.width(), tile.height()],
             )
-        };
+        })
+    }
+    pub(crate) fn accumulate_window(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        tile: &wgpu::Texture,
+        origin: [u32; 2],
+        (output_origin, extent): windows::Window,
+    ) {
         if extent.contains(&0) {
             return;
         }
@@ -213,6 +238,7 @@ impl AreaAverage {
         if let Some(affine) = self.affine {
             bytes.extend_from_slice(bytemuck::cast_slice(&affine));
             bytes.extend_from_slice(bytemuck::cast_slice(&[0_f32; 2]));
+            bytes.extend_from_slice(bytemuck::cast_slice(&parameters[8..]));
         }
         let compute = &self.pipelines.compute[usize::from(self.affine.is_some())];
         let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

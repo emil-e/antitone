@@ -18,6 +18,12 @@ It does not retain active/multi-selection, canvas navigation, source-inspection 
 
 This distinction defines dirty state. Accepted project changes are compared with the last successful Save/Open snapshot. Looking around, selecting a photo or cancelling a draft does not make a project modified. Accepting a statistics area does, even though it does not immediately recalculate the grade.
 
+## Source-owned local adjustments
+
+The schema-5 library extension optionally stores an ordered collection of source-anchored local adjustments. Stable IDs and a retained allocator support renaming/reordering without changing identity; deletion does not reuse IDs. Strict contract/record validation rejects unknown fields, malformed geometry and unsupported processing instead of silently dropping a grade. Older strict readers reject the extension rather than displaying a global-only result.
+
+Immutable processing snapshots contain Global settings and ordered local values, not names, IDs or allocator history. Metadata still participates in saved/dirty state, but does not invalidate GPU processing. Editing-target selection, handles, overlays and mask drafts remain transient. [Local feature admission](plans/local-adjustments.md) is unfinished: normal editor Open/Save/source preparation/export currently rejects nonempty collections, including disabled records.
+
 ## Compatibility is about the processing basis
 
 Calibration makes sense only in the camera basis and development in which it was defined. A roll therefore retains its camera model and camera-to-AP1 matrix, along with fixed development WB and backend/development identity. Every source and reference must be compatible; removing old records does not reset the retained basis.

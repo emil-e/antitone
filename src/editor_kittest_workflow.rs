@@ -1,4 +1,8 @@
 use super::*;
+#[path = "editor_kittest_source_working.rs"]
+mod source_working;
+#[path = "editor_kittest_underlay.rs"]
+mod underlay;
 
 pub(super) fn enter_numeric(harness: &mut Harness<'_, Editor>, label: &str, text: &str) {
     let role = egui::accesskit::Role::SpinButton;
@@ -133,21 +137,36 @@ fn calibrated_workflow() -> (
 
 pub(super) fn wait_settled(harness: &mut Harness<'_, Editor>) {
     wait_for(harness, |e| {
-        assert!(e.refinement_error.is_none(), "{}", e.status);
-        e.signature
-            .as_ref()
-            .is_some_and(|signature| signature.1 == e.target)
-            && e.settled.as_ref().is_some_and(|(revision, _, _)| {
-                *revision == e.generation.load(std::sync::atomic::Ordering::Relaxed)
-            })
+        assert!(e.original.refinement_error.is_none(), "{}", e.status);
+        if e.working.revision().is_some() {
+            let expected = if e.source {
+                e.source_parameters(e.source_exposure)
+                    .map(ProcessingInput::from)
+            } else {
+                e.positive_processing(e.calibration().unwrap(), e.roll, e.photo)
+            }
+            .unwrap();
+            !e.working.updating
+                && e.working.displayed.as_ref().is_some_and(|view| {
+                    view.processing == expected.signature()
+                        && view.target == e.target
+                        && (!e.working.compare || e.source || e.working.reference_ready())
+                })
+        } else {
+            e.original
+                .signature
+                .as_ref()
+                .is_some_and(|s| s.1 == e.target)
+                && e.original
+                    .settled
+                    .as_ref()
+                    .is_some_and(|(revision, _, _)| *revision == e.original.revision())
+        }
     });
-    let (_, view, image) = harness.state().settled.as_ref().unwrap();
-    assert_eq!([image.linear.width(), image.linear.height()], view.output);
-    assert!(view.output.into_iter().all(|size| size > 0));
 }
 
 #[test]
-fn uncalibrated_source_preview_uses_saved_roll_wb_in_provisional_and_settled_targets() {
+fn uncalibrated_source_working_view_uses_saved_roll_wb_in_both_targets_without_idle_refinement() {
     let directory = tempfile::tempdir().unwrap();
     let (mut harness, capture) = editor_harness_with_thumbnails(true);
     let wb = [2., 1., 1.5, 1.];
@@ -188,13 +207,11 @@ fn uncalibrated_source_preview_uses_saved_roll_wb_in_provisional_and_settled_tar
                 .click();
             harness.step();
             assert_eq!(harness.state().source_exposure, ev);
-            harness.state_mut().settled = None;
-            harness.state_mut().last_edit = Instant::now();
-            harness.step();
-            assert!(harness.state().settled.is_none());
-            for settled in [false, true] {
-                if settled {
-                    wait_settled(&mut harness);
+            wait_settled(&mut harness);
+            for phase in 0..2 {
+                if phase == 1 {
+                    std::thread::sleep(Duration::from_millis(300));
+                    harness.step();
                 }
                 harness.render().unwrap();
                 let geometry = harness.state().last_layout.unwrap().0;
@@ -222,11 +239,14 @@ fn uncalibrated_source_preview_uses_saved_roll_wb_in_provisional_and_settled_tar
                         assert!(pixel[c].is_finite());
                         assert!(
                             (f64::from(pixel[c]) - expected).abs() <= 0.001,
-                            "{target:?}, EV {ev}, settled={settled}: {pixel:?} vs {expected}"
+                            "{target:?}, EV {ev}: {pixel:?} vs {expected}"
                         );
                     }
                 }
             }
+            assert!(harness.state().original.signature.is_none());
+            assert!(harness.state().original.refining.is_none());
+            assert!(harness.state().original.settled.is_none());
             let mut expected = project.clone();
             expected.output.tiff = if target == OutputTarget::Srgb {
                 crate::project::TiffTarget::Srgb
@@ -345,9 +365,21 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_return_use_widget
     harness.step();
     assert_eq!(harness.state().viewport.zoom, Some(1.));
     wait_settled(&mut harness);
-    let (_, view, _) = harness.state().settled.as_ref().unwrap();
-    assert_eq!(view.output, [view.area.width, view.area.height]);
-    assert!(view.area.width < harness.state().ready.as_ref().unwrap().area.width);
+    let frame = harness
+        .state()
+        .working
+        .displayed
+        .as_ref()
+        .unwrap()
+        .spec
+        .frame;
+    for c in 0..2 {
+        assert!(
+            ((frame.max.0[c] - frame.min.0[c]) - f64::from(frame.output[c])).abs() < 1e-4,
+            "100% retains one source-frame pixel per physical display pixel"
+        );
+    }
+    assert!(frame.bounds().unwrap().width < harness.state().ready.as_ref().unwrap().area.width);
     let png = harness.render().unwrap();
     save_capture(&png, "workflow-native-p3-offscreen");
     let selected = harness.state().current_source;
@@ -396,6 +428,306 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_return_use_widget
     assert_eq!(harness.state().document.project, project);
     assert!(harness.state().preference_store.is_none());
     wait_settled(&mut harness);
+}
+
+#[test]
+fn physical_view_prospective_local_edits_use_current_input_and_clear_recovered_render_errors() {
+    use crate::{
+        geometry::SourcePoint,
+        local_adjustments::{GradientMask, LocalAdjustment},
+        project::LocalAdjustments,
+    };
+    let (mut harness, _capture, _directory) = calibrated_workflow();
+    wait_for(&mut harness, |e| e.working.support_ready());
+    harness.render().unwrap();
+    let initial = harness.state().working.displayed.clone().unwrap();
+    let source_id = harness.state().current_source.unwrap();
+    let area = harness.state().ready.as_ref().unwrap().area;
+    let mut locals = LocalAdjustments::default();
+    for exposure in [0.5, -0.25] {
+        locals
+            .add(
+                format!("Local {exposure}"),
+                LocalAdjustment {
+                    mask: GradientMask::Linear {
+                        start: SourcePoint([f64::from(area.x), f64::from(area.y)]),
+                        end: SourcePoint([
+                            f64::from(area.x + area.width),
+                            f64::from(area.y + area.height),
+                        ]),
+                    },
+                    photo: PhotoSettings {
+                        exposure,
+                        ..Default::default()
+                    },
+                    enabled: true,
+                    invert: false,
+                    strength: 0.5,
+                },
+            )
+            .unwrap();
+    }
+    for edit in 0..4 {
+        match edit {
+            1 => locals.adjustments[0].adjustment.photo.exposure = 0.75,
+            2 => locals.adjustments.reverse(),
+            3 => {
+                locals.adjustments.remove(0);
+            }
+            _ => (),
+        }
+        // Prospective routing only: normal document admission remains deliberately closed.
+        let editor = harness.state_mut();
+        editor
+            .document
+            .project
+            .source_mut(source_id)
+            .unwrap()
+            .local_adjustments = Some(locals.clone());
+        assert!(
+            document::require_supported_grade(editor.document.project.source(source_id).unwrap())
+                .is_err()
+        );
+        let input = editor
+            .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+            .unwrap();
+        harness.step();
+        harness.render().unwrap();
+        let editor = harness.state();
+        assert!(editor.working.error.is_none(), "{:?}", editor.working.error);
+        let displayed = editor.working.displayed.as_ref().unwrap();
+        assert!(displayed.same_source_as(&initial));
+        assert_eq!(displayed.processing, input.signature());
+        assert!(
+            editor
+                .ready
+                .as_ref()
+                .unwrap()
+                .record
+                .local_adjustments
+                .is_none(),
+            "Ready remains the original accepted-load record"
+        );
+    }
+    let editor = harness.state_mut();
+    let bad = editor
+        .positive_processing(
+            editor.calibration().unwrap(),
+            editor.roll,
+            PhotoSettings {
+                exposure: editor.photo.exposure + 1.,
+                ..editor.photo
+            },
+        )
+        .unwrap();
+    // Mismatched Global controls are rejected before publishing output.
+    let bad = ProcessingInput::from(bad.parameters());
+    let frame = editor.working.current_frame().unwrap();
+    let error = editor
+        .working_view(frame, &bad, &egui::Context::default())
+        .err();
+    assert!(error.is_some());
+    editor.working.error = error.map(|e| e.to_string());
+    harness.step();
+    harness.render().unwrap();
+    assert!(harness.state().working.error.is_none());
+    assert!(
+        harness
+            .state()
+            .working
+            .displayed
+            .as_ref()
+            .unwrap()
+            .same_source_as(&initial)
+    );
+}
+
+#[test]
+fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_reference_switching() {
+    let (mut harness, _, _directory) = calibrated_workflow();
+    harness.state_mut().scopes.visible = true;
+    wait_settled(&mut harness);
+    harness.render().unwrap();
+    let first = harness
+        .state()
+        .working
+        .displayed
+        .clone()
+        .expect("working view");
+    assert_eq!(first.image.processing_byte_len(), (0, 0));
+    assert!(
+        !harness
+            .state()
+            .ready
+            .as_ref()
+            .unwrap()
+            .proxy
+            .output_retained(),
+        "scopes must not recreate unused provisional storage after accepted working presentation"
+    );
+    stage(&mut harness, "Photo");
+    for (label, value) in [
+        ("Exposure", "1.1"),
+        ("Warmth", "-0.2"),
+        ("Tint", "0.15"),
+        ("Contrast", "1.3"),
+        ("Saturation", "1.4"),
+    ] {
+        enter_numeric(&mut harness, label, value);
+        harness.render().unwrap();
+        let current = harness.state().working.displayed.as_ref().unwrap();
+        assert!(
+            current.same_source_as(&first),
+            "{label} must not reacquire or demote source detail"
+        );
+        assert!(current.spec == first.spec);
+        assert!(
+            !harness
+                .state()
+                .ready
+                .as_ref()
+                .unwrap()
+                .proxy
+                .output_retained()
+        );
+        assert_eq!(
+            &current.processing,
+            harness.state().working.processing().unwrap()
+        );
+    }
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Slider, "Exposure")
+        .scroll_to_me();
+    harness.try_run_realtime().unwrap();
+    let slider = harness
+        .get_by_role_and_label(egui::accesskit::Role::Slider, "Exposure")
+        .rect();
+    let start = slider.left_center() + egui::vec2(8., 0.);
+    harness.hover_at(start);
+    harness.event(egui::Event::PointerButton {
+        pos: start,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.step();
+    let mut exposures = Vec::new();
+    for n in 0..12 {
+        harness.hover_at(start + egui::vec2((slider.width() - 16.) * n as f32 / 11., 0.));
+        harness.step();
+        harness.render().unwrap();
+        let view = harness.state().working.displayed.as_ref().unwrap();
+        assert!(
+            view.same_source_as(&first),
+            "dragging must not switch detail levels"
+        );
+        assert_eq!(
+            &view.processing,
+            harness.state().working.processing().unwrap()
+        );
+        assert!(
+            !harness
+                .state()
+                .ready
+                .as_ref()
+                .unwrap()
+                .proxy
+                .output_retained(),
+            "dragging/scopes must not allocate a second presentation path"
+        );
+        exposures.push(harness.state().photo.exposure);
+    }
+    let end = slider.right_center() - egui::vec2(8., 0.);
+    harness.event(egui::Event::PointerButton {
+        pos: end,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.step();
+    harness.render().unwrap();
+    assert!(exposures.last().unwrap() > exposures.first().unwrap());
+    let edited = harness.state().working.displayed.clone().unwrap();
+    wait_settled(&mut harness);
+    harness.render().unwrap();
+    assert!(
+        Arc::ptr_eq(&edited, harness.state().working.displayed.as_ref().unwrap()),
+        "idle must not replace the working view"
+    );
+    stage(&mut harness, "Rendering");
+    select_target(&mut harness, OutputTarget::Srgb);
+    harness.render().unwrap();
+    let srgb = harness.state().working.displayed.clone().unwrap();
+    assert!(srgb.same_source_as(&edited));
+    assert!(
+        srgb.same_grade_as(&edited),
+        "target-only changes reuse graded AP1"
+    );
+    wait_settled(&mut harness);
+    assert!(
+        harness.state().original.signature.is_none(),
+        "normal grading does not prepare hidden original work"
+    );
+    let project = harness.state().document.project.clone();
+    harness
+        .get_by_label("Original-resolution reference")
+        .click();
+    harness.step();
+    wait_settled(&mut harness);
+    harness.render().unwrap();
+    let reference = harness.state().working.displayed.clone().unwrap();
+    assert!(Arc::ptr_eq(
+        &reference.image,
+        &harness.state().original.settled.as_ref().unwrap().2
+    ));
+    assert!(reference.spec == srgb.spec);
+    harness
+        .get_by_label("Original-resolution reference")
+        .click();
+    harness.step();
+    harness.render().unwrap();
+    assert!(Arc::ptr_eq(
+        &srgb,
+        harness.state().working.displayed.as_ref().unwrap()
+    ));
+    assert_eq!(harness.state().document.project, project);
+    match harness.state().scope_request().unwrap() {
+        scopes::ScopeInput::Rendered(view, _) => assert!(Arc::ptr_eq(
+            &view,
+            harness.state().working.displayed.as_ref().unwrap()
+        )),
+        _ => panic!("scopes must consume the viewer's accepted target-linear result"),
+    }
+    harness.get_by_label("100%").click();
+    harness.step();
+    wait_for(&mut harness, |e| e.working.support_ready());
+    harness.render().unwrap();
+    let navigated = harness.state().working.displayed.clone().unwrap();
+    assert!(
+        !navigated.same_source_as(&srgb),
+        "navigation reacquires authoritative originals"
+    );
+    harness
+        .state_mut()
+        .thumbnails
+        .set_limits(cache_limits::CacheLimits {
+            cpu_bytes: 0,
+            gpu_bytes: 0,
+        });
+    harness.step();
+    harness.render().unwrap();
+    assert!(harness.state().original.settled.is_none());
+    assert!(!harness.state().working.reference_ready());
+    assert!(
+        harness
+            .state()
+            .working
+            .displayed
+            .as_ref()
+            .unwrap()
+            .same_source_as(&navigated),
+        "mandatory working detail survives zero optional retention"
+    );
 }
 
 #[test]
@@ -458,18 +790,14 @@ fn scope_plot_scale_and_target_widgets_produce_valid_completed_reductions() {
                 }
                 harness.render().unwrap();
                 wait_for(&mut harness, |e| {
-                    let (image, parameters, frame) = e.scope_input().unwrap();
+                    let input = e.scope_request().unwrap();
+                    let frame = input.frame();
                     let settings = crate::scopes::Settings {
                         target,
                         plot,
                         amplification: *amplification,
                     };
-                    let Some(counts) = e
-                        .scopes
-                        .gpu
-                        .as_ref()
-                        .unwrap()
-                        .status(&image, parameters, frame, settings)
+                    let Some(counts) = input.status(e.scopes.gpu.as_ref().unwrap(), settings)
                     else {
                         return false;
                     };

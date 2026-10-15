@@ -184,6 +184,7 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
                     },
                     reference_only,
                     photo: PhotoSettings::default(),
+                    local_adjustments: None,
                     orientation: Default::default(),
                     crop: None,
                 })

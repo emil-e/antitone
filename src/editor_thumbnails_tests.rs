@@ -20,6 +20,7 @@ pub(super) fn fixture() -> Document {
                     },
                     reference_only: false,
                     photo: PhotoSettings::default(),
+                    local_adjustments: None,
                     orientation: Default::default(),
                     crop: None,
                 },
@@ -481,13 +482,13 @@ fn thumbnail_parameters_follow_actual_roll_and_each_photo_without_inspection_gai
     editor.source_exposure = 3.;
     let source = editor.document.project.source(id).unwrap().clone();
     assert_eq!(
-        bytemuck::bytes_of(&editor.thumbnail_parameters(&source).unwrap()),
+        bytemuck::bytes_of(&editor.thumbnail_parameters(&source).unwrap().parameters()),
         bytemuck::bytes_of(&ProcessingParameters::source_inspection(2.).unwrap())
     );
     editor.dmin = Some(DVec3::new(0.2, 0.15, 0.1));
     editor.dmax = Some(DVec3::new(0.008, 0.005, 0.002));
     editor.floor = crate::processing::CAMERA_INPUT_FLOOR;
-    let first = editor.thumbnail_parameters(&source).unwrap();
+    let first = editor.thumbnail_parameters(&source).unwrap().parameters();
     let expected = ProcessingParameters::positive(
         editor.calibration().unwrap(),
         editor.roll,
@@ -506,7 +507,7 @@ fn thumbnail_parameters_follow_actual_roll_and_each_photo_without_inspection_gai
         saturation_density: 0.25,
         ..PhotoSettings::default()
     };
-    let adjusted = editor.thumbnail_parameters(&source).unwrap();
+    let adjusted = editor.thumbnail_parameters(&source).unwrap().parameters();
     let expected = ProcessingParameters::positive(
         editor.calibration().unwrap(),
         editor.roll,
@@ -521,6 +522,7 @@ fn thumbnail_parameters_follow_actual_roll_and_each_photo_without_inspection_gai
             &editor
                 .thumbnail_parameters(editor.document.project.source(other).unwrap())
                 .unwrap()
+                .parameters()
         ),
         bytemuck::bytes_of(&first)
     );
@@ -530,6 +532,7 @@ fn thumbnail_parameters_follow_actual_roll_and_each_photo_without_inspection_gai
             &editor
                 .thumbnail_parameters(editor.document.project.source(other).unwrap())
                 .unwrap()
+                .parameters()
         ),
         bytemuck::bytes_of(&first)
     );
@@ -553,6 +556,7 @@ fn thumbnail_parameters_follow_actual_roll_and_each_photo_without_inspection_gai
             &editor
                 .thumbnail_parameters(editor.document.project.source(other).unwrap())
                 .unwrap()
+                .parameters()
         ),
         bytemuck::bytes_of(&expected)
     );
@@ -576,7 +580,8 @@ fn uncalibrated_thumbnails_share_source_default_but_not_transient_inspection_ev(
         for id in [id, other] {
             let thumbnail = editor
                 .thumbnail_parameters(editor.document.project.source(id).unwrap())
-                .unwrap();
+                .unwrap()
+                .parameters();
             assert_eq!(bytemuck::bytes_of(&thumbnail), bytemuck::bytes_of(&default));
         }
     }
@@ -590,7 +595,7 @@ fn uncalibrated_thumbnails_share_source_default_but_not_transient_inspection_ev(
         .unwrap()
         .fixed_wb = [1., 1., 1., 1.];
     let new_default = editor.source_parameters(0.).unwrap();
-    let thumbnail = editor.thumbnail_parameters(&source).unwrap();
+    let thumbnail = editor.thumbnail_parameters(&source).unwrap().parameters();
     assert_eq!(
         bytemuck::bytes_of(&thumbnail),
         bytemuck::bytes_of(&new_default)
@@ -599,7 +604,7 @@ fn uncalibrated_thumbnails_share_source_default_but_not_transient_inspection_ev(
     assert_ne!(key(&editor.document, id), original_key);
     editor.document.project.development = None;
     assert_eq!(
-        bytemuck::bytes_of(&editor.thumbnail_parameters(&source).unwrap()),
+        bytemuck::bytes_of(&editor.thumbnail_parameters(&source).unwrap().parameters()),
         bytemuck::bytes_of(&ProcessingParameters::source_inspection(1.).unwrap()),
     );
 }
@@ -674,7 +679,7 @@ fn visible_jobs_do_not_wait_for_refinement_or_grading_idle() {
     let (completed, outcomes) = mpsc::channel();
     editor.thumbnails.commands = Some(commands);
     editor.thumbnails.messages = Some(outcomes);
-    editor.refining = Some((
+    editor.original.refining = Some((
         0,
         crate::refinement::ViewRequest {
             area: [0, 0, 1, 1].into(),
@@ -682,7 +687,7 @@ fn visible_jobs_do_not_wait_for_refinement_or_grading_idle() {
             frame: None,
         },
     ));
-    editor.last_edit = std::time::Instant::now();
+    editor.original.last_edit = std::time::Instant::now();
     let context = egui::Context::default();
     let frame = |editor: &mut Editor| {
         let mut output = context.run_ui(
@@ -738,7 +743,7 @@ fn eager_zero_budget_pass_completes_unvisited_work_without_idle_or_eviction_loop
         cpu_bytes: 0,
         gpu_bytes: 0,
     });
-    editor.last_edit = std::time::Instant::now();
+    editor.original.last_edit = std::time::Instant::now();
     let (commands, jobs) = mpsc::channel();
     let (completed, outcomes) = mpsc::channel();
     editor.thumbnails.commands = Some(commands);
@@ -904,8 +909,7 @@ fn idle_prefetch_fixture() -> (Editor, mpsc::Receiver<Job>, mpsc::Sender<Outcome
     let (completed, outcomes) = mpsc::channel();
     editor.thumbnails.commands = Some(commands);
     editor.thumbnails.messages = Some(outcomes);
-    editor.refinement_error = Some(editor.generation.load(std::sync::atomic::Ordering::Relaxed));
-    editor.last_edit = std::time::Instant::now() - Duration::from_secs(1);
+    editor.original.last_edit = std::time::Instant::now() - Duration::from_secs(1);
     (editor, jobs, completed)
 }
 
@@ -935,7 +939,7 @@ fn idle_roll_prefetch_reaches_unshown_photos_after_visible_work() {
         job.key.source.id, last,
         "should prefetch even the unshown far end of the roll"
     );
-    editor.last_edit = std::time::Instant::now();
+    editor.original.last_edit = std::time::Instant::now();
     let generation = editor
         .thumbnails
         .generation
@@ -972,7 +976,7 @@ fn idle_roll_prefetch_reaches_unshown_photos_after_visible_work() {
         })
         .unwrap();
     editor.thumbnails.receive(&editor.document);
-    editor.last_edit = std::time::Instant::now() - Duration::from_secs(1);
+    editor.original.last_edit = std::time::Instant::now() - Duration::from_secs(1);
     filmstrip_frame(&mut editor, &context, budgets);
     assert_eq!(jobs.try_recv().unwrap().key.source.id, last);
     let first = editor.document.project.order[0];
@@ -1099,8 +1103,7 @@ fn crop_draft_cancels_offscreen_prefetch_and_suspends_idle_admission() {
     let job = jobs.try_recv().unwrap();
     editor.begin_crop();
     assert!(editor.crop_edit.is_some());
-    editor.refinement_error = Some(editor.generation.load(std::sync::atomic::Ordering::Relaxed));
-    editor.last_edit = std::time::Instant::now() - Duration::from_secs(1);
+    editor.original.last_edit = std::time::Instant::now() - Duration::from_secs(1);
     let before = editor
         .thumbnails
         .generation

@@ -99,6 +99,9 @@ impl Document {
     }
     pub fn validate(&self) -> Result<()> {
         self.project.require_runtime(&crate::raw::version())?;
+        for source in &self.project.sources {
+            require_supported_grade(source)?;
+        }
         if let Some(calibration) = self.project.processing_calibration()? {
             for source in &self.project.sources {
                 ProcessingParameters::positive(
@@ -317,10 +320,25 @@ pub(super) fn source_metadata(path: &Path, metadata: &Metadata) -> Result<Source
         development: metadata_development(metadata)?,
         reference_only: false,
         photo: Default::default(),
+        local_adjustments: None,
         orientation: Default::default(),
         crop: None,
     })
 }
+// Until GPU parity, even disabled records must not enter the global-only editor paths.
+pub(super) fn require_supported_grade(source: &Source) -> Result<()> {
+    if source
+        .local_adjustments
+        .as_ref()
+        .is_some_and(|locals| !locals.adjustments.is_empty())
+    {
+        return Err(failure(
+            "local adjustments are not supported by the GPU editor yet",
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn verify_source(expected: &Source, actual: &Source) -> Result<()> {
     if expected.development != actual.development {
         return Err(failure(format!(

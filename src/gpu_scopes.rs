@@ -2,7 +2,7 @@ use crate::{
     Error,
     frame_raster::FrameRaster,
     geometry::TextureMapping,
-    gpu::ProcessingParameters,
+    gpu::{ProcessingInput, ProcessingParameters, ProcessingSignature},
     scopes::{BINS, Basis, Counts, PLANE_LEN, Plot, Settings},
     viewer::GpuImage,
 };
@@ -19,10 +19,13 @@ struct Parameters {
     uv_y: [f32; 4],
 }
 
+#[derive(Clone)]
 struct Key {
+    #[cfg(feature = "editor")]
+    rendered_source: Option<crate::gpu::view::ViewSourceSpec>,
     image: Weak<GpuImage>,
     source_revision: u64,
-    parameters: [u8; ProcessingParameters::BYTE_LEN],
+    processing: ProcessingSignature,
     settings: Settings,
     frame: FrameRaster,
 }
@@ -35,38 +38,54 @@ fn accumulation_settings(mut settings: Settings) -> Settings {
 impl Key {
     fn new(
         image: &Arc<GpuImage>,
-        parameters: ProcessingParameters,
+        input: &ProcessingInput,
         frame: FrameRaster,
         settings: Settings,
     ) -> Self {
         Self {
+            #[cfg(feature = "editor")]
+            rendered_source: None,
             image: Arc::downgrade(image),
             source_revision: image.source_revision(),
-            parameters: bytemuck::bytes_of(&parameters).try_into().unwrap(),
+            processing: input.signature(),
             settings: accumulation_settings(settings),
             frame,
         }
     }
-    fn matches(
-        &self,
-        image: &Arc<GpuImage>,
-        parameters: ProcessingParameters,
+    #[cfg(feature = "editor")]
+    fn rendered(
+        view: &crate::gpu::view::RenderedView,
         frame: FrameRaster,
         settings: Settings,
-    ) -> bool {
-        self.same_presentation(image, frame, settings)
-            && self.parameters.as_slice() == bytemuck::bytes_of(&parameters)
+    ) -> Self {
+        Self {
+            rendered_source: Some(view.spec.clone()),
+            image: Arc::downgrade(&view.image),
+            source_revision: 0,
+            processing: view.processing.clone(),
+            settings: accumulation_settings(settings),
+            frame,
+        }
     }
-    fn same_presentation(
-        &self,
-        image: &Arc<GpuImage>,
-        frame: FrameRaster,
-        settings: Settings,
-    ) -> bool {
-        self.image.ptr_eq(&Arc::downgrade(image))
-            && self.source_revision == image.source_revision()
-            && self.settings == accumulation_settings(settings)
-            && self.frame == frame
+    fn matches(&self, request: &Self) -> bool {
+        self.can_hold(request)
+            && self.image.ptr_eq(&request.image)
+            && self.source_revision == request.source_revision
+            && self.frame == request.frame
+            && self.processing == request.processing
+    }
+    fn can_hold(&self, request: &Self) -> bool {
+        let same_source =
+            self.image.ptr_eq(&request.image) && self.source_revision == request.source_revision;
+        #[cfg(feature = "editor")]
+        let same_source = match (&self.rendered_source, &request.rendered_source) {
+            (Some(a), Some(b)) => a.same_source(b),
+            (None, None) => same_source,
+            _ => false,
+        };
+        same_source
+            && self.settings == request.settings
+            && self.frame.composition == request.frame.composition
     }
 }
 struct Prepared {
@@ -151,7 +170,7 @@ impl GpuScopes {
             ],
         });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("whole-frame scope reduction"),
+            label: Some("visible-frame scope reduction"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/scopes.wgsl").into()),
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -160,7 +179,7 @@ impl GpuScopes {
             immediate_size: 0,
         });
         let reduce = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("whole-frame scope reduction"),
+            label: Some("visible-frame scope reduction"),
             layout: Some(&layout),
             module: &module,
             entry_point: Some("reduce"),
@@ -253,7 +272,7 @@ impl GpuScopes {
         )
     }
 
-    /// Samples the accepted whole frame from the rendered whole-active-area proxy.
+    /// Samples the requested composed frame from the rendered whole-active-area proxy.
     pub fn encode_frame(
         &self,
         device: &wgpu::Device,
@@ -398,12 +417,26 @@ impl GpuScopes {
         frame: FrameRaster,
         settings: Settings,
     ) -> Option<Result<Counts, String>> {
+        self.status_processing(image, &parameters.into(), frame, settings)
+    }
+
+    pub fn status_processing(
+        &self,
+        image: &Arc<GpuImage>,
+        input: &ProcessingInput,
+        frame: FrameRaster,
+        settings: Settings,
+    ) -> Option<Result<Counts, String>> {
         if self
             .prepared
             .lock()
             .unwrap()
             .as_ref()
-            .is_some_and(|prepared| prepared.key.matches(image, parameters, frame, settings))
+            .is_some_and(|prepared| {
+                prepared
+                    .key
+                    .matches(&Key::new(image, input, frame, settings))
+            })
         {
             self.diagnostic.lock().unwrap().result.clone()
         } else {
@@ -411,6 +444,25 @@ impl GpuScopes {
         }
     }
 
+    #[cfg(feature = "editor")]
+    pub(crate) fn status_rendered(
+        &self,
+        view: &crate::gpu::view::RenderedView,
+        frame: FrameRaster,
+        settings: Settings,
+    ) -> Option<Result<Counts, String>> {
+        if self
+            .prepared
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|p| p.key.matches(&Key::rendered(view, frame, settings)))
+        {
+            self.diagnostic.lock().unwrap().result.clone()
+        } else {
+            None
+        }
+    }
     pub fn invalidate(&self) {
         if self.prepared.lock().unwrap().take().is_some() {
             let mut diagnostic = self.diagnostic.lock().unwrap();
@@ -475,14 +527,39 @@ impl GpuScopes {
 
 pub struct ScopePaint {
     pub gpu: Arc<GpuScopes>,
-    pub image: Arc<GpuImage>,
-    pub parameters: ProcessingParameters,
+    image: Arc<GpuImage>,
+    processing: Option<ProcessingInput>,
+    #[cfg(feature = "editor")]
+    rendered: Option<(
+        Arc<crate::gpu::view::RenderedView>,
+        crate::gpu::SubmissionGate,
+    )>,
     pub frame: FrameRaster,
     pub settings: Settings,
     pub context: egui::Context,
     group: Mutex<Option<wgpu::BindGroup>>,
 }
 impl ScopePaint {
+    #[cfg(feature = "editor")]
+    pub(crate) fn rendered(
+        gpu: Arc<GpuScopes>,
+        view: Arc<crate::gpu::view::RenderedView>,
+        frame: FrameRaster,
+        settings: Settings,
+        submissions: crate::gpu::SubmissionGate,
+        context: egui::Context,
+    ) -> Self {
+        Self {
+            gpu,
+            image: view.image.clone(),
+            processing: None,
+            rendered: Some((view, submissions)),
+            frame,
+            settings,
+            context,
+            group: Mutex::new(None),
+        }
+    }
     pub fn new(
         gpu: Arc<GpuScopes>,
         image: Arc<GpuImage>,
@@ -494,45 +571,107 @@ impl ScopePaint {
         Self {
             gpu,
             image,
-            parameters,
+            processing: Some(parameters.into()),
+            #[cfg(feature = "editor")]
+            rendered: None,
             frame,
             settings,
             context,
             group: Mutex::new(None),
         }
     }
+    pub fn with_processing(
+        gpu: Arc<GpuScopes>,
+        image: Arc<GpuImage>,
+        processing: ProcessingInput,
+        frame: FrameRaster,
+        settings: Settings,
+        context: egui::Context,
+    ) -> Result<Self, Error> {
+        image.require_processing(&processing)?;
+        Ok(Self {
+            gpu,
+            image,
+            processing: Some(processing),
+            #[cfg(feature = "editor")]
+            rendered: None,
+            frame,
+            settings,
+            context,
+            group: Mutex::new(None),
+        })
+    }
 }
 impl egui_wgpu::CallbackTrait for ScopePaint {
     fn prepare(
         &self,
         device: &wgpu::Device,
-        _queue: &wgpu::Queue,
+        queue: &wgpu::Queue,
         _screen: &egui_wgpu::ScreenDescriptor,
         encoder: &mut wgpu::CommandEncoder,
         _resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
-        self.image.prepare(device, encoder, self.parameters);
+        let key;
+        let coverage_ready;
+        #[cfg(feature = "editor")]
+        let rendered = self.rendered.as_ref();
+        #[cfg(not(feature = "editor"))]
+        let rendered: Option<()> = None;
+        #[cfg(feature = "editor")]
+        if let Some((view, submissions)) = rendered {
+            view.ensure_submitted(device, queue, submissions, &self.context);
+            key = Key::rendered(view, self.frame, self.settings);
+            let mut accepted = view.spec.frame;
+            accepted.output = self.frame.output;
+            coverage_ready = accepted == self.frame;
+        } else {
+            let input = self.processing.as_ref().expect("source-backed scope input");
+            self.image
+                .prepare_processing(device, encoder, input)
+                .expect("validated processing source");
+            key = Key::new(&self.image, input, self.frame, self.settings);
+            coverage_ready = true;
+        }
+        #[cfg(not(feature = "editor"))]
+        {
+            let _ = queue;
+            let input = self.processing.as_ref().expect("source-backed scope input");
+            self.image
+                .prepare_processing(device, encoder, input)
+                .expect("validated processing source");
+            key = Key::new(&self.image, input, self.frame, self.settings);
+            coverage_ready = true;
+        }
         let mut cached = self.gpu.prepared.lock().unwrap();
-        let matches = cached.as_ref().is_some_and(|prepared| {
-            prepared
-                .key
-                .matches(&self.image, self.parameters, self.frame, self.settings)
-        });
+        let matches = cached
+            .as_ref()
+            .is_some_and(|prepared| prepared.key.matches(&key));
         // UI state supplies the newest request on the completion repaint. Don't enqueue another
         // reduction/readback while the previous one is outstanding, even after hide/source changes.
         let pending = self.gpu.diagnostic.lock().unwrap().pending;
-        if !matches && !pending {
-            let key = Key::new(&self.image, self.parameters, self.frame, self.settings);
-            match self.gpu.encode_frame(
-                device,
-                encoder,
-                &self.image.linear,
-                self.frame,
-                self.settings,
-            ) {
+        if !matches && !pending && coverage_ready {
+            let encoded = if rendered.is_some() {
+                self.gpu.encode_mapped(
+                    device,
+                    encoder,
+                    &self.image.linear,
+                    self.frame.output,
+                    TextureMapping::IDENTITY,
+                    self.settings,
+                )
+            } else {
+                self.gpu.encode_frame(
+                    device,
+                    encoder,
+                    &self.image.linear,
+                    self.frame,
+                    self.settings,
+                )
+            };
+            match encoded {
                 Ok(group) => {
                     *cached = Some(Prepared {
-                        key,
+                        key: key.clone(),
                         plot: self.settings.plot,
                         group: Some(group),
                     });
@@ -540,7 +679,7 @@ impl egui_wgpu::CallbackTrait for ScopePaint {
                 }
                 Err(error) => {
                     *cached = Some(Prepared {
-                        key,
+                        key: key.clone(),
                         plot: self.settings.plot,
                         group: None,
                     });
@@ -552,18 +691,15 @@ impl egui_wgpu::CallbackTrait for ScopePaint {
             }
         }
         *self.group.lock().unwrap() = cached.as_mut().and_then(|prepared| {
-            // Retain coherent bins during grading edits; status stays Updating until the current
-            // parameters complete. Never pair old bins with a different source or graticule.
-            if !prepared
-                .key
-                .same_presentation(&self.image, self.frame, self.settings)
-            {
+            // Keep the previous complete trace during grade/navigation updates, labelled Updating.
+            // Its bins and normalization stay together; source/composition/graticule changes reject it.
+            if !prepared.key.can_hold(&key) {
                 return None;
             }
             if prepared.plot != self.settings.plot && prepared.group.is_some() {
                 let uniform = GpuScopes::uniform(
                     device,
-                    self.frame.output,
+                    prepared.key.frame.output,
                     TextureMapping::IDENTITY,
                     self.settings,
                 );

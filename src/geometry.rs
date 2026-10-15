@@ -58,6 +58,8 @@ impl From<[u32; 4]> for SourceRegion {
 
 /// A continuous position in original developed-source pixel-edge units.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "project", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "project", serde(transparent))]
 pub struct SourcePoint(pub [f64; 2]);
 /// A continuous position in the oriented full active area, before crop/straightening.
 #[derive(Clone, Copy, Debug, PartialEq)]

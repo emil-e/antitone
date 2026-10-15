@@ -191,6 +191,27 @@ impl CanvasLayout {
         });
         FrameRaster::new(self.composition, min, max, output).expect("visible frame is constrained")
     }
+    pub fn physical_draw(self, pixels_per_point: f32) -> egui::Rect {
+        let visible = self.canvas.intersect(self.image);
+        let aligned = egui::Rect::from_min_max(
+            (visible.min * pixels_per_point).ceil() / pixels_per_point,
+            (visible.max * pixels_per_point).floor() / pixels_per_point,
+        );
+        if aligned.is_positive() {
+            aligned
+        } else {
+            visible
+        }
+    }
+    /// Match the callback's physical pixel grid, without capping at source sampling pitch.
+    pub fn physical_frame_raster(self, pixels_per_point: f32) -> FrameRaster {
+        let draw = self.physical_draw(pixels_per_point);
+        let (min, max) = self.visible_frame(draw);
+        let output =
+            [draw.width(), draw.height()].map(|v| (v * pixels_per_point).round().max(1.) as u32);
+        FrameRaster::new(self.composition, min, max, output)
+            .expect("visible physical frame is constrained")
+    }
     pub fn frame_bounds(self, coverage: Coverage) -> (FramePoint, FramePoint) {
         let corners = coverage
             .corners()

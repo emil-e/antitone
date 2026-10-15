@@ -11,19 +11,25 @@ struct Parameters {
     post_low: array<vec4f, 3>,
     creative: array<vec4f, 3>,
     creative_low: array<vec4f, 3>,
+    gamma_tail: vec4f,
+    shape_tail: vec4f,
+    anchor_tail: vec4f,
+    post_tail: array<vec4f, 3>,
+    creative_tail: array<vec4f, 3>,
 }
 @group(0) @binding(0) var<storage, read> scans: array<vec2u>;
 @group(0) @binding(1) var<storage, read_write> positives: array<vec4f>;
 @group(0) @binding(2) var<uniform> parameters: Parameters;
 
-@compute @workgroup_size(64)
+override WORKGROUP_SIZE: u32 = 64u;
+@compute @workgroup_size(WORKGROUP_SIZE)
 fn main(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) groups: vec3u) {
-    let index = id.x + id.y * groups.x * 64u;
+    let index = id.x + id.y * groups.x * WORKGROUP_SIZE;
     if index >= arrayLength(&scans) { return; }
-    let scan = convert_source(scans[index], index);
     if parameters.gamma_mode.w > 0.5 {
-        positives[index] = process_film(scan);
+        let global = process_positive(scans[index], index);
+        positives[index] = finish_pixel(ProcessedPixel(local_grade(global.rgb, index), global.flags));
     } else {
-        positives[index] = process_camera_source(scan);
+        positives[index] = process_camera_source(convert_source(scans[index], index));
     }
 }

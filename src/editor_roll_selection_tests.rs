@@ -18,6 +18,7 @@ fn fixture(index: usize) -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Comma
                     },
                     reference_only: false,
                     photo: PhotoSettings::default(),
+                    local_adjustments: None,
                     orientation: PhotoOrientation::default(),
                     crop: None,
                 },
@@ -206,7 +207,11 @@ fn removing_every_photo_clears_working_images_and_stale_replies_but_keeps_roll_b
     assert_eq!(editor.document.project, expected);
     assert!(editor.current_source.is_none());
     assert!(editor.ready.is_none() && editor.pending_preview.is_none());
-    assert!(editor.settled.is_none() && editor.refining.is_none() && editor.signature.is_none());
+    assert!(
+        editor.original.settled.is_none()
+            && editor.original.refining.is_none()
+            && editor.original.signature.is_none()
+    );
     assert!(editor.roll_selection.ids.is_empty());
     assert_eq!(
         editor

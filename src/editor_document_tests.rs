@@ -1,6 +1,55 @@
 use super::*;
 use crate::{color::Balance, processing::PhotoSettings};
 
+#[test]
+fn local_documents_are_durable_but_rejected_before_editor_source_loading() {
+    use crate::{
+        geometry::SourcePoint,
+        local_adjustments::{GradientMask, LocalAdjustment},
+        project::LocalAdjustments,
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let document = fixture(directory.path());
+    let path = directory.path().join("locals.json");
+    let mut document = document.save(&path, Save::New).unwrap();
+    let id = document.project.order[0];
+    document.project.source_mut(id).unwrap().local_adjustments = Some(LocalAdjustments::default());
+    let mut document = document.save(&path, Save::Replace).unwrap();
+    assert!(!document.dirty());
+    document
+        .project
+        .source_mut(id)
+        .unwrap()
+        .local_adjustments
+        .as_mut()
+        .unwrap()
+        .add(
+            "Disabled identity".into(),
+            LocalAdjustment {
+                mask: GradientMask::Linear {
+                    start: SourcePoint([0., 0.]),
+                    end: SourcePoint([900., 0.]),
+                },
+                photo: PhotoSettings::default(),
+                enabled: false,
+                invert: false,
+                strength: 1.,
+            },
+        )
+        .unwrap();
+    assert!(document.dirty());
+    let before = document.project.clone();
+    let bytes = std::fs::read(&path).unwrap();
+    let error = document.save(&path, Save::Replace).err().unwrap();
+    assert!(error.to_string().contains("local adjustments"));
+    assert_eq!(document.project, before);
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    document.project.save(&path, Save::Replace).unwrap();
+    let error = Document::open(&path).err().unwrap();
+    assert!(error.to_string().contains("local adjustments"), "{error}");
+    assert_eq!(Project::load(&path).unwrap(), before);
+}
+
 fn fixture(directory: &Path) -> Document {
     let mut document = Document::default();
     for name in ["one.ARW", "two.ARW"] {
@@ -20,6 +69,7 @@ fn fixture(directory: &Path) -> Document {
                     },
                     reference_only: false,
                     photo: PhotoSettings::default(),
+                    local_adjustments: None,
                     orientation: Default::default(),
                     crop: None,
                 },

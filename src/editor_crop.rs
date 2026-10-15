@@ -110,10 +110,7 @@ impl Editor {
         });
         self.viewport.fit();
         self.last_layout = None;
-        self.generation
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.signature = None;
-        self.settled = None;
+        self.original.invalidate();
         self.status = "Crop draft; changes are not applied".into();
     }
     pub(super) fn finish_crop(&mut self, apply: bool) {
@@ -133,10 +130,7 @@ impl Editor {
             self.status = "Crop cancelled; composition unchanged".into();
         }
         self.last_layout = None;
-        self.signature = None;
-        self.settled = None;
-        self.generation
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.original.invalidate();
     }
     pub(super) fn composition_controls(&mut self, ui: &mut egui::Ui) {
         use icons::Icon;

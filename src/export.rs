@@ -51,6 +51,32 @@ pub enum Overwrite {
     Confirmed,
 }
 
+/// Processing-contract identifiers, not a reconstructible grade recipe.
+#[derive(Debug, Clone, Copy)]
+pub struct ProcessingMetadata {
+    response: Response,
+    locals: bool,
+}
+impl ProcessingMetadata {
+    pub fn with_grade(
+        response: Response,
+        grade: &crate::local_adjustments::PhotoGradeSnapshot,
+    ) -> Self {
+        Self {
+            response,
+            locals: !grade.locals().is_empty(),
+        }
+    }
+}
+impl From<Response> for ProcessingMetadata {
+    fn from(response: Response) -> Self {
+        Self {
+            response,
+            locals: false,
+        }
+    }
+}
+
 struct Icc(&'static [u8]);
 impl tiff::encoder::TiffValue for Icc {
     const BYTE_LEN: u8 = 1;
@@ -109,11 +135,11 @@ pub fn tiff(
     size: ImageSize,
     target: OutputTarget,
     overwrite: Overwrite,
-    response: Response,
+    response: impl Into<ProcessingMetadata>,
     mut pixel: impl FnMut(u32, u32) -> Result<DVec3>,
 ) -> Result<()> {
     let renderer = CpuRenderer::new(target)?;
-    tiff_encoded(path, size, target, overwrite, response, |y, end| {
+    tiff_encoded(path, size, target, overwrite, response.into(), |y, end| {
         let mut working = Vec::with_capacity(size.width as usize * (end - y) as usize);
         for row in y..end {
             for x in 0..size.width {
@@ -129,11 +155,12 @@ pub fn tiff_composed(
     composition: crate::geometry::Composition,
     target: OutputTarget,
     overwrite: Overwrite,
-    response: Response,
+    response: impl Into<ProcessingMetadata>,
     mut pixel: impl FnMut(u32, u32) -> Result<DVec3>,
 ) -> Result<()> {
     let [width, height] = composition.size();
     let size = ImageSize { width, height };
+    let response = response.into();
     if composition.is_exact() {
         return tiff(path, size, target, overwrite, response, |x, y| {
             let [sx, sy] = composition.source_pixel([x, y])?;
@@ -176,7 +203,7 @@ pub fn exr_composed(
     composition: crate::geometry::Composition,
     precision: ExrPrecision,
     overwrite: Overwrite,
-    response: Response,
+    response: impl Into<ProcessingMetadata>,
     mut pixel: impl FnMut(u32, u32) -> Result<DVec3>,
 ) -> Result<()> {
     let [width, height] = composition.size();
@@ -207,9 +234,10 @@ fn tiff_encoded(
     size: ImageSize,
     target: OutputTarget,
     overwrite: Overwrite,
-    response: Response,
+    metadata: ProcessingMetadata,
     mut strip: impl FnMut(u32, u32) -> Result<Vec<[u16; 3]>>,
 ) -> Result<()> {
+    let response = metadata.response;
     response.shape()?;
     let count = size.count()?;
     if count > (1024 * 1024 * 1024) / 6 {
@@ -241,6 +269,12 @@ fn tiff_encoded(
                 "Antitone model {model}; native-camera RGB inversion to AP1; ACES 2 / OCIO 2.6.0; {target:?} v1 / 100-nit SDR; rendering and encoding in matching target RGB"
             );
             description.push_str(&format!("; photographic={}", crate::photographic::CONTRACT));
+            if metadata.locals {
+                description.push_str(&format!(
+                    "; local-adjustments={}",
+                    crate::local_adjustments::CONTRACT
+                ));
+            }
             if let Response::Film { toe, shoulder } = response {
                 description.push_str(&format!(
                     "; film toe={toe}; shoulder={shoulder}; signed-root continuation above base"
@@ -268,9 +302,11 @@ pub fn exr(
     size: ImageSize,
     precision: ExrPrecision,
     overwrite: Overwrite,
-    response: Response,
+    response: impl Into<ProcessingMetadata>,
     mut pixel: impl FnMut(u32, u32) -> Result<DVec3>,
 ) -> Result<()> {
+    let metadata = response.into();
+    let response = metadata.response;
     response.shape()?;
     let count = size.count()?;
     let bytes_per_pixel = match precision {
@@ -347,6 +383,12 @@ pub fn exr(
         Text::from("antitonePhotographicProcessing"),
         AttributeValue::Text(Text::from(crate::photographic::CONTRACT)),
     );
+    if metadata.locals {
+        attributes.other.insert(
+            Text::from("antitoneLocalAdjustmentProcessing"),
+            AttributeValue::Text(Text::from(crate::local_adjustments::CONTRACT)),
+        );
+    }
     attributes.other.insert(
         Text::from("antitoneColorSpace"),
         AttributeValue::Text(Text::from(
@@ -355,9 +397,11 @@ pub fn exr(
     );
     attributes.other.insert(
         Text::from("antitoneExposureConvention"),
-        AttributeValue::Text(Text::from(
-            "2^(roll stops + photo stops), applied before photographic Bradford WB",
-        )),
+        AttributeValue::Text(Text::from(if metadata.locals {
+            "global 2^(roll stops + photo stops) before global photographic Bradford WB; ordered mask-weighted local exposure/WB/contrast/saturation after the global grade"
+        } else {
+            "2^(roll stops + photo stops), applied before photographic Bradford WB"
+        })),
     );
     let layer = Layer::new(
         (size.width as usize, size.height as usize),

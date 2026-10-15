@@ -14,6 +14,7 @@ fn record(path: &str) -> Source {
         },
         reference_only: false,
         photo: Default::default(),
+        local_adjustments: None,
         orientation: Default::default(),
         crop: None,
     }
@@ -198,7 +199,7 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
         area,
         analysis_support: None,
         floor: ready.floor,
-        images: ready.images.clone(),
+        proxy: ready.proxy.clone(),
         record,
         development: ready.development.clone(),
     };

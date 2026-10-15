@@ -9,10 +9,13 @@ struct CameraMatrix {
 struct Triple { h: f32, l: f32, t: f32 }
 struct ConvertedScan { high: vec3f, low: vec3f, tail: vec3f }
 fn two_sum(a: f32, b: f32) -> vec2f {
-    let s = fma(1.0, a, b);
-    let v = fma(-1.0, a, s);
-    let u = fma(-1.0, v, s);
-    return vec2f(s, fma(1.0, fma(1.0, a, -u), fma(1.0, b, -v)));
+    // Magnitude ordering satisfies FastTwoSum's precondition without assuming
+    // an expansion stayed ordered across cancellation.
+    let ordered = abs(a) >= abs(b);
+    let large = select(b, a, ordered);
+    let small = select(a, b, ordered);
+    let s = fma(1.0, large, small);
+    return vec2f(s, fma(1.0, small, fma(1.0, large, -s)));
 }
 fn add_term(a: Triple, b: f32) -> Triple {
     let x = two_sum(a.h, b);
@@ -24,22 +27,41 @@ fn add_term(a: Triple, b: f32) -> Triple {
     return Triple(h.x, l.x, l.y);
 }
 fn add(a: Triple, b: Triple) -> Triple {
-    return add_term(add_term(add_term(a, b.h), b.l), b.t);
+    var sum = add_term(a, b.h);
+    if b.l != 0.0 { sum = add_term(sum, b.l); }
+    if b.t != 0.0 { sum = add_term(sum, b.t); }
+    return sum;
 }
 fn product(a: f32, b: f32) -> Triple {
     let h = fma(a, b, 0.0);
     return Triple(h, fma(a, b, -h), 0.0);
 }
+fn scale_expansion(a: Triple, b: f32) -> Triple {
+    let head = product(a.h, b);
+    let middle = add(head, product(a.l, b));
+    return add(middle, product(a.t, b));
+}
 fn multiply(a: Triple, b: Triple) -> Triple {
-    var q = product(a.h, b.h);
-    q = add(q, product(a.h, b.l));
-    q = add(q, product(a.l, b.h));
-    q = add(q, product(a.h, b.t));
-    q = add(q, product(a.l, b.l));
-    q = add(q, product(a.t, b.h));
-    q = add(q, product(a.l, b.t));
-    q = add(q, product(a.t, b.l));
-    return add(q, product(a.t, b.t));
+    if a.l == 0.0 && a.t == 0.0 { return scale_expansion(b, a.h); }
+    if b.l == 0.0 && b.t == 0.0 { return scale_expansion(a, b.h); }
+    let hh = product(a.h, b.h);
+    let hl = product(a.h, b.l);
+    let lh = product(a.l, b.h);
+    let first = two_sum(hh.l, hl.h);
+    let second = two_sum(first.x, lh.h);
+    let head = two_sum(hh.h, second.x);
+    // Keep the trailing addition/product residuals: dropping them can put an
+    // exact product on the wrong side of an f64 rounding midpoint.
+    var tail = add_term(Triple(first.y, 0.0, 0.0), second.y);
+    tail = add_term(tail, hl.l);
+    tail = add_term(tail, lh.l);
+    tail = add(tail, product(a.h, b.t));
+    tail = add(tail, product(a.l, b.l));
+    tail = add(tail, product(a.t, b.h));
+    tail = add(tail, product(a.l, b.t));
+    tail = add(tail, product(a.t, b.l));
+    tail = add(tail, product(a.t, b.t));
+    return add(Triple(head.x, head.y, 0.0), tail);
 }
 // Match the scalar f64 rounding between normalization, products and sums.
 fn round53(a: Triple) -> Triple {
