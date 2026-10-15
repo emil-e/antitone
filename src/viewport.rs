@@ -330,11 +330,37 @@ pub enum PickDrag {
     },
     Resize {
         fixed: FramePoint,
+        basis: Option<[[f64; 2]; 2]>,
     },
 }
 impl PickDrag {
     pub fn begin(geometry: CanvasLayout, point: Pos2, region: Option<Coverage>) -> Self {
         if let Some(region) = region {
+            let corners = region
+                .corners()
+                .map(|p| geometry.composition.source_to_frame(p));
+            let edge = [
+                corners[1].0[0] - corners[0].0[0],
+                corners[1].0[1] - corners[0].0[1],
+            ];
+            if edge[0].abs() > 1e-9 && edge[1].abs() > 1e-9 {
+                for (i, corner) in corners.iter().enumerate() {
+                    if geometry.screen_frame_point(*corner).distance(point) <= 8. {
+                        let edge2 = [
+                            corners[3].0[0] - corners[0].0[0],
+                            corners[3].0[1] - corners[0].0[1],
+                        ];
+                        let normalize = |v: [f64; 2]| {
+                            let len = v[0].hypot(v[1]);
+                            v.map(|x| x / len)
+                        };
+                        return Self::Resize {
+                            fixed: corners[(i + 2) % 4],
+                            basis: Some([normalize(edge), normalize(edge2)]),
+                        };
+                    }
+                }
+            }
             let screen = geometry.screen_coverage(region);
             for (corner, opposite) in [
                 (screen.min, screen.max),
@@ -345,6 +371,7 @@ impl PickDrag {
                 if corner.distance(point) <= 8. {
                     return Self::Resize {
                         fixed: geometry.frame_point(opposite),
+                        basis: None,
                     };
                 }
             }
@@ -361,20 +388,51 @@ impl PickDrag {
         let point = geometry.frame_point(point);
         match self {
             Self::New(start) => geometry.frame_selection(start, point),
-            Self::Resize { fixed } => geometry.frame_selection(fixed, point),
+            Self::Resize { fixed, basis: None } => geometry.frame_selection(fixed, point),
+            Self::Resize {
+                fixed,
+                basis: Some([u, v]),
+            } => {
+                let d = [point.0[0] - fixed.0[0], point.0[1] - fixed.0[1]];
+                let determinant = u[0] * v[1] - u[1] * v[0];
+                let extent = |x: f64| {
+                    if x.abs() < 1. {
+                        if x < 0. { -1. } else { 1. }
+                    } else {
+                        x
+                    }
+                };
+                let a = extent((d[0] * v[1] - d[1] * v[0]) / determinant);
+                let b = extent((u[0] * d[1] - u[1] * d[0]) / determinant);
+                Coverage::new([[0., 0.], [a, 0.], [a, b], [0., b]].map(|p| {
+                    geometry.composition.frame_to_source(FramePoint([
+                        fixed.0[0] + u[0] * p[0] + v[0] * p[1],
+                        fixed.0[1] + u[1] * p[0] + v[1] * p[1],
+                    ]))
+                }))
+                .expect("nonempty rotated statistics rectangle")
+            }
             Self::Move { start, original } => {
                 let (min, max) = geometry.frame_bounds(original);
                 let size = geometry.composition.size().map(f64::from);
-                let extent: [f64; 2] = std::array::from_fn(|i| (max.0[i] - min.0[i]).round());
-                let min = FramePoint(std::array::from_fn(|i| {
-                    (min.0[i] + point.0[i] - start.0[i])
-                        .round()
-                        .clamp(0., (size[i] - extent[i]).max(0.))
-                }));
-                geometry.frame_selection(
-                    min,
-                    FramePoint(std::array::from_fn(|i| min.0[i] + extent[i])),
-                )
+                let delta: [f64; 2] = std::array::from_fn(|i| {
+                    let wanted = (min.0[i] + point.0[i] - start.0[i]).round() - min.0[i];
+                    let low = -min.0[i];
+                    let high = size[i] - max.0[i];
+                    if min.0[i] >= 0. && max.0[i] <= size[i] && low <= high {
+                        wanted.clamp(low, high)
+                    } else {
+                        // Off-source statistical coverage must not jump on a click.
+                        wanted
+                    }
+                });
+                Coverage::new(original.corners().map(|p| {
+                    let p = geometry.composition.source_to_frame(p);
+                    geometry
+                        .composition
+                        .frame_to_source(FramePoint([p.0[0] + delta[0], p.0[1] + delta[1]]))
+                }))
+                .expect("translation preserves convex coverage")
             }
         }
     }
@@ -406,6 +464,45 @@ mod tests {
         width: 8640,
         height: 5760,
     };
+    #[test]
+    fn rotated_sampling_resize_keeps_pose_and_fixed_corner_and_move_keeps_shape() {
+        let g = Viewport::default().layout(
+            egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(900., 600.)),
+            AREA,
+            1.,
+        );
+        let angle = 3f64.to_radians();
+        let (s, c) = angle.sin_cos();
+        let q = Coverage::new(
+            [[0., 0.], [3000., 0.], [3000., 2000.], [0., 2000.]]
+                .map(|[x, y]| SourcePoint([2000. + c * x - s * y, 1000. + s * x + c * y])),
+        )
+        .unwrap();
+        let corners = q.corners();
+        let start = g.screen_point(egui::pos2(corners[0].0[0] as f32, corners[0].0[1] as f32));
+        let resized = PickDrag::begin(g, start, Some(q)).update(g, start + egui::vec2(10., 20.));
+        let p = resized.corners();
+        assert!(p.iter().any(|p| p.0 == corners[2].0));
+        let u = [p[1].0[0] - p[0].0[0], p[1].0[1] - p[0].0[1]];
+        let v = [p[3].0[0] - p[0].0[0], p[3].0[1] - p[0].0[1]];
+        assert!((u[0] * v[0] + u[1] * v[1]).abs() < 1e-6);
+        let center = g.screen_coverage(q).center();
+        let moved = PickDrag::begin(g, center, Some(q)).update(g, center + egui::vec2(10., 20.));
+        assert!((moved.area() - q.area()).abs() < 1e-6);
+    }
+    #[test]
+    fn off_source_statistical_coverage_does_not_move_when_clicked() {
+        let g = Viewport::default().layout(
+            egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(900., 600.)),
+            AREA,
+            1.,
+        );
+        let q =
+            Coverage::new([[2., 200.], [300., 200.], [300., 500.], [2., 500.]].map(SourcePoint))
+                .unwrap();
+        let p = g.screen_coverage(q).center();
+        assert_eq!(PickDrag::begin(g, p, Some(q)).update(g, p), q);
+    }
     #[test]
     fn oriented_layout_preserves_source_patches_and_zoom_anchors() {
         use crate::geometry::QuarterTurns;

@@ -30,9 +30,11 @@ The original source stays in place for development, illumination correction and 
 
 Consider a rectangular picker over a straightened photograph. Mapping it back to the source produces a tilted polygon. Its bounding rectangle includes pixels the user never selected.
 
-Antitone measures the actual polygon. Each intersecting original pixel cell contributes according to its covered area. A bounding box only limits the cells that need inspection; it cannot replace those weights. Capture-clipping diagnostics inspect the same contributing cells as the RGB measurement.
+Patch measurements use the actual polygon. Each intersecting original pixel cell contributes according to its covered area. A bounding box only limits the cells that need inspection; it cannot replace those weights. Capture-clipping diagnostics inspect the same contributing cells as the RGB measurement.
 
-This keeps picks consistent through orientation, crop, zoom and arbitrary straightening. Full-resolution measurements never use display, proxy or already-resampled pixels. Only the resulting calibration/balance values persist, not picker coverage.
+This keeps picks consistent through orientation, crop, zoom and arbitrary straightening. Full-resolution measurements never use display, proxy or already-resampled pixels. Only the resulting calibration/balance values persist, not calibration-picker coverage.
+
+Analyze support has a different job: select complete spatial footprints on the original canonical sampling grid. An 8×8 footprint must lie inside film support, and picture footprints also obey their picture rectangle and observed half-planes. Membership never substitutes a bounding box for the selected shape or replaces numerical eligibility. Opening and picture poses may differ. Compatible captures normally share a conservative holder interior, with measured departures and authored edits kept as photo exceptions. The shared interior is inscribed against pooled exterior evidence and fine safety bounds, so rounded corners need not be admitted just because straight side fits intersect there. Picture coverage follows opening edits against retained independent frame evidence; authored picture geometry stays fixed. Statistical rectangles may extend off-source and use coverage constraints for missing sides; actual sampling stays within the active source. These are saved sampling choices, not completed physical boundaries, accepted crops or automatic straightening.
 
 ## Process before averaging
 

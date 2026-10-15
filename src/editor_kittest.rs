@@ -312,7 +312,6 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
             (0, "save", "Save changes"),
             (1, "project-replace", "Replace project"),
             (2, "output-replace", "Replace file"),
-            (3, "analyze", "Analyze roll"),
         ] {
             match decision {
                 0 => harness.state_mut().transition = Some(Transition::New),
@@ -328,7 +327,7 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
                         OutputFormat::Tiff(OutputTarget::Srgb),
                     ))
                 }
-                _ => harness.state_mut().request_analysis(),
+                _ => unreachable!(),
             }
             harness.hover_at(egui::pos2(10., size.y - 10.));
             harness.run();
@@ -358,7 +357,6 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
                 harness.state().transition.is_none()
                     && harness.state().project_overwrite.is_none()
                     && harness.state().overwrite.is_none()
-                    && harness.state().analysis_confirmation.is_none()
             );
             assert!(!harness.state().busy);
             assert_eq!(harness.state().document.project, before);

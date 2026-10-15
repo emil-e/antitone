@@ -36,7 +36,7 @@ The second exercise exports/reopens full-size images and is more expensive. Thes
 
 ## Analyze roll
 
-Use [authored analysis checks](development.md#roll-analysis) for transactions and estimator regressions: picture-area controls, confirmation/cancellation/failure, atomic initialization, Save/Open and both output targets, including correction. They are offscreen, not photographic certification.
+Use [authored analysis checks](development.md#roll-analysis) for transaction and estimator regressions. They cover per-photo review and exception edits, normal/narrow layouts, preparation/analysis cancellation and failure, atomic support/grade installation, Save/Open and both targets, including real correction. They are offscreen; [native-host completion checks](development.md#explicit-native-host-checks) are separate.
 
 An optional regression checks opening recovery and holder-tail exclusion on one twelve-frame feedback scan set:
 
@@ -47,6 +47,41 @@ ANTITONE_SAMPLES=/absolute/samples cargo test --locked --offline --release \
 ```
 
 Its named files and area/Dmax assertions apply only to that case. Other supplied rolls use an explicit manifest or the editor; neither route certifies [photographic success](plans/roll-assistance.md) or a general opening detector.
+
+### Retained area evidence and complete native review
+
+The optional retained-evidence comparison pins native line extraction, the frozen **local** rectangle baseline and canonical original-centre membership. The current shared-holder provider intentionally differs from that local baseline. This check does not redevelop RAWs or certify material truth:
+
+```sh
+ANTITONE_REGION_EVIDENCE=/absolute/retained-evidence ANTITONE_REGION_NATIVE=1 \
+  cargo test --locked --offline --release --features raw,project --lib \
+  retained_rectangle_baseline_parity -- --ignored --nocapture
+```
+
+Compare the current shared-holder provider with that frozen local baseline across the retained corpus, writing fresh private reports under `.cache/`:
+
+```sh
+ANTITONE_REGION_EVIDENCE=/absolute/retained-evidence \
+ANTITONE_REGION_OUTPUT="$PWD/.cache/holder-comparison" \
+ANTITONE_REGION_IMAGES=DSC04331,DSC01635 \
+  cargo test --locked --offline --release --features editor --lib \
+  compare_shared_holder_with_frozen_local_baseline \
+  -- --ignored --nocapture --test-threads=1
+```
+
+The output directory must be new and outside the frozen evidence tree. The comparison checks expected shared-support/abstention counts, one common opening for normal photos, and spatial population adequacy before numerical rejection. Optional PNGs show the old local opening in red, new conservative opening in gold and picture statistics in cyan, over ungraded camera-code previews. This is evidence for software behavior, not photographic appearance; recurring scene darkness, bounded resolution and unobserved edges remain limitations.
+
+For one explicitly named complete retained roll, the Editor worker regression performs real native preparation, temporary browsing, Analyze, return to the working photo, Save/Open and accepted-support reuse. It preserves RAW size/mtime snapshots and writes only temporary project data under `.cache/`:
+
+```sh
+ANTITONE_REGION_EVIDENCE=/absolute/retained-evidence \
+ANTITONE_RAW_ROOT=/absolute/read-only-samples ANTITONE_REGION_ROLL=roll-name \
+  cargo test --locked --offline --features editor --lib \
+  complete_private_roll_prepares_reviews_analyzes_and_round_trips \
+  -- --ignored --nocapture --test-threads=1
+```
+
+These inputs remain private and unshipped. Neither software parity nor a successful numerical proposal establishes photographic quality, boundary accuracy or physical reference compatibility.
 
 ### Private all-roll contacts
 
@@ -78,7 +113,7 @@ cargo test --locked --offline --release --features editor --lib diagnose_sample_
   .cache/roll-check/FRESH_OUTPUT/roll-name/*.tif
 ```
 
-The diagnostic drives actual import/correction/Analyze and approximate contacts. Inspect failures and every image. [Implementation](../src/editor_analysis_diagnostics.rs) owns report fields.
+This older diagnostic drives real import/correction and the legacy shared-area analysis control, bypassing the new per-photo review provider. It renders approximate contacts for comparison, not acceptance of the new workflow. Inspect failures and every image. [Implementation](../src/editor_analysis_diagnostics.rs) owns report fields.
 
 ## Responsive image scopes
 

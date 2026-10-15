@@ -12,11 +12,11 @@ Paths locate external files. Relative paths resolve beside the project document,
 
 ## Save accepted choices, not working machinery
 
-The project retains calibration, Roll and Photo grading, source/development identity, orientation/crop, accepted correction, picture-analysis area and output settings. These are the choices that determine its processing.
+The project retains calibration, Roll and Photo grading, source/development identity, orientation/crop, accepted correction, source-owned Analyze support with shared/exception provenance and compact retained frame evidence (and older shared explicit picture geometry) and output settings. These are the choices that determine its processing.
 
 It does not retain active/multi-selection, canvas navigation, source-inspection exposure, picker return context, tool drafts, GPU objects or caches. Inspector expansion and scope/filmstrip sizing are application preferences saved independently; they are not part of a photographic grade.
 
-This distinction defines dirty state. Accepted project changes are compared with the last successful Save/Open snapshot. Looking around, selecting a photo or cancelling a draft does not make a project modified. Accepting a statistics area does, even though it does not immediately recalculate the grade.
+This distinction defines dirty state. Accepted project changes are compared with the last successful Save/Open snapshot. Looking around, selecting a photo or cancelling a draft does not make a project modified. Analyze review areas remain drafts until a successful analysis installs them with the grade. Cancelling or failing the operation saves neither. Applying an older shared explicit picture area is still an accepted geometry change without an immediate reanalysis.
 
 ## Source-owned local adjustments
 

@@ -4,24 +4,25 @@
 
 Evaluate Analyze as a useful shared-colour and individual-exposure starting point, followed by ordinary manual grading. It is not an automatically finished or physically calibrated grade. Preserve legitimate blue shade/water and coloured lighting.
 
-The [Analyze guide](../roll-analysis.md) explains the implemented estimator and transaction; [projects](../projects.md) explains saved state. Commands and maintained diagnostic recipes belong in [diagnostics](../diagnostics.md#analyze-roll).
+The [Analyze guide](../roll-analysis.md) explains sampling-area review, the estimator and atomic installation; [projects](../projects.md) explains saved state. Commands and maintained diagnostic recipes belong in [diagnostics](../diagnostics.md#analyze-roll).
 
 ## Unfinished acceptance
 
-- Inspect the current initializer across corrected and uncorrected scan sets, including noisy shadows, coloured lighting and sky-dominated scenes. Evaluate the need for manual finishing without treating a statistical prior as measured film/process truth.
-- Exercise conditional confirmation, numeric focus loss, cancellation, manual Roll/Photo WB and settled preview retention with physical controls. Scripted corrected/uncorrected area/Analyze checks submit visible frames and settle both targets, but do not establish physical interaction or photographic appearance.
+- Exercise the single roll-level review with real photographs and physical controls: source navigation, compact overview, opening versus picture support, per-photo exception edits, numeric focus, reset warning and cancellation during preparation/estimation. Automated normal/narrow and native-worker checks do not establish physical interaction or photographic appearance.
+- Inspect the shared conservative holder interior against the frozen local-detector baseline across corrected and uncorrected scan sets, including faint underexposed content, dense film, narrow rebates/fuzz, shifted holders, cuts, perforations and scene-confounded transitions. Keep difficult photos in the complete roll. Assess wanted-content retention and unwanted-material admission separately from proposal availability.
+- Assess noisy shadows, coloured lighting and sky-dominated scenes after Analyze and ordinary manual finishing. Do not select geometry or tune the estimator to reproduce preferred example grades.
 - Reopen TIFF/AP0 EXR and saved projects with corrected and uncorrected sources; assess photographic appearance separately from numerical/state roundtrips.
 - Calibrated monitor/colour, physical gestures, actual macOS 14 and broader cameras/devices remain separate acceptance.
 
 ## Concrete limits
 
-- Automatic support is order-dependent: DSC01631 first can select a partial opening, while DSC01636 first finds the full opening and materially changes the grade. Explicit geometry wins; there is no whole-camera fallback. A general support fix is not selected.
-- Damaged DSC04492 dominates independent Dmax tails and biases its scan set. Diagnostic exclusion establishes causality, not permission to omit or repair the source.
+- Opening and picture rectangles are statistical hypotheses. Missing sides may use source/opening coverage constraints; coarse material evidence and finer terminal runs do not establish original-pixel segmentation, physical aperture accuracy or crop correctness.
+- Inspect/Need area badges direct attention, not certify unflagged suggestions. Confirming areas does not certify material identity or pixel eligibility. Numerically valid contamination and damaged dense film can still influence independent Dmax tails.
 - Tonal-drift fitting can be biased by systematic scene/material/illumination correlations. Shared WB and exposure remain statistical priors; Photo WB is manual rather than individual gray-world fitting.
-- Native/GPU phases may delay cancellation acknowledgement. Numerical and headless checks do not establish physical or photographic acceptance.
+- Native/GPU phases may delay cancellation acknowledgement. Numerical and headless checks do not establish physical or photographic acceptance or physical flat-field-reference compatibility.
 
 ## Non-goals and next action
 
-Do not add material masks, source omissions/repair, clamps, pedestals, automatic per-photo WB, a CPU interactive fallback or weakened numerical gates. Broad mask research needs a concrete failure and separately agreed scope. Generated reports and photographs stay private/ignored; do not restore archives or execution records.
+Do not add source omissions/repair, clamps, pedestals, automatic per-photo WB, a CPU interactive fallback or weakened numerical gates. The implemented spatial baseline is bounded support under the declared-negative roll contract, not a general material classifier or automatic crop/straightener. Further detector sophistication needs a demonstrated real-use failure, not continued tuning to the same corpus. Generated reports and photographs stay private/ignored; do not restore archives or execution records.
 
-Next: exercise conditional confirmation and manual grading with physical controls, then scope corrected cross-roll/export photographic acceptance. Address support ambiguity and damaged-tail handling separately, without silently excluding sources.
+Next: reproduce the reported DSC04240 opening failure with the complete DSC04234–DSC04245 roll (not in the current private corpus), then exercise review and manual grading with physical controls, then scope corrected cross-roll/export photographic acceptance. Keep area confirmation and the unchanged independent numerical rejections complementary; neither replaces the other.

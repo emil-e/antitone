@@ -317,7 +317,7 @@ fn text_actions_preserve_direct_button_geometry_ids_and_paint_at_both_scales() {
                     TextAction::new("Save"),
                     TextAction::new("Replace"),
                     TextAction::new("Analyze roll").primary(),
-                    TextAction::new("Edit picture area…"),
+                    TextAction::new("Edit shared picture area…"),
                     TextAction::new("Cancel").toolbar(0.),
                     TextAction::new("Apply").primary().toolbar(0.),
                     TextAction::new("Apply")

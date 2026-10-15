@@ -62,6 +62,74 @@ fn fixture(directory: &std::path::Path) -> (Project, SourceId, SourceId) {
     (project, dmin_source_id, dmax_source_id)
 }
 #[test]
+fn accepted_per_source_analysis_support_roundtrips_and_rejects_invalid_association_or_drafts() {
+    use antitone::{coverage::Coverage, scan_regions::Areas};
+    let directory = tempfile::tempdir().unwrap();
+    let (mut project, id, other) = fixture(directory.path());
+    let prior = project.source(other).unwrap().clone();
+    let active = project.source(id).unwrap().development.active_area.into();
+    let mut areas = Areas::default();
+    areas.edit_opening(Coverage::rectangle(active));
+    areas.edit_picture(Coverage::rectangle(active));
+    project
+        .analysis_regions
+        .push(SourceAnalysis { source: id, areas });
+    let path = directory.path().join("areas.antitone.json");
+    project.save(&path, Save::New).unwrap();
+    assert_eq!(Project::load(&path).unwrap(), project);
+    assert_eq!(project.source(other).unwrap(), &prior);
+    let mut old = serde_json::to_value(&project).unwrap();
+    old.as_object_mut().unwrap().remove("analysis_regions");
+    let old: Project = serde_json::from_value(old).unwrap();
+    assert!(old.analysis_regions.is_empty());
+    assert_eq!(old.source(other).unwrap(), &prior);
+    let mut duplicate = project.clone();
+    duplicate
+        .analysis_regions
+        .push(duplicate.analysis_regions[0].clone());
+    assert!(duplicate.validate().is_err());
+    let mut unknown = project.clone();
+    unknown.analysis_regions[0].source = SourceId(999);
+    assert!(unknown.validate().is_err());
+    let mut draft = project.clone();
+    draft.analysis_regions[0].areas.picture = None;
+    assert!(draft.validate().is_err());
+    let mut malformed = serde_json::to_value(&project).unwrap();
+    malformed["analysis_regions"][0]["areas"]["unknown_support"] = true.into();
+    assert!(serde_json::from_value::<Project>(malformed).is_err());
+    let a = &mut project.analysis_regions[0].areas;
+    a.opening_edited = false;
+    a.opening_shared = true;
+    a.picture_edited = false;
+    a.picture_geometry = Some(antitone::scan_regions::PictureGeometry {
+        size: [768, 512],
+        angle: 0.,
+        sides: [None; 4],
+    });
+    let path = directory.path().join("shared-areas.antitone.json");
+    project.save(&path, Save::New).unwrap();
+    assert_eq!(Project::load(&path).unwrap(), project);
+    let mut invalid = project.clone();
+    invalid.analysis_regions[0]
+        .areas
+        .picture_geometry
+        .as_mut()
+        .unwrap()
+        .sides[0] = Some(1.);
+    assert!(invalid.validate().is_err());
+    let mut legacy = serde_json::to_value(&project).unwrap();
+    let a = legacy["analysis_regions"][0]["areas"]
+        .as_object_mut()
+        .unwrap();
+    for key in ["opening_shared", "opening_exception", "picture_geometry"] {
+        a.remove(key);
+    }
+    let legacy: Project = serde_json::from_value(legacy).unwrap();
+    assert!(!legacy.analysis_regions[0].areas.opening_shared);
+    assert!(legacy.analysis_regions[0].areas.picture_geometry.is_none());
+    legacy.validate().unwrap();
+}
+#[test]
 fn photographic_settings_roundtrip_and_absent_fields_preserve_current_grades() {
     let directory = tempfile::tempdir().unwrap();
     let (mut project, id, _) = fixture(directory.path());

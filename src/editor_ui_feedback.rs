@@ -15,7 +15,7 @@ pub enum Severity {
     Error,
 }
 
-pub(super) fn notice_heading(ui: &mut Ui, severity: Severity, title: &str) {
+pub(in crate::editor) fn notice_heading(ui: &mut Ui, severity: Severity, title: &str) {
     let (label, icon, color) = match severity {
         Severity::Information => (
             "Information",

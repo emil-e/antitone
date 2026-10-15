@@ -48,7 +48,6 @@ impl Editor {
             && self.project_overwrite.is_none()
             && self.resume_transition.is_none()
             && self.overwrite.is_none()
-            && self.analysis_confirmation.is_none()
     }
 
     pub(super) fn select_roll_photo(&mut self, index: usize, modifiers: egui::Modifiers) {

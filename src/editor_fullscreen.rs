@@ -20,12 +20,12 @@ impl Editor {
             || self.project_overwrite.is_some()
             || self.resume_transition.is_some()
             || self.overwrite.is_some()
-            || self.analysis_confirmation.is_some()
             || self.removal_pending.is_some()
     }
 
     pub(super) fn fullscreen_available(&self) -> bool {
         !self.fullscreen_blocked()
+            && self.analysis_review.is_none()
             && (self.fullscreen.is_some()
                 || (self.ready.is_some() || self.pending_preview.is_some())
                     && !(self.busy && (self.pick.is_some() || self.flat_edit.is_some())))

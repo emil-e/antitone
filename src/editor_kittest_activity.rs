@@ -181,6 +181,7 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                 local_support: false,
                 film: None,
                 picture: None,
+                areas: None,
             },
         };
         harness.state_mut().analysis_pending = Some(pending);

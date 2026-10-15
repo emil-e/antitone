@@ -640,6 +640,9 @@ fn make_image(
 
 impl Editor {
     fn thumbnail_parameters(&self, source: &Source) -> Result<ProcessingInput, Error> {
+        if self.analysis_review.is_some() {
+            return self.source_parameters(0.).map(Into::into);
+        }
         let photo = if self.current_source == Some(source.id) {
             self.photo
         } else {
@@ -655,13 +658,12 @@ impl Editor {
     fn thumbnail_work_allowed(&self) -> bool {
         !self.busy
             && self.thumbnails.budgets.pressure != memory::Pressure::Critical
-            && self.pick.is_none()
+            && (self.pick.is_none() || self.analysis_review.is_some())
             && self.crop_edit.is_none()
             && self.document_pending.is_none()
             && self.transition.is_none()
             && self.project_overwrite.is_none()
             && self.overwrite.is_none()
-            && self.analysis_confirmation.is_none()
             && self.removal_pending.is_none()
     }
     pub(super) fn hidden_filmstrip(&mut self, ui: &egui::Ui) {
@@ -741,10 +743,13 @@ impl Editor {
             && self.selection_timing.is_some()
             && self.document_pending.is_none()
             && self.pick.is_none();
-        let selection_enabled = (!self.busy || selected_loading)
+        let reviewing = self.analysis_review.is_some() && self.analysis_pending.is_none();
+        let selection_enabled = (!self.busy || selected_loading || reviewing)
             && self.flat_edit.is_none()
             && self.crop_edit.is_none()
-            && (self.pick.is_none() || matches!(self.pick, Some(Pick::Dmin | Pick::Dmax)))
+            && (self.pick.is_none()
+                || matches!(self.pick, Some(Pick::Dmin | Pick::Dmax))
+                || reviewing)
             && self.removal_pending.is_none();
         let height = self
             .preferences
@@ -798,7 +803,9 @@ impl Editor {
                         (Some(Ok(image)),Ok(parameters)) => {
                             let photo_orientation = if self.current_source == Some(source.id) { self.photo_orientation } else { source.orientation };
                             let crop = if self.current_source == Some(source.id) { self.crop } else { source.crop };
-                            let composition = Composition::with_crop(source.development.active_area.into(), self.roll_orientation, photo_orientation, crop)
+                            let composition = if self.analysis_review.is_some() {
+                                Composition::new(source.development.active_area.into(), RollOrientation::default(), PhotoOrientation::default())
+                            } else { Composition::with_crop(source.development.active_area.into(), self.roll_orientation, photo_orientation, crop) }
                                 .expect("document source has a valid active area");
                             let dimensions = composition.size();
                             let aspect = dimensions[0] as f32/dimensions[1] as f32;
@@ -820,6 +827,14 @@ impl Editor {
                                 match processing::image_paint(image,Some(parameters),mapping) {
                                     Ok(paint) => { ui.painter().with_clip_rect(draw).add(egui_wgpu::Callback::new_paint_callback(draw,paint)); }
                                     Err(message) => { error = Some(message.to_string()); }
+                                }
+                            }
+                            if let Some(areas)=self.review_areas(id) {
+                                let picture=self.analysis_review.as_ref().is_some_and(|r|r.picture);
+                                if let Some(q)=if picture{areas.picture}else{areas.opening} {
+                                    let a=source.development.active_area;
+                                    let points=q.map(|p|full.min+egui::vec2(((p[0]-f64::from(a[0]))/f64::from(a[2]))as f32*full.width(),((p[1]-f64::from(a[1]))/f64::from(a[3]))as f32*full.height()));
+                                    ui.painter().with_clip_rect(draw).add(egui::Shape::closed_line(points.to_vec(),ui.visuals().selection.stroke));
                                 }
                             }
                         }
@@ -846,6 +861,7 @@ impl Editor {
                         }
                     }
                     if error.is_some() { card.error(ui); }
+                    if let Some(a)=self.review_areas(id).filter(|a|a.needs_inspection()) { card.area_review_badge(ui,!a.ready()); }
                     let name = path.file_name().unwrap_or_default().to_string_lossy();
                     card.caption(ui,&name);
                     if card.response.clicked() && selection_enabled { select = Some((index, ui.input(|input| input.modifiers))); }
@@ -943,7 +959,9 @@ impl Editor {
             visible_allowed && select.is_none() && !remove,
         );
         if let Some((index, modifiers)) = select {
-            if matches!(self.pick, Some(Pick::Dmin | Pick::Dmax)) {
+            if self.analysis_review.is_some() {
+                self.browse_analysis_review(self.document.project.order[index]);
+            } else if matches!(self.pick, Some(Pick::Dmin | Pick::Dmax)) {
                 self.pick_roll_source(self.document.project.order[index]);
             } else {
                 self.select_roll_photo(index, modifiers);

@@ -358,6 +358,18 @@ impl Scan {
         &mut self,
         area: Rect,
         budget: usize,
+        cancelled: impl FnMut() -> bool,
+    ) -> Result<Option<AnalysisSamples>> {
+        self.analysis_samples_in(area, budget, |_| true, cancelled)
+    }
+
+    /// Select complete spatial footprints before the unchanged numerical gates.
+    /// The grid remains canonical to `area`; support never resizes/rephases it.
+    pub fn analysis_samples_in(
+        &mut self,
+        area: Rect,
+        budget: usize,
+        mut inside: impl FnMut(Rect) -> bool,
         mut cancelled: impl FnMut() -> bool,
     ) -> Result<Option<AnalysisSamples>> {
         if cancelled() {
@@ -395,6 +407,9 @@ impl Scan {
                     width: 8,
                     height: 8,
                 };
+                if !inside(footprint) {
+                    continue;
+                }
                 result.attempted += 1;
                 let diagnostic = self.source.region_sensor_diagnostics(footprint)?;
                 if diagnostic.at_white.iter().any(|n| *n > 0)

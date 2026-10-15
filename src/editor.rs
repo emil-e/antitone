@@ -71,6 +71,8 @@ mod scopes;
 use scopes::{Scopes, Slot as ScopeSlot};
 #[path = "editor_analysis.rs"]
 mod analysis;
+#[path = "editor_analysis_review.rs"]
+mod analysis_review;
 #[path = "editor_flat_field.rs"]
 mod flat;
 use flat::{Correction, FlatEdit, FlatPreview};
@@ -175,6 +177,7 @@ impl LoadCache {
 enum Command {
     Unload,
     Analyze(u64, Box<analysis::Request>),
+    AnalysisAreas(u64, Box<analysis::Request>),
     AnalysisSupport(u64, u64),
     Refine(u64, u64, Box<ProcessingInput>, OutputTarget, ViewRequest),
     ViewSource(Arc<working_view::Mailbox>, egui::Context),
@@ -230,6 +233,7 @@ enum Message {
     DocumentProgress(u64, usize, usize),
     AnalysisSupport(u64, u64, Result<Option<Rect>, String>),
     AnalysisProgress(u64, usize, usize),
+    AnalysisAreas(u64, Result<Option<analysis_review::Approved>, String>),
     Analyzed(u64, Result<Option<Box<analysis::Outcome>>, String>),
     Refined(u64, Result<Option<Arc<GpuImage>>, String>),
     Ready(u64, Result<Box<Ready>, String>),
@@ -572,6 +576,20 @@ fn backend(
                     break;
                 }
             }
+            Command::AnalysisAreas(id, request) => {
+                let result = analysis_review::prepare(
+                    &request,
+                    &analysis_generation,
+                    &developments,
+                    |done, total| {
+                        let _ = messages.send(Message::AnalysisProgress(id, done, total));
+                    },
+                )
+                .map_err(|e| e.to_string());
+                if messages.send(Message::AnalysisAreas(id, result)).is_err() {
+                    break;
+                }
+            }
             Command::Analyze(id, mut request) => {
                 let result = if let Some((_, scan)) = source
                     .as_ref()
@@ -583,7 +601,10 @@ fn backend(
                         {
                             return Ok(None);
                         }
-                        if request.local_support && request.film.is_none() {
+                        if request.areas.is_none()
+                            && request.local_support
+                            && request.film.is_none()
+                        {
                             request.film =
                                 scan.propose_flat_field_area().map_err(|e| e.to_string())?;
                         }
@@ -902,7 +923,8 @@ pub struct Editor {
     analysis_generation: Arc<std::sync::atomic::AtomicU64>,
     analysis_pending: Option<analysis::Pending>,
     analysis_area_pending: Option<u64>,
-    analysis_confirmation: Option<analysis::Request>,
+    analysis_preparing: Option<analysis::Pending>,
+    analysis_review: Option<analysis_review::Review>,
     thumbnails: Thumbnails,
     scopes: Scopes,
     grades: Grades,
@@ -1041,7 +1063,8 @@ impl Editor {
             analysis_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             analysis_pending: None,
             analysis_area_pending: None,
-            analysis_confirmation: None,
+            analysis_preparing: None,
+            analysis_review: None,
             thumbnails,
             scopes: Scopes::default(),
             grades: Grades::default(),
@@ -1246,8 +1269,18 @@ impl Editor {
         self.next_request
     }
     fn start_document(&mut self, work: DocumentWork) {
+        if self.analysis_preparing.take().is_some() {
+            self.cancel_analysis();
+        }
+        if let Some(review) = self.analysis_review.take() {
+            self.tab = review.return_tab;
+            self.scopes.visible = review.return_scopes_visible;
+            self.pick = None;
+            self.region = None;
+            self.pick_return = None;
+            self.pick_view = None;
+        }
         self.analysis_area_pending = None;
-        self.analysis_confirmation = None;
         self.pending_preview = None;
         self.selection_timing = None;
         if self.analysis_pending.take().is_some() {
@@ -1302,7 +1335,6 @@ impl Editor {
         self.load_source(path, true);
     }
     fn load_source(&mut self, path: PathBuf, persistent: bool) {
-        self.analysis_confirmation = None;
         let started = std::time::Instant::now();
         let selecting_photo = persistent && self.pick.is_none() && self.flat_edit.is_none();
         self.analysis_area_pending = None;
@@ -1430,8 +1462,12 @@ impl Editor {
                 Message::AnalysisSupport(request, loaded, result) => {
                     self.analysis_support_result(request, loaded, result)
                 }
+                Message::AnalysisAreas(id, result) => self.analysis_areas_result(id, result),
                 Message::AnalysisProgress(id, done, total) => {
-                    if let Some(pending) = &mut self.analysis_pending
+                    if let Some(pending) = self
+                        .analysis_pending
+                        .as_mut()
+                        .or(self.analysis_preparing.as_mut())
                         && pending.id == id
                     {
                         self.tasks.report(
@@ -1742,6 +1778,11 @@ impl Editor {
         }
     }
     fn finish_pick(&mut self) {
+        if self.analysis_review.is_some() {
+            self.status = "Analysis review cancelled; areas and grade unchanged".into();
+            self.end_analysis_review();
+            return;
+        }
         self.analysis_area_pending = None;
         if self.flat_edit.is_some() {
             self.finish_flat_edit();
@@ -1824,7 +1865,11 @@ impl Editor {
             anchored: self.viewport,
         });
         if kind == Pick::Analysis {
-            self.request_analysis_support();
+            if self.analysis_review.is_some() {
+                self.refresh_review_region();
+            } else {
+                self.request_analysis_support();
+            }
         }
     }
     fn pick_roll_source(&mut self, id: SourceId) {
@@ -1852,6 +1897,10 @@ impl Editor {
         self.source = true;
     }
     fn apply_pick(&mut self) {
+        if self.analysis_review.is_some() {
+            self.confirm_analysis_review();
+            return;
+        }
         if self.pick == Some(Pick::Analysis) {
             self.apply_analysis_area();
             return;
@@ -1945,6 +1994,7 @@ impl Editor {
         }
     }
     fn controls(&mut self, ui: &mut egui::Ui) -> (Option<ScopeSlot>, bool) {
+        let reviewing = self.analysis_review.is_some();
         use controls::{ColorControl, Parameter};
         use icons::Icon;
         use presentation::SectionHeader;
@@ -1964,10 +2014,12 @@ impl Editor {
             ui.ctx().request_repaint();
         }
         let editable = !self.busy
+            && !reviewing
             && self.crop_edit.is_none()
             && self.flat_edit.is_none()
             && self.calibration().is_some();
         let can_pick = !self.busy
+            && !reviewing
             && self.crop_edit.is_none()
             && self.flat_edit.is_none()
             && self.ready.is_some();
@@ -1991,7 +2043,7 @@ impl Editor {
                         });
                         if reset { self.roll_orientation = RollOrientation::default(); }
                     });
-                    self.flat_controls(ui);
+                    ui.add_enabled_ui(!reviewing, |ui| self.flat_controls(ui));
                     analyze = self.analysis_controls(ui);
                     let calibration_summary = match (self.dmin.is_some(), self.dmax.is_some()) {
                         (true, true) => "Dmin + Dmax measured",
@@ -2082,7 +2134,7 @@ impl Editor {
                     });
                 });
             } else if self.tab == 1 {
-                self.composition_controls(ui);
+                ui.add_enabled_ui(!reviewing, |ui| self.composition_controls(ui));
                 ui.push_id("photo", |ui| {
                     ui.add_enabled_ui(editable, |ui| {
                         if controls::color(
@@ -2134,7 +2186,7 @@ impl Editor {
                     });
                 });
             } else {
-                ui.add_enabled_ui(self.crop_edit.is_none() && self.flat_edit.is_none(), |ui| {
+                ui.add_enabled_ui(!reviewing && self.crop_edit.is_none() && self.flat_edit.is_none(), |ui| {
                     let changed = self.target != OutputTarget::DisplayP3;
                     let (_, reset) = presentation::section(ui, "rendering-target", "Target", SectionHeader {
                         summary: if self.target == OutputTarget::DisplayP3 { "Display P3 · 100 nit" } else { "sRGB · 100 nit" },
@@ -2159,7 +2211,9 @@ impl Editor {
             }
         });
         self.preferences.sections = presentation::collect_expansion(ui.ctx());
-        self.preferences.scopes_visible = self.scopes.visible;
+        if !reviewing {
+            self.preferences.scopes_visible = self.scopes.visible;
+        }
         self.preferences.scope_height_ratio = self.scopes.height_ratio;
         if previous_orientation != (self.roll_orientation, self.photo_orientation) {
             self.viewport.fit();
@@ -2249,6 +2303,7 @@ impl host::App for Editor {
         if self.ready.is_none() || self.working.authority().is_some_and(|id| id != self.id) {
             self.working.clear();
         }
+        self.stash_review_region();
         self.seed_thumbnail();
         self.thumbnails.receive(&self.document);
         self.validate_pending_preview();
@@ -2262,7 +2317,6 @@ impl host::App for Editor {
             && self.transition.is_none()
             && self.project_overwrite.is_none()
             && self.resume_transition.is_none()
-            && self.analysis_confirmation.is_none()
             && self.removal_pending.is_none();
         let mut file_action = None;
         if !self.allow_close && ui.input(|input| input.viewport().close_requested()) {
@@ -2311,11 +2365,43 @@ impl host::App for Editor {
                 .unwrap_or(false)
         });
         self.fullscreen_shortcuts(ui, text_was_focused, dialog_escape_available);
+        if self.analysis_preparing.is_some()
+            && dialog_escape_available
+            && !text_was_focused
+            && !ui.ctx().egui_wants_keyboard_input()
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.cancel_analysis();
+        }
+        if self.analysis_review.is_some()
+            && self.analysis_pending.is_none()
+            && dialog_escape_available
+            && !text_was_focused
+            && !ui.ctx().egui_wants_keyboard_input()
+        {
+            if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+                self.finish_pick();
+            } else {
+                let previous =
+                    ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft));
+                let next =
+                    ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight));
+                if previous || next {
+                    let index = if previous {
+                        self.selected.saturating_sub(1)
+                    } else {
+                        (self.selected + 1).min(self.document.project.order.len().saturating_sub(1))
+                    };
+                    if let Some(&id) = self.document.project.order.get(index) {
+                        self.browse_analysis_review(id);
+                    }
+                }
+            }
+        }
         if !self.busy
             && self.fullscreen.is_none()
             && !fullscreen_was_active
             && self.failure.is_none()
-            && self.analysis_confirmation.is_none()
             && self.removal_pending.is_none()
             && !(text_was_focused && ui.input(|input| input.key_pressed(egui::Key::Escape)))
             && self.overwrite.is_none()
@@ -2391,7 +2477,6 @@ impl host::App for Editor {
             || self.transition.is_some()
             || self.project_overwrite.is_some()
             || self.resume_transition.is_some()
-            || self.analysis_confirmation.is_some()
             || self.removal_pending.is_some()
         {
             ui.disable();
@@ -2506,6 +2591,9 @@ impl host::App for Editor {
             self.roll = previous_roll;
             self.photo = previous_photo;
             self.status = format!("Edit rejected: {error}");
+        }
+        if self.analysis_review.is_some() && self.analysis_pending.is_none() {
+            self.stash_review_region();
         }
         let zoom_action = self.viewer_bar(ui);
         let fullscreen = self.fullscreen.is_some();
@@ -2707,7 +2795,6 @@ impl host::App for Editor {
                 && !self.busy
                 && reference_allowed
                 && (!working || self.working.support_ready())
-                && self.analysis_confirmation.is_none()
                 && let Some(error) = self.original.schedule(
                     self.id,
                     &parameters,
@@ -2803,7 +2890,9 @@ impl host::App for Editor {
                     self.region = Some(drag.update(geometry, end));
                 }
             }
-            if !fullscreen && let Some(region) = self.region {
+            if self.analysis_review.is_some() {
+                self.paint_review_areas(ui, geometry, canvas);
+            } else if !fullscreen && let Some(region) = self.region {
                 ui.painter().with_clip_rect(canvas).rect_stroke(
                     geometry.screen_coverage(region),
                     0.,
@@ -2851,7 +2940,6 @@ impl host::App for Editor {
             return;
         }
         self.document_dialogs(ui.ctx(), dialog_escape_available);
-        self.analysis_dialog(ui.ctx(), dialog_escape_available);
         self.removal_dialog(ui.ctx(), dialog_escape_available);
         if let Some((path, format)) = self.overwrite.clone() {
             let detail = path.display().to_string();

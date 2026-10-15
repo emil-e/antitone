@@ -128,23 +128,37 @@ impl ContactSheetCard {
     }
 
     pub fn camera_badge(&self, ui: &Ui) {
+        self.badge(
+            ui,
+            if self.image_rect.height() < 24. {
+                "Camera"
+            } else {
+                "Camera preview"
+            },
+            false,
+        );
+    }
+
+    pub fn area_review_badge(&self, ui: &Ui, missing: bool) {
+        self.badge(ui, if missing { "Need area" } else { "Inspect" }, true);
+    }
+
+    fn badge(&self, ui: &Ui, text: &str, top: bool) {
         let image_rect = self.image_rect;
         let painter = ui
             .painter()
             .with_clip_rect(image_rect.intersect(ui.clip_rect()));
         let font = egui::FontId::proportional(((image_rect.height() - 2.) / 1.2).min(10.));
-        let galley = painter.layout_no_wrap(
-            if image_rect.height() < 24. {
-                "Camera"
-            } else {
-                "Camera preview"
-            }
-            .into(),
-            font,
-            Color32::WHITE,
-        );
+        let galley = painter.layout_no_wrap(text.into(), font, Color32::WHITE);
         let size = (galley.size() + egui::vec2(4., 2.)).min(image_rect.size());
-        let label = Rect::from_min_size(image_rect.left_bottom() - egui::vec2(0., size.y), size);
+        let label = Rect::from_min_size(
+            if top {
+                image_rect.left_top()
+            } else {
+                image_rect.left_bottom() - egui::vec2(0., size.y)
+            },
+            size,
+        );
         painter.rect_filled(label, 2., Color32::from_black_alpha(190));
         painter.galley(label.center() - galley.size() * 0.5, galley, Color32::WHITE);
     }

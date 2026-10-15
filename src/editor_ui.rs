@@ -11,7 +11,7 @@ pub(super) use dialogs::{DecisionDialog, DialogChoice};
 
 #[path = "editor_ui_feedback.rs"]
 mod feedback;
-pub(super) use feedback::{FeedbackDialog, Severity};
+pub(super) use feedback::{FeedbackDialog, Severity, notice_heading};
 
 #[path = "editor_ui_progress.rs"]
 mod progress;
@@ -346,15 +346,15 @@ impl ToolGroup<'_> {
             .help("Cancel the active tool (Escape).")
     }
 
-    fn apply(self) -> TextAction<'static> {
-        TextAction::new("Apply")
+    fn apply(self, label: &'static str) -> TextAction<'static> {
+        TextAction::new(label)
             .enabled(self.apply_enabled)
             .primary()
             .toolbar(0.)
             .help("Apply the active tool (Enter).")
     }
 
-    fn content_width(self, ui: &Ui) -> f32 {
+    fn content_width(self, ui: &Ui, apply_label: &'static str) -> f32 {
         let title = self.identity.viewer_title().into();
         let title_width = egui::WidgetText::into_galley(
             title,
@@ -368,18 +368,30 @@ impl ToolGroup<'_> {
         TOOL_ICON_SIZE
             + title_width
             + self.cancel().width(ui)
-            + self.apply().width(ui)
+            + self.apply(apply_label).width(ui)
             + 3. * ui.spacing().item_spacing.x
             + TOOL_ACTION_SPACE
     }
 
     /// Complete single-line reservation, including frame margins, without widget IDs.
     pub(super) fn width(self, ui: &Ui) -> f32 {
-        self.content_width(ui) + 2. * f32::from(TOOL_FRAME_MARGIN)
+        self.width_named(ui, "Apply")
+    }
+
+    pub(super) fn width_named(self, ui: &Ui, label: &'static str) -> f32 {
+        self.content_width(ui, label) + 2. * f32::from(TOOL_FRAME_MARGIN)
     }
 
     pub(super) fn show(self, ui: &mut Ui) -> egui::InnerResponse<ToolActions> {
-        let width = self.content_width(ui);
+        self.show_named(ui, "Apply")
+    }
+
+    pub(super) fn show_named(
+        self,
+        ui: &mut Ui,
+        apply_label: &'static str,
+    ) -> egui::InnerResponse<ToolActions> {
+        let width = self.content_width(ui, apply_label);
         egui::Frame::NONE
             .fill(active_tool_fill(ui))
             .inner_margin(egui::Margin::symmetric(TOOL_FRAME_MARGIN, 0))
@@ -404,7 +416,7 @@ impl ToolGroup<'_> {
                         ui.add_space(TOOL_ACTION_SPACE);
                         ToolActions {
                             cancel: self.cancel().show(ui),
-                            apply: self.apply().show(ui),
+                            apply: self.apply(apply_label).show(ui),
                         }
                     },
                 )

@@ -18,6 +18,7 @@ pub(super) enum Task {
     Reference(u64),
     Measurement(u64, Pick),
     Analyze(u64),
+    AnalysisAreas(u64),
     Export(u64),
 }
 
@@ -49,20 +50,23 @@ impl Task {
             Self::Photo(id) => TaskRequest::Photo(id),
             Self::Reference(id) => TaskRequest::Reference(id),
             Self::Measurement(id, pick) => TaskRequest::Measurement(id, pick),
-            Self::Analyze(id) => TaskRequest::Analyze(id),
+            Self::Analyze(id) | Self::AnalysisAreas(id) => TaskRequest::Analyze(id),
             Self::Export(id) => TaskRequest::Export(id),
         }
     }
 
     fn counts(self) -> bool {
-        matches!(self, Self::Import(_) | Self::Open(_) | Self::Analyze(_))
+        matches!(
+            self,
+            Self::Import(_) | Self::Open(_) | Self::Analyze(_) | Self::AnalysisAreas(_)
+        )
     }
     fn modal(self) -> bool {
         matches!(self.request(), TaskRequest::Document(_))
     }
 
     fn cancel_action(self) -> Option<TaskCancel> {
-        matches!(self, Self::Analyze(_)).then_some(TaskCancel {
+        matches!(self, Self::Analyze(_) | Self::AnalysisAreas(_)).then_some(TaskCancel {
             request: self.request(),
             label: "Cancel analysis",
         })
@@ -78,6 +82,7 @@ impl Task {
             Self::Photo(_) => "Loading photo…".into(),
             Self::Reference(_) => "Preparing reference…".into(),
             Self::Analyze(_) => "Analyzing roll…".into(),
+            Self::AnalysisAreas(_) => "Preparing analysis areas…".into(),
             Self::Export(_) => "Exporting…".into(),
             Self::Measurement(_, pick) => {
                 let name = match pick {
@@ -259,6 +264,7 @@ impl Editor {
             && self
                 .analysis_pending
                 .as_ref()
+                .or(self.analysis_preparing.as_ref())
                 .is_some_and(|pending| pending.id == id)
         {
             self.cancel_analysis();

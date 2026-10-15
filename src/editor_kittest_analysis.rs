@@ -7,31 +7,48 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
     harness.get_by_label("Analyze roll").click();
     harness.step();
     harness.step();
-    assert!(harness.state().analysis_confirmation.is_some());
+    wait_for(harness, |editor| {
+        editor.analysis_review.is_some() || !editor.busy
+    });
+    assert!(
+        harness.state().analysis_review.is_some(),
+        "{}",
+        harness.state().status
+    );
     assert!(harness.state().analysis_pending.is_none());
     assert!(!harness.state().busy);
-    harness.get_by_label("Replace Photo adjustments?");
-    harness.get_by_label("Warning");
+    if harness
+        .state()
+        .analysis_review
+        .as_ref()
+        .unwrap()
+        .replaces_photos
+    {
+        harness.get_by_label("Replace Photo adjustments");
+        harness.get_by_label("Warning");
+    }
 }
 
 fn confirm(harness: &mut Harness<'_, Editor>) {
     let mut buttons = harness
         .get_all_by_role_and_label(egui::accesskit::Role::Button, "Analyze roll")
         .filter(|node| !node.accesskit_node().is_disabled());
-    let button = buttons.next().expect("enabled modal Analyze action");
+    let button = buttons.next().expect("enabled reviewed Analyze action");
     assert!(buttons.next().is_none());
     button.click();
     drop(buttons);
     harness.step();
-    assert!(harness.state().analysis_confirmation.is_none());
+    assert!(harness.state().analysis_review.is_some());
     assert!(harness.state().analysis_pending.is_some());
     assert!(harness.state().busy);
 }
 
 fn draw_picture(harness: &mut Harness<'_, Editor>, area: Rect) {
-    harness.get_by_label("Edit picture area…").scroll_to_me();
+    harness
+        .get_by_label("Edit shared picture area…")
+        .scroll_to_me();
     harness.try_run_realtime().unwrap();
-    harness.get_by_label("Edit picture area…").click();
+    harness.get_by_label("Edit shared picture area…").click();
     harness.step();
     assert_eq!(harness.state().pick, Some(Pick::Analysis));
     wait_for(harness, |editor| editor.analysis_area_pending.is_none());
@@ -143,9 +160,9 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
     assert_eq!(harness.state().document.project, before);
     harness.get_by_label("Cancel").click();
     harness.step();
-    assert!(harness.state().analysis_confirmation.is_none());
+    assert!(harness.state().analysis_review.is_none());
     assert!(harness.state().analysis_pending.is_none());
-    assert_eq!(harness.state().status, "Analysis cancelled");
+    assert!(harness.state().status.contains("areas and grade unchanged"));
     assert_eq!(harness.state().document.project, before);
 
     show_confirmation(harness);
@@ -178,7 +195,14 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
     );
     let after = &harness.state().document.project;
     assert_eq!(after.order, before.order);
-    assert_eq!(after.analysis_area, before.analysis_area);
+    assert!(after.analysis_area.is_none());
+    assert_eq!(after.analysis_regions.len(), after.order.len());
+    assert!(
+        after
+            .analysis_regions
+            .iter()
+            .all(|e| e.areas.picture == Some(Coverage::rectangle(picture).corners().map(|p| p.0)))
+    );
     assert_eq!(after.roll.gamma, before.roll.gamma);
     assert_eq!(after.roll.response, before.roll.response);
     assert_eq!(after.orientation, before.orientation);
@@ -230,23 +254,9 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
     harness.get_by_label("Apply").click();
     harness.step();
     let failed = harness.state().document.project.clone();
-    let adjusted = failed
-        .order
-        .iter()
-        .any(|id| failed.source(*id).unwrap().photo != PhotoSettings::default());
-    if adjusted {
-        show_confirmation(harness);
-        confirm(harness);
-    } else {
-        // Identical corrected frames can initialize exactly-default Photo grades:
-        // a subsequent Analyze must dispatch without a reset warning.
-        harness.step();
-        harness.get_by_label("Analyze roll").click();
-        harness.step();
-        assert!(harness.state().analysis_confirmation.is_none());
-        assert!(harness.state().analysis_pending.is_some());
-        assert!(harness.state().busy);
-    }
+    // Default and adjusted Photos both review areas; only adjusted Photos show the reset warning.
+    show_confirmation(harness);
+    confirm(harness);
     wait_for(harness, |editor| !editor.busy);
     assert!(
         harness.state().status.contains("picture samples"),
@@ -259,6 +269,173 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
     assert!(harness.state().preference_store.is_none());
 }
 
+#[test]
+fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() {
+    let (mut harness, _) = editor_harness_with_thumbnails(true);
+    harness
+        .state_mut()
+        .add_raws(vec![fixture("roll-0.dng"), fixture("roll-1.dng")]);
+    wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+    harness.state_mut().photo.exposure = 1.25;
+    harness.state_mut().sync_document();
+    let before = harness.state().document.project.clone();
+    let first = harness.state().current_source;
+    let scopes_visible = harness.state().scopes.visible;
+    show_confirmation(&mut harness);
+    wait_for(&mut harness, |e| {
+        e.thumbnails.ready_count(&e.document, e.target) == 2
+    });
+    for (layout, size) in [
+        ("normal", egui::vec2(1100., 800.)),
+        ("narrow", egui::vec2(800., 600.)),
+    ] {
+        harness.set_size(size);
+        harness.run();
+        for picture in [false, true] {
+            if picture {
+                harness.get_by_label("Picture statistics").click();
+            } else {
+                harness.get_by_label("Opening").click();
+            }
+            harness.run();
+            assert_eq!(
+                harness.state().analysis_review.as_ref().unwrap().picture,
+                picture
+            );
+            assert!(harness.state().source);
+            assert!(!harness.state().scopes.visible);
+            assert_eq!(harness.state().preferences.scopes_visible, scopes_visible);
+            harness.get_by_label("Roll analysis");
+            harness.get_by_label("Scopes");
+            for name in ["Roll", "Photo", "Rendering"] {
+                assert!(
+                    !harness
+                        .get_by_role_and_label(egui::accesskit::Role::Tab, name)
+                        .accesskit_node()
+                        .is_disabled()
+                );
+            }
+            let apply = harness.get_by_label("Analyze roll");
+            let cancel = harness.get_by_label("Cancel");
+            assert!(!apply.accesskit_node().is_disabled());
+            for rect in [apply.rect(), cancel.rect()] {
+                assert!(
+                    rect.min.x >= 0.
+                        && rect.max.x <= harness.state().last_layout.unwrap().0.canvas.max.x
+                        && rect.max.y <= size.y,
+                    "{layout}: {rect:?}"
+                );
+            }
+            assert!(!apply.rect().intersects(cancel.rect()));
+            for text in [
+                "Replace Photo adjustments",
+                "Analyze replaces Photo grading with estimated exposure and defaults for the other Photo controls.",
+            ] {
+                let warning = harness.get_by_label(text).rect();
+                assert!(
+                    warning.min.y > 0. && warning.max.y < apply.rect().max.y,
+                    "{layout}: warning hidden: {warning:?}"
+                );
+            }
+            save_capture(
+                &harness.render().unwrap(),
+                &format!(
+                    "analyze-review-{layout}-{}-offscreen",
+                    if picture { "picture" } else { "opening" }
+                ),
+            );
+            assert_eq!(harness.state().document.project, before);
+        }
+        stage(&mut harness, "Photo");
+        for role in [
+            egui::accesskit::Role::Slider,
+            egui::accesskit::Role::SpinButton,
+        ] {
+            assert!(
+                harness
+                    .get_by_role_and_label(role, "Exposure")
+                    .accesskit_node()
+                    .is_disabled()
+            );
+        }
+        let mut resets = 0;
+        for reset in
+            harness.get_all_by_role_and_label(egui::accesskit::Role::Button, "Reset Exposure")
+        {
+            assert!(reset.accesskit_node().is_disabled());
+            reset.click();
+            resets += 1;
+        }
+        assert!(resets > 0);
+        harness.run();
+        stage(&mut harness, "Rendering");
+        assert!(
+            harness
+                .get_by(|node| node.role() == egui::accesskit::Role::ComboBox
+                    && node.value().as_deref() == Some("Display P3"))
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert_eq!(harness.state().document.project, before);
+        stage(&mut harness, "Roll");
+    }
+    assert_eq!(
+        harness
+            .query_all_by_role_and_label(egui::accesskit::Role::Button, "Next area to inspect")
+            .count(),
+        0
+    );
+    harness.get_by_label("Opening").click();
+    harness.run();
+    let prior = harness
+        .state()
+        .review_areas(first.unwrap())
+        .unwrap()
+        .clone();
+    assert!(prior.picture_geometry.is_some() && !prior.picture_edited);
+    let q = harness.state().region.unwrap().corners().map(|p| p.0);
+    let p = prior.picture.unwrap()[0];
+    let geometry = harness.state().last_layout.unwrap().0;
+    drag(
+        &mut harness,
+        geometry.screen_point(egui::pos2(q[0][0] as f32, q[0][1] as f32)),
+        geometry.screen_point(egui::pos2(p[0] as f32 + 12., p[1] as f32 + 12.)),
+    );
+    let edited = harness.state().review_areas(first.unwrap()).unwrap();
+    assert!(edited.opening_edited && !edited.picture_edited);
+    assert_ne!(edited.picture, prior.picture);
+    assert_eq!(harness.state().document.project, before);
+    harness.get_by_label("Picture statistics").click();
+    harness.run();
+    assert_eq!(
+        harness.state().region.unwrap().corners().map(|p| p.0),
+        harness
+            .state()
+            .review_areas(first.unwrap())
+            .unwrap()
+            .picture
+            .unwrap()
+    );
+    harness.get_by_label("roll-1.dng").click();
+    harness.step();
+    wait_for(&mut harness, |e| !e.busy);
+    assert_ne!(harness.state().current_source, first);
+    assert!(
+        !harness
+            .state()
+            .review_areas(harness.state().current_source.unwrap())
+            .unwrap()
+            .opening_edited
+    );
+    assert_eq!(harness.state().document.project, before);
+    harness.get_by_label("Cancel").click();
+    harness.step();
+    wait_for(&mut harness, |e| !e.busy);
+    assert_eq!(harness.state().current_source, first);
+    assert_eq!(harness.state().scopes.visible, scopes_visible);
+    assert_eq!(harness.state().preferences.scopes_visible, scopes_visible);
+    assert_eq!(harness.state().document.project, before);
+}
 #[test]
 fn analyze_widgets_preserve_area_cancel_failure_and_both_settled_targets() {
     let (mut harness, _) = editor_harness();

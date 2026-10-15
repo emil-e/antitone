@@ -138,7 +138,7 @@ fn picker_cursor(
                 egui::CursorIcon::Grab
             }
         }
-        PickDrag::Resize { fixed } => {
+        PickDrag::Resize { fixed, .. } => {
             let delta = point - geometry.screen_frame_point(fixed);
             if delta.x * delta.y >= 0. {
                 egui::CursorIcon::ResizeNwSe

@@ -16,7 +16,7 @@ Photo-only full-display inspection uses current-Space borderless window coverage
 
 Roll multi-selection and confirmed project-only removal preserve RAWs, retained source grades and Roll calibration/correction. The active photo has distinct card framing, and empty rolls can be saved/reopened and repopulated. [Physical-input and accessibility acceptance](docs/plans/inspection-and-interaction.md#roll-workflow) remains open; undo is separate.
 
-Current focus is [Analyze photographic acceptance](docs/plans/roll-assistance.md). Analyze uses the shared UI components with full Photo-grade reset and conditional confirmation. Recovery/relink/undo remains lower priority than interaction and photographic acceptance.
+Current focus is [Analyze review and photographic acceptance](docs/plans/roll-assistance.md). Analyze prepares per-photo sampling support, offers one roll-level review with exception editing and the Photo-reset warning, then installs reviewed support and grading atomically under unchanged numerical checks. The bounded detector is not an automatic crop or proof of material accuracy. Recovery/relink/undo remains lower priority than interaction and photographic acceptance.
 
 ## Remaining work, in priority order
 

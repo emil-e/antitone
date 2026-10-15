@@ -21,6 +21,7 @@ pub(super) struct Request {
     pub film: Option<Rect>,
     pub local_support: bool,
     pub picture: Option<Rect>,
+    pub areas: Option<analysis_review::Approved>,
 }
 pub(super) struct Pending {
     pub id: u64,
@@ -110,6 +111,7 @@ pub(super) fn run(
         return Ok(None);
     }
     request.document.validate()?;
+    analysis_review::verify(request)?;
     let project = &request.document.project;
     if project.order.is_empty() || !project.order.contains(&request.selected) {
         return Err(Error::UnusableSample("no selected roll photo"));
@@ -132,7 +134,7 @@ pub(super) fn run(
             .camera_to_ap1,
     );
     let mut support = request.film;
-    if support.is_none() {
+    if request.areas.is_none() && support.is_none() {
         progress(0, project.order.len());
         for id in &project.order {
             if cancelled() {
@@ -160,7 +162,11 @@ pub(super) fn run(
             }
         }
     }
-    let picture = picture_area(request.picture, support)?;
+    let picture = if request.areas.is_some() {
+        None
+    } else {
+        Some(picture_area(request.picture, support)?)
+    };
     // Explicit picture geometry can still be used without a local illumination hint.
     // Never invent whole-camera geometry for dense-tail/balance/exposure statistics.
     let film = support.unwrap_or_else(|| {
@@ -206,11 +212,34 @@ pub(super) fn run(
             ));
         }
         floor = Some(scan.effective_floor());
-        let Some(film) = scan.analysis_samples(film, MAX_SAMPLES_PER_FRAME, cancelled)? else {
+        let active = scan.area;
+        let frame_areas = request.areas.as_ref().map(|a| &a.entries[index].areas);
+        let film_samples = match frame_areas {
+            Some(areas) => scan.analysis_samples_in(
+                active,
+                MAX_SAMPLES_PER_FRAME,
+                |f| areas.contains_footprint(f, active, false),
+                cancelled,
+            )?,
+            None => scan.analysis_samples(film, MAX_SAMPLES_PER_FRAME, cancelled)?,
+        };
+        let Some(film) = film_samples else {
             return Ok(None);
         };
-        let Some(picture) = scan.analysis_samples(picture, MAX_SAMPLES_PER_FRAME, cancelled)?
-        else {
+        let picture_samples = match frame_areas {
+            Some(areas) => scan.analysis_samples_in(
+                active,
+                MAX_SAMPLES_PER_FRAME,
+                |f| areas.contains_footprint(f, active, true),
+                cancelled,
+            )?,
+            None => scan.analysis_samples(
+                picture.expect("legacy picture geometry"),
+                MAX_SAMPLES_PER_FRAME,
+                cancelled,
+            )?,
+        };
+        let Some(picture) = picture_samples else {
             return Ok(None);
         };
         require_picture(&picture)?;
@@ -239,7 +268,20 @@ pub(super) fn run(
     for (id, photo) in project.order.iter().zip(&proposal.photos) {
         candidate.project.source_mut(*id)?.photo = *photo;
     }
-    candidate.project.analysis_area = Some(array(picture));
+    if let Some(approved) = &request.areas {
+        candidate
+            .project
+            .analysis_regions
+            .retain(|e| !project.order.contains(&e.source));
+        candidate
+            .project
+            .analysis_regions
+            .extend(approved.entries.clone());
+        candidate.project.analysis_area = None;
+    } else {
+        candidate.project.analysis_area = picture.map(array);
+    }
+    analysis_review::verify(request)?;
     candidate.validate()?; // Includes effective-floor GPU constants for every Photo grade.
     for id in &project.order {
         if cancelled() {
@@ -264,7 +306,7 @@ pub(super) fn run(
     }))
 }
 
-fn develop_scan(
+pub(super) fn develop_scan(
     developments: &development::Scheduler,
     document: &Document,
     expected: &Source,
@@ -364,6 +406,13 @@ impl Editor {
     pub(super) fn analysis_controls(&mut self, ui: &mut egui::Ui) -> bool {
         use presentation::TextAction;
         let mut analyze = false;
+        if let Some(review) = &mut self.analysis_review
+            && review.reveal
+        {
+            ui.allocate_response(egui::Vec2::ZERO, egui::Sense::hover())
+                .scroll_to_me(Some(egui::Align::Min));
+            review.reveal = false;
+        }
         presentation::section(
             ui,
             "roll-analysis",
@@ -375,7 +424,9 @@ impl Editor {
                 default_open: None,
             },
             |ui| {
-                if self.analysis_pending.is_some() {
+                if self.analysis_review.is_some() {
+                    self.review_controls(ui);
+                } else if self.analysis_pending.is_some() {
                     let view = self
                         .tasks
                         .view()
@@ -392,26 +443,33 @@ impl Editor {
                                 if TextAction::new("Analyze roll").primary().show(ui).clicked() {
                                     analyze = true;
                                 }
-                                if TextAction::new("Edit picture area…").show(ui).clicked() {
+                                if TextAction::new("Edit shared picture area…").help("One picture rectangle for the roll. Use Analyze roll to review and edit individual areas.").show(ui).clicked() {
                                     self.begin_pick(Pick::Analysis);
                                 }
                             });
                         },
                     );
-                    if self.document.project.analysis_area.is_some() && TextAction::new("Reset picture area").enabled(!self.busy && self.pick.is_none() && self.crop_edit.is_none()).help("Discard the accepted statistics rectangle; next Analyze seeks a roll-supported suggestion. Processing stays unchanged.").show(ui).clicked() {
+                    if (self.document.project.analysis_area.is_some() || self.document.project.analysis_regions.iter().any(|e|self.document.project.order.contains(&e.source))) && TextAction::new("Reset sampling areas").enabled(!self.busy && self.pick.is_none() && self.crop_edit.is_none()).help("Discard accepted sampling areas; the next Analyze prepares new suggestions. Processing stays unchanged.").show(ui).clicked() {
                         self.reset_analysis_area();
                     }
                     if self.analysis_picture().is_none() {
-                        ui.small("Opening suggestions are calculated when needed. Analyze searches for support; or draw the picture area explicitly.");
+                        ui.small("Analyze first prepares per-photo opening and picture areas for review. Explicit picture geometry is kept.");
                     }
                 }
-                ui.small("Estimate RGB references, shared colour balance and individual exposures. Keeps gamma/curve, correction and composition. Picture area controls statistics, not cropping.");
+                if self.analysis_review.is_none() {
+                    ui.small("Estimate RGB references, shared colour balance and individual exposures. Keeps gamma/curve, correction and composition. Picture area controls statistics, not cropping.");
+                }
             },
         );
         analyze
     }
     pub(super) fn reset_analysis_area(&mut self) {
         self.document.project.analysis_area = None;
+        let order = &self.document.project.order;
+        self.document
+            .project
+            .analysis_regions
+            .retain(|e| !order.contains(&e.source));
         self.analysis_area_pending = None;
         if let Some(ready) = &mut self.ready {
             ready.analysis_support = Some(None);
@@ -420,7 +478,12 @@ impl Editor {
     }
 
     fn analysis_request(&mut self) -> Option<Request> {
-        if self.busy || self.pick.is_some() || self.crop_edit.is_some() || self.ready.is_none() {
+        if self.busy
+            || self.pick.is_some()
+            || self.crop_edit.is_some()
+            || self.ready.is_none()
+            || self.document.project.order.is_empty()
+        {
             return None;
         }
         self.sync_document();
@@ -435,74 +498,15 @@ impl Editor {
                 .as_ref()
                 .is_some_and(|ready| ready.analysis_support.is_none()),
             picture: self.document.project.analysis_area.map(rect),
+            areas: None,
         })
     }
 
     pub(super) fn request_analysis(&mut self) {
-        if self.analysis_confirmation.is_some() {
-            return;
-        }
         let Some(request) = self.analysis_request() else {
             return;
         };
-        let adjusted = request
-            .document
-            .project
-            .order
-            .iter()
-            .try_fold(false, |adjusted, id| {
-                request
-                    .document
-                    .project
-                    .source(*id)
-                    .map(|source| adjusted || source.photo != PhotoSettings::default())
-            });
-        match adjusted {
-            Ok(true) => self.analysis_confirmation = Some(request),
-            Ok(false) => self.start_analysis(request),
-            Err(error) => self.status = format!("Analysis failed: {error}. Grade unchanged."),
-        }
-    }
-
-    fn finish_analysis_confirmation(&mut self, accept: bool) {
-        let Some(request) = self.analysis_confirmation.take() else {
-            return;
-        };
-        if !accept {
-            self.status = "Analysis cancelled".into();
-            return;
-        }
-        self.sync_document();
-        if self.busy
-            || self.ready.is_none()
-            || self.pick.is_some()
-            || self.crop_edit.is_some()
-            || self.analysis_generation.load(Ordering::Relaxed) != request.revision
-            || self.id != request.loaded
-            || self.current_source != Some(request.selected)
-            || self.document.path != request.document.path
-            || self.document.project != request.document.project
-        {
-            self.status = "Analysis confirmation discarded: document or settings changed".into();
-            return;
-        }
-        self.start_analysis(request);
-    }
-
-    pub(super) fn analysis_dialog(&mut self, context: &egui::Context, escape_available: bool) {
-        use presentation::{DecisionDialog, DialogChoice};
-        if self.analysis_confirmation.is_none() {
-            return;
-        }
-        let choice = DecisionDialog::new(
-            "Replace Photo adjustments?",
-            "Analyze roll will initialize shared Roll settings and replace existing Photo adjustments. Exposure is estimated; Photo white balance and other grading controls return to their defaults.",
-            "Analyze roll",
-        ).warning().detail("Crop, orientation and flat-field correction are kept.")
-            .show(context, egui::Id::new("confirm-roll-analysis"), escape_available);
-        if let Some(choice) = choice {
-            self.finish_analysis_confirmation(choice == DialogChoice::Confirm);
-        }
+        self.prepare_analysis_review(request);
     }
 
     #[cfg(test)]
@@ -513,7 +517,7 @@ impl Editor {
         self.start_analysis(request);
     }
 
-    fn start_analysis(&mut self, mut request: Request) {
+    pub(super) fn start_analysis(&mut self, mut request: Request) {
         request.revision = self.analysis_generation.fetch_add(1, Ordering::Relaxed) + 1;
         let id = self.request_id();
         self.thumbnails.cancel();
@@ -541,11 +545,16 @@ impl Editor {
             self.tasks.finish(TaskRequest::Analyze(id));
             self.busy = false;
             self.status = "RAW worker stopped".into();
+            self.end_analysis_review();
         }
     }
     pub(super) fn cancel_analysis(&mut self) {
         self.analysis_generation.fetch_add(1, Ordering::Relaxed);
-        if let Some(pending) = &self.analysis_pending {
+        if let Some(pending) = self
+            .analysis_pending
+            .as_ref()
+            .or(self.analysis_preparing.as_ref())
+        {
             self.tasks.cancelling(TaskRequest::Analyze(pending.id));
         }
         self.status = "Cancelling analysis…".into();
@@ -565,6 +574,7 @@ impl Editor {
         let snapshot = &pending.request;
         if self.analysis_generation.load(Ordering::Relaxed) != snapshot.revision {
             self.status = "Analysis cancelled".into();
+            self.end_analysis_review();
             return;
         }
         if self.id != snapshot.loaded
@@ -573,10 +583,16 @@ impl Editor {
             || self.document.project != snapshot.document.project
         {
             self.status = "Analysis discarded: document or settings changed".into();
+            self.end_analysis_review();
             return;
         }
         match result {
             Ok(Some(outcome)) => {
+                if let Err(error) = analysis_review::verify(snapshot) {
+                    self.status = format!("Analysis discarded: {error}; grade unchanged");
+                    self.end_analysis_review();
+                    return;
+                }
                 let photo = match outcome.document.validate().and_then(|_| {
                     outcome
                         .document
@@ -587,10 +603,13 @@ impl Editor {
                     Ok(photo) => photo,
                     Err(error) => {
                         self.status = format!("Analysis rejected: {error}");
+                        self.end_analysis_review();
                         return;
                     }
                 };
-                if let Some(ready) = &mut self.ready {
+                if snapshot.areas.is_none()
+                    && let Some(ready) = &mut self.ready
+                {
                     ready.analysis_support = Some(Some(outcome.support));
                 }
                 self.document = outcome.document;
@@ -609,6 +628,7 @@ impl Editor {
             Ok(None) => self.status = "Analysis cancelled".into(),
             Err(error) => self.status = format!("Analysis failed: {error}. Grade unchanged."),
         }
+        self.end_analysis_review();
     }
     pub(super) fn apply_analysis_area(&mut self) {
         let Some(coverage) = self.region else {

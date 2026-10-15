@@ -205,6 +205,7 @@ fn pending(editor: &mut Editor) -> u64 {
             film: Some(rect([12, 12, 800, 600])),
             local_support: false,
             picture: Some(rect([52, 42, 720, 540])),
+            areas: None,
         },
     });
     editor.tasks.begin(Task::Analyze(id));
@@ -750,195 +751,16 @@ fn click_label(editor: &mut Editor, ctx: &egui::Context, label: &str) {
 fn click_analyze(editor: &mut Editor) {
     let ctx = egui::Context::default();
     click_label(editor, &ctx, "Analyze roll");
-    if editor.analysis_confirmation.is_some() {
-        click_label(editor, &ctx, "Analyze roll");
-    }
+    wait_with_limit(editor, Duration::from_secs(60));
+    assert!(editor.analysis_review.is_some(), "{}", editor.status);
+    click_label(editor, &ctx, "Analyze roll");
 }
 
-#[test]
-fn complete_ordered_photo_settings_determine_confirmation_including_inactive_controls() {
-    for field in 0..7 {
-        let (mut editor, _send, receiver) = ready_state();
-        let mut other = editor.document.project.sources[0].clone();
-        other.id = SourceId(0);
-        other.path = "other.ARW".into();
-        match field {
-            0 => other.photo.exposure = 0.1,
-            1 => other.photo.wb.warmth = 0.1,
-            2 => other.photo.contrast = 1.1,
-            3 => other.photo.pivot = 0.3,
-            4 => other.photo.contrast_colour_mix = 0.4,
-            5 => other.photo.saturation = 1.1,
-            _ => other.photo.saturation_density = 0.4,
-        }
-        editor.document.project.add_source(other).unwrap();
-        editor.sync_document();
-        let before = editor.document.project.clone();
-        let revision = editor.analysis_generation.load(Ordering::Relaxed);
-        editor.request_analysis();
-        assert!(editor.analysis_confirmation.is_some(), "field {field}");
-        assert!(!editor.busy && editor.analysis_pending.is_none());
-        assert!(receiver.try_recv().is_err());
-        editor.request_analysis(); // A second request cannot bypass the existing prompt.
-        editor.finish_analysis_confirmation(false);
-        assert_eq!(editor.document.project, before);
-        assert_eq!(editor.analysis_generation.load(Ordering::Relaxed), revision);
-        assert!(receiver.try_recv().is_err());
-    }
-}
+#[path = "editor_analysis_review_tests.rs"]
+mod review_tests;
 
 #[test]
-fn default_ordered_photos_analyze_directly_even_with_adjusted_retired_sources_and_roll() {
-    let (mut editor, _send, receiver) = ready_state();
-    let mut retired = editor.document.project.sources[0].clone();
-    retired.id = SourceId(0);
-    retired.path = "retired.ARW".into();
-    retired.photo.contrast = 1.3;
-    let retired = editor.document.project.add_source(retired).unwrap();
-    editor.document.project.order.retain(|id| *id != retired);
-    editor.roll.exposure = 1.;
-    editor.roll.wb.tint = 0.2;
-    editor.request_analysis();
-    assert!(editor.analysis_confirmation.is_none() && editor.analysis_pending.is_some());
-    assert!(matches!(receiver.try_recv().unwrap(), Command::Analyze(..)));
-}
-
-#[test]
-fn stale_confirmation_cannot_authorize_changed_document_order_selection_or_settings() {
-    for changed in 0..9 {
-        let (mut editor, _send, receiver) = ready_state();
-        editor.photo.contrast = 1.2;
-        editor.request_analysis();
-        match changed {
-            0 => editor.id += 1,
-            1 => editor.current_source = None,
-            2 => editor.document.path = Some("other.antitone.json".into()),
-            3 => editor.document.project.order.clear(),
-            4 => editor.photo.pivot = 0.4,
-            5 => editor.roll.gamma = 0.8,
-            6 => {
-                editor.analysis_generation.fetch_add(1, Ordering::Relaxed);
-            }
-            7 => editor.document.project.analysis_area = Some([52, 42, 720, 540]),
-            _ => editor.pick = Some(Pick::Wb),
-        }
-        editor.sync_document();
-        let before = editor.document.project.clone();
-        editor.finish_analysis_confirmation(true);
-        assert!(editor.analysis_confirmation.is_none() && editor.analysis_pending.is_none());
-        assert!(!editor.busy && receiver.try_recv().is_err());
-        assert_eq!(editor.document.project, before);
-        assert!(editor.status.contains("confirmation discarded"));
-    }
-}
-
-#[test]
-fn analyze_ui_warns_only_for_adjusted_photos_and_cancel_or_accept_is_single_action() {
-    for accept in [false, true] {
-        let (mut editor, _send, receiver) = ready_state();
-        let ctx = egui::Context::default();
-        let fresh = super::super::tests::app_frame(&mut editor, &ctx, vec![]);
-        assert!(!fresh.iter().any(|(label, _)| label.contains("reset Photo")
-            || label.contains("Replace Photo")
-            || label.contains("replace existing Photo")));
-        editor.photo.pivot = 0.3; // Contrast 1 is identity, but the complete settings are adjusted.
-        click_label(&mut editor, &ctx, "Analyze roll");
-        assert!(editor.analysis_confirmation.is_some());
-        let before = editor.document.project.clone();
-        let revision = editor.analysis_generation.load(Ordering::Relaxed);
-        let labels = super::super::tests::app_frame(&mut editor, &ctx, vec![]);
-        assert!(
-            labels
-                .iter()
-                .any(|(label, _)| label == "Replace Photo adjustments?")
-        );
-        assert!(
-            labels
-                .iter()
-                .any(|(label, _)| label.contains("Crop, orientation and flat-field correction"))
-        );
-        assert!(
-            !receiver
-                .try_iter()
-                .any(|command| matches!(command, Command::Analyze(..)))
-        );
-        // Keyboard file/export/selection actions are unavailable behind the modal.
-        super::super::tests::app_frame(
-            &mut editor,
-            &ctx,
-            vec![
-                egui::Event::Key {
-                    key: egui::Key::S,
-                    physical_key: None,
-                    pressed: true,
-                    repeat: false,
-                    modifiers: egui::Modifiers::COMMAND,
-                },
-                egui::Event::Key {
-                    key: egui::Key::ArrowRight,
-                    physical_key: None,
-                    pressed: true,
-                    repeat: false,
-                    modifiers: egui::Modifiers::NONE,
-                },
-            ],
-        );
-        assert!(!receiver.try_iter().any(|command| matches!(
-            command,
-            Command::Document(..) | Command::Analyze(..) | Command::Load(..)
-        )));
-        click_label(
-            &mut editor,
-            &ctx,
-            if accept { "Analyze roll" } else { "Cancel" },
-        );
-        assert!(editor.analysis_confirmation.is_none());
-        assert_eq!(editor.document.project, before);
-        let count = receiver
-            .try_iter()
-            .filter(|command| matches!(command, Command::Analyze(..)))
-            .count();
-        assert_eq!(count, usize::from(accept));
-        assert_eq!(
-            editor.analysis_generation.load(Ordering::Relaxed),
-            revision + u64::from(accept)
-        );
-        editor.finish_analysis_confirmation(true);
-        assert!(receiver.try_recv().is_err());
-    }
-}
-
-#[test]
-fn analyze_decision_requires_explicit_acceptance_and_keyboard_cancel_keeps_accepted_state() {
-    use super::super::presentation::tests::{key, pointer};
-    for cancel_key in [egui::Key::Escape, egui::Key::Enter] {
-        let (mut editor, _send, receiver) = ready_state();
-        editor.photo.exposure = 1.25;
-        editor.sync_document();
-        let before = editor.document.project.clone();
-        editor.request_analysis();
-        let context = egui::Context::default();
-        super::super::tests::app_frame(&mut editor, &context, vec![]);
-        super::super::tests::app_frame(&mut editor, &context, vec![]);
-        for pressed in [true, false] {
-            super::super::tests::app_frame(
-                &mut editor,
-                &context,
-                pointer(egui::pos2(30., 15.), pressed),
-            );
-        }
-        assert!(editor.analysis_confirmation.is_some());
-        assert!(receiver.try_recv().is_err());
-        super::super::tests::app_frame(&mut editor, &context, key(cancel_key));
-        assert!(editor.analysis_confirmation.is_none() && editor.analysis_pending.is_none());
-        assert!(!editor.busy);
-        assert_eq!(editor.document.project, before);
-        assert!(receiver.try_recv().is_err());
-    }
-}
-
-#[test]
-fn photo_numeric_focus_commit_precedes_analyze_confirmation_snapshot() {
+fn photo_numeric_focus_commit_precedes_analysis_area_preparation_snapshot() {
     let (mut editor, _send, receiver) = ready_state();
     editor.tab = 1;
     for section in [
@@ -1014,7 +836,7 @@ fn photo_numeric_focus_commit_precedes_analyze_confirmation_snapshot() {
         editor.tab, editor.status
     );
     click_label(&mut editor, &ctx, "Analyze roll");
-    let snapshot = &editor.analysis_confirmation.as_ref().unwrap().document;
+    let snapshot = &editor.analysis_preparing.as_ref().unwrap().request.document;
     assert_eq!(
         snapshot
             .project
@@ -1033,7 +855,7 @@ fn photo_numeric_focus_commit_precedes_analyze_confirmation_snapshot() {
 }
 
 #[test]
-fn escape_cancels_confirmation_without_invalidating_original_comparison_or_grade() {
+fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade() {
     let (mut editor, _send, receiver) = ready_state();
     editor.photo.contrast = 1.2;
     editor.source = false;
@@ -1065,7 +887,9 @@ fn escape_cancels_confirmation_without_invalidating_original_comparison_or_grade
             modifiers: egui::Modifiers::NONE,
         }],
     );
-    assert!(editor.analysis_confirmation.is_none() && editor.analysis_pending.is_none());
+    assert!(editor.analysis_pending.is_none());
+    assert!(editor.analysis_preparing.is_some());
+    assert_eq!(editor.status, "Cancelling analysis…");
     assert_eq!(editor.document.project, before);
     assert_eq!(editor.original.signature, signature);
     assert_eq!(editor.original.revision(), revision);

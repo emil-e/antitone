@@ -31,6 +31,8 @@ pub mod roll_analysis;
 pub mod sampling;
 #[cfg(feature = "raw")]
 pub mod scan;
+#[cfg(feature = "project")]
+pub mod scan_regions;
 #[cfg(all(feature = "raw", feature = "project"))]
 mod source_revision;
 #[cfg(all(feature = "raw", feature = "project"))]

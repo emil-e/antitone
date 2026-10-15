@@ -40,6 +40,20 @@ fn main() {
             "cargo:rustc-link-search=native={}",
             root.join("lib").display()
         );
+        #[cfg(feature = "project")]
+        {
+            for file in ["native/scan_regions.mm", "native/scan_region_lines.h"] {
+                println!("cargo:rerun-if-changed={file}");
+            }
+            cc::Build::new()
+                .cpp(true)
+                .std("c++17")
+                .flag("-fobjc-arc")
+                .flag("-mmacosx-version-min=14.0")
+                .file("native/scan_regions.mm")
+                .compile("antitone_scan_regions");
+            println!("cargo:rustc-link-lib=framework=Foundation");
+        }
         println!("cargo:rustc-link-lib=static=raw_r");
         println!("cargo:rustc-link-lib=z");
         println!(

@@ -17,6 +17,9 @@ impl Editor {
     }
 
     fn viewer_tool(&self) -> Option<(icons::Icon, &'static str)> {
+        if self.analysis_review.is_some() {
+            return Some((icons::Icon::Crop, "Analysis areas"));
+        }
         if self.crop_edit.is_some() {
             return Some((icons::Icon::Crop, "Crop"));
         }
@@ -45,11 +48,17 @@ impl Editor {
             self.source = true;
         }
         let navigating = self.ready.is_some() && !self.busy;
+        let reviewing = self.analysis_review.is_some();
+        let apply_label = if reviewing { "Analyze roll" } else { "Apply" };
+        let review_ready = self
+            .analysis_review
+            .as_ref()
+            .is_none_or(|r| r.approved.entries.iter().all(|e| e.areas.ready()));
         let tool_group = tool.map(|(icon, title)| ToolGroup {
             identity: ToolIdentity { icon, title },
             busy: self.busy,
-            cancel_enabled: !self.busy,
-            apply_enabled: navigating && (cropping || self.region.is_some()),
+            cancel_enabled: !self.busy || reviewing && self.analysis_pending.is_none(),
+            apply_enabled: navigating && review_ready && (cropping || self.region.is_some()),
         });
         let inspecting = navigating && calibrated && tool.is_none();
         let bar = if fullscreen {
@@ -76,7 +85,7 @@ impl Editor {
                         } else if self.original.refining.is_some() { " · Refining" } else if self.original.settled.is_none() { " · Approximate" } else { "" };
                     let state = format!("{target}{quality}");
                     let trailing_width = presentation::CONTROL_HEIGHT + VIEWER_ITEM_GAP + if let Some(group) = tool_group {
-                        group.width(ui)
+                        if reviewing { group.width_named(ui, apply_label) } else { group.width(ui) }
                     } else {
                         ui.painter().layout_no_wrap(state.clone(), egui::TextStyle::Small.resolve(ui.style()), ui.visuals().text_color()).size().x
                     };
@@ -162,7 +171,7 @@ impl Editor {
                         });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if let Some(group) = tool_group {
-                            let actions = group.show(ui).inner;
+                            let actions = if reviewing { group.show_named(ui, apply_label) } else { group.show(ui) }.inner;
                             cancel = actions.cancel.clicked();
                             apply = actions.apply.clicked();
                         } else {
@@ -190,7 +199,7 @@ impl Editor {
     }
 
     pub(super) fn canvas_input_allowed(&self, ui: &egui::Ui, canvas: egui::Rect) -> bool {
-        if self.analysis_confirmation.is_some() || egui::Popup::is_any_open(ui.ctx()) {
+        if egui::Popup::is_any_open(ui.ctx()) {
             return false;
         }
         let positions = ui.ctx().input(|input| {

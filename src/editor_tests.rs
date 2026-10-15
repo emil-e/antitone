@@ -2113,7 +2113,7 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
                     "Scan orientation",
                     "Roll analysis",
                     "Analyze roll",
-                    "Edit picture area…",
+                    "Edit shared picture area…",
                     "Calibration",
                     "Gamma & balance",
                     "Balance",

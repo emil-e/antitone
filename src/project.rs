@@ -187,6 +187,13 @@ pub use local::{AdjustmentId, AdjustmentRecord, LocalAdjustments};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct SourceAnalysis {
+    pub source: SourceId,
+    pub areas: crate::scan_regions::Areas,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Project {
     pub schema: u32,
     pub processing_model: u32,
@@ -207,6 +214,8 @@ pub struct Project {
     pub flat_field: Option<FlatFieldSettings>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub analysis_area: Option<[u32; 4]>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub analysis_regions: Vec<SourceAnalysis>,
 }
 impl Default for Project {
     fn default() -> Self {
@@ -226,6 +235,7 @@ impl Default for Project {
             output: Output::default(),
             flat_field: None,
             analysis_area: None,
+            analysis_regions: Vec::new(),
         }
     }
 }
@@ -365,6 +375,17 @@ impl Project {
                     "analysis area is outside a roll source",
                 )?;
             }
+        }
+        let mut analysis_ids = HashSet::new();
+        for entry in &self.analysis_regions {
+            require(
+                analysis_ids.insert(entry.source),
+                "duplicate source analysis support",
+            )?;
+            entry
+                .areas
+                .validate(self.source(entry.source)?.development.active_area.into())?;
+            require(entry.areas.ready(), "incomplete accepted analysis support")?;
         }
         require(self.next_source_id > 0, "invalid source ID allocator")?;
         if let Some(floor) = self.input_floor {
