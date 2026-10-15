@@ -83,6 +83,7 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
     let sig = h.state().dust_signature().unwrap();
     let first = h.state().dust_evaluations(sig)[0].clone();
     let initial = h.state().working.regional().unwrap().clone();
+    let initial_neutral = h.state().working.neutral_source().unwrap();
     assert_eq!(h.state().document.project, project);
     assert_eq!(h.state().document.dirty(), dirty);
     assert!(h.state().pick.is_none());
@@ -154,8 +155,12 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
     click(&mut h, egui::pos2(32., 96.), egui::Modifiers::NONE);
     ready(&mut h, 2);
     assert!(Arc::ptr_eq(&same, &h.state().dust_evaluations(sig)[0]));
+    assert!(Arc::ptr_eq(
+        &initial_neutral,
+        &h.state().working.neutral_source().unwrap()
+    ));
     assert!(
-        h.state()
+        !h.state()
             .working
             .regional()
             .unwrap()
@@ -223,6 +228,10 @@ fn dust_is_suspended_in_fullscreen_and_never_claims_saved_or_exported_output() {
     ready(&mut h, 1);
     let source = h.state().current_source.unwrap();
     let project = h.state().document.project.clone();
+    assert!(h.get_by_label("View source").accesskit_node().is_disabled());
+    h.get_by_label("View source").click();
+    h.step();
+    assert!(!h.state().source && h.state().dust.cleanup);
     key(&mut h, egui::Key::F);
     assert!(h.state().fullscreen.is_some());
     let brush = h.state().dust.brush_size;

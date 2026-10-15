@@ -11,11 +11,14 @@ use std::sync::{
 use wgpu::util::DeviceExt;
 #[path = "gpu_working_view_composite.rs"]
 mod composite;
+#[path = "gpu_repair_reconstruction.rs"]
+mod repair_reconstruction;
 
 #[derive(Clone)]
 pub(crate) struct ViewSourceSpec {
     pub authority: u64,
     pub frame: FrameRaster,
+    pub(crate) repairs: super::repairs::Snapshot,
     area: crate::raw::Rect,
     matrix: DMat3,
     neutral: ProcessingParameters,
@@ -26,6 +29,7 @@ impl PartialEq for ViewSourceSpec {
     fn eq(&self, other: &Self) -> bool {
         self.authority == other.authority
             && self.frame == other.frame
+            && self.repairs == other.repairs
             && self.area == other.area
             && self.matrix == other.matrix
             && self.inspection == other.inspection
@@ -37,7 +41,12 @@ impl ViewSourceSpec {
     pub(crate) fn same_source(&self, other: &Self) -> bool {
         let mut other = other.clone();
         other.frame = self.frame;
+        other.repairs = self.repairs.clone();
         self == &other
+    }
+    pub(crate) fn with_repairs(mut self, repairs: super::repairs::Snapshot) -> Self {
+        self.repairs = repairs;
+        self
     }
     pub(crate) fn underlay(&self) -> Result<Self, Error> {
         let composition = self.frame.composition;
@@ -109,6 +118,7 @@ impl ViewSourceSpec {
         Ok(Self {
             authority,
             frame,
+            repairs: Default::default(),
             area,
             matrix,
             neutral,
@@ -345,11 +355,7 @@ impl ViewKernels {
                 },
                 wgpu::BindGroupEntry {
                     binding: 11,
-                    resource: graded
-                        .repaired
-                        .as_ref()
-                        .map_or(&graded.source.pixels, |r| &r.pixels)
-                        .as_entire_binding(),
+                    resource: graded.source.pixels.as_entire_binding(),
                 },
             ],
         });
@@ -422,7 +428,9 @@ impl ViewSource {
             || scan.camera_to_ap1 != spec.matrix
             || scan.flat_field() != spec.field.as_ref()
             || spec.field.as_ref() != field.as_ref().map(|f| f.field())
-            || specs.iter().any(|s| !s.same_source(spec))
+            || specs
+                .iter()
+                .any(|s| !s.same_source(spec) || s.repairs != spec.repairs)
         {
             return Err(Error::Gpu(
                 "physical-view source authority differs from originals".into(),
@@ -522,6 +530,16 @@ impl ViewSource {
                             &working,
                             spec.neutral,
                         );
+                        renderer.repairs.neutral(
+                            device,
+                            &mut encoder,
+                            &working,
+                            &spec.repairs,
+                            SourceGeometry::new(
+                                [region.x, region.y, region.width, region.height],
+                                size,
+                            )?,
+                        );
                         kernels.copy(device, &mut encoder, &working, &texture);
                     }
                     // Share a submission when both filters fit the existing destination-work
@@ -578,16 +596,8 @@ impl ViewSource {
     }
 }
 
-struct RepairedSource {
-    source: Arc<ViewSource>,
-    repairs: super::repairs::Snapshot,
-    pixels: wgpu::Buffer,
-    submitted: Mutex<bool>,
-}
-
 struct GradedView {
     source: Arc<ViewSource>,
-    repaired: Option<Arc<RepairedSource>>,
     // None is the linear source-inspection bypass, never an identity photographic grade.
     grade: Option<Arc<GpuPhotoGrade>>,
     pixels: wgpu::Buffer,
@@ -640,9 +650,16 @@ impl RenderedView {
             roll,
             source.spec.matrix,
             source.spec.field.clone(),
-        )? != source.spec
+        )?
+        .with_repairs(source.spec.repairs.clone())
+            != source.spec
         {
             return Err(Error::Gpu("physical-view source is stale".into()));
+        }
+        if input.repairs != source.spec.repairs {
+            return Err(Error::Gpu(
+                "physical-view repairs differ from reconstructed originals".into(),
+            ));
         }
         let processing = input.signature();
         // Validate the entire candidate even for target-only reuse, before allocating/publishing it.
@@ -661,25 +678,6 @@ impl RenderedView {
         let graded = match graded {
             Some(graded) => graded,
             None => Arc::new(GradedView {
-                repaired: if input.repairs.0.is_empty() {
-                    None
-                } else {
-                    previous
-                        .and_then(|p| p.graded.as_ref())
-                        .and_then(|g| g.repaired.as_ref())
-                        .filter(|r| Arc::ptr_eq(&r.source, &source) && r.repairs == input.repairs)
-                        .cloned()
-                        .map(Ok)
-                        .unwrap_or_else(|| {
-                            Ok::<_, Error>(Arc::new(RepairedSource {
-                                source: source.clone(),
-                                repairs: input.repairs.clone(),
-                                pixels: float_buffer(device, source.spec.frame.output)?,
-                                submitted: Mutex::new(false),
-                            }))
-                        })?
-                        .into()
-                },
                 pixels: float_buffer(device, source.spec.frame.output)?,
                 grade: Some(Arc::new(GpuPhotoGrade::new(
                     device,
@@ -741,7 +739,6 @@ impl RenderedView {
                         ..bytemuck::Zeroable::zeroed()
                     },
                     source: source.clone(),
-                    repaired: None,
                     submitted: Mutex::new(false),
                 }))
             })?;
@@ -863,37 +860,12 @@ impl RenderedView {
             return;
         }
         let mut initialized = self.graded.as_ref().map(|g| g.submitted.lock().unwrap());
-        let repaired = self.graded.as_ref().and_then(|g| g.repaired.as_ref());
-        let mut repair_initialized = repaired.map(|r| r.submitted.lock().unwrap());
         let mut encoder = device.create_command_encoder(&Default::default());
         if let Some(composite) = &self.composite {
             composite.ensure_parents(device, queue, submissions, context);
             composite.encode(&mut encoder, &self.image);
         } else {
             let graded = self.graded.as_ref().expect("unsubmitted working view");
-            if let Some(repaired) = repaired
-                && !**repair_initialized.as_ref().unwrap()
-            {
-                encoder.copy_buffer_to_buffer(
-                    &repaired.source.pixels,
-                    0,
-                    &repaired.pixels,
-                    0,
-                    repaired.pixels.size(),
-                );
-                repaired
-                    .source
-                    .renderer
-                    .repairs
-                    .filtered(
-                        device,
-                        &mut encoder,
-                        &repaired.pixels,
-                        repaired.source.spec.frame,
-                        &repaired.repairs,
-                    )
-                    .expect("validated physical repair frame");
-            }
             if !**initialized.as_ref().unwrap() {
                 graded.source.kernels.grade(device, &mut encoder, graded);
             }
@@ -924,9 +896,6 @@ impl RenderedView {
             context.request_repaint();
         });
         if let Some(initialized) = initialized.as_mut() {
-            **initialized = true;
-        }
-        if let Some(initialized) = repair_initialized.as_mut() {
             **initialized = true;
         }
         *submitted = true;

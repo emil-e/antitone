@@ -9,7 +9,6 @@ use wgpu::util::DeviceExt;
 struct Pixel {
     position: [u32; 4],
     value: [f32; 4],
-    original: [f32; 4],
 }
 
 pub(crate) struct Patch {
@@ -19,31 +18,23 @@ pub(crate) struct Patch {
     bound: DVec3,
 }
 impl Patch {
-    pub fn new(
-        device: &wgpu::Device,
-        evaluated: Arc<EvaluatedRepair>,
-        original: &[[f32; 3]],
-    ) -> Result<Arc<Self>, Error> {
+    pub fn new(device: &wgpu::Device, evaluated: Arc<EvaluatedRepair>) -> Result<Arc<Self>, Error> {
         let support = evaluated.support();
         let [x, y] = support.origin();
         let [width, height] = support.size();
         let pixels = evaluated
             .pixels()
-            .zip(original)
-            .map(|((point, value), base)| Pixel {
+            .map(|(point, value)| Pixel {
                 position: [point[0], point[1], (point[1] - y) * width + point[0] - x, 0],
                 value: [value[0], value[1], value[2], 0.],
-                original: [base[0], base[1], base[2], 0.],
             })
             .collect::<Vec<_>>();
         if pixels.is_empty()
-            || pixels.len() != evaluated.pixels().count()
-            || original.len() != pixels.len()
-            || original.iter().flatten().any(|v| !v.is_finite())
+            || pixels
+                .iter()
+                .any(|p| p.value.iter().any(|v| !v.is_finite()))
         {
-            return Err(Error::Gpu(
-                "repair original/value dimensions disagree".into(),
-            ));
+            return Err(Error::Gpu("invalid neutral repair values".into()));
         }
         let bytes = bytemuck::cast_slice(&pixels);
         if bytes.len() as u64 > device.limits().max_buffer_size
@@ -97,7 +88,8 @@ impl std::fmt::Debug for Snapshot {
 
 pub(crate) struct Kernels {
     original: wgpu::ComputePipeline,
-    filtered: wgpu::ComputePipeline,
+    neutral: wgpu::ComputePipeline,
+    copy: wgpu::ComputePipeline,
 }
 impl Kernels {
     pub async fn new(device: &wgpu::Device) -> Result<Self, Error> {
@@ -124,7 +116,8 @@ impl Kernels {
         };
         let result = Self {
             original: pipeline("repair_original"),
-            filtered: pipeline("repair_filtered"),
+            neutral: pipeline("repair_neutral"),
+            copy: pipeline("repair_copy"),
         };
         if let Some(error) = scope.pop().await {
             return Err(Error::Gpu(error.to_string()));
@@ -181,69 +174,96 @@ impl Kernels {
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.set_pipeline(&self.original);
             pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups((patch.buffer.size() / 48).div_ceil(64) as u32, 1, 1);
+            pass.dispatch_workgroups((patch.buffer.size() / 32).div_ceil(64) as u32, 1, 1);
         }
     }
 
-    /// Filter repair-minus-original contributions into an immutable copy of the same neutral view.
-    /// This never reacquires a photograph or filters a previously repaired preview recursively.
-    pub fn filtered(
+    pub fn neutral(
         &self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         output: &wgpu::Buffer,
+        repairs: &Snapshot,
+        geometry: SourceGeometry,
+    ) {
+        let region = geometry.region();
+        let size = geometry.size();
+        let tile = uniform(
+            device,
+            bytemuck::cast_slice(&[region.x, region.y, size[0], size[1]]),
+        );
+        for patch in &repairs.0 {
+            if !intersects(patch.region, region) {
+                continue;
+            }
+            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("absolute ungraded AP1 repair values"),
+                layout: &self.neutral.get_bind_group_layout(0),
+                entries: &[entry(1, output), entry(12, &patch.buffer), entry(13, &tile)],
+            });
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&self.neutral);
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups((patch.buffer.size() / 32).div_ceil(64) as u32, 1, 1);
+        }
+    }
+
+    /// Copy only physical footprints touched by exact support, preserving every other bit.
+    #[allow(clippy::too_many_arguments)]
+    pub fn copy_regions(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        output: &wgpu::Buffer,
+        source: (&wgpu::Buffer, ([u32; 2], [u32; 2])),
         frame: FrameRaster,
+        window: ([u32; 2], [u32; 2]),
         repairs: &Snapshot,
     ) -> Result<(), Error> {
         let bounds = frame.bounds()?;
         let affine = frame.affine()?;
         for patch in &repairs.0 {
             let r = patch.region;
-            let lo = [r.x.max(bounds.x), r.y.max(bounds.y)];
-            let hi = [
-                (r.x + r.width).min(bounds.x + bounds.width),
-                (r.y + r.height).min(bounds.y + bounds.height),
-            ];
-            if lo[0] >= hi[0] || lo[1] >= hi[1] {
+            if !intersects(r, bounds) {
                 continue;
             }
-            for (start, extent) in
-                crate::resample::windows::bounded(crate::resample::windows::affine_output(
-                    affine,
-                    frame.output,
-                    [lo[0] - bounds.x, lo[1] - bounds.y],
-                    [hi[0] - lo[0], hi[1] - lo[1]],
-                ))
-            {
-                let mut bytes = bytemuck::cast_slice(&[
-                    bounds.x,
-                    bounds.y,
-                    frame.output[0],
-                    frame.output[1],
-                    r.x,
-                    r.y,
-                    r.width,
-                    r.height,
-                    start[0],
-                    start[1],
-                    extent[0],
-                    extent[1],
-                ])
-                .to_vec();
-                for pair in affine {
-                    bytes.extend_from_slice(bytemuck::cast_slice(&[pair[0], pair[1], 0., 0.]));
-                }
-                let view = uniform(device, &bytes);
-                let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("filtered neutral repair resources"),
-                    layout: &self.filtered.get_bind_group_layout(0),
-                    entries: &[entry(1, output), entry(12, &patch.buffer), entry(14, &view)],
-                });
-                let mut pass = encoder.begin_compute_pass(&Default::default());
-                pass.set_pipeline(&self.filtered);
-                pass.set_bind_group(0, &group, &[]);
-                pass.dispatch_workgroups(extent[0].div_ceil(8), extent[1].div_ceil(8), 1);
+            let mut bytes = bytemuck::cast_slice(&[
+                bounds.x,
+                bounds.y,
+                frame.output[0],
+                frame.output[1],
+                r.x,
+                r.y,
+                r.width,
+                r.height,
+                window.0[0],
+                window.0[1],
+                window.1[0],
+                window.1[1],
+                (source.1).0[0],
+                (source.1).0[1],
+                (source.1).1[0],
+                (source.1).1[1],
+            ])
+            .to_vec();
+            for pair in affine {
+                bytes.extend_from_slice(bytemuck::cast_slice(&[pair[0], pair[1], 0., 0.]));
             }
+            let view = uniform(device, &bytes);
+            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("exact support footprint copy"),
+                layout: &self.copy.get_bind_group_layout(0),
+                entries: &[
+                    entry(1, output),
+                    entry(12, &patch.buffer),
+                    entry(14, &view),
+                    entry(15, source.0),
+                ],
+            });
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&self.copy);
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups(window.1[0].div_ceil(8), window.1[1].div_ceil(8), 1);
         }
         Ok(())
     }

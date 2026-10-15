@@ -37,33 +37,35 @@ fn repaired(
         })
         .unwrap(),
     );
-    let original = evaluated
-        .pixels()
-        .map(|(p, _)| {
-            scalar
-                .apply(scan.pixel(p[0], p[1]).unwrap())
-                .unwrap()
-                .rgb
-                .as_vec3()
-                .to_array()
-        })
-        .collect::<Vec<_>>();
     (
-        Snapshot(vec![
-            Patch::new(device, evaluated.clone(), &original).unwrap(),
-        ]),
+        Snapshot(vec![Patch::new(device, evaluated.clone()).unwrap()]),
         evaluated,
     )
 }
 fn render_repaired(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    source: Arc<ViewSource>,
+    (source, scan): (Arc<ViewSource>, &Scan),
     snapshot: &Snapshot,
     (roll, photo): (RollSettings, PhotoSettings),
     target: OutputTarget,
     previous: Option<&Arc<RenderedView>>,
 ) -> Arc<RenderedView> {
+    let source = ViewSource::reconstruct_repairs(
+        device,
+        queue,
+        &SubmissionGate::default(),
+        scan,
+        None,
+        source,
+        snapshot.clone(),
+        previous
+            .and_then(|p| p.graded.as_ref())
+            .map(|g| g.source.clone()),
+        || false,
+    )
+    .unwrap()
+    .unwrap();
     let mut input: ProcessingInput =
         ProcessingParameters::positive(calibration(), roll, photo, source.spec.matrix)
             .unwrap()
@@ -89,6 +91,80 @@ fn render_repaired(
     view
 }
 
+fn filter_authored_repairs(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    source: Arc<ViewSource>,
+    frame: FrameRaster,
+    repairs: &Snapshot,
+) -> Arc<ViewSource> {
+    let area = source.spec.area;
+    assert_eq!(source.spec.frame.output, [area.width, area.height]);
+    let working = float_buffer(device, source.spec.frame.output).unwrap();
+    let pixels = float_buffer(device, frame.output).unwrap();
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: None,
+        size: wgpu::Extent3d {
+            width: area.width,
+            height: area.height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba32Float,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    encoder.copy_buffer_to_buffer(&source.pixels, 0, &working, 0, working.size());
+    source.renderer.repairs.neutral(
+        device,
+        &mut encoder,
+        &working,
+        repairs,
+        SourceGeometry::new(
+            [area.x, area.y, area.width, area.height],
+            [area.width, area.height],
+        )
+        .unwrap(),
+    );
+    source
+        .kernels
+        .copy(device, &mut encoder, &working, &texture);
+    let bounds = frame.bounds().unwrap();
+    source
+        .kernels
+        .filter(
+            device,
+            &mut encoder,
+            &texture,
+            &pixels,
+            frame,
+            [
+                area.x as i32 - bounds.x as i32,
+                area.y as i32 - bounds.y as i32,
+            ],
+            ([0, 0], frame.output),
+        )
+        .unwrap();
+    let submission = queue.submit([encoder.finish()]);
+    device
+        .poll(wgpu::PollType::Wait {
+            submission_index: Some(submission),
+            timeout: None,
+        })
+        .unwrap();
+    let mut spec = source.spec.clone().with_repairs(repairs.clone());
+    spec.frame = frame;
+    Arc::new(ViewSource {
+        spec,
+        pixels,
+        renderer: source.renderer.clone(),
+        kernels: source.kernels.clone(),
+    })
+}
+
 #[test]
 fn sparse_repair_projection_retains_signed_hdr_and_repair_values_extend_range_preflight() {
     pollster::block_on(async {
@@ -108,7 +184,7 @@ fn sparse_repair_projection_retains_signed_hdr_and_repair_values_extend_range_pr
             .map(|i| {
                 let point = [area.x + i % 64, area.y + i / 64];
                 if support.contains(point) {
-                    [0.7, 0.9, 5., 11.]
+                    [1e30, 1e30, 1e30, 11.]
                 } else {
                     [-0.02 + (i % 64) as f32 * 0.0001, 0.1, 4., 11.]
                 }
@@ -128,17 +204,58 @@ fn sparse_repair_projection_retains_signed_hdr_and_repair_values_extend_range_pr
             })
             .unwrap(),
         );
-        let original = evaluated
-            .pixels()
-            .map(|(p, _)| {
-                let v = values[((p[1] - area.y) * area.width + p[0] - area.x) as usize];
-                [v[0], v[1], v[2]]
-            })
-            .collect::<Vec<_>>();
-        let patches = Snapshot(vec![
-            Patch::new(&device, evaluated.clone(), &original).unwrap(),
-        ]);
-        let source = colour::authored_source(&device, renderer, kernels, &values, frame);
+        let patches = Snapshot(vec![Patch::new(&device, evaluated.clone()).unwrap()]);
+        let original_source = colour::authored_source(&device, renderer, kernels, &values, frame);
+        let source =
+            filter_authored_repairs(&device, &queue, original_source.clone(), frame, &patches);
+        let mut reduced = frame;
+        reduced.output = [17, 13];
+        let filtered =
+            filter_authored_repairs(&device, &queue, original_source.clone(), reduced, &patches);
+        let reduced_values = read(&device, &queue, &filtered.pixels);
+        let mut alternative = values.clone();
+        for p in evaluated.support().selected_points() {
+            alternative[((p[1] - area.y) * area.width + p[0] - area.x) as usize] =
+                [-1e20, 1e-20, 1e20, 11.];
+        }
+        let alternative = colour::authored_source(
+            &device,
+            original_source.renderer.clone(),
+            original_source.kernels.clone(),
+            &alternative,
+            frame,
+        );
+        let alternative = filter_authored_repairs(&device, &queue, alternative, reduced, &patches);
+        assert_eq!(
+            reduced_values
+                .iter()
+                .map(|p| p.map(f32::to_bits))
+                .collect::<Vec<_>>(),
+            read(&device, &queue, &alternative.pixels)
+                .iter()
+                .map(|p| p.map(f32::to_bits))
+                .collect::<Vec<_>>()
+        );
+        for (i, pixel) in reduced_values.iter().enumerate() {
+            let footprint = reduced
+                .footprint([(i as u32) % 17, (i as u32) / 17])
+                .unwrap();
+            let expected = footprint
+                .pixels(area)
+                .unwrap()
+                .fold(DVec3::ZERO, |sum, (p, w)| {
+                    let v = values[((p[1] - area.y) * area.width + p[0] - area.x) as usize];
+                    sum + DVec3::from_array(evaluated.pixel(p, [v[0], v[1], v[2]]).map(f64::from))
+                        * w
+                })
+                / footprint.area();
+            for c in 0..3 {
+                assert!(
+                    (pixel[c] as f64 - expected[c]).abs() <= 2e-6 + 2e-5 * expected[c].abs(),
+                    "mixed HDR {i}/{c}: {pixel:?} vs {expected:?}"
+                );
+            }
+        }
         let roll = RollSettings {
             gamma: 0.65,
             ..RollSettings::new_grade()
@@ -172,14 +289,7 @@ fn sparse_repair_projection_retains_signed_hdr_and_repair_values_extend_range_pr
         let actual = read(
             &device,
             &queue,
-            &view
-                .graded
-                .as_ref()
-                .unwrap()
-                .repaired
-                .as_ref()
-                .unwrap()
-                .pixels,
+            &view.graded.as_ref().unwrap().source.pixels,
         );
         for (i, (pixel, base)) in actual.iter().zip(&values).enumerate() {
             let point = [area.x + i as u32 % 64, area.y + i as u32 / 64];
@@ -273,13 +383,13 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
             let first = render_repaired(
                 &device,
                 &queue,
-                source.clone(),
+                (source.clone(), &scan),
                 &patches,
                 (RollSettings::new_grade(), PhotoSettings::default()),
                 OutputTarget::Srgb,
                 None,
             );
-            let layer = first.graded.as_ref().unwrap().repaired.as_ref().unwrap();
+            let layer = &first.graded.as_ref().unwrap().source;
             let actual = read(&device, &queue, &layer.pixels);
             let mut touched = 0;
             for (i, pixel) in actual.iter().enumerate() {
@@ -332,13 +442,13 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
             let graded = render_repaired(
                 &device,
                 &queue,
-                source.clone(),
+                (source.clone(), &scan),
                 &patches,
                 (roll, photo),
                 OutputTarget::Srgb,
                 Some(&first),
             );
-            let same_layer = graded.graded.as_ref().unwrap().repaired.as_ref().unwrap();
+            let same_layer = &graded.graded.as_ref().unwrap().source;
             assert!(Arc::ptr_eq(layer, same_layer));
             let values = read(&device, &queue, &graded.graded.as_ref().unwrap().pixels);
             let post = wb_matrix(photo.wb).unwrap()
@@ -360,7 +470,7 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
             let p3 = render_repaired(
                 &device,
                 &queue,
-                source.clone(),
+                (source.clone(), &scan),
                 &patches,
                 (roll, photo),
                 OutputTarget::DisplayP3,
@@ -373,15 +483,169 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
             let cleared = render_repaired(
                 &device,
                 &queue,
-                source.clone(),
+                (source.clone(), &scan),
                 &Snapshot::default(),
                 (roll, photo),
                 OutputTarget::DisplayP3,
                 Some(&p3),
             );
-            assert!(cleared.graded.as_ref().unwrap().repaired.is_none());
+            assert!(Arc::ptr_eq(
+                &cleared.graded.as_ref().unwrap().source,
+                &source
+            ));
             assert_eq!(read(&device, &queue, &source.pixels), baseline);
         }
+    });
+}
+
+#[test]
+fn repaired_region_updates_compose_independently_restore_removed_support_and_cancel_atomically() {
+    pollster::block_on(async {
+        let (device, queue, renderer, kernels) = context().await;
+        let scan = scan();
+        let (first, _) = repaired(&scan, &device);
+        let scalar = crate::processing::Pipeline::ungraded(
+            calibration(),
+            RollSettings::new_grade(),
+            scan.camera_to_ap1,
+        )
+        .unwrap();
+        let second_repair = Repair {
+            id: RepairId(2),
+            enabled: true,
+            origin: RepairOrigin::Manual,
+            donor: DonorChoice::Offset([-60, 60]),
+            support: SupportMask::new([134, 45], [3, 3], vec![true; 9]).unwrap(),
+        };
+        let evaluate = |repair: &Repair| {
+            Arc::new(
+                crate::dust_repair::evaluate(repair, scan.area, |p| {
+                    Ok(scalar
+                        .apply(scan.pixel(p[0], p[1])?)?
+                        .rgb
+                        .as_vec3()
+                        .to_array())
+                })
+                .unwrap(),
+            )
+        };
+        let second = Patch::new(&device, evaluate(&second_repair)).unwrap();
+        let both = Snapshot(vec![first.0[0].clone(), second.clone()]);
+        let mut frame = frame(&scan);
+        frame.output = [31, 23];
+        let base = ViewSource::acquire(
+            &device,
+            &queue,
+            &SubmissionGate::default(),
+            renderer,
+            kernels,
+            &scan,
+            None,
+            ViewSourceSpec::new(
+                1,
+                frame,
+                calibration(),
+                RollSettings::new_grade(),
+                scan.camera_to_ap1,
+                None,
+            )
+            .unwrap(),
+            || false,
+        )
+        .unwrap()
+        .unwrap();
+        let baseline = read(&device, &queue, &base.pixels);
+        let build = |snapshot: Snapshot, previous: Option<Arc<ViewSource>>| {
+            ViewSource::reconstruct_repairs(
+                &device,
+                &queue,
+                &SubmissionGate::default(),
+                &scan,
+                None,
+                base.clone(),
+                snapshot,
+                previous,
+                || false,
+            )
+            .unwrap()
+            .unwrap()
+        };
+        let one = build(first.clone(), None);
+        let one_pixels = read(&device, &queue, &one.pixels);
+        assert!(
+            ViewSource::reconstruct_repairs(
+                &device,
+                &queue,
+                &SubmissionGate::default(),
+                &scan,
+                None,
+                one.clone(),
+                both.clone(),
+                None,
+                || false
+            )
+            .is_err()
+        );
+        assert!(
+            ViewSource::reconstruct_repairs(
+                &device,
+                &queue,
+                &SubmissionGate::default(),
+                &scan,
+                None,
+                base.clone(),
+                both.clone(),
+                Some(one.clone()),
+                || true
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert_eq!(read(&device, &queue, &one.pixels), one_pixels);
+        let combined = build(both.clone(), Some(one));
+        let reversed = build(Snapshot(vec![second.clone(), first.0[0].clone()]), None);
+        let forward = build(both, None);
+        assert_eq!(
+            read(&device, &queue, &forward.pixels),
+            read(&device, &queue, &reversed.pixels)
+        );
+        for (a, b) in read(&device, &queue, &combined.pixels).iter().zip(read(
+            &device,
+            &queue,
+            &forward.pixels,
+        )) {
+            assert_eq!(a[3], b[3]);
+            for c in 0..3 {
+                assert!((a[c] - b[c]).abs() <= 2e-6 + 2e-5 * b[c].abs());
+            }
+        }
+        let without_first = build(Snapshot(vec![second.clone()]), Some(combined));
+        let mut shrunk = second_repair;
+        shrunk.support = SupportMask::new([135, 46], [1, 1], vec![true]).unwrap();
+        let shrunk = Patch::new(&device, evaluate(&shrunk)).unwrap();
+        let updated = build(Snapshot(vec![shrunk.clone()]), Some(without_first));
+        let fresh = build(Snapshot(vec![shrunk.clone()]), None);
+        let expected = read(&device, &queue, &fresh.pixels);
+        let actual = read(&device, &queue, &updated.pixels);
+        for (i, pixel) in actual.iter().enumerate() {
+            let footprint = frame.footprint([(i as u32) % 31, (i as u32) / 31]).unwrap();
+            let repaired = footprint
+                .pixels(scan.area)
+                .unwrap()
+                .any(|(p, _)| shrunk.evaluated.support().contains(p));
+            if !repaired {
+                assert_eq!(pixel.map(f32::to_bits), baseline[i].map(f32::to_bits));
+            } else {
+                for c in 0..3 {
+                    assert!(
+                        (pixel[c] - expected[i][c]).abs() <= 2e-6 + 2e-5 * expected[i][c].abs()
+                    );
+                }
+            }
+        }
+        let reset = build(Snapshot::default(), Some(updated));
+        assert!(Arc::ptr_eq(&reset, &base));
+        assert_eq!(read(&device, &queue, &base.pixels), baseline);
     });
 }
 

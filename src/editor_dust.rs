@@ -94,7 +94,6 @@ pub(super) struct Response {
     pub signature: Signature,
     pub repair: Repair,
     pub evaluated: Arc<EvaluatedRepair>,
-    pub original: Vec<[f32; 3]>,
 }
 
 fn repair_bound(repair: &EvaluatedRepair) -> DVec3 {
@@ -108,7 +107,6 @@ struct Cached {
     signature: Signature,
     repair: Repair,
     evaluated: Arc<EvaluatedRepair>,
-    original: Vec<[f32; 3]>,
     bound: DVec3,
 }
 
@@ -385,7 +383,6 @@ impl State {
                 repair: response.repair,
                 bound: repair_bound(&response.evaluated),
                 evaluated: response.evaluated,
-                original: response.original,
             },
         );
         true
@@ -428,17 +425,6 @@ pub(super) fn evaluate(scan: &Scan, request: &Request) -> Result<Response, Error
             Err(Error::NumericalOverflow)
         }
     })?;
-    // Original support values are used only for view replacement, never as healer inputs.
-    let original = evaluated
-        .pixels()
-        .map(|(point, _)| {
-            Ok(pipeline
-                .apply(scan.pixel(point[0], point[1])?)?
-                .rgb
-                .as_vec3()
-                .to_array())
-        })
-        .collect::<Result<Vec<_>, Error>>()?;
     Ok(Response {
         request: request.request,
         loaded: request.loaded,
@@ -446,7 +432,6 @@ pub(super) fn evaluate(scan: &Scan, request: &Request) -> Result<Response, Error
         signature: request.signature,
         repair: request.repair.clone(),
         evaluated: Arc::new(evaluated),
-        original,
     })
 }
 
@@ -957,7 +942,7 @@ impl Editor {
         ui: &egui::Ui,
         geometry: crate::viewport::CanvasLayout,
     ) {
-        if !self.dust.cleanup {
+        if !self.dust.cleanup || self.source {
             return;
         }
         let delta = ui.input_mut(|input| {
@@ -1656,11 +1641,7 @@ impl Editor {
             {
                 Some(patch) => patch.clone(),
                 None => {
-                    let patch = crate::gpu::repairs::Patch::new(
-                        &device,
-                        cached.evaluated.clone(),
-                        &cached.original,
-                    )?;
+                    let patch = crate::gpu::repairs::Patch::new(&device, cached.evaluated.clone())?;
                     self.dust.gpu.insert(id, patch.clone());
                     patch
                 }
@@ -1741,7 +1722,7 @@ impl Editor {
         let Some(source) = self.current_source else {
             return;
         };
-        if self.tab != 1 || self.fullscreen.is_some() {
+        if self.tab != 1 || self.fullscreen.is_some() || self.source {
             return;
         }
         let set = self.dust.repairs(source);

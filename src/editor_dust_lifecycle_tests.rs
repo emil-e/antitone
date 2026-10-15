@@ -27,7 +27,6 @@ fn response(request: &Request, active: SourceRegion) -> Response {
         source: request.source,
         signature: request.signature,
         repair: request.repair.clone(),
-        original: vec![[0.1, 0.2, 2.]; evaluated.pixels().count()],
         evaluated,
     }
 }
@@ -63,7 +62,6 @@ fn high_response(e: &mut Editor) -> Response {
         source: request.source,
         signature: request.signature,
         repair: request.repair,
-        original: vec![[1e35; 3]; evaluated.pixels().count()],
         evaluated,
     }
 }
@@ -190,7 +188,6 @@ fn disconnected_automatic_donors_use_their_own_supports_offsets_and_drag_origin(
         matched.source[0] = (matched.target[0] as i32 + offset[0]) as u32;
         matched.source[1] = (matched.target[1] as i32 + offset[1]) as u32;
     }
-    let original = vec![[0.1, 0.2, 2.]; evaluated.pixels().count()];
     e.dust.start(&request);
     e.receive_dust(
         request.request,
@@ -201,7 +198,6 @@ fn disconnected_automatic_donors_use_their_own_supports_offsets_and_drag_origin(
             signature: request.signature,
             repair: request.repair,
             evaluated: Arc::new(evaluated),
-            original,
         })),
     );
     let regions = e.dust_donor_regions();
@@ -309,19 +305,33 @@ fn corrected_repair_evaluation_uses_only_the_ungraded_positive_and_retains_signe
         scan.camera_to_ap1,
     )
     .unwrap();
-    for ((point, _), original) in result.evaluated.pixels().zip(&result.original) {
-        assert_eq!(
-            *original,
+    let expected = crate::dust_repair::evaluate(&request.repair, scan.area, |p| {
+        Ok(pipeline
+            .apply(scan.pixel(p[0], p[1])?)?
+            .rgb
+            .as_vec3()
+            .to_array())
+    })
+    .unwrap();
+    assert_eq!(
+        result.evaluated.pixels().collect::<Vec<_>>(),
+        expected.pixels().collect::<Vec<_>>()
+    );
+    let original = request
+        .repair
+        .support
+        .selected_points()
+        .map(|p| {
             pipeline
-                .apply(scan.pixel(point[0], point[1]).unwrap())
+                .apply(scan.pixel(p[0], p[1]).unwrap())
                 .unwrap()
                 .rgb
                 .as_vec3()
                 .to_array()
-        );
-    }
-    assert!(result.original.iter().flatten().any(|v| *v < 0.));
-    assert!(result.original.iter().flatten().any(|v| *v > 1.));
+        })
+        .collect::<Vec<_>>();
+    assert!(original.iter().flatten().any(|v| *v < 0.));
+    assert!(original.iter().flatten().any(|v| *v > 1.));
 }
 
 #[test]

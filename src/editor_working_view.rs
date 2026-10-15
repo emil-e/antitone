@@ -15,6 +15,9 @@ struct MailboxState {
     awake: bool,
     completed: Option<(ViewSourceSpec, Result<Arc<ViewSource>, String>)>,
     underlay: Option<Arc<ViewSource>>,
+    neutral_detail: Option<Arc<ViewSource>>,
+    neutral_underlay: Option<Arc<ViewSource>>,
+    repaired_detail: Option<Arc<ViewSource>>,
 }
 #[derive(Default)]
 pub(super) struct Mailbox(Mutex<MailboxState>);
@@ -122,6 +125,9 @@ impl WorkingView {
         mailbox.wanted = None;
         mailbox.completed = None;
         mailbox.underlay = None;
+        mailbox.neutral_detail = None;
+        mailbox.neutral_underlay = None;
+        mailbox.repaired_detail = None;
         self.source = None;
         self.underlay = None;
         self.underlay_rendered = None;
@@ -136,6 +142,10 @@ impl WorkingView {
     #[cfg(all(test, feature = "ui-tests"))]
     pub(super) fn regional(&self) -> Option<&Arc<RenderedView>> {
         self.rendered.as_ref()
+    }
+    #[cfg(all(test, feature = "ui-tests"))]
+    pub(super) fn neutral_source(&self) -> Option<Arc<ViewSource>> {
+        self.mailbox.0.lock().unwrap().neutral_detail.clone()
     }
     pub(super) fn support_ready(&self) -> bool {
         self.source
@@ -212,13 +222,15 @@ impl WorkingView {
         context: &egui::Context,
     ) -> Result<(), Error> {
         self.render_with(input, target, context, |device, source, previous| {
+            let mut actual = input.clone();
+            actual.repairs = source.spec.repairs.clone();
             RenderedView::new(
                 device,
                 source,
                 calibration,
                 roll,
                 snapshot.clone(),
-                input,
+                &actual,
                 target,
                 previous,
             )
@@ -245,7 +257,11 @@ impl WorkingView {
             Option<&Arc<RenderedView>>,
         ) -> Result<Arc<RenderedView>, Error>,
     ) -> Result<(), Error> {
-        let signature = input.signature();
+        let signature_for = |source: &ViewSource| {
+            let mut actual = input.clone();
+            actual.repairs = source.spec.repairs.clone();
+            actual.signature()
+        };
         if self.colour_in_flight() {
             self.device
                 .as_ref()
@@ -257,14 +273,16 @@ impl WorkingView {
             }
         }
         let wanted = self.wanted.as_ref().expect("requested physical view");
-        let source = self
-            .source
+        let detail = self.source.as_ref().filter(|s| s.spec.same_source(wanted));
+        let coverage = self
+            .underlay
             .as_ref()
-            .filter(|s| s.spec.same_source(wanted))
-            .or(self
-                .underlay
-                .as_ref()
-                .filter(|s| s.spec.same_source(wanted)));
+            .filter(|s| s.spec.same_source(wanted));
+        let source = detail
+            .filter(|s| s.spec.repairs == wanted.repairs)
+            .or(coverage.filter(|s| s.spec.repairs == wanted.repairs))
+            .or(detail)
+            .or(coverage);
         let Some(source) = source else {
             // Upstream calibration/correction changes cannot grade an incompatible neutral source.
             self.rendered = self
@@ -277,15 +295,15 @@ impl WorkingView {
         let underlay = self
             .underlay
             .as_ref()
-            .filter(|u| u.spec.same_source(wanted));
+            .filter(|u| u.spec.same_source(wanted) && u.spec.repairs == source.spec.repairs);
         if self
             .rendered
             .as_ref()
-            .is_none_or(|r| !r.matches(&source.spec, &signature, target))
+            .is_none_or(|r| !r.matches(&source.spec, &signature_for(source), target))
             || underlay.is_some_and(|u| {
                 self.underlay_rendered
                     .as_ref()
-                    .is_none_or(|r| !r.matches(&u.spec, &signature, target))
+                    .is_none_or(|r| !r.matches(&u.spec, &signature_for(u), target))
             })
         {
             if self.colour_in_flight() {
@@ -296,7 +314,8 @@ impl WorkingView {
                 return Ok(());
             }
             let make = |source: Arc<ViewSource>, previous: Option<&Arc<RenderedView>>| {
-                if let Some(old) = previous.filter(|p| p.matches(&source.spec, &signature, target))
+                if let Some(old) =
+                    previous.filter(|p| p.matches(&source.spec, &signature_for(&source), target))
                 {
                     return Ok(old.clone());
                 }
@@ -361,6 +380,9 @@ impl Drop for WorkingView {
         mailbox.wanted = None;
         mailbox.completed = None;
         mailbox.underlay = None;
+        mailbox.neutral_detail = None;
+        mailbox.neutral_underlay = None;
+        mailbox.repaired_detail = None;
     }
 }
 
@@ -400,7 +422,9 @@ pub(super) fn acquire(
             return;
         };
         let needs_underlay = mailbox.0.lock().unwrap().underlay.as_ref().is_none_or(|u| {
-            !u.spec.same_source(&spec) || u.spec.frame.composition != spec.frame.composition
+            !u.spec.same_source(&spec)
+                || u.spec.frame.composition != spec.frame.composition
+                || u.spec.repairs != spec.repairs
         });
         let cancelled = || {
             source_epoch.load(std::sync::atomic::Ordering::Relaxed) != spec.authority
@@ -414,6 +438,7 @@ pub(super) fn acquire(
                         if needs_underlay {
                             !wanted.same_source(&spec)
                                 || wanted.frame.composition != spec.frame.composition
+                                || wanted.repairs != spec.repairs
                         } else {
                             wanted != &spec
                         }
@@ -424,21 +449,92 @@ pub(super) fn acquire(
             if kernels.is_none() {
                 *kernels = Some(pollster::block_on(ViewKernels::new(device))?);
             }
-            ViewSource::acquire_many(
-                device,
-                queue,
-                submissions,
-                renderer,
-                kernels.as_ref().unwrap().clone(),
-                scan,
-                correction.map(|c| c.gpu.clone()),
-                if needs_underlay {
-                    vec![spec.clone(), spec.underlay()?]
-                } else {
-                    vec![spec.clone()]
-                },
-                cancelled,
-            )
+            let specs = if needs_underlay {
+                vec![spec.clone(), spec.underlay()?]
+            } else {
+                vec![spec.clone()]
+            };
+            let mut bases = Vec::new();
+            let mut missing = Vec::new();
+            {
+                let state = mailbox.0.lock().unwrap();
+                for wanted in &specs {
+                    let neutral = wanted.clone().with_repairs(Default::default());
+                    let cached = [&state.neutral_detail, &state.neutral_underlay]
+                        .into_iter()
+                        .flatten()
+                        .find(|s| s.spec == neutral)
+                        .cloned();
+                    if cached.is_none() {
+                        missing.push(neutral);
+                    }
+                    bases.push(cached);
+                }
+            }
+            if !missing.is_empty() {
+                let Some(acquired) = ViewSource::acquire_many(
+                    device,
+                    queue,
+                    submissions,
+                    renderer,
+                    kernels.as_ref().unwrap().clone(),
+                    scan,
+                    correction.map(|c| c.gpu.clone()),
+                    missing,
+                    || {
+                        source_epoch.load(std::sync::atomic::Ordering::Relaxed) != spec.authority
+                            || mailbox.0.lock().unwrap().wanted.as_ref().is_none_or(|w| {
+                                !w.same_source(&spec)
+                                    || w.frame.composition != spec.frame.composition
+                            })
+                    },
+                )?
+                else {
+                    return Ok(None);
+                };
+                let mut acquired = acquired.into_iter();
+                for base in &mut bases {
+                    if base.is_none() {
+                        *base = acquired.next();
+                    }
+                }
+                let mut state = mailbox.0.lock().unwrap();
+                if state.wanted.as_ref().is_some_and(|w| {
+                    w.same_source(&spec) && w.frame.composition == spec.frame.composition
+                }) {
+                    state.neutral_detail = bases[0].clone();
+                    if needs_underlay {
+                        state.neutral_underlay = bases[1].clone();
+                    }
+                }
+            }
+            let mut views = Vec::new();
+            for (i, (wanted, base)) in specs.into_iter().zip(bases).enumerate() {
+                let previous = {
+                    let state = mailbox.0.lock().unwrap();
+                    if i == 0 {
+                        state.repaired_detail.clone()
+                    } else {
+                        state.underlay.clone()
+                    }
+                };
+                let Some(view) = ViewSource::reconstruct_repairs(
+                    device,
+                    queue,
+                    submissions,
+                    scan,
+                    correction.map(|c| c.gpu.clone()),
+                    base.expect("acquired neutral physical view"),
+                    wanted.repairs,
+                    previous,
+                    cancelled,
+                )?
+                else {
+                    return Ok(None);
+                };
+                views.push(view);
+            }
+            Ok(Some(views))
         })()
         .map_err(|e: Error| e.to_string());
         let mut state = mailbox.0.lock().unwrap();
@@ -446,12 +542,18 @@ pub(super) fn acquire(
             views.map(|mut views| {
                 if needs_underlay
                     && state.wanted.as_ref().is_some_and(|w| {
-                        w.same_source(&spec) && w.frame.composition == spec.frame.composition
+                        w.same_source(&spec)
+                            && w.frame.composition == spec.frame.composition
+                            && w.repairs == spec.repairs
                     })
                 {
                     state.underlay = views.pop();
                 }
-                views.remove(0)
+                let detail = views.remove(0);
+                if state.wanted.as_ref().is_some_and(|w| w.same_source(&spec)) {
+                    state.repaired_detail = Some(detail.clone());
+                }
+                detail
             })
         });
         if state.wanted.as_ref() == Some(&spec) {
@@ -603,7 +705,8 @@ impl Editor {
             self.roll,
             matrix,
             self.correction.as_ref().map(|c| c.gpu.field().clone()),
-        )?;
+        )?
+        .with_repairs(input.repairs.clone());
         self.working.request(spec.clone(), &self.commands, context);
         self.working.render(
             calibration,
