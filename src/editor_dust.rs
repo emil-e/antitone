@@ -19,14 +19,7 @@ fn initial_brush_size(active: SourceRegion) -> u32 {
     ((active.width.min(active.height) as f64 * 0.01).round() as u32).clamp(4, 128)
 }
 
-pub(super) fn validate_dust_donor(
-    choice: DonorChoice,
-    support: &SupportMask,
-    active: SourceRegion,
-) -> Result<(), Error> {
-    let DonorChoice::Offset([dx, dy]) = choice else {
-        return Ok(());
-    };
+fn donor_target(support: &SupportMask, active: SourceRegion) -> Result<SourceRegion, Error> {
     let mut points = support.selected_points();
     let first = points
         .next()
@@ -38,14 +31,25 @@ pub(super) fn validate_dust_donor(
         min_y = min_y.min(y);
         max_y = max_y.max(y);
     }
-    let target = SourceRegion {
+    Ok(SourceRegion {
         x: min_x.saturating_sub(10).max(active.x),
         y: min_y.saturating_sub(10).max(active.y),
         width: max_x.saturating_add(11).min(active.x + active.width)
             - min_x.saturating_sub(10).max(active.x),
         height: max_y.saturating_add(11).min(active.y + active.height)
             - min_y.saturating_sub(10).max(active.y),
+    })
+}
+
+pub(super) fn validate_dust_donor(
+    choice: DonorChoice,
+    support: &SupportMask,
+    active: SourceRegion,
+) -> Result<(), Error> {
+    let DonorChoice::Offset([dx, dy]) = choice else {
+        return Ok(());
     };
+    let target = donor_target(support, active)?;
     let source_x = i64::from(target.x) + i64::from(dx);
     let source_y = i64::from(target.y) + i64::from(dy);
     let source_right = source_x + i64::from(target.width);
@@ -123,6 +127,12 @@ struct Pending {
     repair: Repair,
 }
 
+pub(super) struct DonorRegion {
+    pub support: SupportMask,
+    pub target: SourceRegion,
+    pub donor: SourceRegion,
+}
+
 #[derive(Clone, Copy)]
 struct DonorDrag {
     source: [f64; 2],
@@ -192,13 +202,14 @@ pub(super) struct State {
     preview_cached: HashMap<(SourceId, RepairId), Cached>,
     failed: HashMap<(SourceId, RepairId), Failed>,
     pending: Option<Pending>,
-    revision: u64,
     mask_draft: Option<MaskDraft>,
     pub brush_size: u32,
     brush_source: Option<SourceId>,
     pub cleanup: bool,
+    reveal_controls: bool,
     pub show_masks: bool,
     pub donor_draft: Option<DonorDraft>,
+    pub render_error: Option<String>,
     gpu: HashMap<RepairId, Arc<crate::gpu::repairs::Patch>>,
 }
 
@@ -210,13 +221,14 @@ impl Default for State {
             preview_cached: HashMap::new(),
             failed: HashMap::new(),
             pending: None,
-            revision: 0,
             mask_draft: None,
             brush_size: 12,
             brush_source: None,
             cleanup: false,
+            reveal_controls: false,
             show_masks: true,
             donor_draft: None,
+            render_error: None,
             gpu: HashMap::new(),
         }
     }
@@ -225,6 +237,7 @@ impl Default for State {
 impl State {
     pub(super) fn release_gpu(&mut self) {
         self.gpu.clear();
+        self.render_error = None;
     }
 
     pub fn repairs(&self, source: SourceId) -> Option<&RepairSet> {
@@ -244,7 +257,6 @@ impl State {
         {
             self.cached.insert((source, repair), preview);
         }
-        self.revision = self.revision.wrapping_add(1);
     }
 
     fn removed(&mut self, source: SourceId, repair: RepairId) {
@@ -252,7 +264,6 @@ impl State {
         self.gpu.remove(&repair);
         self.preview_cached.remove(&(source, repair));
         self.failed.remove(&(source, repair));
-        self.revision = self.revision.wrapping_add(1);
     }
 
     fn clear_repairs(&mut self, source: SourceId) {
@@ -271,7 +282,7 @@ impl State {
         self.mask_draft = None;
         self.donor_draft = None;
         self.gpu.clear();
-        self.revision = self.revision.wrapping_add(1);
+        self.render_error = None;
     }
 
     #[cfg(all(test, feature = "ui-tests"))]
@@ -377,7 +388,6 @@ impl State {
                 original: response.original,
             },
         );
-        self.revision = self.revision.wrapping_add(1);
         true
     }
 
@@ -709,6 +719,9 @@ impl Editor {
         if !self.dust.cleanup {
             return;
         }
+        if std::mem::take(&mut self.dust.reveal_controls) {
+            ui.scroll_to_cursor(Some(egui::Align::Min));
+        }
         let Some(source) = self.current_source else {
             return;
         };
@@ -759,6 +772,9 @@ impl Editor {
                     );
                 });
                 ui.small("Preview only · repairs are not saved or exported.");
+                if let Some(error)=&self.dust.render_error {
+                    ui.small("A repair is outside the current grade's GPU range.").on_hover_text(error);
+                }
                 ui.checkbox(&mut self.dust.show_masks, "Show repair outlines")
                     .on_hover_text("Hold H for a momentary unobstructed preview.");
                 ui.small(if self
@@ -884,6 +900,7 @@ impl Editor {
             self.dust.brush_source = Some(source);
         }
         self.dust.cleanup = true;
+        self.dust.reveal_controls = true;
         self.dust.show_masks = true;
     }
 
@@ -1170,7 +1187,11 @@ impl Editor {
         }
     }
 
-    pub(super) fn dust_donor_regions(&self) -> Option<(SourceRegion, SourceRegion)> {
+    pub(super) fn dust_donor_regions(&self) -> Vec<DonorRegion> {
+        self.dust_donor_regions_inner().unwrap_or_default()
+    }
+
+    fn dust_donor_regions_inner(&self) -> Option<Vec<DonorRegion>> {
         let source = self.current_source?;
         let repair_id = self
             .dust
@@ -1202,43 +1223,44 @@ impl Editor {
                         && cached.repair == *repair
                 })
             })?;
-        let donor = cached.evaluated.donors.first()?;
-        let automatic_offset = [
-            i64::from(donor.source[0])
-                .checked_sub(i64::from(donor.target[0]))?
-                .try_into()
-                .ok()?,
-            i64::from(donor.source[1])
-                .checked_sub(i64::from(donor.target[1]))?
-                .try_into()
-                .ok()?,
-        ];
-        let accepted_offset = match repair.donor {
-            DonorChoice::Automatic => automatic_offset,
-            DonorChoice::Offset(offset) => offset,
-        };
-        let offset = self
-            .dust
-            .donor_draft
-            .filter(|draft| draft.repair == repair_id)
-            .map_or(accepted_offset, |draft| draft.offset);
-        let target = SourceRegion {
-            x: donor.target[0],
-            y: donor.target[1],
-            width: donor.target[2],
-            height: donor.target[3],
-        };
-        let source_x = u32::try_from(i64::from(target.x) + i64::from(offset[0])).ok()?;
-        let source_y = u32::try_from(i64::from(target.y) + i64::from(offset[1])).ok()?;
-        Some((
-            target,
-            SourceRegion {
-                x: source_x,
-                y: source_y,
-                width: target.width,
-                height: target.height,
-            },
-        ))
+        if cached.evaluated.support() != &effective.support {
+            return None;
+        }
+        let groups = effective.support.grouped_supports();
+        if groups.len() != cached.evaluated.donors.len() {
+            return None;
+        }
+        groups
+            .into_iter()
+            .zip(&cached.evaluated.donors)
+            .map(|(support, matched)| {
+                let target = SourceRegion {
+                    x: matched.target[0],
+                    y: matched.target[1],
+                    width: matched.target[2],
+                    height: matched.target[3],
+                };
+                let donor = match effective.donor {
+                    DonorChoice::Automatic => SourceRegion {
+                        x: matched.source[0],
+                        y: matched.source[1],
+                        width: target.width,
+                        height: target.height,
+                    },
+                    DonorChoice::Offset(offset) => SourceRegion {
+                        x: u32::try_from(i64::from(target.x) + i64::from(offset[0])).ok()?,
+                        y: u32::try_from(i64::from(target.y) + i64::from(offset[1])).ok()?,
+                        width: target.width,
+                        height: target.height,
+                    },
+                };
+                Some(DonorRegion {
+                    support,
+                    target,
+                    donor,
+                })
+            })
+            .collect()
     }
 
     pub(super) fn dust_donor_at(
@@ -1246,53 +1268,35 @@ impl Editor {
         geometry: crate::viewport::CanvasLayout,
         point: egui::Pos2,
     ) -> bool {
+        self.dust_donor_hit(geometry, point).is_some()
+    }
+
+    fn dust_donor_hit(
+        &self,
+        geometry: crate::viewport::CanvasLayout,
+        point: egui::Pos2,
+    ) -> Option<DonorRegion> {
         if !self.dust.show_masks {
-            return false;
+            return None;
         }
-        let Some(position) = self.dust_source_position(geometry, point) else {
-            return false;
-        };
-        let Some((target, donor)) = self.dust_donor_regions() else {
-            return false;
-        };
-        let Some(source) = self.current_source else {
-            return false;
-        };
-        let Some(repair) = self
-            .dust
-            .donor_draft
-            .map(|draft| draft.repair)
-            .or_else(|| self.dust.mask_draft.as_ref().and_then(|draft| draft.target))
-            .or_else(|| {
-                self.dust
-                    .mask_draft
-                    .is_none()
-                    .then(|| self.selected_dust_repair())
-                    .flatten()
-            })
-            .and_then(|id| self.effective_dust_repair(source, id))
-        else {
-            return false;
-        };
-        let support = repair.support;
-        let offset = [
-            f64::from(donor.x) - f64::from(target.x),
-            f64::from(donor.y) - f64::from(target.y),
-        ];
-        let target_point = [position[0] - offset[0], position[1] - offset[1]];
-        let over_support = target_point[0] >= 0.
-            && target_point[1] >= 0.
-            && support.contains([
-                target_point[0].floor() as u32,
-                target_point[1].floor() as u32,
-            ]);
-        over_support
-            || screen_source_point(geometry, {
-                let anchor = support_anchor(&support);
-                [anchor[0] + offset[0], anchor[1] + offset[1]]
-            })
-            .distance(point)
-                <= 10.
+        let position = self.dust_source_position(geometry, point)?;
+        self.dust_donor_regions().into_iter().find(|region| {
+            let offset = [
+                f64::from(region.donor.x) - f64::from(region.target.x),
+                f64::from(region.donor.y) - f64::from(region.target.y),
+            ];
+            let target = [position[0] - offset[0], position[1] - offset[1]];
+            let inside = target[0] >= 0.
+                && target[1] >= 0.
+                && region
+                    .support
+                    .contains([target[0].floor() as u32, target[1].floor() as u32]);
+            let anchor = support_anchor(&region.support);
+            inside
+                || screen_source_point(geometry, [anchor[0] + offset[0], anchor[1] + offset[1]])
+                    .distance(point)
+                    <= 10.
+        })
     }
 
     pub(super) fn begin_dust_donor_drag(
@@ -1300,9 +1304,9 @@ impl Editor {
         geometry: crate::viewport::CanvasLayout,
         point: egui::Pos2,
     ) {
-        if !self.dust_donor_at(geometry, point) {
+        let Some(region) = self.dust_donor_hit(geometry, point) else {
             return;
-        }
+        };
         let Some(source_point) = self.dust_source_position(geometry, point) else {
             return;
         };
@@ -1319,9 +1323,7 @@ impl Editor {
                         .find(|candidate| candidate.id == repair)
                 })
                 .map_or(DonorChoice::Automatic, |repair| repair.donor);
-            let Some((target, donor)) = self.dust_donor_regions() else {
-                return;
-            };
+            let (target, donor) = (region.target, region.donor);
             let (Ok(offset_x), Ok(offset_y)) = (
                 i32::try_from(i64::from(donor.x) - i64::from(target.x)),
                 i32::try_from(i64::from(donor.y) - i64::from(target.y)),
@@ -1352,10 +1354,20 @@ impl Editor {
         let Some(position) = self.dust_source_position(geometry, point) else {
             return;
         };
-        let Some((target, _)) = self.dust_donor_regions() else {
+        let Some(active) = self.ready.as_ref().map(|ready| ready.area) else {
             return;
         };
-        let Some(active) = self.ready.as_ref().map(|ready| ready.area) else {
+        let Some(support) = self
+            .current_source
+            .and_then(|source| {
+                self.selected_dust_repair()
+                    .and_then(|id| self.effective_dust_repair(source, id))
+            })
+            .map(|r| r.support)
+        else {
+            return;
+        };
+        let Ok(target) = donor_target(&support, active) else {
             return;
         };
         let Some(draft) = &mut self.dust.donor_draft else {
@@ -1383,7 +1395,6 @@ impl Editor {
         if draft.offset != offset {
             draft.offset = offset;
             draft.choice = DonorChoice::Offset(offset);
-            self.dust.revision = self.dust.revision.wrapping_add(1);
             self.invalidate_settled();
         }
     }
@@ -1436,7 +1447,6 @@ impl Editor {
                 self.status = "Dust source updated".into();
             }
             Err(error) => {
-                self.dust.revision = self.dust.revision.wrapping_add(1);
                 self.status = format!("Dust source rejected: {error}");
             }
         }
@@ -1526,30 +1536,14 @@ impl Editor {
         roll: RollSettings,
         photo: PhotoSettings,
     ) -> Result<(), Error> {
-        self.validate_dust_bound(calibration, roll, photo, DVec3::ZERO)
-    }
-
-    fn validate_dust_bound(
-        &self,
-        calibration: Calibration,
-        roll: RollSettings,
-        photo: PhotoSettings,
-        mut bound: DVec3,
-    ) -> Result<(), Error> {
-        let (Some(device), Some(source), Some(ready)) =
-            (&self.working.device, self.current_source, &self.ready)
-        else {
-            return Ok(());
-        };
-        if bound == DVec3::ZERO
-            && self
-                .dust
-                .repairs(source)
-                .is_none_or(|set| set.repairs().iter().all(|r| !r.enabled))
-        {
+        if self.dust.gpu.is_empty() {
             return Ok(());
         }
+        let Some(source) = self.current_source else {
+            return Ok(());
+        };
         let signature = self.dust_signature_for(calibration, roll)?;
+        let mut bound = DVec3::ZERO;
         for repair in self
             .effective_dust_repairs(source)
             .iter()
@@ -1564,13 +1558,33 @@ impl Editor {
                 .get(&(source, repair.id))
                 .filter(matches)
                 .or_else(|| self.dust.cached.get(&(source, repair.id)).filter(matches))
+                && self
+                    .dust
+                    .gpu
+                    .get(&repair.id)
+                    .is_some_and(|p| Arc::ptr_eq(&p.evaluated, &cached.evaluated))
             {
                 bound = bound.max(cached.bound);
             }
         }
+        self.validate_dust_envelope(calibration, roll, photo, bound)
+    }
+
+    fn validate_dust_envelope(
+        &self,
+        calibration: Calibration,
+        roll: RollSettings,
+        photo: PhotoSettings,
+        bound: DVec3,
+    ) -> Result<(), Error> {
         if bound == DVec3::ZERO {
             return Ok(());
         }
+        let (Some(device), Some(source), Some(ready)) =
+            (&self.working.device, self.current_source, &self.ready)
+        else {
+            return Ok(());
+        };
         let locals = self
             .document
             .project
@@ -1599,28 +1613,45 @@ impl Editor {
         let Some(device) = self.working.device.clone() else {
             return Ok(Default::default());
         };
+        self.dust.render_error = None;
+        let calibration = self.calibration().expect("neutral repair signature");
         let repairs = self.effective_dust_repairs(source);
+        let candidates = repairs
+            .iter()
+            .filter(|r| r.enabled)
+            .filter_map(|repair| {
+                let current = |c: &&Cached| {
+                    c.loaded == self.id && c.signature == signature && c.repair == *repair
+                };
+                self.dust
+                    .preview_cached
+                    .get(&(source, repair.id))
+                    .filter(current)
+                    .or_else(|| self.dust.cached.get(&(source, repair.id)).filter(current))
+                    .map(|c| (repair.id, c))
+            })
+            .collect::<Vec<_>>();
+        let bound = candidates
+            .iter()
+            .fold(DVec3::ZERO, |bound, (_, c)| bound.max(c.bound));
+        let all_valid = self
+            .validate_dust_envelope(calibration, self.roll, self.photo, bound)
+            .is_ok();
+        let mut admitted_bound = DVec3::ZERO;
         let mut patches = Vec::new();
-        for repair in &repairs {
-            if !repair.enabled {
+        for (id, cached) in candidates {
+            let bound = admitted_bound.max(cached.bound);
+            if !all_valid
+                && let Err(error) =
+                    self.validate_dust_envelope(calibration, self.roll, self.photo, bound)
+            {
+                self.dust.render_error = Some(error.to_string());
                 continue;
             }
-            let current = |c: &&Cached| {
-                c.loaded == self.id && c.signature == signature && c.repair == *repair
-            };
-            let cached = self
-                .dust
-                .preview_cached
-                .get(&(source, repair.id))
-                .filter(current)
-                .or_else(|| self.dust.cached.get(&(source, repair.id)).filter(current));
-            let Some(cached) = cached else {
-                continue;
-            };
             let patch = match self
                 .dust
                 .gpu
-                .get(&repair.id)
+                .get(&id)
                 .filter(|p| Arc::ptr_eq(&p.evaluated, &cached.evaluated))
             {
                 Some(patch) => patch.clone(),
@@ -1630,10 +1661,11 @@ impl Editor {
                         cached.evaluated.clone(),
                         &cached.original,
                     )?;
-                    self.dust.gpu.insert(repair.id, patch.clone());
+                    self.dust.gpu.insert(id, patch.clone());
                     patch
                 }
             };
+            admitted_bound = bound;
             patches.push(patch);
         }
         self.dust
@@ -1678,19 +1710,6 @@ impl Editor {
                     && Some(response.signature) == self.dust_signature();
                 if !current {
                     self.dust.pending.take_if(|p| p.request == request);
-                    return;
-                }
-                if let Some(calibration) = self.calibration()
-                    && let Err(error) = self.validate_dust_bound(
-                        calibration,
-                        self.roll,
-                        self.photo,
-                        repair_bound(&response.evaluated),
-                    )
-                {
-                    if self.dust.fail(request) {
-                        self.status = format!("Dust repair rejected by GPU range checks: {error}");
-                    }
                     return;
                 }
                 let expected = self.effective_dust_repair(response.source, response.repair.id);
@@ -1832,45 +1851,38 @@ impl Editor {
         if overlays_hidden || !self.dust.show_masks {
             return;
         }
-        let Some((target, donor)) = self.dust_donor_regions() else {
-            return;
-        };
-        let Some(repair) = self
-            .selected_dust_repair()
-            .and_then(|id| self.effective_dust_repair(source, id))
-        else {
-            return;
-        };
-        let support = repair.support;
-        let offset = [
-            f64::from(donor.x) - f64::from(target.x),
-            f64::from(donor.y) - f64::from(target.y),
-        ];
-        paint_support_outline(
-            &painter,
-            geometry,
-            &support,
-            [0., 0.],
-            egui::Color32::WHITE,
-            2.,
-        );
-        paint_support_outline(
-            &painter,
-            geometry,
-            &support,
-            offset,
-            egui::Color32::from_rgb(100, 220, 240),
-            2.,
-        );
-        let target_anchor = support_anchor(&support);
-        let donor_anchor = [target_anchor[0] + offset[0], target_anchor[1] + offset[1]];
-        painter.line_segment(
-            [
-                screen_source_point(geometry, target_anchor),
-                screen_source_point(geometry, donor_anchor),
-            ],
-            egui::Stroke::new(1., egui::Color32::from_gray(220)),
-        );
+        for region in self.dust_donor_regions() {
+            let (target, donor, support) = (region.target, region.donor, region.support);
+            let offset = [
+                f64::from(donor.x) - f64::from(target.x),
+                f64::from(donor.y) - f64::from(target.y),
+            ];
+            paint_support_outline(
+                &painter,
+                geometry,
+                &support,
+                [0., 0.],
+                egui::Color32::WHITE,
+                2.,
+            );
+            paint_support_outline(
+                &painter,
+                geometry,
+                &support,
+                offset,
+                egui::Color32::from_rgb(100, 220, 240),
+                2.,
+            );
+            let target_anchor = support_anchor(&support);
+            let donor_anchor = [target_anchor[0] + offset[0], target_anchor[1] + offset[1]];
+            painter.line_segment(
+                [
+                    screen_source_point(geometry, target_anchor),
+                    screen_source_point(geometry, donor_anchor),
+                ],
+                egui::Stroke::new(1., egui::Color32::from_gray(220)),
+            );
+        }
     }
 }
 

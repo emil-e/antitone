@@ -32,6 +32,208 @@ fn response(request: &Request, active: SourceRegion) -> Response {
     }
 }
 
+fn gpu_editor() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
+    let (mut e, send, commands) = editor();
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let (device, _) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+    e.working = WorkingView::new(device);
+    (e, send, commands)
+}
+fn high_response(e: &mut Editor) -> Response {
+    let request = Request {
+        request: e.request_id(),
+        loaded: e.id,
+        source: e.current_source.unwrap(),
+        signature: e.dust_signature().unwrap(),
+        repair: e.dust.repairs(e.current_source.unwrap()).unwrap().repairs()[0].clone(),
+        calibration: e.calibration().unwrap(),
+        roll: e.roll.inversion_only(),
+    };
+    let evaluated = Arc::new(
+        crate::dust_repair::evaluate(&request.repair, e.ready.as_ref().unwrap().area, |_| {
+            Ok([1e35; 3])
+        })
+        .unwrap(),
+    );
+    e.dust.start(&request);
+    Response {
+        request: request.request,
+        loaded: request.loaded,
+        source: request.source,
+        signature: request.signature,
+        repair: request.repair,
+        original: vec![[1e35; 3]; evaluated.pixels().count()],
+        evaluated,
+    }
+}
+
+#[test]
+fn grade_range_rejection_retains_neutral_evaluation_and_readmits_without_rehealing() {
+    let (mut e, _, commands) = gpu_editor();
+    e.photo.exposure = 16.;
+    let response = high_response(&mut e);
+    let evaluated = response.evaluated.clone();
+    e.receive_dust(response.request, Ok(Some(response)));
+    assert!(e.dust.failed.is_empty());
+    assert!(e.dust_gpu_snapshot().unwrap().0.is_empty());
+    assert!(e.dust.render_error.is_some());
+    e.photo.exposure = 0.;
+    e.dust_validate_processing(e.calibration().unwrap(), e.roll, e.photo)
+        .unwrap();
+    let snapshot = e.dust_gpu_snapshot().unwrap();
+    assert_eq!(snapshot.0.len(), 1);
+    assert!(Arc::ptr_eq(&snapshot.0[0].evaluated, &evaluated));
+    assert!(e.dust.render_error.is_none());
+    e.schedule_dust(e.dust_signature().unwrap());
+    assert!(commands.try_recv().is_err());
+}
+
+#[test]
+fn photo_widget_rejects_an_unsafe_repaired_value_before_accepting_the_grade() {
+    let (mut e, _, _commands) = gpu_editor();
+    let response = high_response(&mut e);
+    e.receive_dust(response.request, Ok(Some(response)));
+    assert_eq!(e.dust_gpu_snapshot().unwrap().0.len(), 1);
+    for section in ["photo-white-balance", "photo-contrast", "photo-saturation"] {
+        e.preferences.sections.insert(section.into(), false);
+    }
+    let ctx = egui::Context::default();
+    for _ in 0..4 {
+        super::super::tests::app_frame(&mut e, &ctx, vec![]);
+    }
+    let labels = super::super::tests::app_frame(&mut e, &ctx, vec![]);
+    let heading = labels.iter().find(|(s, _)| s == "Exposure").unwrap().1;
+    let point = labels
+        .iter()
+        .filter(|(s, r)| s == "0.00" && r.top() >= heading.top() && r.left() >= heading.left())
+        .min_by(|(_, a), (_, b)| a.top().total_cmp(&b.top()))
+        .unwrap()
+        .1
+        .center();
+    for pressed in [true, false] {
+        super::super::tests::app_frame(
+            &mut e,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(point),
+                egui::Event::PointerButton {
+                    pos: point,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+    }
+    assert!(ctx.text_edit_focused());
+    super::super::tests::app_frame(
+        &mut e,
+        &ctx,
+        vec![
+            egui::Event::Text("16".into()),
+            egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    assert_eq!(e.photo.exposure, 0.);
+    assert!(e.status.starts_with("Edit rejected:"), "{}", e.status);
+    assert_eq!(e.dust_gpu_snapshot().unwrap().0.len(), 1);
+}
+
+#[test]
+fn disconnected_automatic_donors_use_their_own_supports_offsets_and_drag_origin() {
+    let (mut e, _, _) = editor();
+    let source = e.current_source.unwrap();
+    let support = SupportMask::new(
+        [50, 50],
+        [11, 3],
+        (0..33).map(|i| i % 11 < 3 || i % 11 >= 8).collect(),
+    )
+    .unwrap();
+    e.dust
+        .repairs_mut(source)
+        .set_support(RepairId(1), support.clone())
+        .unwrap();
+    e.dust
+        .repairs_mut(source)
+        .set_donor(RepairId(1), DonorChoice::Automatic)
+        .unwrap();
+    e.begin_dust_cleanup();
+    let repair = e.dust.repairs(source).unwrap().repairs()[0].clone();
+    let request = Request {
+        request: 1,
+        loaded: e.id,
+        source,
+        signature: e.dust_signature().unwrap(),
+        repair: repair.clone(),
+        calibration: e.calibration().unwrap(),
+        roll: e.roll,
+    };
+    // Constant input permits distinct, equally valid donors; author their resolved geometry.
+    let mut evaluated = crate::dust_repair::evaluate(
+        &Repair {
+            donor: DonorChoice::Offset([30, 0]),
+            ..repair
+        },
+        e.ready.as_ref().unwrap().area,
+        |_| Ok([0.1, 0.2, 2.]),
+    )
+    .unwrap();
+    assert_eq!(evaluated.donors.len(), 2);
+    for (matched, offset) in evaluated.donors.iter_mut().zip([[40, 30], [-20, 40]]) {
+        matched.source[0] = (matched.target[0] as i32 + offset[0]) as u32;
+        matched.source[1] = (matched.target[1] as i32 + offset[1]) as u32;
+    }
+    let original = vec![[0.1, 0.2, 2.]; evaluated.pixels().count()];
+    e.dust.start(&request);
+    e.receive_dust(
+        request.request,
+        Ok(Some(Response {
+            request: request.request,
+            loaded: request.loaded,
+            source,
+            signature: request.signature,
+            repair: request.repair,
+            evaluated: Arc::new(evaluated),
+            original,
+        })),
+    );
+    let regions = e.dust_donor_regions();
+    assert_eq!(regions.len(), 2);
+    assert_eq!(regions[0].support.selected_points().count(), 9);
+    assert_eq!(regions[1].support.selected_points().count(), 9);
+    assert!(regions[0].support.contains([50, 50]) && !regions[0].support.contains([58, 50]));
+    assert!(regions[1].support.contains([58, 50]) && !regions[1].support.contains([50, 50]));
+    let composition = Composition::new(
+        e.ready.as_ref().unwrap().area,
+        Default::default(),
+        Default::default(),
+    )
+    .unwrap();
+    let geometry = e.viewport.layout_composition(
+        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(864., 576.)),
+        composition,
+        1.,
+    );
+    let point = screen_source_point(geometry, [38.5, 90.5]);
+    let hit = e.dust_donor_hit(geometry, point).unwrap();
+    assert!(hit.support.contains([58, 50]));
+    e.begin_dust_donor_drag(geometry, point);
+    assert_eq!(e.dust.donor_draft.unwrap().offset, [-20, 40]);
+    e.drag_dust_donor(geometry, screen_source_point(geometry, [40.5, 91.5]));
+    e.end_dust_donor_drag();
+    assert_eq!(
+        e.dust.repairs(source).unwrap().repairs()[0].donor,
+        DonorChoice::Offset([-18, 41])
+    );
+}
+
 #[test]
 fn corrected_repair_evaluation_uses_only_the_ungraded_positive_and_retains_signed_hdr() {
     let mut scan = Scan::open(

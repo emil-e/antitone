@@ -67,8 +67,15 @@ pub(super) fn crop_draft(harness: &mut Harness<'_, Editor>) -> Crop {
     harness.step();
     assert!(harness.state().crop_edit.is_some());
     harness.step();
-    harness.get_by_label("Angle").click();
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::SpinButton, "Angle")
+        .scroll_to_me();
+    harness.try_run_realtime().unwrap();
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::SpinButton, "Angle")
+        .click();
     harness.step();
+    assert!(harness.ctx.text_edit_focused());
     harness.event(egui::Event::Text("2.3".into()));
     harness.event(egui::Event::Key {
         key: egui::Key::Enter,

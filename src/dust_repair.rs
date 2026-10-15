@@ -70,6 +70,31 @@ impl SupportMask {
                 ])
             })
     }
+    /// Exact support groups in the healer's donor order, for donor geometry presentation.
+    pub fn grouped_supports(&self) -> Vec<Self> {
+        let width = self.size[0] as usize;
+        grouped_components(&self.bits, width, self.size[1] as usize)
+            .into_iter()
+            .map(|group| {
+                let min_x = group.iter().map(|i| i % width).min().unwrap();
+                let max_x = group.iter().map(|i| i % width).max().unwrap();
+                let min_y = group.iter().map(|i| i / width).min().unwrap();
+                let max_y = group.iter().map(|i| i / width).max().unwrap();
+                let size = [(max_x - min_x + 1) as u32, (max_y - min_y + 1) as u32];
+                let mut bits = vec![false; (size[0] * size[1]) as usize];
+                for i in group {
+                    bits[(i / width - min_y) * size[0] as usize + i % width - min_x] = true;
+                }
+                Self::new(
+                    [self.origin[0] + min_x as u32, self.origin[1] + min_y as u32],
+                    size,
+                    bits,
+                )
+                .expect("validated nonempty donor group")
+            })
+            .collect()
+    }
+
     pub fn contains(&self, point: [u32; 2]) -> bool {
         let [x, y] = point;
         if x < self.origin[0]

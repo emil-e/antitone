@@ -117,7 +117,8 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
     click(&mut h, egui::pos2(96., 32.), egui::Modifiers::SHIFT);
     assert_eq!(pixels(h.state(), source, RepairId(1)), before);
     ready(&mut h, 1);
-    let (target, donor) = h.state().dust_donor_regions().unwrap();
+    let regions = h.state().dust_donor_regions();
+    let (target, donor) = (regions[0].target, regions[0].donor);
     let offset = [
         donor.x as i32 - target.x as i32,
         donor.y as i32 - target.y as i32,
@@ -205,9 +206,19 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
 fn dust_is_suspended_in_fullscreen_and_never_claims_saved_or_exported_output() {
     let mut h = tools::calibrated_harness();
     stage(&mut h, "Photo");
+    h.get_by_role_and_label(egui::accesskit::Role::SpinButton, "Exposure")
+        .scroll_to_me();
+    h.try_run_realtime().unwrap();
     h.get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
         .click();
-    h.step();
+    for _ in 0..3 {
+        h.step();
+    }
+    let shelf = h
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
+        .rect();
+    let brush = h.get_by_label("Brush size").rect();
+    assert!(brush.top() > shelf.bottom() && brush.bottom() < h.ctx.content_rect().bottom());
     click(&mut h, egui::pos2(96., 32.), egui::Modifiers::NONE);
     ready(&mut h, 1);
     let source = h.state().current_source.unwrap();

@@ -2661,8 +2661,11 @@ impl host::App for Editor {
             && let Err(error) = if self.roll != previous_roll {
                 self.validate_processing(calibration, self.roll, self.photo)
             } else {
-                self.positive_processing(calibration, self.roll, self.photo)
-                    .map(|_| ())
+                self.dust_validate_processing(calibration, self.roll, self.photo)
+                    .and_then(|()| {
+                        self.positive_processing(calibration, self.roll, self.photo)
+                            .map(|_| ())
+                    })
             }
         {
             self.roll = previous_roll;

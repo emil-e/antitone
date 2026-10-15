@@ -12,6 +12,7 @@ pub(super) struct CropEdit {
     drag: Option<CropDrag>,
     pub(super) layout: Option<CanvasLayout>,
     pub(super) guides: bool,
+    reveal_controls: bool,
 }
 #[derive(Clone, Copy)]
 enum CropDrag {
@@ -108,6 +109,7 @@ impl Editor {
             drag: None,
             layout: None,
             guides: true,
+            reveal_controls: true,
         });
         self.viewport.fit();
         self.last_layout = None;
@@ -263,7 +265,10 @@ impl Editor {
     }
 
     pub(super) fn crop_controls(&mut self, ui: &mut egui::Ui) {
-        if self.crop_edit.is_some() {
+        if let Some(edit) = &mut self.crop_edit {
+            if std::mem::take(&mut edit.reveal_controls) {
+                ui.scroll_to_cursor(Some(egui::Align::Min));
+            }
             ui.add_enabled_ui(!self.busy, |ui| {
                 controls::active_tool(
                     ui,

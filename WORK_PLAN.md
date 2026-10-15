@@ -19,18 +19,18 @@ Use main's physical WorkingView/underlay and purpose-bound OriginalView owners, 
 
 ## Remaining steps
 
-1. Complete current-main verification of the port, including neutral-stage/corrected/signed-HDR cases, repair-bound preflight, controller stale/cancel/reset behavior and composed Dust/fullscreen/roll shortcut ownership.
-2. Run independent review at the broad integration handoff, resolve necessary findings and inspect relevant current-main changes again.
+1. Complete current-main verification of the port, including review regressions for atomic Photo preflight, grade-range readmission without rehealing, disconnected donor geometry and contextual inspector reveal after scrolling.
+2. Inspect relevant current-main changes again before integration. Independent review is complete; fixes have focused regression coverage and must not trigger another routine review of the same change set.
 3. Finalize owning guides/topic plan and transfer any remaining acceptance from this file, then remove it before delivery.
 4. Commit and fast-forward main only when unrelated working-tree edits can be preserved safely. Audit private ignored research evidence before cleanup; do not discard unique artifacts.
 
 ## Constraints and blockers
 
-- Main is b3a39f2 at start. Its checkout has unrelated uncommitted PLAN.md, docs/feedback.md, docs/plans/{README,completion,local-adjustments}.md and .pi/ work; do not overwrite, stash or commit it.
+- Current integration target is main 604c528; its completed export-tile reuse remains job-local and separate from repair snapshots. Its checkout has unrelated uncommitted PLAN.md, docs/feedback.md, docs/plans/{README,completion,local-adjustments}.md and .pi/ work; do not overwrite, stash or commit it.
 - The published branch checkpoint is ead1be0. Rebase rewrites only task history locally; leave the published remote untouched unless separately requested.
 - Private samples remain read-only; all generated experiments/check outputs stay in this worktree's ignored .cache/.
 - Hidden-pixel photographic accuracy, fine-wire reconstruction and aggregate/device/physical-input acceptance remain unestablished. Do not claim these from numerical tests.
 
 ## Next action
 
-Finish the rebase checkpoint and run production/reference, GPU and composed checks. The port retains sparse original/repaired support records and view-sized neutral copies; repair deltas are filtered independently into those copies without reacquiring neutral detail/underlay. Original references grade absolute repaired neutral values. Preflight incorporates the repaired-value envelope without weakening existing gates. Remaining photographic and aggregate resource acceptance belongs in docs/plans/dust-repair.md.
+Rebase the verified review fixes onto current main, then finish export/reference integration and release UI checks. Production Clippy, all 559 non-ignored UI/editor library tests and the focused numerical/GPU/controller cases pass; photographic/resource/physical acceptance remains open. The port retains sparse original/repaired support records and view-sized neutral copies; repair deltas are filtered independently into those copies without reacquiring neutral detail/underlay. Original references grade absolute repaired neutral values. Preflight incorporates the repaired-value envelope without weakening existing gates. Remaining photographic and aggregate resource acceptance belongs in docs/plans/dust-repair.md.
