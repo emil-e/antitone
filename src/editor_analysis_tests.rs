@@ -263,6 +263,25 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
     editor.document.project.add_source(second).unwrap();
     let before = editor.document.project.clone();
     editor.viewport.zoom = Some(1.7);
+    let area = rect([12, 12, 800, 600]);
+    let composition = Composition::new(area, Default::default(), Default::default()).unwrap();
+    let frame = crate::frame_raster::FrameRaster::full(composition).unwrap();
+    let input = ProcessingInput::from(ProcessingParameters::source());
+    editor
+        .working
+        .observe(editor.id, frame, input.signature(), editor.target);
+    assert!(editor.working.revision().is_some());
+    let view = ViewRequest {
+        area,
+        output: [32, 24],
+        frame: None,
+    };
+    editor.original.observe(
+        OriginalPurpose::Reference,
+        (input.signature(), editor.target, Some(view), composition),
+    );
+    let original_revision = editor.original.revision();
+    editor.original.refining = Some((original_revision, view));
     let id = pending(&mut editor);
     send.send(Message::AnalysisProgress(id, 1, 1)).unwrap();
     editor.receive();
@@ -305,6 +324,15 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
     assert_eq!(editor.document.project.camera_basis, before.camera_basis);
     assert_eq!(editor.viewport.zoom, Some(1.7));
     assert!(!editor.source);
+    assert!(editor.working.revision().is_none());
+    assert!(editor.working.displayed.is_none());
+    assert!(editor.original.signature.is_none() && editor.original.settled.is_none());
+    assert!(editor.original.revision() > original_revision);
+    assert_eq!(editor.original.refining, Some((original_revision, view)));
+    send.send(Message::Refined(original_revision, Ok(None)))
+        .unwrap();
+    editor.receive();
+    assert!(editor.original.refining.is_none() && editor.original.settled.is_none());
     assert!(editor.document.dirty());
     editor.roll.exposure = 0.;
     editor.photo.exposure = 0.;

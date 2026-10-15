@@ -613,12 +613,14 @@ impl Editor {
                     ready.analysis_support = Some(Some(outcome.support));
                 }
                 self.document = outcome.document;
+                self.grades.clear();
                 self.dmin = self.document.project.dmin.map(DVec3::from_array);
                 self.dmax = self.document.project.dmax.map(DVec3::from_array);
                 self.floor = self.document.project.input_floor.unwrap();
                 self.roll = self.document.project.roll;
                 self.photo = photo;
                 self.source = false;
+                self.working.clear();
                 self.original.invalidate();
                 self.status = format!(
                     "Analyzed {} frames. Adjust normally; re-pick Dmin if needed.",

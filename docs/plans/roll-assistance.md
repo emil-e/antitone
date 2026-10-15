@@ -2,7 +2,7 @@
 
 ## Scope
 
-Evaluate Analyze as a useful shared-colour and individual-exposure starting point, followed by ordinary manual grading. It is not an automatically finished or physically calibrated grade. Preserve legitimate blue shade/water and coloured lighting.
+The initializer and its first sampling-area review are accepted for current use. Evaluate them as a useful shared-colour and individual-exposure starting point, followed by ordinary manual grading. It is not an automatically finished or physically calibrated grade. Preserve legitimate blue shade/water and coloured lighting.
 
 The [Analyze guide](../roll-analysis.md) explains sampling-area review, the estimator and atomic installation; [projects](../projects.md) explains saved state. Commands and maintained diagnostic recipes belong in [diagnostics](../diagnostics.md#analyze-roll).
 
@@ -13,6 +13,17 @@ The [Analyze guide](../roll-analysis.md) explains sampling-area review, the esti
 - Assess noisy shadows, coloured lighting and sky-dominated scenes after Analyze and ordinary manual finishing. Do not select geometry or tune the estimator to reproduce preferred example grades.
 - Reopen TIFF/AP0 EXR and saved projects with corrected and uncorrected sources; assess photographic appearance separately from numerical/state roundtrips.
 - Calibrated monitor/colour, physical gestures, actual macOS 14 and broader cameras/devices remain separate acceptance.
+
+## Deferred sampling and endpoint work
+
+Keep these separate from completion of the accepted review; no implementation has been selected:
+
+- Make existing rejection counts and endpoint-contributor diagnostics more accessible; consider spatial overlays showing contributing material.
+- Evaluate retaining all eligible Dmax samples with explicit weighting instead of equal-count thinning. Weighting does not solve contamination; genuinely dense photographs must still influence the roll endpoint.
+- Measure legitimate signal lost to the conservative 8×8 neighbourhood veto before changing it. Preserve capture/development/floor safety invariants.
+- Investigate damaged-film tails, including DSC04492. Better geometry can exclude non-film material but cannot establish that film is undamaged. Diagnostic exclusion establishes influence, not permission to omit or repair the source.
+
+[Remaining region consumers](region-detection.md) own bare-light correction support and future crop acceptance. Analyze's source-order ambiguity is no longer an unimplemented detector stage.
 
 ## Concrete limits
 

@@ -188,7 +188,7 @@ fn failed_analysis_dispatch_tears_down_review_and_restores_working_photo() {
     editor.request_analysis();
     prepared(&mut editor, &receiver);
     let before = editor.document.project.clone();
-    let images = editor.ready.as_ref().unwrap().images.clone();
+    let proxy = editor.ready.as_ref().unwrap().proxy.clone();
     let development = editor.ready.as_ref().unwrap().development.clone();
     editor.browse_analysis_review(other);
     let record = editor.document.project.source(other).unwrap().clone();
@@ -198,7 +198,7 @@ fn failed_analysis_dispatch_tears_down_review_and_restores_working_photo() {
         area: record.development.active_area.into(),
         analysis_support: None,
         floor: editor.floor,
-        images,
+        proxy,
         record,
         development,
     });

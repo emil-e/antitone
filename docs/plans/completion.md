@@ -24,7 +24,7 @@ Next: agree bounded essential working-set/resource acceptance. Cache byte limits
 
 ## Roll assistance
 
-[Analyze acceptance](roll-assistance.md) owns photographic and physical-use evaluation of the implemented [initializer](../roll-analysis.md). Statistical priors are not measured calibration truth.
+The [initializer and sampling-area review](../roll-analysis.md) are accepted for current use. [Analyze follow-up](roll-assistance.md) owns broader corrected/uncorrected roll evaluation, physical review/cancellation and manual Roll/Photo WB, preview retention, project/TIFF/AP0 EXR appearance and deferred dense-tail/sampling work. These are not missing estimator stages. Statistical priors are not measured calibration truth; manual finishing remains expected.
 
 ## Photographic controls and B&W handling
 

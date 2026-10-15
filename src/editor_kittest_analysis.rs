@@ -17,6 +17,24 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
     );
     assert!(harness.state().analysis_pending.is_none());
     assert!(!harness.state().busy);
+    let editor = harness.state();
+    let source = ProcessingInput::from(editor.source_parameters(editor.source_exposure).unwrap());
+    let signature = editor
+        .original
+        .signature
+        .as_ref()
+        .expect("review uses original-source tool presentation");
+    assert_eq!(signature.0, source.signature());
+    assert_eq!(
+        signature.3,
+        Composition::new(
+            editor.ready.as_ref().unwrap().area,
+            Default::default(),
+            Default::default()
+        )
+        .unwrap()
+    );
+    assert!(matches!(editor.scope_request(), Err("Positive grade only")));
     if harness
         .state()
         .analysis_review
@@ -416,10 +434,27 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
             .picture
             .unwrap()
     );
+    let source_epoch = harness
+        .state()
+        .source_epoch
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let original_revision = harness.state().original.revision();
     harness.get_by_label("roll-1.dng").click();
     harness.step();
     wait_for(&mut harness, |e| !e.busy);
     assert_ne!(harness.state().current_source, first);
+    assert_ne!(
+        harness
+            .state()
+            .source_epoch
+            .load(std::sync::atomic::Ordering::Relaxed),
+        source_epoch
+    );
+    assert!(harness.state().original.revision() > original_revision);
+    assert!(matches!(
+        harness.state().scope_request(),
+        Err("Positive grade only")
+    ));
     assert!(
         !harness
             .state()
