@@ -205,15 +205,17 @@ impl TaskActivity {
         }
     }
 
-    /// Use for success, failure and dispatch failure. A stale or repeated finish is harmless.
-    pub fn finish(&mut self, request: TaskRequest) {
-        if self
+    /// Retire matching presentation; report whether it was still the foreground activity.
+    /// Controllers retain execution ownership and decide what completion may change.
+    pub fn finish(&mut self, request: TaskRequest) -> bool {
+        let current = self
             .active
             .as_ref()
-            .is_some_and(|active| active.task.request() == request)
-        {
+            .is_some_and(|active| active.task.request() == request);
+        if current {
             self.active = None;
         }
+        current
     }
 
     pub fn view(&self) -> Option<TaskView> {

@@ -1,4 +1,4 @@
-#![cfg(all(feature = "ui", feature = "render"))]
+#![cfg(all(feature = "ui", feature = "render", feature = "ocio-reference"))]
 use antitone::{
     color::{Balance, ap1_to_ap0},
     flat_field::FlatField,

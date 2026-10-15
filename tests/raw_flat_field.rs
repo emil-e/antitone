@@ -230,7 +230,7 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
     }
 }
 
-#[cfg(feature = "export")]
+#[cfg(all(feature = "export", feature = "ocio-reference"))]
 #[test]
 fn authored_corrected_dng_exports_reopen_in_rgb16_and_ap0() {
     use antitone::{

@@ -351,7 +351,7 @@ fn authored_raw_rejects_sensor_white_and_black_references_without_mutating_sourc
     assert_eq!(fs::read(fixture()).unwrap(), original);
 }
 
-#[cfg(feature = "export")]
+#[cfg(all(feature = "export", feature = "ocio-reference"))]
 fn authored_export_image() -> (
     antitone::export::ImageSize,
     antitone::processing::Response,
@@ -404,7 +404,7 @@ fn authored_export_image() -> (
     (size, roll.response, working)
 }
 
-#[cfg(feature = "export")]
+#[cfg(all(feature = "export", feature = "ocio-reference"))]
 #[test]
 fn authored_dng_model4_exports_reopen_as_rgb16_tiff_and_ap0_exr() {
     use antitone::{
@@ -480,7 +480,7 @@ fn authored_dng_model4_exports_reopen_as_rgb16_tiff_and_ap0_exr() {
     }
 }
 
-#[cfg(feature = "export")]
+#[cfg(all(feature = "export", feature = "ocio-reference"))]
 #[test]
 #[ignore = "independent macOS ImageIO reference; compiles with Apple Clang"]
 fn authored_dng_tiffs_reopen_with_independent_imageio_storage_and_profiles() {

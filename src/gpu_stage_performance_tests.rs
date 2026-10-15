@@ -30,6 +30,8 @@ async fn shader_kernel(
     assert!(scope.pop().await.is_none(), "variant validation failed");
     ProcessingKernel {
         pipeline,
+        output_binding: 1,
+        output_stride: 16,
         workgroup_size: 64,
         identity: flat::identity_nodes(device),
         empty_locals: local::empty_buffer(device),

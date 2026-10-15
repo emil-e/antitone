@@ -2,7 +2,7 @@
 
 A P3 file should contain a P3 rendering, not an sRGB rendering hidden inside a wider container. Preview and TIFF therefore use the same selected ACES target and matching encoding/profile.
 
-CPU export/reference and GPU preview share pinned native definitions and generated algorithms. We keep ACES mathematics unchanged; agreeing implementations still need independent gamut, profile and presentation checks, since both could agree on the same mistake.
+GPU preview/export and the independent CPU reference share pinned target definitions and generated algorithms. We keep ACES mathematics unchanged; agreeing implementations still need independent gamut, profile and presentation checks, since both could agree on the same mistake.
 
 The preview converts to an explicitly tagged extended-sRGB floating-point SDR layer. This preserves P3 coordinates outside ordinary sRGB until the OS performs monitor conversion. Encoding happens once; neither a second display transform nor an application monitor transform is added.
 

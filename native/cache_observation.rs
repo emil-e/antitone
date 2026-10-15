@@ -151,10 +151,19 @@ impl Monitor {
         self.check()?;
         let start = Instant::now();
         let result = action().map_err(|e| e.to_string());
+        let status = self.status.lock().unwrap();
         println!(
-            "cache_phase name={name} seconds={:.6}",
-            start.elapsed().as_secs_f64()
+            "cache_phase name={name} seconds={:.6} footprint={} resident={} metal={:?} sampled_peak_footprint={} sampled_peak_resident={} sampled_peak_metal={} sample_age_ms={}",
+            start.elapsed().as_secs_f64(),
+            status.latest.footprint,
+            status.latest.resident,
+            status.latest.metal,
+            status.peak_footprint,
+            status.peak_resident,
+            status.peak_metal,
+            status.sampled.elapsed().as_millis(),
         );
+        drop(status);
         self.check()?;
         result
     }

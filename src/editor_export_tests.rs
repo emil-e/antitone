@@ -1,0 +1,167 @@
+use super::*;
+use tiff::decoder::{Decoder, DecodingResult};
+
+fn wait(editor: &mut Editor) {
+    let start = std::time::Instant::now();
+    while editor.busy {
+        editor.receive();
+        assert!(
+            start.elapsed() < Duration::from_secs(30),
+            "{}",
+            editor.status
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+#[test]
+fn export_completion_cannot_retire_new_source_or_document_operations() {
+    for document in [false, true] {
+        let (mut editor, send, receiver) = super::tests::fixture();
+        super::tests::add_ready_fixture(&mut editor);
+        editor.sync_document();
+        editor.export(
+            "captured.exr".into(),
+            OutputFormat::Exr(ExrPrecision::Full),
+            Overwrite::Refuse,
+        );
+        receiver.recv().unwrap();
+        let export = editor.export_pending.unwrap();
+        if document {
+            editor.start_document(DocumentWork::New);
+        } else {
+            editor.load_source("another.ARW".into(), false);
+        }
+        receiver.recv().unwrap();
+        let status = editor.status.clone();
+        let title = editor.tasks.view().unwrap().title;
+        let project = editor.document.project.clone();
+        send.send(Message::Exported(export, Ok("captured.exr".into())))
+            .unwrap();
+        editor.receive();
+        assert!(editor.busy);
+        assert!(editor.export_pending.is_none());
+        assert_eq!(editor.status, status);
+        assert_eq!(editor.tasks.view().unwrap().title, title);
+        assert_eq!(editor.document.project, project);
+        if document {
+            send.send(Message::Prepared(
+                editor.document_pending.unwrap(),
+                Err("new document failed".into()),
+            ))
+            .unwrap();
+        } else {
+            send.send(Message::Ready(editor.id, Err("new source failed".into())))
+                .unwrap();
+        }
+        editor.receive();
+        assert!(!editor.busy);
+        assert!(editor.tasks.view().is_none());
+    }
+}
+
+fn tiff_pixels(path: &std::path::Path) -> Vec<u16> {
+    let mut decoder = Decoder::new(std::fs::File::open(path).unwrap()).unwrap();
+    let DecodingResult::U16(values) = decoder.read_image().unwrap() else {
+        panic!()
+    };
+    values
+}
+#[test]
+fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_without_ocio() {
+    pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let mut editor = Editor::new(&device, &queue, None);
+        editor.thumbnails = Thumbnails::default();
+        editor.add_raws(vec![
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
+        ]);
+        wait(&mut editor);
+        assert!(editor.ready.is_some(), "{}", editor.status);
+        editor.dmin = Some(DVec3::splat(3000. / 4031.));
+        editor.dmax = Some(DVec3::splat(128. / 4031.));
+        editor.roll = RollSettings::new_grade();
+        editor.photo = PhotoSettings {
+            contrast: 0.8,
+            saturation: 1.3,
+            ..Default::default()
+        };
+        editor.sync_document();
+        let before = editor.document.project.clone();
+        let directory = tempfile::tempdir().unwrap();
+        for (name, format) in [
+            ("srgb.tif", OutputFormat::Tiff(OutputTarget::Srgb)),
+            ("p3.tif", OutputFormat::Tiff(OutputTarget::DisplayP3)),
+            ("half.exr", OutputFormat::Exr(ExrPrecision::Half)),
+            ("full.exr", OutputFormat::Exr(ExrPrecision::Full)),
+        ] {
+            let path = directory.path().join(name);
+            editor.export(path.clone(), format, Overwrite::Refuse);
+            assert!(editor.busy && editor.export_pending.is_some());
+            wait(&mut editor);
+            assert!(editor.failure.is_none(), "{}", editor.status);
+            assert!(editor.export_pending.is_none() && editor.tasks.view().is_none());
+            match format {
+                OutputFormat::Tiff(target) => {
+                    let mut decoder = Decoder::new(std::fs::File::open(&path).unwrap()).unwrap();
+                    let area = editor.ready.as_ref().unwrap().area;
+                    let size = [area.width, area.height];
+                    assert_eq!(decoder.dimensions().unwrap(), (size[0], size[1]));
+                    assert_eq!(
+                        decoder
+                            .get_tag_u8_vec(tiff::tags::Tag::Unknown(34675))
+                            .unwrap(),
+                        crate::profiles::icc(target)
+                    );
+                    assert!(!tiff_pixels(&path).is_empty());
+                }
+                OutputFormat::Exr(_) => {
+                    let image = exr::prelude::read_first_flat_layer_from_file(&path).unwrap();
+                    assert_eq!(image.layer_data.channel_data.list.len(), 3);
+                    assert!(image.attributes.chromaticities.is_some());
+                }
+            }
+            assert_eq!(editor.document.project, before);
+        }
+        let source = directory.path().join("srgb.tif");
+        let expected = tiff_pixels(&source);
+        let captured = directory.path().join("captured.tif");
+        let submissions = host::App::submission_gate(&editor).clone();
+        submissions.configure(|| {
+            editor.export(
+                captured.clone(),
+                OutputFormat::Tiff(OutputTarget::Srgb),
+                Overwrite::Refuse,
+            );
+            assert!(matches!(
+                editor.messages.recv_timeout(Duration::from_millis(100)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ));
+            // Simulate later accepted edits/source identity while the captured worker is queued.
+            editor.photo.exposure = 0.75;
+            editor.sync_document();
+            editor.id += 7;
+        });
+        let edited = editor.document.project.clone();
+        wait(&mut editor);
+        assert!(editor.failure.is_none(), "{}", editor.status);
+        assert_eq!(tiff_pixels(&captured), expected);
+        assert_eq!(editor.document.project, edited);
+        assert_eq!(editor.photo.exposure, 0.75);
+        // Source mismatch and destination failures are explicit and must not replace accepted files.
+        let bytes = std::fs::read(&source).unwrap();
+        editor.export(
+            source.clone(),
+            OutputFormat::Tiff(OutputTarget::Srgb),
+            Overwrite::Confirmed,
+        );
+        wait(&mut editor);
+        assert!(editor.failure.is_some());
+        assert_eq!(std::fs::read(&source).unwrap(), bytes);
+        assert_eq!(editor.document.project, edited);
+    });
+}

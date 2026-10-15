@@ -37,7 +37,7 @@ A nonzero exit reports bridge, immutable-diagnostic or OpenMP-restoration failur
 
 ## Reusing native builds
 
-Separate worktrees can use existing compatible dependencies without a second bootstrap. Set `LIBRAW_SOURCE` to the LibRaw source/build directory containing `lib/libraw_r.a`, and `OCIO_PREFIX` to an installed prefix containing `include/` and `lib/`. Use absolute paths. These are build/probe overrides; `setup-native.sh` still builds the pinned checkout-local dependencies.
+Separate worktrees can use existing compatible dependencies without a second bootstrap. Set `LIBRAW_SOURCE` to the LibRaw source/build directory containing `lib/libraw_r.a`. Opt-in `ocio-reference` builds and native reference probes additionally accept `OCIO_PREFIX` pointing to an installed prefix containing `include/` and `lib/`; normal editor builds do not link OCIO. Use absolute paths. These are build/probe overrides; `setup-native.sh` still builds the pinned checkout-local dependencies.
 
 The accepted OpenMP runtime must remain available at `.cache/native-deps/openmp-22.1.8-install`, for example through an ignored shared native-cache link. `LIBRAW_SOURCE` does not relocate it, and system/Homebrew runtimes are not supported substitutes. Cargo/rustup download caches are shared normally; each worktree has its own build products. Use absolute sample paths or read-only sample links.
 

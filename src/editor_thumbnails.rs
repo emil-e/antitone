@@ -1004,8 +1004,7 @@ impl Editor {
 #[path = "editor_thumbnail_clipping_tests.rs"]
 mod clipping_tests;
 #[cfg(all(test, target_os = "macos"))]
-#[path = "../native/cache_observation.rs"]
-mod observation;
+use crate::cache_observation as observation;
 #[cfg(test)]
 #[path = "editor_renderer_tests.rs"]
 mod renderer_tests;

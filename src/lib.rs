@@ -10,6 +10,8 @@ pub mod frame_raster;
 pub mod geometry;
 #[cfg(feature = "gpu")]
 pub mod gpu;
+#[cfg(all(feature = "gpu", feature = "export", feature = "raw"))]
+pub mod gpu_export;
 pub mod local_adjustments;
 pub mod photographic;
 #[cfg(feature = "ui")]
@@ -42,7 +44,7 @@ pub mod viewport;
 
 #[cfg(all(feature = "ui", feature = "render"))]
 pub mod gpu_scopes;
-#[cfg(all(feature = "ui", feature = "render"))]
+#[cfg(all(feature = "gpu", feature = "render"))]
 pub mod renderer;
 #[cfg(all(feature = "ui", feature = "render"))]
 pub mod resample;
@@ -51,10 +53,13 @@ pub mod scopes;
 #[cfg(all(feature = "ui", feature = "render"))]
 pub mod viewer;
 
+#[cfg(all(test, feature = "editor", target_os = "macos"))]
+#[path = "../native/cache_observation.rs"]
+pub(crate) mod cache_observation;
 #[cfg(all(test, feature = "raw", feature = "gpu", target_os = "macos"))]
 mod raw_test_support;
 
-#[cfg(all(test, feature = "render", target_os = "macos"))]
+#[cfg(all(test, feature = "ocio-reference", target_os = "macos"))]
 mod view_sampling_tests;
 
 pub const PROCESSING_MODEL_VERSION: u32 = 4;

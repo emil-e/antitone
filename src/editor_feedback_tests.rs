@@ -272,12 +272,13 @@ fn export_failure_is_persistent_stale_results_cannot_replace_it_and_matching_suc
         Overwrite::Refuse,
     );
     receiver.recv().unwrap();
-    send.send(Message::Exported(editor.id + 1, Err("stale".into())))
+    let request = editor.export_pending.unwrap();
+    send.send(Message::Exported(request + 1, Err("stale".into())))
         .unwrap();
     editor.receive();
     assert!(editor.failure.is_none() && editor.busy);
     send.send(Message::Exported(
-        editor.id,
+        request,
         Err("choose full-float EXR".into()),
     ))
     .unwrap();
@@ -286,7 +287,7 @@ fn export_failure_is_persistent_stale_results_cannot_replace_it_and_matching_suc
     assert!(!editor.busy);
     editor.status = "Other status".into();
     send.send(Message::Exported(
-        editor.id + 1,
+        request + 1,
         Err("another stale error".into()),
     ))
     .unwrap();
@@ -302,8 +303,17 @@ fn export_failure_is_persistent_stale_results_cannot_replace_it_and_matching_suc
     );
     receiver.recv().unwrap();
     assert!(editor.failure.is_some());
-    send.send(Message::Exported(editor.id, Ok("output.exr".into())))
+    let pending = editor.export_pending;
+    send.send(Message::Exported(request, Ok("old-output.exr".into())))
         .unwrap();
+    editor.receive();
+    assert!(editor.busy && editor.failure.is_some());
+    assert_eq!(editor.export_pending, pending);
+    send.send(Message::Exported(
+        editor.export_pending.unwrap(),
+        Ok("output.exr".into()),
+    ))
+    .unwrap();
     editor.receive();
     assert!(editor.failure.is_none());
     assert_eq!(editor.document.project, before);

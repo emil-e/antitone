@@ -58,11 +58,11 @@ From the repository root, after normal native setup:
 
 ```sh
 cargo test --locked --offline --features raw --test raw_dng --test raw_flat_field --test raw_roll
-cargo test --locked --offline --features raw,export,project --test raw_dng --test raw_flat_field --test raw_roll
+cargo test --locked --offline --features raw,export,project,ocio-reference --test raw_dng --test raw_flat_field --test raw_roll
 # Native/editor/Metal worker checks; no desktop window, preferences or user thumbnail cache:
 cargo test --locked --offline --features editor --lib authored_ -- --test-threads=1
 # Independent ImageIO storage/profile check; Apple Clang, temporary products, no window:
-cargo test --locked --offline --features raw,export --test raw_dng \
+cargo test --locked --offline --features raw,export,ocio-reference --test raw_dng \
   authored_dng_tiffs_reopen_with_independent_imageio_storage_and_profiles \
   -- --ignored --nocapture
 python3 scripts/generate-raw-fixture.py --check
@@ -73,6 +73,8 @@ python3 scripts/generate-raw-fixture.py
 Ordinary tests read the repository binaries; they never generate or download them. Exports and projects go to isolated temporary directories. The recipe uses only Python's standard library and `--check` compares bytes without writing.
 
 The RAW tests also preserve measured inversion anchors at `2e-12` for gamma 0.1/0.65/1/3, a per-channel flooring rate no greater than 1%, and sampled LibRaw sRGB matrix agreement at `2/65535`. The authored matrix case must actually compare eligible pixels. Sensor-white/black rejection tests edit isolated temporary copies, never the repository data.
+
+The scalar rendering/export comparisons use the opt-in `ocio-reference` feature. Production GPU export/worker checks are documented in [development](../../../docs/development.md#export-checks); normal editor builds do not link OCIO.
 
 The tests cover declared metadata/sensor statistics, AHD camera RGB16, complete foreground/background-policy RGB agreement, immutable sensor diagnostics, automatic/explicit WB and invalid-gain rejection, nonzero crop/proxy centres, reference sampling, model-4 processing, both TIFF targets and half/full AP0 EXR reopening. `editor::document::tests` additionally covers initial DNG registration and preservation of saved WB through Open/re-import. TIFF/EXR pixel comparisons verify serialization against the actual pipeline, not independent photographic calibration. The opt-in [ImageIO check](../../../docs/diagnostics.md#export) independently verifies TIFF storage/profile decoding at two image sizes.
 

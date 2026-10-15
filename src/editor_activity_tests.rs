@@ -235,7 +235,7 @@ fn export_activity_preserves_identity_and_closes_before_failure_feedback() {
         Overwrite::Refuse,
     );
     receiver.recv().unwrap();
-    let id = editor.id;
+    let id = editor.export_pending.unwrap();
     editor.status = "Settled preview failed: unrelated".into();
     assert_eq!(editor.tasks.view().unwrap().title, "Exporting…");
     send.send(Message::Exported(id + 1, Err("stale".into())))
@@ -398,8 +398,11 @@ fn matching_success_retires_source_save_measurement_and_export_activity() {
                     Overwrite::Refuse,
                 );
                 receiver.recv().unwrap();
-                send.send(Message::Exported(editor.id, Ok("output.exr".into())))
-                    .unwrap();
+                send.send(Message::Exported(
+                    editor.export_pending.unwrap(),
+                    Ok("output.exr".into()),
+                ))
+                .unwrap();
             }
         }
         assert!(editor.tasks.view().is_some());

@@ -388,6 +388,8 @@ impl ProcessingSource {
 
 pub struct ProcessingKernel {
     pipeline: wgpu::ComputePipeline,
+    output_binding: u32,
+    output_stride: u64,
     workgroup_size: u32,
     identity: wgpu::Buffer,
     empty_locals: wgpu::Buffer,
@@ -407,12 +409,22 @@ impl ProcessingKernel {
         queue: &wgpu::Queue,
         submissions: SubmissionGate,
     ) -> Result<Self, Error> {
-        Self::new_pipeline(device, queue, true, submissions).await
+        Self::new_pipeline(device, queue, true, false, submissions).await
     }
 
     #[cfg(test)]
     async fn new_fused(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Self, Error> {
-        Self::new_pipeline(device, queue, false, SubmissionGate::default()).await
+        Self::new_pipeline(device, queue, false, false, SubmissionGate::default()).await
+    }
+
+    /// Job-local compensated AP1 readback; normal image outputs remain RGBA f32.
+    #[cfg(all(feature = "export", feature = "raw"))]
+    pub(crate) async fn new_export(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        submissions: SubmissionGate,
+    ) -> Result<Self, Error> {
+        Self::new_pipeline(device, queue, true, true, submissions).await
     }
 
     fn shader(lookup: bool) -> String {
@@ -445,6 +457,7 @@ impl ProcessingKernel {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         lookup: bool,
+        precise_output: bool,
         submissions: SubmissionGate,
     ) -> Result<Self, Error> {
         if lookup
@@ -456,15 +469,23 @@ impl ProcessingKernel {
             ));
         }
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut shader = Self::shader(lookup);
+        if precise_output {
+            shader.push_str(include_str!("shaders/export.wgsl"));
+        }
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("camera RGB16 to AP1 photographic processing"),
-            source: wgpu::ShaderSource::Wgsl(Self::shader(lookup).into()),
+            source: wgpu::ShaderSource::Wgsl(shader.into()),
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("Antitone processing"),
             layout: None,
             module: &module,
-            entry_point: Some("main"),
+            entry_point: Some(if precise_output {
+                "export_main"
+            } else {
+                "main"
+            }),
             compilation_options: Default::default(),
             cache: None,
         });
@@ -475,6 +496,8 @@ impl ProcessingKernel {
         }
         Ok(Self {
             pipeline,
+            output_binding: if precise_output { 10 } else { 1 },
+            output_stride: if precise_output { 48 } else { 16 },
             workgroup_size: 64,
             identity: flat::identity_nodes(device),
             empty_locals: local::empty_buffer(device),
@@ -532,7 +555,7 @@ impl ProcessingKernel {
         (locals, context): (&wgpu::Buffer, &wgpu::Buffer),
     ) {
         let pixels = source.pixels;
-        let size = NonZeroU64::new(u64::from(pixels) * 16).unwrap();
+        let size = NonZeroU64::new(u64::from(pixels) * self.output_stride).unwrap();
         let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("processing parameters"),
             contents: bytemuck::bytes_of(&parameters),
@@ -569,7 +592,7 @@ impl ProcessingKernel {
                 resource: source.input.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
-                binding: 1,
+                binding: self.output_binding,
                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                     buffer: output,
                     offset: 0,

@@ -1,4 +1,4 @@
-#![cfg(feature = "render")]
+#![cfg(feature = "ocio-reference")]
 
 use antitone::{
     Error,
@@ -12,6 +12,10 @@ use lcms2::{Flags, Intent, PixelFormat, Profile, Tag, TagSignature, Transform};
 #[test]
 fn output_transfers_have_the_correct_toes_and_reject_invalid_channels() {
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
+        assert_eq!(
+            target.parameters(),
+            antitone::rendering::reference_parameters(target)
+        );
         assert!((target.encode(0.0031308).unwrap() - 0.040449936).abs() < 1e-12);
         assert!((target.decode(0.04045).unwrap() - 0.04045 / 12.92).abs() < 1e-12);
         assert_eq!(target.encode(0.0).unwrap(), 0.0);

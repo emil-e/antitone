@@ -1,4 +1,6 @@
-use crate::{Error, gpu::ProcessingKernel, rendering::OutputTarget, resample::AveragePipelines};
+#[cfg(feature = "ui")]
+use crate::resample::AveragePipelines;
+use crate::{Error, gpu::ProcessingKernel, rendering::OutputTarget};
 use std::{borrow::Cow, sync::Arc};
 use wgpu::util::DeviceExt;
 
@@ -11,6 +13,7 @@ struct Vertex { @builtin(position) position: vec4f, @location(0) uv: vec2f }
  let p=array<vec2f,3>(vec2f(-1.,-1.),vec2f(3.,-1.),vec2f(-1.,3.))[i];
  return Vertex(vec4f(p,0.,1.),vec2f(p.x*.5+.5,.5-p.y*.5));
 }"#;
+#[cfg(feature = "ui")]
 const DISPLAY: &str = r#"
 @group(0) @binding(0) var image:texture_2d<f32>;
 struct Parameters { c0:vec4f, c1:vec4f, c2:vec4f, size:vec4u, uv_x:vec4f, uv_y:vec4f }
@@ -77,8 +80,10 @@ pub(crate) struct TargetResources {
 /// Image storage and processing signatures remain image-owned.
 pub struct GpuRenderer {
     pub(crate) kernel: ProcessingKernel,
+    #[cfg(feature = "ui")]
     pub(crate) display: wgpu::RenderPipeline,
     targets: [TargetResources; 2],
+    #[cfg(feature = "ui")]
     pub(crate) average: Arc<AveragePipelines>,
 }
 impl GpuRenderer {
@@ -91,6 +96,7 @@ impl GpuRenderer {
         submissions: crate::gpu::SubmissionGate,
     ) -> Result<Arc<Self>, Error> {
         let kernel = ProcessingKernel::new_with_submissions(device, queue, submissions).await?;
+        #[cfg(feature = "ui")]
         let average = Arc::new(AveragePipelines::new(device).await?);
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let vertex = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -101,14 +107,17 @@ impl GpuRenderer {
             target_resources(device, queue, &vertex, OutputTarget::Srgb)?,
             target_resources(device, queue, &vertex, OutputTarget::DisplayP3)?,
         ];
+        #[cfg(feature = "ui")]
         let display = display_pipeline(device);
         if let Some(error) = scope.pop().await {
             return Err(Error::Gpu(error.to_string()));
         }
         Ok(Arc::new(Self {
             kernel,
+            #[cfg(feature = "ui")]
             display,
             targets,
+            #[cfg(feature = "ui")]
             average,
         }))
     }
@@ -117,6 +126,7 @@ impl GpuRenderer {
     }
 }
 
+#[cfg(feature = "ui")]
 pub(crate) fn display_pipeline(device: &wgpu::Device) -> wgpu::RenderPipeline {
     let vertex = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("image fullscreen triangle"),

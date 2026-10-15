@@ -2,7 +2,7 @@ use super::*;
 use crate::roll_analysis::{self, FrameSamples, MAX_SAMPLES_PER_FRAME};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[cfg(test)]
+#[cfg(all(test, feature = "ocio-reference"))]
 #[path = "editor_analysis_diagnostics.rs"]
 mod diagnostics;
 #[cfg(test)]

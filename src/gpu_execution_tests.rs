@@ -79,6 +79,8 @@ async fn variant(
         global_only,
         kernel: ProcessingKernel {
             pipeline,
+            output_binding: 1,
+            output_stride: 16,
             workgroup_size: workgroup,
             identity: baseline.identity.clone(),
             empty_locals: baseline.empty_locals.clone(),

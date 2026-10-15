@@ -3,10 +3,10 @@ use crate::{
     color::Balance,
     coverage::Coverage,
     crop::Crop,
-    export::{self, ExrPrecision, Overwrite},
+    export::{ExrPrecision, Overwrite},
     geometry::{Composition, PhotoOrientation, RollOrientation},
     gpu::{ProcessingInput, ProcessingParameters, ProcessingSignature},
-    local_adjustments::{PhotoGradeSnapshot, SpatialPipeline},
+    local_adjustments::PhotoGradeSnapshot,
     platform::host,
     processing::{Calibration, PhotoSettings, RollSettings},
     raw::Rect,
@@ -82,6 +82,9 @@ use crop_editor::CropEdit;
 #[cfg(test)]
 #[path = "editor_cache_preferences_tests.rs"]
 mod cache_preferences_tests;
+#[cfg(test)]
+#[path = "editor_export_tests.rs"]
+mod export_tests;
 #[cfg(all(test, feature = "ui-tests"))]
 #[path = "editor_kittest.rs"]
 mod kittest_tests;
@@ -174,6 +177,11 @@ impl LoadCache {
         }
     }
 }
+struct ExportIdentity {
+    source: u64,
+    request: u64,
+}
+
 enum Command {
     Unload,
     Analyze(u64, Box<analysis::Request>),
@@ -210,7 +218,7 @@ enum Command {
         PhotoSettings,
     ),
     Export(
-        u64,
+        ExportIdentity,
         PathBuf,
         OutputFormat,
         Calibration,
@@ -872,44 +880,40 @@ fn backend(
                     let (loaded, scan) = source
                         .as_ref()
                         .ok_or(Error::UnusableSample("no developed source"))?;
-                    if id != *loaded {
+                    if id.source != *loaded {
                         return Err(Error::UnusableSample("source changed before export"));
                     }
-                    let metadata = export::ProcessingMetadata::with_grade(roll.response, &grade);
-                    let pipeline = SpatialPipeline::new(
-                        scan.processing_calibration(calibration)?,
-                        roll,
-                        grade,
-                        scan.camera_to_ap1,
+                    let renderer = renderers.get(&device, &queue)?;
+                    crate::gpu_export::write(
+                        &renderer,
+                        &device,
+                        (&queue, &submissions),
+                        crate::gpu_export::Request {
+                            scan,
+                            field: correction.as_ref().map(|c| c.gpu.clone()),
+                            calibration,
+                            roll,
+                            grade,
+                            composition,
+                            format: match format {
+                                OutputFormat::Tiff(target) => {
+                                    crate::gpu_export::Format::Tiff(target)
+                                }
+                                OutputFormat::Exr(precision) => {
+                                    crate::gpu_export::Format::Exr(precision)
+                                }
+                            },
+                        },
+                        &path,
+                        overwrite,
                     )?;
-                    if composition.area() != scan.area {
-                        return Err(Error::InvalidParameter(
-                            "export composition belongs to another source area",
-                        ));
-                    }
-                    let pixel = |x, y| pipeline.apply(scan.pixel(x, y)?, [x, y]).map(|p| p.rgb);
-                    match format {
-                        OutputFormat::Tiff(target) => export::tiff_composed(
-                            &path,
-                            composition,
-                            target,
-                            overwrite,
-                            metadata,
-                            pixel,
-                        )?,
-                        OutputFormat::Exr(precision) => export::exr_composed(
-                            &path,
-                            composition,
-                            precision,
-                            overwrite,
-                            metadata,
-                            pixel,
-                        )?,
-                    }
                     Ok(path)
                 })()
                 .map_err(|e| e.to_string());
-                if messages.send(Message::Exported(id, result)).is_err() {
+                if messages
+                    .send(Message::Exported(id.request, result))
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -970,6 +974,7 @@ pub struct Editor {
     current_source: Option<SourceId>,
     next_request: u64,
     document_pending: Option<u64>,
+    export_pending: Option<u64>,
     transition: Option<Transition>,
     after_save: Option<Transition>,
     resume_transition: Option<Transition>,
@@ -1111,6 +1116,7 @@ impl Editor {
             current_source: None,
             next_request: 0,
             document_pending: None,
+            export_pending: None,
             transition: None,
             after_save: None,
             resume_transition: None,
@@ -1757,10 +1763,18 @@ impl Editor {
                         }
                     }
                 }
-                Message::Exported(id, result)
-                    if id == self.id && self.document_pending.is_none() =>
-                {
-                    self.tasks.finish(TaskRequest::Export(id));
+                Message::Exported(id, result) if self.export_pending == Some(id) => {
+                    self.export_pending = None;
+                    let foreground = self.tasks.finish(TaskRequest::Export(id));
+                    if !foreground {
+                        // The captured file still completed, but a newer operation owns busy/status.
+                        if let Err(error) = result
+                            && self.failure.is_none()
+                        {
+                            self.report_failure(FailureKind::Export, error);
+                        }
+                        continue;
+                    }
                     self.busy = false;
                     match result {
                         Ok(path) => {
@@ -1968,14 +1982,19 @@ impl Editor {
                 self.crop,
             )
             .expect("accepted crop belongs to the loaded source");
+            let request = self.request_id();
+            self.export_pending = Some(request);
             self.thumbnails.cancel();
             self.busy = true;
             self.status = "Exporting full-resolution source; preview pixels are not used…".into();
-            self.tasks.begin(Task::Export(self.id));
+            self.tasks.begin(Task::Export(request));
             if self
                 .commands
                 .send(Command::Export(
-                    self.id,
+                    ExportIdentity {
+                        source: self.id,
+                        request,
+                    },
                     path,
                     format,
                     calibration,
@@ -1987,7 +2006,8 @@ impl Editor {
                 .is_err()
             {
                 self.busy = false;
-                self.tasks.finish(TaskRequest::Export(self.id));
+                self.export_pending = None;
+                self.tasks.finish(TaskRequest::Export(request));
                 self.status = "RAW worker stopped".into();
                 self.report_failure(FailureKind::Export, self.status.clone());
             }

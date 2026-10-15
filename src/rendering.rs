@@ -1,10 +1,13 @@
+#[cfg(feature = "ocio-reference")]
 use std::ffi::{CStr, c_char, c_void};
+#[cfg(feature = "ocio-reference")]
 use std::ptr::NonNull;
 
 use glam::{DMat3, DVec3, Vec3};
 
 use crate::Error;
 
+#[cfg(feature = "ocio-reference")]
 unsafe extern "C" {
     fn antitone_ocio_version() -> *const c_char;
     fn antitone_output_parameters(target: u32, parameters: *mut f64) -> i32;
@@ -28,11 +31,11 @@ pub enum OutputTarget {
 
 impl OutputTarget {
     pub fn parameters(self) -> [f64; 9] {
-        let mut parameters = [0.0; 9];
-        // Both enum values are supported; native code writes exactly nine doubles.
-        let status = unsafe { antitone_output_parameters(self as u32, parameters.as_mut_ptr()) };
-        assert_eq!(status, 0);
-        parameters
+        // Pinned target definitions; reference builds independently check the native parameters.
+        match self {
+            Self::Srgb => [100., 0.64, 0.33, 0.30, 0.60, 0.15, 0.06, 0.3127, 0.3290],
+            Self::DisplayP3 => [100., 0.68, 0.32, 0.265, 0.69, 0.15, 0.06, 0.3127, 0.3290],
+        }
     }
 
     pub fn rgb_to_xyz(self) -> DMat3 {
@@ -87,6 +90,17 @@ impl OutputTarget {
     }
 }
 
+#[cfg(feature = "ocio-reference")]
+pub fn reference_parameters(target: OutputTarget) -> [f64; 9] {
+    let mut parameters = [0.; 9];
+    // Both enum values are supported; native code writes exactly nine doubles.
+    assert_eq!(
+        unsafe { antitone_output_parameters(target as u32, parameters.as_mut_ptr()) },
+        0
+    );
+    parameters
+}
+
 fn validate_channel(value: f64) -> Result<(), Error> {
     if !value.is_finite() || !(0.0..=1.0).contains(&value) {
         return Err(Error::InvalidParameter(
@@ -96,6 +110,7 @@ fn validate_channel(value: f64) -> Result<(), Error> {
     Ok(())
 }
 
+#[cfg(feature = "ocio-reference")]
 pub fn ocio_version() -> String {
     // OCIO returns a process-lifetime, NUL-terminated version string.
     unsafe { CStr::from_ptr(antitone_ocio_version()) }
@@ -103,6 +118,7 @@ pub fn ocio_version() -> String {
         .into_owned()
 }
 
+#[cfg(feature = "ocio-reference")]
 fn diagnostic(buffer: &[c_char]) -> Error {
     // The C++ bridge uses snprintf into a nonempty, zero-initialized buffer.
     Error::Rendering(
@@ -112,12 +128,14 @@ fn diagnostic(buffer: &[c_char]) -> Error {
     )
 }
 
-/// CPU export/reference rendering: linear AP1/D60 in, limited linear target RGB out.
-/// Does not encode, apply a monitor transform, or mutate its input.
+/// Independent OCIO reference: linear AP1/D60 in, limited linear target RGB out.
+/// Not a production export path. Does not encode or apply a monitor transform.
+#[cfg(feature = "ocio-reference")]
 pub struct CpuRenderer {
     handle: NonNull<c_void>,
 }
 
+#[cfg(feature = "ocio-reference")]
 impl CpuRenderer {
     pub fn new(target: OutputTarget) -> Result<Self, Error> {
         let mut error = [0; 512];
@@ -165,6 +183,7 @@ impl CpuRenderer {
     }
 }
 
+#[cfg(feature = "ocio-reference")]
 impl Drop for CpuRenderer {
     fn drop(&mut self) {
         // This handle is uniquely owned and released exactly once.

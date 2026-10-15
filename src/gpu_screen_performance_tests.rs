@@ -2,6 +2,7 @@ use super::*;
 use crate::{renderer::GpuRenderer, rendering::OutputTarget};
 use wgpu::util::DeviceExt;
 
+#[cfg(feature = "ocio-reference")]
 #[path = "gpu_aces_execution_tests.rs"]
 mod aces_execution_tests;
 

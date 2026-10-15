@@ -1,10 +1,6 @@
-use crate::{
-    Error,
-    color::ap1_to_ap0,
-    processing::Response,
-    profiles,
-    rendering::{CpuRenderer, OutputTarget},
-};
+#[cfg(feature = "ocio-reference")]
+use crate::rendering::CpuRenderer;
+use crate::{Error, color::ap1_to_ap0, processing::Response, profiles, rendering::OutputTarget};
 use exr::{meta::attribute::Chromaticities, prelude::*};
 use glam::DVec3;
 use std::{
@@ -17,6 +13,10 @@ use tiff::{
     encoder::{Compression, Predictor, TiffEncoder, colortype::RGB16},
     tags::Tag,
 };
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "export_tests.rs"]
+mod tests;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -130,6 +130,8 @@ fn exclusive_rename(_from: &Path, _to: &Path) -> Result<()> {
     ))
 }
 
+/// Scalar/OCIO reference adapter, not a production rendering path.
+#[cfg(feature = "ocio-reference")]
 pub fn tiff(
     path: &Path,
     size: ImageSize,
@@ -139,17 +141,26 @@ pub fn tiff(
     mut pixel: impl FnMut(u32, u32) -> Result<DVec3>,
 ) -> Result<()> {
     let renderer = CpuRenderer::new(target)?;
-    tiff_encoded(path, size, target, overwrite, response.into(), |y, end| {
-        let mut working = Vec::with_capacity(size.width as usize * (end - y) as usize);
-        for row in y..end {
-            for x in 0..size.width {
-                working.push(pixel(x, row)?);
+    tiff_encoded(
+        path,
+        size,
+        target,
+        overwrite,
+        response.into(),
+        |origin, extent| {
+            let mut working = Vec::with_capacity((extent[0] * extent[1]) as usize);
+            for row in origin[1]..origin[1] + extent[1] {
+                for x in origin[0]..origin[0] + extent[0] {
+                    working.push(pixel(x, row)?);
+                }
             }
-        }
-        target.encode_u16(&renderer.render(&working)?)
-    })
+            target.encode_u16(&renderer.render(&working)?)
+        },
+    )
 }
 
+/// Scalar/OCIO original-sample reconstruction oracle.
+#[cfg(feature = "ocio-reference")]
 pub fn tiff_composed(
     path: &Path,
     composition: crate::geometry::Composition,
@@ -169,12 +180,12 @@ pub fn tiff_composed(
     }
     let raster = crate::frame_raster::FrameRaster::full(composition)?;
     let renderer = CpuRenderer::new(target)?;
-    tiff_encoded(path, size, target, overwrite, response, |y, end| {
+    tiff_encoded(path, size, target, overwrite, response, |origin, extent| {
         let mut working = Vec::new();
         let mut weights = Vec::new();
         let mut groups = Vec::new();
-        for row in y..end {
-            for x in 0..width {
+        for row in origin[1]..origin[1] + extent[1] {
+            for x in origin[0]..origin[0] + extent[0] {
                 let start = working.len();
                 for ([sx, sy], weight) in raster.footprint([x, row])?.pixels(composition.area())? {
                     working.push(pixel(sx, sy)?);
@@ -198,6 +209,8 @@ pub fn tiff_composed(
     })
 }
 
+/// Scalar original-sample reconstruction oracle.
+#[cfg(feature = "ocio-reference")]
 pub fn exr_composed(
     path: &Path,
     composition: crate::geometry::Composition,
@@ -229,13 +242,31 @@ pub fn exr_composed(
     )
 }
 
-fn tiff_encoded(
+// Square units avoid orientation-dependent repeated work without a large fixed workspace.
+pub(crate) const BLOCK: [u32; 2] = [128, 128];
+fn blocks(size: ImageSize) -> impl Iterator<Item = ([u32; 2], [u32; 2])> {
+    (0..size.height)
+        .step_by(BLOCK[1] as usize)
+        .flat_map(move |y| {
+            (0..size.width).step_by(BLOCK[0] as usize).map(move |x| {
+                (
+                    [x, y],
+                    [BLOCK[0].min(size.width - x), BLOCK[1].min(size.height - y)],
+                )
+            })
+        })
+}
+
+/// Encode supplied target RGB16 codes, with matching ICC and atomic destination safety.
+/// The callback receives bounded block origin/extent and returns row-major codes.
+/// This encoder performs no photographic processing or display rendering.
+pub fn tiff_encoded(
     path: &Path,
     size: ImageSize,
     target: OutputTarget,
     overwrite: Overwrite,
     metadata: ProcessingMetadata,
-    mut strip: impl FnMut(u32, u32) -> Result<Vec<[u16; 3]>>,
+    mut block: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<[u16; 3]>>,
 ) -> Result<()> {
     let response = metadata.response;
     response.shape()?;
@@ -285,11 +316,18 @@ fn tiff_encoded(
                 .write_tag(Tag::ImageDescription, description.as_str())
                 .map_err(failure)?;
             // tiff 0.11.3 activates compression only in write_data, not write_strip.
-            let mut samples = Vec::with_capacity(count * 3);
-            for y in (0..size.height).step_by(8) {
-                let end = (y + 8).min(size.height);
-                let encoded = strip(y, end)?;
-                samples.extend(encoded.into_iter().flatten());
+            let mut samples = vec![0; count * 3];
+            for (origin, extent) in blocks(size) {
+                let encoded = block(origin, extent)?;
+                if encoded.len() != (extent[0] * extent[1]) as usize {
+                    return Err(Error::InvalidParameter("invalid TIFF block length"));
+                }
+                for (i, pixel) in encoded.into_iter().enumerate() {
+                    let x = origin[0] + i as u32 % extent[0];
+                    let y = origin[1] + i as u32 / extent[0];
+                    let index = (y as usize * size.width as usize + x as usize) * 3;
+                    samples[index..index + 3].copy_from_slice(&pixel);
+                }
             }
             image.write_data(&samples).map_err(failure)?;
         }
@@ -305,7 +343,32 @@ pub fn exr(
     response: impl Into<ProcessingMetadata>,
     mut pixel: impl FnMut(u32, u32) -> Result<DVec3>,
 ) -> Result<()> {
-    let metadata = response.into();
+    exr_blocks(
+        path,
+        size,
+        precision,
+        overwrite,
+        response.into(),
+        |origin, extent| {
+            let mut values = Vec::with_capacity((extent[0] * extent[1]) as usize);
+            for row in origin[1]..origin[1] + extent[1] {
+                for x in origin[0]..origin[0] + extent[0] {
+                    values.push(pixel(x, row)?);
+                }
+            }
+            Ok(values)
+        },
+    )
+}
+
+pub(crate) fn exr_blocks(
+    path: &Path,
+    size: ImageSize,
+    precision: ExrPrecision,
+    overwrite: Overwrite,
+    metadata: ProcessingMetadata,
+    mut block: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<DVec3>>,
+) -> Result<()> {
     let response = metadata.response;
     response.shape()?;
     let count = size.count()?;
@@ -320,13 +383,20 @@ pub fn exr(
         ));
     }
     let mut samples: [FlatSamples; 3] = std::array::from_fn(|_| match precision {
-        ExrPrecision::Half => FlatSamples::F16(Vec::with_capacity(count)),
-        ExrPrecision::Full => FlatSamples::F32(Vec::with_capacity(count)),
+        ExrPrecision::Half => FlatSamples::F16(vec![half::f16::ZERO; count]),
+        ExrPrecision::Full => FlatSamples::F32(vec![0.; count]),
     });
     let conversion = ap1_to_ap0();
-    for y in 0..size.height {
-        for x in 0..size.width {
-            let ap0 = conversion * pixel(x, y)?;
+    for (origin, extent) in blocks(size) {
+        let values = block(origin, extent)?;
+        if values.len() != (extent[0] * extent[1]) as usize {
+            return Err(Error::InvalidParameter("invalid EXR block length"));
+        }
+        for (i, pixel) in values.into_iter().enumerate() {
+            let x = origin[0] + i as u32 % extent[0];
+            let y = origin[1] + i as u32 / extent[0];
+            let index = y as usize * size.width as usize + x as usize;
+            let ap0 = conversion * pixel;
             for (channel, value) in ap0.to_array().into_iter().enumerate() {
                 if !value.is_finite() {
                     return Err(Error::NonFinitePixel { channel });
@@ -339,13 +409,13 @@ pub fn exr(
                                     .into(),
                             ));
                         }
-                        values.push(half::f16::from_f64(value));
+                        values[index] = half::f16::from_f64(value);
                     }
                     FlatSamples::F32(values) => {
                         if value.abs() > f64::from(f32::MAX) {
                             return Err(Error::NumericalOverflow);
                         }
-                        values.push(value as f32);
+                        values[index] = value as f32;
                     }
                     _ => unreachable!(),
                 }

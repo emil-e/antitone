@@ -67,7 +67,7 @@ fn main() {
         );
         println!("cargo:rustc-link-arg=-mmacosx-version-min=14.0");
     }
-    #[cfg(feature = "render")]
+    #[cfg(feature = "ocio-reference")]
     {
         println!("cargo:rerun-if-env-changed=OCIO_PREFIX");
         for file in [
@@ -82,7 +82,7 @@ fn main() {
             .unwrap_or_else(|| std::path::PathBuf::from(".cache/deps/ocio-install"));
         let root = root
             .canonicalize()
-            .expect("Run scripts/build-ocio.sh before building with --features render");
+            .expect("Run scripts/build-ocio.sh before building with --features ocio-reference");
         cc::Build::new()
             .cpp(true)
             .std("c++17")

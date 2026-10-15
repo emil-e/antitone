@@ -1,4 +1,9 @@
-#![cfg(all(feature = "project", feature = "export", target_os = "macos"))]
+#![cfg(all(
+    feature = "project",
+    feature = "export",
+    feature = "ocio-reference",
+    target_os = "macos"
+))]
 use antitone::{
     color::{AP1_TO_XYZ, ap1_to_ap0},
     crop::Crop,

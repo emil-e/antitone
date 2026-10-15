@@ -29,7 +29,7 @@ From the repository root:
 
 ```sh
 # Download, verify and build pinned LibRaw 0.22.0, LLVM OpenMP 22.1.8
-# and OpenColorIO 2.6.0.
+# and OpenColorIO 2.6.0 (for opt-in reference checks).
 ./scripts/setup-native.sh
 
 # Build the editor.
@@ -61,7 +61,7 @@ The editor has its Dock icon when launched with `cargo app`. To package the buil
 open .cache/app/Antitone.app
 ```
 
-The bundle is disposable and can be regenerated after `cargo build-app`. It still links OCIO and OpenMP through absolute local library paths; keep those libraries available. This is local development packaging, not a distributable release: dependency bundling, signing/notarization and file associations remain unfinished.
+The bundle is disposable and can be regenerated after `cargo build-app`. It still links OpenMP through an absolute local library path; keep that library available. Normal editor rendering/export does not link OCIO; the opt-in `ocio-reference` feature adds that diagnostic dependency. This is local development packaging, not a distributable release: dependency bundling, signing/notarization and file associations remain unfinished.
 
 [Branding assets](assets/branding/README.md) include self-contained SVG wordmarks, portable PNG/ICO icons, the macOS icon and their regeneration command. These assets do not imply that the application supports other platforms yet.
 

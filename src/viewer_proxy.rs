@@ -71,11 +71,11 @@ impl GpuProxy {
                     + u64::from(self.0.size[0]) * u64::from(self.0.size[1]) * 16
             })
     }
-    #[cfg(test)]
+    #[cfg(all(test, feature = "ui-tests"))]
     pub(crate) fn output_retained(&self) -> bool {
         self.0.active.lock().unwrap().is_some()
     }
-    #[cfg(test)]
+    #[cfg(all(test, feature = "ui-tests"))]
     pub(crate) fn same_source(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }

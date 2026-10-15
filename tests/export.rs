@@ -1,4 +1,4 @@
-#![cfg(all(feature = "export", target_os = "macos"))]
+#![cfg(all(feature = "export", feature = "ocio-reference", target_os = "macos"))]
 use antitone::{
     Error,
     color::{ap0_to_ap1, ap1_to_ap0},

@@ -1,4 +1,4 @@
-#![cfg(all(feature = "export", target_os = "macos"))]
+#![cfg(all(feature = "export", feature = "ocio-reference", target_os = "macos"))]
 use antitone::{
     color::ap1_to_ap0,
     export::{self, ExrPrecision, ImageSize, Overwrite},

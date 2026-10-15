@@ -230,12 +230,12 @@ These isolate arithmetic agreement, not filtering-before-grading or footprint-ce
 The [scalar sampling oracles](../src/view_sampling_tests.rs) compare representations with exact original-cell correction/inversion/grades, pinned ACES and linear-target averaging. They are offline numerical references, not an interactive CPU path.
 
 ```sh
-cargo test --locked --offline --features render --lib \
+cargo test --locked --offline --features ocio-reference --lib \
   view_sampling_tests -- --nocapture --test-threads=1
-cargo test --locked --offline --release --features render --lib \
+cargo test --locked --offline --release --features ocio-reference --lib \
   synthetic_view_sampling_quality -- --ignored --nocapture --test-threads=1
 ANTITONE_RAW_SAMPLES=/absolute/samples cargo test --locked --offline --release \
-  --features raw,gpu,render --lib raw_view_sampling_quality \
+  --features raw,gpu,ocio-reference --lib raw_view_sampling_quality \
   -- --ignored --nocapture --test-threads=1
 ```
 
@@ -270,9 +270,9 @@ The camera extension uses the committed patch DNG and explicit code-floor cases.
 For corrected affine reconstruction against scalar coverage:
 
 ```sh
-cargo test --locked --offline --features editor --lib \
+cargo test --locked --offline --features editor,ocio-reference --lib \
   --test scopes --test viewer --test affine_resample --test geometry_export
-cargo test --locked --offline --release --features editor --lib \
+cargo test --locked --offline --release --features editor,ocio-reference --lib \
   corrected_affine_refinement_matches_scalar_coverage -- --ignored --nocapture
 ```
 
@@ -283,21 +283,34 @@ CPU rendering/ICC regenerates its OCIO references without preceding Metal checks
 ```sh
 ./scripts/probe-rendering.sh
 ./scripts/probe-rendering.sh --camera
-cargo test --locked --offline --features render --test rendering
+cargo test --locked --offline --features ocio-reference --test rendering
 ./scripts/probe-gamut.sh
-cargo run --locked --offline --features render --bin antitone-rendering-probe -- --gamut-check
+cargo run --locked --offline --features ocio-reference --bin antitone-rendering-probe -- --gamut-check
 ```
 
 Rendering scripts share `scripts/generate-ocio-reference.sh`, which regenerates upstream CPU/GLSL/LUT artifacts. Existing camera artifacts are ignored unless requested; failures do not fall back to cached files. CPU/GPU agreement, transfer/profile checks and independent ColorSync/Core Image checks address different boundaries. [OCIO artifacts](../assets/ocio/README.md) and [profiles](../assets/profiles/README.md) retain provenance.
 
 ## Export
 
-[Export tests](../tests/export.rs) check TIFF codes/profile/compression, signed/HDR AP0 EXR and destination safety. [Authored RAW tests](development.md#feature-specific-checks) additionally decode, calibrate and process model-4 input before export.
+[Export checks](development.md#export-checks) distinguish production GPU/worker workflows, exact encoder serialization and independent scalar/OCIO photographic references. [GPU exports](../tests/gpu_export.rs) reopen original-sample TIFF/AP0 EXR with ordered locals, correction, orientation and straightening; [reference export tests](../tests/export.rs) retain scalar file-code/profile/compression and failure checks behind `ocio-reference`. No reference is a production fallback.
+
+During an agreed GPU window, the opt-in full-size resource exercise retains production physical detail/underlay while exporting and then regrading that retained source:
+
+```sh
+ANTITONE_RAW_SAMPLES=/absolute/samples \
+  cargo test --locked --offline --release --features editor --lib \
+  full_size_export_resources_with_retained_working_view \
+  -- --ignored --nocapture --test-threads=1
+```
+
+It uses the existing three train/calibration RAW inputs read-only, checks native geometry before development, and keeps the existing monitor's pressure, swap-counter, footprint-growth and unavailable-telemetry stops. Exports stop at bounded-unit checkpoints if those guards trip or the diagnostic duration limit expires. The default cases are uncorrected native composition and synthetic 2×2 correction with a straightened, quarter-turned crop, each as sRGB TIFF and full AP0 EXR. `ANTITONE_EXPORT_RESOURCE_CASE` selects `native`, `rotated`, `corrected-native` or `corrected-rotated`; `ANTITONE_EXPORT_RESOURCE_FORMAT=tiff` narrows a run to TIFF for cost isolation.
+
+Every output pixel is reopened through bounded TIFF strips or a nonparallel EXR counting/finite-value sink; decoder limits are not disabled and another full-frame decoder cache is not introduced. Temporary photographic outputs are removed automatically. Phase traces separate original tile sampling/GPU/readback from reconstruction/initialization/encoding and include sampled process footprint, resident memory and Metal allocation, with sample age. Those quantities overlap and must not be added. The regrade exercises the GPU service after export, not simultaneous editing or physical UI latency. If other GPU consumers are not known to be idle, timings are indicative rather than isolated cost evidence; do not interrupt other work without agreement. This is a bounded observation on the supplied camera/device, not forced pressure, an aggregate admission guarantee or broad photographic acceptance.
 
 ImageIO provides independent TIFF reopening:
 
 ```sh
-cargo test --locked --offline --features raw,export --test raw_dng \
+cargo test --locked --offline --features raw,export,ocio-reference --test raw_dng \
   authored_dng_tiffs_reopen_with_independent_imageio_storage_and_profiles \
   -- --ignored --nocapture
 ```

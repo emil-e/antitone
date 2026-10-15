@@ -1,4 +1,4 @@
-#![cfg(all(feature = "raw", feature = "export"))]
+#![cfg(all(feature = "raw", feature = "export", feature = "ocio-reference"))]
 use antitone::{
     color::ap1_to_ap0,
     export::{self, ExrPrecision, ImageSize, Overwrite},

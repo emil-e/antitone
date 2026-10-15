@@ -62,7 +62,7 @@ impl WorkingView {
     pub(super) fn revision(&self) -> Option<u64> {
         self.intent.as_ref().map(|_| self.revision)
     }
-    #[cfg(test)]
+    #[cfg(all(test, feature = "ui-tests"))]
     pub(super) fn processing(&self) -> Option<&ProcessingSignature> {
         self.intent.as_ref().map(|i| &i.2)
     }

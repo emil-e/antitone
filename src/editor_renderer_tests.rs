@@ -1,10 +1,13 @@
 use super::*;
 use crate::renderer::RendererCache;
+#[cfg(feature = "ocio-reference")]
 use std::sync::atomic::AtomicU64;
 
+#[cfg(feature = "ocio-reference")]
 #[path = "editor_local_adjustment_raw_tests.rs"]
 mod local_adjustments;
 
+#[cfg(feature = "ocio-reference")]
 #[test]
 #[ignore = "read-only local RAW/Metal corrected affine shared-renderer integration"]
 fn corrected_affine_refinement_matches_scalar_coverage() {
@@ -387,6 +390,7 @@ fn wait(device: &wgpu::Device, queue: &wgpu::Queue) {
         })
         .unwrap();
 }
+#[cfg(feature = "ocio-reference")]
 fn pixels(device: &wgpu::Device, queue: &wgpu::Queue, image: &GpuImage) -> Vec<u8> {
     let width = image.linear.width();
     let height = image.linear.height();

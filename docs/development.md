@@ -16,6 +16,22 @@ Cargo uses the committed lockfile. Add `--offline` when caches are populated and
 
 ## Feature-specific checks
 
+Production and reference dependencies are separate:
+
+| Feature | Boundary |
+| --- | --- |
+| no default features | Numerical core; no native, GPU or UI dependency |
+| `raw` | CPU RAW development and measurements; LibRaw/OpenMP |
+| `gpu` | Precise photographic GPU processing; no OCIO or desktop |
+| `render` | Output targets, transfer and profiles; no OCIO |
+| `export` | Encoders, metadata and atomic file safety; no OCIO |
+| `raw,gpu,export` | Bounded original-sample GPU export; no desktop or OCIO |
+| `editor` | Production application, including GPU export; no OCIO |
+| `ocio-reference` | Independent OCIO renderer and scalar composed export oracles |
+| `ui-tests` | Editor interaction checks, including independent OCIO assertions |
+
+Tests that explicitly use the CPU/OCIO oracle require `ocio-reference`; this is not a production fallback. `--all-features` includes those references. Verify the production configuration separately so reference-feature unification cannot hide a runtime dependency.
+
 Choose checks for the boundary you changed rather than running every native/sample-dependent exercise.
 
 ```sh
@@ -28,7 +44,7 @@ cargo test --locked --features project \
   --test camera_project --test project --test film_project --test flat_field_project
 
 # Authored DNG plumbing; native libraries, no private photographs or desktop.
-cargo test --locked --features raw,export,project --test raw_dng --test raw_flat_field --test raw_roll
+cargo test --locked --features raw,export,project,ocio-reference --test raw_dng --test raw_flat_field --test raw_roll
 
 # Authored import/correction/Analyze/JPEG/cache workers; native setup and Metal, no desktop window.
 cargo test --locked --features editor --lib authored_ -- --test-threads=1
@@ -37,7 +53,7 @@ cargo test --locked --features editor --lib authored_ -- --test-threads=1
 cargo test --locked --features gpu --test gpu_processing --test gpu_film_response
 
 # Composed editor, scopes and viewer; native setup and Metal required.
-cargo test --locked --features editor --lib --test scopes --test viewer
+cargo test --locked --features editor,ocio-reference --lib --test scopes --test viewer
 ```
 
 The [authored RAW fixtures](../tests/fixtures/raw/README.md) are repository data, not private camera samples. They cover RAW/Scan/export, measured inversion anchors, sensor-clipping rejection, LibRaw matrix/flooring gates, correction/map persistence, roll sampling and named Editor/JPEG worker flows. They do not establish native-dialog interaction, general composed-UI behavior or photographic quality. Tests read them directly and use temporary export/project outputs; they never generate or download their inputs. The fixture README explains the patch expectations and deterministic maintenance recipe.
@@ -52,6 +68,21 @@ After native setup, use broader integration/lints when the change warrants them:
 cargo test --locked --all-features
 cargo clippy --locked --all-features --all-targets -- -D warnings
 ```
+
+## Export checks
+
+```sh
+# Production worker, immutable snapshots/operation identity, encoders and destination safety; no OCIO.
+cargo test --locked --features editor --lib export -- --test-threads=1
+# Independent original-sample processing/reconstruction and reopened files, including correction/locals.
+cargo test --locked --features raw,gpu,export,project,ocio-reference \
+  --lib gpu_export::tests -- --test-threads=1
+cargo test --locked --features raw,gpu,export,project,ocio-reference \
+  --test gpu_export --test export --test geometry_export --test local_adjustment_export
+cargo build --locked --release --features editor --bin antitone
+```
+
+Photographic numerical correspondence is not bitwise identity with scalar floating-point rounding. Original-sample, coverage, pre-encoding arithmetic and final quantization are checked separately; encoder tests require exact supplied-sample serialization. GPU/readback and reconstruction work is block-bounded in both dimensions. Modest square source/destination batches avoid orientation-dependent repeated work; larger batches trade fewer submissions against more live workspace, not against image quality. The file libraries still retain their checked encoded frame buffers; those limits and per-job bounds are not an aggregate memory-pressure guarantee. Keep broader resource/photographic/device acceptance separate.
 
 ## Roll analysis
 
@@ -89,10 +120,10 @@ The [local processing foundation](processing.md#local-grades-change-controls-not
 ```sh
 cargo test --locked --no-default-features --test local_adjustments
 cargo test --locked --features project --test local_adjustment_project
-cargo test --locked --features export,project --test local_adjustment_export
+cargo test --locked --features export,project,ocio-reference --test local_adjustment_export
 cargo test --locked --features gpu --lib gpu::
 cargo test --locked --features gpu --test gpu_local_adjustments
-cargo test --locked --features editor --test local_adjustment_consumers --test viewer --test scopes
+cargo test --locked --features editor,ocio-reference --test local_adjustment_consumers --test viewer --test scopes
 cargo test --locked --features editor --lib editor::processing::tests -- --test-threads=1
 ```
 

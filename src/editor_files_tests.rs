@@ -440,7 +440,8 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
         else {
             panic!()
         };
-        assert_eq!(id, editor.id);
+        assert_eq!(id.source, editor.id);
+        assert_eq!(Some(id.request), editor.export_pending);
         assert_eq!(destination, path);
         match (dispatched, format) {
             (OutputFormat::Tiff(a), OutputFormat::Tiff(b)) => assert_eq!(a, b),
