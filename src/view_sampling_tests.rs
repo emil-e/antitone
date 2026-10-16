@@ -237,7 +237,7 @@ impl Stages {
             * exposure_multiplier(photo.exposure).unwrap();
         Self {
             inversion: Inversion::new(source.calibration, roll).unwrap(),
-            // Exactly the scalar Pipeline's matrix construction; not a new exposure cut in GPU arithmetic.
+            // Match the scalar Pipeline's exposure and white-balance ordering.
             matrix: wb_matrix(photo.wb).unwrap()
                 * wb_matrix(roll.wb).unwrap()
                 * source.matrix

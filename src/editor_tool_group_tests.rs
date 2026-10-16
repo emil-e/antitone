@@ -1,9 +1,9 @@
-use super::{direct, frame, key, pointer};
+use super::{frame, key, pointer};
 use crate::editor::{
     controls,
-    icons::{self, Icon},
+    icons::Icon,
     presentation::{
-        SessionToolGroup, TextAction, ToolActions, ToolButton, ToolGroup, ToolIdentity, ToolShelf,
+        CONTROL_HEIGHT, SessionToolGroup, ToolButton, ToolGroup, ToolIdentity, ToolShelf,
     },
 };
 use egui::{Context, FullOutput, Ui};
@@ -61,107 +61,6 @@ fn tool_warning_has_reserved_space_reason_semantics_and_unchanged_actions() {
     }
 }
 
-fn direct_viewer(ui: &mut Ui, group: ToolGroup<'_>) -> egui::InnerResponse<ToolActions> {
-    let title = crate::editor::presentation::instrument_label(group.identity.title, 12.).strong();
-    let cancel = TextAction::new("Cancel")
-        .enabled(group.cancel_enabled)
-        .toolbar(0.)
-        .help("Cancel (Escape).");
-    let apply = TextAction::new("Apply")
-        .enabled(group.apply_enabled)
-        .primary()
-        .toolbar(0.)
-        .help("Apply (Enter).");
-    let title_width = egui::WidgetText::from(title.clone())
-        .into_galley(
-            ui,
-            Some(egui::TextWrapMode::Extend),
-            f32::INFINITY,
-            egui::TextStyle::Body,
-        )
-        .size()
-        .x;
-    let width = title_width
-        + cancel.width(ui)
-        + apply.width(ui)
-        + 16.
-        + 12.
-        + 3. * ui.spacing().item_spacing.x
-        + 8.;
-    egui::Frame::NONE
-        .fill(ui.visuals().selection.bg_fill.linear_multiply(0.15))
-        .inner_margin(egui::Margin::symmetric(6, 0))
-        .show(ui, |ui| {
-            ui.allocate_ui_with_layout(
-                egui::vec2(width - 12., 28.),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(16., 16.), egui::Sense::hover());
-                    if group.busy {
-                        ui.put(rect, egui::Spinner::new().size(16.));
-                    } else {
-                        group
-                            .identity
-                            .icon
-                            .paint(ui, rect, ui.visuals().selection.stroke);
-                    }
-                    let label = ui.add(egui::Label::new(title));
-                    label.widget_info(|| {
-                        egui::WidgetInfo::labeled(
-                            egui::WidgetType::Label,
-                            label.enabled(),
-                            format!(
-                                "Active tool: {}{}",
-                                group.identity.title,
-                                if group.busy { " · Working" } else { "" }
-                            ),
-                        )
-                    });
-                    ui.add_space(8.);
-                    ToolActions {
-                        cancel: direct(ui, cancel),
-                        apply: direct(ui, apply),
-                    }
-                },
-            )
-            .inner
-        })
-}
-
-fn direct_inspector<R>(
-    ui: &mut Ui,
-    identity: ToolIdentity<'_>,
-    reset: Option<bool>,
-    contents: impl FnOnce(&mut Ui, bool) -> R,
-) -> R {
-    let mut reset_clicked = false;
-    egui::Frame::NONE
-        .fill(ui.visuals().selection.bg_fill.linear_multiply(0.15))
-        .inner_margin(6.)
-        .show(ui, |ui| {
-            icons::row(ui, |ui| {
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(16., 16.), egui::Sense::hover());
-                identity.icon.paint(ui, rect, ui.visuals().selection.stroke);
-                ui.strong(identity.title);
-                if let Some(enabled) = reset {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        reset_clicked = icons::button(
-                            ui,
-                            Icon::Reset,
-                            enabled,
-                            "Reset draft",
-                            "Reset draft crop and angle; keeps orientation and colour.",
-                        )
-                        .clicked();
-                    });
-                }
-            });
-            contents(ui, reset_clicked)
-        })
-        .inner
-}
-
 fn node<'a>(output: &'a FullOutput, label: &str) -> &'a egui::accesskit::Node {
     &output
         .platform_output
@@ -189,6 +88,23 @@ fn node<'a>(output: &'a FullOutput, label: &str) -> &'a egui::accesskit::Node {
             )
         })
         .1
+}
+
+fn assert_icon_before_title(output: &FullOutput, title: &egui::accesskit::Node) {
+    let title = title.bounds().unwrap();
+    assert!(
+        output.shapes.iter().any(|shape| {
+            let bounds = shape
+                .shape
+                .visual_bounding_rect()
+                .intersect(shape.clip_rect);
+            bounds.is_positive()
+                && f64::from(bounds.right()) <= title.x0
+                && f64::from(bounds.bottom()) > title.y0
+                && f64::from(bounds.top()) < title.y1
+        }),
+        "tool icon must be painted before its title"
+    );
 }
 
 #[test]
@@ -240,7 +156,7 @@ fn session_group_measures_and_returns_one_right_aligned_done_action() {
 }
 
 #[test]
-fn viewer_group_preserves_frame_paint_geometry_ids_and_following_focus_target() {
+fn viewer_groups_keep_actions_ordered_contained_and_stable_across_frames() {
     for scale in [1., 2.] {
         for width in [315., 270.] {
             for enabled in [true, false] {
@@ -255,21 +171,14 @@ fn viewer_group_preserves_frame_paint_geometry_ids_and_following_focus_target() 
                     let context = Context::default();
                     context.set_pixels_per_point(scale);
                     frame(&context, width, enabled, vec![], |_| ());
-                    let render = |shared| {
+                    let render = || {
                         frame(&context, width, enabled, vec![], |ui| {
                             ui.spacing_mut().item_spacing.x = 4.;
                             ui.push_id("viewer", |ui| {
                                 let response = ui
                                     .with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            let group = group(title, false, title != "Dmin");
-                                            if shared {
-                                                group.show(ui)
-                                            } else {
-                                                direct_viewer(ui, group)
-                                            }
-                                        },
+                                        |ui| group(title, false, title != "Dmin").show(ui),
                                     )
                                     .inner;
                                 (response, ui.button("Following"))
@@ -277,8 +186,8 @@ fn viewer_group_preserves_frame_paint_geometry_ids_and_following_focus_target() 
                             .inner
                         })
                     };
-                    let ((before, following_before), before_output) = render(false);
-                    let ((after, following_after), after_output) = render(true);
+                    let ((before, following_before), _) = render();
+                    let ((after, following_after), output) = render();
                     assert_eq!(after.response.rect, before.response.rect);
                     assert_eq!(after.response.id, before.response.id);
                     assert_eq!(after.inner.cancel.rect, before.inner.cancel.rect);
@@ -286,18 +195,40 @@ fn viewer_group_preserves_frame_paint_geometry_ids_and_following_focus_target() 
                     assert_eq!(after.inner.cancel.id, before.inner.cancel.id);
                     assert_eq!(after.inner.apply.id, before.inner.apply.id);
                     assert_eq!(following_after.id, following_before.id);
-                    assert_eq!(after_output.shapes, before_output.shapes);
-                    assert_eq!(after.inner.apply.rect.height(), 28.);
-                    assert_eq!(after.response.rect.height(), 28.);
+                    assert_ne!(after.inner.cancel.id, after.inner.apply.id);
+                    assert_ne!(after.inner.apply.id, following_after.id);
+                    assert_eq!(after.inner.apply.rect.height(), CONTROL_HEIGHT);
+                    assert_eq!(after.response.rect.height(), CONTROL_HEIGHT);
                     assert_eq!(after.inner.cancel.enabled(), enabled);
                     assert_eq!(after.inner.apply.enabled(), enabled && title != "Dmin");
-                    let title_bounds = node(&after_output, &format!("Active tool: {title}"))
-                        .bounds()
-                        .unwrap();
-                    assert!(
-                        (after.inner.cancel.rect.left() - title_bounds.x1 as f32 - 12.).abs()
-                            < 1e-5
-                    );
+                    assert!(after.response.rect.contains_rect(after.inner.cancel.rect));
+                    assert!(after.response.rect.contains_rect(after.inner.apply.rect));
+                    assert!(after.inner.cancel.rect.right() <= after.inner.apply.rect.left());
+                    let title_node = node(&output, &format!("Active tool: {title}"));
+                    assert_icon_before_title(&output, title_node);
+                    let title_bounds = title_node.bounds().unwrap();
+                    assert!(title_bounds.x1 < f64::from(after.inner.cancel.rect.left()));
+                    let fill = |response: &egui::Response| {
+                        output
+                            .shapes
+                            .iter()
+                            .find_map(|shape| match &shape.shape {
+                                egui::Shape::Rect(rect) if rect.rect == response.rect => {
+                                    Some(rect.fill)
+                                }
+                                _ => None,
+                            })
+                            .unwrap()
+                    };
+                    assert_ne!(fill(&after.inner.apply), fill(&after.inner.cancel));
+                    for (name, response) in [
+                        ("Cancel", &after.inner.cancel),
+                        ("Apply", &after.inner.apply),
+                    ] {
+                        let action = node(&output, name);
+                        assert_eq!(action.role(), egui::accesskit::Role::Button);
+                        assert_eq!(action.is_disabled(), !response.enabled());
+                    }
                 }
             }
         }
@@ -355,12 +286,6 @@ fn busy_identity_changes_semantics_without_moving_actions_or_frame() {
     assert_eq!(idle.response.rect, busy.response.rect);
     assert_eq!(idle.inner.cancel.rect, busy.inner.cancel.rect);
     assert_eq!(idle.inner.apply.rect, busy.inner.apply.rect);
-    let (direct_busy, _) = frame(&context, 270., true, vec![], |ui| {
-        ui.spacing_mut().item_spacing.x = 4.;
-        direct_viewer(ui, group("Dmin", true, false))
-    });
-    assert_eq!(direct_busy.inner.cancel.id, busy.inner.cancel.id);
-    assert_eq!(direct_busy.inner.apply.id, busy.inner.apply.id);
     assert_eq!(
         node(&idle_output, "Active tool: Dmin").bounds(),
         node(&busy_output, "Active tool: Dmin · Working").bounds()
@@ -437,7 +362,7 @@ fn group_responses_keep_mouse_keyboard_focus_and_disabled_transition_behavior() 
 }
 
 #[test]
-fn inspector_identity_keeps_local_title_reset_and_body_geometry_ids_and_paint() {
+fn inspector_titles_resets_and_body_actions_fit_and_expose_supplied_availability() {
     for scale in [1., 2.] {
         for width in [315., 270.] {
             for enabled in [true, false] {
@@ -450,52 +375,51 @@ fn inspector_identity_keeps_local_title_reset_and_body_geometry_ids_and_paint() 
                     } else {
                         "Crop & straighten"
                     };
-                    let render = |shared| {
+                    let render = || {
                         frame(&context, width, enabled, vec![], |ui| {
                             ui.push_id("inspector", |ui| {
-                                let identity = ToolIdentity {
-                                    icon: Icon::Crop,
-                                    title,
-                                };
-                                let contents = |ui: &mut Ui, reset_clicked: bool| {
-                                    assert!(!reset_clicked);
-                                    ui.button("Body action")
-                                };
-                                if shared {
-                                    controls::active_tool(ui, identity.icon, title, reset, contents)
-                                } else {
-                                    direct_inspector(ui, identity, reset, contents)
-                                }
+                                ui.vertical(|ui| {
+                                    controls::active_tool(
+                                        ui,
+                                        Icon::Crop,
+                                        title,
+                                        reset,
+                                        |ui: &mut Ui, reset_clicked| {
+                                            assert!(!reset_clicked);
+                                            ui.button("Body action")
+                                        },
+                                    )
+                                })
+                                .inner
                             })
                             .inner
                         })
                     };
-                    let (before, before_output) = render(false);
-                    let (after, after_output) = render(true);
+                    let (before, _) = render();
+                    let (after, output) = render();
                     assert_eq!(after.rect, before.rect);
                     assert_eq!(after.id, before.id);
-                    assert_eq!(after_output.shapes, before_output.shapes);
-                    assert_eq!(
-                        node(&after_output, title).role(),
-                        egui::accesskit::Role::Label
-                    );
-                    assert!(
-                        !after_output
-                            .platform_output
-                            .accesskit_update
-                            .as_ref()
-                            .unwrap()
-                            .nodes
-                            .iter()
-                            .any(|(_, node)| node
-                                .value()
-                                .is_some_and(|label| label.starts_with("Active tool:")))
-                    );
+                    assert_eq!(after.enabled(), enabled);
+                    let title_node = node(&output, title);
+                    assert_eq!(title_node.role(), egui::accesskit::Role::Label);
+                    assert_icon_before_title(&output, title_node);
+                    let title_bounds = title_node.bounds().unwrap();
+                    let has_reset = output
+                        .platform_output
+                        .accesskit_update
+                        .as_ref()
+                        .unwrap()
+                        .nodes
+                        .iter()
+                        .any(|(_, node)| node.label() == Some("Reset draft"));
+                    assert_eq!(has_reset, reset.is_some());
+                    assert!(title_bounds.y1 <= f64::from(after.rect.top()));
                     if let Some(reset_enabled) = reset {
-                        let before = node(&before_output, "Reset draft");
-                        let after = node(&after_output, "Reset draft");
-                        assert_eq!(after.bounds(), before.bounds());
-                        assert_eq!(after.is_disabled(), !enabled || !reset_enabled);
+                        let reset_node = node(&output, "Reset draft");
+                        assert_eq!(reset_node.is_disabled(), !enabled || !reset_enabled);
+                        let reset_bounds = reset_node.bounds().unwrap();
+                        assert!(title_bounds.x1 <= reset_bounds.x0);
+                        assert!(reset_bounds.y1 <= f64::from(after.rect.top()));
                     }
                 }
             }

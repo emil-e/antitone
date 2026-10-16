@@ -32,27 +32,27 @@ v = (2*y + 1 - 320) / 320
 RGB light = 1 + (0.08,-0.05,0.03)*u + (-0.04,0.06,0.08)*v
 ```
 
-The recipe evaluates that field as exact integer ratios before rounding to sensor codes. All sites remain above black and below white. Accepted support (16,16,352,288) contains the normal 256×256 centre patch; no production support requirement is weakened for the fixture.
+The recipe evaluates that field as exact integer ratios before rounding to sensor codes. All sites remain above black and below white. Accepted support (16,16,352,288) contains the required 256×256 centre patch.
 
-[Correction tests](../../raw_flat_field.rs) check the known inverse illumination and corrected patch values, including the estimator's measured centre normalization. Their allowances account for authored sensor quantization and estimation, not captured output baselines. They also check identity outside support, precision-floor propagation, rejected-map immutability, exact project/map Save/Open, restored corrected pixels and actual corrected TIFF/AP0 EXR serialization. These direct API checks are complemented by an Editor worker test for cancelled/rejected reference edits, correction application and Save/Open without rereading a missing reference. Thumbnail scheduling is disabled in that test to avoid the user's disk cache; corrected-thumbnail and native-dialog acceptance remain separate.
+[Correction tests](../../raw_flat_field.rs) derive expected gains and patch values from this field, including the estimator's measured centre normalization. Their allowances account for authored sensor quantization and estimation, not captured output baselines.
 
 ## Analyze roll
 
 `roll-0.dng` and `roll-1.dng` are each 524,934 bytes with 512×512 sensors and crop (8,8,496,496). Their neutral picture rectangle is (96,96,320,320): a two-axis signal ramp from 256 to 2048, with the second frame's picture signal multiplied by 3/4. A 32-pixel transition joins each picture to a broad neutral film-base plateau of 3000. The recipe uses integer arithmetic and the same camera basis as the other fixtures.
 
-[Roll tests](../../raw_roll.rs) obtain 3,844 eligible film and 1,600 picture samples per frame through real 8×8 capture footprints. They check the declared Dmin plateau, dense-tail range, exposure ordering and cancellation. The Editor Analyze worker test additionally enforces production sample minimums, installs the grade, preserves geometry/global gamma, rejects sparse picture areas, acknowledges cancellation and round-trips Save/Open. [Framework Analyze tests](../../../docs/development.md#roll-analysis) add actual per-photo area-review/Cancel input, normal/narrow layouts, developed-source thumbnails and settled-target rendering. Their corrected case uses the matching correction pair and a temporary second copy of the illuminated negative, keeping production sample minimums unchanged without adding repository data. The [framework workflow tests](../../../docs/development.md#framework-ui-regressions) also use a temporary copy of `roll-0.dng` as the working photo, calibrated by real picks in patch-fixture sources. Its 496×496 active area supports a smaller native-pixel viewport at 800×600 without a larger fixture. The known base plateau checks +2 EV source inspection against CPU rendering in both targets; scope controls require complete valid whole-frame reductions. This neutral ramp tests plumbing and declared statistics, not photographic tonal-colour fitting or material detection.
+[Roll tests](../../raw_roll.rs) sample the declared plateau and ramp through production 8×8 capture footprints. Corrected [framework Analyze cases](../../../docs/development.md#roll-analysis) use the correction pair and a temporary second copy of the illuminated negative to meet complete-roll sample minimums. Working-view cases use `roll-0.dng`'s 496×496 active area to exercise native-pixel navigation with a bounded viewport. The neutral ramp supplies known statistics, not photographic tonal-colour fitting or material identity.
 
 ## Embedded preview
 
 `preview.dng` is 99,305 bytes. Its raw sensor pixels equal `patches.dng`; it adds an Exif sRGB declaration and a JPEG thumbnail IFD with orientation 6. The 16×8 baseline JPEG contains two authored neutral 8×8 blocks at codes 64 and 192. The maintained recipe encodes their DC-only coefficients with fixed quantization/Huffman tables; no downloaded image or general-purpose image encoder is needed.
 
-Tests extract the actual LibRaw JPEG without unpacking/developing RAW, verify copied-byte lifetime and unchanged diagnostics/development, then run the production decoder and real preview worker. Rotation produces an 8×16 display-referred placeholder with the two known grey bands. Removal from the visible-needed list releases it; proper-thumbnail coordination already has separate transaction tests. Native presentation and realistic camera preview behavior are not established.
+LibRaw can extract the JPEG without unpacking/developing RAW. Decoding with orientation produces an 8×16 display-referred placeholder with two known grey bands. It is a deterministic decoder/worker input, not a realistic proprietary-camera preview.
 
 All six DNGs total 1,740,935 bytes (about 1.66 MiB).
 
 ## Checks and maintenance
 
-Cache regressions use temporary copies of these fixtures to distinguish saved development identity from disposable cache freshness: appending bytes changes the cache revision without rejecting the saved project, and old selected seeds retain their old revision. Other worker checks develop project-relative cold thumbnails and verify that prewarm, selected processing, completed scopes and disk thumbnails reuse existing work. These are correctness checks, not latency budgets.
+Cache tests use temporary copies to distinguish saved development identity from disposable cache freshness: appending bytes changes the cache revision without changing the declared sensor data. Such checks establish correctness, not latency budgets.
 
 From the repository root, after normal native setup:
 
@@ -72,16 +72,16 @@ python3 scripts/generate-raw-fixture.py
 
 Ordinary tests read the repository binaries; they never generate or download them. Exports and projects go to isolated temporary directories. The recipe uses only Python's standard library and `--check` compares bytes without writing.
 
-The RAW tests also preserve measured inversion anchors at `2e-12` for gamma 0.1/0.65/1/3, a per-channel flooring rate no greater than 1%, and sampled LibRaw sRGB matrix agreement at `2/65535`. The authored matrix case must actually compare eligible pixels. Sensor-white/black rejection tests edit isolated temporary copies, never the repository data.
+Sensor-white/black rejection tests edit isolated temporary copies, never the repository data. Numerical gates and eligible-sample requirements live in the tests.
 
 The scalar rendering/export comparisons use the opt-in `ocio-reference` feature. Production GPU export/worker checks are documented in [development](../../../docs/development.md#export-checks); normal editor builds do not link OCIO.
 
-The tests cover declared metadata/sensor statistics, AHD camera RGB16, complete foreground/background-policy RGB agreement, immutable sensor diagnostics, automatic/explicit WB and invalid-gain rejection, nonzero crop/proxy centres, reference sampling, model-4 processing, both TIFF targets and half/full AP0 EXR reopening. `editor::document::tests` additionally covers initial DNG registration and preservation of saved WB through Open/re-import. TIFF/EXR pixel comparisons verify serialization against the actual pipeline, not independent photographic calibration. The opt-in [ImageIO check](../../../docs/diagnostics.md#export) independently verifies TIFF storage/profile decoding at two image sizes.
+TIFF/EXR pixel comparisons verify serialization against the actual pipeline, not independent photographic calibration. The opt-in [ImageIO check](../../../docs/diagnostics.md#export) independently reopens TIFF storage and profiles.
 
 ## Limits
 
-Pinned LibRaw supplies `[1,1,1,0]` for this three-plane DNG's raw metadata WB. Automatic WB selection shares green with the unspecified fourth gain through the [generic three-color WB boundary](../../../docs/processing.md#start-with-the-cameras-measurements); it does not alter raw metadata or explicit/saved WB. Scan and document-import checks pass without malformed four-plane metadata or a DNG/camera-specific production branch. The authored worker tests establish their named async flows, not general composed-UI or native presentation coverage.
+Pinned LibRaw supplies `[1,1,1,0]` for this three-plane DNG's raw metadata WB. Automatic WB selection shares green with the unspecified fourth gain through the [generic three-color WB boundary](../../../docs/processing.md#start-with-the-cameras-measurements); it does not alter raw metadata or explicit/saved WB. The authored worker tests establish their named async flows, not general composed-UI or native presentation coverage.
 
 Tag choices follow [DNG definitions](https://www.adobe.com/go/dng_spec) and were checked against pinned LibRaw's parser. Adobe DNG Validator acceptance is not established. Successful LibRaw decoding is not general DNG conformance.
 
-No proprietary-camera preview behavior, photographic correction/Analyze quality, GPU/desktop presentation, physical colour or realistic resource/performance acceptance follows. Named [framework UI regressions](../../../docs/development.md#framework-ui-regressions) cover authored transactions, not general interaction/native appearance. Framework project/correction tests add exact Save/Open, failed-transition preservation, corrected picker measurements, map-keyed thumbnail readiness in both targets and missing-reference reopening. Broader [thumbnail coordination/real-use acceptance](../../../docs/plans/visual-feedback.md) and [native/physical interaction](../../../docs/plans/inspection-and-interaction.md) remain open.
+Synthetic fixtures do not establish photographic correction/Analyze quality, desktop presentation, physical colour or realistic resource/performance acceptance. [Framework UI checks](../../../docs/development.md#framework-ui-regressions), [thumbnail/real-use acceptance](../../../docs/plans/visual-feedback.md) and [native/physical interaction](../../../docs/plans/inspection-and-interaction.md) address separate boundaries.

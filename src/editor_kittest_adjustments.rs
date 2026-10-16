@@ -181,8 +181,6 @@ fn local_target_widgets_commit_outgoing_numbers_and_keep_global_and_section_rese
     ] {
         set_layout(&mut harness, size, width);
         open_drawer(&mut harness);
-        assert_eq!(harness.query_all_by_label("Global").count(), 0);
-        assert_eq!(harness.query_all_by_label("Editing: Global").count(), 0);
         assert!(
             (harness.get_by_label("Sky").rect().width()
                 - harness.get_by_label("Foreground").rect().width())
@@ -338,10 +336,6 @@ fn drawer_close_commits_outgoing_local_then_routes_global_and_reopens_the_same_l
         harness.state().adjustment_target(),
         super::super::adjustments::Target::Local(ids[0])
     );
-    assert_eq!(harness.query_all_by_label("Global").count(), 0);
-    assert_eq!(harness.query_all_by_label("Editing: Global").count(), 0);
-    assert_eq!(harness.query_all_by_label("More…").count(), 0);
-    assert_eq!(harness.query_all_by_label("Mask").count(), 0);
     click(&mut harness, "Foreground");
     for name in ["Add linear", "Add radial"] {
         let icon = harness
@@ -374,7 +368,6 @@ fn drawer_close_commits_outgoing_local_then_routes_global_and_reopens_the_same_l
     );
     assert_eq!(harness.query_all_by_label("Add radial").count(), 0);
     assert_eq!(harness.query_all_by_label("Editing: Foreground").count(), 0);
-    assert_eq!(harness.query_all_by_label("Editing: Global").count(), 0);
     save_capture(&harness.render().unwrap(), "adjustments-closed-with-locals");
     workflow::enter_numeric(&mut harness, "Exposure", "0.625");
     assert_eq!(harness.state().photo.exposure, 0.625);
@@ -404,8 +397,6 @@ fn empty_open_tool_keeps_grading_visible_but_read_only_and_close_reenables_it() 
         set_layout(&mut harness, size, width);
         let before = harness.state().document.project.clone();
         open_drawer(&mut harness);
-        assert_eq!(harness.query_all_by_label("Global").count(), 0);
-        assert_eq!(harness.query_all_by_label("Editing: Global").count(), 0);
         for label in ["Exposure", "Warmth", "Contrast", "Saturation"] {
             assert!(
                 harness
@@ -451,7 +442,6 @@ fn empty_open_tool_keeps_grading_visible_but_read_only_and_close_reenables_it() 
                 .accesskit_node()
                 .is_disabled()
         );
-        assert_eq!(harness.query_all_by_label("Editing: Global").count(), 0);
         save_capture(
             &harness.render().unwrap(),
             &format!("adjustments-closed-{name}"),

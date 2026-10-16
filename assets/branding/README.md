@@ -13,7 +13,7 @@ The wordmark uses normal-width Arimo Bold with a leading triangle pointing into 
 - `png/`: transparent square icons from 16 to 1024 pixels, with the small artwork used through 32 pixels.
 - `icon.ico`: multi-size PNG-backed Windows icon; `icon.icns`: the macOS icon set, including Retina representations.
 
-macOS can apply its own appearance treatment to bundle icons, so judge the Finder/Dock result as well as the flat SVG. The macOS icon adds a transparent canvas inset for Dock alignment. Its small representations are selected by logical size, so 32-point Retina uses the small artwork at 64 physical pixels. PNG/ICO exports do not have the macOS inset. These formats are ready for platform integration; they do not establish Windows/Linux application support or device acceptance.
+macOS can apply its own appearance treatment to bundle icons, so judge the Finder/Dock result as well as the flat SVG. The macOS icon adds a transparent canvas inset for Dock alignment. Its small representations are selected by logical size, so 32-point Retina uses the small artwork at 64 physical pixels. PNG/ICO exports do not have the macOS inset. See the [application prerequisites](../../README.md#prerequisites) for supported platforms.
 
 SVG wordmarks contain paths, not text or external font references. Preserve their proportions and the distinction between the horizontal wordmark index and the icon’s vertical film edge.
 
@@ -27,6 +27,6 @@ From the repository root on macOS with Apple’s command-line developer tools:
 
 [`native/branding_assets.swift`](../../native/branding_assets.swift) owns the geometry and typography, emits both vector and raster assets, and uses `iconutil` for ICNS. Intermediate icon sets and Swift caches stay in `.cache/branding-assets/`. Normal app builds use the checked-in assets and do not need asset generation or font downloads.
 
-The checked-in, unmodified [Arimo Bold source](https://github.com/googlefonts/Arimo/tree/4a6255f269916ae7ad3fc2706b0935e7621396b8) is used only for regeneration. Its [SIL Open Font License](fonts/OFL.txt) accompanies `fonts/Arimo-Bold.ttf`; no font is installed globally or embedded in the application. The window/index artwork is project-authored. Private references and concept screenshots are not production assets.
+The checked-in, unmodified [Arimo Bold source](https://github.com/googlefonts/Arimo/tree/4a6255f269916ae7ad3fc2706b0935e7621396b8) is used only for regeneration. Its [SIL Open Font License](fonts/OFL.txt) accompanies `fonts/Arimo-Bold.ttf`; no font is installed globally or embedded in the application. The window/index artwork is project-authored.
 
 For app/bundle use, see [build and run](../../README.md#build-and-run). The local macOS bundle is not a signed, self-contained release.

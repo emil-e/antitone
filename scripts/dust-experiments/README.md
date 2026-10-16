@@ -283,7 +283,7 @@ PYTHONDONTWRITEBYTECODE=1 .cache/venv/bin/python scripts/dust-experiments/lightr
 
 The command requires one `outputs/CASE.jpg` per manifest case. It converts each embedded output profile to Antitone sRGB and round-trips the input and Antitone reference through JPEG with that output's quantization tables and sampling. This controls much of the encoding bias but does not restore 16-bit values or make JPEG encoders identical. Outside-support measurements diagnose global encoding/colour differences only; without clean recaptures they are not repair scores.
 
-Current known cases and returned cloud JPEGs are a pilot, not interoperability or competitive acceptance. The operator accepted all eight automatic Lightroom results without source moves, mask edits or retries and preferred Lightroom for the siding fleck. Further Lightroom comparison is intentionally closed because it became tedious and is no longer an acceptance gate; retain the package only as a competitive sanity check.
+The [pilot findings](../../docs/research/dust-removal.md#lightroom-pilot-competitive-sanity-check-only) provide competitive context, not interoperability or production acceptance. Further Lightroom comparison is out of scope.
 
 ## Controlled detection support coverage
 
@@ -315,6 +315,6 @@ cargo clippy --locked --offline --features raw,render,export,project \
   --bin antitone-dust-source-probe -- -D warnings
 ```
 
-Native probe integration tests run when the release binary exists; without it they report an explicit skip. Build the probe before interpreting a full test pass. Unit/integration checks cover fixed-source rejection, paired/weighted context, nearest-source tie-breaking, dependent masks, deterministic held-out generation, bounded score-derived support and singleton rejection, quadratic and crossing-wire controls, identical donors across correction variants, masked-truth independence, log-camera positivity, context-veto collateral rejection, selected-only development, exact known-byte retention, production floor flags, invalid snapshots and no-overwrite output.
+Native probe integration tests run when the release binary exists; without it they report an explicit skip. Build the probe before interpreting a full test pass.
 
 Pointwise reconstruction error favours averaging away unpredictable grain. Masked highpass energy is a complementary diagnostic, not a guarantee of grain spectrum, colour correlation, structure or semantic fidelity. Neither replaces native-resolution photographic inspection.

@@ -1,6 +1,6 @@
 # Accept the physical-view working image
 
-The narrow Global editor prototype is implemented. Its current behavior belongs in [the editor guide](../editor.md#a-stable-working-view-while-grading), [processing](../processing.md#physical-view-processing-is-an-approximation), [geometry](../geometry.md#process-before-averaging) and [scopes](../scopes.md). This plan tracks unfinished acceptance, not authorization to expand into local tools, export migration or CPU-renderer removal. [PLAN.md](../../PLAN.md) owns priority; [local adjustments](local-adjustments.md) owns feature-specific photographic and interaction follow-up.
+The narrow Global editor prototype is implemented. Its current behavior belongs in [the editor guide](../editor.md#a-stable-working-view-while-grading), [processing](../processing.md#physical-view-processing-is-an-approximation), [geometry](../geometry.md#process-before-averaging) and [scopes](../scopes.md). This plan tracks unfinished photographic, latency and concurrent-resource acceptance. [PLAN.md](../../PLAN.md) owns priority; [local adjustments](local-adjustments.md) owns feature-specific photographic and interaction follow-up.
 
 ## Acceptance contract
 
@@ -23,4 +23,4 @@ Initial live Global appearance and responsiveness have been positively assessed.
 
 ## Next checkpoint
 
-Complete quantitative/synthetic matching-view export, integrated latency and concurrent-resource evidence. Include rapid navigation/grade changes with coarse support, GPU-backlog coalescing and the cold whole-composition acquisition now required even when initial demand is regional. Corrected acquisition still takes seconds; passing regression tests are not complete acceptance. Investigate remaining local stress cost where measurements justify it; do not turn it into another prerequisite research programme. Normal local tools now share this lifecycle and original-sample GPU export; broaden acceptance without introducing a parallel rendering owner. Scene-linear AP0 EXR must stay distinct from display ACES.
+Complete quantitative/synthetic matching-view export, integrated latency and concurrent-resource evidence. Include rapid navigation/grade changes with coarse support, GPU-backlog coalescing and cold whole-composition acquisition even when initial demand is regional. Corrected acquisition still takes seconds; passing regression tests are not complete acceptance. Investigate remaining local stress cost where measurements justify it; do not turn it into another prerequisite research programme. Normal local tools share this lifecycle and original-sample GPU export; broaden acceptance without introducing a parallel rendering owner. Scene-linear AP0 EXR must stay distinct from display ACES.

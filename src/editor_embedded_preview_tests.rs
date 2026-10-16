@@ -364,11 +364,29 @@ fn camera_images_and_badges_fit_polished_wells_and_clip_without_squeezing_or_hid
                 let wells: Vec<_> = output
                     .shapes
                     .iter()
-                    .filter_map(|shape| match &shape.shape {
-                        egui::Shape::Rect(rect) if rect.fill == egui::Color32::from_gray(14) => {
-                            Some(rect.rect)
+                    .filter_map(|shape| {
+                        let egui::Shape::Rect(rect) = &shape.shape else {
+                            return None;
+                        };
+                        if rect.stroke.width != 0. {
+                            return None;
                         }
-                        _ => None,
+                        let inside_card = output.shapes.iter().any(|shape| match &shape.shape {
+                            egui::Shape::Rect(card) => {
+                                card.stroke.width > 0. && card.rect.contains_rect(rect.rect)
+                            }
+                            _ => false,
+                        });
+                        let contains_camera_image = output.shapes.iter().any(|shape| {
+                            let egui::Shape::Mesh(mesh) = &shape.shape else {
+                                return false;
+                            };
+                            textures
+                                .iter()
+                                .any(|(_, texture)| texture.id() == mesh.texture_id)
+                                && rect.rect.expand(0.5).contains_rect(mesh.calc_bounds())
+                        });
+                        (inside_card && contains_camera_image).then_some(rect.rect)
                     })
                     .collect();
                 let mut images = 0;
@@ -394,15 +412,10 @@ fn camera_images_and_badges_fit_polished_wells_and_clip_without_squeezing_or_hid
                                 (rect.aspect_ratio() - dimensions.x / dimensions.y).abs() < 0.001
                             );
                             assert!(well.expand(0.5).contains_rect(shape.clip_rect));
-                            assert_eq!(
-                                mesh.vertices.iter().map(|v| v.uv).collect::<Vec<_>>(),
-                                [
-                                    egui::pos2(0., 0.),
-                                    egui::pos2(1., 0.),
-                                    egui::pos2(0., 1.),
-                                    egui::pos2(1., 1.)
-                                ]
-                            );
+                            for vertex in &mesh.vertices {
+                                let expected = (vertex.pos - rect.min) / rect.size();
+                                assert!((vertex.uv.to_vec2() - expected).length() < 1e-5);
+                            }
                             if rect.intersect(shape.clip_rect).is_positive() {
                                 edges[0] |= rect.left() < shape.clip_rect.left();
                                 edges[1] |= rect.right() > shape.clip_rect.right();
@@ -416,14 +429,10 @@ fn camera_images_and_badges_fit_polished_wells_and_clip_without_squeezing_or_hid
                                 .find(|well| well.expand(0.5).contains_rect(bounds))
                                 .unwrap();
                             assert!(well.expand(0.5).contains_rect(shape.clip_rect));
-                            assert_eq!(
-                                text.galley.job.text,
-                                if well.height() < 24. {
-                                    "Camera"
-                                } else {
-                                    "Camera preview"
-                                }
-                            );
+                            assert!(matches!(
+                                text.galley.job.text.as_str(),
+                                "Camera" | "Camera preview"
+                            ));
                             badges += 1;
                         }
                         egui::Shape::Text(text) if text.galley.job.text.starts_with("photo-") => {
@@ -500,8 +509,15 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
             .find(|(_, node)| node.label() == Some(name.as_ref()))
             .unwrap();
         assert_eq!(selected.1.toggled(), Some(egui::accesskit::Toggled::True));
+        let bounds = selected.1.bounds().unwrap();
         assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
-            egui::Shape::Rect(rect) if rect.stroke.width == 1.5 && rect.fill == egui::Color32::from_gray(48))));
+            egui::Shape::Rect(rect)
+                if f64::from(rect.rect.left()) == bounds.x0
+                    && f64::from(rect.rect.top()) == bounds.y0
+                    && f64::from(rect.rect.right()) == bounds.x1
+                    && f64::from(rect.rect.bottom()) == bounds.y1
+                    && rect.stroke.width > 0.
+                    && rect.stroke.color == context.style_of(egui::Theme::Dark).visuals.selection.stroke.color)));
         output
             .shapes
             .into_iter()

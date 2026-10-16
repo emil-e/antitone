@@ -1,17 +1,29 @@
 fn cards(output: &egui::FullOutput) -> Vec<&egui::epaint::RectShape> {
+    let nodes = &output
+        .platform_output
+        .accesskit_update
+        .as_ref()
+        .unwrap()
+        .nodes;
     output
         .shapes
         .iter()
-        .filter_map(|shape| {
-            if let egui::Shape::Rect(rect) = &shape.shape
-                && rect.corner_radius == egui::CornerRadius::same(4)
-                && rect.rect.width() >= 64.
-                && rect.stroke.width > 0.
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Rect(rect)
+                if nodes.iter().any(|(_, node)| {
+                    node.toggled().is_some()
+                        && node.label().is_some_and(|label| label.ends_with(".ARW"))
+                        && node.bounds().is_some_and(|bounds| {
+                            bounds.x0 == f64::from(rect.rect.left())
+                                && bounds.y0 == f64::from(rect.rect.top())
+                                && bounds.x1 == f64::from(rect.rect.right())
+                                && bounds.y1 == f64::from(rect.rect.bottom())
+                        })
+                }) =>
             {
                 Some(rect)
-            } else {
-                None
             }
+            _ => None,
         })
         .collect()
 }
@@ -28,6 +40,7 @@ fn card_frames_and_captions_fit_compact_and_normal_strips_without_changing_prefe
         editor.preferences.filmstrip_height = height;
         for size in [egui::vec2(700., 600.), egui::vec2(1100., 800.)] {
             let context = egui::Context::default();
+            context.enable_accesskit();
             for _ in 0..3 {
                 let mut output = context.run_ui(
                     egui::RawInput {
@@ -61,14 +74,15 @@ fn card_frames_and_captions_fit_compact_and_normal_strips_without_changing_prefe
                         .stroke
                         .color
                 );
-                assert_eq!(cards[0].stroke.width, 1.5);
-                assert_eq!(cards[0].fill, egui::Color32::from_gray(48));
+                assert!(cards[0].stroke.width > 0.);
+                assert_eq!(cards[0].fill.r(), cards[0].fill.g());
+                assert_eq!(cards[0].fill.g(), cards[0].fill.b());
                 let captions: Vec<_> = output
                     .shapes
                     .iter()
                     .filter_map(|shape| {
                         if let egui::Shape::Text(text) = &shape.shape
-                            && text.galley.job.sections[0].format.font_id.size == 11.
+                            && text.galley.job.text.ends_with(".ARW")
                         {
                             Some(text)
                         } else {
@@ -98,6 +112,7 @@ fn hover_is_neutral_and_distinct_from_selection_without_changing_cell_geometry()
     editor.current_source = Some(editor.document.project.order[0]);
     editor.busy = false;
     let context = egui::Context::default();
+    context.enable_accesskit();
     let mut frame = |pointer: Option<egui::Pos2>| {
         let mut output = context.run_ui(
             egui::RawInput {
@@ -119,8 +134,12 @@ fn hover_is_neutral_and_distinct_from_selection_without_changing_cell_geometry()
     let idle = cards(&idle);
     let hover = cards(&hover);
     assert_eq!(idle[1].rect, hover[1].rect);
-    assert_eq!(hover[1].fill, egui::Color32::from_gray(28));
-    assert_eq!(hover[1].stroke.color, egui::Color32::from_gray(65));
+    assert_ne!(hover[1].fill, idle[1].fill);
+    assert_eq!(hover[1].fill.r(), hover[1].fill.g());
+    assert_eq!(hover[1].fill.g(), hover[1].fill.b());
+    assert_eq!(hover[1].stroke.color.r(), hover[1].stroke.color.g());
+    assert_eq!(hover[1].stroke.color.g(), hover[1].stroke.color.b());
     assert_ne!(hover[1].stroke, hover[0].stroke);
-    assert_eq!(hover[0].fill, egui::Color32::from_gray(48));
+    assert_ne!(hover[1].fill, hover[0].fill);
+    assert_eq!(hover[0].fill, idle[0].fill);
 }

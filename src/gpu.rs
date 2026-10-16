@@ -71,8 +71,7 @@ fn source_preview_gain(fixed_wb: Option<[f64; 4]>) -> f64 {
             return None;
         }
         let gain = f64::from(maximum) / f64::from(wb[1]);
-        // A pathological WB must not introduce unbounded display gain. This is only
-        // a preview fallback; RAW/project WB validation and measurements are unchanged.
+        // Bound preview gain for pathological development WB.
         (gain.is_finite() && gain <= crate::processing::MAX_EXPOSURE.exp2()).then_some(gain)
     });
     headroom.unwrap_or(1.) * SOURCE_PREVIEW_EXPOSURE.exp2()

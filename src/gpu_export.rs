@@ -224,8 +224,8 @@ fn write_job_with_policy(
         )
     })?;
     let tile_size = tiles.size;
-    // Coordinates are unnecessary for some uncorrected serial sources outside this domain.
-    // Keep their existing GPU path rather than narrowing admission for an optimization.
+    // Paired source coordinates must be exact f32 integers. Uncorrected serial sources
+    // can remain valid outside that coordinate range.
     let paired = matches!(format, Format::Tiff(_))
         && tile_size == TILE
         && u64::from(scan.area.x) + u64::from(scan.area.width) <= 1 << 24

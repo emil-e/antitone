@@ -7,7 +7,7 @@ mod tool_groups;
 #[path = "editor_ui_typography_tests.rs"]
 mod typography;
 
-use super::{INSCRIPTION, TextAction, app_header, configure_branding};
+use super::{CONTROL_HEIGHT, INSCRIPTION, TextAction, app_header, configure_branding};
 use egui::{Context, Event, FullOutput, Modifiers, Pos2, Rect, Response, Ui};
 
 pub(super) fn frame<R>(
@@ -76,35 +76,6 @@ fn rotation_cursor_bitmaps_keep_the_hotspot_contrast_and_bounded_storage() {
         super::icons::rotation_cursor(ui.ctx(), id, 0.);
         assert_eq!(ui.next_auto_id(), before);
     });
-}
-
-fn direct(ui: &mut Ui, action: TextAction<'_>) -> Response {
-    if action.toolbar_width.is_none()
-        && !action.primary
-        && action.enabled
-        && action.name.is_none()
-        && action.help.is_none()
-    {
-        return ui.button(action.label);
-    }
-    let mut button = egui::Button::new(action.label);
-    if let Some(width) = action.toolbar_width {
-        button = button.min_size(egui::vec2(width, 28.));
-    }
-    if action.primary {
-        button = button.fill(ui.visuals().selection.bg_fill);
-    }
-    let response = ui.add_enabled(action.enabled, button);
-    if let Some(name) = action.name {
-        response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Button, response.enabled(), name)
-        });
-    }
-    if let Some(help) = action.help {
-        response.on_hover_text(help)
-    } else {
-        response
-    }
 }
 
 pub(in crate::editor) fn key(key: egui::Key) -> Vec<Event> {
@@ -305,7 +276,7 @@ fn app_header_keeps_the_wordmark_size_neutral_theme_and_menu_focus_at_both_scale
 }
 
 #[test]
-fn text_actions_preserve_direct_button_geometry_ids_and_paint_at_both_scales() {
+fn text_actions_fit_their_labels_and_keep_ids_and_supplied_availability() {
     for scale in [1., 2.] {
         for width in [315., 270.] {
             for inherited_enabled in [true, false] {
@@ -332,24 +303,50 @@ fn text_actions_preserve_direct_button_geometry_ids_and_paint_at_both_scales() {
                     let context = Context::default();
                     context.set_pixels_per_point(scale);
                     frame(&context, width, inherited_enabled, vec![], |_| ());
-                    let (baseline, before) =
+                    let draw = || {
                         frame(&context, width, inherited_enabled, vec![], |ui| {
-                            direct(ui, action)
-                        });
-                    let (shared, after) = frame(&context, width, inherited_enabled, vec![], |ui| {
-                        action.show(ui)
-                    });
-                    assert_eq!(shared.id, baseline.id);
-                    assert_eq!(shared.rect, baseline.rect);
-                    assert_eq!(shared.enabled(), baseline.enabled());
-                    assert_eq!(after.shapes, before.shapes);
+                            action.show(ui)
+                        })
+                    };
+                    let (before, _) = draw();
+                    let (after, output) = draw();
+                    assert_eq!(after.id, before.id);
+                    assert_eq!(after.rect, before.rect);
+                    assert_eq!(after.enabled(), inherited_enabled && action.enabled);
+                    let text = output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            egui::Shape::Text(text) if text.galley.job.text == action.label => {
+                                Some(text)
+                            }
+                            _ => None,
+                        })
+                        .unwrap();
+                    let bounds = text.galley.rect.translate(text.pos.to_vec2());
+                    assert!(after.rect.expand(0.5).contains_rect(bounds));
                     if let Some(min_width) = action.toolbar_width {
-                        assert_eq!(shared.rect.height(), 28.);
-                        assert!(shared.rect.width() >= min_width);
+                        assert_eq!(after.rect.height(), CONTROL_HEIGHT);
+                        assert!(after.rect.width() >= min_width);
                     }
                 }
             }
         }
+    }
+}
+
+#[test]
+fn natural_text_actions_use_egui_button_sizing_and_caller_ids() {
+    for enabled in [false, true] {
+        let context = Context::default();
+        frame(&context, 315., enabled, vec![], |_| ());
+        let (button, _) = frame(&context, 315., enabled, vec![], |ui| ui.button("Save"));
+        let (action, _) = frame(&context, 315., enabled, vec![], |ui| {
+            TextAction::new("Save").show(ui)
+        });
+        assert_eq!(action.rect, button.rect);
+        assert_eq!(action.id, button.id);
+        assert_eq!(action.enabled(), button.enabled());
     }
 }
 
@@ -427,36 +424,26 @@ fn semantic_name_is_independent_of_painted_label_and_reports_button_state() {
 }
 
 #[test]
-fn repeated_labels_keep_caller_scopes_and_direct_focus_order() {
+fn repeated_labels_keep_caller_scopes_and_focus_order() {
     let context = Context::default();
-    let render = |shared, events| {
+    let render = |events| {
         frame(&context, 315., true, events, |ui| {
             ["roll", "photo"].map(|scope| {
-                ui.push_id(scope, |ui| {
-                    let action = TextAction::new("Reset");
-                    if shared {
-                        action.show(ui)
-                    } else {
-                        direct(ui, action)
-                    }
-                })
-                .inner
+                ui.push_id(scope, |ui| TextAction::new("Reset").show(ui))
+                    .inner
             })
         })
     };
-    let (direct, _) = render(false, vec![]);
-    let (shared, _) = render(true, vec![]);
-    assert_ne!(shared[0].id, shared[1].id);
+    let (before, _) = render(vec![]);
+    let (after, _) = render(vec![]);
+    assert_ne!(after[0].id, after[1].id);
     assert_eq!(
-        direct.map(|response| response.id),
-        shared.clone().map(|response| response.id)
+        before.map(|response| response.id),
+        after.clone().map(|response| response.id)
     );
-    context.memory_mut(|memory| memory.request_focus(shared[0].id));
-    render(true, key(egui::Key::Tab));
-    assert_eq!(
-        context.memory(|memory| memory.focused()),
-        Some(shared[1].id)
-    );
+    context.memory_mut(|memory| memory.request_focus(after[0].id));
+    render(key(egui::Key::Tab));
+    assert_eq!(context.memory(|memory| memory.focused()), Some(after[1].id));
 }
 
 #[test]

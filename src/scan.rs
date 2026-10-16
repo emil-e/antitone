@@ -381,7 +381,7 @@ impl Scan {
         self.analysis_samples_in(area, budget, |_| true, cancelled)
     }
 
-    /// Select complete spatial footprints before the unchanged numerical gates.
+    /// Select complete spatial footprints before checking capture and numerical eligibility.
     /// The grid remains canonical to `area`; support never resizes/rephases it.
     pub fn analysis_samples_in(
         &mut self,

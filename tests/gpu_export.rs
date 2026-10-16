@@ -77,8 +77,7 @@ fn tiff(path: &Path) -> Vec<u16> {
     values
 }
 
-// Photographic correspondence is distinct from exact encoder serialization.
-// Existing scalar/OCIO tests remain independent reference and encoder checks.
+// GPU/scalar correspondence allows rounding differences; encoder serialization is exact.
 #[test]
 fn gpu_tiff_matches_scalar_ocio_within_one_rgb16_code_on_authored_patches() {
     let (device, queue, renderer) = context();

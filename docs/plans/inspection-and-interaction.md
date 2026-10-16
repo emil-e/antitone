@@ -23,7 +23,6 @@ These are unfinished fixes and design questions. [The roadmap](../../PLAN.md) ow
 
 ### Layout and controls
 
-- **Scopes disclosure:** decide whether disclosure-style hiding improves the persistent visibility control without changing canvas/resource behavior.
 - **Preferences dialog:** replace the temporary CPU/GPU cache menu with a dedicated preferences surface, preserving persisted whole-MiB/zero limits, explicit reset and the distinction between optional ownership and process memory.
 - **Native shell:** native app menus and ownership of native file choosers need design; no native-shell framework choice is established.
 - **Operation feedback:** coordinate progress/errors with [the feedback slice](completion.md#operation-feedback), preserving transactions and cancellation boundaries.

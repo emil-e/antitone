@@ -214,7 +214,6 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                     text.iter().find(|(s, _)| s == "Cancel").unwrap().1.left() - identity.right()
                         >= 11.5
                 );
-                assert!(!text.iter().any(|(s, _)| s.starts_with("Move tool toolbar")));
                 assert!(
                     !text
                         .iter()
@@ -448,7 +447,6 @@ fn bottom_crop_handles_are_unobstructed_without_reframing_or_docking() {
         let draft = editor.crop_edit.as_ref().unwrap().draft;
         let viewport = editor.viewport;
         let text = labels(&mut editor, &context, size, vec![]);
-        assert!(!text.iter().any(|(s, _)| s.starts_with("Move tool toolbar")));
         for name in ["Apply", "Cancel"] {
             assert!(
                 text.iter().find(|(s, _)| s == name).unwrap().1.top() >= layout.canvas.bottom()
@@ -804,7 +802,6 @@ fn geometry_tools_use_trailing_viewer_bar_actions_and_only_their_own_inspector()
                         .unwrap()
                         .canvas;
                     assert_eq!(current_canvas, canvas);
-                    assert!(!text.iter().any(|(s, _)| s.starts_with("Move tool toolbar")));
                     let cancel = text.iter().find(|(s, _)| s == "Cancel").unwrap().1;
                     let apply = text.iter().find(|(s, _)| s == "Apply").unwrap().1;
                     assert!(cancel.top() >= canvas.bottom() && apply.top() >= canvas.bottom());

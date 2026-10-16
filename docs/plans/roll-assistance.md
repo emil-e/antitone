@@ -23,7 +23,7 @@ Keep these separate from completion of the accepted review; no implementation ha
 - Measure legitimate signal lost to the conservative 8×8 neighbourhood veto before changing it. Preserve capture/development/floor safety invariants.
 - Investigate damaged-film tails, including DSC04492. Better geometry can exclude non-film material but cannot establish that film is undamaged. Diagnostic exclusion establishes influence, not permission to omit or repair the source.
 
-[Remaining region consumers](region-detection.md) own bare-light correction support and future crop acceptance. Analyze's source-order ambiguity is no longer an unimplemented detector stage.
+[Remaining region consumers](region-detection.md) own bare-light correction support and future crop acceptance.
 
 ## Concrete limits
 

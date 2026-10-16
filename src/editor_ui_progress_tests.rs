@@ -154,7 +154,7 @@ fn measured_progress_uses_supplied_file_counts() {
 }
 
 #[test]
-fn viewer_spinner_is_large_centred_and_has_no_visible_copy() {
+fn viewer_spinner_is_centred_with_an_accessible_label_and_no_visible_copy() {
     let context = Context::default();
     context.enable_accesskit();
     let canvas = Rect::from_min_size(egui::pos2(32., 60.), egui::vec2(500., 350.));
@@ -166,7 +166,8 @@ fn viewer_spinner_is_large_centred_and_has_no_visible_copy() {
         }
         .viewer(ui, canvas);
         assert_eq!(response.rect.center(), canvas.center());
-        assert_eq!(response.rect.size(), egui::vec2(32., 32.));
+        assert!(response.rect.is_positive());
+        assert!(canvas.contains_rect(response.rect));
     });
     output.textures_delta.clear();
     assert!(

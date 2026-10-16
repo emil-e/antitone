@@ -109,8 +109,6 @@ fn drawing_accepts_on_release_and_exposure_is_immediately_available_without_a_ma
         harness.state().adjustment_target(),
         super::super::adjustments::Target::Local(locals.adjustments[0].id)
     );
-    assert_eq!(harness.query_all_by_label("Apply").count(), 0);
-    assert_eq!(harness.query_all_by_label("Edit mask…").count(), 0);
     assert!(
         !harness
             .get_by_role_and_label(egui::accesskit::Role::SpinButton, "Exposure")

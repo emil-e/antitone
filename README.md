@@ -9,7 +9,7 @@ An editor for camera-scanned film negatives. Analyze a roll to establish shared 
 
 Antitone works from linear camera measurements rather than inverting a displayed JPEG. Calibration and response are shared across a roll; Photo adjustments provide individual grading. [How processing works](docs/processing.md) and [how Analyze chooses a starting grade](docs/roll-analysis.md) explain those two separate jobs.
 
-The current photo input is ARW RAW, with Sony ILCE-1M2 lossless-compressed ARW as the supported camera baseline. Saved grades use JSON projects. Developed JPEG/TIFF/EXR import, dust removal, catalogs and HDR display output are not implemented; this checkout is not a distribution-ready app.
+The current photo input is ARW RAW, with Sony ILCE-1M2 lossless-compressed ARW as the supported camera baseline. Saved grades use JSON projects. Developed JPEG/TIFF/EXR import, catalogs and HDR display output are not implemented; this checkout is not a distribution-ready app. The [provisional Dust workflow](docs/editor.md#provisional-dust-cleanup) supports transient manual repairs; Save and export omit them.
 
 ## Prerequisites
 
@@ -52,7 +52,7 @@ cargo run --locked --release --features editor --bin antitone -- /path/to/photo.
 
 Plain `cargo build --locked` builds the lightweight numerical core, not the editor. Editor features remain opt-in so core development does not require the native libraries or desktop stack.
 
-For an existing compatible native build or a separate worktree, see [reusing native builds](docs/native-development.md#reusing-native-builds). The ordinary setup remains the command above.
+For an existing compatible native build or a separate worktree, see [reusing native builds](docs/native-development.md#reusing-native-builds).
 
 The editor has its Dock icon when launched with `cargo app`. To package the built release binary with a Finder icon as a local macOS application:
 
@@ -63,7 +63,7 @@ open .cache/app/Antitone.app
 
 The bundle is disposable and can be regenerated after `cargo build-app`. It still links OpenMP through an absolute local library path; keep that library available. Normal editor rendering/export does not link OCIO; the opt-in `ocio-reference` feature adds that diagnostic dependency. This is local development packaging, not a distributable release: dependency bundling, signing/notarization and file associations remain unfinished.
 
-[Branding assets](assets/branding/README.md) include self-contained SVG wordmarks, portable PNG/ICO icons, the macOS icon and their regeneration command. These assets do not imply that the application supports other platforms yet.
+[Branding assets](assets/branding/README.md) include self-contained SVG wordmarks, portable PNG/ICO icons, the macOS icon and their regeneration command.
 
 ## Checks
 

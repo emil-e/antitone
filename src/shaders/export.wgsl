@@ -1,5 +1,4 @@
-// Export retains the existing compensated result through reconstruction/AP0 conversion.
-// Normal consumers keep their unchanged vec4f output and entry point.
+// Preserve compensated AP1 through reconstruction and AP0 conversion.
 struct ExportPixel {
     high: vec4f,
     low: vec4f,

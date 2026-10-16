@@ -32,7 +32,7 @@ Small coloured reference boxes indicate nominal 100% RGB/CMY code colours; their
 
 ## Keep feedback coherent
 
-Only one reduction/diagnostic readback is outstanding. During grade, pan/zoom or sample-dimension updates, hold the previous coherent trace and its normalization until a compatible replacement is ready. Latest-result status still requires exact processing content and visible-frame identity, so an old completion cannot become current. Compatible holding uses logical source authority, not an immutable rendered-image pointer that changes on every edit. A different source/revision, accepted composition, target or vector scale must not inherit incompatible old bins; suspension clears them. RGB/luma selects cached planes without another reduction. No full-image readback or UI-thread GPU wait is introduced.
+Only one reduction/diagnostic readback is outstanding. During grade, pan/zoom or sample-dimension updates, hold the previous coherent trace and its normalization until a compatible replacement is ready. Latest-result status still requires exact processing content and visible-frame identity, so an old completion cannot become current. Compatible holding uses logical source authority, not an immutable rendered-image pointer that changes on every edit. A different source/revision, accepted composition, target or vector scale must not inherit incompatible old bins; suspension clears them. RGB/luma selects cached planes without another reduction. Reduction uses bounded readback and asynchronous completion.
 
 The Scopes disclosure collapses the plot and suspends its work. A single header menu selects vectorscope, RGB waveform or luma waveform and, for vectorscope, magnification; its readout shows the active plot and scale. The lower divider resizes the plot, with double-click restoring its default size. Outside-plot counts, invalid samples and errors remain visible in the plot; hover reveals the full message only when it is truncated.
 
@@ -42,6 +42,6 @@ Plot controls do not change photographic processing. Visibility and plot sizing 
 
 [Scopes](../src/scopes.rs) owns target-native measurement and plot conventions; [GPU scopes](../src/gpu_scopes.rs) owns reduction and diagnostics; [editor scopes](../src/editor_scopes.rs) owns availability, scheduling and drawing.
 
-[Scope tests](../tests/scopes.rs) cover measurement and GPU agreement; [geometry tests](../tests/scopes/geometry.rs) cover final-frame mapping. The skin guide's exact convention and drawing constants live in code, not a second prose specification.
+Use [measurement/GPU tests](../tests/scopes.rs) and [final-frame geometry tests](../tests/scopes/geometry.rs) for their respective boundaries.
 
 Use [authored scope widget checks](diagnostics.md#responsive-image-scopes) for composed controls and completed GPU reductions, not native-window or responsiveness acceptance. [Remaining acceptance](plans/completion.md#scopes) includes photographic interpretation and physical use; a synthetic plot test does not establish either.

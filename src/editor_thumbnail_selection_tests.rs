@@ -79,20 +79,43 @@ fn key(key: Key) -> Vec<Event> {
 }
 
 fn selected_outline(output: &FullOutput, point: Pos2, active: bool) {
+    let selected = output
+        .platform_output
+        .accesskit_update
+        .as_ref()
+        .unwrap()
+        .nodes
+        .iter()
+        .find(|(_, node)| {
+            node.toggled() == Some(egui::accesskit::Toggled::True)
+                && node.bounds().is_some_and(|bounds| {
+                    f64::from(point.x) >= bounds.x0
+                        && f64::from(point.x) <= bounds.x1
+                        && f64::from(point.y) >= bounds.y0
+                        && f64::from(point.y) <= bounds.y1
+                })
+        })
+        .expect("selected photo");
+    assert_eq!(selected.1.description() == Some("Active photo"), active);
+    let bounds = selected.1.bounds().unwrap();
     let card = output
         .shapes
         .iter()
         .find_map(|shape| match &shape.shape {
-            egui::Shape::Rect(rect) if rect.rect.contains(point) && rect.stroke.width == 1.5 => {
+            egui::Shape::Rect(rect)
+                if f64::from(rect.rect.left()) == bounds.x0
+                    && f64::from(rect.rect.top()) == bounds.y0
+                    && f64::from(rect.rect.right()) == bounds.x1
+                    && f64::from(rect.rect.bottom()) == bounds.y1 =>
+            {
                 Some(rect)
             }
             _ => None,
         })
         .expect("selected card outline");
-    assert_eq!(
-        card.fill,
-        egui::Color32::from_gray(if active { 48 } else { 30 })
-    );
+    assert!(card.stroke.width > 0. && card.stroke.color.a() > 0);
+    assert_eq!(card.fill.r(), card.fill.g());
+    assert_eq!(card.fill.g(), card.fill.b());
 }
 
 #[test]

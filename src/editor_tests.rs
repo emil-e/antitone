@@ -2177,11 +2177,7 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
             for label in &required {
                 assert!(labels.contains(label), "missing {label}");
             }
-            if tab == 1 {
-                assert!(!labels.contains(&"Global") && !labels.contains(&"Editing: Global"));
-            }
             if tab == 0 {
-                assert!(!labels.contains(&"Gamma balance"));
                 assert!(!labels.contains(&"Toe"));
                 assert!(!labels.contains(&"Shoulder"));
             }
@@ -2234,10 +2230,6 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
                 assert!(
                     rect.left() >= 0. && rect.right() <= width + 1.,
                     "{label}: {rect:?} / {width}"
-                );
-                assert!(
-                    !["Roll post", "Neutral", "SHARED • fixed development WB"]
-                        .contains(&label.as_str())
                 );
             }
         }

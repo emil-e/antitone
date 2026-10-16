@@ -1,4 +1,4 @@
-use super::{frame, key, pointer};
+use super::{CONTROL_HEIGHT, frame, key, pointer};
 use crate::editor::{
     icons::{self, Icon},
     presentation::{
@@ -34,26 +34,8 @@ fn contents(ui: &mut Ui, numeric: bool) -> Vec<Response> {
     }
 }
 
-fn direct_row(
-    ui: &mut Ui,
-    label: &str,
-    help: Option<&str>,
-    numeric: bool,
-) -> egui::InnerResponse<Vec<Response>> {
-    icons::row(ui, |ui| {
-        let label = ui.label(label);
-        if let Some(help) = help {
-            label.on_hover_text(help);
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            contents(ui, numeric)
-        })
-        .inner
-    })
-}
-
 #[test]
-fn labelled_rows_preserve_direct_layout_paint_ids_and_inherited_disable() {
+fn labelled_rows_keep_labels_left_of_controls_with_stable_ids_and_inherited_disable() {
     for scale in [1., 2.] {
         for width in [315., 270.] {
             for enabled in [true, false] {
@@ -67,31 +49,41 @@ fn labelled_rows_preserve_direct_layout_paint_ids_and_inherited_disable() {
                         } else {
                             "Dmin (film base)"
                         };
-                        let render = |shared| {
+                        let render = || {
                             frame(&context, width, enabled, vec![], |ui| {
                                 ui.push_id("caller", |ui| {
-                                    let row = if shared {
-                                        labelled_row(ui, label, help, |ui, _| contents(ui, numeric))
-                                    } else {
-                                        direct_row(ui, label, help, numeric)
-                                    };
+                                    let row = labelled_row(ui, label, help, |ui, _| {
+                                        contents(ui, numeric)
+                                    });
                                     (row, ui.button("Following"))
                                 })
                                 .inner
                             })
                         };
-                        let ((before, following_before), before_output) = render(false);
-                        let ((after, following_after), after_output) = render(true);
+                        let ((before, following_before), _) = render();
+                        let ((after, following_after), output) = render();
                         assert_eq!(after.response.rect, before.response.rect);
                         assert_eq!(after.response.id, before.response.id);
-                        assert_eq!(after.response.rect.height(), 28.);
-                        for (before, after) in before.inner.iter().zip(&after.inner) {
-                            assert_eq!(after.rect, before.rect);
-                            assert_eq!(after.id, before.id);
-                            assert_eq!(after.enabled(), enabled);
+                        assert_eq!(after.response.rect.height(), CONTROL_HEIGHT);
+                        let label_bounds = output
+                            .shapes
+                            .iter()
+                            .find_map(|shape| match &shape.shape {
+                                egui::Shape::Text(text) if text.galley.job.text == label => {
+                                    Some(text.galley.rect.translate(text.pos.to_vec2()))
+                                }
+                                _ => None,
+                            })
+                            .unwrap();
+                        assert!(after.response.rect.expand(0.5).contains_rect(label_bounds));
+                        for (before, after_control) in before.inner.iter().zip(&after.inner) {
+                            assert_eq!(after_control.rect, before.rect);
+                            assert_eq!(after_control.id, before.id);
+                            assert_eq!(after_control.enabled(), enabled);
+                            assert!(after.response.rect.contains_rect(after_control.rect));
+                            assert!(label_bounds.right() <= after_control.rect.left());
                         }
                         assert_eq!(following_after.id, following_before.id);
-                        assert_eq!(after_output.shapes, before_output.shapes);
                     }
                 }
             }

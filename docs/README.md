@@ -22,7 +22,7 @@ Each guide explains the idea, the important boundaries and where to find its imp
 
 ## Make a change
 
-Use [development checks](development.md) for the normal edit/test loop and targeted subsystem checks. [Diagnostics](diagnostics.md) covers sample-dependent, numerical, export and presentation exercises; [native development](native-development.md) covers the production RAW diagnostic.
+Follow the [code guidelines](code-guidelines.md) for comments, tests and explanatory prose. Use [development checks](development.md) for the normal edit/test loop and targeted subsystem checks. [Diagnostics](diagnostics.md) covers sample-dependent, numerical, export and presentation exercises; [native development](native-development.md) covers the production RAW diagnostic.
 
 The current platform is macOS on Apple Silicon. Local RAWs and generated photographic outputs are private, ignored inputs/products—not contributor prerequisites or repository fixtures to upload.
 

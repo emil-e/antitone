@@ -40,7 +40,9 @@ Verify both the component and its composed feature.
 
 ## Keep source readable
 
-Follow the neighboring code: separate declarations and logical phases with blank lines, name values by role outside conventional mathematics, and expand dense control flow or macros even when the formatter accepts them. Comments explain contracts and non-obvious constraints, not obvious steps. Inspect complete touched functions and run `python3 scripts/check-format.py` before finishing; formatter success is not a readability review.
+Follow the neighboring code: separate declarations and logical phases with blank lines, name values by role outside conventional mathematics, and expand dense control flow or macros even when the formatter accepts them. Inspect complete touched functions and run `python3 scripts/check-format.py` before finishing; formatter success is not a readability review.
+
+Follow the [code guidelines](docs/code-guidelines.md) for comments, tests and prose: preserve current contracts and useful rationale, not change narration or obvious restatements. Tests should protect meaningful requirements and invariants, not incidental implementation choices or facts guaranteed by their own setup.
 
 ## Keep documentation useful
 

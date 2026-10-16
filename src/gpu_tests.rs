@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn ordinary_and_compensated_export_select_distinct_math_without_changing_bindings() {
+fn ordinary_and_compensated_export_select_distinct_math_and_optional_response_lookup() {
     let ordinary = include_str!("shaders/processing_math.wgsl");
     let export = include_str!("shaders/export_math.wgsl");
     for lookup in [false, true] {
@@ -12,7 +12,7 @@ fn ordinary_and_compensated_export_select_distinct_math_without_changing_binding
         let precise = ProcessingKernel::pipeline_shader(lookup, true);
         assert!(precise.contains(export));
         assert!(!precise.contains(ordinary));
-        assert!(precise.ends_with(include_str!("shaders/export.wgsl")));
+        assert!(precise.contains(include_str!("shaders/export.wgsl")));
         for shader in [&general, &precise] {
             for name in ["precise_log1p", "precise_exp", "precise_expm1"] {
                 assert_eq!(shader.matches(&format!("fn {name}(")).count(), 1);

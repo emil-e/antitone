@@ -434,7 +434,7 @@ impl Drop for WorkingView {
     }
 }
 
-// Runs on the existing command worker and consumes its authoritative developed-source lease.
+// Runs on the command worker, borrowing its authoritative developed-source lease.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn acquire(
     mailbox: &Mailbox,

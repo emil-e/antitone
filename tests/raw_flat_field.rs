@@ -117,8 +117,7 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
                 .gain([point[0] as f64 + 0.5, point[1] as f64 + 0.5])
                 .unwrap()
                 / normalization;
-            // Four authored sensor codes allow quantization/demosaicing and local-fit error,
-            // not a recorded-output baseline or a relaxation of existing numerical gates.
+            // Four authored sensor codes allow quantization/demosaicing and local-fit error.
             assert!((relative - illumination.recip()).abs().max_element() < 4. / 2400.);
             let expected =
                 normalization * DVec3::from_array(patches[((y * 6 + x) % 12) as usize]) / 4031.;

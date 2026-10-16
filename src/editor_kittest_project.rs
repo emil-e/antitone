@@ -111,7 +111,7 @@ fn project_widgets_save_precision_order_wb_and_reject_open_atomically() {
             shoulder: 0.003123456789
         }
     );
-    // There is no reorder widget: initialize order, then test source-owned Save/Open behavior.
+    // Supply a reordered roll to exercise source-owned Save/Open behavior.
     {
         let e = harness.state_mut();
         e.document.project.order.swap(0, 1);

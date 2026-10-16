@@ -1,6 +1,6 @@
 # Export performance follow-up
 
-Production export uses authoritative original-sample GPU processing, exact f64 reconstruction and CPU encoders. Straightened compositions now reuse completed tiles within one immutable job; the [output guide](../colour-and-output.md#tiff-and-exr-serve-different-purposes) owns that contract. Matched scalar/OCIO-reference measurements and bounded cache comparisons are available through the [full-size diagnostic](../diagnostics.md#export).
+Production export uses authoritative original-sample GPU processing, exact f64 reconstruction and CPU encoders. Straightened compositions reuse completed tiles within one immutable job; the [output guide](../colour-and-output.md#tiff-and-exr-serve-different-purposes) owns that contract. Matched scalar/OCIO-reference measurements and bounded cache comparisons are available through the [full-size diagnostic](../diagnostics.md#export).
 
 Bounded reuse, exact clipping/locality, range-reduced compensated GPU math, overlapped TIFF geometry planning, two-original rendered-output batches and bounded future-use retention reduce measured stage costs, but do not establish isolated hardware throughput, a minimum chip/RAM target or universal latency. The reference adapter remains an independent measurement oracle, not a second production renderer or a reconstruction of an old binary.
 

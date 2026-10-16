@@ -416,9 +416,8 @@ impl ViewSource {
         .map(|sources| sources.map(|mut sources| sources.remove(0)))
     }
 
-    // Called by the existing RAW worker against its leased authoritative Scan.
-    // First acquisition can fill detail and coarse coverage in one original traversal. Each
-    // destination still has its own exact footprints; neither raster is resampled from the other.
+    // Borrow the worker's authoritative Scan. Destinations share the original traversal
+    // while filtering independent exact footprints.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn acquire_many(
         device: &wgpu::Device,

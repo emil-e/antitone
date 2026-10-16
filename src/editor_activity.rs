@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 const PROMINENCE_DELAY: Duration = Duration::from_millis(300);
 
-/// Foreground work with its existing controller request identity. This is not an executor.
+/// Foreground task presentation keyed by controller-owned requests.
 #[derive(Clone, Copy)]
 pub(super) enum Task {
     Import(u64),

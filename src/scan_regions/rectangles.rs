@@ -345,7 +345,8 @@ fn weak_border(
 }
 
 impl RollModel {
-    /// Measurements are unchanged equal/finer camera codes from this same native development.
+    /// Measurements must contain unmodified camera codes from the same native development,
+    /// sampled at equal or higher resolution than the retained capture.
     pub fn areas(
         &self,
         index: usize,

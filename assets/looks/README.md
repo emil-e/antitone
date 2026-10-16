@@ -1,12 +1,12 @@
 # Independent creative-look authoring
 
-This catalog preserves independently derived, print-informed creative looks as **small versioned model definitions**, rather than a collection of unrelated experiment programs or large LUT dumps. A shared offline tool evaluates them, bakes an output-independent ACEScct/AP1 LUT and checks its identity and numerical contract. It is **not wired into the editor, project format or export**.
+This catalog preserves independently derived, print-informed creative looks as **small versioned model definitions**. A shared offline tool evaluates them, bakes an output-independent ACEScct/AP1 LUT and checks its identity and numerical contract. It is **not wired into the editor, project format or export**.
 
 The current definitions are:
 
 | ID | Selection status | Interpretation |
 |---|---|---|
-| `kodak-portra-endura` | selected | Source-reconstructed Portra Endura; the older definition is intentionally absent |
+| `kodak-portra-endura` | selected | Source-reconstructed Portra Endura |
 | `kodak-pro-image-ii` | accepted | Corrected Pro Image II paper response |
 | `kodak-2383` | accepted | Print-film transmission, with the fixed 5000 K creative viewing adaptation |
 | `ilford-multigrade-rc-deluxe-filter-2` | accepted | New RC Deluxe/filter 2, neutral scalar response |
@@ -21,7 +21,7 @@ The current definitions are:
 
 A spectral definition supplies CMY attenuation spectra and a frozen effective-coefficient table. Published Status-A readings are not dye amounts: the independent derivation solves effective nonnegative coefficients against the original standard's whole-instrument spectral products. Minimum density stays in those coefficients; there is no separately invented base spectrum, extra optical-path factor or paper-white normalization. The same attenuation mathematics supports reflection or transmission interpretations, but that does not recover physical geometry, scattering, fluorescence, film base or projector/screen effects. Driving effective layers independently from AP1 channels is a creative convention, not a recovered negative/enlarger spectral response or calibrated scene-to-printer exposure.
 
-The neutral scalar definition supplies fitted density parameters. Signed **linear AP1 luminance is reduced before** ACEScct/exposure mapping, then the selected paper curve returns neutral attenuation. It is not RGB-first compression, post-render desaturation, a fabricated CMY material or measured warmtone colour. Its density curve is evaluated analytically, avoiding the slope kinks introduced by an unnecessary sampled-density table.
+The neutral scalar definition supplies fitted density parameters. Signed **linear AP1 luminance is reduced before** ACEScct/exposure mapping, then the selected paper curve returns neutral attenuation. It is not RGB-first compression, post-render desaturation, a fabricated CMY material or measured warmtone colour. Its density curve is evaluated analytically.
 
 All definitions share:
 
@@ -51,7 +51,7 @@ These maintained checks validate numerical observations and equations. They **do
 
 The agreed application direction is **one 3D-LUT execution contract**, including the neutral look, so material-derived looks can share a renderer with looks from other sources. Model definitions remain authoritative; their LUTs are derived execution artifacts, not replacements for the source data. Selection should resolve a cached LUT or generate and validate a missing one asynchronously, then upload it. Successful generations should be persistently cached by the complete numerical definition, generator version and LUT specification, rather than the display name. GPU residency is a separate bounded cache.
 
-Cold-generation latency has not been measured for application use. It will determine whether first-use generation is sufficient or bundled prebakes are useful. The offline Python/compiler/OCIO toolchain is not an end-user runtime dependency to introduce implicitly: on-demand baking needs an application-ready implementation. Final sampling/precision, other-source admission, selection persistence, preview/export integration and EXR policy remain open. No application implementation is part of this catalog extraction.
+Cold-generation latency has not been measured for application use. It will determine whether first-use generation is sufficient or bundled prebakes are useful. The offline Python/compiler/OCIO toolchain is not an end-user runtime dependency to introduce implicitly: on-demand baking needs an application-ready implementation. Final sampling/precision, other-source admission, selection persistence, preview/export integration and EXR policy remain open.
 
 ## Generate and check
 
@@ -83,13 +83,13 @@ LOOKS_NATIVE_TESTS=1 python3 -m unittest discover -s scripts/looks -p 'test_*.py
 
 A bake defaults to `.cache/looks/bakes/ID/SIZE/`, with `look.cube`, `native-checks.json` and `validation.json`. `--output .cache/looks/another-fresh-directory` selects another ignored destination. Source/schema/output-path rejection happens before building or replacing any destination. The driver atomically claims a fresh destination before generation, so a competing invocation cannot replace another bake's validation report. Native or payload failure is nonzero and is never a successful validation report. Build products and generated model headers are cached separately under `.cache/looks/build/` by model/native-source/compiler/dependency identity; only complete builds are atomically published into that cache.
 
-Native checks are photo-free: no RAWs, private PFM files, worktree links, frozen grades or old comparison galleries are prerequisites. They include the scalar luminance-first ordering witness; checking component-wise remapping would be the wrong invariant for B&W.
+Native checks use synthetic inputs. They include the scalar luminance-first ordering witness; checking component-wise remapping would be the wrong invariant for B&W.
 
-## Migration and asset identity
+## Asset identity
 
-Both reviewed sizes, **65³ and 97³**, have frozen numeric payload hashes. The identity covers bytes from `LUT_3D_SIZE` through the domains and all node rows, with R changing fastest. Descriptive comments and `TITLE` are excluded: the maintained public header differs from the private research header without changing the numeric look. The complete prior independent file digest is separately recorded for traceability. A generation must match the reviewed payload exactly; do not refresh hashes merely to pass a failed migration.
+Both reviewed sizes, **65³ and 97³**, have frozen numeric payload hashes. The identity covers bytes from `LUT_3D_SIZE` through the domains and all node rows, with R changing fastest. Descriptive comments and `TITLE` are excluded. The complete prior independent file digest is separately recorded for traceability. A generation must match the reviewed payload exactly; do not refresh hashes merely to pass a failed check.
 
-All eight definitions were ported without changing their reviewed numeric payloads at either size on the pinned native stack. Byte identity across every compiler, architecture or OCIO build is not established. A mismatch is a reason to investigate, not to silently loosen a gate, narrow the domain, nudge an inverse target or normalize the material. A deliberate model/contract change needs a separately reviewed identity/revision.
+The eight definitions match their reviewed numeric payloads at both sizes on the pinned native stack. Byte identity across other compilers, architectures or OCIO builds is not established. A mismatch is a reason to investigate, not to silently loosen a gate, narrow the domain, nudge an inverse target or normalize the material. A deliberate model/contract change needs a separately reviewed identity/revision.
 
 The 97³ bakes were used for photographic review and generally improved approximation over 65³, but **no final shipping approximation threshold is agreed**. Interpolation agreement, tiny solver residuals and continuity do not establish photographic/monitor acceptance or universal absence of visible ripples. The CMY path retains its coefficient-table approximation and F32 OCIO arithmetic. Known wider-reference/Rec.2020 output issues are not fixed by this toolkit; it intentionally retains one reviewed authoring reference.
 

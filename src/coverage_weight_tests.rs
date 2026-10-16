@@ -1,4 +1,4 @@
-//! Independent scalar traversal guards the optimized clip bookkeeping, not a new area formula.
+//! Independent scalar traversal checks exact clipping weights and iteration order.
 use super::*;
 use crate::crop::Crop;
 

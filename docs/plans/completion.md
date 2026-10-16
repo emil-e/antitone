@@ -38,7 +38,7 @@ B&W scope is unresolved: monochrome film captured by an RGB camera, colour-negat
 
 Shared decisions, acknowledged flat-field/save/export failures and usability-based working feedback are implemented; the [editor guide](../editor.md#working-feedback-follows-what-remains-usable) owns the current policy. Native keyboard/pointer, VoiceOver, display scaling and real-operation appearance/latency acceptance remain open. Component/controller checks and composed working-state captures do not establish these.
 
-Loading/import/picker/Analyze failures still use passive status. Broader acknowledged-failure coverage, additional native/export progress and additional cancellation remain unselected; do not infer capabilities from activity animation. Import/Open now report completed-file work, not whole-job percentages.
+Loading/import/picker/Analyze failures still use passive status. Broader acknowledged-failure coverage, additional native/export progress and additional cancellation remain unselected; do not infer capabilities from activity animation. Import/Open report completed-file work, not whole-job percentages.
 
 Next: exercise document work, export inspection and Analyze cancellation in the native editor. Preserve accepted-state transactions, stale-result rejection, foreground priority and destination safety. Coordinate optional background presentation with [thumbnail follow-up](visual-feedback.md#triaged-thumbnail-follow-up).
 
