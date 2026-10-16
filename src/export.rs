@@ -274,6 +274,7 @@ fn blocks(size: ImageSize) -> impl Iterator<Item = ([u32; 2], [u32; 2])> {
 pub(crate) enum BlockOrder {
     RowMajor,
     Spatial2x2,
+    Spatial1x5,
 }
 
 pub(crate) fn ordered_blocks(
@@ -281,10 +282,11 @@ pub(crate) fn ordered_blocks(
     order: BlockOrder,
 ) -> impl Iterator<Item = ([u32; 2], [u32; 2])> {
     let step = match order {
-        BlockOrder::RowMajor => 1,
-        BlockOrder::Spatial2x2 => 2,
+        BlockOrder::RowMajor => [1, 1],
+        BlockOrder::Spatial2x2 => [2, 2],
+        BlockOrder::Spatial1x5 => [1, 5],
     };
-    let group = [BLOCK[0] * step, BLOCK[1] * step];
+    let group = [BLOCK[0] * step[0], BLOCK[1] * step[1]];
     (0..size.height)
         .step_by(group[1] as usize)
         .flat_map(move |gy| {

@@ -22,6 +22,7 @@ pub(super) const MAX_PAYLOAD_BYTES: usize =
 pub(super) struct TileCache {
     entries: VecDeque<([u32; 2], SharedTile)>,
     peak_bytes: usize,
+    forecast: Option<super::forecast::Cursor>,
 }
 
 impl TileCache {
@@ -29,6 +30,29 @@ impl TileCache {
         Self {
             entries: VecDeque::new(),
             peak_bytes: 0,
+            forecast: None,
+        }
+    }
+
+    pub(super) fn forecasted(forecast: super::forecast::Forecast) -> Self {
+        Self {
+            forecast: Some(super::forecast::Cursor::new(forecast)),
+            ..Self::new()
+        }
+    }
+
+    pub(super) fn order(&self) -> Option<super::export::BlockOrder> {
+        self.forecast.as_ref().map(super::forecast::Cursor::order)
+    }
+
+    pub(super) fn begin_block(&mut self) {
+        if self
+            .forecast
+            .as_mut()
+            .is_some_and(|cursor| !cursor.advance())
+        {
+            // The encoder has already captured its order. Lost hints only disable prediction.
+            self.forecast = None;
         }
     }
 
@@ -56,7 +80,13 @@ impl TileCache {
         // Boxed slices retain the sample payload, not spare Vec capacity.
         let tile = SharedTile(Arc::new(pixels.into_boxed_slice()));
         if self.entries.len() == CAPACITY {
-            self.entries.pop_front();
+            let victim = self.forecast.as_ref().map_or(Some(0), |cursor| {
+                cursor.victim(origin, self.entries.iter().map(|(key, _)| *key))
+            });
+            let Some(victim) = victim else {
+                return Ok(tile);
+            };
+            self.entries.remove(victim);
         }
         self.entries.push_back((origin, tile.clone()));
         self.peak_bytes = self.peak_bytes.max(
@@ -109,6 +139,84 @@ mod tests {
         assert_eq!(Arc::strong_count(&retained.0), 2);
         drop(hit);
         assert_eq!(Arc::strong_count(&retained.0), 1);
+    }
+
+    #[test]
+    fn forecast_failures_bypass_and_exhaustion_keep_values_and_bounds() {
+        use super::super::{export::BlockOrder, forecast::Forecast};
+        use crate::{
+            crop::Crop,
+            geometry::{Composition, SourceRegion},
+        };
+        let area = SourceRegion::from([0, 0, 1024, 768]);
+        let composition = Composition::with_crop(
+            area,
+            Default::default(),
+            Default::default(),
+            Some(Crop {
+                center: [512., 384.],
+                size: [800, 576],
+                angle: 0.015,
+            }),
+        )
+        .unwrap();
+        let forecast = Forecast::new(composition).unwrap();
+        let mut cache = TileCache::forecasted(forecast);
+        let captured_order = cache.order().unwrap();
+        assert!(matches!(captured_order, BlockOrder::Spatial1x5));
+        cache.begin_block();
+        for x in 0..CAPACITY as u32 {
+            cache
+                .read([x * 128, 0], |key| {
+                    Ok(vec![
+                        [key[0] as f64, -1., 4., 7.];
+                        (TILE[0] * TILE[1]) as usize
+                    ])
+                })
+                .unwrap();
+        }
+        let before: Vec<_> = cache
+            .entries
+            .iter()
+            .map(|(key, value)| (*key, value.0.clone()))
+            .collect();
+        assert!(
+            cache
+                .read([0, 512], |_| Err(Error::Gpu(
+                    "injected batch failure".into()
+                )))
+                .is_err()
+        );
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = cache.read([0, 512], |_| -> Result<Vec<[f64; 4]>, Error> {
+                    panic!("injected load panic")
+                });
+            }))
+            .is_err()
+        );
+        let value = cache
+            .read([999999, 999999], |_| Ok(vec![[-0.25, 4., 16., 7.]]))
+            .unwrap();
+        assert_eq!(value.as_ref(), &[[-0.25, 4., 16., 7.]]);
+        assert!(!cache.contains([999999, 999999]));
+        assert_eq!(cache.peak_bytes(), MAX_PAYLOAD_BYTES);
+        for (key, pointer) in before {
+            let existing = cache
+                .entries
+                .iter()
+                .find(|(origin, _)| *origin == key)
+                .unwrap();
+            assert!(Arc::ptr_eq(&existing.1.0, &pointer));
+        }
+        // Too many plan notifications disable prediction, never change the captured encoder order.
+        for _ in 0..100 {
+            cache.begin_block();
+        }
+        assert!(cache.order().is_none());
+        assert!(matches!(captured_order, BlockOrder::Spatial1x5));
+        drop(cache);
+        assert_eq!(value.as_ref()[0], [-0.25, 4., 16., 7.]);
     }
 
     #[test]

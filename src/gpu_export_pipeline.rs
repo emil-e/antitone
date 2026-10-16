@@ -29,11 +29,8 @@ fn encode_planned<R: TileReader>(
     mut build: impl FnMut([u32; 2], [u32; 2]) -> Result<ReconstructionPlan, Error> + Send,
 ) -> Result<(), Error> {
     let [width, height] = composition.size();
-    let order = if composition.is_exact() {
-        export::BlockOrder::RowMajor
-    } else {
-        export::BlockOrder::Spatial2x2
-    };
+    // Capture once: producer and encoder must never infer different visitation orders.
+    let order = read.order().unwrap_or_else(|| default_order(composition));
     #[cfg(test)]
     let metrics = diagnostics::Metrics::default();
     #[cfg(test)]
@@ -80,11 +77,12 @@ fn encode_planned<R: TileReader>(
             })
             .map_err(|e| Error::Export(format!("cannot start export geometry worker: {e}")))?;
 
-        let result = encode_with(
+        let result = encode_ordered(
             composition,
             Format::Tiff(target),
             metadata,
             destination,
+            order,
             |origin, extent| {
                 #[cfg(test)]
                 let start = std::time::Instant::now();

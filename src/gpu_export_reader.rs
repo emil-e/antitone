@@ -15,6 +15,9 @@ pub(super) trait TileReader {
     fn finish(&mut self) -> Result<(), Error> {
         Ok(())
     }
+    fn order(&self) -> Option<super::export::BlockOrder> {
+        None
+    }
     fn cached(&self, _origin: [u32; 2]) -> bool {
         false
     }
@@ -38,14 +41,14 @@ where
 
 pub(super) enum Pixels {
     Owned(Vec<Pixel>),
-    Cached(SharedTile),
+    Shared(SharedTile),
 }
 
 impl AsRef<[Pixel]> for Pixels {
     fn as_ref(&self) -> &[Pixel] {
         match self {
             Self::Owned(p) => p,
-            Self::Cached(p) => p.as_ref(),
+            Self::Shared(p) => p.as_ref(),
         }
     }
 }
@@ -83,6 +86,15 @@ impl<L, C> JobReader<L, C> {
         }
     }
 
+    pub fn forecasted(load: L, check: C, forecast: super::forecast::Forecast) -> Self {
+        Self {
+            load,
+            check,
+            cache: Some(TileCache::forecasted(forecast)),
+            requests: 0,
+        }
+    }
+
     pub fn into_loader(self) -> L {
         self.load
     }
@@ -103,7 +115,7 @@ where
         (self.check)()?;
         self.requests += 1;
         let pixels = match &mut self.cache {
-            Some(cache) => Pixels::Cached(cache.read(origin, |o| self.load.load(o))?),
+            Some(cache) => Pixels::Shared(cache.read(origin, |o| self.load.load(o))?),
             None => Pixels::Owned(self.load.load(origin)?),
         };
         (self.check)()?;
@@ -115,9 +127,16 @@ where
     }
 
     fn prepare(&mut self, origins: impl Iterator<Item = [u32; 2]>) -> Result<(), Error> {
+        if let Some(cache) = &mut self.cache {
+            cache.begin_block();
+        }
         let cache = &self.cache;
         self.load
             .prepare(origins.filter(|o| !cache.as_ref().is_some_and(|c| c.contains(*o))))
+    }
+
+    fn order(&self) -> Option<super::export::BlockOrder> {
+        self.cache.as_ref().and_then(TileCache::order)
     }
 
     fn cached(&self, origin: [u32; 2]) -> bool {

@@ -22,6 +22,7 @@ fn full_size_export_resources_with_retained_working_view() {
 #[derive(Clone, Copy, Debug)]
 enum Backend {
     Gpu,
+    PairedLru,
     Serial,
     Uncached,
     Cached,
@@ -37,8 +38,11 @@ fn exercise(
     let backends: &[Backend] = match std::env::var("ANTITONE_EXPORT_RESOURCE_BACKEND").as_deref() {
         Ok("gpu") | Err(_) => &[Backend::Gpu],
         Ok("serial") => &[Backend::Serial],
-        Ok("compare-batch") => &[Backend::Serial, Backend::Gpu],
-        Ok("compare-batch-reverse") => &[Backend::Gpu, Backend::Serial],
+        Ok("paired-lru") => &[Backend::PairedLru],
+        Ok("compare-batch") => &[Backend::Serial, Backend::PairedLru],
+        Ok("compare-batch-reverse") => &[Backend::PairedLru, Backend::Serial],
+        Ok("compare-forecast") => &[Backend::PairedLru, Backend::Gpu],
+        Ok("compare-forecast-reverse") => &[Backend::Gpu, Backend::PairedLru],
         Ok("uncached") => &[Backend::Uncached],
         Ok("cached") => &[Backend::Cached],
         Ok("compare-cache") => &[Backend::Uncached, Backend::Gpu],
@@ -139,7 +143,13 @@ fn exercise(
             saturation: 1.1,
             ..Default::default()
         };
-        let snapshot = PhotoGradeSnapshot::new(photo, vec![]).map_err(|e| e.to_string())?;
+        let locals = match std::env::var("ANTITONE_EXPORT_RESOURCE_LOCALS").as_deref() {
+            Err(_) | Ok("0") => vec![],
+            Ok("2") => resource_locals(area),
+            _ => return Err("resource locals must be0 or2".into()),
+        };
+        println!("export_resources ordered_locals={}", locals.len());
+        let snapshot = PhotoGradeSnapshot::new(photo, locals).map_err(|e| e.to_string())?;
         let input: ProcessingInput = Arc::new(
             GpuPhotoGrade::new(
                 device,
@@ -232,8 +242,17 @@ fn exercise(
             if tiff_only && matches!(format, Format::Exr(_)) {
                 continue;
             }
-            let compare_batches = backends.iter().any(|b| matches!(b, Backend::Serial))
-                && backends.iter().any(|b| matches!(b, Backend::Gpu));
+            let compare_outputs = backends.len() > 1
+                && backends.iter().all(|b| {
+                    matches!(
+                        b,
+                        Backend::Gpu
+                            | Backend::PairedLru
+                            | Backend::Serial
+                            | Backend::Uncached
+                            | Backend::Cached
+                    )
+                });
             let mut expected_digest = None;
             for &backend in backends {
                 let path = directory.path().join("bounded-output");
@@ -279,12 +298,18 @@ fn exercise(
                         Ok(())
                     };
                     match backend {
-                        Backend::Gpu | Backend::Serial | Backend::Uncached | Backend::Cached => {
+                        Backend::Gpu
+                        | Backend::PairedLru
+                        | Backend::Serial
+                        | Backend::Uncached
+                        | Backend::Cached => {
                             let stage_start = Instant::now();
                             let (result, timings) = crate::export_timing::record(|| {
                                 let cached = matches!(backend, Backend::Cached)
-                                    || (matches!(backend, Backend::Gpu | Backend::Serial)
-                                        && cache_eligible(composition));
+                                    || (matches!(
+                                        backend,
+                                        Backend::Gpu | Backend::PairedLru | Backend::Serial
+                                    ) && cache_eligible(composition));
                                 let mut check = || {
                                     checks += 1;
                                     if checks > 1 {
@@ -304,6 +329,20 @@ fn exercise(
                                         request,
                                         (&path, Overwrite::Refuse),
                                         cached,
+                                        &mut check,
+                                    )
+                                } else if matches!(backend, Backend::PairedLru) {
+                                    write_job_with_policy(
+                                        &renderer,
+                                        device,
+                                        (queue, &gate),
+                                        request,
+                                        (&path, Overwrite::Refuse),
+                                        if cached {
+                                            CachePolicy::Lru
+                                        } else {
+                                            CachePolicy::None
+                                        },
                                         &mut check,
                                     )
                                 } else {
@@ -417,7 +456,7 @@ fn exercise(
                                 exposure: 0.25,
                                 ..photo
                             },
-                            vec![],
+                            snapshot.locals().to_vec(),
                         )?;
                         let edited_input: ProcessingInput = Arc::new(GpuPhotoGrade::new(
                             device,
@@ -446,10 +485,9 @@ fn exercise(
                         Ok(())
                     },
                 )?;
-                if compare_batches && matches!(format, Format::Tiff(_)) {
-                    let digest = monitor.phase(
-                        "compare-complete-single-paired-file",
-                        || -> Result<_, Error> {
+                if compare_outputs && matches!(format, Format::Tiff(_)) {
+                    let digest =
+                        monitor.phase("compare-complete-gpu-files", || -> Result<_, Error> {
                             use std::io::Read;
                             let mut file = std::fs::File::open(&path)
                                 .map_err(|e| Error::Export(e.to_string()))?;
@@ -465,10 +503,9 @@ fn exercise(
                                 hash.update(&buffer[..n]);
                             }
                             Ok(hash.finalize())
-                        },
-                    )?;
+                        })?;
                     if let Some(expected) = expected_digest {
-                        assert_eq!(digest, expected, "complete single/paired files differ");
+                        assert_eq!(digest, expected, "complete GPU files differ");
                         println!("export_batch complete_file_equal=true digest={digest}");
                     } else {
                         expected_digest = Some(digest);
@@ -483,6 +520,53 @@ fn exercise(
         monitor.phase("retire-view-before-next-correction", || Ok::<_, Error>(()))?;
     }
     Ok(())
+}
+
+fn resource_locals(
+    area: crate::geometry::SourceRegion,
+) -> Vec<crate::local_adjustments::LocalAdjustment> {
+    use crate::{
+        geometry::SourcePoint,
+        local_adjustments::{GradientMask, LocalAdjustment},
+    };
+    let [x, y] = [area.x as f64, area.y as f64];
+    let [width, height] = [area.width as f64, area.height as f64];
+    vec![
+        LocalAdjustment {
+            mask: GradientMask::Linear {
+                start: SourcePoint([x, y]),
+                end: SourcePoint([x + width, y + height]),
+            },
+            photo: PhotoSettings {
+                exposure: 0.5,
+                wb: crate::color::Balance {
+                    warmth: 0.003,
+                    tint: -0.002,
+                },
+                ..Default::default()
+            },
+            enabled: true,
+            invert: false,
+            strength: 0.7,
+        },
+        LocalAdjustment {
+            mask: GradientMask::Radial {
+                center: SourcePoint([x + width / 2., y + height / 2.]),
+                radii: [width / 3., height / 3.],
+                angle: 0.3,
+                feather: 0.4,
+            },
+            photo: PhotoSettings {
+                exposure: -0.25,
+                contrast: 1.05,
+                saturation: 1.08,
+                ..Default::default()
+            },
+            enabled: true,
+            invert: true,
+            strength: 0.6,
+        },
+    ]
 }
 
 #[cfg(feature = "ocio-reference")]

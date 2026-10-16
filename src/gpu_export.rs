@@ -23,6 +23,8 @@ use wgpu::util::DeviceExt;
 mod batch;
 #[path = "gpu_export_cache.rs"]
 mod cache;
+#[path = "gpu_export_forecast.rs"]
+mod forecast;
 #[path = "gpu_export_reader.rs"]
 mod reader;
 #[cfg(all(test, target_os = "macos"))]
@@ -119,6 +121,19 @@ fn cache_eligible(composition: Composition) -> bool {
     !composition.is_exact()
 }
 
+#[derive(Clone, Copy)]
+enum CachePolicy {
+    None,
+    Lru,
+    Forecast,
+}
+
+impl CachePolicy {
+    fn cached(self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
 // Returns tile requests, actual GPU tile reads, and peak retained CPU tile payload bytes.
 fn write_job(
     renderer: &GpuRenderer,
@@ -127,6 +142,33 @@ fn write_job(
     request: Request<'_>,
     (path, overwrite): (&Path, Overwrite),
     cache_enabled: bool,
+    check: impl FnMut() -> Result<(), Error>,
+) -> Result<(u64, u64, usize), Error> {
+    let policy = if !cache_enabled {
+        CachePolicy::None
+    } else if matches!(request.format, Format::Tiff(_)) && !request.composition.is_exact() {
+        CachePolicy::Forecast
+    } else {
+        CachePolicy::Lru
+    };
+    write_job_with_policy(
+        renderer,
+        device,
+        (queue, submissions),
+        request,
+        (path, overwrite),
+        policy,
+        check,
+    )
+}
+
+fn write_job_with_policy(
+    renderer: &GpuRenderer,
+    device: &wgpu::Device,
+    (queue, submissions): (&wgpu::Queue, &SubmissionGate),
+    request: Request<'_>,
+    (path, overwrite): (&Path, Overwrite),
+    policy: CachePolicy,
     mut check: impl FnMut() -> Result<(), Error>,
 ) -> Result<(u64, u64, usize), Error> {
     check()?;
@@ -147,6 +189,20 @@ fn write_job(
     if scan.flat_field() != field.as_ref().map(|f| f.field()) {
         return Err(Error::Gpu("CPU and GPU flat-field resources differ".into()));
     }
+    let forecast = timed!(Setup, {
+        if matches!(policy, CachePolicy::Forecast) && matches!(format, Format::Tiff(_)) {
+            forecast::Forecast::new(composition)
+        } else {
+            None
+        }
+    });
+    #[cfg(test)]
+    println!(
+        "export_forecast index_payload_bytes={}",
+        forecast
+            .as_ref()
+            .map_or(0, forecast::Forecast::payload_bytes)
+    );
     let metadata = ProcessingMetadata::with_grade(roll.response, &grade);
     let batch_field = field.clone();
     let mut tiles = timed!(Setup, {
@@ -218,7 +274,11 @@ fn write_job(
         }
     };
     let load = batch::PairLoader::new(load, (tile_size[0] * tile_size[1]) as usize, paired);
-    let mut reader = JobReader::new(load, check, cache_enabled);
+    let mut reader = if let Some(forecast) = forecast {
+        JobReader::forecasted(load, check, forecast)
+    } else {
+        JobReader::new(load, check, policy.cached())
+    };
     encode_output(
         composition,
         format,
@@ -256,38 +316,57 @@ fn encode_output<R: TileReader>(
     )
 }
 
+fn default_order(composition: Composition) -> export::BlockOrder {
+    if composition.is_exact() {
+        export::BlockOrder::RowMajor
+    } else {
+        export::BlockOrder::Spatial2x2
+    }
+}
+
 fn encode_with(
     composition: Composition,
     format: Format,
     metadata: ProcessingMetadata,
+    destination: (&Path, Overwrite),
+    build: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<DVec3>, Error>,
+) -> Result<(), Error> {
+    encode_ordered(
+        composition,
+        format,
+        metadata,
+        destination,
+        default_order(composition),
+        build,
+    )
+}
+
+fn encode_ordered(
+    composition: Composition,
+    format: Format,
+    metadata: ProcessingMetadata,
     (path, overwrite): (&Path, Overwrite),
+    order: export::BlockOrder,
     mut build: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<DVec3>, Error>,
 ) -> Result<(), Error> {
     let [width, height] = composition.size();
     let size = ImageSize { width, height };
     match format {
-        Format::Tiff(target) => {
-            let order = if composition.is_exact() {
-                export::BlockOrder::RowMajor
-            } else {
-                export::BlockOrder::Spatial2x2
-            };
-            export::tiff_encoded_ordered(
-                path,
-                size,
-                target,
-                overwrite,
-                metadata,
-                order,
-                |origin, extent| {
-                    let linear = build(origin, extent)?;
-                    timed!(
-                        TargetEncode,
-                        target.encode_u16(&linear.iter().map(|v| v.as_vec3()).collect::<Vec<_>>())
-                    )
-                },
-            )
-        }
+        Format::Tiff(target) => export::tiff_encoded_ordered(
+            path,
+            size,
+            target,
+            overwrite,
+            metadata,
+            order,
+            |origin, extent| {
+                let linear = build(origin, extent)?;
+                timed!(
+                    TargetEncode,
+                    target.encode_u16(&linear.iter().map(|v| v.as_vec3()).collect::<Vec<_>>())
+                )
+            },
+        ),
         Format::Exr(precision) => {
             export::exr_blocks(path, size, precision, overwrite, metadata, build)
         }
