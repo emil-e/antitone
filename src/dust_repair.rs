@@ -6,6 +6,8 @@ use crate::{Error, geometry::SourceRegion};
 use std::collections::VecDeque;
 
 pub type Ap1 = [f32; 3];
+pub(crate) const CONTEXT_PADDING: u32 = 10;
+pub(crate) const AUTOMATIC_PADDING: u32 = 128 + 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RepairId(pub u64);
@@ -310,20 +312,24 @@ pub fn evaluate(
             .max()
             .unwrap() as u32;
     let target = SourceRegion {
-        x: min_x.saturating_sub(10).max(active.x),
-        y: min_y.saturating_sub(10).max(active.y),
+        x: min_x.saturating_sub(CONTEXT_PADDING).max(active.x),
+        y: min_y.saturating_sub(CONTEXT_PADDING).max(active.y),
         width: 0,
         height: 0,
     };
-    let target_right = max_x.saturating_add(11).min(active.x + active.width);
-    let target_bottom = max_y.saturating_add(11).min(active.y + active.height);
+    let target_right = max_x
+        .saturating_add(CONTEXT_PADDING + 1)
+        .min(active.x + active.width);
+    let target_bottom = max_y
+        .saturating_add(CONTEXT_PADDING + 1)
+        .min(active.y + active.height);
     let target = SourceRegion {
         width: target_right - target.x,
         height: target_bottom - target.y,
         ..target
     };
     let window = match repair.donor {
-        DonorChoice::Automatic => padded(target, active, 132),
+        DonorChoice::Automatic => padded(target, active, AUTOMATIC_PADDING),
         DonorChoice::Offset([dx, dy]) => {
             let source_x = offset(target.x as usize, dx)
                 .and_then(|value| u32::try_from(value).ok())
@@ -427,6 +433,38 @@ pub fn heal_ranked(
     mask: &[bool],
     donor: DonorChoice,
 ) -> Result<(Vec<Ap1>, Vec<DonorMatch>), Error> {
+    heal_ranked_with_search(image, size, mask, donor, DonorSearch::Bounded)
+}
+
+#[derive(Clone, Copy)]
+enum DonorSearch {
+    Bounded,
+    #[cfg(test)]
+    Exhaustive,
+}
+impl DonorSearch {
+    fn is_bounded(self) -> bool {
+        matches!(self, Self::Bounded)
+    }
+    fn ceiling(self, best: f64) -> Option<f64> {
+        match self {
+            Self::Bounded => Some(competitive_score(best)),
+            #[cfg(test)]
+            Self::Exhaustive => None,
+        }
+    }
+}
+fn competitive_score(best: f64) -> f64 {
+    best * 1.01 + 1e-12
+}
+
+fn heal_ranked_with_search(
+    image: &[Ap1],
+    size: [u32; 2],
+    mask: &[bool],
+    donor: DonorChoice,
+    search: DonorSearch,
+) -> Result<(Vec<Ap1>, Vec<DonorMatch>), Error> {
     let [width, height] = dimensions(size, image.len())?;
     if mask.len() != image.len() || mask.iter().all(|bit| *bit) {
         return Err(Error::InvalidParameter("invalid repair mask"));
@@ -450,18 +488,21 @@ pub fn heal_ranked(
         .into_iter()
         .map(|unknown| !unknown)
         .collect::<Vec<_>>();
+    let masked_bounds = selected_bounds(mask, width);
     let mut output = image.to_vec();
     let mut matches = Vec::new();
     for component in groups {
         let donor_match = heal_component(
             &source,
             mask,
+            masked_bounds,
             &gradients,
             &gradient_known,
             width,
             height,
             &component,
             donor,
+            search,
             &mut output,
         )?;
         matches.push(donor_match);
@@ -480,12 +521,14 @@ pub fn heal_ranked(
 fn heal_component(
     image: &[Ap1],
     mask: &[bool],
+    masked_bounds: Option<[usize; 4]>,
     gradients: &[[f32; 6]],
     gradient_known: &[bool],
     width: usize,
     height: usize,
     component: &[usize],
     donor_choice: DonorChoice,
+    search: DonorSearch,
     output: &mut [Ap1],
 ) -> Result<DonorMatch, Error> {
     let min_x = component.iter().map(|index| index % width).min().unwrap();
@@ -497,10 +540,11 @@ fn heal_component(
             "biharmonic correction requires a two-pixel exterior",
         ));
     }
-    let x0 = min_x.saturating_sub(10);
-    let y0 = min_y.saturating_sub(10);
-    let x1 = (max_x + 11).min(width);
-    let y1 = (max_y + 11).min(height);
+    let padding = CONTEXT_PADDING as usize;
+    let x0 = min_x.saturating_sub(padding);
+    let y0 = min_y.saturating_sub(padding);
+    let x1 = (max_x + padding + 1).min(width);
+    let y1 = (max_y + padding + 1).min(height);
     let local_width = x1 - x0;
     let local_height = y1 - y0;
     let mut local = vec![false; local_width * local_height];
@@ -508,6 +552,7 @@ fn heal_component(
         local[(index / width - y0) * local_width + index % width - x0] = true;
     }
     let required = dilate(&local, local_width, local_height, 2);
+    let eligibility = DonorEligibility::new(mask, width, masked_bounds, local_width, &required);
     for y in 0..local_height {
         for x in 0..local_width {
             if required[y * local_width + x]
@@ -586,28 +631,56 @@ fn heal_component(
     let search_y1 = (y1 + 128).min(height);
     let candidates = match donor_choice {
         DonorChoice::Automatic => {
+            let totals = MatchWeights::new(&weights, &valid_target);
             let mut candidates = Vec::new();
+            let mut best = f64::INFINITY;
+            let mut zero_winner = None;
             for sy in search_y0..=search_y1 - local_height {
                 for sx in search_x0..=search_x1 - local_width {
-                    if required_source_is_clean(mask, width, sx, sy, local_width, &required)
-                        && let Ok(score) = matching_score(MatchContext {
-                            image,
-                            mask,
-                            gradients,
-                            gradient_known,
-                            width,
-                            target: [x0, y0],
-                            source: [sx, sy],
-                            size: [local_width, local_height],
-                            known: &known,
-                            valid_target: &valid_target,
-                            weights: &weights,
-                            center,
-                            contrast,
-                            gradient_scale,
-                        })
+                    if zero_winner
+                        .is_some_and(|winner| !can_beat_zero_winner(winner, [sx, sy], [x0, y0]))
                     {
-                        candidates.push((score, sy, sx));
+                        continue;
+                    }
+                    if eligibility.clean(sx, sy, search)
+                        && let Ok(Some(score)) = matching_score_bounded(
+                            MatchContext {
+                                image,
+                                mask,
+                                gradients,
+                                gradient_known,
+                                width,
+                                target: [x0, y0],
+                                source: [sx, sy],
+                                size: [local_width, local_height],
+                                known: &known,
+                                valid_target: &valid_target,
+                                weights: &weights,
+                                center,
+                                contrast,
+                                gradient_scale,
+                            },
+                            totals,
+                            search.ceiling(best),
+                        )
+                    {
+                        best = best.min(score);
+                        let candidate = (score, sy, sx);
+                        candidates.push(candidate);
+                        if search.is_bounded() && best == 0. {
+                            zero_winner = match zero_winner {
+                                Some(winner) => Some(
+                                    if score <= competitive_score(0.)
+                                        && donor_order(&candidate, &winner, [x0, y0]).is_lt()
+                                    {
+                                        candidate
+                                    } else {
+                                        winner
+                                    },
+                                ),
+                                None => select_donor(&candidates, [x0, y0]),
+                            };
+                        }
                     }
                 }
             }
@@ -623,7 +696,7 @@ fn heal_component(
             let sy = offset(y0, dy).ok_or(Error::InvalidParameter("manual donor outside crop"))?;
             if sx + local_width > width
                 || sy + local_height > height
-                || !required_source_is_clean(mask, width, sx, sy, local_width, &required)
+                || !eligibility.clean(sx, sy, search)
             {
                 return Err(Error::InvalidParameter(
                     "manual donor intersects required pixels",
@@ -651,22 +724,7 @@ fn heal_component(
             )]
         }
     };
-    let best = candidates
-        .iter()
-        .map(|candidate| candidate.0)
-        .fold(f64::INFINITY, f64::min);
-    let (matching_score, source_y, source_x) = candidates
-        .into_iter()
-        .filter(|candidate| candidate.0 <= best * 1.01 + 1e-12)
-        .min_by(|a, b| {
-            let da = distance(a.2, a.1, x0, y0);
-            let db = distance(b.2, b.1, x0, y0);
-            da.total_cmp(&db)
-                .then_with(|| a.0.total_cmp(&b.0))
-                .then_with(|| a.1.cmp(&b.1))
-                .then_with(|| a.2.cmp(&b.2))
-        })
-        .unwrap();
+    let (matching_score, source_y, source_x) = select_donor(&candidates, [x0, y0]).unwrap();
     let mut difference = vec![[0.; 3]; local.len()];
     let mut paired_context_pixels = 0;
     let mut context_error = 0.;
@@ -714,6 +772,40 @@ fn heal_component(
     })
 }
 
+fn donor_order(
+    a: &(f64, usize, usize),
+    b: &(f64, usize, usize),
+    target: [usize; 2],
+) -> std::cmp::Ordering {
+    let da = distance(a.2, a.1, target[0], target[1]);
+    let db = distance(b.2, b.1, target[0], target[1]);
+    da.total_cmp(&db)
+        .then_with(|| a.0.total_cmp(&b.0))
+        .then_with(|| a.1.cmp(&b.1))
+        .then_with(|| a.2.cmp(&b.2))
+}
+fn select_donor(
+    candidates: &[(f64, usize, usize)],
+    target: [usize; 2],
+) -> Option<(f64, usize, usize)> {
+    let best = candidates.iter().map(|c| c.0).fold(f64::INFINITY, f64::min);
+    candidates
+        .iter()
+        .filter(|c| c.0 <= competitive_score(best))
+        .min_by(|a, b| donor_order(a, b, target))
+        .copied()
+}
+fn can_beat_zero_winner(
+    winner: (f64, usize, usize),
+    source: [usize; 2],
+    target: [usize; 2],
+) -> bool {
+    // Zero fixes the global best and epsilon margin. Even a perfect new score must beat
+    // the incumbent's complete distance/score/y/x rank; nearer nonzero epsilon ties survive.
+    donor_order(&(0., source[1], source[0]), &winner, target).is_lt()
+}
+
+#[derive(Clone, Copy)]
 struct MatchContext<'a> {
     image: &'a [Ap1],
     mask: &'a [bool],
@@ -730,7 +822,36 @@ struct MatchContext<'a> {
     contrast: f64,
     gradient_scale: f64,
 }
+#[derive(Clone, Copy)]
+struct MatchWeights {
+    color: f64,
+    gradient: f64,
+}
+impl MatchWeights {
+    fn new(weights: &[f64], valid_target: &[bool]) -> Self {
+        Self {
+            color: weights.iter().sum(),
+            gradient: weights
+                .iter()
+                .zip(valid_target)
+                .filter_map(|(weight, valid)| valid.then_some(*weight))
+                .sum(),
+        }
+    }
+}
 fn matching_score(context: MatchContext<'_>) -> Result<f64, Error> {
+    matching_score_bounded(
+        context,
+        MatchWeights::new(context.weights, context.valid_target),
+        None,
+    )
+    .map(|score| score.expect("unbounded matching never prunes"))
+}
+fn matching_score_bounded(
+    context: MatchContext<'_>,
+    totals: MatchWeights,
+    ceiling: Option<f64>,
+) -> Result<Option<f64>, Error> {
     let [local_width, local_height] = context.size;
     let mut color_weight = 0.;
     let mut color_error = 0.;
@@ -762,19 +883,24 @@ fn matching_score(context: MatchContext<'_>) -> Result<f64, Error> {
                 }
             }
         }
+        // Errors only increase and paired weights cannot exceed these target totals.
+        // A strict lower bound outside the competitive margin can never become a winner.
+        if ceiling.is_some_and(|limit| {
+            0.75 * color_error / (totals.color * 3.)
+                + 0.25 * gradient_error / (totals.gradient * 6.)
+                > limit
+        }) {
+            return Ok(None);
+        }
     }
-    let required_color = context.weights.iter().sum::<f64>() * 0.5;
-    let required_gradient = context
-        .weights
-        .iter()
-        .zip(context.valid_target)
-        .filter_map(|(weight, valid)| valid.then_some(*weight))
-        .sum::<f64>()
-        * 0.5;
+    let required_color = totals.color * 0.5;
+    let required_gradient = totals.gradient * 0.5;
     if color_weight < required_color.max(1e-12) || gradient_weight < required_gradient.max(1e-12) {
         return Err(Error::InvalidParameter("insufficient paired donor context"));
     }
-    Ok(0.75 * color_error / (color_weight * 3.) + 0.25 * gradient_error / (gradient_weight * 6.))
+    Ok(Some(
+        0.75 * color_error / (color_weight * 3.) + 0.25 * gradient_error / (gradient_weight * 6.),
+    ))
 }
 
 fn dimensions(size: [u32; 2], count: usize) -> Result<[usize; 2], Error> {
@@ -795,17 +921,82 @@ fn offset(value: usize, delta: i32) -> Option<usize> {
 fn distance(x: usize, y: usize, tx: usize, ty: usize) -> f64 {
     ((x as f64 - tx as f64).powi(2) + (y as f64 - ty as f64).powi(2)).sqrt()
 }
-fn required_source_is_clean(
-    mask: &[bool],
+fn selected_bounds(mask: &[bool], width: usize) -> Option<[usize; 4]> {
+    let mut bounds = [usize::MAX, usize::MAX, 0, 0];
+    let mut any = false;
+    for (i, selected) in mask.iter().enumerate() {
+        if *selected {
+            let (x, y) = (i % width, i / width);
+            bounds[0] = bounds[0].min(x);
+            bounds[1] = bounds[1].min(y);
+            bounds[2] = bounds[2].max(x + 1);
+            bounds[3] = bounds[3].max(y + 1);
+            any = true;
+        }
+    }
+    any.then_some(bounds)
+}
+
+struct DonorEligibility<'a> {
+    mask: &'a [bool],
     width: usize,
-    source_x: usize,
-    source_y: usize,
+    masked: Option<[usize; 4]>,
+    needed: Option<[usize; 4]>,
+    offsets: Vec<usize>,
+    #[cfg(test)]
+    required: &'a [bool],
+    #[cfg(test)]
     local_width: usize,
-    required: &[bool],
-) -> bool {
-    required.iter().enumerate().all(|(index, needed)| {
-        !needed || !mask[(source_y + index / local_width) * width + source_x + index % local_width]
-    })
+}
+impl<'a> DonorEligibility<'a> {
+    fn new(
+        mask: &'a [bool],
+        width: usize,
+        masked: Option<[usize; 4]>,
+        local_width: usize,
+        required: &'a [bool],
+    ) -> Self {
+        Self {
+            mask,
+            width,
+            masked,
+            needed: selected_bounds(required, local_width),
+            offsets: required
+                .iter()
+                .enumerate()
+                .filter_map(|(i, needed)| {
+                    needed.then_some(i / local_width * width + i % local_width)
+                })
+                .collect(),
+            #[cfg(test)]
+            required,
+            #[cfg(test)]
+            local_width,
+        }
+    }
+    fn clean(&self, x: usize, y: usize, _search: DonorSearch) -> bool {
+        #[cfg(test)]
+        if matches!(_search, DonorSearch::Exhaustive) {
+            return self.required.iter().enumerate().all(|(i, needed)| {
+                !needed
+                    || !self.mask
+                        [(y + i / self.local_width) * self.width + x + i % self.local_width]
+            });
+        }
+        let (Some(masked), Some(needed)) = (self.masked, self.needed) else {
+            return true;
+        };
+        // Disjoint bounding boxes prove cleanliness; intersecting boxes still test exact support.
+        if x + needed[2] <= masked[0]
+            || y + needed[3] <= masked[1]
+            || x + needed[0] >= masked[2]
+            || y + needed[1] >= masked[3]
+        {
+            return true;
+        }
+        let base = y * self.width + x;
+        self.offsets.iter().all(|offset| !self.mask[base + offset])
+    }
 }
 
 fn grouped_components(mask: &[bool], width: usize, height: usize) -> Vec<Vec<usize>> {

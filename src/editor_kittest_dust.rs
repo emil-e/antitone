@@ -14,6 +14,10 @@ fn click(h: &mut Harness<'_, Editor>, p: egui::Pos2, modifiers: egui::Modifiers)
     }
     h.step();
 }
+fn brush_ring_at(h: &Harness<'_, Editor>, point: egui::Pos2) -> bool {
+    h.output().shapes.iter().any(|shape|matches!(&shape.shape,egui::Shape::Circle(circle) if circle.center.distance(point)<0.01 && circle.fill==egui::Color32::TRANSPARENT && circle.stroke.width==1.5))
+}
+
 fn ready(h: &mut Harness<'_, Editor>, count: usize) {
     wait_for(h, |e| {
         e.dust_signature()
@@ -84,6 +88,68 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
     let first = h.state().dust_evaluations(sig)[0].clone();
     let initial = h.state().working.regional().unwrap().clone();
     let initial_neutral = h.state().working.neutral_source().unwrap();
+    let layout = h.state().last_layout.unwrap().0;
+    let target = layout.screen_point(egui::pos2(96., 32.));
+    h.hover_at(target);
+    h.step();
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        egui::CursorIcon::PointingHand
+    );
+    assert!(!brush_ring_at(&h, target));
+    for modifiers in [egui::Modifiers::SHIFT, egui::Modifiers::ALT] {
+        h.event(egui::Event::ModifiersChanged(modifiers));
+        h.hover_at(target);
+        h.step();
+        assert_eq!(
+            h.output().platform_output.cursor_icon,
+            egui::CursorIcon::Crosshair
+        );
+        assert!(brush_ring_at(&h, target));
+    }
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    h.step();
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        egui::CursorIcon::PointingHand
+    );
+    h.event(egui::Event::Key {
+        key: egui::Key::Space,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.step();
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        egui::CursorIcon::Grab
+    );
+    assert!(!brush_ring_at(&h, target));
+    h.event(egui::Event::Key {
+        key: egui::Key::Space,
+        physical_key: None,
+        pressed: false,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.step();
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        egui::CursorIcon::PointingHand
+    );
+    let empty = layout.screen_point(egui::pos2(180., 130.));
+    assert!(
+        h.state().dust_repair_at(layout, empty).is_none()
+            && !h.state().dust_donor_at(layout, empty)
+    );
+    h.hover_at(empty);
+    h.step();
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        egui::CursorIcon::Crosshair
+    );
+    assert!(brush_ring_at(&h, empty));
     assert_eq!(h.state().document.project, project);
     assert_eq!(h.state().document.dirty(), dirty);
     assert!(h.state().pick.is_none());
@@ -151,6 +217,19 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         DonorChoice::Offset(desired)
     );
     ready(&mut h, 1);
+    let region = h.state().dust_donor_regions().remove(0);
+    let selected = region.support.selected_points().next().unwrap();
+    let donor = h.state().last_layout.unwrap().0.screen_point(egui::pos2(
+        selected[0] as f32 + desired[0] as f32 + 0.5,
+        selected[1] as f32 + desired[1] as f32 + 0.5,
+    ));
+    h.hover_at(donor);
+    h.step();
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        egui::CursorIcon::Grab
+    );
+    assert!(!brush_ring_at(&h, donor));
     let same = h.state().dust_evaluations(sig)[0].clone();
     click(&mut h, egui::pos2(32., 96.), egui::Modifiers::NONE);
     ready(&mut h, 2);

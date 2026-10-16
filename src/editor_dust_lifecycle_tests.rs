@@ -1,4 +1,5 @@
 use super::*;
+use crate::geometry::QuarterTurns;
 
 fn editor() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
     let (mut editor, send, commands) = super::super::tests::fixture();
@@ -63,6 +64,379 @@ fn high_response(e: &mut Editor) -> Response {
         signature: request.signature,
         repair: request.repair,
         evaluated,
+    }
+}
+
+#[test]
+fn held_dust_stroke_keeps_painting_past_512_source_pixels_until_primary_release() {
+    let (mut e, _send, _commands) = editor();
+    let source = e.current_source.unwrap();
+    e.dust.clear_repairs(source);
+    e.begin_dust_cleanup();
+    e.dust.brush_size = 8;
+    e.preferences.scopes_visible = false;
+    let ctx = egui::Context::default();
+    for _ in 0..3 {
+        super::super::tests::app_frame(&mut e, &ctx, vec![]);
+    }
+    let project = e.document.project.clone();
+    let layout = e.last_layout.unwrap().0;
+    let start = layout.screen_point(egui::pos2(100., 200.));
+    super::super::tests::app_frame(
+        &mut e,
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(start),
+            egui::Event::PointerButton {
+                pos: start,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    for x in (125..=750).step_by(25) {
+        let point = layout.screen_point(egui::pos2(x as f32, 200.));
+        super::super::tests::app_frame(&mut e, &ctx, vec![egui::Event::PointerMoved(point)]);
+        assert!(ctx.input(|i| i.pointer.primary_down()));
+        assert!(
+            e.dust.mask_draft.is_some(),
+            "lost held stroke at source x={x}: {}",
+            e.status
+        );
+        assert!(e.dust.repairs(source).is_none());
+    }
+    assert!(
+        e.dust
+            .mask_draft
+            .as_ref()
+            .unwrap()
+            .pixels
+            .contains(&[750, 200]),
+        "held stroke stopped early: {}",
+        e.status
+    );
+    let end = layout.screen_point(egui::pos2(750., 200.));
+    super::super::tests::app_frame(
+        &mut e,
+        &ctx,
+        vec![egui::Event::PointerButton {
+            pos: end,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    assert!(e.dust.mask_draft.is_none());
+    let repairs = e.dust.repairs(source).unwrap().repairs();
+    assert_eq!(repairs.len(), 1);
+    assert!(repairs[0].support.contains([750, 200]));
+    assert_eq!(e.document.project, project);
+}
+
+#[test]
+fn mask_aspect_ratio_budget_preserves_original_storage_matching_and_automatic_work_bounds() {
+    assert!(mask_within_budget([512, 512], MAX_MASK_PIXELS));
+    assert!(mask_within_budget([700, 8], 5600));
+    assert!(!mask_within_budget([513, 512], MAX_MASK_PIXELS));
+    assert!(!mask_within_budget([8, 8], MAX_MASK_PIXELS + 1));
+    assert!(!mask_within_budget([u32::MAX, u32::MAX], 1));
+    let context_padding = 2 * u64::from(CONTEXT_PADDING);
+    let padding = context_padding + 2 * u64::from(AUTOMATIC_PADDING);
+    let max_width = MAX_MASK_WORK_PIXELS / (1 + padding) - padding;
+    for width in 1..=max_width {
+        let Some(height) = (MAX_MASK_WORK_PIXELS / (width + padding))
+            .checked_sub(padding)
+            .filter(|h| *h > 0)
+        else {
+            continue;
+        };
+        assert!(mask_within_budget([width as u32, height as u32], 1));
+        assert!(width * height <= 512 * 512);
+        assert!(
+            (width + context_padding) * (height + context_padding)
+                <= (512 + context_padding).pow(2)
+        );
+        assert!((width + padding) * (height + padding) <= MAX_MASK_WORK_PIXELS);
+        assert!(MAX_MASK_WORK_PIXELS <= 4_000_000);
+    }
+}
+
+#[test]
+fn over_budget_held_strokes_are_visible_and_discarded_without_partial_new_or_existing_repairs() {
+    for edit_existing in [false, true] {
+        let (mut e, _send, _commands) = editor();
+        let source = e.current_source.unwrap();
+        if !edit_existing {
+            e.dust.clear_repairs(source);
+        }
+        e.begin_dust_cleanup();
+        e.dust.brush_size = 64;
+        e.preferences.scopes_visible = false;
+        let before = e
+            .dust
+            .repairs(source)
+            .map(|r| r.repairs().to_vec())
+            .unwrap_or_default();
+        let ctx = egui::Context::default();
+        for _ in 0..3 {
+            super::super::tests::app_frame(&mut e, &ctx, vec![]);
+        }
+        let project = e.document.project.clone();
+        let layout = e.last_layout.unwrap().0;
+        let modifiers = if edit_existing {
+            egui::Modifiers::SHIFT
+        } else {
+            egui::Modifiers::NONE
+        };
+        let start = layout.screen_point(egui::pos2(200., 120.));
+        super::super::tests::app_frame(
+            &mut e,
+            &ctx,
+            vec![
+                egui::Event::ModifiersChanged(modifiers),
+                egui::Event::PointerMoved(start),
+                egui::Event::PointerButton {
+                    pos: start,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers,
+                },
+            ],
+        );
+        let mut end = start;
+        'stroke: for row in 0..7 {
+            for step in 0..=10 {
+                let x = if row % 2 == 0 {
+                    200 + step * 25
+                } else {
+                    450 - step * 25
+                };
+                end = layout.screen_point(egui::pos2(x as f32, (120 + row * 45) as f32));
+                super::super::tests::app_frame(
+                    &mut e,
+                    &ctx,
+                    vec![
+                        egui::Event::ModifiersChanged(modifiers),
+                        egui::Event::PointerMoved(end),
+                    ],
+                );
+                assert!(ctx.input(|i| i.pointer.primary_down()));
+                if e.dust
+                    .mask_draft
+                    .as_ref()
+                    .is_some_and(|draft| draft.rejected)
+                {
+                    break 'stroke;
+                }
+            }
+        }
+        assert!(e.dust.mask_draft.as_ref().unwrap().rejected);
+        let labels = super::super::tests::app_frame(
+            &mut e,
+            &ctx,
+            vec![egui::Event::ModifiersChanged(modifiers)],
+        );
+        assert!(ctx.input(|i| i.pointer.primary_down()));
+        assert!(
+            labels
+                .iter()
+                .any(|(text, _)| text.contains("Stroke too large"))
+        );
+        assert_eq!(e.effective_dust_repairs(source), before);
+        super::super::tests::app_frame(
+            &mut e,
+            &ctx,
+            vec![egui::Event::PointerButton {
+                pos: end,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers,
+            }],
+        );
+        assert!(e.dust.mask_draft.is_none());
+        assert_eq!(
+            e.dust
+                .repairs(source)
+                .map(|r| r.repairs().to_vec())
+                .unwrap_or_default(),
+            before
+        );
+        assert!(e.status.contains("no changes applied"), "{}", e.status);
+        assert_eq!(e.document.project, project);
+    }
+}
+
+#[test]
+fn dust_cursor_matches_selection_paint_and_donor_action_precedence() {
+    let (mut e, _send, _commands) = editor();
+    e.begin_dust_cleanup();
+    let source = e.current_source.unwrap();
+    let request = Request {
+        request: 1,
+        loaded: e.id,
+        source,
+        signature: e.dust_signature().unwrap(),
+        repair: e.dust.repairs(source).unwrap().repairs()[0].clone(),
+        calibration: e.calibration().unwrap(),
+        roll: e.roll.inversion_only(),
+    };
+    e.dust.start(&request);
+    e.receive_dust(
+        1,
+        Ok(Some(response(&request, e.ready.as_ref().unwrap().area))),
+    );
+    let composition = Composition::new(
+        e.ready.as_ref().unwrap().area,
+        Default::default(),
+        Default::default(),
+    )
+    .unwrap();
+    let geometry = e.viewport.layout_composition(
+        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1728., 1152.)),
+        composition,
+        1.,
+    );
+    let target = screen_source_point(geometry, [51.5, 51.5]);
+    let donor = screen_source_point(geometry, [81.5, 51.5]);
+    let empty = screen_source_point(geometry, [20.5, 20.5]);
+    let outline = screen_source_point(geometry, [53., 51.5]) + egui::vec2(4., 0.);
+    assert_eq!(e.dust_repair_at(geometry, outline), Some(RepairId(1)));
+    assert_eq!(
+        e.dust_canvas_cursor(geometry, Some(target), false),
+        egui::CursorIcon::PointingHand
+    );
+    assert_eq!(
+        e.dust_canvas_cursor(geometry, Some(outline), false),
+        egui::CursorIcon::PointingHand
+    );
+    assert_eq!(
+        e.dust_canvas_cursor(geometry, Some(empty), false),
+        egui::CursorIcon::Crosshair
+    );
+    assert_eq!(
+        e.dust_canvas_cursor(geometry, Some(donor), false),
+        egui::CursorIcon::Grab
+    );
+    for point in [target, outline, donor] {
+        assert_eq!(
+            e.dust_canvas_cursor(geometry, Some(point), true),
+            egui::CursorIcon::Crosshair
+        );
+    }
+    e.begin_dust_mask(None);
+    assert_eq!(
+        e.dust_canvas_cursor(geometry, Some(target), false),
+        egui::CursorIcon::Crosshair
+    );
+    e.cancel_dust_mask();
+    e.begin_dust_donor_drag(geometry, donor);
+    assert!(e.dust_donor_dragging());
+    assert_eq!(
+        e.dust_canvas_cursor(geometry, Some(target), true),
+        egui::CursorIcon::Grabbing
+    );
+    assert_eq!(
+        e.dust_canvas_cursor(geometry, None, false),
+        egui::CursorIcon::Grabbing
+    );
+    e.end_dust_donor_drag();
+    let other = e
+        .dust
+        .repairs_mut(source)
+        .insert(
+            SupportMask::new([80, 50], [3, 3], vec![true; 9]).unwrap(),
+            RepairOrigin::Manual,
+            DonorChoice::Automatic,
+        )
+        .unwrap();
+    e.dust
+        .repairs_mut(source)
+        .select(Some(RepairId(1)))
+        .unwrap();
+    assert!(e.dust_donor_at(geometry, donor));
+    assert_eq!(e.dust_repair_at(geometry, donor), Some(other));
+    assert_eq!(
+        e.dust_canvas_cursor(geometry, Some(donor), false),
+        egui::CursorIcon::PointingHand
+    );
+    e.dust.show_masks = false;
+    assert_eq!(
+        e.dust_canvas_cursor(geometry, Some(target), false),
+        egui::CursorIcon::Crosshair
+    );
+}
+
+#[test]
+fn repair_outline_fast_rejection_keeps_exact_hits_under_rotation_and_zoom() {
+    let (mut e, _send, _commands) = editor();
+    let support = SupportMask::new(
+        [50, 50],
+        [7, 5],
+        (0..35)
+            .map(|i| i % 7 == 0 || i % 7 == 6 || i / 7 == 0 || i / 7 == 4)
+            .collect(),
+    )
+    .unwrap();
+    for turns in [
+        QuarterTurns::Zero,
+        QuarterTurns::One,
+        QuarterTurns::Two,
+        QuarterTurns::Three,
+    ] {
+        let composition = Composition::with_crop(
+            e.ready.as_ref().unwrap().area,
+            RollOrientation {
+                turns,
+                ..Default::default()
+            },
+            PhotoOrientation {
+                flips: crate::geometry::Flips {
+                    horizontal: true,
+                    vertical: false,
+                },
+                ..Default::default()
+            },
+            Some(Crop {
+                center: [110., 95.],
+                size: [160, 120],
+                angle: 0.17,
+            }),
+        )
+        .unwrap();
+        for zoom in [None, Some(2.)] {
+            e.viewport.zoom = zoom;
+            let geometry = e.viewport.layout_composition(
+                egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900., 600.)),
+                composition,
+                1.,
+            );
+            let segments = support_boundary_segments(&support);
+            for point in segments
+                .iter()
+                .flat_map(|segment| segment.iter())
+                .map(|p| screen_source_point(geometry, *p))
+            {
+                for delta in [
+                    egui::Vec2::ZERO,
+                    egui::vec2(7.9, 0.),
+                    egui::vec2(-7.9, 0.),
+                    egui::vec2(0., 7.9),
+                    egui::vec2(0., -7.9),
+                    egui::vec2(30., 30.),
+                ] {
+                    let point = point + delta;
+                    let exact = segments.iter().any(|segment| {
+                        distance_to_segment(
+                            point,
+                            screen_source_point(geometry, segment[0]),
+                            screen_source_point(geometry, segment[1]),
+                        ) <= 8.
+                    });
+                    assert_eq!(repair_outline_hit(geometry, &support, point), exact);
+                }
+            }
+        }
     }
 }
 

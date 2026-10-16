@@ -1,7 +1,8 @@
 use super::*;
 use crate::{
     dust_repair::{
-        DonorChoice, EvaluatedRepair, Repair, RepairId, RepairOrigin, RepairSet, SupportMask,
+        AUTOMATIC_PADDING, CONTEXT_PADDING, DonorChoice, EvaluatedRepair, Repair, RepairId,
+        RepairOrigin, RepairSet, SupportMask,
     },
     geometry::SourceRegion,
     processing::Pipeline,
@@ -12,8 +13,17 @@ use std::collections::{BTreeSet, HashMap};
 #[path = "editor_dust_lifecycle_tests.rs"]
 mod lifecycle_tests;
 
-const MAX_MASK_SIDE: u32 = 512;
+// Preserve the former 512-square source-window budget, without limiting aspect ratio.
+const MAX_MASK_WORK_PIXELS: u64 =
+    (512 + 2 * (CONTEXT_PADDING as u64 + AUTOMATIC_PADDING as u64)).pow(2);
 const MAX_MASK_PIXELS: usize = 65_536;
+fn mask_within_budget(size: [u32; 2], marked: usize) -> bool {
+    let padding = 2 * (u64::from(CONTEXT_PADDING) + u64::from(AUTOMATIC_PADDING));
+    marked <= MAX_MASK_PIXELS
+        && (u64::from(size[0]) + padding)
+            .checked_mul(u64::from(size[1]) + padding)
+            .is_some_and(|cells| cells <= MAX_MASK_WORK_PIXELS)
+}
 
 fn initial_brush_size(active: SourceRegion) -> u32 {
     ((active.width.min(active.height) as f64 * 0.01).round() as u32).clamp(4, 128)
@@ -32,12 +42,16 @@ fn donor_target(support: &SupportMask, active: SourceRegion) -> Result<SourceReg
         max_y = max_y.max(y);
     }
     Ok(SourceRegion {
-        x: min_x.saturating_sub(10).max(active.x),
-        y: min_y.saturating_sub(10).max(active.y),
-        width: max_x.saturating_add(11).min(active.x + active.width)
-            - min_x.saturating_sub(10).max(active.x),
-        height: max_y.saturating_add(11).min(active.y + active.height)
-            - min_y.saturating_sub(10).max(active.y),
+        x: min_x.saturating_sub(CONTEXT_PADDING).max(active.x),
+        y: min_y.saturating_sub(CONTEXT_PADDING).max(active.y),
+        width: max_x
+            .saturating_add(CONTEXT_PADDING + 1)
+            .min(active.x + active.width)
+            - min_x.saturating_sub(CONTEXT_PADDING).max(active.x),
+        height: max_y
+            .saturating_add(CONTEXT_PADDING + 1)
+            .min(active.y + active.height)
+            - min_y.saturating_sub(CONTEXT_PADDING).max(active.y),
     })
 }
 
@@ -150,6 +164,7 @@ struct MaskDraft {
     target: Option<RepairId>,
     pixels: BTreeSet<[u32; 2]>,
     last: Option<[f64; 2]>,
+    rejected: bool,
 }
 
 impl MaskDraft {
@@ -161,6 +176,7 @@ impl MaskDraft {
                 .flat_map(SupportMask::selected_points)
                 .collect(),
             last: None,
+            rejected: false,
         }
     }
 
@@ -178,8 +194,7 @@ impl MaskDraft {
             return Err(Error::InvalidParameter("empty repair mask"));
         };
         let size = [max_x - min_x + 1, max_y - min_y + 1];
-        if size[0] > MAX_MASK_SIDE || size[1] > MAX_MASK_SIDE || self.pixels.len() > MAX_MASK_PIXELS
-        {
+        if !mask_within_budget(size, self.pixels.len()) {
             return Err(Error::InvalidParameter("dust repair mask is too large"));
         }
         let mut bits = vec![false; (size[0] * size[1]) as usize];
@@ -511,10 +526,10 @@ fn brush_dab(
         .map(|point| point[1])
         .max()
         .unwrap();
-    if max_x - min_x + 1 > MAX_MASK_SIDE
-        || max_y - min_y + 1 > MAX_MASK_SIDE
-        || draft.pixels.len() + added > MAX_MASK_PIXELS
-    {
+    if !mask_within_budget(
+        [max_x - min_x + 1, max_y - min_y + 1],
+        draft.pixels.len() + added,
+    ) {
         return Err(Error::InvalidParameter("dust repair mask is too large"));
     }
     draft.pixels.extend(candidates);
@@ -687,6 +702,21 @@ fn repair_outline_hit(
     support: &SupportMask,
     point: egui::Pos2,
 ) -> bool {
+    let [x, y] = support.origin();
+    let [width, height] = support.size();
+    // Hovering needs this test every frame; reject distant masks before tracing their edges.
+    if !geometry
+        .screen_region(SourceRegion {
+            x,
+            y,
+            width,
+            height,
+        })
+        .expand(9.)
+        .contains(point)
+    {
+        return false;
+    }
     support_boundary_segments(support)
         .into_iter()
         .any(|segment| {
@@ -761,7 +791,14 @@ impl Editor {
                 }
                 ui.checkbox(&mut self.dust.show_masks, "Show repair outlines")
                     .on_hover_text("Hold H for a momentary unobstructed preview.");
-                ui.small(if self
+                let rejected = self
+                    .dust
+                    .mask_draft
+                    .as_ref()
+                    .is_some_and(|draft| draft.rejected);
+                let guidance = egui::RichText::new(if rejected {
+                    "Stroke too large · release to discard it and use smaller repairs."
+                } else if self
                     .dust
                     .repairs(source)
                     .and_then(RepairSet::selected)
@@ -770,6 +807,11 @@ impl Editor {
                     "Draw for a new heal · Shift adds to selected · Option removes · drag its source."
                 } else {
                     "Draw for a new heal · click an outline to select it · Delete removes selected."
+                });
+                ui.small(if rejected {
+                    guidance.color(ui.visuals().error_fg_color)
+                } else {
+                    guidance
                 });
                 if repairs.is_empty() {
                     ui.small("Manual masks only · automatic proposals are not wired yet");
@@ -991,6 +1033,11 @@ impl Editor {
         let Some(draft) = &self.dust.mask_draft else {
             return;
         };
+        if draft.rejected {
+            self.cancel_dust_mask();
+            self.status = "Dust stroke rejected: repair budget exceeded; no changes applied".into();
+            return;
+        }
         let target = draft.target;
         let donor = self
             .dust
@@ -1082,6 +1129,14 @@ impl Editor {
         let Some(source) = self.current_source else {
             return;
         };
+        if self
+            .dust
+            .mask_draft
+            .as_ref()
+            .is_some_and(|draft| draft.rejected)
+        {
+            return;
+        }
         let Some(target) = self.dust.mask_draft.as_ref().map(|draft| draft.target) else {
             return;
         };
@@ -1106,13 +1161,35 @@ impl Editor {
         match result {
             Ok((_, true)) => self.status = "Dust masks cannot overlap another repair".into(),
             Ok(_) => {}
-            Err(error) => self.status = format!("Dust mask rejected: {error}"),
+            Err(_) => {
+                self.dust.mask_draft.as_mut().unwrap().rejected = true;
+                self.status = "Dust stroke too large; release to discard it".into();
+            }
         }
     }
 
     pub(super) fn end_dust_stroke(&mut self) {
         if let Some(draft) = &mut self.dust.mask_draft {
             draft.clear_stroke();
+        }
+    }
+
+    pub(super) fn dust_canvas_cursor(
+        &self,
+        geometry: crate::viewport::CanvasLayout,
+        point: Option<egui::Pos2>,
+        modifying: bool,
+    ) -> egui::CursorIcon {
+        if self.dust_donor_dragging() {
+            egui::CursorIcon::Grabbing
+        } else if modifying || self.dust.mask_draft.is_some() {
+            egui::CursorIcon::Crosshair
+        } else if point.is_some_and(|p| self.dust_repair_at(geometry, p).is_some()) {
+            egui::CursorIcon::PointingHand
+        } else if point.is_some_and(|p| self.dust_donor_at(geometry, p)) {
+            egui::CursorIcon::Grab
+        } else {
+            egui::CursorIcon::Crosshair
         }
     }
 
@@ -1442,12 +1519,17 @@ impl Editor {
     }
 
     fn effective_dust_repairs(&self, source: SourceId) -> Vec<Repair> {
-        let target = self.dust.mask_draft.as_ref().and_then(|draft| draft.target);
+        let target = self
+            .dust
+            .mask_draft
+            .as_ref()
+            .filter(|draft| !draft.rejected)
+            .and_then(|draft| draft.target);
         let support = self
             .dust
             .mask_draft
             .as_ref()
-            .filter(|draft| draft.target.is_some())
+            .filter(|draft| draft.target.is_some() && !draft.rejected)
             .and_then(|draft| draft.support().ok());
         self.dust
             .repairs(source)
@@ -1792,7 +1874,16 @@ impl Editor {
                 geometry,
                 &mask,
                 [0., 0.],
-                egui::Color32::from_rgb(100, 220, 240),
+                if self
+                    .dust
+                    .mask_draft
+                    .as_ref()
+                    .is_some_and(|draft| draft.rejected)
+                {
+                    ui.visuals().error_fg_color
+                } else {
+                    egui::Color32::from_rgb(100, 220, 240)
+                },
                 1.,
             );
         }
@@ -1809,7 +1900,8 @@ impl Editor {
             && !self.dust_donor_dragging()
             && !hide_cursor
             && let Some(point) = point
-            && (add || erase || !self.dust_donor_at(geometry, point))
+            && self.dust_canvas_cursor(geometry, Some(point), add || erase)
+                == egui::CursorIcon::Crosshair
             && let Some(source_point) = self.dust_source_position(geometry, point)
         {
             let center = screen_source_point(geometry, source_point);
@@ -1824,7 +1916,14 @@ impl Editor {
                 radius,
                 egui::Stroke::new(
                     1.5,
-                    if erase {
+                    if self
+                        .dust
+                        .mask_draft
+                        .as_ref()
+                        .is_some_and(|draft| draft.rejected)
+                    {
+                        ui.visuals().error_fg_color
+                    } else if erase {
                         egui::Color32::from_rgb(240, 120, 100)
                     } else if add {
                         egui::Color32::from_rgb(100, 220, 240)

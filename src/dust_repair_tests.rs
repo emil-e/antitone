@@ -300,6 +300,285 @@ fn bounded_evaluation_uses_base_ap1_and_ignores_ui_provenance() {
     }
 }
 
+fn assert_exhaustive_search(image: &[Ap1], size: [u32; 2], mask: &[bool]) {
+    let fast = heal_ranked(image, size, mask, DonorChoice::Automatic);
+    let reference = heal_ranked_with_search(
+        image,
+        size,
+        mask,
+        DonorChoice::Automatic,
+        DonorSearch::Exhaustive,
+    );
+    match (fast, reference) {
+        (Ok((pixels, donors)), Ok((expected, expected_donors))) => {
+            assert_eq!(donors, expected_donors);
+            for (a, b) in donors.iter().zip(&expected_donors) {
+                assert_eq!(a.matching_score.to_bits(), b.matching_score.to_bits());
+                assert_eq!(a.context_mse.to_bits(), b.context_mse.to_bits());
+            }
+            assert!(
+                pixels
+                    .iter()
+                    .zip(&expected)
+                    .all(|(a, b)| a.map(f32::to_bits) == b.map(f32::to_bits))
+            );
+            assert!(outside_bits_equal(&pixels, image, mask));
+        }
+        (Err(a), Err(b)) => assert_eq!(a.to_string(), b.to_string()),
+        (a, b) => panic!("bounded/exhaustive disagreement: {a:?} vs {b:?}"),
+    }
+}
+
+#[test]
+fn bounded_search_matches_exhaustive_flat_structure_noise_hdr_and_disconnected_support() {
+    let size = [64, 60];
+    let one = circle(size, [32, 30], 3);
+    let far = circle(size, [19, 20], 2)
+        .into_iter()
+        .zip(circle(size, [42, 38], 2))
+        .map(|(a, b)| a || b)
+        .collect::<Vec<_>>();
+    let close = circle(size, [29, 30], 2)
+        .into_iter()
+        .zip(circle(size, [36, 30], 2))
+        .map(|(a, b)| a || b)
+        .collect::<Vec<_>>();
+    let mut seed = 0x1f73459bu32;
+    for kind in 0..6 {
+        let image = (0..size[0] * size[1])
+            .map(|i| {
+                let (x, y) = (i % size[0], i / size[0]);
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                let noise = (seed >> 8) as f32 / (1u32 << 24) as f32;
+                match kind {
+                    0 => [0.1, -0.2, 1.3],
+                    1 => [0.04 + x as f32 * 0.001, -0.02 + y as f32 * 0.001, 1.1],
+                    2 => {
+                        let v = if (30..33).contains(&x) { 0.3 } else { 0.04 };
+                        [v, v * 0.7, 1. + v]
+                    }
+                    3 => [noise * 0.2 - 0.04, noise * 0.7 - 0.1, 1. + noise],
+                    4 => {
+                        let v = ((x / 4 + y / 4) % 2) as f32 * 0.1;
+                        [v, -0.2 + v, 1.3 + v]
+                    }
+                    _ => [1e24 + x as f32 * 1e20, -2e24 + y as f32 * 1e20, 3e24],
+                }
+            })
+            .collect::<Vec<_>>();
+        for mask in [&one, &far, &close] {
+            assert_exhaustive_search(&image, size, mask);
+        }
+        let changed = image
+            .iter()
+            .zip(&one)
+            .map(|(p, masked)| if *masked { [-1e25, 1e25, 0.] } else { *p })
+            .collect::<Vec<_>>();
+        assert_exhaustive_search(&changed, size, &one);
+        assert_eq!(
+            heal_ranked(&image, size, &one, DonorChoice::Automatic).unwrap(),
+            heal_ranked(&changed, size, &one, DonorChoice::Automatic).unwrap()
+        );
+    }
+}
+
+#[test]
+fn donor_selection_keeps_the_exact_margin_distance_score_and_coordinate_policy() {
+    let target = [20, 20];
+    let margin = competitive_score(1.);
+    let just_above = f64::from_bits(margin.to_bits() + 1);
+    assert_eq!(
+        select_donor(&[(1., 5, 5), (1.005, 20, 18), (1.02, 20, 19)], target),
+        Some((1.005, 20, 18))
+    );
+    assert_eq!(
+        select_donor(
+            &[(1., 5, 5), (margin, 20, 19), (just_above, 20, 20)],
+            target
+        ),
+        Some((margin, 20, 19))
+    );
+    assert_eq!(
+        select_donor(&[(1.005, 20, 19), (1., 20, 21)], target),
+        Some((1., 20, 21))
+    );
+    assert_eq!(
+        select_donor(&[(1., 20, 21), (1., 20, 19), (1., 19, 20)], target),
+        Some((1., 19, 20))
+    );
+    assert_eq!(
+        select_donor(&[(1., 20, 21), (1., 20, 19)], target),
+        Some((1., 20, 19))
+    );
+}
+
+#[test]
+fn zero_best_pruning_preserves_nearer_epsilon_and_equal_distance_score_ties() {
+    let target = [20, 20];
+    let near = (8e-13, 19, 20);
+    let winner = select_donor(&[near, (0., 20, 0), (1.01e-12, 20, 20)], target).unwrap();
+    assert_eq!(winner, near);
+    assert!(!can_beat_zero_winner(winner, [18, 20], target));
+    assert!(can_beat_zero_winner(winner, [19, 20], target));
+    let perfect = (0., 20, 19);
+    assert_eq!(
+        select_donor(&[near, (0., 20, 0), perfect], target),
+        Some(perfect)
+    );
+    assert!(!can_beat_zero_winner(perfect, [21, 20], target));
+    assert!(can_beat_zero_winner(perfect, [20, 19], target));
+}
+
+#[test]
+fn score_cutoff_never_discards_a_candidate_on_or_below_its_limit() {
+    let width = 48;
+    let height = 24;
+    let image = gradient([width as u32, height as u32]);
+    let gradients = sobel(&gaussian_blur(&image, width, height), width, height);
+    let mask = vec![false; width * height];
+    let gradient_known = vec![true; width * height];
+    let known = (0..63).map(|i| i % 7 != 2).collect::<Vec<_>>();
+    let valid = (0..63).map(|i| i % 5 != 3 && known[i]).collect::<Vec<_>>();
+    let weights = known
+        .iter()
+        .enumerate()
+        .map(|(i, known)| {
+            if *known {
+                0.15 + (i % 13) as f64 * 0.05
+            } else {
+                0.
+            }
+        })
+        .collect::<Vec<_>>();
+    let context = MatchContext {
+        image: &image,
+        mask: &mask,
+        gradients: &gradients,
+        gradient_known: &gradient_known,
+        width,
+        target: [4, 4],
+        source: [25, 8],
+        size: [9, 7],
+        known: &known,
+        valid_target: &valid,
+        weights: &weights,
+        center: [0.04, -0.02, 1.1],
+        contrast: 0.3,
+        gradient_scale: 0.1,
+    };
+    let mut partial_mask = mask.clone();
+    let mut partial_gradient = gradient_known.clone();
+    for i in 0..63 {
+        let source = (8 + i / 9) * width + 25 + i % 9;
+        partial_mask[source] = i % 11 == 0;
+        partial_gradient[source] = i % 13 != 0;
+    }
+    for context in [
+        context,
+        MatchContext {
+            mask: &partial_mask,
+            gradient_known: &partial_gradient,
+            ..context
+        },
+    ] {
+        let full = matching_score(context).unwrap();
+        assert!(full > 0. && full.is_finite());
+        let totals = MatchWeights::new(&weights, &valid);
+        let mut pruned = false;
+        for limit in [
+            0.,
+            full * 0.5,
+            f64::from_bits(full.to_bits() - 1),
+            full,
+            f64::from_bits(full.to_bits() + 1),
+            competitive_score(full),
+            f64::INFINITY,
+        ] {
+            match matching_score_bounded(context, totals, Some(limit)).unwrap() {
+                Some(score) => assert_eq!(score.to_bits(), full.to_bits()),
+                None => {
+                    assert!(full > limit);
+                    pruned = true;
+                }
+            }
+            if limit >= full {
+                assert_eq!(
+                    matching_score_bounded(context, totals, Some(limit))
+                        .unwrap()
+                        .unwrap()
+                        .to_bits(),
+                    full.to_bits()
+                );
+            }
+        }
+        assert!(pruned);
+    }
+    let bad = MatchContext {
+        gradient_known: &vec![false; width * height],
+        ..context
+    };
+    assert!(matching_score(bad).is_err());
+}
+
+#[test]
+fn prepared_donor_eligibility_matches_scalar_required_pixels_including_sparse_bounds() {
+    let (width, height, local_width, local_height) = (18, 14, 5, 4);
+    for mask_kind in 0..5 {
+        let mask = (0..width * height)
+            .map(|i| match mask_kind {
+                0 => false,
+                1 => true,
+                2 => i % 23 == 0,
+                3 => (7..10).contains(&(i % width)) && (5..8).contains(&(i / width)),
+                _ => i == 0 || i == width * height - 1,
+            })
+            .collect::<Vec<_>>();
+        for required_kind in 0..5 {
+            let required = (0..local_width * local_height)
+                .map(|i| match required_kind {
+                    0 => false,
+                    1 => true,
+                    2 => i == 0 || i == local_width * local_height - 1,
+                    3 => i % 2 == 0,
+                    _ => i == local_width + 2,
+                })
+                .collect::<Vec<_>>();
+            let prepared = DonorEligibility::new(
+                &mask,
+                width,
+                selected_bounds(&mask, width),
+                local_width,
+                &required,
+            );
+            for y in 0..=height - local_height {
+                for x in 0..=width - local_width {
+                    assert_eq!(
+                        prepared.clean(x, y, DonorSearch::Bounded),
+                        prepared.clean(x, y, DonorSearch::Exhaustive),
+                        "mask={mask_kind} required={required_kind} source={x},{y}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn bounded_and_exhaustive_search_reject_the_same_ineligible_and_invalid_inputs() {
+    let size = [32, 32];
+    let image = gradient(size);
+    for mask in [
+        circle(size, [16, 16], 12),
+        circle(size, [2, 2], 2),
+        vec![true; image.len()],
+    ] {
+        assert_exhaustive_search(&image, size, &mask);
+    }
+    let mut invalid = image;
+    invalid[0][0] = f32::NAN;
+    assert_exhaustive_search(&invalid, size, &circle(size, [16, 16], 2));
+}
+
 #[test]
 fn empty_is_identity_and_invalid_masks_or_donors_reject() {
     let size = [32, 32];

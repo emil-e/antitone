@@ -96,15 +96,11 @@ impl Editor {
             let cursor = if panning {
                 egui::CursorIcon::Grabbing
             } else if dusting && !space {
-                if self.dust_donor_dragging() {
-                    egui::CursorIcon::Grabbing
-                } else if !ui.input(|i| i.modifiers.alt || i.modifiers.shift)
-                    && pointer.is_some_and(|p| self.dust_donor_at(geometry, p))
-                {
-                    egui::CursorIcon::Grab
-                } else {
-                    egui::CursorIcon::Crosshair
-                }
+                self.dust_canvas_cursor(
+                    geometry,
+                    pointer,
+                    ui.input(|i| i.modifiers.alt || i.modifiers.shift),
+                )
             } else if space || !canvas_tool && self.viewport.zoom.is_some() && can_pan(geometry) {
                 egui::CursorIcon::Grab
             } else if masking {
