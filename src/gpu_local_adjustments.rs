@@ -206,20 +206,21 @@ impl GpuPhotoGrade {
                 "local grade and RGB16 source camera matrices differ".into(),
             ));
         }
-        if self.active != 0 {
+        if self.active != 0 || source.geometry.is_some_and(|g| g.is_pair()) {
             let geometry = source.geometry.ok_or_else(|| {
                 Error::Gpu("local grade requires original-source geometry".into())
             })?;
-            let region = geometry.region();
-            // Refinement can pad the final tile, but its origin must remain in the source.
-            if region.x < self.area.x
-                || region.y < self.area.y
-                || region.x >= self.area.x + self.area.width
-                || region.y >= self.area.y + self.area.height
-            {
-                return Err(Error::Gpu(
-                    "local grade and source geometry regions differ".into(),
-                ));
+            // Refinement can pad a final tile; every real member still starts in this source.
+            for region in geometry.regions() {
+                if region.x < self.area.x
+                    || region.y < self.area.y
+                    || region.x >= self.area.x + self.area.width
+                    || region.y >= self.area.y + self.area.height
+                {
+                    return Err(Error::Gpu(
+                        "local grade and source geometry regions differ".into(),
+                    ));
+                }
             }
         }
         Ok(())

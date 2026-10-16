@@ -137,29 +137,75 @@ fn cached_jobs_preserve_reopened_pixels_through_correction_locals_and_rotated_re
                 assert!(cached_stats.2 <= super::cache::MAX_PAYLOAD_BYTES);
                 if !corrected && angle == 0. && matches!(format, Format::Tiff(OutputTarget::Srgb)) {
                     let before = std::fs::read(&cached).unwrap();
+                    for stop in [2, 3, 4, 5] {
+                        let mut checks = 0;
+                        let stopped = write_job(
+                            &renderer,
+                            &device,
+                            (&queue, &gate),
+                            request(),
+                            (&cached, Overwrite::Confirmed),
+                            true,
+                            || {
+                                checks += 1;
+                                if checks == stop {
+                                    Err(Error::Export("bounded diagnostic stop".into()))
+                                } else {
+                                    Ok(())
+                                }
+                            },
+                        );
+                        assert_eq!(
+                            stopped,
+                            Err(Error::Export("bounded diagnostic stop".into()))
+                        );
+                        assert_eq!(std::fs::read(&cached).unwrap(), before);
+                        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
+                    }
                     let mut checks = 0;
-                    let stopped = write_job(
+                    assert!(
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| write_job(
+                            &renderer,
+                            &device,
+                            (&queue, &gate),
+                            request(),
+                            (&cached, Overwrite::Confirmed),
+                            true,
+                            || {
+                                checks += 1;
+                                if checks == 3 {
+                                    panic!("paired consumer stop");
+                                }
+                                Ok(())
+                            }
+                        )))
+                        .is_err()
+                    );
+                    assert_eq!(std::fs::read(&cached).unwrap(), before);
+                    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
+                }
+                if matches!(format, Format::Tiff(_)) {
+                    let serial = directory.path().join("serial");
+                    let stats = super::pair_tests::write_single(
                         &renderer,
                         &device,
                         (&queue, &gate),
                         request(),
-                        (&cached, Overwrite::Confirmed),
+                        (&serial, Overwrite::Refuse),
                         true,
-                        || {
-                            checks += 1;
-                            if checks == 4 {
-                                Err(Error::Export("bounded diagnostic stop".into()))
-                            } else {
-                                Ok(())
-                            }
-                        },
+                        || Ok(()),
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        stats, cached_stats,
+                        "batching must not change original requests/cache misses/payload"
                     );
                     assert_eq!(
-                        stopped,
-                        Err(Error::Export("bounded diagnostic stop".into()))
+                        std::fs::read(&serial).unwrap(),
+                        std::fs::read(&cached).unwrap(),
+                        "single and paired originals must serialize the same complete TIFF"
                     );
-                    assert_eq!(std::fs::read(&cached).unwrap(), before);
-                    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
+                    std::fs::remove_file(serial).unwrap();
                 }
                 match format {
                     Format::Tiff(_) => {

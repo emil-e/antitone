@@ -1,4 +1,55 @@
 use super::*;
+
+#[cfg(all(feature = "raw", feature = "export"))]
+#[test]
+fn original_pairs_keep_real_rectangles_exact_slots_and_admit_each_member() {
+    for size in [[1, 1], [127, 65], [128, 128]] {
+        let origins = [[10, 20], [(1 << 24) - size[0], (1 << 24) - size[1]]];
+        let pair = SourceGeometry::original_pair(origins, size).unwrap();
+        let count = size[0] * size[1];
+        assert_eq!(pair.pixels(), 2 * count);
+        assert_eq!(pair.size(), [size[0], 2 * size[1]]);
+        let regions: Vec<_> = pair.regions().collect();
+        assert_eq!(regions.len(), 2);
+        for index in 0..2 * count {
+            let member = (index / count) as usize;
+            let i = index % count;
+            assert_eq!(
+                pair.pixel(index).unwrap(),
+                [
+                    origins[member][0] + i % size[0],
+                    origins[member][1] + i / size[0]
+                ]
+            );
+        }
+        assert!(pair.pixel(2 * count).is_err());
+        let uniform = flat::FieldGeometry::uncorrected(Some(pair));
+        assert_eq!(std::mem::size_of_val(&uniform), 80);
+        let words: &[u32] = bytemuck::cast_slice(bytemuck::bytes_of(&uniform));
+        assert_eq!(&words[12..16], &[size[0], 2 * size[1], size[0], size[1]]);
+        assert_eq!(
+            &words[16..20],
+            &[origins[0][0], origins[0][1], origins[1][0], origins[1][1]]
+        );
+    }
+    for origins in [
+        [[0, 0], [1 << 24, 0]],
+        [[1 << 24, 0], [0, 0]],
+        [[0, 0], [0, (1 << 24) - 127]],
+    ] {
+        assert!(SourceGeometry::original_pair(origins, [128, 128]).is_err());
+    }
+    assert!(SourceGeometry::original_pair([[0, 0]; 2], [0, 128]).is_err());
+    assert!(SourceGeometry::original_pair([[0, 0]; 2], [65536, 65536]).is_err());
+    let single = SourceGeometry::new([10, 20, 513, 65], [128, 32]).unwrap();
+    assert!(!single.is_pair());
+    assert_eq!(single.regions().count(), 1);
+    let uniform = flat::FieldGeometry::uncorrected(Some(single));
+    let words: &[u32] = bytemuck::cast_slice(bytemuck::bytes_of(&uniform));
+    assert_eq!(&words[14..16], &[0, 0]);
+    assert_eq!(&words[16..20], &[0; 4]);
+}
+
 use crate::{
     flat_field::FlatField,
     processing::{Pipeline, Response},

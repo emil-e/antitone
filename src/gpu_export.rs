@@ -19,6 +19,8 @@ use crate::{
 use glam::{DMat3, DVec3};
 use std::{collections::BTreeMap, path::Path, sync::Arc};
 use wgpu::util::DeviceExt;
+#[path = "gpu_export_batch.rs"]
+mod batch;
 #[path = "gpu_export_cache.rs"]
 mod cache;
 #[path = "gpu_export_reader.rs"]
@@ -33,6 +35,9 @@ mod cached_tests;
 #[cfg(all(test, target_os = "macos"))]
 #[path = "gpu_export_edge_tests.rs"]
 mod edge_tests;
+#[cfg(all(test, target_os = "macos"))]
+#[path = "gpu_export_pair_tests.rs"]
+mod pair_tests;
 #[path = "gpu_export_pipeline.rs"]
 mod pipeline;
 #[cfg(all(test, feature = "editor", target_os = "macos"))]
@@ -142,6 +147,7 @@ fn write_job(
         return Err(Error::Gpu("CPU and GPU flat-field resources differ".into()));
     }
     let metadata = ProcessingMetadata::with_grade(roll.response, &grade);
+    let batch_field = field.clone();
     let mut tiles = timed!(Setup, {
         let grade = GpuPhotoGrade::new(
             device,
@@ -161,21 +167,56 @@ fn write_job(
         )
     })?;
     let tile_size = tiles.size;
-    let mut reads = 0;
-    let load = |origin: [u32; 2]| {
-        reads += 1;
-        let pixels = timed!(
-            SourcePrepare,
-            scan.tile_region(
-                scan.area,
-                origin[0] - scan.area.x,
-                origin[1] - scan.area.y,
-                tile_size[0],
-                tile_size[1],
+    // Coordinates are unnecessary for some uncorrected serial sources outside this domain.
+    // Keep their existing GPU path rather than narrowing admission for an optimization.
+    let paired = matches!(format, Format::Tiff(_))
+        && tile_size == TILE
+        && u64::from(scan.area.x) + u64::from(scan.area.width) <= 1 << 24
+        && u64::from(scan.area.y) + u64::from(scan.area.height) <= 1 << 24;
+    let mut pair = None;
+    let load = |origins: &[[u32; 2]]| {
+        let pixels = timed!(SourcePrepare, {
+            let read = |origin: [u32; 2]| {
+                scan.tile_region(
+                    scan.area,
+                    origin[0] - scan.area.x,
+                    origin[1] - scan.area.y,
+                    tile_size[0],
+                    tile_size[1],
+                )
+            };
+            let mut pixels = read(origins[0])?;
+            if origins.len() == 2 {
+                pixels.extend(read(origins[1])?);
+            }
+            Ok::<_, Error>(pixels)
+        })?;
+        if origins.len() == 1 {
+            tiles.read(renderer, device, queue, submissions, origins[0], &pixels)
+        } else {
+            let geometry = SourceGeometry::original_pair([origins[0], origins[1]], tile_size)?;
+            if pair.is_none() {
+                pair = Some(OriginalTiles::new_geometry(
+                    renderer,
+                    (device, queue, submissions),
+                    (scan.camera_to_ap1, geometry.size()),
+                    batch_field.clone(),
+                    tiles.grade.clone(),
+                    format,
+                    Some(geometry),
+                )?);
+            }
+            pair.as_mut().unwrap().read_geometry(
+                renderer,
+                device,
+                queue,
+                submissions,
+                Some(geometry),
+                &pixels,
             )
-        )?;
-        tiles.read(renderer, device, queue, submissions, origin, &pixels)
+        }
     };
+    let load = batch::PairLoader::new(load, (tile_size[0] * tile_size[1]) as usize, paired);
     let mut reader = JobReader::new(load, check, cache_enabled);
     encode_output(
         composition,
@@ -186,8 +227,13 @@ fn write_job(
     )?;
     let requests = reader.requests;
     let peak = reader.peak_bytes();
-    drop(reader);
-    Ok((requests, reads, peak))
+    let loader = reader.into_loader();
+    #[cfg(test)]
+    println!(
+        "export_batch original_tiles={} dispatches={} paired_enabled={paired}",
+        loader.reads, loader.dispatches
+    );
+    Ok((requests, loader.reads, peak))
 }
 
 fn encode_output<R: TileReader>(
@@ -418,6 +464,7 @@ fn complete<R: TileReader>(
     // Read hits first using the consumer's current cache, not the producer's earlier state.
     // Sample slots and each pixel's final reduction stay ordered.
     tiles.sort_by_key(|(origin, _)| !read.cached(*origin));
+    read.prepare(tiles.iter().map(|(origin, _)| *origin))?;
     for (origin, entries) in tiles {
         let pixels = timed!(TileAccess, read.read(origin))?;
         let pixels = pixels.as_ref();
@@ -433,6 +480,7 @@ fn complete<R: TileReader>(
             }
         });
     }
+    read.finish()?;
     timed!(
         WeightedMean,
         groups
@@ -449,7 +497,7 @@ struct OriginalTiles {
     size: [u32; 2],
     geometry: bool,
     readback_pitch: u32,
-    grade: GpuPhotoGrade,
+    grade: Arc<GpuPhotoGrade>,
     working: wgpu::Buffer,
     precise: Option<ProcessingKernel>,
     rendered: Option<(wgpu::Texture, wgpu::BindGroup, wgpu::RenderPipeline)>,
@@ -465,15 +513,40 @@ impl OriginalTiles {
         format: Format,
     ) -> Result<Self, Error> {
         let size = tile_size(area);
+        let geometry = if field.is_some() || grade.snapshot().locals().iter().any(|a| a.is_active())
+        {
+            Some(SourceGeometry::new(
+                [area.x, area.y, size[0], size[1]],
+                size,
+            )?)
+        } else {
+            None
+        };
+        Self::new_geometry(
+            renderer,
+            (device, queue, submissions),
+            (matrix, size),
+            field,
+            Arc::new(grade),
+            format,
+            geometry,
+        )
+    }
+    fn new_geometry(
+        renderer: &GpuRenderer,
+        (device, queue, submissions): (&wgpu::Device, &wgpu::Queue, &SubmissionGate),
+        (matrix, size): (DMat3, [u32; 2]),
+        field: Option<Arc<GpuFlatField>>,
+        grade: Arc<GpuPhotoGrade>,
+        format: Format,
+        geometry: Option<SourceGeometry>,
+    ) -> Result<Self, Error> {
         let mut source =
             ProcessingSource::new(device, &vec![[0; 4]; (size[0] * size[1]) as usize], matrix)?;
-        let geometry = field.is_some() || grade.snapshot().locals().iter().any(|a| a.is_active());
-        if geometry {
-            source.set_flat_field(
-                field,
-                SourceGeometry::new([area.x, area.y, size[0], size[1]], size)?,
-            )?;
+        if let Some(geometry) = geometry {
+            source.set_flat_field(field, geometry)?;
         }
+        let geometry = geometry.is_some();
         let readback_pitch = (size[0] * 16).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let precise = if matches!(format, Format::Exr(_)) {
@@ -579,12 +652,28 @@ impl OriginalTiles {
         origin: [u32; 2],
         pixels: &[[u16; 4]],
     ) -> Result<Vec<[f64; 4]>, Error> {
-        self.source.write(queue, pixels)?;
-        if self.geometry {
-            self.source.set_geometry(SourceGeometry::new(
+        let geometry = if self.geometry {
+            Some(SourceGeometry::new(
                 [origin[0], origin[1], self.size[0], self.size[1]],
                 self.size,
-            )?)?;
+            )?)
+        } else {
+            None
+        };
+        self.read_geometry(renderer, device, queue, submissions, geometry, pixels)
+    }
+    fn read_geometry(
+        &mut self,
+        renderer: &GpuRenderer,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        submissions: &SubmissionGate,
+        geometry: Option<SourceGeometry>,
+        pixels: &[[u16; 4]],
+    ) -> Result<Vec<[f64; 4]>, Error> {
+        self.source.write(queue, pixels)?;
+        if let Some(geometry) = geometry {
+            self.source.set_geometry(geometry)?;
         }
         let mut encoder = device.create_command_encoder(&Default::default());
         self.precise

@@ -22,6 +22,7 @@ fn full_size_export_resources_with_retained_working_view() {
 #[derive(Clone, Copy, Debug)]
 enum Backend {
     Gpu,
+    Serial,
     Uncached,
     Cached,
     #[cfg(feature = "ocio-reference")]
@@ -35,6 +36,9 @@ fn exercise(
 ) -> Result<(), String> {
     let backends: &[Backend] = match std::env::var("ANTITONE_EXPORT_RESOURCE_BACKEND").as_deref() {
         Ok("gpu") | Err(_) => &[Backend::Gpu],
+        Ok("serial") => &[Backend::Serial],
+        Ok("compare-batch") => &[Backend::Serial, Backend::Gpu],
+        Ok("compare-batch-reverse") => &[Backend::Gpu, Backend::Serial],
         Ok("uncached") => &[Backend::Uncached],
         Ok("cached") => &[Backend::Cached],
         Ok("compare-cache") => &[Backend::Uncached, Backend::Gpu],
@@ -228,6 +232,9 @@ fn exercise(
             if tiff_only && matches!(format, Format::Exr(_)) {
                 continue;
             }
+            let compare_batches = backends.iter().any(|b| matches!(b, Backend::Serial))
+                && backends.iter().any(|b| matches!(b, Backend::Gpu));
+            let mut expected_digest = None;
             for &backend in backends {
                 let path = directory.path().join("bounded-output");
                 let start = Instant::now();
@@ -272,30 +279,44 @@ fn exercise(
                         Ok(())
                     };
                     match backend {
-                        Backend::Gpu | Backend::Uncached | Backend::Cached => {
+                        Backend::Gpu | Backend::Serial | Backend::Uncached | Backend::Cached => {
                             let stage_start = Instant::now();
                             let (result, timings) = crate::export_timing::record(|| {
-                                write_job(
-                                    &renderer,
-                                    device,
-                                    (queue, &gate),
-                                    request,
-                                    (&path, Overwrite::Refuse),
-                                    matches!(backend, Backend::Cached)
-                                        || (matches!(backend, Backend::Gpu)
-                                            && cache_eligible(composition)),
-                                    || {
-                                        checks += 1;
-                                        if checks > 1 {
-                                            if checks.is_multiple_of(2) {
-                                                tile_start = Some(Instant::now());
-                                            } else {
-                                                tile_time += tile_start.take().unwrap().elapsed();
-                                            }
+                                let cached = matches!(backend, Backend::Cached)
+                                    || (matches!(backend, Backend::Gpu | Backend::Serial)
+                                        && cache_eligible(composition));
+                                let mut check = || {
+                                    checks += 1;
+                                    if checks > 1 {
+                                        if checks.is_multiple_of(2) {
+                                            tile_start = Some(Instant::now());
+                                        } else {
+                                            tile_time += tile_start.take().unwrap().elapsed();
                                         }
-                                        stop()
-                                    },
-                                )
+                                    }
+                                    stop()
+                                };
+                                if matches!(backend, Backend::Serial) {
+                                    super::pair_tests::write_single(
+                                        &renderer,
+                                        device,
+                                        (queue, &gate),
+                                        request,
+                                        (&path, Overwrite::Refuse),
+                                        cached,
+                                        &mut check,
+                                    )
+                                } else {
+                                    write_job(
+                                        &renderer,
+                                        device,
+                                        (queue, &gate),
+                                        request,
+                                        (&path, Overwrite::Refuse),
+                                        cached,
+                                        &mut check,
+                                    )
+                                }
                             });
                             println!(
                                 "export_stage backend={backend:?} format={format:?} complete={}",
@@ -399,6 +420,34 @@ fn exercise(
                         Ok(())
                     },
                 )?;
+                if compare_batches && matches!(format, Format::Tiff(_)) {
+                    let digest = monitor.phase(
+                        "compare-complete-single-paired-file",
+                        || -> Result<_, Error> {
+                            use std::io::Read;
+                            let mut file = std::fs::File::open(&path)
+                                .map_err(|e| Error::Export(e.to_string()))?;
+                            let mut hash = blake3::Hasher::new();
+                            let mut buffer = vec![0u8; 1024 * 1024];
+                            loop {
+                                let n = file
+                                    .read(&mut buffer)
+                                    .map_err(|e| Error::Export(e.to_string()))?;
+                                if n == 0 {
+                                    break;
+                                }
+                                hash.update(&buffer[..n]);
+                            }
+                            Ok(hash.finalize())
+                        },
+                    )?;
+                    if let Some(expected) = expected_digest {
+                        assert_eq!(digest, expected, "complete single/paired files differ");
+                        println!("export_batch complete_file_equal=true digest={digest}");
+                    } else {
+                        expected_digest = Some(digest);
+                    }
+                }
                 std::fs::remove_file(&path).map_err(|e| e.to_string())?;
             }
         }

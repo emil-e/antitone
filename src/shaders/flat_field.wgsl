@@ -3,6 +3,7 @@ struct FieldGeometry {
     grid: vec4u,
     area: vec4u,
     dimensions: vec4u,
+    packed_origins: vec4u,
 }
 @group(0) @binding(4) var<storage, read> field_nodes: array<f32>;
 @group(0) @binding(5) var<uniform> field: FieldGeometry;
@@ -26,6 +27,14 @@ fn field_lerp(a: Triple, b: Triple, t: Triple) -> Triple {
     return round53(add(round53(multiply(a, one_minus)), round53(multiply(b, t))));
 }
 fn source_pixel(index: u32) -> vec2u {
+    if field.dimensions.z != 0u {
+        let count = field.dimensions.z * field.dimensions.w;
+        let tile = index / count;
+        let local = index % count;
+        let offset = 2u * tile;
+        return vec2u(field.packed_origins[offset], field.packed_origins[offset + 1u])
+            + vec2u(local % field.dimensions.z, local / field.dimensions.z);
+    }
     let xy = vec2u(index % field.dimensions.x, index / field.dimensions.x);
     return field.area.xy + ((2u * xy + vec2u(1u)) * field.area.zw) / (2u * field.dimensions.xy);
 }

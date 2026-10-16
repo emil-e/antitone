@@ -29,7 +29,7 @@ fn codes(point: [u32; 2]) -> [u16; 4] {
         ],
     }
 }
-fn tile(origin: [u32; 2], size: [u32; 2]) -> Vec<[u16; 4]> {
+pub(super) fn tile(origin: [u32; 2], size: [u32; 2]) -> Vec<[u16; 4]> {
     (0..size[0] * size[1])
         .map(|i| codes([origin[0] + i % size[0], origin[1] + i / size[0]]))
         .collect()
