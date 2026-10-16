@@ -611,10 +611,7 @@ fn retained_gpu_screening_preserves_all_donor_and_pixel_bits() {
                 height: size[1],
             };
             let base = |[x, y]: [u32; 2]| Ok(image[(y * size[0] + x) as usize]);
-            let clock = std::time::Instant::now();
             let expected = evaluate(&repair, active, base).unwrap();
-            let cpu = clock.elapsed();
-            let clock = std::time::Instant::now();
             let actual = evaluate_with(
                 &repair,
                 active,
@@ -626,9 +623,7 @@ fn retained_gpu_screening_preserves_all_donor_and_pixel_bits() {
             )
             .unwrap()
             .unwrap();
-            let gpu = clock.elapsed();
             assert_eq!(bits(&expected), bits(&actual), "{} {donor:?}", f[0]);
-            eprintln!("{} {donor:?} cpu={cpu:?} gpu={gpu:?} exact", f[0]);
             comparisons += 1;
         }
     }
