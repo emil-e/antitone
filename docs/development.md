@@ -1,6 +1,38 @@
 # Making and checking a change
 
-Use [the README](../README.md) to build and run. If you are new to an area, read its [topic guide](README.md#understand-the-system), then follow the code links. Follow the [code guidelines](code-guidelines.md) when choosing what comments and tests should protect.
+Use [the README](../README.md) to build and run. If you are new to an area, read its [topic guide](README.md#understand-the-system), then follow the code links.
+
+## Engineering standards
+
+### Code and design
+
+Follow the neighboring code. Separate declarations and logical phases with blank lines, name values by role outside conventional mathematics, and expand dense control flow and macros even when the formatter accepts them. Inspect complete touched functions; formatting success alone does not establish readability.
+
+Preserve the owning guides' processing, output and project-compatibility contracts. Code and tests own exact defaults, formats and numerical gates. Distinguish established requirements from implementation choices and experimental hypotheses. Keep source storage compact; judge additional caching by measured benefit, memory cost and lifetime.
+
+### Comments and documentation
+
+Explain current contracts, rationale and non-obvious constraints, including ownership, lifecycle, numerical assumptions, platform quirks, compatibility and security. Public documentation should describe supported behavior at the reader's level rather than enumerate private helpers or call paths.
+
+Remove obvious restatements, patch narration, completed TODOs and temporary investigation/review notes. Replace “previously X, now Y” with the reason Y matters, if still useful. Keep history where it serves the reader: decision rationale, migration guidance and changelogs. Negative statements earn their place when they prevent a plausible, consequential misunderstanding: “Edits are not persisted until Save” explains a boundary; “the old toolbar is no longer rendered” usually records only a completed change.
+
+Write for prospective contributors: explain the problem, mental model and guarantees. Keep one explanation per topic in its owning guide, with links rather than parallel implementation inventories. Keep build/run prerequisites in the top-level README and contributor workflow in this guide. Update affected guides and links when behavior changes; update the roadmap when priorities, status or blockers change.
+
+Plans describe unfinished scope, acceptance and next actions, not execution history. Transfer useful knowledge into the owning guide before removing completed steps or finished plans. Delete obsolete tools and superseded material rather than creating archives. Rewrite awkward prose when it contains useful knowledge instead of deleting that knowledge with it.
+
+### Meaningful tests
+
+For each test, ask: **What plausible defect would this catch, and why would that defect matter?** Derive expectations from requirements, justified invariants or independent references. Agreement between two paths can establish consistency without establishing that either is correct.
+
+Protect the relevant contract while allowing behavior-preserving changes. Exact wording, snapshots, private calls, ordering, representations and operation counts need justification; accessibility, serialization, resource lifetime and performance can make them essential. Structural guarantees and source inspection can also deserve architectural tests. Distinguish those from facts guaranteed only by the test's own setup.
+
+Watch for self-comparisons, expected results that mirror implementation calculations, checks for permanently removed UI text, mocks that merely confirm their arrangement, duplicate tests without distinct failure coverage and broad snapshots that obscure the meaningful expectation. These are review signals, not automatic deletion rules.
+
+Test names and assertions should describe the scenario and invariant actually exercised. Preserve unusual fixture rationale and non-obvious preconditions beside the relevant setup.
+
+Establish why a new expected value or tolerance is correct before updating it; a green test or newly accepted snapshot is not that justification. Do not weaken checks or alter development behavior to improve an experiment's appearance.
+
+Before deleting a test, identify the protection being removed and whether it is still needed or covered elsewhere. Inspect cleanup diffs for lost meaning; documentation and comments can also contain executable examples or affect generated output.
 
 ## Everyday checks
 
@@ -32,8 +64,6 @@ python3 scripts/check-format.py --write
 ```
 
 `RUFF`, `WGSLFMT` and `CLANG_FORMAT` can point to existing compatible executables. Ruff's version and conservative syntax/undefined-name/unused-code checks live in `ruff.toml`. The WGSL formatter is pinned by revision because its package version does not distinguish development snapshots. Upgrade tools deliberately and inspect their output rather than mixing versions in one cleanup.
-
-Formatters can leave dense macros and control flow untouched. Inspect complete touched functions; formatting success alone does not establish readability.
 
 ## Feature-specific checks
 
@@ -79,7 +109,7 @@ cargo test --locked --features editor,ocio-reference --lib --test scopes --test 
 
 The [authored RAW fixtures](../tests/fixtures/raw/README.md) supply declared sensor data for API, worker and UI checks. Tests read the committed files directly and write exports/projects to temporary directories. The fixture guide explains their construction and maintenance; private photographs are optional diagnostic inputs, not ordinary test prerequisites.
 
-The photographic tests use an independent scalar oracle in [test support](../tests/support/photographic_reference.rs). Numerical gates live in the tests; do not loosen them merely to make a new implementation agree. A missing Metal device is a verification limit, not a numerical pass.
+The photographic tests use an independent scalar oracle in [test support](../tests/support/photographic_reference.rs). A missing Metal device is a verification limit, not a numerical pass.
 
 After native setup, use broader integration/lints when the change warrants them:
 

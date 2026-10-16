@@ -20,39 +20,13 @@ Within delegated work, continue through routine implementation and verification 
 
 Tie experiments to the requested outcome. Prefer a simple useful baseline, and add sophistication only when observed failures justify it.
 
-## Preserve the product's guarantees
+## Follow contributor guidance
 
-Follow the relevant [processing](docs/processing.md), [colour/output](docs/colour-and-output.md), [project compatibility](docs/projects.md) and decision guides. Code and tests own exact defaults, formats and numerical gates.
+Follow the [development guide](docs/development.md) for engineering standards, documentation conventions and proportionate checks before handoff. Use the relevant [processing](docs/processing.md), [colour/output](docs/colour-and-output.md), [project compatibility](docs/projects.md) and decision guides for the boundaries being changed.
 
-Do not weaken checks or alter development behavior to improve an experiment's appearance. Software agreement is not proof of photographic quality, physical interaction or monitor correctness.
+For editor work, follow [shared presentation](docs/editor.md#build-ui-from-shared-presentation) and the [tooltip/contextual-help policy](docs/editor.md#tooltips-and-contextual-help). Verify the component and its composed feature.
 
-Distinguish established requirements from implementation choices and experimental hypotheses. Keep source storage compact; judge additional caching by measured benefit, memory cost and lifetime rather than assuming all retained intermediates are forbidden.
-
-## Build on the shared UI
-
-Follow [the editor guide](docs/editor.md#build-ui-from-shared-presentation) and existing components for layout, controls, viewer tools, dialogs and task feedback. Reuse their visual and interaction language.
-
-Follow the editor's [tooltip and contextual-help policy](docs/editor.md#tooltips-and-contextual-help): no tooltip is the default for self-explanatory labelled controls. Keep useful help brief and local; do not put pipeline explanations or unrelated gestures in hover text.
-
-Presentation receives state and returns actions; domain semantics and transactions remain with their owners. Extend shared components for real supported variants. Keep genuinely one-off UI local without copying an existing family or creating speculative abstractions.
-
-Verify both the component and its composed feature.
-
-## Keep source readable
-
-Follow the neighboring code: separate declarations and logical phases with blank lines, name values by role outside conventional mathematics, and expand dense control flow or macros even when the formatter accepts them. Inspect complete touched functions and run `python3 scripts/check-format.py` before finishing; formatter success is not a readability review.
-
-Follow the [code guidelines](docs/code-guidelines.md) for comments, tests and prose: preserve current contracts and useful rationale, not change narration or obvious restatements. Tests should protect meaningful requirements and invariants, not incidental implementation choices or facts guaranteed by their own setup.
-
-## Keep documentation useful
-
-Write for prospective contributors: explain the problem, mental model, rationale and important guarantees. Leave implementation inventories and exhaustive detail to code and tests.
-
-Maintain one explanation per topic. Extend the owning guide before adding a page. Keep workflow instructions here, not in the human README.
-
-Plans describe unfinished scope, acceptance and next actions—not execution history. Remove completed steps and finished plans after transferring useful current knowledge. Delete obsolete tools and superseded material; do not create archives or resurrect old designs without a historical-investigation request.
-
-Update affected guides and links when behavior changes. Update the roadmap only when priorities, status or blockers change.
+Write `docs/` for human contributors. Keep agent-only execution instructions here or in skills.
 
 ## Build and deliver
 
@@ -61,6 +35,8 @@ Use the normal [contributor build workflow](README.md#build-and-run), including 
 Use `.cache/` for disposable experiments, dependencies and generated outputs. Maintained tools belong in `scripts/` or `native/`. Do not automatically promote downloaded material into maintained source.
 
 Samples are private, read-only, ignored and never committed. System installations and automation of other applications require explicit authorization; respect environment approval requirements for setup and downloads.
+
+Before integrating substantial changes, consider an independent, fresh-context agent review against the contributor standards and relevant topic guides, proportionate to the change's breadth and risk. Review supplements verification; assess findings with evidence rather than treating the review as an approval gate.
 
 An explicit wrap-up request authorizes local delivery of agreed work:
 
