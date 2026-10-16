@@ -33,6 +33,8 @@ mod cached_tests;
 #[cfg(all(test, target_os = "macos"))]
 #[path = "gpu_export_edge_tests.rs"]
 mod edge_tests;
+#[path = "gpu_export_pipeline.rs"]
+mod pipeline;
 #[cfg(all(test, feature = "editor", target_os = "macos"))]
 #[path = "gpu_export_resource_tests.rs"]
 mod resource_tests;
@@ -195,6 +197,25 @@ fn encode_output<R: TileReader>(
     (path, overwrite): (&Path, Overwrite),
     read: &mut R,
 ) -> Result<(), Error> {
+    if let Format::Tiff(target) = format {
+        return pipeline::encode(composition, target, metadata, (path, overwrite), read);
+    }
+    encode_with(
+        composition,
+        format,
+        metadata,
+        (path, overwrite),
+        |origin, extent| reconstruct_reader(composition, origin, extent, true, read),
+    )
+}
+
+fn encode_with(
+    composition: Composition,
+    format: Format,
+    metadata: ProcessingMetadata,
+    (path, overwrite): (&Path, Overwrite),
+    mut build: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<DVec3>, Error>,
+) -> Result<(), Error> {
     let [width, height] = composition.size();
     let size = ImageSize { width, height };
     match format {
@@ -212,7 +233,7 @@ fn encode_output<R: TileReader>(
                 metadata,
                 order,
                 |origin, extent| {
-                    let linear = reconstruct_reader(composition, origin, extent, true, read)?;
+                    let linear = build(origin, extent)?;
                     timed!(
                         TargetEncode,
                         target.encode_u16(&linear.iter().map(|v| v.as_vec3()).collect::<Vec<_>>())
@@ -220,14 +241,9 @@ fn encode_output<R: TileReader>(
                 },
             )
         }
-        Format::Exr(precision) => export::exr_blocks(
-            path,
-            size,
-            precision,
-            overwrite,
-            metadata,
-            |origin, extent| reconstruct_reader(composition, origin, extent, true, read),
-        ),
+        Format::Exr(precision) => {
+            export::exr_blocks(path, size, precision, overwrite, metadata, build)
+        }
     }
 }
 
@@ -266,9 +282,57 @@ fn reconstruct_reader<R: TileReader>(
     shared_edges: bool,
     read: &mut R,
 ) -> Result<Vec<DVec3>, Error> {
+    let plan = plan(composition, origin, extent, shared_edges)?;
+    complete(plan, read)
+}
+
+type TileVisits = ([u32; 2], Vec<(usize, usize)>);
+struct ReconstructionPlan {
+    samples: Vec<(DVec3, f64)>,
+    groups: Vec<std::ops::Range<usize>>,
+    tiles: Vec<TileVisits>,
+    tile_size: [u32; 2],
+}
+impl ReconstructionPlan {
+    // Full-resolution footprints are unit squares under rotation/reflection, not resized ROIs.
+    // A conservative 4x4 source-cell envelope per pixel plus vector growth fits this bound
+    // for a 128x128 block. It bounds completed payload, not construction/tree/stack overhead.
+    const MAX_PAYLOAD_BYTES: usize = 32 * 1024 * 1024;
+
+    fn payload_bytes(&self) -> Result<usize, Error> {
+        let mut bytes = 0usize;
+        let capacities = [
+            self.samples.capacity() * std::mem::size_of::<(DVec3, f64)>(),
+            self.groups.capacity() * std::mem::size_of::<std::ops::Range<usize>>(),
+            self.tiles.capacity() * std::mem::size_of::<TileVisits>(),
+        ];
+        for n in capacities.into_iter().chain(
+            self.tiles
+                .iter()
+                .map(|(_, entries)| entries.capacity() * std::mem::size_of::<(usize, usize)>()),
+        ) {
+            bytes = bytes.checked_add(n).ok_or(Error::NumericalOverflow)?;
+        }
+        Ok(bytes)
+    }
+    fn admitted(self) -> Result<Self, Error> {
+        if self.payload_bytes()? > Self::MAX_PAYLOAD_BYTES {
+            return Err(Error::Export(
+                "export geometry plan exceeds its payload bound".into(),
+            ));
+        }
+        Ok(self)
+    }
+}
+fn plan(
+    composition: Composition,
+    origin: [u32; 2],
+    extent: [u32; 2],
+    shared_edges: bool,
+) -> Result<ReconstructionPlan, Error> {
     let area = composition.area();
     let size = tile_size(area);
-    let (mut samples, groups, tiles) = timed!(CoveragePlan, {
+    let (samples, groups, tiles) = timed!(CoveragePlan, {
         let raster = FrameRaster::full(composition)?;
         let mut samples = Vec::new();
         let mut groups = Vec::new();
@@ -332,12 +396,28 @@ fn reconstruct_reader<R: TileReader>(
                 std::mem::swap(&mut top, &mut bottom);
             }
         }
-        // Read hits before misses so new uploads cannot evict still-needed cached values.
-        // Only tile visits move: sample slots and each pixel's final reduction stay ordered.
-        let mut tiles: Vec<_> = tiles.into_iter().collect();
-        tiles.sort_by_key(|(origin, _)| !read.cached(*origin));
+        let tiles: Vec<_> = tiles.into_iter().collect();
         Ok::<_, Error>((samples, groups, tiles))
     })?;
+    Ok(ReconstructionPlan {
+        samples,
+        groups,
+        tiles,
+        tile_size: size,
+    })
+}
+fn complete<R: TileReader>(
+    ReconstructionPlan {
+        mut samples,
+        groups,
+        mut tiles,
+        tile_size: size,
+    }: ReconstructionPlan,
+    read: &mut R,
+) -> Result<Vec<DVec3>, Error> {
+    // Read hits first using the consumer's current cache, not the producer's earlier state.
+    // Sample slots and each pixel's final reduction stay ordered.
+    tiles.sort_by_key(|(origin, _)| !read.cached(*origin));
     for (origin, entries) in tiles {
         let pixels = timed!(TileAccess, read.read(origin))?;
         let pixels = pixels.as_ref();

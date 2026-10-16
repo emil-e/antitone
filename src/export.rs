@@ -266,7 +266,7 @@ pub(crate) enum BlockOrder {
     Spatial2x2,
 }
 
-fn ordered_blocks(
+pub(crate) fn ordered_blocks(
     size: ImageSize,
     order: BlockOrder,
 ) -> impl Iterator<Item = ([u32; 2], [u32; 2])> {
