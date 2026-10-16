@@ -19,6 +19,7 @@ fn source(model: &str, matrix: DMat3) -> Source {
         reference_only: false,
         photo: Default::default(),
         local_adjustments: None,
+        repairs: Default::default(),
         orientation: Default::default(),
         crop: None,
     }
@@ -101,7 +102,7 @@ fn analysis_area_roundtrips_without_changing_processing_and_old_documents_defaul
 }
 
 #[test]
-fn roll_wb_roundtrips_defaults_old_schema_five_to_zero_and_rejects_invalid_values() {
+fn roll_wb_roundtrips_defaults_missing_optional_values_to_zero_and_rejects_invalid_values() {
     use antitone::color::Balance;
     let mut p = project();
     let mut old = serde_json::to_value(&p).unwrap();

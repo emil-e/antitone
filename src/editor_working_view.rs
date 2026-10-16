@@ -733,8 +733,13 @@ impl Editor {
             return Ok(self.working.displayed.clone());
         }
 
-        if self.document_pending.is_some()
-            || self.pending_preview.is_some()
+        if self.document_pending.is_some() {
+            // Candidate preparation must not retire the accepted view before replacement succeeds.
+            self.working.displayed = previous;
+            return Ok(self.working.hold(self.id, self.target));
+        }
+
+        if self.pending_preview.is_some()
             || self.pick.is_some()
             || self.pick_return.is_some()
             || self.crop_edit.is_some()

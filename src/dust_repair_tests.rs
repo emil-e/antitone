@@ -90,7 +90,7 @@ fn repair_set_keeps_stable_independent_repairs() {
             DonorChoice::Offset([-3, 2]),
         )
         .unwrap();
-    assert_eq!(set.selected(), Some(second));
+    assert_eq!(set.repairs()[1].id, second);
     let unchanged = set.repairs()[1].clone();
     set.set_enabled(first, false).unwrap();
     set.set_donor(first, DonorChoice::Offset([4, -2])).unwrap();
@@ -105,7 +105,7 @@ fn repair_set_keeps_stable_independent_repairs() {
     set.set_support(first, a).unwrap();
     assert_eq!(set.remove(first).unwrap().id, first);
     assert_eq!(set.repairs(), &[unchanged]);
-    assert!(set.select(Some(first)).is_err());
+    assert!(set.remove(first).is_err());
 }
 
 #[test]

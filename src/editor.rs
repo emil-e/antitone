@@ -1867,7 +1867,7 @@ impl Editor {
                     self.busy = false;
                     match result {
                         Ok(document) => {
-                            self.document = *document;
+                            self.document.accept_save(*document);
                             self.status = "Project saved".into();
                             self.resolve_failure(FailureKind::Save);
                             self.resume_transition = self.after_save.take();

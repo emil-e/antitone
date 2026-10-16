@@ -107,7 +107,7 @@ impl Editor {
         });
         let has_repairs = self
             .current_source
-            .and_then(|id| self.dust.repairs(id))
+            .and_then(|id| self.dust_repairs(id))
             .is_some_and(|repairs| !repairs.repairs().is_empty());
         let mut finish_dust = false;
 
@@ -186,13 +186,8 @@ impl Editor {
                 } else {
                     ""
                 };
-                let repair_work = if !self.source && self.dust.render_error.is_some() {
-                    " · Repair unavailable"
-                } else {
-                    ""
-                };
                 let state = if has_repairs {
-                    format!("{target}{quality}{repair_work} · Unsaved repairs")
+                    format!("{target}{quality} · {}", self.dust_render_state())
                 } else {
                     format!("{target}{quality}")
                 };
@@ -426,7 +421,7 @@ impl Editor {
                             ui.small(
                                 "Drag the source outline to move it · release commits changes · H hides outlines.",
                             );
-                            ui.small("Preview only: repairs are not saved or exported.");
+                            ui.small("TIFF/EXR and thumbnails do not include repairs.");
                         } else if !fullscreen && self.analysis_review.is_some() {
                             ui.separator();
                             ui.small(
@@ -474,7 +469,7 @@ impl Editor {
                     } else {
                         let help = if has_repairs {
                             format!(
-                                "{state}\nRepairs are not saved or exported; New/Open or quitting discards them."
+                                "{state}\nTIFF/EXR and thumbnails do not include repairs."
                             )
                         } else {
                             state.clone()

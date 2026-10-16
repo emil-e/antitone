@@ -41,6 +41,7 @@ fn fixture(directory: &std::path::Path) -> (Project, SourceId, SourceId) {
             reference_only: false,
             photo: PhotoSettings::default(),
             local_adjustments: None,
+            repairs: Default::default(),
             orientation: Default::default(),
             crop: None,
         }
@@ -457,7 +458,7 @@ fn references_are_rgb_only_and_survive_removal_of_all_source_records() {
     let (mut project, _, _) = fixture(dir.path());
     let calibration = project.calibration().unwrap();
     let mut value = serde_json::to_value(&project).unwrap();
-    assert_eq!(value["schema"], 5);
+    assert_eq!(value["schema"], 6);
     assert_eq!(value["processing_model"], 4);
     assert!(value["sources"][0].get("fingerprint").is_none());
     assert_eq!(value["dmin"], serde_json::json!(project.dmin));

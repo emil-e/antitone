@@ -2,6 +2,8 @@ use super::*;
 use crate::{color::Balance, processing::PhotoSettings};
 #[path = "editor_document_admission_tests.rs"]
 mod admission;
+#[path = "editor_document_dust_tests.rs"]
+mod dust;
 
 #[test]
 fn antitone_and_legacy_json_projects_open_and_save_in_place() {
@@ -106,6 +108,7 @@ fn fixture(directory: &Path) -> Document {
                     reference_only: false,
                     photo: PhotoSettings::default(),
                     local_adjustments: None,
+                    repairs: Default::default(),
                     orientation: Default::default(),
                     crop: None,
                 },

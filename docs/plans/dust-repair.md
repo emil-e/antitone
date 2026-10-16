@@ -1,6 +1,6 @@
-# Dust-repair acceptance and output boundaries
+# Dust-repair output and remaining acceptance
 
-The transient manual workflow and its neutral-AP1 working-view integration are implemented. [Processing](../processing.md#ungraded-positive-and-repair-placement) owns the repair stage; [editor](../editor.md#provisional-dust-cleanup) owns gestures, cache lifetime and user-visible limits. The [research guide](../research/dust-removal.md) records evidence for the `ap1-boundary-ranked-score10-grow4-v1` solver, not a production-quality guarantee. [PLAN.md](../../PLAN.md) owns priority.
+The provisional manual workflow, neutral-AP1 working-view integration and project persistence are implemented. [Projects](../projects.md#source-owned-dust-repairs) owns saved instructions and compatibility; [processing](../processing.md#ungraded-positive-and-repair-placement) owns the stage; [editor](../editor.md#provisional-dust-cleanup) owns gestures, cache lifetime and user-visible limits. The [research guide](../research/dust-removal.md) records evidence for the `ap1-boundary-ranked-score10-grow4-v1` solver, not a production-quality guarantee. [PLAN.md](../../PLAN.md) owns priority.
 
 ## Preserve
 
@@ -10,24 +10,31 @@ The transient manual workflow and its neutral-AP1 working-view integration are i
 - Retain physical-view detail/underlay, shared viewer/scope output, explicit original reference, source leases, submission gate and numerical/preflight checks. Ordinary grading reuses neutral repairs and working detail; original reconstruction is explicitly requested.
 - Apply absolute repairs to original neutral samples before footprint filtering; do not subtract corrections from an already rounded proxy. Cache sparse immutable repair content and view-sized derived copies, not a full-resolution repaired photograph. Source/correction/inversion changes may take time to reevaluate; ordinary grading and navigation reuse valid heals.
 - Keep direct canvas selection, release-to-commit creation/edits, Shift-add, Option-remove, donor dragging, Delete and contextual reset/Done. No per-repair Apply/Cancel mode, list, numeric donor panel or local-only undo.
+- Preserve the [saved-instruction contract](../projects.md#source-owned-dust-repairs): output work must not replace editable intent with cached pixels or pin automatic donors.
+
+## Next slice: repaired output
+
+**TIFF/EXR and thumbnails remain unrepaired.** Keep that omission visible until the corresponding consumers are implemented. Repaired output is separate from thumbnail work and undo.
+
+The authoritative original-sample export path needs an immutable repair snapshot and explicit invalidation/acceptance tied to its source and interpretation. Apply repairs before original-sample photographic grading and geometry reconstruction, never by exporting a working-view bitmap. Preserve scalar/OCIO diagnostic references, RGB16 source storage, AP0 EXR and destination safety. Settle pending/no-donor export behavior and cancellation before implementation; do not silently omit an enabled saved repair or label unrepaired output repaired.
 
 ## Remaining acceptance
 
 1. Exercise pre-grade placement on representative photographs, including corrected scans, signed/HDR regions, strong Roll/Photo grades, fine texture and seams. Compare working detail, coarse navigation coverage and original reference at matching positions. The full-grade AP1 studies do not establish every downstream grade's appearance after pre-grade repair.
 2. Broaden normal-use residuals, donor failures, support rejections and complete click/stroke/donor-to-display latency beyond the initial accepted native exercise. Do not retune the retained corpus or change solver constants without a concrete new failure. Inversion changes are uncommon and may reevaluate asynchronously; failure feedback must remain visible.
-3. Measure concurrent CPU/GPU ownership during high-volume cleanup, navigation, target changes and source retirement. Sparse GPU records retain coordinates and repaired values; neutral bases, repaired physical rasters, bounded original/region reconstruction and encoded/in-flight older versions add mandatory work. Declared bytes, Arc tests and a small fixture are not aggregate memory or device acceptance.
+3. Measure concurrent CPU/GPU ownership during high-volume cleanup, navigation, target changes and source retirement. Sparse GPU records retain coordinates and repaired values; neutral bases, repaired physical rasters, bounded original/region reconstruction and encoded/in-flight older versions add mandatory work. Declared bytes, Arc tests and bounded project fixtures are not aggregate memory or device acceptance.
 4. Broaden physical pointer/trackpad, normal/narrow inspector, fullscreen suspension/restoration and modifier/cursor acceptance. Headless input does not establish native interaction or monitor correctness.
 5. Preserve regression coverage for source/grade/repair invalidation, cancellation versus genuine failure, reset/delete, crop/turn/flip/straightening, shader initialization only after submission and viewer/scope identity.
 
 ## Deliberately deferred
 
-- **Persistence and undo:** repairs remain outside the project schema/dirty state; Save omits them and New/Open/exit discards them. Durable state should express support, donor policy and algorithm/domain identity, not cached repaired pixels. Settle global/local undo together.
-- **TIFF/EXR and thumbnails:** these remain unrepaired and the UI explicitly says repairs are unsaved/unexported. Authoritative original-sample output consumers need explicit repair snapshots and invalidation. Never export a working-view bitmap. Retain scalar/OCIO diagnostic references, RGB16 source storage, AP0 EXR and destination safety.
+- **Undo:** settle gesture coalescing and shared/Photo scope with the existing undo plan, rather than introducing a repair-only stack.
+- **Thumbnails:** separately scope authoritative repair snapshots, reconstruction and invalidation; do not promote a working-view image into the filmstrip cache.
 - **Automatic proposals:** present editable masks independently from healing; detector scores/provenance must not change reconstruction. Precision/recall needs independently sampled exhaustive labels.
 - **Algorithm questions:** clean-truth accuracy, real dust crossing fine in-focus wires, diagnostic calibration, grain fidelity and broader cameras/materials remain unestablished. No further Lightroom comparison or neural downloads.
 
 ## Checks and next action
 
-Use the [normal development checks](../development.md), including both production and reference-feature builds. Focused coverage lives in `dust_repair`, `editor::dust`, `gpu::view::tests::repairs` and `editor::kittest_tests::dust`; run the composed editor/UI suites after changes to shared controls or lifecycle. The [experiment checks](../../scripts/dust-experiments/README.md#inspect-and-check) reproduce standalone numerical behavior without publishing private images.
+Use the [normal development checks](../development.md#dust-persistence), including production and reference-feature builds. Run composed editor/UI suites after shared-control or lifecycle changes. The [experiment checks](../../scripts/dust-experiments/README.md#inspect-and-check) reproduce standalone numerical behavior without publishing private images.
 
-Next: broaden the initial accepted cleanup exercise with the integrated pre-grade working view and collect only evidence tied to a concrete latency, rendering, resource or photographic symptom. Scope persistence/output consumers separately after that workflow is accepted. Do not turn remaining acceptance into another corpus-tuning programme.
+Next: scope repaired output when requested. Collect additional photographic/resource evidence only for a concrete symptom.

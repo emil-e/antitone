@@ -151,6 +151,7 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                         reference_only: true,
                         photo: Default::default(),
                         local_adjustments: None,
+                        repairs: Default::default(),
                         orientation: Default::default(),
                         crop: None,
                     },
@@ -481,6 +482,7 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
             reference_only: false,
             photo: Default::default(),
             local_adjustments: None,
+            repairs: Default::default(),
             orientation: Default::default(),
             crop: None,
         })
@@ -623,6 +625,7 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
         reference_only: false,
         photo: editor.photo,
         local_adjustments: None,
+        repairs: Default::default(),
         orientation: editor.photo_orientation,
         crop: editor.crop,
     };
@@ -1897,6 +1900,7 @@ fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
                     reference_only: false,
                     photo: PhotoSettings::default(),
                     local_adjustments: None,
+                    repairs: Default::default(),
                     orientation: Default::default(),
                     crop: None,
                 },

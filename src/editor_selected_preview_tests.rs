@@ -37,6 +37,7 @@ fn add_source(editor: &mut Editor, path: PathBuf) -> SourceId {
                 reference_only: false,
                 photo: PhotoSettings::default(),
                 local_adjustments: None,
+                repairs: Default::default(),
                 orientation: Default::default(),
                 crop: None,
             },

@@ -92,7 +92,8 @@ cargo test --locked --no-default-features \
 
 # Persistence; no native libraries or Metal.
 cargo test --locked --features project \
-  --test camera_project --test project --test film_project --test flat_field_project
+  --test camera_project --test project --test film_project --test flat_field_project \
+  --test dust_project
 
 # Authored DNG plumbing; native libraries, no private photographs or desktop.
 cargo test --locked --features raw,export,project,ocio-reference --test raw_dng --test raw_flat_field --test raw_roll
@@ -195,6 +196,17 @@ cargo test --locked --features ui-tests --lib editor::kittest_tests::masks -- --
 ```
 
 Processing admission, source-owned transactions and downstream consumers need separate checks. Exercise correction, ordered local grades and source/target changes where relevant; one supported fixture does not establish admission for every response or control combination. Keep numerical gates intact and use [performance/RAW diagnostics](diagnostics.md#local-processing-and-reuse) for opt-in resource observations.
+
+## Dust persistence
+
+```sh
+cargo test --locked --features project --test dust_project
+cargo test --locked --features ui-tests --lib dust -- --test-threads=1
+cargo test --locked --features ui-tests --lib editor::document::tests -- --test-threads=1
+cargo test --locked --release --features ui-tests --lib editor::kittest_tests::dust -- --test-threads=1
+```
+
+Test [saved repair intent](projects.md#source-owned-dust-repairs) separately from evaluation. Project checks need malformed-contract/record rejection, destination safety and lossless masks/IDs at uneven roll scale without a document-size cap. Controller and composed checks need accepted-only dirty state, pending/failed evaluation saves, source removal/reimport and failure-safe Save/Open/Save As. Authored RAW reopening must reproduce donor metadata and repaired f32 bits across supported CPU/GPU routes, with viewer/reference/scopes sharing the accepted repair content. Inspect the output-omission warning at normal/narrow sizes; optional captures use `dust-persistence-{normal,narrow}-offscreen.png`. These checks do not establish photographic or physical-input acceptance.
 
 ## Shared editor UI checks
 

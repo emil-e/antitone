@@ -156,6 +156,7 @@ fn state() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
                 reference_only: false,
                 photo: PhotoSettings::default(),
                 local_adjustments: None,
+                repairs: Default::default(),
                 orientation: Default::default(),
                 crop: None,
             },

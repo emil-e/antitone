@@ -1,4 +1,4 @@
-//! Provisional, non-persistent dust-repair model and frozen AP1 donor healer.
+//! Source-owned dust-repair instructions and frozen AP1 donor healer.
 //!
 //! Repair support is binary and source-coordinate owned. Manual and detected
 //! supports differ only in UI provenance; both enter [`heal_ranked`] identically.
@@ -14,16 +14,35 @@ pub type Ap1 = [f32; 3];
 pub(crate) const CONTEXT_PADDING: u32 = 10;
 pub(crate) const AUTOMATIC_PADDING: u32 = 128 + 4;
 
+#[path = "dust_repair_support.rs"]
+mod support;
+#[cfg(all(test, feature = "editor"))]
+pub(crate) use support::{MAX_MASK_PIXELS, MAX_MASK_WORK_PIXELS};
+pub use support::{SupportMask, donor_target, mask_within_budget, validate_donor};
+
+pub const REPAIR_CONTRACT: &str = "ungraded-ap1-boundary-ranked-score10-grow4-v1";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "project", derive(serde::Serialize, serde::Deserialize))]
 pub struct RepairId(pub u64);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "project", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "project",
+    serde(rename_all = "snake_case", deny_unknown_fields)
+)]
 pub enum RepairOrigin {
     Manual,
     Detected,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "project", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "project",
+    serde(rename_all = "snake_case", deny_unknown_fields)
+)]
 pub enum DonorChoice {
     #[default]
     Automatic,
@@ -31,106 +50,8 @@ pub enum DonorChoice {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SupportMask {
-    origin: [u32; 2],
-    size: [u32; 2],
-    bits: Vec<bool>,
-}
-
-impl SupportMask {
-    pub fn new(origin: [u32; 2], size: [u32; 2], bits: Vec<bool>) -> Result<Self, Error> {
-        let count = usize::try_from(
-            size[0]
-                .checked_mul(size[1])
-                .filter(|count| *count > 0)
-                .ok_or(Error::InvalidParameter("invalid repair support dimensions"))?,
-        )
-        .map_err(|_| Error::InvalidParameter("repair support is too large"))?;
-        if bits.len() != count || !bits.iter().any(|bit| *bit) {
-            return Err(Error::InvalidParameter("invalid repair support bits"));
-        }
-        origin[0]
-            .checked_add(size[0])
-            .and_then(|_| origin[1].checked_add(size[1]))
-            .ok_or(Error::InvalidParameter(
-                "repair support coordinates overflow",
-            ))?;
-        Ok(Self { origin, size, bits })
-    }
-
-    pub fn origin(&self) -> [u32; 2] {
-        self.origin
-    }
-
-    pub fn size(&self) -> [u32; 2] {
-        self.size
-    }
-
-    pub fn bits(&self) -> &[bool] {
-        &self.bits
-    }
-
-    pub fn selected_points(&self) -> impl Iterator<Item = [u32; 2]> + '_ {
-        let width = self.size[0] as usize;
-        self.bits
-            .iter()
-            .enumerate()
-            .filter_map(move |(index, selected)| {
-                selected.then_some([
-                    self.origin[0] + (index % width) as u32,
-                    self.origin[1] + (index / width) as u32,
-                ])
-            })
-    }
-
-    /// Exact support groups in the healer's donor order, for donor geometry presentation.
-    pub fn grouped_supports(&self) -> Vec<Self> {
-        let width = self.size[0] as usize;
-        grouped_components(&self.bits, width, self.size[1] as usize)
-            .into_iter()
-            .map(|group| {
-                let min_x = group.iter().map(|i| i % width).min().unwrap();
-                let max_x = group.iter().map(|i| i % width).max().unwrap();
-                let min_y = group.iter().map(|i| i / width).min().unwrap();
-                let max_y = group.iter().map(|i| i / width).max().unwrap();
-                let size = [(max_x - min_x + 1) as u32, (max_y - min_y + 1) as u32];
-                let mut bits = vec![false; (size[0] * size[1]) as usize];
-                for i in group {
-                    bits[(i / width - min_y) * size[0] as usize + i % width - min_x] = true;
-                }
-                Self::new(
-                    [self.origin[0] + min_x as u32, self.origin[1] + min_y as u32],
-                    size,
-                    bits,
-                )
-                .expect("validated nonempty donor group")
-            })
-            .collect()
-    }
-
-    pub fn contains(&self, point: [u32; 2]) -> bool {
-        let [x, y] = point;
-        if x < self.origin[0]
-            || y < self.origin[1]
-            || x >= self.origin[0] + self.size[0]
-            || y >= self.origin[1] + self.size[1]
-        {
-            return false;
-        }
-        self.bits[((y - self.origin[1]) * self.size[0] + x - self.origin[0]) as usize]
-    }
-
-    fn intersects(&self, other: &Self) -> bool {
-        let left = self.origin[0].max(other.origin[0]);
-        let top = self.origin[1].max(other.origin[1]);
-        let right = (self.origin[0] + self.size[0]).min(other.origin[0] + other.size[0]);
-        let bottom = (self.origin[1] + self.size[1]).min(other.origin[1] + other.size[1]);
-        (top..bottom)
-            .any(|y| (left..right).any(|x| self.contains([x, y]) && other.contains([x, y])))
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "project", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "project", serde(deny_unknown_fields))]
 pub struct Repair {
     pub id: RepairId,
     pub enabled: bool,
@@ -139,11 +60,23 @@ pub struct Repair {
     pub donor: DonorChoice,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "project", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "project", serde(deny_unknown_fields))]
 pub struct RepairSet {
-    next_id: u64,
+    contract: String,
+    last_id: u64,
     repairs: Vec<Repair>,
-    selected: Option<RepairId>,
+}
+
+impl Default for RepairSet {
+    fn default() -> Self {
+        Self {
+            contract: REPAIR_CONTRACT.into(),
+            last_id: 0,
+            repairs: Vec::new(),
+        }
+    }
 }
 
 impl RepairSet {
@@ -151,8 +84,47 @@ impl RepairSet {
         &self.repairs
     }
 
-    pub fn selected(&self) -> Option<RepairId> {
-        self.selected
+    pub fn validate(&self, active: SourceRegion) -> Result<(), Error> {
+        if self.contract != REPAIR_CONTRACT {
+            return Err(Error::InvalidParameter("unsupported repair contract"));
+        }
+
+        active.validate()?;
+        let mut ids = std::collections::HashSet::new();
+        for repair in &self.repairs {
+            if repair.id.0 == 0 || repair.id.0 > self.last_id || !ids.insert(repair.id) {
+                return Err(Error::InvalidParameter("invalid repair ID allocator"));
+            }
+            repair.support.validate()?;
+            let [x, y] = repair.support.origin();
+            let [width, height] = repair.support.size();
+            if !active.contains_region(SourceRegion {
+                x,
+                y,
+                width,
+                height,
+            }) {
+                return Err(Error::InvalidParameter(
+                    "repair support is outside the source",
+                ));
+            }
+            validate_donor(repair.donor, &repair.support, active)?;
+        }
+
+        for (index, repair) in self.repairs.iter().enumerate() {
+            if self.repairs[..index]
+                .iter()
+                .any(|other| other.support.intersects(&repair.support))
+            {
+                return Err(Error::InvalidParameter("repair supports overlap"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Reset accepted repairs without reusing any previously allocated identity.
+    pub fn clear(&mut self) {
+        self.repairs.clear();
     }
 
     pub fn insert(
@@ -163,11 +135,11 @@ impl RepairSet {
     ) -> Result<RepairId, Error> {
         self.require_independent(&support, None)?;
         let next = self
-            .next_id
+            .last_id
             .checked_add(1)
             .ok_or(Error::InvalidParameter("repair ID space exhausted"))?;
         let id = RepairId(next);
-        self.next_id = next;
+        self.last_id = next;
         self.repairs.push(Repair {
             id,
             enabled: true,
@@ -175,16 +147,7 @@ impl RepairSet {
             support,
             donor,
         });
-        self.selected = Some(id);
         Ok(id)
-    }
-
-    pub fn select(&mut self, id: Option<RepairId>) -> Result<(), Error> {
-        if id.is_some_and(|id| !self.repairs.iter().any(|repair| repair.id == id)) {
-            return Err(Error::InvalidParameter("unknown repair ID"));
-        }
-        self.selected = id;
-        Ok(())
     }
 
     pub fn remove(&mut self, id: RepairId) -> Result<Repair, Error> {
@@ -193,11 +156,7 @@ impl RepairSet {
             .iter()
             .position(|repair| repair.id == id)
             .ok_or(Error::InvalidParameter("unknown repair ID"))?;
-        let repair = self.repairs.remove(index);
-        if self.selected == Some(id) {
-            self.selected = None;
-        }
-        Ok(repair)
+        Ok(self.repairs.remove(index))
     }
 
     pub fn set_enabled(&mut self, id: RepairId, enabled: bool) -> Result<(), Error> {
@@ -317,13 +276,8 @@ pub(crate) fn evaluate_with(
             "repair support is outside the source",
         ));
     }
-    let selected = repair
-        .support
-        .bits
-        .iter()
-        .enumerate()
-        .filter_map(|(index, bit)| bit.then_some(index))
-        .collect::<Vec<_>>();
+    repair.support.validate()?;
+    let selected = repair.support.selected_indices().collect::<Vec<_>>();
     let local_width = repair.support.size[0] as usize;
     let min_x = repair.support.origin[0]
         + selected
@@ -436,13 +390,11 @@ pub(crate) fn evaluate_with(
         donor.source[0] += window.x;
         donor.source[1] += window.y;
     }
-    let mut values = vec![[0.; 3]; repair.support.bits.len()];
-    for (index, selected) in repair.support.bits.iter().enumerate() {
-        if *selected {
-            let x = repair.support.origin[0] + (index % local_width) as u32;
-            let y = repair.support.origin[1] + (index / local_width) as u32;
-            values[index] = result[((y - window.y) * window.width + x - window.x) as usize];
-        }
+    let mut values = vec![[0.; 3]; (repair.support.size[0] * repair.support.size[1]) as usize];
+    for index in repair.support.selected_indices() {
+        let x = repair.support.origin[0] + (index % local_width) as u32;
+        let y = repair.support.origin[1] + (index / local_width) as u32;
+        values[index] = result[((y - window.y) * window.width + x - window.x) as usize];
     }
     if (execution.cancelled)() {
         return Ok(None);

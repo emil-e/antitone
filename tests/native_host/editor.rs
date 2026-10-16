@@ -32,6 +32,7 @@ pub(super) fn fixture_project(directory: &Path) -> host::Result<PathBuf> {
         reference_only: false,
         photo: Default::default(),
         local_adjustments: None,
+        repairs: Default::default(),
         orientation: Default::default(),
         crop: None,
     })?;

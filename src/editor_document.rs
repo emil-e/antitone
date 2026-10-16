@@ -95,6 +95,34 @@ impl Document {
         self.project != self.saved
     }
 
+    /// Accept the written snapshot as a baseline, without replacing edits made since dispatch.
+    pub fn accept_save(&mut self, saved: Self) {
+        let old_parent = self
+            .path
+            .as_deref()
+            .and_then(Path::parent)
+            .unwrap_or(Path::new("."));
+        let new_parent = saved
+            .path
+            .as_deref()
+            .and_then(Path::parent)
+            .unwrap_or(Path::new("."));
+
+        if self.path != saved.path {
+            for source in &mut self.project.sources {
+                if source.path.is_relative() {
+                    // Rebase directories, not source files: unavailable non-filmstrip RAWs are valid.
+                    // If a directory became inaccessible during the write, retain its original locator.
+                    source.path = rebase_relative(&source.path, old_parent, new_parent)
+                        .unwrap_or_else(|_| old_parent.join(&source.path));
+                }
+            }
+        }
+
+        self.path = saved.path;
+        self.saved = saved.saved;
+    }
+
     pub fn source_path(&self, id: SourceId) -> Result<PathBuf> {
         self.project
             .resolve_path(id, self.path.as_deref().unwrap_or(Path::new(".")))
@@ -381,6 +409,7 @@ pub(super) fn source_metadata(path: &Path, metadata: &Metadata) -> Result<Source
         reference_only: false,
         photo: Default::default(),
         local_adjustments: None,
+        repairs: Default::default(),
         orientation: Default::default(),
         crop: None,
     })

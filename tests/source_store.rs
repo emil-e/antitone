@@ -31,6 +31,7 @@ impl Input {
             reference_only: false,
             photo: Default::default(),
             local_adjustments: None,
+            repairs: Default::default(),
             crop: None,
             orientation: Default::default(),
             development: SourceDevelopment {

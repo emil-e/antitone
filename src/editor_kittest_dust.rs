@@ -1,6 +1,9 @@
 use super::*;
 use crate::dust_repair::{DonorChoice, RepairId};
 
+#[path = "editor_kittest_dust_persistence.rs"]
+mod persistence;
+
 fn click(h: &mut Harness<'_, Editor>, p: egui::Pos2, modifiers: egui::Modifiers) {
     let at = h.state().last_layout.unwrap().0.screen_point(p);
     h.hover_at(at);
@@ -36,8 +39,7 @@ fn ready(h: &mut Harness<'_, Editor>, count: usize) {
 }
 
 fn pixels(e: &Editor, source: SourceId, id: RepairId) -> usize {
-    e.dust
-        .repairs(source)
+    e.dust_repairs(source)
         .unwrap()
         .repairs()
         .iter()
@@ -70,7 +72,7 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
     h.step();
     let source = h.state().current_source.unwrap();
     let project = h.state().document.project.clone();
-    let dirty = h.state().document.dirty();
+    assert!(h.state().document.dirty());
     assert!(h.state().dust.cleanup);
     assert!(h.state().pick.is_none());
     assert!(
@@ -161,8 +163,8 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         egui::CursorIcon::Crosshair
     );
     assert!(brush_ring_at(&h, empty));
-    assert_eq!(h.state().document.project, project);
-    assert_eq!(h.state().document.dirty(), dirty);
+    assert_ne!(h.state().document.project, project);
+    assert!(h.state().document.dirty());
     assert!(h.state().pick.is_none());
     h.state_mut().roll.exposure = 0.3;
     h.state_mut().roll.wb = Balance {
@@ -201,7 +203,7 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         donor.x as i32 - target.x as i32,
         donor.y as i32 - target.y as i32,
     ];
-    let point = h.state().dust.repairs(source).unwrap().repairs()[0]
+    let point = h.state().dust_repairs(source).unwrap().repairs()[0]
         .support
         .selected_points()
         .next()
@@ -224,7 +226,7 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         ),
     );
     assert_eq!(
-        h.state().dust.repairs(source).unwrap().repairs()[0].donor,
+        h.state().dust_repairs(source).unwrap().repairs()[0].donor,
         DonorChoice::Offset(desired)
     );
     ready(&mut h, 1);
@@ -260,7 +262,7 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
     assert_eq!(h.state().selected_dust_repair(), Some(RepairId(1)));
     key(&mut h, egui::Key::Delete);
     assert!(h.state().removal_pending.is_none());
-    assert_eq!(h.state().dust.repairs(source).unwrap().repairs().len(), 1);
+    assert_eq!(h.state().dust_repairs(source).unwrap().repairs().len(), 1);
     ready(&mut h, 1);
     let remaining = h.state().dust_evaluations(sig)[0].clone();
     h.get_by_label("100%").click();
@@ -289,7 +291,7 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
     ));
     h.get_by_label("Reset dust repairs").click();
     h.step();
-    assert!(h.state().dust.repairs(source).is_none());
+    assert!(h.state().dust_repairs(source).is_none());
     ready(&mut h, 0);
     h.get_by_label("Done").click();
     h.step();
@@ -298,7 +300,7 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
 }
 
 #[test]
-fn dust_is_suspended_in_fullscreen_and_never_claims_saved_or_exported_output() {
+fn fullscreen_suspends_dust_interaction_without_changing_committed_repairs() {
     let mut h = tools::calibrated_harness();
     stage(&mut h, "Photo");
     h.get_by_role_and_label(egui::accesskit::Role::SpinButton, "Exposure")
@@ -326,7 +328,7 @@ fn dust_is_suspended_in_fullscreen_and_never_claims_saved_or_exported_output() {
     assert!(h.state().fullscreen.is_some());
     let brush = h.state().dust.brush_size;
     click(&mut h, egui::pos2(32., 96.), egui::Modifiers::NONE);
-    assert_eq!(h.state().dust.repairs(source).unwrap().repairs().len(), 1);
+    assert_eq!(h.state().dust_repairs(source).unwrap().repairs().len(), 1);
     assert_eq!(h.state().dust.brush_size, brush);
     key(&mut h, egui::Key::F);
     h.state_mut().fullscreen_changed(false);
@@ -339,10 +341,5 @@ fn dust_is_suspended_in_fullscreen_and_never_claims_saved_or_exported_output() {
     let stored = serde_json::to_value(&h.state().document.project).unwrap();
     assert_eq!(stored, serde_json::to_value(&project).unwrap());
     ready(&mut h, 1);
-    assert!(
-        h.get_by_label("Display P3 · Unsaved repairs")
-            .rect()
-            .height()
-            > 0.
-    );
+    assert!(h.get_by_label("Display P3 · Repairs").rect().height() > 0.);
 }

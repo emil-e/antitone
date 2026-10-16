@@ -34,6 +34,7 @@ pub(in crate::editor) async fn fixture() -> (
         reference_only: false,
         photo: editor.photo,
         local_adjustments: None,
+        repairs: Default::default(),
         orientation: Default::default(),
         crop: None,
     };

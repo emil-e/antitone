@@ -19,6 +19,7 @@ fn fixture(index: usize) -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Comma
                     reference_only: false,
                     photo: PhotoSettings::default(),
                     local_adjustments: None,
+                    repairs: Default::default(),
                     orientation: PhotoOrientation::default(),
                     crop: None,
                 },

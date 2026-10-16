@@ -104,6 +104,7 @@ fn persisted_locals_export_at_source_centres_before_rotated_reconstruction() {
                 ..PhotoSettings::default()
             },
             local_adjustments: Some(locals),
+            repairs: Default::default(),
             orientation: PhotoOrientation {
                 turns: QuarterTurns::One,
                 flips: Flips {
@@ -346,6 +347,7 @@ fn contract_metadata_tracks_snapshot_presence_including_inactive_records() {
             reference_only: false,
             photo: PhotoSettings::default(),
             local_adjustments: (case != "absent").then_some(locals),
+            repairs: Default::default(),
             orientation: PhotoOrientation::default(),
             crop: None,
         };

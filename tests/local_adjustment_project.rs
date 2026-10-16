@@ -46,6 +46,7 @@ fn fixture() -> (Project, SourceId) {
             reference_only: false,
             photo: PhotoSettings::default(),
             local_adjustments: None,
+            repairs: Default::default(),
             orientation: Default::default(),
             crop: None,
         })
@@ -82,10 +83,10 @@ fn with_locals() -> (Project, SourceId) {
 }
 
 #[test]
-fn absent_local_state_keeps_schema_five_and_old_source_representation() {
+fn absent_local_state_remains_optional_in_schema_six() {
     let (project, id) = fixture();
     let json = serde_json::to_value(&project).unwrap();
-    assert_eq!(json["schema"], 5);
+    assert_eq!(json["schema"], 6);
     assert!(json["sources"][0].get("local_adjustments").is_none());
     let loaded: Project = serde_json::from_value(json).unwrap();
     loaded.validate().unwrap();
@@ -284,6 +285,7 @@ fn older_strict_source_readers_reject_local_state_instead_of_discarding_it() {
         path: std::path::PathBuf,
         development: SourceDevelopment,
         reference_only: bool,
+        repairs: antitone::dust_repair::RepairSet,
         photo: PhotoSettings,
         #[serde(default)]
         orientation: antitone::geometry::PhotoOrientation,
@@ -293,6 +295,7 @@ fn older_strict_source_readers_reject_local_state_instead_of_discarding_it() {
     let (project, id) = fixture();
     let source = project.source(id).unwrap();
     let old: OldSource = serde_json::from_value(serde_json::to_value(source).unwrap()).unwrap();
+    assert_eq!(old.repairs, source.repairs);
     assert_eq!(
         (
             old.id,

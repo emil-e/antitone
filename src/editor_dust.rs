@@ -1,8 +1,12 @@
 use super::*;
+#[cfg(test)]
+use crate::dust_repair::{
+    AUTOMATIC_PADDING, CONTEXT_PADDING, MAX_MASK_PIXELS, MAX_MASK_WORK_PIXELS,
+};
 use crate::{
     dust_repair::{
-        AUTOMATIC_PADDING, CONTEXT_PADDING, DonorChoice, EvaluatedRepair, Repair, RepairId,
-        RepairOrigin, RepairSet, SupportMask,
+        DonorChoice, EvaluatedRepair, Repair, RepairId, RepairOrigin, RepairSet, SupportMask,
+        donor_target, mask_within_budget, validate_donor as validate_dust_donor,
     },
     geometry::SourceRegion,
     processing::Pipeline,
@@ -13,80 +17,8 @@ use std::collections::{BTreeSet, HashMap};
 #[path = "editor_dust_lifecycle_tests.rs"]
 mod lifecycle_tests;
 
-// Preserve the former 512-square source-window budget, without limiting aspect ratio.
-const MAX_MASK_WORK_PIXELS: u64 =
-    (512 + 2 * (CONTEXT_PADDING as u64 + AUTOMATIC_PADDING as u64)).pow(2);
-const MAX_MASK_PIXELS: usize = 65_536;
-
-fn mask_within_budget(size: [u32; 2], marked: usize) -> bool {
-    let padding = 2 * (u64::from(CONTEXT_PADDING) + u64::from(AUTOMATIC_PADDING));
-    marked <= MAX_MASK_PIXELS
-        && (u64::from(size[0]) + padding)
-            .checked_mul(u64::from(size[1]) + padding)
-            .is_some_and(|cells| cells <= MAX_MASK_WORK_PIXELS)
-}
-
 fn initial_brush_size(active: SourceRegion) -> u32 {
     ((active.width.min(active.height) as f64 * 0.01).round() as u32).clamp(4, 128)
-}
-
-fn donor_target(support: &SupportMask, active: SourceRegion) -> Result<SourceRegion, Error> {
-    let mut points = support.selected_points();
-    let first = points
-        .next()
-        .ok_or(Error::InvalidParameter("empty repair mask"))?;
-    let (mut min_x, mut max_x, mut min_y, mut max_y) = (first[0], first[0], first[1], first[1]);
-    for [x, y] in points {
-        min_x = min_x.min(x);
-        max_x = max_x.max(x);
-        min_y = min_y.min(y);
-        max_y = max_y.max(y);
-    }
-    Ok(SourceRegion {
-        x: min_x.saturating_sub(CONTEXT_PADDING).max(active.x),
-        y: min_y.saturating_sub(CONTEXT_PADDING).max(active.y),
-        width: max_x
-            .saturating_add(CONTEXT_PADDING + 1)
-            .min(active.x + active.width)
-            - min_x.saturating_sub(CONTEXT_PADDING).max(active.x),
-        height: max_y
-            .saturating_add(CONTEXT_PADDING + 1)
-            .min(active.y + active.height)
-            - min_y.saturating_sub(CONTEXT_PADDING).max(active.y),
-    })
-}
-
-pub(super) fn validate_dust_donor(
-    choice: DonorChoice,
-    support: &SupportMask,
-    active: SourceRegion,
-) -> Result<(), Error> {
-    let DonorChoice::Offset([dx, dy]) = choice else {
-        return Ok(());
-    };
-    let target = donor_target(support, active)?;
-    let source_x = i64::from(target.x) + i64::from(dx);
-    let source_y = i64::from(target.y) + i64::from(dy);
-    let source_right = source_x + i64::from(target.width);
-    let source_bottom = source_y + i64::from(target.height);
-    if source_x < i64::from(active.x)
-        || source_y < i64::from(active.y)
-        || source_right > i64::from(active.x + active.width)
-        || source_bottom > i64::from(active.y + active.height)
-    {
-        return Err(Error::InvalidParameter("manual donor outside source"));
-    }
-    if support.selected_points().any(|[x, y]| {
-        i64::from(x) >= source_x
-            && i64::from(x) < source_right
-            && i64::from(y) >= source_y
-            && i64::from(y) < source_bottom
-    }) {
-        return Err(Error::InvalidParameter(
-            "manual donor intersects required pixels",
-        ));
-    }
-    Ok(())
 }
 
 pub(super) type Signature = [u8; ProcessingParameters::BYTE_LEN];
@@ -166,6 +98,7 @@ pub(super) struct DonorDraft {
 #[derive(Clone)]
 struct MaskDraft {
     target: Option<RepairId>,
+    original_support: Option<SupportMask>,
     pixels: BTreeSet<[u32; 2]>,
     last: Option<[f64; 2]>,
     rejected: bool,
@@ -175,6 +108,7 @@ impl MaskDraft {
     fn new(target: Option<RepairId>, support: Option<&SupportMask>) -> Self {
         Self {
             target,
+            original_support: support.cloned(),
             pixels: support
                 .into_iter()
                 .flat_map(SupportMask::selected_points)
@@ -185,6 +119,16 @@ impl MaskDraft {
     }
 
     fn support(&self) -> Result<SupportMask, Error> {
+        // Unchanged support keeps its declared rectangle, including saved blank margins.
+        if let Some(original) = &self.original_support
+            && original.selected_points().count() == self.pixels.len()
+            && original
+                .selected_points()
+                .all(|point| self.pixels.contains(&point))
+        {
+            return Ok(original.clone());
+        }
+
         let min = [
             self.pixels.iter().map(|point| point[0]).min(),
             self.pixels.iter().map(|point| point[1]).min(),
@@ -214,7 +158,7 @@ impl MaskDraft {
 }
 
 pub(super) struct State {
-    repairs: HashMap<SourceId, RepairSet>,
+    selected: HashMap<SourceId, RepairId>,
     cached: HashMap<(SourceId, RepairId), Cached>,
     preview_cached: HashMap<(SourceId, RepairId), Cached>,
     failed: HashMap<(SourceId, RepairId), Failed>,
@@ -233,7 +177,7 @@ pub(super) struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            repairs: HashMap::new(),
+            selected: HashMap::new(),
             cached: HashMap::new(),
             preview_cached: HashMap::new(),
             failed: HashMap::new(),
@@ -277,20 +221,10 @@ impl State {
         self.render_error = None;
     }
 
-    pub fn repairs(&self, source: SourceId) -> Option<&RepairSet> {
-        self.repairs.get(&source)
-    }
-
-    fn repairs_mut(&mut self, source: SourceId) -> &mut RepairSet {
-        self.repairs.entry(source).or_default()
-    }
-
-    fn repair_changed(&mut self, source: SourceId, repair: RepairId) {
+    fn repair_changed(&mut self, source: SourceId, repair: RepairId, accepted: &RepairSet) {
         self.failed.remove(&(source, repair));
         if let Some(preview) = self.preview_cached.remove(&(source, repair))
-            && self
-                .repairs(source)
-                .is_some_and(|set| set.repairs().contains(&preview.repair))
+            && accepted.repairs().contains(&preview.repair)
         {
             self.cached.insert((source, repair), preview);
         }
@@ -305,6 +239,9 @@ impl State {
                 .cancelled
                 .store(true, std::sync::atomic::Ordering::Relaxed);
         }
+        if self.selected.get(&source) == Some(&repair) {
+            self.selected.remove(&source);
+        }
         self.cached.remove(&(source, repair));
         self.gpu.remove(&repair);
         self.preview_cached.remove(&(source, repair));
@@ -312,7 +249,7 @@ impl State {
     }
 
     fn clear_repairs(&mut self, source: SourceId) {
-        self.repairs.remove(&source);
+        self.selected.remove(&source);
         self.cached.retain(|(candidate, _), _| *candidate != source);
         self.preview_cached
             .retain(|(candidate, _), _| *candidate != source);
@@ -404,7 +341,7 @@ impl State {
         });
     }
 
-    fn accept(&mut self, response: Response, expected: Option<&Repair>) -> bool {
+    fn accept(&mut self, response: Response, expected: Option<&Repair>, accepted: bool) -> bool {
         let Some(pending) = self.pending.take_if(|p| p.request == response.request) else {
             return false;
         };
@@ -419,9 +356,6 @@ impl State {
             return false;
         }
         self.failed.remove(&(response.source, response.repair.id));
-        let accepted = self
-            .repairs(response.source)
-            .is_some_and(|set| set.repairs().contains(&response.repair));
         let cache = if accepted {
             &mut self.cached
         } else {
@@ -793,6 +727,99 @@ fn repair_outline_hit(
 }
 
 impl Editor {
+    pub(super) fn dust_repairs(&self, source: SourceId) -> Option<&RepairSet> {
+        self.document
+            .project
+            .source(source)
+            .ok()
+            .map(|source| &source.repairs)
+            .filter(|set| !set.repairs().is_empty())
+    }
+
+    pub(super) fn dust_repairs_mut(&mut self, source: SourceId) -> &mut RepairSet {
+        &mut self
+            .document
+            .project
+            .source_mut(source)
+            .expect("accepted source")
+            .repairs
+    }
+
+    pub(super) fn dust_render_state(&self) -> &'static str {
+        if self.source {
+            return "Repairs hidden";
+        }
+        if self.dust.render_error.is_some() {
+            return "Repair unavailable";
+        }
+
+        let Some(source) = self.current_source else {
+            return "Repairs pending";
+        };
+        let Some(signature) = self.dust_signature() else {
+            return "Repairs pending";
+        };
+
+        let repairs = self.effective_dust_repairs(source);
+        let mut pending = false;
+        for repair in repairs.iter().filter(|repair| repair.enabled) {
+            if self
+                .dust
+                .failed
+                .get(&(source, repair.id))
+                .is_some_and(|failed| {
+                    failed.loaded == self.id
+                        && failed.signature == signature
+                        && failed.repair == *repair
+                })
+            {
+                return "Repair unavailable";
+            }
+
+            let matches = |cached: &&Cached| {
+                cached.loaded == self.id
+                    && cached.signature == signature
+                    && cached.repair == *repair
+            };
+            if self
+                .dust
+                .cached
+                .get(&(source, repair.id))
+                .filter(matches)
+                .is_none()
+                && self
+                    .dust
+                    .preview_cached
+                    .get(&(source, repair.id))
+                    .filter(matches)
+                    .is_none()
+            {
+                pending = true;
+            }
+        }
+
+        if pending {
+            "Repairs pending"
+        } else {
+            "Repairs"
+        }
+    }
+
+    fn dust_repair_changed(&mut self, source: SourceId, id: RepairId) {
+        let accepted = &self
+            .document
+            .project
+            .source(source)
+            .expect("accepted source")
+            .repairs;
+        self.dust.repair_changed(source, id, accepted);
+    }
+
+    fn reset_dust_repairs(&mut self, source: SourceId) {
+        self.dust_repairs_mut(source).clear();
+        self.dust.clear_repairs(source);
+    }
+
     pub(super) fn dust_controls(&mut self, ui: &mut egui::Ui) {
         use presentation::ToolIdentity;
         if !self.dust.cleanup {
@@ -804,11 +831,9 @@ impl Editor {
         let Some(source) = self.current_source else {
             return;
         };
-        let repairs = self
-            .dust
-            .repairs(source)
-            .map(|set| set.repairs().to_vec())
-            .unwrap_or_default();
+        let repair_count = self
+            .dust_repairs(source)
+            .map_or(0, |set| set.repairs().len());
         let available = !self.busy
             && self.ready.is_some()
             && self.pick.is_none()
@@ -824,10 +849,10 @@ impl Editor {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let reset = presentation::reset_button(
                         ui,
-                        available && !repairs.is_empty(),
+                        available && repair_count > 0,
                         "dust repairs",
                     );
-                    ui.weak(format!("{} repairs", repairs.len()));
+                    ui.weak(format!("{repair_count} repairs"));
                     reset
                 })
                 .inner
@@ -848,7 +873,7 @@ impl Editor {
                             .step_by(1.),
                     );
                 });
-                ui.small("Preview only · repairs are not saved or exported.");
+                ui.small("TIFF/EXR and thumbnails do not include repairs.");
                 if let Some(error) = &self.dust.render_error {
                     ui.small("A repair is outside the current grade's GPU range.")
                         .on_hover_text(error);
@@ -862,11 +887,7 @@ impl Editor {
                     .is_some_and(|draft| draft.rejected);
                 let guidance = egui::RichText::new(if rejected {
                     "Stroke too large · release to discard it and use smaller repairs."
-                } else if self
-                    .dust
-                    .repairs(source)
-                    .and_then(RepairSet::selected)
-                    .is_some()
+                } else if self.selected_dust_repair().is_some()
                 {
                     "Draw for a new heal · Shift adds to selected · Option removes · drag its source."
                 } else {
@@ -877,14 +898,14 @@ impl Editor {
                 } else {
                     guidance
                 });
-                if repairs.is_empty() {
+                if repair_count == 0 {
                     ui.small("Manual masks only · automatic proposals are not wired yet");
                 }
                 reset_repairs = reset.clicked();
             },
         );
         if reset_repairs {
-            self.dust.clear_repairs(source);
+            self.reset_dust_repairs(source);
             self.status = "Dust repairs reset".into();
             self.invalidate_settled();
         }
@@ -1011,8 +1032,7 @@ impl Editor {
         self.dust.donor_draft = None;
         let support = target.and_then(|id| {
             let source = self.current_source?;
-            self.dust
-                .repairs(source)?
+            self.dust_repairs(source)?
                 .repairs()
                 .iter()
                 .find(|repair| repair.id == id)
@@ -1028,7 +1048,10 @@ impl Editor {
 
     pub(super) fn selected_dust_repair(&self) -> Option<RepairId> {
         let source = self.current_source?;
-        self.dust.repairs(source)?.selected()
+        self.dust.selected.get(&source).copied().filter(|id| {
+            self.dust_repairs(source)
+                .is_some_and(|set| set.repairs().iter().any(|repair| repair.id == *id))
+        })
     }
 
     pub(super) fn commit_dust_mask(&mut self) {
@@ -1110,14 +1133,27 @@ impl Editor {
             .map(|donor| donor.choice);
         let effective_donor = donor.or_else(|| {
             let id = target?;
-            self.dust
-                .repairs(source)?
+            self.dust_repairs(source)?
                 .repairs()
                 .iter()
                 .find(|repair| repair.id == id)
                 .map(|repair| repair.donor)
         });
-        let result = draft.support().and_then(|support| {
+        let support = draft.support();
+        if let (Some(id), Ok(support)) = (target, &support)
+            && self.dust_repairs(source).is_some_and(|set| {
+                set.repairs().iter().any(|repair| {
+                    repair.id == id
+                        && repair.support == *support
+                        && donor.is_none_or(|choice| choice == repair.donor)
+                })
+            })
+        {
+            self.cancel_dust_mask();
+            return;
+        }
+
+        let result = support.and_then(|support| {
             if let Some(choice) = effective_donor {
                 let active = self
                     .ready
@@ -1127,13 +1163,13 @@ impl Editor {
                 validate_dust_donor(choice, &support, active)?;
             }
             if let Some(id) = target {
-                self.dust.repairs_mut(source).set_support(id, support)?;
+                self.dust_repairs_mut(source).set_support(id, support)?;
                 if let Some(choice) = donor {
-                    self.dust.repairs_mut(source).set_donor(id, choice)?;
+                    self.dust_repairs_mut(source).set_donor(id, choice)?;
                 }
                 Ok(id)
             } else {
-                self.dust.repairs_mut(source).insert(
+                self.dust_repairs_mut(source).insert(
                     support,
                     RepairOrigin::Manual,
                     DonorChoice::Automatic,
@@ -1142,7 +1178,8 @@ impl Editor {
         });
         match result {
             Ok(id) => {
-                self.dust.repair_changed(source, id);
+                self.dust.selected.insert(source, id);
+                self.dust_repair_changed(source, id);
                 self.status = "Dust repair queued for full-resolution evaluation".into();
                 self.invalidate_settled();
                 self.cancel_dust_mask();
@@ -1205,8 +1242,7 @@ impl Editor {
             return;
         };
         let blocked = self
-            .dust
-            .repairs(source)
+            .dust_repairs(source)
             .into_iter()
             .flat_map(RepairSet::repairs)
             .filter(|repair| Some(repair.id) != target)
@@ -1277,8 +1313,8 @@ impl Editor {
             source_point[1].floor() as u32,
         ];
         let source = self.current_source?;
-        let set = self.dust.repairs(source)?;
-        let selected = set.selected();
+        let set = self.dust_repairs(source)?;
+        let selected = self.selected_dust_repair();
         set.repairs()
             .iter()
             .filter(|repair| Some(repair.id) == selected)
@@ -1296,8 +1332,12 @@ impl Editor {
     }
 
     pub(super) fn select_dust_repair(&mut self, id: RepairId) {
-        if let Some(source) = self.current_source {
-            let _ = self.dust.repairs_mut(source).select(Some(id));
+        if let Some(source) = self.current_source
+            && self
+                .dust_repairs(source)
+                .is_some_and(|set| set.repairs().iter().any(|repair| repair.id == id))
+        {
+            self.dust.selected.insert(source, id);
         }
     }
 
@@ -1305,11 +1345,11 @@ impl Editor {
         let Some(source) = self.current_source else {
             return;
         };
-        let Some(id) = self.dust.repairs(source).and_then(RepairSet::selected) else {
+        let Some(id) = self.selected_dust_repair() else {
             return;
         };
         self.cancel_dust_mask();
-        if self.dust.repairs_mut(source).remove(id).is_ok() {
+        if self.dust_repairs_mut(source).remove(id).is_ok() {
             self.dust.removed(source, id);
             self.status = "Dust repair deleted".into();
             self.invalidate_settled();
@@ -1333,7 +1373,7 @@ impl Editor {
                     .flatten()
             })?;
         let signature = self.dust_signature()?;
-        let set = self.dust.repairs(source)?;
+        let set = self.dust_repairs(source)?;
         let repair = set.repairs().iter().find(|repair| repair.id == repair_id)?;
         let effective = self.effective_dust_repair(source, repair_id)?;
         let cached = self
@@ -1445,7 +1485,7 @@ impl Editor {
             };
             let choice = self
                 .current_source
-                .and_then(|source| self.dust.repairs(source))
+                .and_then(|source| self.dust_repairs(source))
                 .and_then(|set| {
                     set.repairs()
                         .iter()
@@ -1545,8 +1585,7 @@ impl Editor {
             return;
         };
         let Some((support, accepted_donor)) = self
-            .dust
-            .repairs(source)
+            .dust_repairs(source)
             .and_then(|set| {
                 set.repairs()
                     .iter()
@@ -1566,13 +1605,12 @@ impl Editor {
             .ok_or(Error::InvalidParameter("manual donor unavailable"))
             .and_then(|active| validate_dust_donor(draft.choice, &support, active))
             .and_then(|()| {
-                self.dust
-                    .repairs_mut(source)
+                self.dust_repairs_mut(source)
                     .set_donor(draft.repair, draft.choice)
             });
         match result {
             Ok(()) => {
-                self.dust.repair_changed(source, draft.repair);
+                self.dust_repair_changed(source, draft.repair);
                 self.status = "Dust source updated".into();
             }
             Err(error) => {
@@ -1595,8 +1633,7 @@ impl Editor {
             .as_ref()
             .filter(|draft| draft.target.is_some() && !draft.rejected)
             .and_then(|draft| draft.support().ok());
-        self.dust
-            .repairs(source)
+        self.dust_repairs(source)
             .into_iter()
             .flat_map(RepairSet::repairs)
             .filter_map(|repair| {
@@ -1867,7 +1904,10 @@ impl Editor {
                     return;
                 }
                 let expected = self.effective_dust_repair(response.source, response.repair.id);
-                if self.dust.accept(response, expected.as_ref()) {
+                let accepted = self
+                    .dust_repairs(response.source)
+                    .is_some_and(|set| set.repairs().contains(&response.repair));
+                if self.dust.accept(response, expected.as_ref(), accepted) {
                     self.status = "Dust repair ready".into();
                     self.invalidate_settled();
                 }
@@ -1898,8 +1938,8 @@ impl Editor {
         if self.tab != 1 || self.fullscreen.is_some() || self.source {
             return;
         }
-        let set = self.dust.repairs(source);
-        let selected = set.and_then(RepairSet::selected);
+        let set = self.dust_repairs(source);
+        let selected = self.selected_dust_repair();
         let signature = self.dust_signature();
         let mask_target = self.dust.mask_draft.as_ref().and_then(|draft| draft.target);
         let painter = ui.painter().with_clip_rect(geometry.canvas);
@@ -2131,34 +2171,44 @@ mod tests {
     }
 
     #[test]
-    fn transient_repair_sets_are_independent_per_source() {
-        let mut state = State::default();
+    fn committed_repair_sets_are_independent_per_source() {
+        let (mut editor, _, _) = super::super::tests::fixture();
+        super::super::tests::add_ready_fixture(&mut editor);
+        let first_source = editor.current_source.unwrap();
+        let mut second_record = editor
+            .document
+            .project
+            .source(first_source)
+            .unwrap()
+            .clone();
+        second_record.path = "second.ARW".into();
+        let second_source = editor.document.project.add_source(second_record).unwrap();
         let mask = || SupportMask::new([20, 20], [3, 3], vec![true; 9]).unwrap();
-        let first = state
-            .repairs_mut(SourceId(1))
+        let first = editor
+            .dust_repairs_mut(first_source)
             .insert(mask(), RepairOrigin::Manual, DonorChoice::Automatic)
             .unwrap();
-        let second = state
-            .repairs_mut(SourceId(2))
+        let second = editor
+            .dust_repairs_mut(second_source)
             .insert(mask(), RepairOrigin::Detected, DonorChoice::Offset([4, -2]))
             .unwrap();
         assert_eq!(first, RepairId(1));
         assert_eq!(second, RepairId(1));
-        state
-            .repairs_mut(SourceId(1))
+        editor
+            .dust_repairs_mut(first_source)
             .set_enabled(first, false)
             .unwrap();
-        assert!(!state.repairs(SourceId(1)).unwrap().repairs()[0].enabled);
-        assert!(state.repairs(SourceId(2)).unwrap().repairs()[0].enabled);
+        assert!(!editor.dust_repairs(first_source).unwrap().repairs()[0].enabled);
+        assert!(editor.dust_repairs(second_source).unwrap().repairs()[0].enabled);
     }
 
     #[test]
     fn unchanged_failure_is_not_retried_or_allowed_to_block_later_repairs() {
         let mut state = State::default();
         let source = SourceId(1);
+        let mut committed = RepairSet::default();
         for origin in [[20, 20], [30, 30]] {
-            state
-                .repairs_mut(source)
+            committed
                 .insert(
                     SupportMask::new(origin, [2, 2], vec![true; 4]).unwrap(),
                     RepairOrigin::Manual,
@@ -2166,7 +2216,7 @@ mod tests {
                 )
                 .unwrap();
         }
-        let first = state.repairs(source).unwrap().repairs()[0].clone();
+        let first = committed.repairs()[0].clone();
         state.pending = Some(Pending {
             cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             request: 4,
@@ -2176,7 +2226,7 @@ mod tests {
             repair: first,
         });
         assert!(state.fail(4));
-        let repairs = state.repairs(source).unwrap().repairs().to_vec();
+        let repairs = committed.repairs().to_vec();
         assert_eq!(
             state
                 .next_stale(source, 8, [3; ProcessingParameters::BYTE_LEN], &repairs)

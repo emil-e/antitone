@@ -2,7 +2,7 @@
 
 [PLAN.md](../../PLAN.md) owns priorities. These packages describe open scope, questions and acceptance—not implemented behavior:
 
-- [Dust-repair acceptance and output boundaries](dust-repair.md)
+- [Dust-repair output and remaining acceptance](dust-repair.md)
 - [Physical-view Global prototype acceptance](view-working-set.md)
 - [Remaining scan-region consumers and physical acceptance](region-detection.md)
 - [Analyze acceptance and deferred sampling work](roll-assistance.md)

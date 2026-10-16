@@ -518,6 +518,7 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
                 reference_only: false,
                 photo: Default::default(),
                 local_adjustments: None,
+                repairs: Default::default(),
                 orientation: Default::default(),
                 crop: None,
             },

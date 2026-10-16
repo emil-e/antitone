@@ -15,6 +15,7 @@ fn record(path: &str) -> Source {
         reference_only: false,
         photo: Default::default(),
         local_adjustments: None,
+        repairs: Default::default(),
         orientation: Default::default(),
         crop: None,
     }

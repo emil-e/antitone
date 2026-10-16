@@ -1,6 +1,9 @@
 use super::*;
 use crate::geometry::QuarterTurns;
 
+#[path = "editor_dust_persistence_tests.rs"]
+mod persistence;
+
 fn editor() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
     let (mut editor, send, commands) = super::super::tests::fixture();
     super::super::tests::add_ready_fixture(&mut editor);
@@ -8,14 +11,14 @@ fn editor() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
     editor.tab = 1;
     let source = editor.current_source.unwrap();
     editor
-        .dust
-        .repairs_mut(source)
+        .dust_repairs_mut(source)
         .insert(
             SupportMask::new([50, 50], [3, 3], vec![true; 9]).unwrap(),
             RepairOrigin::Manual,
             DonorChoice::Offset([30, 0]),
         )
         .unwrap();
+    editor.select_dust_repair(RepairId(1));
     (editor, send, commands)
 }
 
@@ -50,7 +53,7 @@ fn high_response(e: &mut Editor) -> Response {
         loaded: e.id,
         source: e.current_source.unwrap(),
         signature: e.dust_signature().unwrap(),
-        repair: e.dust.repairs(e.current_source.unwrap()).unwrap().repairs()[0].clone(),
+        repair: e.dust_repairs(e.current_source.unwrap()).unwrap().repairs()[0].clone(),
         calibration: e.calibration().unwrap(),
         roll: e.roll.inversion_only(),
     };
@@ -75,7 +78,7 @@ fn high_response(e: &mut Editor) -> Response {
 fn held_dust_stroke_keeps_painting_past_512_source_pixels_until_primary_release() {
     let (mut e, _send, _commands) = editor();
     let source = e.current_source.unwrap();
-    e.dust.clear_repairs(source);
+    e.reset_dust_repairs(source);
     e.begin_dust_cleanup();
     e.dust.brush_size = 8;
     e.preferences.scopes_visible = false;
@@ -108,7 +111,8 @@ fn held_dust_stroke_keeps_painting_past_512_source_pixels_until_primary_release(
             "lost held stroke at source x={x}: {}",
             e.status
         );
-        assert!(e.dust.repairs(source).is_none());
+        assert!(e.dust_repairs(source).is_none());
+        assert_eq!(e.document.project, project);
     }
     assert!(
         e.dust
@@ -132,10 +136,11 @@ fn held_dust_stroke_keeps_painting_past_512_source_pixels_until_primary_release(
         }],
     );
     assert!(e.dust.mask_draft.is_none());
-    let repairs = e.dust.repairs(source).unwrap().repairs();
+    let repairs = e.dust_repairs(source).unwrap().repairs();
     assert_eq!(repairs.len(), 1);
     assert!(repairs[0].support.contains([750, 200]));
-    assert_eq!(e.document.project, project);
+    assert_ne!(e.document.project, project);
+    assert!(e.document.dirty());
 }
 
 #[test]
@@ -174,14 +179,13 @@ fn over_budget_held_strokes_are_visible_and_discarded_without_partial_new_or_exi
         let (mut e, _send, _commands) = editor();
         let source = e.current_source.unwrap();
         if !edit_existing {
-            e.dust.clear_repairs(source);
+            e.reset_dust_repairs(source);
         }
         e.begin_dust_cleanup();
         e.dust.brush_size = 64;
         e.preferences.scopes_visible = false;
         let before = e
-            .dust
-            .repairs(source)
+            .dust_repairs(source)
             .map(|r| r.repairs().to_vec())
             .unwrap_or_default();
         let ctx = egui::Context::default();
@@ -262,8 +266,7 @@ fn over_budget_held_strokes_are_visible_and_discarded_without_partial_new_or_exi
         );
         assert!(e.dust.mask_draft.is_none());
         assert_eq!(
-            e.dust
-                .repairs(source)
+            e.dust_repairs(source)
                 .map(|r| r.repairs().to_vec())
                 .unwrap_or_default(),
             before
@@ -283,7 +286,7 @@ fn dust_cursor_matches_selection_paint_and_donor_action_precedence() {
         loaded: e.id,
         source,
         signature: e.dust_signature().unwrap(),
-        repair: e.dust.repairs(source).unwrap().repairs()[0].clone(),
+        repair: e.dust_repairs(source).unwrap().repairs()[0].clone(),
         wake: egui::Context::default(),
         cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         calibration: e.calibration().unwrap(),
@@ -350,18 +353,14 @@ fn dust_cursor_matches_selection_paint_and_donor_action_precedence() {
     );
     e.end_dust_donor_drag();
     let other = e
-        .dust
-        .repairs_mut(source)
+        .dust_repairs_mut(source)
         .insert(
             SupportMask::new([80, 50], [3, 3], vec![true; 9]).unwrap(),
             RepairOrigin::Manual,
             DonorChoice::Automatic,
         )
         .unwrap();
-    e.dust
-        .repairs_mut(source)
-        .select(Some(RepairId(1)))
-        .unwrap();
+    e.select_dust_repair(RepairId(1));
     assert!(e.dust_donor_at(geometry, donor));
     assert_eq!(e.dust_repair_at(geometry, donor), Some(other));
     assert_eq!(
@@ -573,16 +572,14 @@ fn disconnected_automatic_donors_use_their_own_supports_offsets_and_drag_origin(
         (0..33).map(|i| i % 11 < 3 || i % 11 >= 8).collect(),
     )
     .unwrap();
-    e.dust
-        .repairs_mut(source)
+    e.dust_repairs_mut(source)
         .set_support(RepairId(1), support.clone())
         .unwrap();
-    e.dust
-        .repairs_mut(source)
+    e.dust_repairs_mut(source)
         .set_donor(RepairId(1), DonorChoice::Automatic)
         .unwrap();
     e.begin_dust_cleanup();
-    let repair = e.dust.repairs(source).unwrap().repairs()[0].clone();
+    let repair = e.dust_repairs(source).unwrap().repairs()[0].clone();
     let request = Request {
         request: 1,
         loaded: e.id,
@@ -646,7 +643,7 @@ fn disconnected_automatic_donors_use_their_own_supports_offsets_and_drag_origin(
     e.drag_dust_donor(geometry, screen_source_point(geometry, [40.5, 91.5]));
     e.end_dust_donor_drag();
     assert_eq!(
-        e.dust.repairs(source).unwrap().repairs()[0].donor,
+        e.dust_repairs(source).unwrap().repairs()[0].donor,
         DonorChoice::Offset([-18, 41])
     );
 }
@@ -800,8 +797,7 @@ fn obsolete_heal_cancels_without_releasing_admission_or_memoizing_failure() {
             e.roll.gamma = 0.8;
         } else {
             let source = e.current_source.unwrap();
-            e.dust
-                .repairs_mut(source)
+            e.dust_repairs_mut(source)
                 .set_donor(RepairId(1), DonorChoice::Offset([31, 0]))
                 .unwrap();
         }
@@ -818,7 +814,7 @@ fn obsolete_heal_cancels_without_releasing_admission_or_memoizing_failure() {
             panic!("expected retry")
         };
         assert!(!second.cancelled.load(std::sync::atomic::Ordering::Relaxed));
-        e.dust.clear_repairs(e.current_source.unwrap());
+        e.reset_dust_repairs(e.current_source.unwrap());
         assert!(second.cancelled.load(std::sync::atomic::Ordering::Relaxed));
     }
 }
@@ -875,7 +871,7 @@ fn cancellation_and_obsolete_replies_neither_fail_current_repairs_nor_steal_admi
 }
 
 #[test]
-fn new_open_clear_repairs_only_after_success_and_late_work_cannot_restore_them() {
+fn failed_new_open_preserve_repairs_and_empty_replacements_retire_them_and_late_work() {
     for open in [false, true] {
         let (mut e, send, commands) = editor();
         let source = e.current_source.unwrap();
@@ -896,7 +892,7 @@ fn new_open_clear_repairs_only_after_success_and_late_work_cannot_restore_them()
         send.send(Message::Prepared(id, Err("not prepared".into())))
             .unwrap();
         e.receive();
-        assert_eq!(e.dust.repairs(source).unwrap().repairs().len(), 1);
+        assert_eq!(e.dust_repairs(source).unwrap().repairs().len(), 1);
         e.start_document(work());
         let id = e.document_pending.unwrap();
         send.send(Message::Prepared(
@@ -912,9 +908,9 @@ fn new_open_clear_repairs_only_after_success_and_late_work_cannot_restore_them()
         ))
         .unwrap();
         e.receive();
-        assert!(e.dust.repairs(source).is_none());
+        assert!(e.dust_repairs(source).is_none());
         e.receive_dust(request.request, Ok(Some(response(&request, active))));
-        assert!(e.dust.repairs(source).is_none());
+        assert!(e.dust_repairs(source).is_none());
         assert!(e.dust.cached.is_empty());
     }
 }

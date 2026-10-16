@@ -10,16 +10,15 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
     fs::File,
-    io::{Read, Write},
+    io::{BufReader, BufWriter, Write},
     path::{Path, PathBuf},
 };
 
-pub const SCHEMA_VERSION: u32 = 5;
+pub const SCHEMA_VERSION: u32 = 6;
 // Bump when native/raw_bridge.cpp development or scan.rs matrix/normalization/floor contracts change.
 pub const DEVELOPMENT_CONTRACT: &str =
     "libraw-camera-ahd-u16-linear-camera-inversion-ap1-bradford-code-floor-v2";
 pub const OUTPUT_CONTRACT: &str = "ocio-2.6.0-aces2-100nit-antitone-srgb-displayp3-v2";
-const MAX_DOCUMENT_BYTES: u64 = 8 * 1024 * 1024;
 type Result<T> = std::result::Result<T, Error>;
 
 fn failure(error: impl std::fmt::Display) -> Error {
@@ -142,6 +141,7 @@ pub struct Source {
     pub development: SourceDevelopment,
     pub reference_only: bool,
     pub photo: PhotoSettings,
+    pub repairs: crate::dust_repair::RepairSet,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_adjustments: Option<LocalAdjustments>,
     #[serde(default, skip_serializing_if = "PhotoOrientation::is_identity")]
@@ -158,6 +158,7 @@ impl Source {
             crop.region(self.development.active_area.into())?;
         }
         self.photo.validate()?;
+        self.repairs.validate(self.development.active_area.into())?;
         if let Some(locals) = &self.local_adjustments {
             locals.validate()?;
         }
@@ -213,6 +214,7 @@ pub struct SourceAnalysis {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Project {
+    #[serde(deserialize_with = "deserialize_schema")]
     pub schema: u32,
     pub processing_model: u32,
     pub next_source_id: u64,
@@ -234,6 +236,16 @@ pub struct Project {
     pub analysis_area: Option<[u32; 4]>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub analysis_regions: Vec<SourceAnalysis>,
+}
+
+fn deserialize_schema<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<u32, D::Error> {
+    let schema = u32::deserialize(deserializer)?;
+    if schema != SCHEMA_VERSION {
+        return Err(serde::de::Error::custom("unsupported project schema"));
+    }
+    Ok(schema)
 }
 
 impl Default for Project {
@@ -464,35 +476,25 @@ impl Project {
     }
 
     pub fn load(path: &Path) -> Result<Self> {
-        let mut bytes = Vec::new();
-        File::open(path)
-            .map_err(failure)?
-            .take(MAX_DOCUMENT_BYTES + 1)
-            .read_to_end(&mut bytes)
-            .map_err(failure)?;
-        require(
-            bytes.len() as u64 <= MAX_DOCUMENT_BYTES,
-            "project exceeds the 8 MiB document budget",
-        )?;
-        let project: Self = serde_json::from_slice(&bytes).map_err(failure)?;
+        let input = BufReader::new(File::open(path).map_err(failure)?);
+        let project: Self = serde_json::from_reader(input).map_err(failure)?;
         project.validate()?;
         Ok(project)
     }
 
     pub fn save(&self, path: &Path, policy: Save) -> Result<()> {
         self.validate()?;
-        let bytes = serde_json::to_vec_pretty(self).map_err(failure)?;
-        require(
-            (bytes.len() as u64) < MAX_DOCUMENT_BYTES,
-            "project exceeds the 8 MiB document budget",
-        )?;
         let parent = path
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
         let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(failure)?;
-        temporary.write_all(&bytes).map_err(failure)?;
-        temporary.write_all(b"\n").map_err(failure)?;
+        {
+            let mut output = BufWriter::new(&mut temporary);
+            serde_json::to_writer_pretty(&mut output, self).map_err(failure)?;
+            output.write_all(b"\n").map_err(failure)?;
+            output.flush().map_err(failure)?;
+        }
         temporary.as_file().sync_all().map_err(failure)?;
         match policy {
             Save::New => {

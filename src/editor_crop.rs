@@ -185,7 +185,7 @@ impl Editor {
                 && !tool_active;
         let repairs_changed = self
             .current_source
-            .and_then(|source| self.dust.repairs(source))
+            .and_then(|source| self.dust_repairs(source))
             .is_some_and(|set| !set.repairs().is_empty());
         let mut action = None;
 
