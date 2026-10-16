@@ -4,6 +4,11 @@
 //! supports differ only in UI provenance; both enter [`heal_ranked`] identically.
 use crate::{Error, geometry::SourceRegion};
 use std::collections::VecDeque;
+#[path = "dust_repair_screening.rs"]
+mod screening;
+pub(crate) use screening::Execution;
+#[cfg(feature = "editor")]
+pub(crate) use screening::{ScreenInput, Screener};
 
 pub type Ap1 = [f32; 3];
 pub(crate) const CONTEXT_PADDING: u32 = 10;
@@ -257,8 +262,21 @@ impl EvaluatedRepair {
 pub fn evaluate(
     repair: &Repair,
     active: SourceRegion,
-    mut base: impl FnMut([u32; 2]) -> Result<Ap1, Error>,
+    base: impl FnMut([u32; 2]) -> Result<Ap1, Error>,
 ) -> Result<EvaluatedRepair, Error> {
+    evaluate_with(repair, active, base, &mut Execution::default())
+        .map(|result| result.expect("uncancelled repair evaluation"))
+}
+
+pub(crate) fn evaluate_with(
+    repair: &Repair,
+    active: SourceRegion,
+    mut base: impl FnMut([u32; 2]) -> Result<Ap1, Error>,
+    execution: &mut Execution<'_>,
+) -> Result<Option<EvaluatedRepair>, Error> {
+    if (execution.cancelled)() {
+        return Ok(None);
+    }
     active.validate()?;
     let support_right = repair.support.origin[0]
         .checked_add(repair.support.size[0])
@@ -368,6 +386,9 @@ pub fn evaluate(
         ))? as usize;
     let mut image = Vec::with_capacity(count);
     for y in window.y..window.y + window.height {
+        if (execution.cancelled)() {
+            return Ok(None);
+        }
         for x in window.x..window.x + window.width {
             image.push(base([x, y])?);
         }
@@ -378,8 +399,17 @@ pub fn evaluate(
         let y = repair.support.origin[1] + (index / local_width) as u32;
         mask[((y - window.y) * window.width + x - window.x) as usize] = true;
     }
-    let (result, mut donors) =
-        heal_ranked(&image, [window.width, window.height], &mask, repair.donor)?;
+    let Some((result, mut donors)) = heal_with_execution(
+        &image,
+        [window.width, window.height],
+        &mask,
+        repair.donor,
+        DonorSearch::Bounded,
+        execution,
+    )?
+    else {
+        return Ok(None);
+    };
     for donor in &mut donors {
         donor.target[0] += window.x;
         donor.target[1] += window.y;
@@ -394,12 +424,15 @@ pub fn evaluate(
             values[index] = result[((y - window.y) * window.width + x - window.x) as usize];
         }
     }
-    Ok(EvaluatedRepair {
+    if (execution.cancelled)() {
+        return Ok(None);
+    }
+    Ok(Some(EvaluatedRepair {
         id: repair.id,
         support: repair.support.clone(),
         donors,
         values,
-    })
+    }))
 }
 
 fn padded(region: SourceRegion, active: SourceRegion, amount: u32) -> SourceRegion {
@@ -465,6 +498,22 @@ fn heal_ranked_with_search(
     donor: DonorChoice,
     search: DonorSearch,
 ) -> Result<(Vec<Ap1>, Vec<DonorMatch>), Error> {
+    heal_with_execution(image, size, mask, donor, search, &mut Execution::default())
+        .map(|result| result.expect("uncancelled donor healing"))
+}
+
+type Healed = (Vec<Ap1>, Vec<DonorMatch>);
+fn heal_with_execution(
+    image: &[Ap1],
+    size: [u32; 2],
+    mask: &[bool],
+    donor: DonorChoice,
+    search: DonorSearch,
+    execution: &mut Execution<'_>,
+) -> Result<Option<Healed>, Error> {
+    if (execution.cancelled)() {
+        return Ok(None);
+    }
     let [width, height] = dimensions(size, image.len())?;
     if mask.len() != image.len() || mask.iter().all(|bit| *bit) {
         return Err(Error::InvalidParameter("invalid repair mask"));
@@ -473,7 +522,7 @@ fn heal_ranked_with_search(
         return Err(Error::InvalidParameter("repair requires finite AP1"));
     }
     if !mask.iter().any(|bit| *bit) {
-        return Ok((image.to_vec(), Vec::new()));
+        return Ok(Some((image.to_vec(), Vec::new())));
     }
     let mut source = image.to_vec();
     for (pixel, hidden) in source.iter_mut().zip(mask) {
@@ -492,7 +541,10 @@ fn heal_ranked_with_search(
     let mut output = image.to_vec();
     let mut matches = Vec::new();
     for component in groups {
-        let donor_match = heal_component(
+        if (execution.cancelled)() {
+            return Ok(None);
+        }
+        let Some(donor_match) = heal_component(
             &source,
             mask,
             masked_bounds,
@@ -504,7 +556,11 @@ fn heal_ranked_with_search(
             donor,
             search,
             &mut output,
-        )?;
+            execution,
+        )?
+        else {
+            return Ok(None);
+        };
         matches.push(donor_match);
     }
     if output.iter().flatten().any(|value| !value.is_finite())
@@ -514,7 +570,10 @@ fn heal_ranked_with_search(
     {
         return Err(Error::NumericalOverflow);
     }
-    Ok((output, matches))
+    if (execution.cancelled)() {
+        return Ok(None);
+    }
+    Ok(Some((output, matches)))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -530,7 +589,8 @@ fn heal_component(
     donor_choice: DonorChoice,
     search: DonorSearch,
     output: &mut [Ap1],
-) -> Result<DonorMatch, Error> {
+    execution: &mut Execution<'_>,
+) -> Result<Option<DonorMatch>, Error> {
     let min_x = component.iter().map(|index| index % width).min().unwrap();
     let max_x = component.iter().map(|index| index % width).max().unwrap();
     let min_y = component.iter().map(|index| index / width).min().unwrap();
@@ -598,7 +658,11 @@ fn heal_component(
         .sqrt()
         .max(center_max * 1e-6)
         .max(1e-12);
-    let distances = distance_to_unknown(&known, local_width, local_height);
+    let Some(distances) =
+        distance_to_unknown(&known, local_width, local_height, execution.cancelled)
+    else {
+        return Ok(None);
+    };
     let mut weights = vec![0.; local.len()];
     for index in 0..local.len() {
         if known[index] {
@@ -632,38 +696,98 @@ fn heal_component(
     let candidates = match donor_choice {
         DonorChoice::Automatic => {
             let totals = MatchWeights::new(&weights, &valid_target);
-            let mut candidates = Vec::new();
-            let mut best = f64::INFINITY;
-            let mut zero_winner = None;
+            let filter = screening::prepare(
+                MatchContext {
+                    image,
+                    mask,
+                    gradients,
+                    gradient_known,
+                    width,
+                    target: [x0, y0],
+                    source: [0, 0],
+                    size: [local_width, local_height],
+                    known: &known,
+                    valid_target: &valid_target,
+                    weights: &weights,
+                    center,
+                    contrast,
+                    gradient_scale,
+                },
+                totals,
+                &eligibility,
+                [
+                    search_x0,
+                    search_y0,
+                    search_x1 - local_width,
+                    search_y1 - local_height,
+                ],
+                search,
+                execution,
+            )?;
+            if (execution.cancelled)() {
+                return Ok(None);
+            }
+            // A seed minimum must retain its actual candidates, especially exact zero:
+            // otherwise a cached positive score could incorrectly become the zero winner.
+            let mut candidates = filter
+                .as_ref()
+                .map(|f| {
+                    f.scores
+                        .iter()
+                        .filter(|(_, score)| **score <= competitive_score(f.best))
+                        .map(|(p, s)| (*s, p[1], p[0]))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let mut best = filter.as_ref().map_or(f64::INFINITY, |f| f.best);
+            let mut zero_winner = if best == 0. {
+                select_donor(&candidates, [x0, y0])
+            } else {
+                None
+            };
             for sy in search_y0..=search_y1 - local_height {
+                if (execution.cancelled)() {
+                    return Ok(None);
+                }
                 for sx in search_x0..=search_x1 - local_width {
+                    if (execution.cancelled)() {
+                        return Ok(None);
+                    }
+                    if filter
+                        .as_ref()
+                        .is_some_and(|f| f.scores.contains_key(&[sx, sy]))
+                    {
+                        continue;
+                    }
                     if zero_winner
                         .is_some_and(|winner| !can_beat_zero_winner(winner, [sx, sy], [x0, y0]))
                     {
                         continue;
                     }
-                    if eligibility.clean(sx, sy, search)
-                        && let Ok(Some(score)) = matching_score_bounded(
-                            MatchContext {
-                                image,
-                                mask,
-                                gradients,
-                                gradient_known,
-                                width,
-                                target: [x0, y0],
-                                source: [sx, sy],
-                                size: [local_width, local_height],
-                                known: &known,
-                                valid_target: &valid_target,
-                                weights: &weights,
-                                center,
-                                contrast,
-                                gradient_scale,
-                            },
-                            totals,
-                            search.ceiling(best),
-                        )
-                    {
+                    if !filter.as_ref().map_or_else(
+                        || eligibility.clean(sx, sy, search),
+                        |f| f.allows(sx, sy, best),
+                    ) {
+                        continue;
+                    }
+                    let context = MatchContext {
+                        image,
+                        mask,
+                        gradients,
+                        gradient_known,
+                        width,
+                        target: [x0, y0],
+                        source: [sx, sy],
+                        size: [local_width, local_height],
+                        known: &known,
+                        valid_target: &valid_target,
+                        weights: &weights,
+                        center,
+                        contrast,
+                        gradient_scale,
+                    };
+                    let score = matching_score_bounded(context, totals, search.ceiling(best));
+                    if let Ok(Some(score)) = score {
                         best = best.min(score);
                         let candidate = (score, sy, sx);
                         candidates.push(candidate);
@@ -746,7 +870,13 @@ fn heal_component(
             }
         }
     }
+    if (execution.cancelled)() {
+        return Ok(None);
+    }
     let correction = limited_biharmonic(&difference, &local, local_width, local_height)?;
+    if (execution.cancelled)() {
+        return Ok(None);
+    }
     for y in 0..local_height {
         for x in 0..local_width {
             let index = y * local_width + x;
@@ -758,7 +888,7 @@ fn heal_component(
             }
         }
     }
-    Ok(DonorMatch {
+    Ok(Some(DonorMatch {
         target: [
             x0 as u32,
             y0 as u32,
@@ -769,7 +899,7 @@ fn heal_component(
         context_mse: context_error / (paired_context_pixels * 3) as f64,
         paired_context_pixels,
         matching_score,
-    })
+    }))
 }
 
 fn donor_order(
@@ -1048,7 +1178,130 @@ fn dilate(mask: &[bool], width: usize, height: usize, radius: usize) -> Vec<bool
     }
     output
 }
-fn distance_to_unknown(known: &[bool], width: usize, _height: usize) -> Vec<f64> {
+fn exact_distance_squares(width: usize, height: usize) -> bool {
+    (width.saturating_sub(1) as u64)
+        .checked_pow(2)
+        .and_then(|x| {
+            (height.saturating_sub(1) as u64)
+                .checked_pow(2)
+                .and_then(|y| x.checked_add(y))
+        })
+        .is_some_and(|n| n <= 1u64 << 53)
+}
+
+fn distance_to_unknown(
+    known: &[bool],
+    width: usize,
+    height: usize,
+    cancelled: &dyn Fn() -> bool,
+) -> Option<Vec<f64>> {
+    // Integer squared distances are identical to the reference's binary64 sums
+    // in this range. Apply the same sqrt once to the exact minimum, not once
+    // per possible unknown pixel. Keep the scalar path beyond that guarantee.
+    let exact = exact_distance_squares(width, height);
+    #[derive(Clone, Copy)]
+    struct Site {
+        base: u64,
+        position: u32,
+        start: u32,
+    }
+    if !exact || std::mem::size_of::<Site>() > std::mem::size_of::<(usize, usize)>() {
+        return distance_to_unknown_scalar(known, width, cancelled);
+    }
+    if known.is_empty() {
+        return Some(Vec::new());
+    }
+    let mut values = vec![f64::INFINITY; known.len()];
+    for y in 0..height {
+        let mut previous = None;
+        for x in 0..width {
+            let i = y * width + x;
+            if i.is_multiple_of(128) && cancelled() {
+                return None;
+            }
+            if !known[i] {
+                previous = Some(x);
+            }
+            if let Some(p) = previous {
+                values[i] = (x.abs_diff(p) as u64).pow(2) as f64;
+            }
+        }
+        previous = None;
+        for x in (0..width).rev() {
+            let i = y * width + x;
+            if i.is_multiple_of(128) && cancelled() {
+                return None;
+            }
+            if !known[i] {
+                previous = Some(x);
+            }
+            if let Some(p) = previous {
+                values[i] = values[i].min((x.abs_diff(p) as u64).pow(2) as f64);
+            }
+        }
+    }
+    // At most one site per row containing an unknown; each site uses no more
+    // storage than a scalar-reference unknown coordinate on supported targets.
+    let mut envelope: Vec<Site> = Vec::new();
+    for x in 0..width {
+        envelope.clear();
+        for q in 0..height {
+            if q.is_multiple_of(128) && cancelled() {
+                return None;
+            }
+            let base = values[q * width + x];
+            if !base.is_finite() {
+                continue;
+            }
+            let base = base as u64;
+            let start = loop {
+                let Some(p) = envelope.last().copied() else {
+                    break 0;
+                };
+                let numerator = (q as i64).pow(2) + base as i64
+                    - (i64::from(p.position).pow(2) + p.base as i64);
+                // First integer row where the new parabola is strictly lower.
+                // Clipping only its active domain preserves equal-distance ties.
+                let first = (numerator.div_euclid(2 * (q as i64 - i64::from(p.position))) + 1)
+                    .clamp(0, height as i64) as u32;
+                if first <= p.start {
+                    envelope.pop();
+                } else {
+                    break first;
+                }
+            };
+            if start < height as u32 {
+                envelope.push(Site {
+                    base,
+                    position: q as u32,
+                    start,
+                });
+            }
+        }
+        if envelope.is_empty() {
+            continue;
+        }
+        let mut active = 0;
+        for y in 0..height {
+            if y.is_multiple_of(128) && cancelled() {
+                return None;
+            }
+            while active + 1 < envelope.len() && envelope[active + 1].start <= y as u32 {
+                active += 1;
+            }
+            let p = envelope[active];
+            let squared = p.base + (y.abs_diff(p.position as usize) as u64).pow(2);
+            values[y * width + x] = (squared as f64).sqrt();
+        }
+    }
+    Some(values)
+}
+
+fn distance_to_unknown_scalar(
+    known: &[bool],
+    width: usize,
+    cancelled: &dyn Fn() -> bool,
+) -> Option<Vec<f64>> {
     let unknown = known
         .iter()
         .enumerate()
@@ -1058,7 +1311,10 @@ fn distance_to_unknown(known: &[bool], width: usize, _height: usize) -> Vec<f64>
         .iter()
         .enumerate()
         .map(|(index, value)| {
-            if !value {
+            if index % 128 == 0 && cancelled() {
+                return None;
+            }
+            Some(if !value {
                 0.
             } else {
                 let x = index % width;
@@ -1067,7 +1323,7 @@ fn distance_to_unknown(known: &[bool], width: usize, _height: usize) -> Vec<f64>
                     .iter()
                     .map(|(ux, uy)| distance(x, y, *ux, *uy))
                     .fold(f64::INFINITY, f64::min)
-            }
+            })
         })
         .collect()
 }

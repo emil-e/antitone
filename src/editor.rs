@@ -573,6 +573,8 @@ fn backend(
     let mut correction: Option<Arc<Correction>> = None;
     let mut flat_preview: Option<(u64, Scan, Source)> = None;
     let mut view_kernels = None;
+    let mut dust_screening =
+        crate::gpu::dust_screening::Screening::new(&device, &queue, &submissions);
     while let Ok(command) = commands.recv() {
         match command {
             Command::AnalysisSupport(request, loaded) => {
@@ -657,21 +659,32 @@ fn backend(
                 &source_epoch,
             ),
             Command::Dust(request) => {
-                let result = match source.as_ref().filter(|(loaded, _)| {
-                    *loaded == request.loaded
-                        && source_epoch.load(std::sync::atomic::Ordering::Relaxed) == request.loaded
-                }) {
-                    Some((_, scan)) => dust::evaluate(scan, &request)
-                        .map(|r| Some(Box::new(r)))
-                        .map_err(|e| e.to_string()),
+                let cancelled = || {
+                    use std::sync::atomic::Ordering;
+                    if source_epoch.load(Ordering::Relaxed) != request.loaded {
+                        request.cancelled.store(true, Ordering::Relaxed);
+                    }
+                    request.cancelled.load(Ordering::Relaxed)
+                };
+                let result = match source
+                    .as_ref()
+                    .filter(|(loaded, _)| *loaded == request.loaded && !cancelled())
+                {
+                    Some((_, scan)) => {
+                        dust::evaluate_with(scan, &request, Some(&mut dust_screening), &cancelled)
+                            .map(|r| r.map(Box::new))
+                            .map_err(|e| e.to_string())
+                    }
                     None => Ok(None),
                 };
+                let result = if cancelled() { Ok(None) } else { result };
                 if messages
                     .send(Message::Dust(request.request, result))
                     .is_err()
                 {
                     break;
                 }
+                request.wake.request_repaint();
             }
             Command::Refine(id, revision, parameters, target, view) => {
                 let active = match &flat_preview {
@@ -2876,7 +2889,7 @@ impl host::App for Editor {
             };
             if !self.source && self.flat_edit.is_none() && self.pick_return.is_none() {
                 if let Some(signature) = self.dust_signature() {
-                    self.schedule_dust(signature);
+                    self.schedule_dust_with_wake(signature, ui.ctx());
                 }
                 match self.dust_gpu_snapshot(parameters.grade().map(|grade| grade.snapshot())) {
                     Ok(repairs) => parameters.repairs = repairs,

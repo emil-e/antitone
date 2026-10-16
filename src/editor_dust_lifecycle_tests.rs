@@ -43,6 +43,8 @@ fn gpu_editor() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
 fn high_response(e: &mut Editor) -> Response {
     let request = Request {
         request: e.request_id(),
+        wake: egui::Context::default(),
+        cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         loaded: e.id,
         source: e.current_source.unwrap(),
         signature: e.dust_signature().unwrap(),
@@ -158,7 +160,9 @@ fn mask_aspect_ratio_budget_preserves_original_storage_matching_and_automatic_wo
                 <= (512 + context_padding).pow(2)
         );
         assert!((width + padding) * (height + padding) <= MAX_MASK_WORK_PIXELS);
-        assert!(MAX_MASK_WORK_PIXELS <= 4_000_000);
+        const {
+            assert!(MAX_MASK_WORK_PIXELS <= 4_000_000);
+        }
     }
 }
 
@@ -278,6 +282,8 @@ fn dust_cursor_matches_selection_paint_and_donor_action_precedence() {
         source,
         signature: e.dust_signature().unwrap(),
         repair: e.dust.repairs(source).unwrap().repairs()[0].clone(),
+        wake: egui::Context::default(),
+        cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         calibration: e.calibration().unwrap(),
         roll: e.roll.inversion_only(),
     };
@@ -581,6 +587,8 @@ fn disconnected_automatic_donors_use_their_own_supports_offsets_and_drag_origin(
         source,
         signature: e.dust_signature().unwrap(),
         repair: repair.clone(),
+        wake: egui::Context::default(),
+        cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         calibration: e.calibration().unwrap(),
         roll: e.roll,
     };
@@ -690,6 +698,8 @@ fn corrected_repair_evaluation_uses_only_the_ungraded_positive_and_retains_signe
         request: 1,
         loaded: 1,
         source: SourceId(1),
+        wake: egui::Context::default(),
+        cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         signature: [0; ProcessingParameters::BYTE_LEN],
         repair,
         calibration,
@@ -773,6 +783,59 @@ fn repair_identity_excludes_roll_photo_grades_but_tracks_negative_interpretation
     assert_eq!(e.dust_signature(), Some(before));
     e.roll.balance.warmth = 0.05;
     assert_ne!(e.dust_signature(), Some(before));
+}
+
+#[test]
+fn obsolete_heal_cancels_without_releasing_admission_or_memoizing_failure() {
+    for upstream in [false, true] {
+        let (mut e, _, commands) = editor();
+        let signature = e.dust_signature().unwrap();
+        e.schedule_dust(signature);
+        let Command::Dust(first) = commands.try_recv().unwrap() else {
+            panic!("expected dust")
+        };
+        if upstream {
+            e.roll.gamma = 0.8;
+        } else {
+            let source = e.current_source.unwrap();
+            e.dust
+                .repairs_mut(source)
+                .set_donor(RepairId(1), DonorChoice::Offset([31, 0]))
+                .unwrap();
+        }
+        let next_signature = e.dust_signature().unwrap();
+        e.schedule_dust(next_signature);
+        assert!(first.cancelled.load(std::sync::atomic::Ordering::Relaxed));
+        assert_eq!(e.dust.pending.as_ref().unwrap().request, first.request);
+        assert!(commands.try_recv().is_err());
+        // A genuine backend error arriving after retirement is not an unchanged failure.
+        e.receive_dust(first.request, Err("obsolete failure".into()));
+        assert!(e.dust.pending.is_none() && e.dust.failed.is_empty());
+        e.schedule_dust(next_signature);
+        let Command::Dust(second) = commands.try_recv().unwrap() else {
+            panic!("expected retry")
+        };
+        assert!(!second.cancelled.load(std::sync::atomic::Ordering::Relaxed));
+        e.dust.clear_repairs(e.current_source.unwrap());
+        assert!(second.cancelled.load(std::sync::atomic::Ordering::Relaxed));
+    }
+}
+
+#[test]
+fn navigation_and_downstream_grades_do_not_cancel_an_admitted_heal() {
+    let (mut e, _, commands) = editor();
+    e.schedule_dust(e.dust_signature().unwrap());
+    let Command::Dust(request) = commands.try_recv().unwrap() else {
+        panic!("expected dust")
+    };
+    e.viewport.zoom = Some(2.);
+    e.photo.exposure = 1.;
+    e.roll.exposure = 2.;
+    e.schedule_dust(e.dust_signature().unwrap());
+    assert!(!request.cancelled.load(std::sync::atomic::Ordering::Relaxed));
+    assert_eq!(e.dust.pending.as_ref().unwrap().request, request.request);
+    e.dust = State::default();
+    assert!(request.cancelled.load(std::sync::atomic::Ordering::Relaxed));
 }
 
 #[test]

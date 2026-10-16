@@ -16,6 +16,9 @@ mod response;
 mod submission;
 pub use submission::SubmissionGate;
 #[cfg(feature = "editor")]
+#[path = "gpu_dust_screening.rs"]
+pub(crate) mod dust_screening;
+#[cfg(feature = "editor")]
 #[path = "gpu_working_view.rs"]
 pub(crate) mod view;
 

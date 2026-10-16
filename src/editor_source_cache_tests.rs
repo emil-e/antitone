@@ -2,6 +2,8 @@ use super::*;
 use crate::raw::fixture as raw_fixture;
 use crate::{scan::CameraProxy, source_store::SourceKey};
 
+#[path = "editor_dust_worker_tests.rs"]
+mod dust_worker;
 #[path = "editor_lazy_support_worker_tests.rs"]
 mod lazy_worker;
 

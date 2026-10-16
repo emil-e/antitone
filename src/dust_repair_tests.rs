@@ -1,5 +1,48 @@
 use super::*;
 
+#[test]
+fn linear_distance_transform_preserves_every_reference_distance_bit() {
+    assert!(exact_distance_squares((1 << 26) + 1, (1 << 26) + 1));
+    assert!(!exact_distance_squares((1 << 26) + 2, (1 << 26) + 1));
+    assert!(exact_distance_squares(94_906_266, 1));
+    assert!(!exact_distance_squares(94_906_267, 1));
+    assert!(!exact_distance_squares(usize::MAX, usize::MAX));
+    // Exercise fallback dispatch without allocating an enormous raster: the
+    // scalar helper depends only on the supplied indices, not a stored height.
+    let distant = [true, false];
+    assert_eq!(
+        distance_to_unknown(&distant, 94_906_267, 1, &|| false),
+        distance_to_unknown_scalar(&distant, 94_906_267, &|| false)
+    );
+    let check = |known: &[bool], width, height| {
+        let exact = distance_to_unknown(known, width, height, &|| false).unwrap();
+        let reference = distance_to_unknown_scalar(known, width, &|| false).unwrap();
+        assert_eq!(
+            exact.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            reference.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            "{width}x{height}"
+        );
+    };
+    for bits in 0..1u32 << 12 {
+        let known = (0..12).map(|i| bits & (1 << i) == 0).collect::<Vec<_>>();
+        check(&known, 4, 3);
+    }
+    for (width, height) in [(1usize, 2048usize), (2048, 1), (257, 7), (63, 41), (64, 64)] {
+        for mode in 0..5 {
+            let known = (0..width * height)
+                .map(|i| match mode {
+                    0 => true,
+                    1 => false,
+                    2 => i != width * height / 2,
+                    3 => (i % width + i / width) % 3 != 0,
+                    _ => (i.wrapping_mul(2654435761usize).rotate_left(7) & 15) != 0,
+                })
+                .collect::<Vec<_>>();
+            check(&known, width, height);
+        }
+    }
+}
+
 fn circle(size: [u32; 2], center: [i32; 2], radius: i32) -> Vec<bool> {
     let mut mask = vec![false; (size[0] * size[1]) as usize];
     for y in 0..size[1] as i32 {

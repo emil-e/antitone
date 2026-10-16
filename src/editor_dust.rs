@@ -99,6 +99,8 @@ pub(super) struct Request {
     pub repair: Repair,
     pub calibration: Calibration,
     pub roll: RollSettings,
+    pub cancelled: Arc<std::sync::atomic::AtomicBool>,
+    pub wake: egui::Context,
 }
 
 pub(super) struct Response {
@@ -132,6 +134,7 @@ struct Failed {
 
 #[derive(Clone)]
 struct Pending {
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
     request: u64,
     loaded: u64,
     source: SourceId,
@@ -247,7 +250,27 @@ impl Default for State {
     }
 }
 
+impl Drop for State {
+    fn drop(&mut self) {
+        if let Some(pending) = &self.pending {
+            pending
+                .cancelled
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
 impl State {
+    #[cfg(test)]
+    pub(super) fn pending_request(&self) -> Option<u64> {
+        self.pending.as_ref().map(|pending| pending.request)
+    }
+
+    #[cfg(test)]
+    pub(super) fn has_evaluation(&self, source: SourceId, repair: RepairId) -> bool {
+        self.cached.contains_key(&(source, repair))
+    }
+
     pub(super) fn release_gpu(&mut self) {
         self.gpu.clear();
         self.render_error = None;
@@ -273,6 +296,14 @@ impl State {
     }
 
     fn removed(&mut self, source: SourceId, repair: RepairId) {
+        if let Some(pending) = &self.pending
+            && pending.source == source
+            && pending.repair.id == repair
+        {
+            pending
+                .cancelled
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         self.cached.remove(&(source, repair));
         self.gpu.remove(&repair);
         self.preview_cached.remove(&(source, repair));
@@ -285,12 +316,10 @@ impl State {
         self.preview_cached
             .retain(|(candidate, _), _| *candidate != source);
         self.failed.retain(|(candidate, _), _| *candidate != source);
-        if self
-            .pending
-            .as_ref()
-            .is_some_and(|pending| pending.source == source)
-        {
-            self.pending = None;
+        if let Some(pending) = self.pending.take_if(|pending| pending.source == source) {
+            pending
+                .cancelled
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         }
         self.mask_draft = None;
         self.donor_draft = None;
@@ -359,7 +388,13 @@ impl State {
     }
 
     fn start(&mut self, request: &Request) {
+        if let Some(pending) = &self.pending {
+            pending
+                .cancelled
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         self.pending = Some(Pending {
+            cancelled: request.cancelled.clone(),
             request: request.request,
             loaded: request.loaded,
             source: request.source,
@@ -372,7 +407,8 @@ impl State {
         let Some(pending) = self.pending.take_if(|p| p.request == response.request) else {
             return false;
         };
-        if pending.request != response.request
+        if pending.cancelled.load(std::sync::atomic::Ordering::Relaxed)
+            || pending.request != response.request
             || pending.loaded != response.loaded
             || pending.source != response.source
             || pending.signature != response.signature
@@ -407,6 +443,9 @@ impl State {
         let Some(pending) = self.pending.take_if(|pending| pending.request == request) else {
             return false;
         };
+        if pending.cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+            return false;
+        }
         self.failed.insert(
             (pending.source, pending.repair.id),
             Failed {
@@ -419,7 +458,20 @@ impl State {
     }
 }
 
+#[cfg(test)]
 pub(super) fn evaluate(scan: &Scan, request: &Request) -> Result<Response, Error> {
+    evaluate_with(scan, request, None, &|| false).map(|r| r.expect("uncancelled test evaluation"))
+}
+
+pub(super) fn evaluate_with<'a>(
+    scan: &Scan,
+    request: &Request,
+    screener: Option<&'a mut dyn crate::dust_repair::Screener>,
+    cancelled: &'a dyn Fn() -> bool,
+) -> Result<Option<Response>, Error> {
+    if cancelled() {
+        return Ok(None);
+    }
     let pipeline = Pipeline::ungraded(
         scan.processing_calibration(request.calibration)?,
         request.roll,
@@ -431,23 +483,34 @@ pub(super) fn evaluate(scan: &Scan, request: &Request) -> Result<Response, Error
         width: scan.area.width,
         height: scan.area.height,
     };
-    let evaluated = crate::dust_repair::evaluate(&request.repair, active, |[x, y]| {
-        let rgb = pipeline.apply(scan.pixel(x, y)?)?.rgb;
-        let value = rgb.as_vec3().to_array();
-        if value.iter().all(|channel| channel.is_finite()) {
-            Ok(value)
-        } else {
-            Err(Error::NumericalOverflow)
-        }
-    })?;
-    Ok(Response {
+    let Some(evaluated) = crate::dust_repair::evaluate_with(
+        &request.repair,
+        active,
+        |[x, y]| {
+            let rgb = pipeline.apply(scan.pixel(x, y)?)?.rgb;
+            let value = rgb.as_vec3().to_array();
+            if value.iter().all(|channel| channel.is_finite()) {
+                Ok(value)
+            } else {
+                Err(Error::NumericalOverflow)
+            }
+        },
+        &mut crate::dust_repair::Execution {
+            screener,
+            cancelled,
+        },
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(Response {
         request: request.request,
         loaded: request.loaded,
         source: request.source,
         signature: request.signature,
         repair: request.repair.clone(),
         evaluated: Arc::new(evaluated),
-    })
+    }))
 }
 
 fn brush_dab(
@@ -1742,7 +1805,16 @@ impl Editor {
         Ok(crate::gpu::repairs::Snapshot(patches))
     }
 
+    #[cfg(test)]
     pub(super) fn schedule_dust(&mut self, signature: Signature) {
+        self.schedule_dust_with_wake(signature, &egui::Context::default());
+    }
+
+    pub(super) fn schedule_dust_with_wake(
+        &mut self,
+        signature: Signature,
+        context: &egui::Context,
+    ) {
         if self.busy || self.document_pending.is_some() {
             return;
         }
@@ -1750,6 +1822,17 @@ impl Editor {
             return;
         };
         let repairs = self.effective_dust_repairs(source);
+        if let Some(pending) = &self.dust.pending
+            && (pending.source != source
+                || pending.loaded != self.id
+                || pending.signature != signature
+                || !repairs.contains(&pending.repair))
+        {
+            // Retain admission until its reply; obsolete work is not a failed heal.
+            pending
+                .cancelled
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         let Some(repair) = self.dust.next_stale(source, self.id, signature, &repairs) else {
             return;
         };
@@ -1761,6 +1844,8 @@ impl Editor {
             repair,
             calibration,
             roll: self.roll.inversion_only(),
+            cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            wake: context.clone(),
         };
         if self.commands.send(Command::Dust(request.clone())).is_ok() {
             self.dust.start(&request);
@@ -2082,6 +2167,7 @@ mod tests {
         }
         let first = state.repairs(source).unwrap().repairs()[0].clone();
         state.pending = Some(Pending {
+            cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             request: 4,
             loaded: 8,
             source,

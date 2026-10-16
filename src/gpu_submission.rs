@@ -1,4 +1,6 @@
 use std::sync::{Arc, Mutex};
+#[cfg(test)]
+type SubmissionObserver = Arc<dyn Fn() + Send + Sync>;
 
 /// Shared by a hosted queue's UI and background submitters. Surface configuration
 /// must exclude new submissions while wgpu drains the queue. Encoding, uploads and
@@ -8,6 +10,7 @@ use std::sync::{Arc, Mutex};
 pub struct SubmissionGate(
     Arc<Mutex<()>>,
     #[cfg(any(feature = "ui", test))] Arc<std::sync::atomic::AtomicUsize>,
+    #[cfg(test)] Arc<Mutex<Option<SubmissionObserver>>>,
 );
 
 impl SubmissionGate {
@@ -16,7 +19,10 @@ impl SubmissionGate {
         queue: &wgpu::Queue,
         commands: impl IntoIterator<Item = wgpu::CommandBuffer>,
     ) -> wgpu::SubmissionIndex {
-        self.exclusive(|| queue.submit(commands))
+        let index = self.exclusive(|| queue.submit(commands));
+        #[cfg(test)]
+        self.observe_submission();
+        index
     }
 
     /// Attach completion before a background submitter can advance the queue fence.
@@ -27,7 +33,7 @@ impl SubmissionGate {
         commands: impl IntoIterator<Item = wgpu::CommandBuffer>,
         completion: impl FnOnce() + Send + 'static,
     ) -> wgpu::SubmissionIndex {
-        self.exclusive(|| {
+        let index = self.exclusive(|| {
             use std::sync::atomic::Ordering;
             self.1.fetch_add(1, Ordering::Relaxed);
             let pending = self.1.clone();
@@ -37,7 +43,23 @@ impl SubmissionGate {
                 pending.fetch_sub(1, Ordering::Release);
             });
             index
-        })
+        });
+        #[cfg(test)]
+        self.observe_submission();
+        index
+    }
+
+    #[cfg(test)]
+    pub(crate) fn observe_submissions(&self, observer: SubmissionObserver) {
+        *self.2.lock().unwrap() = Some(observer);
+    }
+
+    #[cfg(test)]
+    fn observe_submission(&self) {
+        let observer = self.2.lock().unwrap().clone();
+        if let Some(observer) = observer {
+            observer();
+        }
     }
 
     #[cfg(any(feature = "ui", test))]
