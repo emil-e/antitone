@@ -403,81 +403,161 @@ impl Editor {
             Err(error) => self.status = error,
         }
     }
-    pub(super) fn analysis_controls(&mut self, ui: &mut egui::Ui) -> bool {
-        use presentation::TextAction;
+    pub(super) fn roll_tool_shelf(&mut self, ui: &mut egui::Ui) -> bool {
+        use icons::Icon;
+        use presentation::{ToolButton, ToolShelf};
+        let reviewing = self.analysis_review.is_some();
+        let commands = !self.busy
+            && self.ready.is_some()
+            && self.pick.is_none()
+            && self.crop_edit.is_none()
+            && self.auto_crop_edit.is_none()
+            && self.flat_edit.is_none()
+            && !reviewing
+            && self.removal_pending.is_none();
         let mut analyze = false;
-        if let Some(review) = &mut self.analysis_review
-            && review.reveal
-        {
-            ui.allocate_response(egui::Vec2::ZERO, egui::Sense::hover())
-                .scroll_to_me(Some(egui::Align::Min));
-            review.reveal = false;
+        #[derive(Clone, Copy)]
+        enum Orientation {
+            Left,
+            Right,
+            Horizontal,
+            Vertical,
+            Reset,
         }
-        presentation::section(
-            ui,
-            "roll-analysis",
-            "Roll analysis",
-            presentation::SectionHeader {
-                summary: "Shared roll initialization",
-                changed: false,
-                reset: None,
-                default_open: None,
-            },
-            |ui| {
-                if self.analysis_review.is_some() {
-                    self.review_controls(ui);
-                } else if self.analysis_pending.is_some() {
-                    let view = self
-                        .tasks
-                        .view()
-                        .expect("pending analysis has presentation");
-                    view.inline(ui);
-                } else {
-                    ui.add_enabled_ui(
-                        !self.busy
-                            && self.ready.is_some()
-                            && self.pick.is_none()
-                            && self.crop_edit.is_none(),
-                        |ui| {
-                            ui.horizontal_wrapped(|ui| {
-                                if TextAction::new("Analyze roll").primary().show(ui).clicked() {
-                                    analyze = true;
-                                }
-                                if TextAction::new("Edit shared picture area…")
-                                    .help("Apply one sampling rectangle to the roll.")
-                                    .show(ui)
-                                    .clicked()
-                                {
-                                    self.begin_pick(Pick::Analysis);
-                                }
-                            });
-                        },
-                    );
-                    if (self.document.project.analysis_area.is_some()
-                        || self
-                            .document
-                            .project
-                            .analysis_regions
-                            .iter()
-                            .any(|e| self.document.project.order.contains(&e.source)))
-                        && TextAction::new("Reset sampling areas")
-                            .enabled(!self.busy && self.pick.is_none() && self.crop_edit.is_none())
-                            .help("Suggest new areas on the next Analyze; keep the current grade.")
-                            .show(ui)
-                            .clicked()
-                    {
-                        self.reset_analysis_area();
-                    }
-                    if self.analysis_picture().is_none() {
-                        ui.small("Analyze first prepares per-photo opening and picture areas for review. Explicit picture geometry is kept.");
+        ToolShelf::show(ui, |ui| {
+            for (icon, name, help, action) in [
+                (
+                    Icon::TurnLeft,
+                    "Turn left",
+                    "Turn the shared scan baseline 90° left.",
+                    Orientation::Left,
+                ),
+                (
+                    Icon::TurnRight,
+                    "Turn right",
+                    "Turn the shared scan baseline 90° right.",
+                    Orientation::Right,
+                ),
+                (
+                    Icon::FlipHorizontal,
+                    "Flip horizontal",
+                    "Flip all scans left/right.",
+                    Orientation::Horizontal,
+                ),
+                (
+                    Icon::FlipVertical,
+                    "Flip vertical",
+                    "Flip all scans top/bottom.",
+                    Orientation::Vertical,
+                ),
+                (
+                    Icon::Reset,
+                    "Reset scan orientation",
+                    "Reset the shared scan orientation.",
+                    Orientation::Reset,
+                ),
+            ] {
+                if ToolButton::command(icon, name, help)
+                    .enabled(
+                        commands
+                            && (!matches!(action, Orientation::Reset)
+                                || !self.roll_orientation.is_identity()),
+                    )
+                    .show(ui)
+                    .clicked()
+                {
+                    match action {
+                        Orientation::Left => self.roll_orientation.turn_counterclockwise(),
+                        Orientation::Right => self.roll_orientation.turn_clockwise(),
+                        Orientation::Horizontal => self.roll_orientation.horizontal ^= true,
+                        Orientation::Vertical => self.roll_orientation.vertical ^= true,
+                        Orientation::Reset => self.roll_orientation = RollOrientation::default(),
                     }
                 }
-                if self.analysis_review.is_none() {
-                    ui.small("Estimate RGB references, shared colour balance and individual exposures. Keeps gamma/curve, correction and composition. Picture area controls statistics, not cropping.");
+            }
+            ui.separator();
+            if ToolButton::tool(
+                Icon::Analyze,
+                "Analyze",
+                "Prepare and review sampling areas, then estimate the roll's starting grade.",
+                reviewing,
+            )
+            .enabled(!self.busy && (reviewing || commands))
+            .show(ui)
+            .clicked()
+            {
+                if reviewing {
+                    self.finish_pick();
+                } else {
+                    analyze = true;
+                }
+            }
+            let cropping = self.auto_crop_edit.is_some();
+            if ToolButton::tool(
+                Icon::Crop,
+                "Auto-crop roll",
+                "Propose crop and straightening for the whole roll.",
+                cropping,
+            )
+            .enabled(cropping || self.auto_crop_entry_available())
+            .show(ui)
+            .clicked()
+            {
+                if cropping {
+                    self.finish_auto_crop(false);
+                } else {
+                    self.auto_crop_requested = Some(auto_crop::Target::Roll);
+                }
+            }
+        });
+        analyze
+    }
+    pub(super) fn analysis_controls(&mut self, ui: &mut egui::Ui) {
+        if self.analysis_review.is_some() || self.analysis_pending.is_some() {
+            return;
+        }
+        let enabled = !self.busy
+            && self.ready.is_some()
+            && self.pick.is_none()
+            && self.crop_edit.is_none()
+            && self.auto_crop_edit.is_none();
+        presentation::section(
+            ui,
+            "sampling-area-actions",
+            "Sampling areas",
+            presentation::SectionHeader {
+                summary: "",
+                changed: false,
+                reset: None,
+                default_open: Some(false),
+            },
+            |ui| {
+                if presentation::TextAction::new("Edit shared picture area…")
+                    .enabled(enabled)
+                    .help("Apply one sampling rectangle to the roll.")
+                    .show(ui)
+                    .clicked()
+                {
+                    self.begin_pick(Pick::Analysis);
+                }
+                let saved = self.document.project.analysis_area.is_some()
+                    || self
+                        .document
+                        .project
+                        .analysis_regions
+                        .iter()
+                        .any(|e| self.document.project.order.contains(&e.source));
+                if saved
+                    && presentation::TextAction::new("Reset sampling areas")
+                        .enabled(enabled)
+                        .help("Suggest new areas on the next Analyze; keep the current grade.")
+                        .show(ui)
+                        .clicked()
+                {
+                    self.reset_analysis_area();
                 }
             },
         );
-        analyze
     }
     pub(super) fn reset_analysis_area(&mut self) {
         self.document.project.analysis_area = None;
@@ -497,6 +577,7 @@ impl Editor {
         if self.busy
             || self.pick.is_some()
             || self.crop_edit.is_some()
+            || self.auto_crop_edit.is_some()
             || self.ready.is_none()
             || self.document.project.order.is_empty()
         {

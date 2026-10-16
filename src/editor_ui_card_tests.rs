@@ -184,6 +184,55 @@ fn render(
 }
 
 #[test]
+fn warning_cues_fit_compact_cards_explain_the_photo_and_do_not_steal_selection() {
+    for height in [32., 64., 140.] {
+        let context = Context::default();
+        let reason = "No crop proposal: four measured edges are required";
+        let draw = |events| {
+            frame(&context, 315., true, events, |ui| {
+                let layout = ContactSheetLayout::new(height, true);
+                let card = layout.begin(
+                    ui,
+                    egui::pos2(20., 10.),
+                    ui.id().with("warned-photo"),
+                    true,
+                    true,
+                    true,
+                );
+                card.caption(ui, "01.ARW");
+                let warning = card.warning(ui, reason);
+                (card.response, card.image_rect, warning)
+            })
+        };
+        let ((_, image, warning), output) = draw(vec![]);
+        assert!(image.contains_rect(warning.rect));
+        let nodes = &output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes;
+        assert!(
+            nodes
+                .iter()
+                .any(|(_, n)| n.label() == Some("Photo warning")
+                    && n.description() == Some(reason))
+        );
+        assert!(nodes.iter().any(|(_, n)| {
+            n.label() == Some("01.ARW")
+                && n.description()
+                    .is_some_and(|d| d.contains("Active photo") && d.contains(reason))
+        }));
+        let point = warning.rect.center();
+        draw(pointer(point, true));
+        assert!(
+            draw(pointer(point, false)).0.0.clicked(),
+            "warning hover must not intercept photo selection"
+        );
+    }
+}
+
+#[test]
 fn card_geometry_paint_ids_and_clips_match_direct_compact_normal_and_focused_states() {
     for scale in [1., 2.] {
         for height in [52., 80., 140., 240.] {

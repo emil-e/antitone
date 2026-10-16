@@ -57,6 +57,7 @@ async fn fixture() -> (
     )
     .unwrap();
     editor.ready = Some(Ready {
+        file: thumbnails::FileKey::new(&record.path),
         thumbnail: None,
         path: record.path.clone(),
         area: record.development.active_area.into(),

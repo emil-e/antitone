@@ -25,6 +25,28 @@ pub(super) fn polygon(b: [f64; 4], angle: f64) -> Option<Quad> {
     (l < r && t < bot).then(|| [[l, t], [r, t], [r, bot], [l, bot]].map(|p| project(p, -angle)))
 }
 impl PictureGeometry {
+    /// Complete independent frame in source pixels, without opening or coverage limits.
+    /// Side presence alone does not establish strength; consumers must check provenance.
+    pub fn frame(&self, active: SourceRegion) -> Option<Quad> {
+        active.validate().ok()?;
+        if self.size.contains(&0) || !self.angle.is_finite() || self.angle.abs() > 6. {
+            return None;
+        }
+        let [Some(l), Some(r), Some(t), Some(b)] = self.sides else {
+            return None;
+        };
+        if [l, r, t, b].iter().any(|v| !v.is_finite()) {
+            return None;
+        }
+        polygon([l, r, t, b], self.angle).map(|quad| {
+            quad.map(|p| {
+                [
+                    f64::from(active.x) + p[0] * f64::from(active.width) / f64::from(self.size[0]),
+                    f64::from(active.y) + p[1] * f64::from(active.height) / f64::from(self.size[1]),
+                ]
+            })
+        })
+    }
     pub(super) fn fit(&self, active: SourceRegion, opening: Quad) -> Option<Quad> {
         let scale = (f64::from(self.size[0]) / 768.).max(f64::from(self.size[1]) / 512.);
         let mut b = bounds(self.size, self.angle, 2. * scale);

@@ -332,7 +332,7 @@ fn all_three_stage_controls_are_reachable_at_normal_and_narrow_inspector_sizes()
             (
                 0,
                 vec![
-                    "Scan orientation",
+                    "Reset scan orientation",
                     "Flat-field correction",
                     "Choose reference RAW…",
                     "Calibration",
@@ -343,8 +343,8 @@ fn all_three_stage_controls_are_reachable_at_normal_and_narrow_inspector_sizes()
                     "Balance",
                     "Warmth",
                     "Tint",
-                    "Roll analysis",
-                    "Analyze roll",
+                    "Sampling areas",
+                    "Analyze",
                     "White balance",
                     "Toe & shoulder",
                     "Toe",

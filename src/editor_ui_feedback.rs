@@ -15,6 +15,22 @@ pub enum Severity {
     Error,
 }
 
+pub(super) fn warning_icon(
+    ui: &Ui,
+    response: egui::Response,
+    name: &str,
+    reason: &str,
+) -> egui::Response {
+    let rect = response.rect;
+    Icon::Warning.paint(ui, rect, egui::Stroke::new(1.5, ui.visuals().warn_fg_color));
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Image, response.enabled(), name)
+    });
+    ui.ctx()
+        .accesskit_node_builder(response.id, |node| node.set_description(reason));
+    response.on_hover_text(reason)
+}
+
 pub(in crate::editor) fn notice_heading(ui: &mut Ui, severity: Severity, title: &str) {
     let (label, icon, color) = match severity {
         Severity::Information => (

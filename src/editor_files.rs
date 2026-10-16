@@ -93,8 +93,9 @@ impl Editor {
         }
     }
     pub(super) fn file_action(&mut self, action: FileAction, context: &egui::Context) {
-        if self.crop_edit.is_some() {
-            self.status = "Apply or cancel the crop before changing or saving the document".into();
+        if self.crop_edit.is_some() || self.auto_crop_edit.is_some() {
+            self.status =
+                "Apply or cancel the crop tool before changing or saving the document".into();
             return;
         }
         match action {

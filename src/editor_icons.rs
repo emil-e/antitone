@@ -21,6 +21,7 @@ pub(super) enum Icon {
     FlipHorizontal,
     FlipVertical,
     Crop,
+    Analyze,
     Pick,
     Dust,
     Swap,
@@ -31,8 +32,9 @@ pub(super) enum Icon {
 
 impl Icon {
     pub(super) fn paint(self, ui: &Ui, rect: Rect, stroke: Stroke) {
-        let origin = rect.center() - Vec2::splat(8.);
-        let point = |x, y| origin + egui::vec2(x, y);
+        let scale = (rect.width().min(rect.height()) / 16.).min(1.);
+        let origin = rect.center() - Vec2::splat(8. * scale);
+        let point = |x, y| origin + egui::vec2(x, y) * scale;
         let line = |points: &[[f32; 2]]| {
             ui.painter().add(egui::Shape::line(
                 points.iter().map(|[x, y]| point(*x, *y)).collect(),
@@ -169,6 +171,12 @@ impl Icon {
                 mapped(&[[8., 1.], [8., 15.]]);
                 mapped(&[[5., 3.], [1., 13.], [5., 13.], [5., 3.]]);
                 mapped(&[[11., 3.], [15., 13.], [11., 13.], [11., 3.]]);
+            }
+            Self::Analyze => {
+                line(&[[2., 13.], [2., 9.]]);
+                line(&[[6., 13.], [6., 5.]]);
+                line(&[[10., 13.], [10., 2.]]);
+                line(&[[14., 13.], [14., 7.]]);
             }
             Self::Crop => {
                 line(&[[4., 1.], [4., 12.], [15., 12.]]);

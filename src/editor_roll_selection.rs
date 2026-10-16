@@ -146,7 +146,10 @@ impl Editor {
     }
 
     pub(super) fn request_removal(&mut self) {
-        if !self.roll_edit_available() || self.removal_pending.is_some() {
+        if !self.roll_edit_available()
+            || self.auto_crop_edit.is_some()
+            || self.removal_pending.is_some()
+        {
             return;
         }
         self.roll_selection

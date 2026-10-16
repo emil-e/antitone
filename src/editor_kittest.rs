@@ -9,6 +9,8 @@ use std::{cell::RefCell, rc::Rc, time::Instant};
 mod activity;
 #[path = "editor_kittest_analysis.rs"]
 mod analyze;
+#[path = "editor_kittest_auto_crop.rs"]
+mod auto_crop;
 #[path = "editor_kittest_correction.rs"]
 mod correction;
 #[path = "editor_kittest_dust.rs"]
@@ -896,9 +898,9 @@ fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
     ] {
         set_layout(&mut harness, size, width);
         for (index, stage, heading, absent) in [
-            (0, "Roll", "Scan orientation", "Crop & straighten"),
+            (0, "Roll", "Reset scan orientation", "Crop & straighten"),
             (1, "Photo", "Crop & straighten", "Target"),
-            (2, "Rendering", "Target", "Scan orientation"),
+            (2, "Rendering", "Target", "Reset scan orientation"),
         ] {
             harness
                 .get_by_role_and_label(egui::accesskit::Role::Tab, stage)

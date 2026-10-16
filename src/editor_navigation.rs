@@ -14,6 +14,8 @@ impl Editor {
         }
         let picking = self.pick.is_some() && self.fullscreen.is_none();
         let dusting = self.dust.cleanup && self.tab == 1 && self.fullscreen.is_none();
+        let canvas_tool =
+            picking || dusting || self.auto_crop_edit.is_some() && self.fullscreen.is_none();
         let (zoom, translation, touch, pointer, space) = ui.input(|input| {
             (
                 input.zoom_delta(),
@@ -55,8 +57,7 @@ impl Editor {
         }
         let panning = response.dragged_by(egui::PointerButton::Middle)
             || response.dragged_by(egui::PointerButton::Primary)
-                && (space
-                    || !picking && !dusting && self.viewport.zoom.is_some() && can_pan(geometry));
+                && (space || !canvas_tool && self.viewport.zoom.is_some() && can_pan(geometry));
         if panning && can_pan(geometry) {
             self.viewport
                 .pan(geometry, pixels_per_point, response.drag_delta());
@@ -66,8 +67,7 @@ impl Editor {
                 pixels_per_point,
             );
         }
-        if !picking
-            && !dusting
+        if !canvas_tool
             && !space
             && response.clicked_by(egui::PointerButton::Primary)
             && let Some(point) = response
@@ -98,21 +98,36 @@ impl Editor {
                 } else {
                     egui::CursorIcon::Crosshair
                 }
-            } else if space || !picking && self.viewport.zoom.is_some() && can_pan(geometry) {
+            } else if space || !canvas_tool && self.viewport.zoom.is_some() && can_pan(geometry) {
                 egui::CursorIcon::Grab
             } else if picking && !self.busy {
                 pointer
                     .map(|point| {
+                        let region = if self.analysis_review.is_some()
+                            && !response.dragged_by(egui::PointerButton::Primary)
+                        {
+                            self.review_area_at(geometry, point).and_then(|picture| {
+                                let areas = self.review_areas(self.current_source?)?;
+                                crate::scan_regions::Areas::coverage(if picture {
+                                    areas.picture?
+                                } else {
+                                    areas.opening?
+                                })
+                                .ok()
+                            })
+                        } else {
+                            self.region
+                        };
                         picker_cursor(
                             geometry,
                             point,
-                            self.region,
+                            region,
                             self.pick_drag,
                             response.dragged_by(egui::PointerButton::Primary),
                         )
                     })
                     .unwrap_or(egui::CursorIcon::Crosshair)
-            } else if pointer.is_some_and(|point| geometry.image.contains(point)) && !picking {
+            } else if pointer.is_some_and(|point| geometry.image.contains(point)) && !canvas_tool {
                 if self.viewport.zoom.is_none() {
                     egui::CursorIcon::ZoomIn
                 } else {

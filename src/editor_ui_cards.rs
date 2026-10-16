@@ -135,15 +135,36 @@ impl ContactSheetCard {
             } else {
                 "Camera preview"
             },
-            false,
         );
     }
 
-    pub fn area_review_badge(&self, ui: &Ui, missing: bool) {
-        self.badge(ui, if missing { "Need area" } else { "Inspect" }, true);
+    pub fn warning(&self, ui: &Ui, reason: &str) -> Response {
+        let side = 20_f32
+            .min(self.image_rect.width())
+            .min(self.image_rect.height());
+        let rect = Rect::from_min_size(
+            self.image_rect.right_top() - egui::vec2(side, 0.),
+            Vec2::splat(side),
+        );
+        ui.painter()
+            .rect_filled(rect, 2., Color32::from_black_alpha(210));
+        let response = ui.interact(
+            rect.shrink(2.),
+            self.response.id.with("warning"),
+            egui::Sense::hover(),
+        );
+        let response = super::feedback::warning_icon(ui, response, "Photo warning", reason);
+        ui.ctx().accesskit_node_builder(self.response.id, |node| {
+            node.set_description(if self.active {
+                format!("Active photo. {reason}")
+            } else {
+                reason.to_owned()
+            })
+        });
+        response
     }
 
-    fn badge(&self, ui: &Ui, text: &str, top: bool) {
+    fn badge(&self, ui: &Ui, text: &str) {
         let image_rect = self.image_rect;
         let painter = ui
             .painter()
@@ -151,14 +172,7 @@ impl ContactSheetCard {
         let font = egui::FontId::proportional(((image_rect.height() - 2.) / 1.2).min(10.));
         let galley = painter.layout_no_wrap(text.into(), font, Color32::WHITE);
         let size = (galley.size() + egui::vec2(4., 2.)).min(image_rect.size());
-        let label = Rect::from_min_size(
-            if top {
-                image_rect.left_top()
-            } else {
-                image_rect.left_bottom() - egui::vec2(0., size.y)
-            },
-            size,
-        );
+        let label = Rect::from_min_size(image_rect.left_bottom() - egui::vec2(0., size.y), size);
         painter.rect_filled(label, 2., Color32::from_black_alpha(190));
         painter.galley(label.center() - galley.size() * 0.5, galley, Color32::WHITE);
     }

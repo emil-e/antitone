@@ -272,7 +272,11 @@ impl Editor {
             ready.area,
             self.roll_orientation,
             self.photo_orientation,
-            self.crop,
+            if self.auto_crop_context() {
+                None
+            } else {
+                self.crop
+            },
         )
         .map_err(|_| "Composition unavailable")?;
         self.last_layout.ok_or("Waiting for view")?;

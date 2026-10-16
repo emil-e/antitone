@@ -835,11 +835,13 @@ impl Editor {
                             } else {
                                 source.orientation
                             };
-                            let crop = if self.current_source == Some(source.id) {
-                                self.crop
-                            } else {
-                                source.crop
-                            };
+                            let crop = self.auto_crop_preview(source.id).unwrap_or_else(|| {
+                                if self.current_source == Some(source.id) {
+                                    self.crop
+                                } else {
+                                    source.crop
+                                }
+                            });
                             let composition = if self.analysis_review.is_some() {
                                 Composition::new(
                                     source.development.active_area.into(),
@@ -971,11 +973,11 @@ impl Editor {
                     if error.is_some() {
                         card.error(ui);
                     }
-                    if let Some(a) = self.review_areas(id).filter(|a| a.needs_inspection()) {
-                        card.area_review_badge(ui, !a.ready());
-                    }
                     let name = path.file_name().unwrap_or_default().to_string_lossy();
                     card.caption(ui, &name);
+                    if let Some(reason) = self.source_tool_warning(id) {
+                        card.warning(ui, reason);
+                    }
                     if card.response.clicked() && selection_enabled {
                         select = Some((index, ui.input(|input| input.modifiers)));
                     }
@@ -999,7 +1001,19 @@ impl Editor {
                     card.response.context_menu(|ui| {
                         if ui
                             .add_enabled(
-                                self.roll_edit_available() && selected,
+                                self.auto_crop_entry_available() && selected,
+                                egui::Button::new("Auto-crop selected photos"),
+                            )
+                            .clicked()
+                        {
+                            self.auto_crop_requested = Some(auto_crop::Target::Selected);
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(
+                                self.roll_edit_available()
+                                    && self.auto_crop_edit.is_none()
+                                    && selected,
                                 egui::Button::new("Remove selected photos…"),
                             )
                             .clicked()

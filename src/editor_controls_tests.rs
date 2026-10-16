@@ -53,6 +53,59 @@ fn pointer(position: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
     ]
 }
 #[test]
+fn inward_margin_uses_shared_precision_keyboard_steps_and_actual_default() {
+    for width in [230., 315.] {
+        let context = egui::Context::default();
+        let mut value = 1.23456789;
+        let (slider, numeric, reset) = frame(
+            &context,
+            &mut value,
+            Parameter::CropMargin,
+            width,
+            true,
+            vec![],
+            egui::Modifiers::NONE,
+        );
+        assert_eq!(value, 1.23456789);
+        assert!(numeric.rect.right() < reset.rect.left());
+        assert!((slider.rect.width() - (width - 16.)).abs() < 1.);
+        for pressed in [true, false] {
+            frame(
+                &context,
+                &mut value,
+                Parameter::CropMargin,
+                width,
+                true,
+                pointer(reset.rect.center(), pressed),
+                egui::Modifiers::NONE,
+            );
+        }
+        assert_eq!(value, crate::auto_crop::DEFAULT_MARGIN_PERCENT);
+        context.memory_mut(|m| m.request_focus(slider.id));
+        frame(
+            &context,
+            &mut value,
+            Parameter::CropMargin,
+            width,
+            true,
+            vec![key(egui::Key::ArrowRight, egui::Modifiers::NONE)],
+            egui::Modifiers::NONE,
+        );
+        assert!((value - crate::auto_crop::DEFAULT_MARGIN_PERCENT - 0.01).abs() < 1e-12);
+        frame(
+            &context,
+            &mut value,
+            Parameter::CropMargin,
+            width,
+            true,
+            vec![key(egui::Key::ArrowRight, egui::Modifiers::SHIFT)],
+            egui::Modifiers::SHIFT,
+        );
+        assert!((value - crate::auto_crop::DEFAULT_MARGIN_PERCENT - 0.011).abs() < 1e-12);
+    }
+}
+
+#[test]
 fn drawing_preserves_manual_precision_and_exposure_outside_normal_slider_range() {
     for width in [230., 315.] {
         for initial in [-16., -7.123456789, 0.123456789, 16.] {
@@ -186,10 +239,16 @@ fn numeric_entry_commits_full_range_and_escape_cancels_without_hidden_rounding()
         Parameter::Exposure,
         315.,
         true,
-        vec![
-            egui::Event::Text("-8".into()),
-            key(egui::Key::Escape, egui::Modifiers::NONE),
-        ],
+        vec![egui::Event::Text("-8".into())],
+        egui::Modifiers::NONE,
+    );
+    frame(
+        &context,
+        &mut value,
+        Parameter::Exposure,
+        315.,
+        true,
+        vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
         egui::Modifiers::NONE,
     );
     frame(

@@ -194,6 +194,7 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
     record.path = "light.ARW".into();
     record.reference_only = true;
     let reference = Ready {
+        file: thumbnails::FileKey::new(&record.path),
         thumbnail: None,
         path: record.path.clone(),
         area,

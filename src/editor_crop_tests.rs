@@ -505,6 +505,7 @@ impl Harness {
             drag: None,
             layout: None,
             guides: true,
+            auto_problem: None,
             reveal_controls: false,
         });
         Self {

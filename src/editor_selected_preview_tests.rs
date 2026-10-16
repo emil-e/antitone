@@ -385,6 +385,7 @@ fn authoritative_ready_replaces_pending_and_active_proxy_survives_optional_press
         editor.validate_pending_preview();
         assert!(editor.pending_preview.is_some());
         let ready = Ready {
+            file: thumbnails::FileKey::new(&path),
             thumbnail: None,
             path,
             area: editor.pending_preview.as_ref().unwrap().area(),

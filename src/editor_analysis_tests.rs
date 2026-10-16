@@ -778,7 +778,7 @@ fn click_label(editor: &mut Editor, ctx: &egui::Context, label: &str) {
 
 fn click_analyze(editor: &mut Editor) {
     let ctx = egui::Context::default();
-    click_label(editor, &ctx, "Analyze roll");
+    click_label(editor, &ctx, "Analyze");
     wait_with_limit(editor, Duration::from_secs(60));
     assert!(editor.analysis_review.is_some(), "{}", editor.status);
     click_label(editor, &ctx, "Analyze roll");
@@ -849,7 +849,7 @@ fn photo_numeric_focus_commit_precedes_analysis_area_preparation_snapshot() {
         "tab={} status={}",
         editor.tab, editor.status
     );
-    click_label(&mut editor, &ctx, "Analyze roll");
+    click_label(&mut editor, &ctx, "Analyze");
     let snapshot = &editor.analysis_preparing.as_ref().unwrap().request.document;
     assert_eq!(
         snapshot

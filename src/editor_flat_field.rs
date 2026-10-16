@@ -95,7 +95,10 @@ impl Editor {
                     );
                 }
                 ui.add_enabled_ui(
-                    !self.busy && self.pick.is_none() && self.crop_edit.is_none(),
+                    !self.busy
+                        && self.pick.is_none()
+                        && self.crop_edit.is_none()
+                        && self.auto_crop_edit.is_none(),
                     |ui| {
                         if presentation::TextAction::new("Choose reference RAW…")
                             .show(ui)
@@ -160,7 +163,11 @@ impl Editor {
         );
     }
     pub(super) fn begin_flat_edit(&mut self, path: PathBuf, region: Option<Rect>) {
-        if self.busy || self.pick.is_some() || self.crop_edit.is_some() {
+        if self.busy
+            || self.pick.is_some()
+            || self.crop_edit.is_some()
+            || self.auto_crop_edit.is_some()
+        {
             return;
         }
         self.sync_document();

@@ -1,3 +1,5 @@
+#[cfg(feature = "project")]
+pub mod auto_crop;
 pub mod color;
 pub mod coverage;
 pub mod crop;

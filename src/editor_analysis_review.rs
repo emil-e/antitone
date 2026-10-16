@@ -18,7 +18,21 @@ pub(super) struct Review {
     pub loaded: u64,
     pub return_tab: usize,
     pub return_scopes_visible: bool,
-    pub reveal: bool,
+}
+
+fn review_label(canvas: egui::Rect, q: [egui::Pos2; 4], picture: bool) -> egui::Rect {
+    let p = q[0] + egui::vec2(5., 4.);
+    let p = egui::pos2(
+        p.x.clamp(
+            canvas.left() + 4.,
+            (canvas.right() - 54.).max(canvas.left() + 4.),
+        ),
+        p.y.clamp(
+            canvas.top() + 4.,
+            (canvas.bottom() - 32.).max(canvas.top() + 4.),
+        ) + if picture { 16. } else { 0. },
+    );
+    egui::Rect::from_min_size(p, egui::vec2(50., 14.))
 }
 
 fn verify_file(request: &analysis::Request, approved: &Approved) -> Result<(), Error> {
@@ -320,7 +334,6 @@ impl Editor {
                     loaded: self.id,
                     return_tab: self.tab,
                     return_scopes_visible: self.scopes.visible,
-                    reveal: true,
                 });
                 self.tab = 0;
                 // Positive-only scopes have no data in the source sampling tool.
@@ -328,7 +341,7 @@ impl Editor {
                 self.begin_pick(Pick::Analysis);
                 self.refresh_review_region();
                 self.viewport.fit();
-                self.status="Review the suggested opening across the roll, then Analyze roll. Areas are statistics, not crops.".into();
+                self.status = "Review sampling areas".into();
             }
             Ok(None) => self.status = "Analysis-area preparation cancelled; grade unchanged".into(),
             Err(error) => {
@@ -456,6 +469,90 @@ impl Editor {
         }
         self.start_analysis(request);
     }
+    pub(super) fn review_area_at(
+        &self,
+        geometry: crate::viewport::CanvasLayout,
+        point: egui::Pos2,
+    ) -> Option<bool> {
+        let review = self.analysis_review.as_ref()?;
+        let areas = self.review_areas(self.current_source?)?;
+        for (picture, quad) in [(false, areas.opening), (true, areas.picture)] {
+            if let Some(quad) = quad
+                && let Ok(coverage) = Areas::coverage(quad)
+            {
+                let q = coverage
+                    .corners()
+                    .map(|p| geometry.screen_frame_point(geometry.composition.source_to_frame(p)));
+                if review_label(geometry.canvas, q, picture).contains(point) {
+                    return Some(picture);
+                }
+            }
+        }
+        if areas.opening.is_none() {
+            return Some(false);
+        }
+        if areas.picture.is_none() {
+            return Some(true);
+        }
+        let mut nearest = None;
+        for (picture, quad) in [(false, areas.opening), (true, areas.picture)] {
+            let coverage = Areas::coverage(quad?).ok()?;
+            let q = coverage
+                .corners()
+                .map(|p| geometry.screen_frame_point(geometry.composition.source_to_frame(p)));
+            let distance = (0..4)
+                .map(|i| {
+                    let a = q[i];
+                    let delta = q[(i + 1) % 4] - a;
+                    let t = ((point - a).dot(delta) / delta.length_sq()).clamp(0., 1.);
+                    point.distance(a + delta * t)
+                })
+                .min_by(f32::total_cmp)
+                .unwrap();
+            if distance <= 8.
+                && nearest.is_none_or(|(best, selected): (f32, bool)| {
+                    distance < best - 0.01
+                        || (distance - best).abs() <= 0.01
+                            && picture == review.picture
+                            && selected != review.picture
+                })
+            {
+                nearest = Some((distance, picture));
+            }
+        }
+        if let Some((_, picture)) = nearest {
+            return Some(picture);
+        }
+        for (picture, quad) in [(true, areas.picture), (false, areas.opening)] {
+            let q = Areas::coverage(quad?)
+                .ok()?
+                .corners()
+                .map(|p| geometry.screen_frame_point(geometry.composition.source_to_frame(p)));
+            let cross = (0..4)
+                .map(|i| (q[(i + 1) % 4] - q[i]).rot90().dot(point - q[i]))
+                .collect::<Vec<_>>();
+            if cross.iter().all(|v| *v >= 0.) || cross.iter().all(|v| *v <= 0.) {
+                return Some(picture);
+            }
+        }
+        Some(review.picture)
+    }
+    pub(super) fn select_review_area(
+        &mut self,
+        geometry: crate::viewport::CanvasLayout,
+        point: egui::Pos2,
+    ) {
+        self.stash_review_region();
+        if let Some(picture) = self.review_area_at(geometry, point)
+            && self
+                .analysis_review
+                .as_ref()
+                .is_some_and(|r| r.picture != picture)
+        {
+            self.analysis_review.as_mut().unwrap().picture = picture;
+            self.refresh_review_region();
+        }
+    }
     pub(super) fn paint_review_areas(
         &self,
         ui: &egui::Ui,
@@ -471,11 +568,10 @@ impl Editor {
             .and_then(|a| if review.picture { a.opening } else { a.picture })
             .and_then(|q| Areas::coverage(q).ok());
         let painter = ui.painter().with_clip_rect(canvas);
-        if review.picture
-            && let Some(material) = self
-                .current_source
-                .and_then(|id| self.review_areas(id))
-                .and_then(|a| a.material.as_ref())
+        if let Some(material) = self
+            .current_source
+            .and_then(|id| self.review_areas(id))
+            .and_then(|a| a.material.as_ref())
         {
             let area = geometry.composition.area();
             // Nearest-centre membership uses Voronoi bounds, not centre-to-centre cells.
@@ -528,126 +624,55 @@ impl Editor {
             let stroke = if active {
                 ui.visuals().selection.stroke
             } else {
-                egui::Stroke::new(1., ui.visuals().weak_text_color())
+                egui::Stroke::new(1., ui.visuals().text_color())
             };
+            painter.add(egui::Shape::closed_line(
+                points.to_vec(),
+                egui::Stroke::new(3., egui::Color32::from_black_alpha(180)),
+            ));
             painter.add(egui::Shape::closed_line(points.to_vec(), stroke));
-            if active {
-                for p in points {
-                    painter.rect_filled(
-                        egui::Rect::from_center_size(p, egui::vec2(6., 6.)),
-                        0.,
-                        stroke.color,
-                    );
-                }
+            for p in points {
+                painter.rect_filled(
+                    egui::Rect::from_center_size(p, egui::vec2(8., 8.)),
+                    0.,
+                    egui::Color32::from_black_alpha(180),
+                );
+                painter.rect_filled(
+                    egui::Rect::from_center_size(p, egui::vec2(6., 6.)),
+                    0.,
+                    stroke.color,
+                );
             }
+            let picture = if active {
+                review.picture
+            } else {
+                !review.picture
+            };
+            let label = if picture { "Picture" } else { "Opening" };
+            let point = review_label(canvas, points, picture).min;
+            painter.text(
+                point + egui::vec2(1., 1.),
+                egui::Align2::LEFT_TOP,
+                label,
+                egui::FontId::proportional(11.),
+                egui::Color32::BLACK,
+            );
+            painter.text(
+                point,
+                egui::Align2::LEFT_TOP,
+                label,
+                egui::FontId::proportional(11.),
+                stroke.color,
+            );
         }
     }
-    pub(super) fn review_controls(&mut self, ui: &mut egui::Ui) {
-        let Some(review) = &self.analysis_review else {
-            return;
-        };
-        let count = review.approved.entries.len();
-        let missing = review
-            .approved
-            .entries
-            .iter()
-            .filter(|e| !e.areas.ready())
-            .count();
-        let inspect = review
-            .approved
-            .entries
-            .iter()
-            .filter(|e| e.areas.needs_inspection())
-            .count();
-        let picture = review.picture;
-        let replaces = review.replaces_photos;
-        let detail = self
-            .current_source
-            .and_then(|id| self.review_areas(id))
-            .map(|a| {
-                let edited = if picture {
-                    a.picture_edited
-                } else {
-                    a.opening_edited
-                };
-                if edited {
-                    return if picture {
-                        "Authored picture statistics area"
-                    } else {
-                        "Authored opening exception"
-                    }
-                    .into();
-                }
-                if !picture && a.opening_shared {
-                    return if a.opening_exception {
-                        "Roll-pooled opening with a photo-specific departure."
-                    } else {
-                        "Roll-pooled conservative sampling interior."
-                    }
-                    .into();
-                }
-                let observed = if picture {
-                    a.picture_observed
-                } else {
-                    a.opening_observed
-                }
-                .iter()
-                .filter(|&&v| v)
-                .count();
-                let weak = if picture {
-                    a.picture_weak.iter().filter(|&&v| v).count()
-                } else {
-                    0
-                };
-                format!(
-                    "{observed} fitted sides, {weak} weak transitions, {} coverage bounds.",
-                    4 - observed - weak
-                )
-            });
-        let mut next_picture = picture;
-        ui.label(format!(
-            "{} / {count} · {}",
-            self.selected + 1,
-            if picture {
-                "Picture statistics"
-            } else {
-                "Holder opening"
-            }
-        ));
-        ui.add_enabled_ui(self.analysis_pending.is_none(), |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.selectable_value(&mut next_picture, false, "Opening");
-                ui.selectable_value(&mut next_picture, true, "Picture statistics");
-            });
-        });
-        ui.small("Browse the filmstrip and edit photo exceptions. One confirmation covers the roll, not a crop or pixel-validity guarantee.");
-        if replaces {
-            presentation::notice_heading(
-                ui,
-                presentation::Severity::Warning,
-                "Replace Photo adjustments",
-            );
-            ui.label("Analyze replaces Photo grading with estimated exposure and defaults for the other Photo controls.");
-        } else {
-            ui.label("Analyze initializes shared Roll settings and individual exposures.");
-        }
-        ui.small("Keeps gamma/curve, correction, crops and orientation. Cancel keeps accepted areas and grading.");
-        if let Some(detail) = &detail {
-            ui.small(detail);
-        }
-        if picture {
-            ui.small("Tint: automatic film exclusions. Editing opening replaces that mask. Numerical pixel checks still run during Analyze.");
-        }
-        ui.small(format!("{inspect} photos have coverage bounds, opening exceptions or missing areas. Unflagged suggestions can also be wrong."));
-        if missing > 0 {
-            ui.small(format!(
-                "{missing} photos need an opening/picture area before Analyze."
-            ));
-        }
-        if next_picture != picture {
-            self.stash_review_region();
-            self.analysis_review.as_mut().unwrap().picture = next_picture;
-            self.refresh_review_region();
+    pub(super) fn review_warning(&self, id: SourceId) -> Option<&'static str> {
+        let areas = self.review_areas(id)?;
+        match (areas.opening.is_some(), areas.picture.is_some()) {
+            (false, false) => Some("Opening and picture sampling areas are missing"),
+            (false, true) => Some("Opening sampling area is missing"),
+            (true, false) => Some("Picture sampling area is missing"),
+            _ => None,
         }
     }
 }

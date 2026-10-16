@@ -54,6 +54,7 @@ pub enum Parameter {
     ColourMix,
     Saturation,
     Density,
+    CropMargin,
 }
 impl Parameter {
     fn label(self) -> &'static str {
@@ -69,6 +70,7 @@ impl Parameter {
             Self::ColourMix => "Colour preservation",
             Self::Saturation => "Saturation",
             Self::Density => "Density",
+            Self::CropMargin => "Inward margin",
         }
     }
     fn range(self) -> RangeInclusive<f64> {
@@ -81,6 +83,7 @@ impl Parameter {
             Self::Pivot => 0.01..=1.,
             Self::Saturation => 0.0..=2.,
             Self::ColourMix | Self::Density => 0.0..=1.,
+            Self::CropMargin => 0.0..=crate::auto_crop::MAX_MARGIN_PERCENT,
             _ => -1.0..=1.0,
         }
     }
@@ -98,6 +101,7 @@ impl Parameter {
             Self::Contrast | Self::Saturation => 1.,
             Self::Pivot => DEFAULT_PIVOT,
             Self::ColourMix | Self::Density => DEFAULT_COLOUR_MIX,
+            Self::CropMargin => crate::auto_crop::DEFAULT_MARGIN_PERCENT,
             _ => 0.,
         }
     }
@@ -109,6 +113,21 @@ impl Parameter {
             _ => 0.01,
         }
     }
+}
+
+/// egui 0.36 retains cancelled text for a second lost-focus pass; reject both writes.
+pub(super) fn numeric_cancelled(ui: &Ui, response: &Response) -> bool {
+    let id = response.id.with("cancelled-numeric-edit");
+    let cancelled = ui
+        .ctx()
+        .data_mut(|data| data.remove_temp::<bool>(id))
+        .unwrap_or(false);
+    let cancelling =
+        response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Escape));
+    if cancelling {
+        ui.ctx().data_mut(|data| data.insert_temp(id, true));
+    }
+    cancelled || cancelling
 }
 
 pub fn parameter(ui: &mut Ui, kind: Parameter, value: &mut f64) -> (Response, Response, Response) {
@@ -126,6 +145,9 @@ pub fn parameter(ui: &mut Ui, kind: Parameter, value: &mut f64) -> (Response, Re
             Parameter::ColourMix => "Reduce colour shifts caused by contrast.",
             Parameter::Saturation => "0 makes the image grey; 1 leaves saturation unchanged.",
             Parameter::Density => "Higher values darken colours more as saturation increases.",
+            Parameter::CropMargin => {
+                "Trim each edge by a percentage of the detected frame's shorter side."
+            }
             _ => "",
         };
         let (numeric, reset, label) = labelled_row(
@@ -137,9 +159,16 @@ pub fn parameter(ui: &mut Ui, kind: Parameter, value: &mut f64) -> (Response, Re
                 if reset.clicked() {
                     *value = kind.default();
                 }
-                if matches!(kind, Parameter::Exposure) {
-                    ui.label("EV");
+                match kind {
+                    Parameter::Exposure => {
+                        ui.label("EV");
+                    }
+                    Parameter::CropMargin => {
+                        ui.label("%");
+                    }
+                    _ => {}
                 }
+                let previous = *value;
                 let numeric = ui
                     .push_id("numeric", |ui| {
                         ui.add_sized(
@@ -158,6 +187,9 @@ pub fn parameter(ui: &mut Ui, kind: Parameter, value: &mut f64) -> (Response, Re
                         )
                     })
                     .inner;
+                if numeric_cancelled(ui, &numeric) {
+                    *value = previous;
+                }
                 (numeric.labelled_by(label), reset, label)
             },
         )

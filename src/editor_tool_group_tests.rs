@@ -24,6 +24,43 @@ fn group(title: &str, busy: bool, apply_enabled: bool) -> ToolGroup<'_> {
     }
 }
 
+#[test]
+fn tool_warning_has_reserved_space_reason_semantics_and_unchanged_actions() {
+    let reason = "No crop proposal: retained frame measurements are missing";
+    for width in [270., 315.] {
+        let context = Context::default();
+        let ((reserved, rect, cancel, apply), output) =
+            frame(&context, width, true, vec![], |ui| {
+                let group = group("Auto-crop", false, false);
+                let reserved = group.width_named(ui, "Apply");
+                let response = group.show_warned(ui, "Apply", Some(reason));
+                (
+                    reserved,
+                    response.response.rect,
+                    response.inner.cancel,
+                    response.inner.apply,
+                )
+            });
+        assert!(rect.width() <= reserved + 1. && rect.right() <= width);
+        assert!(cancel.enabled() && !apply.enabled());
+        assert_eq!(node(&output, "Tool warning").description(), Some(reason));
+        assert_eq!(
+            node(&output, "Tool warning").role(),
+            egui::accesskit::Role::Image
+        );
+        assert!(!cancel.rect.intersects(apply.rect));
+        let ((plain_cancel, plain_apply), _) = frame(&context, width, true, vec![], |ui| {
+            let actions = group("Auto-crop", false, false).show(ui).inner;
+            (actions.cancel, actions.apply)
+        });
+        assert_eq!(
+            cancel.id, plain_cancel.id,
+            "cue changes must not move action focus to another widget"
+        );
+        assert_eq!(apply.id, plain_apply.id);
+    }
+}
+
 fn direct_viewer(ui: &mut Ui, group: ToolGroup<'_>) -> egui::InnerResponse<ToolActions> {
     let title = crate::editor::presentation::instrument_label(group.identity.title, 12.).strong();
     let cancel = TextAction::new("Cancel")

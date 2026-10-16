@@ -78,6 +78,8 @@ mod dust;
 #[path = "editor_flat_field.rs"]
 mod flat;
 use flat::{Correction, FlatEdit, FlatPreview};
+#[path = "editor_auto_crop.rs"]
+mod auto_crop;
 #[path = "editor_crop.rs"]
 mod crop_editor;
 use crop_editor::CropEdit;
@@ -124,6 +126,7 @@ struct PickView {
     anchored: Viewport,
 }
 struct Ready {
+    file: thumbnails::FileKey,
     thumbnail: Option<(thumbnails::FileKey, Arc<thumbnails::Proxy>)>,
     path: PathBuf,
     area: Rect,
@@ -405,7 +408,7 @@ fn prepare_source_scheduled(
     {
         cache.store.publish_proxy(key.clone(), proxy.clone())?;
     }
-    let thumbnail = Some((thumbnail_file, proxy));
+    let thumbnail = Some((thumbnail_file.clone(), proxy));
     let proxy_seconds = tick.elapsed().as_secs_f64();
     let tick = std::time::Instant::now();
     let renderer = renderers.get(device, queue)?;
@@ -427,6 +430,7 @@ fn prepare_source_scheduled(
         started.elapsed().as_secs_f64()
     );
     let ready = Ready {
+        file: thumbnail_file,
         thumbnail,
         path,
         area: scan.area,
@@ -980,6 +984,9 @@ pub struct Editor {
     photo_orientation: PhotoOrientation,
     crop: Option<Crop>,
     crop_edit: Option<CropEdit>,
+    auto_crop_edit: Option<auto_crop::Draft>,
+    auto_crop_requested: Option<auto_crop::Target>,
+    auto_crop_margin: f64,
     last_layout: Option<(crate::viewport::CanvasLayout, f32)>,
     target: OutputTarget,
     source: bool,
@@ -1124,6 +1131,9 @@ impl Editor {
             photo_orientation: PhotoOrientation::default(),
             crop: None,
             crop_edit: None,
+            auto_crop_edit: None,
+            auto_crop_requested: None,
+            auto_crop_margin: crate::auto_crop::DEFAULT_MARGIN_PERCENT,
             last_layout: None,
             target: OutputTarget::DisplayP3,
             source: true,
@@ -1300,6 +1310,7 @@ impl Editor {
         self.next_request
     }
     fn start_document(&mut self, work: DocumentWork) {
+        self.finish_auto_crop(false);
         self.finish_dust_cleanup();
         self.reset_repairs_pending = matches!(&work, DocumentWork::New | DocumentWork::Open(_));
         if self.analysis_preparing.take().is_some() {
@@ -1431,7 +1442,10 @@ impl Editor {
             selecting_photo.then(|| Arc::new(SelectionTiming::new(self.id, started)));
         self.region = None;
         self.pick = None;
-        self.source = self.calibration().is_none();
+        self.source = self
+            .auto_crop_edit
+            .as_ref()
+            .map_or(self.calibration().is_none(), |d| d.source_view);
         self.busy = true;
         self.status = "Developing full-resolution RAW…".into();
         self.tasks.begin(Task::Photo(self.id));
@@ -1871,7 +1885,7 @@ impl Editor {
         if self.pick.is_some() {
             self.finish_pick();
         }
-        if self.busy || self.crop_edit.is_some() {
+        if self.busy || self.crop_edit.is_some() || self.auto_crop_edit.is_some() {
             return;
         }
         self.thumbnails.cancel();
@@ -1985,6 +1999,10 @@ impl Editor {
         }
     }
     fn export(&mut self, path: PathBuf, format: OutputFormat, overwrite: Overwrite) {
+        if self.auto_crop_edit.is_some() {
+            self.status = "Apply or cancel auto-crop before exporting".into();
+            return;
+        }
         if self
             .document
             .path
@@ -2053,7 +2071,6 @@ impl Editor {
     fn controls(&mut self, ui: &mut egui::Ui) -> (Option<ScopeSlot>, bool) {
         let reviewing = self.analysis_review.is_some();
         use controls::{ColorControl, Parameter};
-        use icons::Icon;
         use presentation::SectionHeader;
         let previous_orientation = (self.roll_orientation, self.photo_orientation);
         presentation::restore_expansion(ui.ctx(), self.preferences.sections.clone());
@@ -2070,41 +2087,30 @@ impl Editor {
             });
             ui.ctx().request_repaint();
         }
-        if self.tab == 1 {
+        if self.tab == 0 {
+            analyze = self.roll_tool_shelf(ui);
+        } else if self.tab == 1 {
             ui.add_enabled_ui(!reviewing, |ui| self.photo_tool_shelf(ui));
         }
         let editable = !self.busy
             && !reviewing
+            && self.auto_crop_edit.is_none()
             && self.crop_edit.is_none()
             && self.flat_edit.is_none()
             && self.calibration().is_some();
         let can_pick = !self.busy
             && !reviewing
+            && self.auto_crop_edit.is_none()
             && self.crop_edit.is_none()
             && self.flat_edit.is_none()
             && self.ready.is_some();
         let mut start_pick = None;
         egui::ScrollArea::vertical().id_salt(("inspector", self.tab)).show(ui, |ui| {
+            self.auto_crop_controls(ui);
             if self.tab == 0 {
-                let geometry_editable = !self.busy
-                    && self.crop_edit.is_none()
-                    && self.ready.is_some()
-                    && self.pick.is_none();
                 ui.push_id("roll", |ui| {
-                    ui.add_enabled_ui(geometry_editable, |ui| {
-                        let changed = !self.roll_orientation.is_identity();
-                        let (_, reset) = presentation::section(ui, "roll-orientation", "Scan orientation", SectionHeader { summary: "Shared scanning baseline", changed, reset: Some(changed), default_open: Some(false) }, |ui| {
-                            ui.horizontal(|ui| {
-                                if icons::button(ui, Icon::TurnLeft, true, "Turn left", "Turn the shared scan baseline 90° left.").clicked() { self.roll_orientation.turn_counterclockwise(); }
-                                if icons::button(ui, Icon::TurnRight, true, "Turn right", "Turn the shared scan baseline 90° right.").clicked() { self.roll_orientation.turn_clockwise(); }
-                                if icons::button(ui, Icon::FlipHorizontal, true, "Flip horizontal", "Flip all scans left/right.").clicked() { self.roll_orientation.horizontal ^= true; }
-                                if icons::button(ui, Icon::FlipVertical, true, "Flip vertical", "Flip all scans top/bottom.").clicked() { self.roll_orientation.vertical ^= true; }
-                            });
-                        });
-                        if reset { self.roll_orientation = RollOrientation::default(); }
-                    });
                     ui.add_enabled_ui(!reviewing, |ui| self.flat_controls(ui));
-                    analyze = self.analysis_controls(ui);
+                    self.analysis_controls(ui);
                     let calibration_summary = match (self.dmin.is_some(), self.dmax.is_some()) {
                         (true, true) => "Dmin + Dmax measured",
                         (false, false) => "Dmin + Dmax not measured",
@@ -2247,7 +2253,7 @@ impl Editor {
                     });
                 });
             } else {
-                ui.add_enabled_ui(!reviewing && self.crop_edit.is_none() && self.flat_edit.is_none(), |ui| {
+                ui.add_enabled_ui(!reviewing && self.crop_edit.is_none() && self.auto_crop_edit.is_none() && self.flat_edit.is_none(), |ui| {
                     let changed = self.target != OutputTarget::DisplayP3;
                     let (_, reset) = presentation::section(ui, "rendering-target", "Target", SectionHeader {
                         summary: if self.target == OutputTarget::DisplayP3 { "Display P3 · 100 nit" } else { "sRGB · 100 nit" },
@@ -2373,6 +2379,7 @@ impl host::App for Editor {
         let available = !self.busy
             && self.failure.is_none()
             && self.pick.is_none()
+            && self.auto_crop_edit.is_none()
             && self.crop_edit.is_none()
             && self.overwrite.is_none()
             && self.transition.is_none()
@@ -2498,6 +2505,16 @@ impl host::App for Editor {
                     self.finish_crop(true);
                 }
             }
+            if self.auto_crop_edit.is_some() {
+                if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+                {
+                    self.finish_auto_crop(false);
+                } else if ui
+                    .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+                {
+                    self.finish_auto_crop(true);
+                }
+            }
             if self.dust.cleanup
                 && ui.input_mut(|input| {
                     input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
@@ -2512,6 +2529,7 @@ impl host::App for Editor {
                 self.finish_dust_cleanup();
             }
             if !self.dust.cleanup
+                && self.auto_crop_edit.is_none()
                 && self.roll_edit_available()
                 && ui.input_mut(|input| {
                     input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
@@ -2704,10 +2722,11 @@ impl host::App for Editor {
             let pixels_per_point = ui.ctx().pixels_per_point();
             let canvas_input = self.canvas_input_allowed(ui, canvas);
             let active_pick = self.pick;
-            let crop = if matches!(
-                active_pick,
-                Some(Pick::Dmin | Pick::Dmax | Pick::Flat | Pick::Analysis)
-            ) {
+            let crop = if self.auto_crop_context()
+                || matches!(
+                    active_pick,
+                    Some(Pick::Dmin | Pick::Dmax | Pick::Flat | Pick::Analysis)
+                ) {
                 None
             } else {
                 self.crop_edit.as_ref().map(|edit| edit.draft).or(self.crop)
@@ -2767,7 +2786,16 @@ impl host::App for Editor {
             } else if cropping {
                 (self.crop_interaction(ui, &response, geometry), false)
             } else {
-                self.navigate(ui, &response, geometry, pixels_per_point)
+                let (claimed, cursor) = self.auto_crop_margin_interaction(ui, &response, geometry);
+                let result = if claimed {
+                    (geometry, false)
+                } else {
+                    self.navigate(ui, &response, geometry, pixels_per_point)
+                };
+                if let Some(cursor) = cursor {
+                    ui.ctx().set_cursor_icon(cursor);
+                }
+                result
             };
             self.dust_interaction(ui, &response, geometry, canvas_input, panning);
             if cropping && canvas_input {
@@ -2954,6 +2982,11 @@ impl host::App for Editor {
             if cropping {
                 self.paint_crop(ui, geometry);
             } else {
+                if self.auto_crop_artwork_visible(ui)
+                    && let Some(q) = self.auto_crop_outline(geometry)
+                {
+                    crop_editor::paint_outline(ui, canvas, q, false, 64);
+                }
                 self.paint_dust(ui, geometry);
             }
             if !fullscreen
@@ -2965,15 +2998,26 @@ impl host::App for Editor {
             {
                 if response.clicked_by(egui::PointerButton::Primary)
                     && let Some(point) = response.interact_pointer_pos()
-                    && geometry.image.contains(point)
+                    && (geometry.image.contains(point) || self.analysis_review.is_some())
                 {
-                    self.region = Some(geometry.pick_patch(point, 32));
+                    if self.analysis_review.is_some() {
+                        self.select_review_area(geometry, point);
+                    } else {
+                        self.region = Some(geometry.pick_patch(point, 32));
+                    }
                 }
                 if response.drag_started_by(egui::PointerButton::Primary) {
+                    if self.analysis_review.is_some()
+                        && let Some(point) = ui.input(|i| i.pointer.press_origin())
+                    {
+                        self.select_review_area(geometry, point);
+                    }
                     // Classify from the press, not the later point where egui recognizes the drag.
                     self.pick_drag = ui
                         .input(|input| input.pointer.press_origin())
-                        .filter(|point| geometry.image.contains(*point))
+                        .filter(|point| {
+                            geometry.image.contains(*point) || self.analysis_review.is_some()
+                        })
                         .map(|point| PickDrag::begin(geometry, point, self.region));
                 }
                 if response.dragged_by(egui::PointerButton::Primary)
@@ -3018,6 +3062,7 @@ impl host::App for Editor {
         if self.document.dirty() != was_dirty {
             ui.ctx().request_repaint();
         }
+        let auto_crop = self.auto_crop_requested.take();
         if let Some(transition) = self.resume_transition.take() {
             self.perform_transition(transition, ui.ctx());
         } else if let Some(action) = file_action {
@@ -3027,6 +3072,9 @@ impl host::App for Editor {
         } else if analyze {
             // Inspect the validated, focus-committed Photo state before confirming a reset.
             self.request_analysis();
+        } else if let Some(target) = auto_crop {
+            self.auto_crop(target);
+            ui.ctx().request_repaint();
         }
         if self.failure.is_some() {
             self.feedback_dialog(ui.ctx(), dialog_escape_available);

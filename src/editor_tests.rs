@@ -130,6 +130,7 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                     "a-long-scanning-session-directory/".repeat(12)
                 ));
                 editor.ready = Some(Ready {
+                    file: thumbnails::FileKey::new(&path),
                     thumbnail: None,
                     path: path.clone(),
                     area,
@@ -620,6 +621,7 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
             .unwrap(),
     );
     editor.ready = Some(Ready {
+        file: thumbnails::FileKey::new(&record.path),
         thumbnail: None,
         path: record.path.clone(),
         area: record.development.active_area.into(),
@@ -710,14 +712,14 @@ fn crop_inspector_settings_remain_photo_only_without_transaction_buttons() {
             }
             let text = controls_frame_sized(&mut editor, &context, width, 600., vec![]);
             let heading = if tab == 0 {
-                "Scan orientation"
+                "Reset scan orientation"
             } else {
                 "Crop & straighten"
             };
             let hidden = if tab == 0 {
                 "Crop & straighten"
             } else {
-                "Scan orientation"
+                "Reset scan orientation"
             };
             let title = text.iter().find(|(s, _)| s == heading).unwrap().1;
             let tabs = text.iter().find(|(s, _)| s == "Roll").unwrap().1;
@@ -814,8 +816,8 @@ fn tab_clicks_show_only_the_selected_scope_without_changing_view_or_crop_draft()
             editor.last_layout.unwrap().0.image
         };
         for (tab, label, heading, hidden) in [
-            (0, "Roll", "Scan orientation", "Crop & straighten"),
-            (1, "Photo", "Crop & straighten", "Scan orientation"),
+            (0, "Roll", "Reset scan orientation", "Crop & straighten"),
+            (1, "Photo", "Crop & straighten", "Reset scan orientation"),
             (2, "Rendering", "Target", "Crop & straighten"),
         ] {
             let labels = app_frame(&mut editor, &context, vec![]);
@@ -1605,11 +1607,6 @@ fn flip_buttons_are_repeatable_scoped_actions_and_disabled_when_busy_or_picking(
             click_section_button(&mut editor, &context, section, label);
             assert_eq!((editor.roll_orientation, editor.photo_orientation), before);
         }
-        if section == "Composition" {
-            editor.tab = 0;
-            click_section_header(&mut editor, &context, "Scan orientation");
-            editor.tab = 1;
-        }
         editor.begin_crop();
         let text = controls_frame(&mut editor, &context, 315., vec![]);
         let tabs = text.iter().find(|(label, _)| label == "Roll").unwrap().1;
@@ -1662,36 +1659,9 @@ fn roll_turn_controls_preserve_photo_crop_and_grade_and_are_disabled_during_pick
         app_frame(&mut editor, &context, vec![]);
     }
     let labels = app_frame(&mut editor, &context, vec![]);
-    let header = labels
-        .iter()
-        .find(|(label, _)| label == "Scan orientation")
-        .unwrap()
-        .1
-        .center();
-    for pressed in [true, false] {
-        app_frame(
-            &mut editor,
-            &context,
-            vec![
-                egui::Event::PointerMoved(header),
-                egui::Event::PointerButton {
-                    pos: header,
-                    button: egui::PointerButton::Primary,
-                    pressed,
-                    modifiers: egui::Modifiers::NONE,
-                },
-            ],
-        );
-    }
-    let labels = app_frame(&mut editor, &context, vec![]);
-    let title = labels
-        .iter()
-        .find(|(label, _)| label == "Scan orientation")
-        .unwrap()
-        .1;
     let button = labels
         .iter()
-        .find(|(label, rect)| label == "Turn right" && rect.top() > title.bottom())
+        .find(|(label, _)| label == "Turn right")
         .unwrap()
         .1
         .center();
@@ -1747,18 +1717,9 @@ fn roll_turn_controls_preserve_photo_crop_and_grade_and_are_disabled_during_pick
     assert_eq!(editor.roll_orientation, turned);
     editor.finish_pick();
     let labels = app_frame(&mut editor, &context, vec![]);
-    let title = labels
-        .iter()
-        .find(|(label, _)| label == "Scan orientation")
-        .unwrap()
-        .1;
     let reset = labels
         .iter()
-        .find(|(label, rect)| {
-            label == "Reset Scan orientation"
-                && (rect.center().y - title.center().y).abs() < 3.
-                && rect.left() > title.right()
-        })
+        .find(|(label, _)| label == "Reset scan orientation")
         .unwrap()
         .1
         .center();
@@ -1804,6 +1765,7 @@ fn shared_roll_turns_apply_to_new_photos_and_export_snapshots() {
     send.send(Message::Ready(
         editor.id,
         Ok(Box::new(Ready {
+            file: thumbnails::FileKey::new(&record.path),
             thumbnail: None,
             path: record.path.clone(),
             area: ready.area,
@@ -2052,7 +2014,7 @@ fn click_control(editor: &mut Editor, context: &egui::Context, label: &str) {
 }
 
 fn click_section_button(editor: &mut Editor, context: &egui::Context, section: &str, label: &str) {
-    if section == "Composition" {
+    if section == "Composition" || section == "Scan orientation" {
         click_control(editor, context, label);
         return;
     }
@@ -2144,10 +2106,10 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
             let labels: Vec<_> = text.iter().map(|(label, _)| label.as_str()).collect();
             let required = if tab == 0 {
                 vec![
-                    "Scan orientation",
-                    "Roll analysis",
-                    "Analyze roll",
-                    "Edit shared picture area…",
+                    "Reset scan orientation",
+                    "Analyze",
+                    "Auto-crop roll",
+                    "Sampling areas",
                     "Calibration",
                     "Gamma & balance",
                     "Balance",
@@ -2174,10 +2136,10 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
             assert!(!labels.contains(&if tab == 0 {
                 "Crop & straighten"
             } else {
-                "Scan orientation"
+                "Reset scan orientation"
             }));
             let heading = match tab {
-                0 => "Scan orientation",
+                0 => "Reset scan orientation",
                 1 => "Crop & straighten",
                 _ => "Target",
             };
@@ -2192,8 +2154,7 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
             );
             let sections = if tab == 0 {
                 vec![
-                    "Scan orientation",
-                    "Roll analysis",
+                    "Sampling areas",
                     "Calibration",
                     "Gamma & balance",
                     "Toe & shoulder",

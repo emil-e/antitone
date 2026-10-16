@@ -11,7 +11,7 @@ pub(super) use dialogs::{DecisionDialog, DialogChoice};
 
 #[path = "editor_ui_feedback.rs"]
 mod feedback;
-pub(super) use feedback::{FeedbackDialog, Severity, notice_heading};
+pub(super) use feedback::{FeedbackDialog, Severity};
 
 #[path = "editor_ui_progress.rs"]
 mod progress;
@@ -410,9 +410,15 @@ pub(super) struct ToolIdentity<'a> {
 
 impl ToolIdentity<'_> {
     fn icon(self, ui: &mut Ui, busy: bool) {
-        let (rect, _) = ui.allocate_exact_size(Vec2::splat(TOOL_ICON_SIZE), egui::Sense::hover());
+        self.icon_warned(ui, busy, None);
+    }
+    fn icon_warned(self, ui: &mut Ui, busy: bool, warning: Option<&str>) {
+        let (rect, response) =
+            ui.allocate_exact_size(Vec2::splat(TOOL_ICON_SIZE), egui::Sense::hover());
         if busy {
             ui.put(rect, egui::Spinner::new().size(TOOL_ICON_SIZE));
+        } else if let Some(reason) = warning {
+            feedback::warning_icon(ui, response, "Tool warning", reason);
         } else {
             self.icon.paint(ui, rect, ui.visuals().selection.stroke);
         }
@@ -472,7 +478,15 @@ fn tool_identity_width(ui: &Ui, identity: ToolIdentity<'_>) -> f32 {
 }
 
 fn paint_tool_identity(ui: &mut Ui, identity: ToolIdentity<'_>, busy: bool) {
-    identity.icon(ui, busy);
+    paint_tool_identity_warned(ui, identity, busy, None);
+}
+fn paint_tool_identity_warned(
+    ui: &mut Ui,
+    identity: ToolIdentity<'_>,
+    busy: bool,
+    warning: Option<&str>,
+) {
+    identity.icon_warned(ui, busy, warning);
     let label = ui.add(egui::Label::new(identity.viewer_title()));
     label.widget_info(|| {
         egui::WidgetInfo::labeled(
@@ -547,9 +561,18 @@ impl ToolGroup<'_> {
         ui: &mut Ui,
         apply_label: &'static str,
     ) -> egui::InnerResponse<ToolActions> {
+        self.show_warned(ui, apply_label, None)
+    }
+
+    pub(super) fn show_warned(
+        self,
+        ui: &mut Ui,
+        apply_label: &'static str,
+        warning: Option<&str>,
+    ) -> egui::InnerResponse<ToolActions> {
         let width = self.content_width(ui, apply_label);
         tool_group_frame(ui, width, |ui| {
-            paint_tool_identity(ui, self.identity, self.busy);
+            paint_tool_identity_warned(ui, self.identity, self.busy, warning);
             ui.add_space(TOOL_ACTION_SPACE);
             ToolActions {
                 cancel: self.cancel().show(ui),

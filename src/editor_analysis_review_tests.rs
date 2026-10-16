@@ -60,6 +60,65 @@ fn prepared(editor: &mut Editor, receiver: &mpsc::Receiver<Command>) {
 }
 
 #[test]
+fn both_sampling_frames_select_directly_and_resize_without_changing_accepted_areas() {
+    let (mut editor, _send, receiver) = ready_state();
+    editor.request_analysis();
+    prepared(&mut editor, &receiver);
+    let active = editor.ready.as_ref().unwrap().area;
+    let opening = Coverage::rectangle(active);
+    let picture = Coverage::rectangle(Rect {
+        x: active.x + active.width / 4,
+        y: active.y + active.height / 4,
+        width: active.width / 2,
+        height: active.height / 2,
+    });
+    let areas = &mut editor.analysis_review.as_mut().unwrap().approved.entries[0].areas;
+    areas.opening = Some(opening.corners().map(|p| p.0));
+    areas.picture = Some(picture.corners().map(|p| p.0));
+    editor.refresh_review_region();
+    let before = editor.document.project.clone();
+    let mut viewport = Viewport::default();
+    viewport.zoom = Some(0.5);
+    let geometry = viewport.layout_composition(
+        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000., 700.)),
+        Composition::new(active, Default::default(), Default::default()).unwrap(),
+        1.,
+    );
+    let point = |c: Coverage, i: usize| {
+        geometry.screen_frame_point(geometry.composition.source_to_frame(c.corners()[i]))
+    };
+    assert_eq!(
+        editor.review_area_at(geometry, point(picture, 0)),
+        Some(true)
+    );
+    editor.select_review_area(geometry, point(picture, 0));
+    assert!(editor.analysis_review.as_ref().unwrap().picture);
+    let drag = PickDrag::begin(geometry, point(picture, 0), editor.region);
+    editor.region = Some(drag.update(geometry, point(picture, 0) + egui::vec2(5., 5.)));
+    editor.stash_review_region();
+    let edited = editor.review_areas(editor.current_source.unwrap()).unwrap();
+    assert!(edited.picture_edited);
+    assert_eq!(edited.opening, Some(opening.corners().map(|p| p.0)));
+    editor.select_review_area(geometry, point(opening, 0));
+    assert!(!editor.analysis_review.as_ref().unwrap().picture);
+    assert_eq!(editor.region, Some(opening));
+    assert_eq!(editor.document.project, before);
+    let areas = &mut editor.analysis_review.as_mut().unwrap().approved.entries[0].areas;
+    areas.picture = areas.opening;
+    assert_eq!(
+        editor.review_area_at(geometry, point(opening, 0)),
+        Some(false),
+        "coincident handles retain the selected area"
+    );
+    editor.select_review_area(geometry, geometry.image.center());
+    assert!(editor.analysis_review.as_ref().unwrap().picture);
+    editor.select_review_area(geometry, point(opening, 0) + egui::vec2(8., 8.));
+    assert!(
+        !editor.analysis_review.as_ref().unwrap().picture,
+        "labels disambiguate coincident frames"
+    );
+}
+#[test]
 fn drawing_missing_opening_does_not_invent_picture_support_and_last_picture_edit_enables_analyze() {
     let (mut editor, _send, receiver) = ready_state();
     editor.request_analysis();
@@ -84,7 +143,8 @@ fn drawing_missing_opening_does_not_invent_picture_support_and_last_picture_edit
             .picture
             .is_none()
     );
-    click_label(&mut editor, &ctx, "Picture statistics");
+    let geometry = editor.last_layout.unwrap().0;
+    editor.select_review_area(geometry, geometry.image.center());
     editor.region = Some(Coverage::rectangle(area));
     super::super::super::tests::app_frame(&mut editor, &ctx, vec![]);
     assert!(
@@ -193,6 +253,7 @@ fn failed_analysis_dispatch_tears_down_review_and_restores_working_photo() {
     editor.browse_analysis_review(other);
     let record = editor.document.project.source(other).unwrap().clone();
     editor.ready = Some(Ready {
+        file: thumbnails::FileKey::new(&record.path),
         thumbnail: None,
         path: record.path.clone(),
         area: record.development.active_area.into(),
@@ -437,18 +498,50 @@ fn review_reveals_roll_controls_without_persisting_temporary_scope_visibility_an
     }
 }
 #[test]
+fn valid_sampling_exceptions_have_no_inspect_badge_or_extra_photo_warning() {
+    let (mut editor, _send, receiver) = ready_state();
+    editor.request_analysis();
+    prepared(&mut editor, &receiver);
+    let areas = &mut editor.analysis_review.as_mut().unwrap().approved.entries[0].areas;
+    areas.opening_shared = true;
+    areas.opening_exception = true;
+    assert!(areas.ready() && areas.needs_inspection());
+    let id = editor.current_source.unwrap();
+    assert!(editor.source_tool_warning(id).is_none());
+    let context = egui::Context::default();
+    let labels = super::super::super::tests::app_frame(&mut editor, &context, vec![]);
+    assert!(
+        !labels
+            .iter()
+            .any(|(label, _)| label == "Inspect" || label == "Need area")
+    );
+}
+#[test]
 fn composed_review_shows_reset_consequence_and_has_one_analyze_or_cancel_action() {
     for accept in [false, true] {
         let (mut editor, _send, receiver) = ready_state();
         editor.photo.pivot = 0.3;
         let ctx = egui::Context::default();
-        click_label(&mut editor, &ctx, "Analyze roll");
+        click_label(&mut editor, &ctx, "Analyze");
         prepared(&mut editor, &receiver);
         let before = editor.document.project.clone();
         let labels = super::super::super::tests::app_frame(&mut editor, &ctx, vec![]);
-        assert!(labels.iter().any(|(s, _)| s == "Warning"));
-        assert!(labels.iter().any(|(s, _)| s == "Replace Photo adjustments"));
-        assert!(labels.iter().any(|(s, _)| s.contains("Holder opening")));
+        assert!(labels.iter().any(|(s, _)| s == "Tool warning"));
+        assert!(
+            !labels
+                .iter()
+                .any(|(s, _)| s == "Photo adjustments will be replaced.")
+        );
+        assert!(!labels.iter().any(|(s, _)| s == "Warning"));
+        assert!(
+            labels.iter().any(|(s, _)| s == "Opening")
+                && labels.iter().any(|(s, _)| s == "Picture")
+        );
+        assert!(
+            !labels
+                .iter()
+                .any(|(s, _)| s == "Picture statistics" || s == "Roll analysis")
+        );
         assert!(
             receiver
                 .try_iter()

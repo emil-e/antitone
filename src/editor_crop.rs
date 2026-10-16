@@ -12,6 +12,7 @@ pub(super) struct CropEdit {
     drag: Option<CropDrag>,
     pub(super) layout: Option<CanvasLayout>,
     pub(super) guides: bool,
+    pub(super) auto_problem: Option<String>,
     reveal_controls: bool,
 }
 #[derive(Clone, Copy)]
@@ -96,7 +97,11 @@ fn reframe_crop(
 impl Editor {
     pub(super) fn begin_crop(&mut self) {
         self.finish_dust_cleanup();
-        if self.busy || self.pick.is_some() || self.crop_edit.is_some() {
+        if self.busy
+            || self.pick.is_some()
+            || self.crop_edit.is_some()
+            || self.auto_crop_edit.is_some()
+        {
             return;
         }
         let Some(ready) = &self.ready else {
@@ -109,12 +114,25 @@ impl Editor {
             drag: None,
             layout: None,
             guides: true,
+            auto_problem: None,
             reveal_controls: true,
         });
         self.viewport.fit();
         self.last_layout = None;
         self.original.invalidate();
         self.status = "Crop draft; changes are not applied".into();
+    }
+    pub(super) fn initialize_crop_frame(&mut self, crop: Crop) {
+        let edit = self
+            .crop_edit
+            .as_mut()
+            .expect("crop initialization retains its tool");
+        edit.draft = crop;
+        edit.ratio = None;
+        edit.layout = None;
+        self.viewport.fit();
+        self.last_layout = None;
+        self.original.invalidate();
     }
     pub(super) fn finish_crop(&mut self, apply: bool) {
         let Some(edit) = self.crop_edit.take() else {
@@ -141,10 +159,12 @@ impl Editor {
 
         let cropping = self.crop_edit.is_some();
         let dusting = self.dust.cleanup;
-        let tool_active = cropping || dusting || self.flat_edit.is_some();
+        let auto_cropping = self.auto_crop_edit.is_some();
+        let tool_active = cropping || dusting || auto_cropping || self.flat_edit.is_some();
         let ready = !self.busy && self.ready.is_some();
         let commands_enabled = ready && !tool_active && self.pick.is_none();
-        let crop_enabled = cropping || ready && self.pick.is_none() && !tool_active;
+        let crop_enabled =
+            cropping || auto_cropping || ready && self.pick.is_none() && !tool_active;
         let dust_enabled = dusting
             || ready
                 && self.calibration().is_some()
@@ -208,12 +228,12 @@ impl Editor {
             if ToolButton::tool(
                 Icon::Crop,
                 "Crop & straighten",
-                if cropping {
+                if cropping || auto_cropping {
                     "Exit crop without applying the draft."
                 } else {
                     "Edit this photo's crop and straighten."
                 },
-                cropping,
+                cropping || auto_cropping,
             )
             .enabled(crop_enabled)
             .changed(self.crop.is_some())
@@ -247,7 +267,9 @@ impl Editor {
             Some(Action::FlipHorizontal) => self.photo_orientation.flips.horizontal ^= true,
             Some(Action::FlipVertical) => self.photo_orientation.flips.vertical ^= true,
             Some(Action::Crop) => {
-                if cropping {
+                if auto_cropping {
+                    self.finish_auto_crop(false);
+                } else if cropping {
                     self.finish_crop(false);
                 } else {
                     self.begin_crop();
@@ -275,7 +297,10 @@ impl Editor {
                     icons::Icon::Crop,
                     "Crop & straighten",
                     Some(true),
-                    |ui, reset| self.crop_tool_controls(ui, reset),
+                    |ui, reset| {
+                        self.auto_crop_action(ui, auto_crop::Target::Photo, "Auto-crop");
+                        self.crop_tool_controls(ui, reset);
+                    },
                 );
             });
         }
@@ -341,19 +366,8 @@ impl Editor {
                     .update_while_editing(false)
                     .suffix("°"),
             ).labelled_by(angle_label.id);
-            // egui 0.36 retains cancelled text for its second lost-focus pass.
-            let cancel_id = ui.id().with("angle-cancelled");
-            let cancelled = ui
-                .ctx()
-                .data_mut(|data| data.remove_temp::<bool>(cancel_id))
-                .unwrap_or(false);
-            let cancelling =
-                angle.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Escape));
-            if cancelled || cancelling || !ui.is_enabled() {
+            if controls::numeric_cancelled(ui, &angle) || !ui.is_enabled() {
                 degrees = previous_degrees;
-            }
-            if cancelling {
-                ui.ctx().data_mut(|data| data.insert_temp(cancel_id, true));
             }
             reset_angle = icons::button(
                 ui,
@@ -656,74 +670,126 @@ impl Editor {
     }
 
     pub(super) fn paint_crop(&self, ui: &egui::Ui, layout: CanvasLayout) {
-        let crop = layout.image;
-        let canvas = layout.canvas;
-        let painter = ui.painter().with_clip_rect(canvas);
-        let shade = egui::Color32::from_black_alpha(160);
-        for rect in [
-            egui::Rect::from_min_max(canvas.min, egui::pos2(canvas.max.x, crop.min.y)),
-            egui::Rect::from_min_max(egui::pos2(canvas.min.x, crop.max.y), canvas.max),
-            egui::Rect::from_min_max(
-                egui::pos2(canvas.min.x, crop.min.y),
-                egui::pos2(crop.min.x, crop.max.y),
-            ),
-            egui::Rect::from_min_max(
-                egui::pos2(crop.max.x, crop.min.y),
-                egui::pos2(canvas.max.x, crop.max.y),
-            ),
-        ] {
-            if rect.is_positive() {
-                painter.rect_filled(rect, 0., shade);
-            }
-        }
-        painter.rect_stroke(
-            crop,
-            0.,
-            egui::Stroke::new(2., egui::Color32::from_black_alpha(180)),
-            egui::StrokeKind::Inside,
+        paint_outline(
+            ui,
+            layout.canvas,
+            [
+                layout.image.min,
+                layout.image.right_top(),
+                layout.image.max,
+                layout.image.left_bottom(),
+            ],
+            self.crop_edit.as_ref().is_some_and(|e| e.guides),
+            160,
         );
-        painter.rect_stroke(
-            crop,
-            0.,
-            egui::Stroke::new(0.8, egui::Color32::WHITE),
-            egui::StrokeKind::Inside,
-        );
-        let segment = |a: egui::Pos2, b: egui::Pos2, width: f32| {
-            painter.line_segment(
-                [a, b],
-                egui::Stroke::new(width + 1.5, egui::Color32::from_black_alpha(200)),
-            );
-            painter.line_segment([a, b], egui::Stroke::new(width, egui::Color32::WHITE));
-        };
-        if self.crop_edit.as_ref().is_some_and(|edit| edit.guides) {
-            for fraction in [1. / 3., 2. / 3.] {
-                let x = egui::lerp(crop.x_range(), fraction);
-                let y = egui::lerp(crop.y_range(), fraction);
-                segment(egui::pos2(x, crop.top()), egui::pos2(x, crop.bottom()), 0.5);
-                segment(egui::pos2(crop.left(), y), egui::pos2(crop.right(), y), 0.5);
-            }
+    }
+}
+
+pub(super) fn outline_handles(q: [egui::Pos2; 4]) -> [(egui::Pos2, [i8; 2]); 8] {
+    [
+        (q[0], [-1, -1]),
+        (q[1], [1, -1]),
+        (q[2], [1, 1]),
+        (q[3], [-1, 1]),
+        (q[0] + (q[3] - q[0]) * 0.5, [-1, 0]),
+        (q[1] + (q[2] - q[1]) * 0.5, [1, 0]),
+        (q[0] + (q[1] - q[0]) * 0.5, [0, -1]),
+        (q[3] + (q[2] - q[3]) * 0.5, [0, 1]),
+    ]
+}
+
+/// Shared crop artwork in canvas coordinates, including source-view rotated/reflected frames.
+pub(super) fn paint_outline(
+    ui: &egui::Ui,
+    canvas: egui::Rect,
+    q: [egui::Pos2; 4],
+    guides: bool,
+    shade: u8,
+) {
+    let painter = ui.painter().with_clip_rect(canvas);
+    let u = q[1] - q[0];
+    let v = q[3] - q[0];
+    let width = u.length();
+    let height = v.length();
+    if width <= 0. || height <= 0. {
+        return;
+    }
+    let center = q[0] + (q[2] - q[0]) * 0.5;
+    let radius =
+        center.distance(canvas.min).max(center.distance(canvas.max)) + canvas.size().length();
+    let scale = (radius / (width.min(height) * 0.5) + 2.).max(2.);
+    let outer = q.map(|p| center + (p - center) * scale);
+    // A clipped ring shades only outside the frame, including rotated/offscreen frames.
+    let mut mesh = egui::Mesh::default();
+    for p in q.into_iter().chain(outer) {
+        mesh.colored_vertex(p, egui::Color32::from_black_alpha(shade));
+    }
+    for i in 0..4 {
+        let j = (i + 1) % 4;
+        mesh.add_triangle(i, j, 4 + j);
+        mesh.add_triangle(i, 4 + j, 4 + i);
+    }
+    painter.add(egui::Shape::mesh(mesh));
+    let bounds = egui::Rect::from_points(&q);
+    let aligned = q
+        == [
+            bounds.min,
+            bounds.right_top(),
+            bounds.max,
+            bounds.left_bottom(),
+        ];
+    for stroke in [
+        egui::Stroke::new(2., egui::Color32::from_black_alpha(180)),
+        egui::Stroke::new(0.8, egui::Color32::WHITE),
+    ] {
+        if aligned {
+            painter.rect_stroke(bounds, 0., stroke, egui::StrokeKind::Inside);
+        } else {
+            painter.add(egui::Shape::closed_line(q.to_vec(), stroke));
         }
-        let corner_length = 18_f32.min(crop.width() * 0.3).min(crop.height() * 0.3);
-        for (point, [x, y]) in handles(crop) {
-            if x != 0 && y != 0 {
+    }
+    let segment = |a, b, width| {
+        painter.line_segment(
+            [a, b],
+            egui::Stroke::new(width + 1.5, egui::Color32::from_black_alpha(200)),
+        );
+        painter.line_segment([a, b], egui::Stroke::new(width, egui::Color32::WHITE));
+    };
+    if guides {
+        for fraction in [1. / 3., 2. / 3.] {
+            if aligned {
+                let x = egui::lerp(bounds.x_range(), fraction);
+                let y = egui::lerp(bounds.y_range(), fraction);
                 segment(
-                    point,
-                    point - egui::vec2(f32::from(x) * corner_length, 0.),
-                    2.5,
+                    egui::pos2(x, bounds.top()),
+                    egui::pos2(x, bounds.bottom()),
+                    0.5,
                 );
                 segment(
-                    point,
-                    point - egui::vec2(0., f32::from(y) * corner_length),
-                    2.5,
+                    egui::pos2(bounds.left(), y),
+                    egui::pos2(bounds.right(), y),
+                    0.5,
                 );
             } else {
-                let half = if x == 0 {
-                    egui::vec2(7_f32.min(crop.width() * 0.15), 0.)
-                } else {
-                    egui::vec2(0., 7_f32.min(crop.height() * 0.15))
-                };
-                segment(point - half, point + half, 2.5);
+                segment(q[0] + u * fraction, q[3] + u * fraction, 0.5);
+                segment(q[0] + v * fraction, q[1] + v * fraction, 0.5);
             }
+        }
+    }
+    let u = u / width;
+    let v = v / height;
+    let length = 18_f32.min(width * 0.3).min(height * 0.3);
+    for (point, [x, y]) in outline_handles(q) {
+        if x != 0 && y != 0 {
+            segment(point, point - u * f32::from(x) * length, 2.5);
+            segment(point, point - v * f32::from(y) * length, 2.5);
+        } else {
+            let half = if x == 0 {
+                u * 7_f32.min(width * 0.15)
+            } else {
+                v * 7_f32.min(height * 0.15)
+            };
+            segment(point - half, point + half, 2.5);
         }
     }
 }

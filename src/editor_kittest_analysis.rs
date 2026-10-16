@@ -2,9 +2,13 @@ use super::*;
 
 fn show_confirmation(harness: &mut Harness<'_, Editor>) {
     harness.step();
-    harness.get_by_label("Analyze roll").scroll_to_me();
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Analyze")
+        .scroll_to_me();
     harness.try_run_realtime().unwrap();
-    harness.get_by_label("Analyze roll").click();
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Analyze")
+        .click();
     harness.step();
     harness.step();
     wait_for(harness, |editor| {
@@ -42,11 +46,43 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
         .unwrap()
         .replaces_photos
     {
-        harness.get_by_label("Replace Photo adjustments");
-        harness.get_by_label("Warning");
+        assert!(
+            harness
+                .get_by_label("Tool warning")
+                .accesskit_node()
+                .description()
+                .unwrap()
+                .contains("Photo adjustments")
+        );
     }
 }
 
+fn select_area(h: &mut Harness<'_, Editor>, picture: bool) {
+    let geometry = h.state().last_layout.unwrap().0;
+    let point = (0..21)
+        .flat_map(|y| {
+            (0..21).map(move |x| {
+                egui::pos2(
+                    geometry.canvas.left() + 2. + (geometry.canvas.width() - 4.) * x as f32 / 20.,
+                    geometry.canvas.top() + 2. + (geometry.canvas.height() - 4.) * y as f32 / 20.,
+                )
+            })
+        })
+        .find(|&p| h.state().review_area_at(geometry, p) == Some(picture))
+        .expect("selectable sampling area");
+    h.hover_at(point);
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.step();
+    h.step();
+    assert_eq!(h.state().analysis_review.as_ref().unwrap().picture, picture);
+}
 fn confirm(harness: &mut Harness<'_, Editor>) {
     let mut buttons = harness
         .get_all_by_role_and_label(egui::accesskit::Role::Button, "Analyze roll")
@@ -62,6 +98,15 @@ fn confirm(harness: &mut Harness<'_, Editor>) {
 }
 
 fn draw_picture(harness: &mut Harness<'_, Editor>, area: Rect) {
+    harness.get_by_label("Sampling areas").scroll_to_me();
+    harness.try_run_realtime().unwrap();
+    if harness
+        .query_by_label("Edit shared picture area…")
+        .is_none()
+    {
+        harness.get_by_label("Sampling areas").click();
+        harness.try_run_realtime().unwrap();
+    }
     harness
         .get_by_label("Edit shared picture area…")
         .scroll_to_me();
@@ -288,6 +333,83 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
 }
 
 #[test]
+fn missing_area_cues_follow_the_photo_and_clear_without_an_inspector_panel() {
+    let (mut h, _) = editor_harness_with_thumbnails(true);
+    h.state_mut()
+        .add_raws(vec![fixture("roll-0.dng"), fixture("roll-1.dng")]);
+    wait_for(&mut h, |e| !e.busy && e.document_pending.is_none());
+    show_confirmation(&mut h);
+    assert!(!h.state().analysis_review.as_ref().unwrap().replaces_photos);
+    let before = h.state().document.project.clone();
+    let ids = before.order.clone();
+    assert!(h.query_by_label("Tool warning").is_none());
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::Label, "Analyze")
+            .is_none()
+    );
+    let picture = h.state().review_areas(ids[0]).unwrap().picture;
+    h.state_mut()
+        .analysis_review
+        .as_mut()
+        .unwrap()
+        .approved
+        .entries[0]
+        .areas
+        .picture = None;
+    h.state_mut().refresh_review_region();
+    h.step();
+    h.step();
+    assert!(
+        h.get_by_label("Tool warning")
+            .accesskit_node()
+            .description()
+            .unwrap()
+            .contains("Picture sampling area is missing")
+    );
+    assert_eq!(
+        h.get_all_by_role_and_label(egui::accesskit::Role::Image, "Photo warning")
+            .count(),
+        1
+    );
+    assert!(
+        h.get_by_label("Analyze roll")
+            .accesskit_node()
+            .is_disabled()
+    );
+    save_capture(&h.render().unwrap(), "analysis-missing-area-cue");
+    h.get_by_label("roll-1.dng").click();
+    h.step();
+    wait_for(&mut h, |e| !e.busy && e.ready.is_some());
+    assert!(h.state().source_tool_warning(ids[1]).is_none());
+    assert!(
+        h.get_by_label("Tool warning")
+            .accesskit_node()
+            .description()
+            .unwrap()
+            .contains("1 photo")
+    );
+    h.state_mut()
+        .analysis_review
+        .as_mut()
+        .unwrap()
+        .approved
+        .entries[0]
+        .areas
+        .picture = picture;
+    h.step();
+    h.step();
+    assert!(h.query_by_label("Tool warning").is_none());
+    assert_eq!(
+        h.query_all_by_role_and_label(egui::accesskit::Role::Image, "Photo warning")
+            .count(),
+        0
+    );
+    h.get_by_label("Cancel").click();
+    h.step();
+    wait_for(&mut h, |e| !e.busy);
+    assert_eq!(h.state().document.project, before);
+}
+#[test]
 fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() {
     let (mut harness, _) = editor_harness_with_thumbnails(true);
     harness
@@ -310,11 +432,7 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
         harness.set_size(size);
         harness.run();
         for picture in [false, true] {
-            if picture {
-                harness.get_by_label("Picture statistics").click();
-            } else {
-                harness.get_by_label("Opening").click();
-            }
+            select_area(&mut harness, picture);
             harness.run();
             assert_eq!(
                 harness.state().analysis_review.as_ref().unwrap().picture,
@@ -323,7 +441,8 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
             assert!(harness.state().source);
             assert!(!harness.state().scopes.visible);
             assert_eq!(harness.state().preferences.scopes_visible, scopes_visible);
-            harness.get_by_label("Roll analysis");
+            assert!(harness.query_by_label("Roll analysis").is_none());
+            assert!(harness.query_by_label("Picture statistics").is_none());
             harness.get_by_label("Scopes");
             for name in ["Roll", "Photo", "Rendering"] {
                 assert!(
@@ -345,16 +464,17 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
                 );
             }
             assert!(!apply.rect().intersects(cancel.rect()));
-            for text in [
-                "Replace Photo adjustments",
-                "Analyze replaces Photo grading with estimated exposure and defaults for the other Photo controls.",
-            ] {
-                let warning = harness.get_by_label(text).rect();
-                assert!(
-                    warning.min.y > 0. && warning.max.y < apply.rect().max.y,
-                    "{layout}: warning hidden: {warning:?}"
-                );
-            }
+            let warning = harness.get_by_label("Tool warning").rect();
+            assert!(
+                harness
+                    .query_by_role_and_label(egui::accesskit::Role::Label, "Analyze")
+                    .is_none(),
+                "Analyze has no parameter panel"
+            );
+            assert!(
+                warning.min.y > 0. && warning.max.y < apply.rect().max.y,
+                "{layout}: warning hidden: {warning:?}"
+            );
             save_capture(
                 &harness.render().unwrap(),
                 &format!(
@@ -403,7 +523,7 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
             .count(),
         0
     );
-    harness.get_by_label("Opening").click();
+    select_area(&mut harness, false);
     harness.run();
     let prior = harness
         .state()
@@ -423,7 +543,7 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
     assert!(edited.opening_edited && !edited.picture_edited);
     assert_ne!(edited.picture, prior.picture);
     assert_eq!(harness.state().document.project, before);
-    harness.get_by_label("Picture statistics").click();
+    select_area(&mut harness, true);
     harness.run();
     assert_eq!(
         harness.state().region.unwrap().corners().map(|p| p.0),

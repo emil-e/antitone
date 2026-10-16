@@ -874,6 +874,9 @@ impl Editor {
     }
 
     pub(super) fn begin_dust_cleanup(&mut self) {
+        if self.auto_crop_edit.is_some() {
+            return;
+        }
         if self.dust.brush_source != self.current_source
             && let (Some(source), Some(active)) = (
                 self.current_source,

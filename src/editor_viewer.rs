@@ -18,10 +18,13 @@ impl Editor {
 
     fn viewer_tool(&self) -> Option<(icons::Icon, &'static str)> {
         if self.analysis_review.is_some() {
-            return Some((icons::Icon::Crop, "Analysis areas"));
+            return Some((icons::Icon::Analyze, "Analyze"));
         }
         if self.crop_edit.is_some() {
             return Some((icons::Icon::Crop, "Crop"));
+        }
+        if self.auto_crop_edit.is_some() {
+            return Some((icons::Icon::Crop, "Auto-crop"));
         }
         self.pick.map(|pick| match pick {
             Pick::Dmin => (icons::Icon::Pick, "Dmin"),
@@ -34,6 +37,49 @@ impl Editor {
         })
     }
 
+    pub(super) fn source_tool_warning(&self, id: SourceId) -> Option<&str> {
+        if self.auto_crop_edit.is_some() {
+            return self.auto_crop_problem(id);
+        }
+        if self.current_source == Some(id)
+            && let Some(edit) = &self.crop_edit
+        {
+            return edit.auto_problem.as_deref();
+        }
+        self.review_warning(id)
+    }
+    fn viewer_warning(&self) -> Option<String> {
+        let mut warning = self
+            .current_source
+            .and_then(|id| self.source_tool_warning(id))
+            .map(str::to_owned);
+        if warning.is_none() {
+            warning = self.auto_crop_batch_warning().map(str::to_owned);
+        }
+        if let Some(review) = &self.analysis_review {
+            let missing = review
+                .approved
+                .entries
+                .iter()
+                .filter(|e| !e.areas.ready())
+                .count();
+            if warning.is_none() && missing > 0 {
+                warning = Some(format!(
+                    "Sampling areas missing: {missing} photo{}",
+                    if missing == 1 { "" } else { "s" }
+                ));
+            }
+            if review.replaces_photos {
+                let consequence = "Analyze will replace Photo adjustments";
+                if let Some(warning) = &mut warning {
+                    warning.push_str(&format!("\n{consequence}"));
+                } else {
+                    warning = Some(consequence.into());
+                }
+            }
+        }
+        warning
+    }
     pub(super) fn viewer_bar(&mut self, ui: &mut egui::Ui) -> Option<f32> {
         use icons::Icon;
         use presentation::{
@@ -76,8 +122,13 @@ impl Editor {
             identity: ToolIdentity { icon, title },
             busy: self.busy,
             cancel_enabled: !self.busy || reviewing && self.analysis_pending.is_none(),
-            apply_enabled: navigating && review_ready && (cropping || self.region.is_some()),
+            apply_enabled: if self.auto_crop_edit.is_some() {
+                self.auto_crop_editable()
+            } else {
+                navigating && review_ready && (cropping || self.region.is_some())
+            },
         });
+        let warning = self.viewer_warning();
         let inspecting = navigating && calibrated && tool.is_none() && !dust_session;
         let bar = if fullscreen {
             presentation::ViewerBar::Overlay
@@ -103,7 +154,7 @@ impl Editor {
                     let repair_work = if !self.source && self.dust.render_error.is_some() { " · Repair unavailable" } else { "" };
                     let state = if has_repairs { format!("{target}{quality}{repair_work} · Unsaved repairs") } else { format!("{target}{quality}") };
                     let trailing_width = presentation::CONTROL_HEIGHT + VIEWER_ITEM_GAP + if let Some(group) = tool_group {
-                        if reviewing { group.width_named(ui, apply_label) } else { group.width(ui) }
+                        if reviewing {group.width_named(ui,apply_label)} else {group.width(ui)}
                     } else if let Some(group) = session_group {
                         group.width(ui)
                     } else {
@@ -170,7 +221,7 @@ impl Editor {
                             ui.set_width(290.);
                             ui.label(egui::RichText::new("Viewer navigation").strong());
                             ui.small(if dust_session { "Scroll changes brush size · Cmd/Ctrl-scroll or pinch zooms" } else { "Scroll pans · Cmd/Ctrl-scroll or pinch zooms" });
-                            ui.small("Click: Fit / 100% outside cleanup · Z: Fit · F: Fullscreen");
+                            ui.small("Click: Fit / 100% outside canvas tools · Z: Fit · F: Fullscreen");
                             ui.small("Zoomed drag pans · Space-drag / middle-drag always pans");
                             if !fullscreen && tool.is_none() && !dust_session {
                                 ui.separator();
@@ -183,12 +234,21 @@ impl Editor {
                                 ui.separator();
                                 ui.small("Crop: drag inside to move the image, edges/corners to resize, outside to straighten.");
                                 ui.small("Enter applies · Escape cancels");
+                            } else if !fullscreen && self.auto_crop_edit.is_some() {
+                                ui.separator();
+                                ui.small("Auto-crop: drag an edge or corner for the shared inward margin; Space-drag / middle-drag pans.");
+                                ui.small("Browsing is optional and never retargets the proposals · H hides artwork.");
+                                ui.small("Enter applies the fixed set · Escape cancels");
                             } else if dust_session {
                                 ui.separator();
                                 ui.small("Draw for a new heal · click an outline to select another heal.");
                                 ui.small("Shift-drag adds to selected · Option-drag removes · Delete removes selected.");
                                 ui.small("Drag the source outline to move it · release commits changes · H hides outlines.");
                                 ui.small("Preview only: repairs are not saved or exported.");
+                            } else if !fullscreen && self.analysis_review.is_some() {
+                                ui.separator();
+                                ui.small("Drag either area's corners to resize, or its interior to move. Click a label when outlines coincide.");
+                                ui.small("Enter analyzes · Escape cancels");
                             } else if !fullscreen && let Some(kind) = self.pick {
                                 ui.separator();
                                 ui.small("Click a patch or drag an area; drag its edges/corners to resize.");
@@ -203,7 +263,8 @@ impl Editor {
                         });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if let Some(group) = tool_group {
-                            let actions = if reviewing { group.show_named(ui, apply_label) } else { group.show(ui) }.inner;
+                            let actions = if warning.is_some() {group.show_warned(ui,apply_label,warning.as_deref())}
+                                else if reviewing {group.show_named(ui,apply_label)} else {group.show(ui)}.inner;
                             cancel = actions.cancel.clicked();
                             apply = actions.apply.clicked();
                         } else if let Some(group) = session_group {
@@ -221,14 +282,18 @@ impl Editor {
             self.finish_dust_cleanup();
             ui.ctx().request_repaint();
         } else if cancel {
-            if cropping {
+            if self.auto_crop_edit.is_some() {
+                self.finish_auto_crop(false);
+            } else if cropping {
                 self.finish_crop(false);
             } else {
                 self.finish_pick();
             }
             ui.ctx().request_repaint();
         } else if apply {
-            if cropping {
+            if self.auto_crop_edit.is_some() {
+                self.finish_auto_crop(true);
+            } else if cropping {
                 self.finish_crop(true);
             } else {
                 self.apply_pick();

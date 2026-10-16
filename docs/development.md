@@ -104,6 +104,18 @@ cargo test --locked --features ui-tests --lib editor::kittest_tests::analyze -- 
 
 These tests cover shared-area Apply/Cancel, one roll review with optional photo exceptions and reset warning, sparse-area failure and accepted physical-view sRGB/P3 rendering, with and without correction. Review bypasses positive/local grading and scopes; source switching changes authority and retires stale original-tool work. Cancellation holds reply delivery until the Cancel widget is clicked, without replacing or stalling the worker. Optional captures are `analyze-{roll,corrected}-{srgb,p3}-offscreen.png`. [Real-RAW diagnostics](diagnostics.md#analyze-roll) remain separate.
 
+## Auto-crop
+
+```sh
+cargo test --locked --features editor --lib auto_crop -- --test-threads=1
+cargo test --locked --features ui-tests --lib editor::kittest_tests::auto_crop -- --test-threads=1
+cargo test --locked --release --features ui-tests --lib editor::kittest_tests::auto_crop -- --test-threads=1
+```
+
+Geometry/component checks cover source-coordinate angle/origin/turn/reflection mapping, evidence abstention, equal-distance inward margins and shared artwork. Controller checks cover fixed draft membership, immutable proposals, atomic Apply, true Cancel and stale source/document/evidence rejection. Composed authored-RAW checks exercise the Roll orientation/tool shelf and Photo's Auto-crop button inside ordinary Crop at normal/narrow sizes, plus batch live slider/numeric/outline input, full-scan working/reference reuse and scope identity, representative browsing/reselection, fullscreen suspension, tool exclusivity and accepted-only persistence/export. Analyze review checks edit both simultaneously visible sampling outlines directly, without a selector or per-photo approval checklist. Warning checks distinguish failed attempts from uncaptured sources, cover all-skipped batches and failed Photo initialization, verify per-photo tooltip/accessibility reasons and cleanup on exit, and ensure badge clicks still select photos while viewer action IDs remain stable as cues appear/disappear. `ANTITONE_UI_CAPTURE` writes `auto-crop-{tool,batch,margin-draft}-{normal,narrow}-offscreen.png` for inspection.
+
+These checks establish lifecycle, geometry and output authority, not photographic border accuracy or physical interaction. Independent lazy evidence and broader photographic acceptance remain in the [region-consumer plan](plans/region-detection.md).
+
 ## Shared GPU queue checks
 
 ```sh
