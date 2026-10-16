@@ -9,7 +9,7 @@ For the photographic model, start with [processing](processing.md). This page is
 | Area | Start here | Responsibility |
 | --- | --- | --- |
 | Processing | [processing](../src/processing.rs), [photographic](../src/photographic.rs), [colour](../src/color.rs) | Scalar reference, response and positive grading |
-| Spatial grades | [local processing](../src/local_adjustments.rs), [GPU grades](../src/gpu_local_adjustments.rs), [editor routing](../src/editor_processing.rs) | Immutable Global/ordered-local snapshots, analytic masks and whole-stack validation; normal editor admission/tools remain unwired |
+| Spatial grades | [local processing](../src/local_adjustments.rs), [GPU grades](../src/gpu_local_adjustments.rs), [editor routing](../src/editor_processing.rs) | Immutable Global/ordered-local snapshots, analytic masks, source-owned tools and device-aware whole-document admission |
 | RAW source | [raw](../src/raw.rs), [scan](../src/scan.rs), [native bridge](../native/raw_bridge.cpp) | LibRaw ownership, camera RGB and original capture diagnostics |
 | Scan correction | [flat-field](../src/flat_field.rs), [GPU map](../src/gpu_flat_field.rs) | Source-coordinate illumination gains |
 | Dust prototype | [repair model](../src/dust_repair.rs), [controller](../src/editor_dust.rs), [GPU patches](../src/gpu_repairs.rs) | Independent neutral-AP1 healing and transient viewer repair snapshots |

@@ -102,6 +102,73 @@ fn browse(editor: &mut Editor, index: usize) {
     editor.busy = false;
 }
 #[test]
+fn batch_crop_closes_local_editing_and_preserves_masks_on_apply_and_cancel() {
+    for apply in [false, true] {
+        let (mut e, _directory, _commands) = fixture();
+        e.tab = 1;
+        e.source = false;
+        let id = e.current_source.unwrap();
+        let mut locals = crate::project::LocalAdjustments::default();
+        let local = locals
+            .add(
+                "Sky".into(),
+                crate::local_adjustments::LocalAdjustment {
+                    mask: crate::local_adjustments::GradientMask::Linear {
+                        start: crate::geometry::SourcePoint([100., 80.]),
+                        end: crate::geometry::SourcePoint([650., 450.]),
+                    },
+                    photo: PhotoSettings {
+                        exposure: 0.25,
+                        ..Default::default()
+                    },
+                    enabled: true,
+                    invert: false,
+                    strength: 1.,
+                },
+            )
+            .unwrap();
+        e.document.project.source_mut(id).unwrap().local_adjustments = Some(locals.clone());
+        e.select_adjustment(adjustments::Target::Local(local));
+        assert!(e.mask_handles_available());
+        let before = e.document.project.clone();
+        e.auto_crop(Target::Roll);
+        assert!(e.auto_crop_valid());
+        assert!(!e.adjustments.drawer_open());
+        assert_eq!(e.adjustment_target(), adjustments::Target::Global);
+        assert_eq!(e.document.project, before);
+
+        // A late local action cannot compete even if its previous drawer state returns.
+        e.open_adjustments();
+        assert!(!e.mask_handles_available());
+        assert!(!e.adjustment_owns_delete());
+        e.begin_linear_mask(None);
+        e.begin_radial_mask(None);
+        e.delete_selected_adjustment();
+        assert!(e.mask_edit.is_none());
+        assert!(!e.adjustments.confirming());
+        assert_eq!(e.document.project, before);
+        e.close_adjustments();
+
+        e.finish_auto_crop(apply);
+        assert!(e.auto_crop_edit.is_none(), "{}", e.status);
+        assert_eq!(
+            e.document.project.source(id).unwrap().local_adjustments,
+            Some(locals)
+        );
+        let mut expected = before;
+        if apply {
+            for source in &mut expected.sources {
+                source.crop = Some(default_crop(
+                    source.development.active_area.into(),
+                    &measured_areas(),
+                ));
+            }
+        }
+        assert_eq!(e.document.project, expected);
+    }
+}
+
+#[test]
 fn partial_proposals_keep_source_reasons_without_warning_about_uncaptured_photos() {
     let (mut e, _directory, _commands) = fixture();
     let ids = e.document.project.order.clone();

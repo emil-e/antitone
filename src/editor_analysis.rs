@@ -110,7 +110,7 @@ pub(super) fn run(
     if cancelled() {
         return Ok(None);
     }
-    request.document.validate()?;
+    request.document.validate_for_device(device)?;
     analysis_review::verify(request)?;
     let project = &request.document.project;
     if project.order.is_empty() || !project.order.contains(&request.selected) {
@@ -260,14 +260,7 @@ pub(super) fn run(
         owned.iter().map(|(film, _)| film.len()).sum(),
         &proposal.frames,
     )?;
-    let mut candidate = request.document.clone();
-    candidate.project.dmin = Some(proposal.dmin.to_array());
-    candidate.project.dmax = Some(proposal.dmax.to_array());
-    candidate.project.input_floor = Some(crate::processing::CAMERA_INPUT_FLOOR);
-    candidate.project.roll = proposal.roll;
-    for (id, photo) in project.order.iter().zip(&proposal.photos) {
-        candidate.project.source_mut(*id)?.photo = *photo;
-    }
+    let mut candidate = proposed_document(&request.document, proposal, picture)?;
     if let Some(approved) = &request.areas {
         candidate
             .project
@@ -277,12 +270,9 @@ pub(super) fn run(
             .project
             .analysis_regions
             .extend(approved.entries.clone());
-        candidate.project.analysis_area = None;
-    } else {
-        candidate.project.analysis_area = picture.map(array);
     }
     analysis_review::verify(request)?;
-    candidate.validate()?; // Includes effective-floor GPU constants for every Photo grade.
+    candidate.validate_for_device(device)?;
     for id in &project.order {
         if cancelled() {
             return Ok(None);
@@ -304,6 +294,31 @@ pub(super) fn run(
         frames: frames.len(),
         support: film,
     }))
+}
+
+fn proposed_document(
+    document: &Document,
+    proposal: roll_analysis::Proposal,
+    picture: Option<Rect>,
+) -> Result<Document, Error> {
+    if proposal.photos.len() != document.project.order.len() {
+        return Err(Error::UnusableSample("analysis photo count changed"));
+    }
+    let mut candidate = document.clone();
+    candidate.project.dmin = Some(proposal.dmin.to_array());
+    candidate.project.dmax = Some(proposal.dmax.to_array());
+    candidate.project.input_floor = Some(crate::processing::CAMERA_INPUT_FLOOR);
+    candidate.project.roll = proposal.roll;
+    for (id, photo) in document.project.order.iter().zip(proposal.photos) {
+        let source = candidate.project.source_mut(*id)?;
+        source.photo = photo;
+        if let Some(locals) = &mut source.local_adjustments {
+            // A full Photo-grade reset removes masks, not the non-reusing ID history.
+            locals.adjustments.clear();
+        }
+    }
+    candidate.project.analysis_area = picture.map(array);
+    Ok(candidate)
 }
 
 pub(super) fn develop_scan(
@@ -413,6 +428,8 @@ impl Editor {
             && self.crop_edit.is_none()
             && self.auto_crop_edit.is_none()
             && self.flat_edit.is_none()
+            && self.mask_edit.is_none()
+            && !self.adjustments.confirming()
             && !reviewing
             && self.removal_pending.is_none();
         let mut analyze = false;
@@ -520,7 +537,9 @@ impl Editor {
             && self.ready.is_some()
             && self.pick.is_none()
             && self.crop_edit.is_none()
-            && self.auto_crop_edit.is_none();
+            && self.auto_crop_edit.is_none()
+            && self.mask_edit.is_none()
+            && !self.adjustments.confirming();
         presentation::section(
             ui,
             "sampling-area-actions",
@@ -578,6 +597,8 @@ impl Editor {
             || self.pick.is_some()
             || self.crop_edit.is_some()
             || self.auto_crop_edit.is_some()
+            || self.mask_edit.is_some()
+            || self.adjustments.confirming()
             || self.ready.is_none()
             || self.document.project.order.is_empty()
         {
@@ -690,13 +711,15 @@ impl Editor {
                     self.end_analysis_review();
                     return;
                 }
-                let photo = match outcome.document.validate().and_then(|_| {
-                    outcome
-                        .document
-                        .project
-                        .source(snapshot.selected)
-                        .map(|s| s.photo)
-                }) {
+                let photo = match self
+                    .validate_document_candidate(&outcome.document)
+                    .and_then(|_| {
+                        outcome
+                            .document
+                            .project
+                            .source(snapshot.selected)
+                            .map(|s| s.photo)
+                    }) {
                     Ok(photo) => photo,
                     Err(error) => {
                         self.status = format!("Analysis rejected: {error}");
@@ -710,6 +733,7 @@ impl Editor {
                     ready.analysis_support = Some(Some(outcome.support));
                 }
                 self.document = outcome.document;
+                self.adjustments = Adjustments::default();
                 self.grades.clear();
                 self.dmin = self.document.project.dmin.map(DVec3::from_array);
                 self.dmax = self.document.project.dmax.map(DVec3::from_array);
@@ -744,7 +768,7 @@ impl Editor {
         self.sync_document();
         let mut candidate = self.document.clone();
         candidate.project.analysis_area = Some(array(area));
-        match candidate.validate() {
+        match self.validate_document_candidate(&candidate) {
             Ok(()) => {
                 self.document = candidate;
                 self.status = "Picture statistics area updated; processing unchanged".into();

@@ -12,7 +12,12 @@ impl Editor {
         if !ui.is_enabled() {
             return (geometry, false);
         }
-        let picking = self.pick.is_some() && self.fullscreen.is_none();
+        let mask_pointer =
+            ui.input(|input| input.pointer.press_origin().or(input.pointer.hover_pos()));
+        let masking = self.tab == 1 && self.mask_edit.is_some() && self.fullscreen.is_none()
+            || mask_pointer.is_some_and(|point| self.mask_pointer_interest(geometry, point));
+        let captured_mask = masking && self.mask_edit.as_ref().is_some_and(MaskEdit::dragging);
+        let picking = (self.pick.is_some() || masking) && self.fullscreen.is_none();
         let dusting = self.dust.cleanup && self.tab == 1 && self.fullscreen.is_none();
         let canvas_tool =
             picking || dusting || self.auto_crop_edit.is_some() && self.fullscreen.is_none();
@@ -26,7 +31,7 @@ impl Editor {
             )
         });
         let gesture_inside = touch.is_some_and(|touch| geometry.canvas.contains(touch.center_pos));
-        if response.hovered() || gesture_inside {
+        if (response.hovered() || gesture_inside) && !captured_mask {
             if zoom != 1.
                 && let Some(anchor) = touch
                     .map(|touch| touch.center_pos - touch.translation_delta)
@@ -55,9 +60,11 @@ impl Editor {
                 );
             }
         }
-        let panning = response.dragged_by(egui::PointerButton::Middle)
-            || response.dragged_by(egui::PointerButton::Primary)
-                && (space || !canvas_tool && self.viewport.zoom.is_some() && can_pan(geometry));
+        let panning = !captured_mask
+            && (response.dragged_by(egui::PointerButton::Middle)
+                || response.dragged_by(egui::PointerButton::Primary)
+                    && (space
+                        || !canvas_tool && self.viewport.zoom.is_some() && can_pan(geometry)));
         if panning && can_pan(geometry) {
             self.viewport
                 .pan(geometry, pixels_per_point, response.drag_delta());
@@ -100,6 +107,8 @@ impl Editor {
                 }
             } else if space || !canvas_tool && self.viewport.zoom.is_some() && can_pan(geometry) {
                 egui::CursorIcon::Grab
+            } else if masking {
+                egui::CursorIcon::Crosshair
             } else if picking && !self.busy {
                 pointer
                     .map(|point| {

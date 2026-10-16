@@ -57,6 +57,9 @@ use thumbnails::Thumbnails;
 #[path = "editor_processing.rs"]
 mod processing;
 use processing::Grades;
+#[path = "editor_adjustments.rs"]
+mod adjustments;
+use adjustments::Adjustments;
 #[path = "editor_working_view.rs"]
 mod working_view;
 use working_view::WorkingView;
@@ -83,6 +86,9 @@ mod auto_crop;
 #[path = "editor_crop.rs"]
 mod crop_editor;
 use crop_editor::CropEdit;
+#[path = "editor_masks.rs"]
+mod mask_editor;
+use mask_editor::MaskEdit;
 #[cfg(test)]
 #[path = "editor_cache_preferences_tests.rs"]
 mod cache_preferences_tests;
@@ -118,6 +124,7 @@ enum Pick {
 struct PickReturn {
     path: PathBuf,
     selected: usize,
+    adjustment: Option<(SourceId, adjustments::Target)>,
 }
 #[derive(Clone, Copy)]
 struct PickView {
@@ -317,7 +324,7 @@ fn prepare_source_scheduled(
     cancelled: &dyn Fn() -> bool,
 ) -> Result<(Ready, Scan), Error> {
     if let Some(expected) = expected {
-        document::require_supported_grade(expected)?;
+        expected.grade_snapshot()?;
     }
     if cancelled() || cache.is_some_and(|cache| cache.store.is_closed()) {
         return Err(Error::UnusableSample("document source work retired"));
@@ -463,10 +470,13 @@ fn prepare_document_scheduled(
     let (document, reuse) = match work {
         DocumentWork::Import(mut document, paths, reuse) => {
             document.fork_cache();
-            document.import_with_progress(&paths, progress)?;
+            document.import_with_progress(&paths, Some(device), progress)?;
             (document, reuse)
         }
-        DocumentWork::Open(path) => (Document::open_with_progress(&path, progress)?, None),
+        DocumentWork::Open(path) => (
+            Document::open_with_progress(&path, Some(device), progress)?,
+            None,
+        ),
         DocumentWork::New => (Document::default(), None),
         DocumentWork::Correction(mut document, _) => {
             document.fork_cache();
@@ -474,19 +484,8 @@ fn prepare_document_scheduled(
         }
         DocumentWork::Save(..) => unreachable!("save does not prepare a RAW"),
     };
-    document.validate()?;
     let correction = Correction::prepare(device, &document, previous_correction)?;
-    let calibration = document.project.processing_calibration()?;
     for record in &document.project.sources {
-        if let Some(calibration) = calibration {
-            processing::validate_source(
-                Some(device),
-                calibration,
-                document.project.roll,
-                record,
-                record.photo,
-            )?;
-        }
         crate::gpu::ProcessingSource::new(
             device,
             &[[0; 4]],
@@ -597,6 +596,7 @@ fn backend(
                     &request,
                     &analysis_generation,
                     &developments,
+                    &device,
                     |done, total| {
                         let _ = messages.send(Message::AnalysisProgress(id, done, total));
                     },
@@ -815,7 +815,7 @@ fn backend(
                     DocumentWork::Save(document, path, policy) => Message::Saved(
                         id,
                         document
-                            .save(&path, policy)
+                            .save_with_device(&path, policy, Some(&device))
                             .map(Box::new)
                             .map_err(|error| error.to_string()),
                     ),
@@ -980,6 +980,7 @@ pub struct Editor {
     floor: f64,
     roll: RollSettings,
     photo: PhotoSettings,
+    adjustments: Adjustments,
     roll_orientation: RollOrientation,
     photo_orientation: PhotoOrientation,
     crop: Option<Crop>,
@@ -987,6 +988,7 @@ pub struct Editor {
     auto_crop_edit: Option<auto_crop::Draft>,
     auto_crop_requested: Option<auto_crop::Target>,
     auto_crop_margin: f64,
+    mask_edit: Option<MaskEdit>,
     last_layout: Option<(crate::viewport::CanvasLayout, f32)>,
     target: OutputTarget,
     source: bool,
@@ -1127,6 +1129,7 @@ impl Editor {
             floor: 0.,
             roll: RollSettings::new_grade(),
             photo: PhotoSettings::default(),
+            adjustments: Adjustments::default(),
             roll_orientation: RollOrientation::default(),
             photo_orientation: PhotoOrientation::default(),
             crop: None,
@@ -1134,6 +1137,7 @@ impl Editor {
             auto_crop_edit: None,
             auto_crop_requested: None,
             auto_crop_margin: crate::auto_crop::DEFAULT_MARGIN_PERCENT,
+            mask_edit: None,
             last_layout: None,
             target: OutputTarget::DisplayP3,
             source: true,
@@ -1379,6 +1383,11 @@ impl Editor {
         self.load_source(path, true);
     }
     fn load_source(&mut self, path: PathBuf, persistent: bool) {
+        self.sync_document();
+        if let Err(error) = self.validate_document_candidate(&self.document) {
+            self.status = format!("Source not changed: {error}");
+            return;
+        }
         self.finish_dust_cleanup();
         self.dust.release_gpu();
         let started = std::time::Instant::now();
@@ -1391,7 +1400,8 @@ impl Editor {
             self.cancel_analysis();
         }
         self.thumbnails.cancel();
-        self.sync_document();
+        self.adjustments = Adjustments::default();
+        self.mask_edit = None;
         self.current_source = self.document.find_source(&path);
         if selecting_photo {
             self.roll_selection
@@ -1682,6 +1692,8 @@ impl Editor {
                             self.reset_repairs_pending = false;
                             self.correction = prepared.correction;
                             self.document = prepared.document;
+                            self.adjustments = Adjustments::default();
+                            self.mask_edit = None;
                             self.grades.clear();
                             if new_project {
                                 self.tab = 0;
@@ -1869,6 +1881,12 @@ impl Editor {
                 self.return_notice = Some(notice);
             }
             self.selected = context.selected;
+            if let Some((source, target)) = context.adjustment
+                && self.current_source == Some(source)
+                && self.adjustment_target() != target
+            {
+                self.select_adjustment(target);
+            }
         }
         if let Some(view) = view {
             if returning || self.viewport == view.anchored {
@@ -1885,7 +1903,11 @@ impl Editor {
         if self.pick.is_some() {
             self.finish_pick();
         }
-        if self.busy || self.crop_edit.is_some() || self.auto_crop_edit.is_some() {
+        if self.busy
+            || self.crop_edit.is_some()
+            || self.auto_crop_edit.is_some()
+            || self.mask_edit.is_some()
+        {
             return;
         }
         self.thumbnails.cancel();
@@ -1900,6 +1922,9 @@ impl Editor {
             self.pick_return = self.ready.as_ref().map(|ready| PickReturn {
                 path: ready.path.clone(),
                 selected: self.selected,
+                adjustment: self
+                    .current_source
+                    .map(|source| (source, self.adjustment_target())),
             });
         }
         if let Some((layout, pixels_per_point)) = self.last_layout {
@@ -2016,11 +2041,11 @@ impl Editor {
         self.sync_document();
         if let (Some(calibration), Some(ready)) = (self.calibration(), &self.ready) {
             let grade = (|| -> Result<PhotoGradeSnapshot, Error> {
+                self.validate_document_candidate(&self.document)?;
                 let id = self
                     .current_source
                     .ok_or_else(|| Error::Project("no accepted source for export".into()))?;
                 let source = self.document.project.source(id)?;
-                document::require_supported_grade(source)?;
                 source.grade_snapshot()
             })();
             let grade = match grade {
@@ -2095,16 +2120,24 @@ impl Editor {
         let editable = !self.busy
             && !reviewing
             && self.auto_crop_edit.is_none()
+            && self.mask_edit.is_none()
             && self.crop_edit.is_none()
             && self.flat_edit.is_none()
             && self.calibration().is_some();
         let can_pick = !self.busy
             && !reviewing
             && self.auto_crop_edit.is_none()
+            && self.mask_edit.is_none()
             && self.crop_edit.is_none()
             && self.flat_edit.is_none()
             && self.ready.is_some();
         let mut start_pick = None;
+        if self.tab == 1 {
+            // A conditional indicator must not change the following inputs' auto-ID sequence.
+            ui.push_id("adjustment-target-indicator", |ui| {
+                self.adjustment_target_label(ui)
+            });
+        }
         egui::ScrollArea::vertical().id_salt(("inspector", self.tab)).show(ui, |ui| {
             self.auto_crop_controls(ui);
             if self.tab == 0 {
@@ -2202,58 +2235,11 @@ impl Editor {
                     self.crop_controls(ui);
                     self.dust_controls(ui);
                 });
-                ui.push_id("photo", |ui| {
-                    ui.add_enabled_ui(editable, |ui| {
-                        if controls::color(
-                            ui, ColorControl::WhiteBalance, &mut self.photo.wb, can_pick,
-                        ) {
-                            start_pick = Some(Pick::Wb);
-                        }
-                        let (_, reset) = presentation::section(
-                            ui, "photo-exposure", "Exposure", SectionHeader { summary: &format!("{:+.2} EV", self.photo.exposure), changed: self.photo.exposure != 0., reset: Some(self.photo.exposure != 0.), default_open: Some(true) },
-                            |ui| {
-                                controls::parameter(ui, Parameter::Exposure, &mut self.photo.exposure);
-                            },
-                        );
-                        if reset {
-                            self.photo.exposure = 0.;
-                        }
-                        let defaults = PhotoSettings::default();
-                        let changed = self.photo.contrast != defaults.contrast
-                            || self.photo.pivot != defaults.pivot
-                            || self.photo.contrast_colour_mix != defaults.contrast_colour_mix;
-                        let (_, reset) = presentation::section(ui, "photo-contrast", "Contrast", SectionHeader {
-                            summary: &format!("{:.2} · Pivot {:.3} · Preserve {:.2}", self.photo.contrast, self.photo.pivot, self.photo.contrast_colour_mix),
-                            changed, reset: Some(changed), default_open: Some(true),
-                        }, |ui| {
-                            controls::parameter(ui, Parameter::Contrast, &mut self.photo.contrast);
-                            controls::parameter(ui, Parameter::Pivot, &mut self.photo.pivot);
-                            ui.small("Colour behavior");
-                            controls::parameter(ui, Parameter::ColourMix, &mut self.photo.contrast_colour_mix);
-                        });
-                        if reset {
-                            self.photo.contrast = defaults.contrast;
-                            self.photo.pivot = defaults.pivot;
-                            self.photo.contrast_colour_mix = defaults.contrast_colour_mix;
-                        }
-                        let changed = self.photo.saturation != defaults.saturation
-                            || self.photo.saturation_density != defaults.saturation_density;
-                        let (_, reset) = presentation::section(ui, "photo-saturation", "Saturation", SectionHeader {
-                            summary: &format!("{:.2} · Density {:.2}", self.photo.saturation, self.photo.saturation_density),
-                            changed, reset: Some(changed), default_open: Some(true),
-                        }, |ui| {
-                            controls::parameter(ui, Parameter::Saturation, &mut self.photo.saturation);
-                            ui.small("Colour behavior");
-                            controls::parameter(ui, Parameter::Density, &mut self.photo.saturation_density);
-                        });
-                        if reset {
-                            self.photo.saturation = defaults.saturation;
-                            self.photo.saturation_density = defaults.saturation_density;
-                        }
-                    });
-                });
+                if self.adjustment_controls(ui, editable, can_pick) {
+                    start_pick = Some(Pick::Wb);
+                }
             } else {
-                ui.add_enabled_ui(!reviewing && self.crop_edit.is_none() && self.auto_crop_edit.is_none() && self.flat_edit.is_none(), |ui| {
+                ui.add_enabled_ui(!reviewing && self.crop_edit.is_none() && self.auto_crop_edit.is_none() && self.flat_edit.is_none() && self.mask_edit.is_none(), |ui| {
                     let changed = self.target != OutputTarget::DisplayP3;
                     let (_, reset) = presentation::section(ui, "rendering-target", "Target", SectionHeader {
                         summary: if self.target == OutputTarget::DisplayP3 { "Display P3 · 100 nit" } else { "sRGB · 100 nit" },
@@ -2381,11 +2367,13 @@ impl host::App for Editor {
             && self.pick.is_none()
             && self.auto_crop_edit.is_none()
             && self.crop_edit.is_none()
+            && self.mask_edit.is_none()
             && self.overwrite.is_none()
             && self.transition.is_none()
             && self.project_overwrite.is_none()
             && self.resume_transition.is_none()
-            && self.removal_pending.is_none();
+            && self.removal_pending.is_none()
+            && !self.adjustments.confirming();
         let mut file_action = None;
         if !self.allow_close && ui.input(|input| input.viewport().close_requested()) {
             ui.ctx()
@@ -2427,6 +2415,7 @@ impl host::App for Editor {
                 }
             });
         }
+        self.sync_adjustment_drag(ui.ctx());
         // egui clears text focus at pass start on Escape, before tool shortcuts run.
         let text_was_focused = ui.ctx().data(|data| {
             data.get_temp::<bool>(ui.id().with("editor-text-focus"))
@@ -2471,6 +2460,7 @@ impl host::App for Editor {
             && !fullscreen_was_active
             && self.failure.is_none()
             && self.removal_pending.is_none()
+            && !self.adjustments.confirming()
             && !(text_was_focused && ui.input(|input| input.key_pressed(egui::Key::Escape)))
             && self.overwrite.is_none()
             && self.transition.is_none()
@@ -2478,7 +2468,9 @@ impl host::App for Editor {
             && !ui.ctx().egui_wants_keyboard_input()
             && !egui::Popup::is_any_open(ui.ctx())
         {
-            if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Z)) {
+            if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Z))
+                && !self.mask_edit.as_ref().is_some_and(MaskEdit::dragging)
+            {
                 self.viewport.fit();
             }
             self.select_active_shortcut(ui.ctx());
@@ -2515,6 +2507,11 @@ impl host::App for Editor {
                     self.finish_auto_crop(true);
                 }
             }
+            if self.mask_edit.is_some()
+                && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+            {
+                self.finish_mask(false);
+            }
             if self.dust.cleanup
                 && ui.input_mut(|input| {
                     input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
@@ -2528,8 +2525,20 @@ impl host::App for Editor {
             {
                 self.finish_dust_cleanup();
             }
+            let adjustment_delete = self.adjustment_owns_delete();
+            if adjustment_delete
+                && !self.adjustments.dragging()
+                && ui.input_mut(|input| {
+                    input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
+                        || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
+                })
+            {
+                self.delete_selected_adjustment();
+            }
             if !self.dust.cleanup
                 && self.auto_crop_edit.is_none()
+                && !adjustment_delete
+                && !self.adjustments.dragging()
                 && self.roll_edit_available()
                 && ui.input_mut(|input| {
                     input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
@@ -2540,6 +2549,8 @@ impl host::App for Editor {
             }
             if self.pick.is_none()
                 && self.crop_edit.is_none()
+                && self.mask_edit.is_none()
+                && !self.adjustments.dragging()
                 && !self.document.project.order.is_empty()
             {
                 let previous = ui.input_mut(|input| {
@@ -2571,6 +2582,7 @@ impl host::App for Editor {
             || self.project_overwrite.is_some()
             || self.resume_transition.is_some()
             || self.removal_pending.is_some()
+            || self.adjustments.confirming()
         {
             ui.disable();
         }
@@ -2801,6 +2813,9 @@ impl host::App for Editor {
             if cropping && canvas_input {
                 self.crop_rotation_cursor(ui, &response, geometry);
             }
+            if !fullscreen && (self.mask_edit.is_some() || self.mask_handles_available()) {
+                self.mask_interaction(ui, &response, geometry, panning, canvas_input);
+            }
             if !cropping {
                 self.last_layout = Some((geometry, pixels_per_point));
             }
@@ -2851,7 +2866,7 @@ impl host::App for Editor {
                     ui.label("Positive preview requires valid calibration");
                     return;
                 };
-                match self.positive_processing(cal, self.roll, self.photo) {
+                match self.view_processing(cal, self.roll, self.photo) {
                     Ok(p) => p,
                     Err(error) => {
                         ui.label(format!("Positive preview unavailable: {error}"));
@@ -2863,7 +2878,7 @@ impl host::App for Editor {
                 if let Some(signature) = self.dust_signature() {
                     self.schedule_dust(signature);
                 }
-                match self.dust_gpu_snapshot() {
+                match self.dust_gpu_snapshot(parameters.grade().map(|grade| grade.snapshot())) {
                     Ok(repairs) => parameters.repairs = repairs,
                     Err(error) => self.status = format!("Dust view unavailable: {error}"),
                 }
@@ -3027,6 +3042,7 @@ impl host::App for Editor {
                     self.region = Some(drag.update(geometry, end));
                 }
             }
+            self.paint_mask(ui, geometry);
             if self.analysis_review.is_some() {
                 self.paint_review_areas(ui, geometry, canvas);
             } else if !fullscreen && let Some(region) = self.region {
@@ -3066,9 +3082,17 @@ impl host::App for Editor {
         if let Some(transition) = self.resume_transition.take() {
             self.perform_transition(transition, ui.ctx());
         } else if let Some(action) = file_action {
-            self.file_action(action, ui.ctx());
+            if self.mask_edit.is_none() {
+                self.file_action(action, ui.ctx());
+            } else {
+                self.status = "Apply or cancel the mask before a file action".into();
+            }
         } else if let Some(format) = export_action {
-            self.export_dialog(format);
+            if self.mask_edit.is_none() {
+                self.export_dialog(format);
+            } else {
+                self.status = "Apply or cancel the mask before exporting".into();
+            }
         } else if analyze {
             // Inspect the validated, focus-committed Photo state before confirming a reset.
             self.request_analysis();
@@ -3082,6 +3106,7 @@ impl host::App for Editor {
         }
         self.document_dialogs(ui.ctx(), dialog_escape_available);
         self.removal_dialog(ui.ctx(), dialog_escape_available);
+        self.adjustment_dialog(ui.ctx(), dialog_escape_available);
         if let Some((path, format)) = self.overwrite.clone() {
             let detail = path.display().to_string();
             let choice = presentation::DecisionDialog::new(

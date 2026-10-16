@@ -187,7 +187,7 @@ For native thread policy or immutable-sensor investigation, use [native developm
 
 ## Local processing and reuse
 
-The [local feature](plans/local-adjustments.md) remains guarded in the editor. These checks exercise original-sample processing and immutable consumer snapshots, not interactive local-tool admission:
+The [local feature](plans/local-adjustments.md) uses normal device-aware editor admission. These diagnostics isolate original-sample processing and immutable snapshots; the [composed workflow checks](development.md#local-grading-and-shared-consumers) separately exercise controls and normal workers:
 
 ```sh
 ANTITONE_LOCAL_PERF_QUICK=1 cargo test --locked --offline --release \
@@ -200,6 +200,15 @@ ANTITONE_RAW_SAMPLES=/absolute/samples cargo test --locked --offline --release \
   --features editor --lib real_raw_local_preview_tiles_and_refinement \
   -- --ignored --nocapture --test-threads=1
 ```
+
+For a bounded local-stack ownership observation on the production working view:
+
+```sh
+cargo test --locked --offline --release --features editor --lib \
+  physical_view_local_stack_resources -- --ignored --nocapture --test-threads=1
+```
+
+The [diagnostic](../src/gpu_working_view_local_resource_tests.rs) uses an authored RAW, a 1080p detail grid and the production whole-composition underlay, correction off/on, numeric/geometry edits and both targets. It samples same-process footprint/resident/Metal allocation and checkpoints current/building, deferred encoded consumers and retirement. The deferred texture copy is an encoded-lifetime stand-in, not a native presentation frame. Scopes and native host resources are excluded. Set `ANTITONE_SCREEN_RAW=1 ANTITONE_RAW_SAMPLES=/absolute/samples` for the supplied native-size source instead of the small authored fixture; headers must pass the existing 600-MiB diagnostic source bound. Both variants use the existing Normal-pressure, free-memory, swap, growth and sampler-freshness stops; a preflight stop establishes no workload/resource acceptance. Timings without a coordinated window are indicative, not isolated interaction latency.
 
 [Response-table tests](../src/gpu_response_table_tests.rs) check exact RGB16-code reuse, complete keys, signed/floor behavior and initialization/publication through the hosted submission gate. Continuous corrected input and inspection bypass the table. Independent original-processing operator/stage references remain numerical diagnostics; they are not alternate editor caches or scheduling policies. Existing numerical gates must not be relaxed for a faster candidate.
 

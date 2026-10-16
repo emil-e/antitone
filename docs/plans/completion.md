@@ -30,6 +30,8 @@ The [initializer and sampling-area review](../roll-analysis.md) are accepted for
 
 Evaluate [contrast and saturation](../processing.md#photo-contrast-and-saturation) at full resolution on noisy shadows, skin and coloured lighting, corrected and uncorrected, with both targets. Assess colour/hue, separation and noise/texture. Physical use and older-binary interoperability remain unverified.
 
+[Local linear/radial adjustments](local-adjustments.md) are implemented. Their photographic, physical-interaction and broader-device acceptance is separate from acceptance of the Global operators.
+
 B&W scope is unresolved: monochrome film captured by an RGB camera, colour-negative desaturation, or both? Compare the relevant models before choosing one. No automatic film detection or calibration reinterpretation is implied.
 
 ## Operation feedback

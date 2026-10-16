@@ -660,6 +660,7 @@ impl Editor {
             && self.thumbnails.budgets.pressure != memory::Pressure::Critical
             && (self.pick.is_none() || self.analysis_review.is_some())
             && self.crop_edit.is_none()
+            && self.mask_edit.is_none()
             && self.document_pending.is_none()
             && self.transition.is_none()
             && self.project_overwrite.is_none()
@@ -747,6 +748,7 @@ impl Editor {
         let selection_enabled = (!self.busy || selected_loading || reviewing)
             && self.flat_edit.is_none()
             && self.crop_edit.is_none()
+            && self.mask_edit.is_none()
             && (self.pick.is_none()
                 || matches!(self.pick, Some(Pick::Dmin | Pick::Dmax))
                 || reviewing)

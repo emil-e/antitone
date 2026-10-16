@@ -2,7 +2,13 @@ use super::*;
 use crate::region_timing;
 use std::sync::{Arc, atomic::AtomicUsize};
 
-fn request() -> (analysis::Request, tempfile::TempDir) {
+fn request() -> (analysis::Request, tempfile::TempDir, wgpu::Device) {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::METAL,
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
+    });
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let (device, _) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw");
     let paths: Vec<_> = ["roll-0.dng", "roll-1.dng"]
@@ -28,6 +34,7 @@ fn request() -> (analysis::Request, tempfile::TempDir) {
             areas: None,
         },
         directory,
+        device,
     )
 }
 fn observed() -> (development::Scheduler, Arc<AtomicUsize>) {
@@ -46,12 +53,12 @@ fn observed() -> (development::Scheduler, Arc<AtomicUsize>) {
 
 #[test]
 fn scratch_and_unavailable_storage_produce_identical_areas_without_additional_native_retention() {
-    let (request, _directory) = request();
+    let (request, _directory, device) = request();
     let before = request.document.project.clone();
     let generation = AtomicU64::new(1);
     let (scheduler, count) = observed();
     let (cached, timings) =
-        region_timing::record(|| prepare(&request, &generation, &scheduler, |_, _| {}));
+        region_timing::record(|| prepare(&request, &generation, &scheduler, &device, |_, _| {}));
     let cached = cached.unwrap().unwrap();
     assert_eq!(count.load(Ordering::Relaxed), 2);
     assert_eq!(
@@ -74,6 +81,7 @@ fn scratch_and_unavailable_storage_produce_identical_areas_without_additional_na
         &request,
         &generation,
         &scheduler,
+        &device,
         |_, _| {},
         &mut measurements::Measurements::unavailable(),
     )
@@ -84,6 +92,7 @@ fn scratch_and_unavailable_storage_produce_identical_areas_without_additional_na
         &request,
         &generation,
         &scheduler,
+        &device,
         |_, _| {},
         &mut measurements::Measurements::full(),
     )
@@ -101,20 +110,26 @@ fn scratch_and_unavailable_storage_produce_identical_areas_without_additional_na
 #[test]
 fn source_revision_changes_between_capture_and_scratch_consumption_reject() {
     use std::io::Write;
-    let (request, _directory) = request();
+    let (request, _directory, device) = request();
     let before = request.document.project.clone();
     let path = request.document.source_path(request.selected).unwrap();
     let (scheduler, count) = observed();
-    let result = prepare(&request, &AtomicU64::new(1), &scheduler, |index, total| {
-        if index == total / 2 {
-            std::fs::OpenOptions::new()
-                .append(true)
-                .open(&path)
-                .unwrap()
-                .write_all(&[0])
-                .unwrap();
-        }
-    });
+    let result = prepare(
+        &request,
+        &AtomicU64::new(1),
+        &scheduler,
+        &device,
+        |index, total| {
+            if index == total / 2 {
+                std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(&path)
+                    .unwrap()
+                    .write_all(&[0])
+                    .unwrap();
+            }
+        },
+    );
     scheduler.close_and_wait().unwrap();
     assert!(result.err().unwrap().to_string().contains("source changed"));
     assert_eq!(count.load(Ordering::Relaxed), 2);
@@ -123,16 +138,22 @@ fn source_revision_changes_between_capture_and_scratch_consumption_reject() {
 
 #[test]
 fn cancellation_at_the_roll_barrier_neither_reads_scratch_nor_promotes_partial_areas() {
-    let (request, _directory) = request();
+    let (request, _directory, device) = request();
     let before = request.document.project.clone();
     let generation = AtomicU64::new(1);
     let (scheduler, count) = observed();
     let (result, timings) = region_timing::record(|| {
-        prepare(&request, &generation, &scheduler, |index, total| {
-            if index == total / 2 {
-                generation.store(2, Ordering::Relaxed);
-            }
-        })
+        prepare(
+            &request,
+            &generation,
+            &scheduler,
+            &device,
+            |index, total| {
+                if index == total / 2 {
+                    generation.store(2, Ordering::Relaxed);
+                }
+            },
+        )
     });
     scheduler.close_and_wait().unwrap();
     assert!(result.unwrap().is_none());
@@ -156,7 +177,7 @@ fn cancellation_at_the_roll_barrier_neither_reads_scratch_nor_promotes_partial_a
 
 #[test]
 fn authored_areas_remain_authoritative_and_complete_edits_need_no_fine_capture() {
-    let (mut request, _directory) = request();
+    let (mut request, _directory, device) = request();
     let mut areas = Areas::default();
     let opening = Coverage::rectangle(crate::geometry::SourceRegion {
         x: 16,
@@ -170,8 +191,8 @@ fn authored_areas_remain_authoritative_and_complete_edits_need_no_fine_capture()
         width: 320,
         height: 320,
     });
-    areas.edit_opening(opening.clone());
-    areas.edit_picture(picture.clone());
+    areas.edit_opening(opening);
+    areas.edit_picture(picture);
     let first = SourceAnalysis {
         source: request.document.project.order[0],
         areas: areas.clone(),
@@ -188,14 +209,16 @@ fn authored_areas_remain_authoritative_and_complete_edits_need_no_fine_capture()
     request.document.project.analysis_regions = vec![first.clone(), second.clone()];
     let before = request.document.project.clone();
     let (scheduler, count) = observed();
-    let (result, timings) =
-        region_timing::record(|| prepare(&request, &AtomicU64::new(1), &scheduler, |_, _| {}));
+    let (result, timings) = region_timing::record(|| {
+        prepare(&request, &AtomicU64::new(1), &scheduler, &device, |_, _| {})
+    });
     let approved = result.unwrap().unwrap();
     assert_eq!(count.load(Ordering::Relaxed), 2);
     let reference = prepare_with_measurements(
         &request,
         &AtomicU64::new(1),
         &scheduler,
+        &device,
         |_, _| {},
         &mut measurements::Measurements::unavailable(),
     )

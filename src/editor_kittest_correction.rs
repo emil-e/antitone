@@ -198,6 +198,20 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
     stage(&mut harness, "Photo");
     pick_patch(&mut harness, "Pick neutral…", region);
     assert_eq!(harness.state().photo.wb, balance);
+    {
+        let editor = harness.state_mut();
+        adjustments::install_locals(editor);
+        editor
+            .edit_adjustments(|locals| {
+                locals.adjustments[0].adjustment.photo.exposure = 0.125;
+                Ok(())
+            })
+            .unwrap();
+        editor.sync_document();
+        editor
+            .validate_document_candidate(&editor.document)
+            .unwrap();
+    }
     if harness.state().source {
         harness.get_by_label("View source").click();
         harness.step();
@@ -302,16 +316,17 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
     harness.step();
     harness.get_by_label("Fit").click();
     harness.step();
-    {
-        let e = harness.state_mut();
-        e.document = e
-            .document
-            .save(
-                &directory.path().join("correction.antitone.json"),
-                crate::project::Save::New,
-            )
-            .unwrap();
-    }
+    harness.state_mut().queue_save(
+        directory.path().join("correction.antitone.json"),
+        crate::project::Save::New,
+        None,
+    );
+    wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+    assert!(
+        !harness.state().document.dirty(),
+        "{}",
+        harness.state().status
+    );
     save_existing_project(&mut harness);
     let saved = harness.state().document.project.clone();
     stage(&mut harness, "Roll");

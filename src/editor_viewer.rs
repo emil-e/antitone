@@ -70,7 +70,7 @@ impl Editor {
                 ));
             }
             if review.replaces_photos {
-                let consequence = "Analyze will replace Photo adjustments";
+                let consequence = "Analyze will replace Photo adjustments and remove any local adjustments and masks.\nThis cannot be undone.";
                 if let Some(warning) = &mut warning {
                     warning.push_str(&format!("\n{consequence}"));
                 } else {
@@ -88,6 +88,8 @@ impl Editor {
         let mut zoom_action = None;
         let fullscreen = self.fullscreen.is_some();
         let cropping = !fullscreen && self.crop_edit.is_some();
+        let masking = !fullscreen && self.mask_edit.is_some();
+        let creating = !fullscreen && self.mask_edit.as_ref().is_some_and(MaskEdit::creating);
         let dust_session = !fullscreen && self.dust.cleanup && !self.source;
         let tool = (!fullscreen && !dust_session)
             .then(|| self.viewer_tool())
@@ -105,13 +107,16 @@ impl Editor {
             .and_then(|s| self.dust.repairs(s))
             .is_some_and(|s| !s.repairs().is_empty());
         let mut finish_dust = false;
+
         let mut cancel = false;
         let mut apply = false;
         let calibrated = self.calibration().is_some();
         if !calibrated {
             self.source = true;
         }
-        let navigating = self.ready.is_some() && !self.busy;
+        let navigating = self.ready.is_some()
+            && !self.busy
+            && !self.mask_edit.as_ref().is_some_and(MaskEdit::dragging);
         let reviewing = self.analysis_review.is_some();
         let apply_label = if reviewing { "Analyze roll" } else { "Apply" };
         let review_ready = self
@@ -129,7 +134,7 @@ impl Editor {
             },
         });
         let warning = self.viewer_warning();
-        let inspecting = navigating && calibrated && tool.is_none() && !dust_session;
+        let inspecting = navigating && calibrated && tool.is_none() && !dust_session && !masking;
         let bar = if fullscreen {
             presentation::ViewerBar::Overlay
         } else {
@@ -160,7 +165,7 @@ impl Editor {
                     } else {
                         ui.painter().layout_no_wrap(state.clone(), egui::TextStyle::Small.resolve(ui.style()), ui.visuals().text_color()).size().x
                     };
-                    let show_zoom_steps = tool.is_none() && !dust_session || ui.available_width() >= trailing_width + presentation::CONTROL_HEIGHT + VIEWER_ITEM_GAP + if self.source { 224. } else { 192. };
+                    let show_zoom_steps = tool.is_none() && !dust_session && !masking || ui.available_width() >= trailing_width + presentation::CONTROL_HEIGHT + VIEWER_ITEM_GAP + if self.source { 224. } else { 192. };
                     if icons::button(ui, Icon::Fit, navigating, if cropping { "Fit source" } else { "Fit" }, if cropping { "Fit the full source (Z)." } else { "Fit the image (Z)." }).clicked() {
                         self.viewport.fit();
                     }
@@ -230,7 +235,11 @@ impl Editor {
                                 ui.small("Shift–Cmd–A: select active photo only");
                             }
                             if fullscreen { ui.small("F or Escape: return to the workspace"); }
-                            if cropping {
+                            if let Some(help) = self.mask_help().filter(|_| !fullscreen && self.tab == 1 && !dust_session && !cropping && self.pick.is_none()) {
+                                ui.separator();
+                                ui.small(help);
+
+                            } else if cropping {
                                 ui.separator();
                                 ui.small("Crop: drag inside to move the image, edges/corners to resize, outside to straighten.");
                                 ui.small("Enter applies · Escape cancels");
@@ -269,6 +278,9 @@ impl Editor {
                             apply = actions.apply.clicked();
                         } else if let Some(group) = session_group {
                             finish_dust = group.show(ui).inner.clicked();
+                        } else if creating {
+                            cancel = TextAction::new("Cancel drawing").show(ui).clicked();
+                            ui.add(egui::Label::new(self.mask_edit.as_ref().unwrap().creation_label()).truncate());
                         } else {
                             let help = if has_repairs {
                                 format!("{state}\nRepairs are not saved or exported; New/Open or quitting discards them.")
@@ -284,6 +296,8 @@ impl Editor {
         } else if cancel {
             if self.auto_crop_edit.is_some() {
                 self.finish_auto_crop(false);
+            } else if masking {
+                self.finish_mask(false);
             } else if cropping {
                 self.finish_crop(false);
             } else {
@@ -304,7 +318,7 @@ impl Editor {
     }
 
     pub(super) fn canvas_input_allowed(&self, ui: &egui::Ui, canvas: egui::Rect) -> bool {
-        if egui::Popup::is_any_open(ui.ctx()) {
+        if self.adjustments.confirming() || egui::Popup::is_any_open(ui.ctx()) {
             return false;
         }
         let positions = ui.ctx().input(|input| {

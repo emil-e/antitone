@@ -125,6 +125,84 @@ pub fn stage_tabs(ui: &mut Ui, selected: &mut usize) {
     }
 }
 
+/// Single-select row with pointer capture for reordering and an independent enable toggle.
+pub fn draggable_icon_row(
+    ui: &mut Ui,
+    icon: Icon,
+    label: &str,
+    selected: bool,
+    enabled: Option<&mut bool>,
+) -> (egui::Response, Option<egui::Response>) {
+    let (rect, allocated) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), CONTROL_HEIGHT),
+        egui::Sense::hover(),
+    );
+    let toggle_width = if enabled.is_some() {
+        CONTROL_HEIGHT
+    } else {
+        0.
+    };
+    let select_rect = egui::Rect::from_min_max(rect.min, rect.max - egui::vec2(toggle_width, 0.));
+    let response = ui.interact(
+        select_rect,
+        allocated.id.with("select"),
+        egui::Sense::click_and_drag(),
+    );
+    let visuals = ui.style().interact_selectable(&response, selected);
+    ui.painter().rect(
+        rect,
+        visuals.corner_radius,
+        visuals.weak_bg_fill,
+        visuals.bg_stroke,
+        egui::StrokeKind::Inside,
+    );
+    icon.paint(
+        ui,
+        egui::Rect::from_center_size(
+            rect.left_center() + egui::vec2(14., 0.),
+            egui::vec2(16., 16.),
+        ),
+        visuals.fg_stroke,
+    );
+    let text = egui::WidgetText::from(label).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Truncate),
+        (select_rect.width() - 38.).max(1.),
+        egui::TextStyle::Button,
+    );
+    ui.painter().galley_with_override_text_color(
+        egui::pos2(rect.left() + 30., rect.center().y - text.size().y * 0.5),
+        text,
+        visuals.fg_stroke.color,
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            response.enabled(),
+            selected,
+            label,
+        )
+    });
+    ui.ctx()
+        .accesskit_node_builder(response.id, |node| node.set_selected(selected));
+    let toggle = enabled.map(|enabled| {
+        let response = ui.put(
+            egui::Rect::from_min_max(egui::pos2(select_rect.right(), rect.top()), rect.max),
+            egui::Checkbox::without_text(enabled),
+        );
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::Checkbox,
+                response.enabled(),
+                *enabled,
+                format!("Enable {label}"),
+            )
+        });
+        response
+    });
+    (response.on_hover_text(label), toggle)
+}
+
 pub struct SectionHeader<'a> {
     pub summary: &'a str,
     pub changed: bool,

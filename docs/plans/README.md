@@ -7,7 +7,7 @@
 - [Remaining scan-region consumers and physical acceptance](region-detection.md)
 - [Analyze acceptance and deferred sampling work](roll-assistance.md)
 - [Broader LibRaw source compatibility](raw-compatibility.md)
-- [Local photographic adjustments](local-adjustments.md) — tools/admission paused behind the shared working-image package
+- [Local linear/radial adjustment acceptance](local-adjustments.md)
 - [Interaction and colour diagnosis](inspection-and-interaction.md)
 - [Thumbnail loading and resources](visual-feedback.md)
 - [Other photographic acceptance and release needs](completion.md)

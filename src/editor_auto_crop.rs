@@ -332,6 +332,7 @@ impl Editor {
         let count = entries.len();
         let skipped = problems.len();
         if attempted > 0 {
+            self.close_adjustments();
             self.auto_crop_edit = Some(Draft {
                 document: Arc::downgrade(self.document.cache()),
                 development: self.document.project.development.clone(),

@@ -222,7 +222,7 @@ fn profile_complete_roll_area_preparation() {
         arm != "warm" || comparison.is_some(),
         "warm arm requires ANTITONE_REGION_PERF_COMPARE from the cold run"
     );
-    let result = cache_observation::with_monitor(|monitor, _, _| {
+    let result = cache_observation::with_monitor(|monitor, device, _| {
         let start = Instant::now();
         let mut document = Document::default();
         monitor.phase("region_headers", || {
@@ -313,7 +313,7 @@ fn profile_complete_roll_area_preparation() {
             let stop = Mutex::new(None);
             let prepare_start = Instant::now();
             let (prepared, timings) = region_timing::record(|| {
-                prepare(&request, &generation, &scheduler, |_, _| {
+                prepare(&request, &generation, &scheduler, device, |_, _| {
                     if let Err(error) = within_limit(start, monitor) {
                         *stop.lock().unwrap() = Some(error);
                         generation.store(2, Ordering::Relaxed);

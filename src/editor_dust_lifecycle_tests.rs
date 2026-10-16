@@ -74,12 +74,12 @@ fn grade_range_rejection_retains_neutral_evaluation_and_readmits_without_reheali
     let evaluated = response.evaluated.clone();
     e.receive_dust(response.request, Ok(Some(response)));
     assert!(e.dust.failed.is_empty());
-    assert!(e.dust_gpu_snapshot().unwrap().0.is_empty());
+    assert!(e.dust_gpu_snapshot(None).unwrap().0.is_empty());
     assert!(e.dust.render_error.is_some());
     e.photo.exposure = 0.;
     e.dust_validate_processing(e.calibration().unwrap(), e.roll, e.photo)
         .unwrap();
-    let snapshot = e.dust_gpu_snapshot().unwrap();
+    let snapshot = e.dust_gpu_snapshot(None).unwrap();
     assert_eq!(snapshot.0.len(), 1);
     assert!(Arc::ptr_eq(&snapshot.0[0].evaluated, &evaluated));
     assert!(e.dust.render_error.is_none());
@@ -88,11 +88,48 @@ fn grade_range_rejection_retains_neutral_evaluation_and_readmits_without_reheali
 }
 
 #[test]
+fn arriving_repairs_are_admitted_against_the_exact_view_grade_without_mutating_the_document() {
+    let (mut e, _, commands) = gpu_editor();
+    let before = e.document.project.clone();
+    let response = high_response(&mut e);
+    let evaluated = response.evaluated.clone();
+    e.receive_dust(response.request, Ok(Some(response)));
+    let candidate = PhotoGradeSnapshot::new(
+        PhotoSettings {
+            exposure: 16.,
+            ..e.photo
+        },
+        Vec::new(),
+    )
+    .unwrap();
+    assert!(e.dust_gpu_snapshot(Some(&candidate)).unwrap().0.is_empty());
+    assert!(e.dust.render_error.is_some());
+    let accepted = PhotoGradeSnapshot::new(e.photo, Vec::new()).unwrap();
+    let snapshot = e.dust_gpu_snapshot(Some(&accepted)).unwrap();
+    assert_eq!(snapshot.0.len(), 1);
+    assert!(Arc::ptr_eq(&snapshot.0[0].evaluated, &evaluated));
+    let mut source_candidate = e
+        .document
+        .project
+        .source(e.current_source.unwrap())
+        .unwrap()
+        .clone();
+    source_candidate.photo.exposure = 16.;
+    assert!(e.validate_source_candidate(&source_candidate).is_err());
+    assert_eq!(e.document.project, before);
+    e.schedule_dust(e.dust_signature().unwrap());
+    assert!(
+        commands.try_recv().is_err(),
+        "grade changes do not re-evaluate ungraded repairs"
+    );
+}
+
+#[test]
 fn photo_widget_rejects_an_unsafe_repaired_value_before_accepting_the_grade() {
     let (mut e, _, _commands) = gpu_editor();
     let response = high_response(&mut e);
     e.receive_dust(response.request, Ok(Some(response)));
-    assert_eq!(e.dust_gpu_snapshot().unwrap().0.len(), 1);
+    assert_eq!(e.dust_gpu_snapshot(None).unwrap().0.len(), 1);
     for section in ["photo-white-balance", "photo-contrast", "photo-saturation"] {
         e.preferences.sections.insert(section.into(), false);
     }
@@ -141,7 +178,7 @@ fn photo_widget_rejects_an_unsafe_repaired_value_before_accepting_the_grade() {
     );
     assert_eq!(e.photo.exposure, 0.);
     assert!(e.status.starts_with("Edit rejected:"), "{}", e.status);
-    assert_eq!(e.dust_gpu_snapshot().unwrap().0.len(), 1);
+    assert_eq!(e.dust_gpu_snapshot(None).unwrap().0.len(), 1);
 }
 
 #[test]

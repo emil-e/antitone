@@ -18,7 +18,7 @@ impl Correction {
         document: &Document,
         previous: Option<&Arc<Self>>,
     ) -> Result<Option<Arc<Self>>, Error> {
-        document.validate()?;
+        document.validate_for_device(device)?;
         let Some(settings) = document.project.active_flat_field() else {
             return Ok(None);
         };
@@ -98,7 +98,8 @@ impl Editor {
                     !self.busy
                         && self.pick.is_none()
                         && self.crop_edit.is_none()
-                        && self.auto_crop_edit.is_none(),
+                        && self.auto_crop_edit.is_none()
+                        && self.mask_edit.is_none(),
                     |ui| {
                         if presentation::TextAction::new("Choose reference RAW…")
                             .show(ui)
@@ -167,6 +168,7 @@ impl Editor {
             || self.pick.is_some()
             || self.crop_edit.is_some()
             || self.auto_crop_edit.is_some()
+            || self.mask_edit.is_some()
         {
             return;
         }

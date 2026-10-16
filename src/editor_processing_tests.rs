@@ -6,7 +6,7 @@ use crate::{
     project::{LocalAdjustments, SourceDevelopment},
 };
 
-async fn fixture() -> (
+pub(in crate::editor) async fn fixture() -> (
     Editor,
     mpsc::Sender<Message>,
     mpsc::Receiver<Command>,
@@ -91,7 +91,6 @@ async fn fixture() -> (
     ] {
         locals.add(name.into(), adjustment).unwrap();
     }
-    // Normal Open/Save still rejects nonempty locals; exercise prospective routing directly.
     editor
         .document
         .project
@@ -106,6 +105,7 @@ async fn fixture() -> (
         ),
         1.,
     ));
+    editor.sync_document();
     (editor, send, receiver, device, queue)
 }
 fn local(exposure: f64) -> LocalAdjustment {

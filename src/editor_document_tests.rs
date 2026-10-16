@@ -1,8 +1,10 @@
 use super::*;
 use crate::{color::Balance, processing::PhotoSettings};
+#[path = "editor_document_admission_tests.rs"]
+mod admission;
 
 #[test]
-fn local_documents_are_durable_but_rejected_before_editor_source_loading() {
+fn uncalibrated_local_documents_are_durable_but_rejected_before_source_loading() {
     use crate::{
         geometry::SourcePoint,
         local_adjustments::{GradientMask, LocalAdjustment},
@@ -119,9 +121,11 @@ fn file_progress_reports_only_completed_reads_including_duplicates() {
     let mut document = Document::default();
     let mut progress = Vec::new();
     document
-        .import_with_progress(&[one.clone(), two.clone(), one.clone()], |done, total| {
-            progress.push((done, total))
-        })
+        .import_with_progress(
+            &[one.clone(), two.clone(), one.clone()],
+            None,
+            |done, total| progress.push((done, total)),
+        )
         .unwrap();
     assert_eq!(progress, [(0, 3), (1, 3), (2, 3), (3, 3)]);
     assert_eq!(document.project.order.len(), 2);
@@ -129,19 +133,22 @@ fn file_progress_reports_only_completed_reads_including_duplicates() {
     let saved = document.save(&project, Save::New).unwrap();
     progress.clear();
     let opened =
-        Document::open_with_progress(&project, |done, total| progress.push((done, total))).unwrap();
+        Document::open_with_progress(&project, None, |done, total| progress.push((done, total)))
+            .unwrap();
     assert_eq!(progress, [(0, 2), (1, 2), (2, 2)]);
     assert_eq!(opened.project, saved.project);
     std::fs::remove_file(&two).unwrap();
     progress.clear();
     assert!(
-        Document::open_with_progress(&project, |done, total| progress.push((done, total))).is_err()
+        Document::open_with_progress(&project, None, |done, total| progress.push((done, total)))
+            .is_err()
     );
     assert_eq!(progress, [(0, 2), (1, 2)]);
     progress.clear();
     assert!(
         Document::default()
-            .import_with_progress(&[one, two], |done, total| progress.push((done, total)))
+            .import_with_progress(&[one, two], None, |done, total| progress
+                .push((done, total)))
             .is_err()
     );
     assert_eq!(progress, [(0, 2), (1, 2)]);

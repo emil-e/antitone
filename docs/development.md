@@ -128,7 +128,7 @@ These headless Metal checks verify submission exclusion during surface configura
 
 ## Local grading and shared consumers
 
-The [local processing foundation](processing.md#local-grades-change-controls-not-rendered-pixels) is testable without exposing the unfinished editor tools:
+The [local processing foundation](processing.md#local-grades-change-controls-not-rendered-pixels) and source-owned editor tools have focused component, composed and normal-worker checks:
 
 ```sh
 cargo test --locked --no-default-features --test local_adjustments
@@ -138,9 +138,20 @@ cargo test --locked --features gpu --lib gpu::
 cargo test --locked --features gpu --test gpu_local_adjustments
 cargo test --locked --features editor,ocio-reference --test local_adjustment_consumers --test viewer --test scopes
 cargo test --locked --features editor --lib editor::processing::tests -- --test-threads=1
+cargo test --locked --features editor --lib editor::adjustments::tests -- --test-threads=1
+cargo test --locked --features ui-tests --lib editor::kittest_tests::adjustments -- --test-threads=1
+cargo test --locked --features editor --lib editor::mask_editor:: -- --test-threads=1
+cargo test --locked --features editor --lib editor::document::tests::admission -- --test-threads=1
+cargo test --locked --features ui-tests --lib editor::kittest_tests::masks -- --test-threads=1
 ```
 
-These cover analytic masks, exact bypasses, signed/HDR processing, persistence/export snapshots, conservative precision rejection, content-based reuse and correction/source anchoring. The controlled supported-stack/zero-Y stress fixtures explicitly fix gamma at 0.65; they are not promises of admission under every roll response. A separate default-gamma case combines Roll/Photo/local WB. Metadata alone does not make an export a reconstructible recipe.
+Processing checks cover analytic masks, exact bypasses, signed/HDR intermediates, persistence/export snapshots, conservative precision rejection and content-based reuse. Supported mixed-stack fixtures exercise gamma 0.60/0.65; separate default-response cases combine WB, corrected noisy shadows, order and floor provenance. They are not promises of admission under every response.
+
+Component/composed checks cover source isolation, outgoing-text commit, scoped resets, stable IDs, confirmed/stale deletion and direct row management at normal/narrow sizes. Closed Adjustments routes Global without a Global row; empty-open photographic controls stay visible but disabled. Mask checks inverse-map composition and off-image geometry, validate live previews, promote geometry/creation IDs only on release and cancel only the current gesture. Radial cases retain independent axes, overlay-only rotation, hard/soft boundaries and small ovals. Popup/fullscreen and Crop/Auto-crop/Dust ownership remain exclusive. Captures show layout/artwork, not photographic or native-input acceptance.
+
+Device-aware admission checks preflight inactive/offscreen/non-filmstrip grades, correction floors and runtime compatibility without publishing resources. Rejected edits/source/export requests preserve accepted state and avoid dispatch. Temporary Roll sampling restores only a still-valid source-owned local unless explicitly closed. Normal workers create both masks, save/reopen, switch sources and reopen sRGB/P3 TIFF and AP0 EXR with local contract metadata. Correction toggling/clearing retains locals. Analyze's direct area review warns about local removal/no undo; cancellation/failure preserves accepted state, and success clears only ordered locals while retaining allocator history and non-filmstrip grades.
+
+Metadata alone does not make an export a reconstructible recipe.
 
 Scope paint regressions keep a readback outstanding during navigation and grade edits: held traces remain visible but not current, latest-region counts install after a fresh reduction, and incompatible sources/graticules reject old bins. Native interaction and broader photographic/resource acceptance remain separate. [Performance/RAW diagnostics](diagnostics.md#local-processing-and-reuse) are opt-in.
 

@@ -9,6 +9,9 @@ use std::sync::atomic::AtomicU64;
 mod colour;
 #[path = "gpu_working_view_inspection_tests.rs"]
 mod inspection;
+#[cfg(target_os = "macos")]
+#[path = "gpu_working_view_local_resource_tests.rs"]
+mod local_resources;
 #[path = "gpu_working_view_performance_tests.rs"]
 mod performance;
 #[path = "gpu_repair_view_tests.rs"]

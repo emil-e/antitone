@@ -1,5 +1,7 @@
 #[path = "editor_ui_row_tests.rs"]
 mod rows;
+#[path = "editor_ui_selection_tests.rs"]
+mod selection;
 #[path = "editor_tool_group_tests.rs"]
 mod tool_groups;
 #[path = "editor_ui_typography_tests.rs"]

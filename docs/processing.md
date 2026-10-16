@@ -96,7 +96,7 @@ Original GPU sources may concatenate two validated full-resolution rectangles fo
 
 The scalar spatial pipeline and GPU grades consume immutable snapshots. Full-stack preflight propagates continuous-weight intermediate bounds forward and observable-signal sensitivity backward, rejecting both overflow and unsupported attenuation/re-amplification. The next stage receives the proven output envelope, not a scratch peak. Compensated constants/temporaries preserve inversion and photographic precision; ordinary f32 AP1 is not an exact reusable prefix. These conservative checks can reject modest stacks and passing fixtures are not universal supported-domain proof.
 
-Library processing, persistence and export paths are connected, but the normal editor still rejects nonempty local collections, including inactive records. [Admission, controls, tools and remaining acceptance](plans/local-adjustments.md) are unfinished; scalar feather endpoints are not approved UI defaults.
+Normal editor controls, source-anchored tools, persistence and GPU export share these snapshots. Admission validates complete candidates against the calibrated GPU domain, including inactive/offscreen records, without publishing replacement resources. Support depends on the full calibration/response/Global/local stack, not a fixed adjustment count. [Photographic, interaction and broader-device acceptance](plans/local-adjustments.md) remains open; the editor's soft radial creation default does not change persisted falloff semantics.
 
 ### Preserve information, reduce mathematical work
 

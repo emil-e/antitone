@@ -156,21 +156,8 @@ fn command_save_commits_pending_numeric_text_before_snapshot() {
         editor.preferences.sections.insert(section.into(), false);
     }
     let context = egui::Context::default();
-    for frame in 0..12 {
-        let events = if frame == 3 {
-            vec![
-                egui::Event::PointerMoved(egui::pos2(950., 550.)),
-                egui::Event::MouseWheel {
-                    unit: egui::MouseWheelUnit::Point,
-                    phase: egui::TouchPhase::Move,
-                    delta: egui::vec2(0., -100.),
-                    modifiers: egui::Modifiers::NONE,
-                },
-            ]
-        } else {
-            Vec::new()
-        };
-        ui_frame(&mut editor, &context, events);
+    for _ in 0..12 {
+        ui_frame(&mut editor, &context, Vec::new());
     }
     let shapes = ui_frame(&mut editor, &context, vec![]);
     let exposure = shapes

@@ -20,7 +20,8 @@ pub(super) use progress::{ACTIVITY_BAR_HEIGHT, Progress, ProgressContent};
 #[path = "editor_ui_hierarchy.rs"]
 mod hierarchy;
 pub(super) use hierarchy::{
-    SectionHeader, collect_expansion, restore_expansion, section, section_disclosure, stage_tabs,
+    SectionHeader, collect_expansion, draggable_icon_row, restore_expansion, section,
+    section_disclosure, stage_tabs,
 };
 
 pub(super) const CONTROL_HEIGHT: f32 = 28.;

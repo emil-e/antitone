@@ -2120,14 +2120,18 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
                 vec![
                     "Crop & straighten",
                     "Dust repair",
-                    "White balance",
+                    "Adjustments",
                     "Exposure",
+                    "White balance",
                 ]
             } else {
                 vec!["Target", "Display P3", "Preview + TIFF · 100 nit"]
             };
             for label in &required {
                 assert!(labels.contains(label), "missing {label}");
+            }
+            if tab == 1 {
+                assert!(!labels.contains(&"Global") && !labels.contains(&"Editing: Global"));
             }
             if tab == 0 {
                 assert!(!labels.contains(&"Gamma balance"));
@@ -2161,7 +2165,7 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
                     "Exposure",
                 ]
             } else if tab == 1 {
-                vec!["Crop & straighten", "White balance", "Exposure"]
+                vec!["Crop & straighten", "Exposure", "White balance"]
             } else {
                 vec!["Target"]
             };

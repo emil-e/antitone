@@ -5,6 +5,7 @@ mod source_working;
 mod underlay;
 
 pub(super) fn enter_numeric(harness: &mut Harness<'_, Editor>, label: &str, text: &str) {
+    harness.try_run_realtime().unwrap();
     let role = egui::accesskit::Role::SpinButton;
     harness.get_by_role_and_label(role, label).scroll_to_me();
     harness.try_run_realtime().unwrap();
@@ -21,7 +22,7 @@ pub(super) fn enter_numeric(harness: &mut Harness<'_, Editor>, label: &str, text
     harness.step();
 }
 
-fn calibrated_workflow() -> (
+pub(super) fn calibrated_workflow() -> (
     Harness<'static, Editor>,
     Rc<RefCell<FloatCapture>>,
     tempfile::TempDir,
@@ -121,6 +122,12 @@ fn calibrated_workflow() -> (
     assert_eq!(harness.state().roll.gamma, 0.75);
     stage(&mut harness, "Photo");
     enter_numeric(&mut harness, "Exposure", "0.5");
+    assert_eq!(
+        harness.state().photo.exposure,
+        0.5,
+        "{}",
+        harness.state().status
+    );
     enter_numeric(&mut harness, "Warmth", "0.1");
     enter_numeric(&mut harness, "Tint", "-0.05");
     assert_eq!(harness.state().photo.exposure, 0.5);
@@ -431,7 +438,7 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_return_use_widget
 }
 
 #[test]
-fn physical_view_prospective_local_edits_use_current_input_and_clear_recovered_render_errors() {
+fn physical_view_local_edits_use_current_input_and_clear_recovered_render_errors() {
     use crate::{
         geometry::SourcePoint,
         local_adjustments::{GradientMask, LocalAdjustment},
@@ -476,7 +483,6 @@ fn physical_view_prospective_local_edits_use_current_input_and_clear_recovered_r
             }
             _ => (),
         }
-        // Prospective routing only: normal document admission remains deliberately closed.
         let editor = harness.state_mut();
         editor
             .document
@@ -484,10 +490,9 @@ fn physical_view_prospective_local_edits_use_current_input_and_clear_recovered_r
             .source_mut(source_id)
             .unwrap()
             .local_adjustments = Some(locals.clone());
-        assert!(
-            document::require_supported_grade(editor.document.project.source(source_id).unwrap())
-                .is_err()
-        );
+        editor
+            .validate_document_candidate(&editor.document)
+            .unwrap();
         let input = editor
             .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
             .unwrap();

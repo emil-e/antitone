@@ -140,6 +140,72 @@ fn drawing_preserves_manual_precision_and_exposure_outside_normal_slider_range()
     }
 }
 #[test]
+fn mask_parameters_preserve_precision_clamp_edits_and_reset_only_when_enabled() {
+    for width in [230., 315.] {
+        for (kind, text, expected) in [Parameter::Strength, Parameter::Feather]
+            .into_iter()
+            .flat_map(|kind| {
+                [("-0.1", 0.), ("0.123456789", 0.123456789), ("1.1", 1.)]
+                    .map(|(text, expected)| (kind, text, expected))
+            })
+        {
+            let context = egui::Context::default();
+            let mut value = 0.3456789123;
+            let draw = |value: &mut f64, enabled, events| {
+                frame(
+                    &context,
+                    value,
+                    kind,
+                    width,
+                    enabled,
+                    events,
+                    egui::Modifiers::NONE,
+                )
+            };
+            let response = draw(&mut value, true, vec![]);
+            assert_eq!(value, 0.3456789123);
+            assert!(response.1.rect.right() < response.2.rect.left());
+            for pressed in [true, false] {
+                draw(&mut value, true, pointer(response.1.rect.center(), pressed));
+            }
+            draw(&mut value, true, vec![egui::Event::Text(text.into())]);
+            assert_eq!(value, 0.3456789123);
+            draw(
+                &mut value,
+                true,
+                vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+            );
+            draw(&mut value, true, vec![]);
+            assert_eq!(value, expected);
+            value = 0.3456789123;
+            for pressed in [true, false] {
+                draw(
+                    &mut value,
+                    false,
+                    pointer(response.2.rect.center(), pressed),
+                );
+            }
+            assert_eq!(value, 0.3456789123);
+            let response = draw(&mut value, true, vec![]);
+            for pressed in [true, false] {
+                draw(&mut value, true, pointer(response.2.rect.center(), pressed));
+            }
+            assert_eq!(value, kind.default());
+            for pressed in [true, false] {
+                draw(&mut value, true, pointer(response.1.rect.center(), pressed));
+            }
+            draw(&mut value, true, vec![egui::Event::Text("0.75".into())]);
+            draw(&mut value, false, vec![]);
+            assert_eq!(
+                value,
+                kind.default(),
+                "disabling must not commit pending mask-parameter text"
+            );
+        }
+    }
+}
+
+#[test]
 fn slider_keyboard_steps_are_precise_and_shift_is_finer() {
     for (modifiers, expected) in [
         (egui::Modifiers::NONE, 0.05),

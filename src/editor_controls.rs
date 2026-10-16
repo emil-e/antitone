@@ -41,6 +41,8 @@ pub(super) fn active_tool<R>(
     )
 }
 
+pub(super) const DEFAULT_RADIAL_FEATHER: f64 = 0.8;
+
 #[derive(Clone, Copy)]
 pub enum Parameter {
     Gamma,
@@ -55,6 +57,8 @@ pub enum Parameter {
     Saturation,
     Density,
     CropMargin,
+    Strength,
+    Feather,
 }
 impl Parameter {
     fn label(self) -> &'static str {
@@ -71,6 +75,8 @@ impl Parameter {
             Self::Saturation => "Saturation",
             Self::Density => "Density",
             Self::CropMargin => "Inward margin",
+            Self::Strength => "Strength",
+            Self::Feather => "Feather",
         }
     }
     fn range(self) -> RangeInclusive<f64> {
@@ -82,7 +88,7 @@ impl Parameter {
             Self::Contrast => 0.4..=1.6,
             Self::Pivot => 0.01..=1.,
             Self::Saturation => 0.0..=2.,
-            Self::ColourMix | Self::Density => 0.0..=1.,
+            Self::ColourMix | Self::Density | Self::Strength | Self::Feather => 0.0..=1.,
             Self::CropMargin => 0.0..=crate::auto_crop::MAX_MARGIN_PERCENT,
             _ => -1.0..=1.0,
         }
@@ -98,8 +104,9 @@ impl Parameter {
         match self {
             Self::Gamma => DEFAULT_GAMMA,
             Self::Toe => DEFAULT_TOE,
-            Self::Contrast | Self::Saturation => 1.,
+            Self::Contrast | Self::Saturation | Self::Strength => 1.,
             Self::Pivot => DEFAULT_PIVOT,
+            Self::Feather => DEFAULT_RADIAL_FEATHER,
             Self::ColourMix | Self::Density => DEFAULT_COLOUR_MIX,
             Self::CropMargin => crate::auto_crop::DEFAULT_MARGIN_PERCENT,
             _ => 0.,
@@ -122,8 +129,8 @@ pub(super) fn numeric_cancelled(ui: &Ui, response: &Response) -> bool {
         .ctx()
         .data_mut(|data| data.remove_temp::<bool>(id))
         .unwrap_or(false);
-    let cancelling =
-        response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Escape));
+    let cancelling = ui.input(|input| input.key_pressed(egui::Key::Escape))
+        && (response.lost_focus() || ui.memory(|memory| memory.had_focus_last_frame(response.id)));
     if cancelling {
         ui.ctx().data_mut(|data| data.insert_temp(id, true));
     }
@@ -147,6 +154,10 @@ pub fn parameter(ui: &mut Ui, kind: Parameter, value: &mut f64) -> (Response, Re
             Parameter::Density => "Higher values darken colours more as saturation increases.",
             Parameter::CropMargin => {
                 "Trim each edge by a percentage of the detected frame's shorter side."
+            }
+            Parameter::Strength => "Scale the adjustment from no effect to full strength.",
+            Parameter::Feather => {
+                "Soften the oval's edge; 0 is hard, 1 fades across the full radius."
             }
             _ => "",
         };
@@ -223,6 +234,89 @@ pub fn parameter(ui: &mut Ui, kind: Parameter, value: &mut f64) -> (Response, Re
         (slider, numeric, reset)
     })
     .inner
+}
+
+pub(super) fn photographic_exposure(ui: &mut Ui, photo: &mut crate::processing::PhotoSettings) {
+    let (_, reset) = section(
+        ui,
+        "photo-exposure",
+        "Exposure",
+        SectionHeader {
+            summary: &format!("{:+.2} EV", photo.exposure),
+            changed: photo.exposure != 0.,
+            reset: Some(photo.exposure != 0.),
+            default_open: Some(true),
+        },
+        |ui| {
+            parameter(ui, Parameter::Exposure, &mut photo.exposure);
+        },
+    );
+    if reset {
+        photo.exposure = 0.;
+    }
+}
+
+pub(super) fn photographic_colour(
+    ui: &mut Ui,
+    photo: &mut crate::processing::PhotoSettings,
+    can_pick: bool,
+) -> bool {
+    let pick = color(ui, ColorControl::WhiteBalance, &mut photo.wb, can_pick);
+    let defaults = crate::processing::PhotoSettings::default();
+    let changed = photo.contrast != defaults.contrast
+        || photo.pivot != defaults.pivot
+        || photo.contrast_colour_mix != defaults.contrast_colour_mix;
+    let (_, reset) = section(
+        ui,
+        "photo-contrast",
+        "Contrast",
+        SectionHeader {
+            summary: &format!(
+                "{:.2} · Pivot {:.3} · Preserve {:.2}",
+                photo.contrast, photo.pivot, photo.contrast_colour_mix
+            ),
+            changed,
+            reset: Some(changed),
+            default_open: Some(true),
+        },
+        |ui| {
+            parameter(ui, Parameter::Contrast, &mut photo.contrast);
+            parameter(ui, Parameter::Pivot, &mut photo.pivot);
+            ui.small("Colour behavior");
+            parameter(ui, Parameter::ColourMix, &mut photo.contrast_colour_mix);
+        },
+    );
+    if reset {
+        photo.contrast = defaults.contrast;
+        photo.pivot = defaults.pivot;
+        photo.contrast_colour_mix = defaults.contrast_colour_mix;
+    }
+    let changed = photo.saturation != defaults.saturation
+        || photo.saturation_density != defaults.saturation_density;
+    let (_, reset) = section(
+        ui,
+        "photo-saturation",
+        "Saturation",
+        SectionHeader {
+            summary: &format!(
+                "{:.2} · Density {:.2}",
+                photo.saturation, photo.saturation_density
+            ),
+            changed,
+            reset: Some(changed),
+            default_open: Some(true),
+        },
+        |ui| {
+            parameter(ui, Parameter::Saturation, &mut photo.saturation);
+            ui.small("Colour behavior");
+            parameter(ui, Parameter::Density, &mut photo.saturation_density);
+        },
+    );
+    if reset {
+        photo.saturation = defaults.saturation;
+        photo.saturation_density = defaults.saturation_density;
+    }
+    pick
 }
 
 pub fn calibration(

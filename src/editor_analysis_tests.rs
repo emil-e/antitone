@@ -784,6 +784,8 @@ fn click_analyze(editor: &mut Editor) {
     click_label(editor, &ctx, "Analyze roll");
 }
 
+#[path = "editor_local_analysis_tests.rs"]
+mod locals;
 #[path = "editor_analysis_review_tests.rs"]
 mod review_tests;
 

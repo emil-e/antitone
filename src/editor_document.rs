@@ -1,6 +1,5 @@
 use crate::{
     Error,
-    gpu::ProcessingParameters,
     project::{Development, Project, Save, Source, SourceDevelopment, SourceId},
     raw::{Metadata, RawFile},
     scan::Scan,
@@ -97,19 +96,34 @@ impl Document {
                 .map(|_| source.id)
         })
     }
+    #[cfg(test)]
     pub fn validate(&self) -> Result<()> {
+        self.validate_with_device(None)
+    }
+    /// Preflight the complete document without publishing grades or retaining offscreen images.
+    pub fn validate_for_device(&self, device: &wgpu::Device) -> Result<()> {
+        self.validate_with_device(Some(device))
+    }
+    pub(super) fn validate_with_device(&self, device: Option<&wgpu::Device>) -> Result<()> {
         self.project.require_runtime(&crate::raw::version())?;
+        let calibration = self.project.processing_calibration()?;
         for source in &self.project.sources {
-            require_supported_grade(source)?;
-        }
-        if let Some(calibration) = self.project.processing_calibration()? {
-            for source in &self.project.sources {
-                ProcessingParameters::positive(
+            if let Some(calibration) = calibration {
+                super::processing::validate_source(
+                    device,
                     calibration,
                     self.project.roll,
+                    source,
                     source.photo,
-                    glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1),
                 )?;
+            } else if source
+                .local_adjustments
+                .as_ref()
+                .is_some_and(|locals| !locals.adjustments.is_empty())
+            {
+                return Err(failure(
+                    "local adjustments require a calibrated processing basis",
+                ));
             }
         }
         if let Some(development) = &self.project.development
@@ -126,9 +140,13 @@ impl Document {
     }
     #[cfg(test)]
     pub fn open(path: &Path) -> Result<Self> {
-        Self::open_with_progress(path, |_, _| {})
+        Self::open_with_progress(path, None, |_, _| {})
     }
-    pub fn open_with_progress(path: &Path, mut progress: impl FnMut(usize, usize)) -> Result<Self> {
+    pub fn open_with_progress(
+        path: &Path,
+        device: Option<&wgpu::Device>,
+        mut progress: impl FnMut(usize, usize),
+    ) -> Result<Self> {
         let path = absolute(path)?;
         let project = Project::load(&path)?;
         let document = Self {
@@ -140,7 +158,7 @@ impl Document {
             #[cfg(test)]
             fixture_directory: None,
         };
-        document.validate()?;
+        document.validate_with_device(device)?;
         let total = document.project.order.len();
         progress(0, total);
         for (index, id) in document.project.order.iter().enumerate() {
@@ -153,11 +171,12 @@ impl Document {
     }
     #[cfg(test)]
     pub fn import(&mut self, paths: &[PathBuf]) -> Result<()> {
-        self.import_with_progress(paths, |_, _| {})
+        self.import_with_progress(paths, None, |_, _| {})
     }
     pub fn import_with_progress(
         &mut self,
         paths: &[PathBuf],
+        device: Option<&wgpu::Device>,
         mut progress: impl FnMut(usize, usize),
     ) -> Result<()> {
         let started = std::time::Instant::now();
@@ -175,7 +194,7 @@ impl Document {
             }
             progress(index + 1, paths.len());
         }
-        self.validate()?;
+        self.validate_with_device(device)?;
         println!(
             "raw_import sources={} seconds={:.6}",
             paths.len(),
@@ -206,7 +225,16 @@ impl Document {
         self.project.remove_from_filmstrip(id)?;
         Ok(id)
     }
+    #[cfg(test)]
     pub fn save(&self, path: &Path, policy: Save) -> Result<Self> {
+        self.save_with_device(path, policy, None)
+    }
+    pub fn save_with_device(
+        &self,
+        path: &Path,
+        policy: Save,
+        device: Option<&wgpu::Device>,
+    ) -> Result<Self> {
         let path = absolute(path)?;
         if !path
             .extension()
@@ -233,7 +261,7 @@ impl Document {
                 )?;
             }
         }
-        candidate.validate()?;
+        candidate.validate_with_device(device)?;
         candidate.project.save(&path, policy)?;
         candidate.path = Some(path);
         candidate.saved = candidate.project.clone();
@@ -325,20 +353,6 @@ pub(super) fn source_metadata(path: &Path, metadata: &Metadata) -> Result<Source
         crop: None,
     })
 }
-// Until GPU parity, even disabled records must not enter the global-only editor paths.
-pub(super) fn require_supported_grade(source: &Source) -> Result<()> {
-    if source
-        .local_adjustments
-        .as_ref()
-        .is_some_and(|locals| !locals.adjustments.is_empty())
-    {
-        return Err(failure(
-            "local adjustments are not supported by the GPU editor yet",
-        ));
-    }
-    Ok(())
-}
-
 pub(super) fn verify_source(expected: &Source, actual: &Source) -> Result<()> {
     if expected.development != actual.development {
         return Err(failure(format!(

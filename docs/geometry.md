@@ -63,9 +63,11 @@ A destination pixel inverse-maps to a source footprint. Exact intersection areas
 
 ## Source-anchored local masks
 
-Local gradients remain in original developed-source coordinates. Authoritative scalar/GPU original-sample processing evaluates them at original pixel centres after Global grading, before any rendered/working reconstruction. The internal view-sized candidate evaluates precise original-coordinate masks at mapped footprint centres after filtering; this approximation has no normal-editor local admission yet. Crop, turns/flips, straightening and viewport navigation transform the photograph and its overlay, not the stored mask.
+Local gradients remain in original developed-source coordinates. Authoritative scalar/GPU original-sample processing evaluates them at original pixel centres after Global grading, before any rendered/working reconstruction. The normal working view evaluates precise original-coordinate masks at mapped footprint centres after filtering; this remains a sampling approximation, not original-sample export authority. Crop, turns/flips, straightening and viewport navigation transform the photograph and its overlay, not the stored mask.
 
 Nearest-centre proxies must evaluate at the actual native source pixel chosen by their sampling raster; reusable tiles retain their origins and bypass locals in padded samples outside the declared area. Geometry is supplied independently of flat-field correction, so clearing correction must not erase it. Simply replacing a proxy crop with a rounded source rectangle can change its sampling lattice; regional processing needs explicit original-raster addressing before it can claim exact pitch-preserving reuse.
+
+Viewer mask gestures inverse-map their captured canvas/composition layout into source coordinates, retaining subpixel precision and off-image geometry. Validated live geometry is transient until release and does not replace immutable job snapshots. [Local interaction](editor.md#immutable-local-grade-routing) describes gesture acceptance and cancellation.
 
 ## Drafts do not change accepted composition
 

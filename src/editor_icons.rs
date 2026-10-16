@@ -22,10 +22,15 @@ pub(super) enum Icon {
     FlipVertical,
     Crop,
     Analyze,
+    LinearGradient,
+    RadialGradient,
+    AddLinearGradient,
+    AddRadialGradient,
     Pick,
     Dust,
     Swap,
     Guides,
+    Eye,
     ChevronRight,
     ChevronDown,
 }
@@ -42,6 +47,21 @@ impl Icon {
             ));
         };
         match self {
+            Self::Eye => {
+                let upper = (0..=24).map(|i| {
+                    let t = i as f32 / 24.;
+                    point(2. + 12. * t, 8. - 4. * (std::f32::consts::PI * t).sin())
+                });
+                let lower = (0..=24).rev().map(|i| {
+                    let t = i as f32 / 24.;
+                    point(2. + 12. * t, 8. + 4. * (std::f32::consts::PI * t).sin())
+                });
+                ui.painter().add(egui::Shape::closed_line(
+                    upper.chain(lower).collect(),
+                    stroke,
+                ));
+                ui.painter().circle_stroke(point(8., 8.), 2.5, stroke);
+            }
             Self::Reset => {
                 let arc = (0..=24)
                     .map(|i| {
@@ -181,6 +201,32 @@ impl Icon {
             Self::Crop => {
                 line(&[[4., 1.], [4., 12.], [15., 12.]]);
                 line(&[[1., 4.], [12., 4.], [12., 15.]]);
+            }
+            Self::AddLinearGradient | Self::AddRadialGradient => {
+                let base = if matches!(self, Self::AddLinearGradient) {
+                    Self::LinearGradient
+                } else {
+                    Self::RadialGradient
+                };
+                base.paint(ui, rect.translate(egui::vec2(-2., -2.)), stroke);
+                line(&[[10., 13.], [16., 13.]]);
+                line(&[[13., 10.], [13., 16.]]);
+            }
+            Self::RadialGradient => {
+                ui.painter().add(egui::Shape::ellipse_stroke(
+                    point(8., 8.),
+                    egui::vec2(6., 4.),
+                    stroke,
+                ));
+                ui.painter().circle_stroke(point(8., 8.), 1., stroke);
+            }
+            Self::LinearGradient => {
+                line(&[[2., 3.], [14., 3.]]);
+                line(&[[2., 13.], [14., 13.]]);
+                line(&[[8., 3.], [8., 13.]]);
+                for y in [3., 13.] {
+                    ui.painter().circle_stroke(point(8., y), 2., stroke);
+                }
             }
             Self::Pick => {
                 line(&[

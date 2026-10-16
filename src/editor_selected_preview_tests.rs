@@ -609,10 +609,9 @@ fn local_snapshots_reach_pending_previews_and_cached_thumbnails_without_rebuildi
                 .adjustment
                 .invert = false;
         }
-        assert!(
-            editor.document.validate().is_err(),
-            "normal Open/Save remains guarded"
-        );
+        editor
+            .validate_document_candidate(&editor.document)
+            .unwrap();
     });
 }
 

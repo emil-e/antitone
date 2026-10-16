@@ -7,6 +7,8 @@ use std::{cell::RefCell, rc::Rc, time::Instant};
 
 #[path = "editor_kittest_activity.rs"]
 mod activity;
+#[path = "editor_kittest_adjustments.rs"]
+mod adjustments;
 #[path = "editor_kittest_analysis.rs"]
 mod analyze;
 #[path = "editor_kittest_auto_crop.rs"]
@@ -17,6 +19,8 @@ mod correction;
 mod dust;
 #[path = "editor_kittest_fullscreen.rs"]
 mod fullscreen;
+#[path = "editor_kittest_masks.rs"]
+mod masks;
 #[path = "editor_kittest_project.rs"]
 mod project;
 #[path = "editor_kittest_roll_selection.rs"]

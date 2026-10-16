@@ -101,14 +101,16 @@ impl Editor {
             || self.pick.is_some()
             || self.crop_edit.is_some()
             || self.auto_crop_edit.is_some()
+            || self.mask_edit.is_some()
         {
             return;
         }
-        let Some(ready) = &self.ready else {
+        let Some(area) = self.ready.as_ref().map(|ready| ready.area) else {
             return;
         };
+        self.close_adjustments();
         self.crop_edit = Some(CropEdit {
-            draft: self.crop.unwrap_or(Crop::from_region(ready.area)),
+            draft: self.crop.unwrap_or(Crop::from_region(area)),
             viewport: self.viewport,
             ratio: None,
             drag: None,
@@ -160,7 +162,11 @@ impl Editor {
         let cropping = self.crop_edit.is_some();
         let dusting = self.dust.cleanup;
         let auto_cropping = self.auto_crop_edit.is_some();
-        let tool_active = cropping || dusting || auto_cropping || self.flat_edit.is_some();
+        let tool_active = cropping
+            || dusting
+            || auto_cropping
+            || self.flat_edit.is_some()
+            || self.mask_edit.is_some();
         let ready = !self.busy && self.ready.is_some();
         let commands_enabled = ready && !tool_active && self.pick.is_none();
         let crop_enabled =
@@ -259,6 +265,10 @@ impl Editor {
             {
                 action = Some(Action::Dust);
             }
+            self.adjustment_launcher(
+                ui,
+                commands_enabled && self.calibration().is_some() && !self.source,
+            );
         });
 
         match action {

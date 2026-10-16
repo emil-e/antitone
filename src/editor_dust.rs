@@ -877,6 +877,7 @@ impl Editor {
         if self.auto_crop_edit.is_some() {
             return;
         }
+        self.close_adjustments();
         if self.dust.brush_source != self.current_source
             && let (Some(source), Some(active)) = (
                 self.current_source,
@@ -1504,6 +1505,15 @@ impl Editor {
         roll: RollSettings,
         photo: PhotoSettings,
     ) -> Result<(), Error> {
+        self.dust_validate_snapshot(calibration, roll, &self.dust_grade_snapshot(photo)?)
+    }
+
+    pub(super) fn dust_validate_snapshot(
+        &self,
+        calibration: Calibration,
+        roll: RollSettings,
+        snapshot: &PhotoGradeSnapshot,
+    ) -> Result<(), Error> {
         if self.dust.gpu.is_empty() {
             return Ok(());
         }
@@ -1535,43 +1545,51 @@ impl Editor {
                 bound = bound.max(cached.bound);
             }
         }
-        self.validate_dust_envelope(calibration, roll, photo, bound)
+        self.validate_dust_snapshot(calibration, roll, snapshot, bound)
     }
 
-    fn validate_dust_envelope(
+    fn dust_grade_snapshot(&self, photo: PhotoSettings) -> Result<PhotoGradeSnapshot, Error> {
+        let locals = match self.current_source {
+            Some(source) => self
+                .document
+                .project
+                .source(source)?
+                .grade_snapshot()?
+                .locals()
+                .to_vec(),
+            None => Vec::new(),
+        };
+        PhotoGradeSnapshot::new(photo, locals)
+    }
+
+    fn validate_dust_snapshot(
         &self,
         calibration: Calibration,
         roll: RollSettings,
-        photo: PhotoSettings,
+        snapshot: &PhotoGradeSnapshot,
         bound: DVec3,
     ) -> Result<(), Error> {
         if bound == DVec3::ZERO {
             return Ok(());
         }
-        let (Some(device), Some(source), Some(ready)) =
-            (&self.working.device, self.current_source, &self.ready)
-        else {
+        let (Some(device), Some(ready)) = (&self.working.device, &self.ready) else {
             return Ok(());
         };
-        let locals = self
-            .document
-            .project
-            .source(source)?
-            .grade_snapshot()?
-            .locals()
-            .to_vec();
         crate::gpu::GpuPhotoGrade::validate_repaired(
             device,
             self.processing_calibration(calibration)?,
             roll,
-            &PhotoGradeSnapshot::new(photo, locals)?,
+            snapshot,
             glam::DMat3::from_cols_array_2d(&ready.record.development.camera_to_ap1),
             ready.area,
             bound,
         )
     }
 
-    pub(super) fn dust_gpu_snapshot(&mut self) -> Result<crate::gpu::repairs::Snapshot, Error> {
+    pub(super) fn dust_gpu_snapshot(
+        &mut self,
+        grade: Option<&PhotoGradeSnapshot>,
+    ) -> Result<crate::gpu::repairs::Snapshot, Error> {
         let Some(signature) = self.dust_signature() else {
             return Ok(Default::default());
         };
@@ -1583,6 +1601,10 @@ impl Editor {
         };
         self.dust.render_error = None;
         let calibration = self.calibration().expect("neutral repair signature");
+        let snapshot = match grade {
+            Some(grade) => grade.clone(),
+            None => self.dust_grade_snapshot(self.photo)?,
+        };
         let repairs = self.effective_dust_repairs(source);
         let candidates = repairs
             .iter()
@@ -1603,7 +1625,7 @@ impl Editor {
             .iter()
             .fold(DVec3::ZERO, |bound, (_, c)| bound.max(c.bound));
         let all_valid = self
-            .validate_dust_envelope(calibration, self.roll, self.photo, bound)
+            .validate_dust_snapshot(calibration, self.roll, &snapshot, bound)
             .is_ok();
         let mut admitted_bound = DVec3::ZERO;
         let mut patches = Vec::new();
@@ -1611,7 +1633,7 @@ impl Editor {
             let bound = admitted_bound.max(cached.bound);
             if !all_valid
                 && let Err(error) =
-                    self.validate_dust_envelope(calibration, self.roll, self.photo, bound)
+                    self.validate_dust_snapshot(calibration, self.roll, &snapshot, bound)
             {
                 self.dust.render_error = Some(error.to_string());
                 continue;

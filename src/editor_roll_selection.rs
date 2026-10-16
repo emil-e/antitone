@@ -42,12 +42,14 @@ impl Editor {
             && self.pick.is_none()
             && self.flat_edit.is_none()
             && self.crop_edit.is_none()
+            && self.mask_edit.is_none()
             && self.failure.is_none()
             && self.document_pending.is_none()
             && self.transition.is_none()
             && self.project_overwrite.is_none()
             && self.resume_transition.is_none()
             && self.overwrite.is_none()
+            && !self.adjustments.confirming()
     }
 
     pub(super) fn select_roll_photo(&mut self, index: usize, modifiers: egui::Modifiers) {

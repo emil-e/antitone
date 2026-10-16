@@ -445,22 +445,25 @@ fn tightened_global_local_bounds_admit_photographic_stacks_with_independent_pixe
     let (device, queue, kernel) = context();
     let area = SourceRegion::from([12, 12, 8192, 5472]);
     let size = [31, 19];
-    let roll = RollSettings {
-        gamma: 0.65,
-        ..RollSettings::new_grade()
-    };
-    for (global, count) in [
-        (PhotoSettings::default(), 3),
-        (
-            PhotoSettings {
-                exposure: -2.,
-                contrast: 1.05,
-                saturation: 1.2,
-                ..Default::default()
-            },
-            4,
-        ),
-    ] {
+    for (gamma, global, count) in [0.60, 0.65].into_iter().flat_map(|gamma| {
+        [
+            (gamma, PhotoSettings::default(), 3),
+            (
+                gamma,
+                PhotoSettings {
+                    exposure: -2.,
+                    contrast: 1.05,
+                    saturation: 1.2,
+                    ..Default::default()
+                },
+                if gamma == 0.60 { 3 } else { 4 },
+            ),
+        ]
+    }) {
+        let roll = RollSettings {
+            gamma,
+            ..RollSettings::new_grade()
+        };
         let locals = (0..count)
             .map(|i| LocalAdjustment {
                 mask: if i % 2 == 1 {
@@ -495,9 +498,17 @@ fn tightened_global_local_bounds_admit_photographic_stacks_with_independent_pixe
             .collect();
         let snapshot = PhotoGradeSnapshot::new(global, locals).unwrap();
         for matrix in [DMat3::IDENTITY, matrix()] {
-            let grade =
-                GpuPhotoGrade::new(&device, calibration(), roll, snapshot.clone(), matrix, area)
-                    .unwrap();
+            let grade = GpuPhotoGrade::new(
+                &device,
+                calibration(),
+                roll,
+                snapshot.clone(),
+                matrix,
+                area,
+            )
+            .unwrap_or_else(|error| {
+                panic!("gamma={gamma} global={global:?} count={count} matrix={matrix:?}: {error}")
+            });
             let (source, pixels) = source(&device, area, size, matrix, None);
             let actual = read(
                 &device,
@@ -518,6 +529,143 @@ fn tightened_global_local_bounds_admit_photographic_stacks_with_independent_pixe
                 None,
             );
         }
+    }
+}
+
+#[test]
+fn default_response_ordered_locals_preserve_corrected_noisy_shadows_and_floor_flags() {
+    let (device, queue, kernel) = context();
+    let area = SourceRegion::from([120, 80, 32, 8]);
+    let raster = SourceRaster::new(area, [32, 8]).unwrap();
+    let field = Arc::new(
+        FlatField::from_nodes(
+            [120, 80, 32, 8],
+            [2, 2],
+            vec![
+                DVec3::new(0.81, 1.17, 0.97),
+                DVec3::new(1.23, 0.78, 1.07),
+                DVec3::new(1.11, 0.99, 0.89),
+                DVec3::new(0.93, 1.03, 1.14),
+            ],
+        )
+        .unwrap(),
+    );
+    let pixels: Vec<_> = (0..256)
+        .map(|i| match i % 4 {
+            0 => [0, 1, 0, 0],
+            1 => [900, 300, 100, 0],
+            2 => {
+                let noise = (i % 7) as i32 - 3;
+                [
+                    (12452 + noise) as u16,
+                    (9175 - noise) as u16,
+                    (7864 + 2 * noise) as u16,
+                    0,
+                ]
+            }
+            _ => codes([i % 32, i / 32]),
+        })
+        .collect();
+    let roll = RollSettings::new_grade();
+    assert_eq!(roll.gamma, antitone::processing::DEFAULT_GAMMA);
+    for corrected in [false, true] {
+        let cal = if corrected {
+            field.processing_calibration(calibration()).unwrap()
+        } else {
+            calibration()
+        };
+        let mut source = ProcessingSource::new(&device, &pixels, matrix()).unwrap();
+        source
+            .set_flat_field(
+                corrected.then(|| Arc::new(GpuFlatField::new(&device, field.clone()).unwrap())),
+                SourceGeometry::new([120, 80, 32, 8], [32, 8]).unwrap(),
+            )
+            .unwrap();
+        let mut locals = vec![
+            adjustment(
+                GradientMask::Linear {
+                    start: SourcePoint([121., 80.]),
+                    end: SourcePoint([149., 87.]),
+                },
+                PhotoSettings {
+                    exposure: 0.5,
+                    wb: Balance {
+                        warmth: 0.02,
+                        tint: -0.01,
+                    },
+                    ..Default::default()
+                },
+            ),
+            adjustment(
+                GradientMask::Radial {
+                    center: SourcePoint([135., 84.]),
+                    radii: [14., 5.],
+                    angle: 0.3,
+                    feather: 0.8,
+                },
+                PhotoSettings {
+                    exposure: -0.25,
+                    contrast: 1.05,
+                    saturation: 1.1,
+                    ..Default::default()
+                },
+            ),
+        ];
+        let mut results = Vec::new();
+        for _ in 0..2 {
+            let snapshot =
+                PhotoGradeSnapshot::new(PhotoSettings::default(), locals.clone()).unwrap();
+            let grade = GpuPhotoGrade::new(&device, cal, roll, snapshot, matrix(), area).unwrap();
+            let actual = read(
+                &device,
+                &queue,
+                &kernel,
+                &source,
+                pixels.len(),
+                &grade,
+                None,
+            );
+            let global = Pipeline::new(cal, roll, PhotoSettings::default(), matrix()).unwrap();
+            let mut signed = false;
+            let mut hdr = false;
+            for (i, pixel) in pixels.iter().enumerate() {
+                let xy = raster.source_pixel([i as u32 % 32, i as u32 / 32]).unwrap();
+                let point = [xy[0] as f64 + 0.5, xy[1] as f64 + 0.5];
+                let scan = DVec3::new(pixel[0] as f64, pixel[1] as f64, pixel[2] as f64) / 65535.;
+                let scan = scan
+                    * if corrected {
+                        field.gain(point).unwrap()
+                    } else {
+                        DVec3::ONE
+                    };
+                let inverted = global.apply(scan).unwrap();
+                let expected = local_reference(inverted.rgb, &locals, point);
+                let flags = inverted
+                    .floored
+                    .iter()
+                    .enumerate()
+                    .fold(0, |bits, (c, flag)| bits | (u32::from(*flag) << c));
+                assert_eq!(actual[i][3] as u32, flags);
+                signed |= expected.min_element() < 0.;
+                hdr |= expected.max_element() > 1.;
+                for c in 0..3 {
+                    assert!(
+                        actual[i][c].is_finite()
+                            && (actual[i][c] as f64 - expected[c]).abs()
+                                <= 2e-5 + 2e-4 * expected[c].abs(),
+                        "corrected={corrected} point={point:?} channel={c} GPU={:?} reference={expected:?}",
+                        actual[i]
+                    );
+                }
+            }
+            assert!(signed && hdr);
+            results.push(actual);
+            locals.reverse();
+        }
+        assert!(
+            results[0].iter().zip(&results[1]).any(|(a, b)| a != b),
+            "the ordered fixture must distinguish nonlinear processing order"
+        );
     }
 }
 

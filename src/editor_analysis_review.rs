@@ -96,12 +96,14 @@ pub(super) fn prepare(
     request: &analysis::Request,
     generation: &AtomicU64,
     developments: &development::Scheduler,
+    device: &wgpu::Device,
     progress: impl FnMut(usize, usize),
 ) -> Result<Option<Approved>, Error> {
     prepare_with_measurements(
         request,
         generation,
         developments,
+        device,
         progress,
         &mut measurements::Measurements::default(),
     )
@@ -111,6 +113,7 @@ fn prepare_with_measurements(
     request: &analysis::Request,
     generation: &AtomicU64,
     developments: &development::Scheduler,
+    device: &wgpu::Device,
     mut progress: impl FnMut(usize, usize),
     measurements: &mut measurements::Measurements,
 ) -> Result<Option<Approved>, Error> {
@@ -118,7 +121,7 @@ fn prepare_with_measurements(
     if cancelled() {
         return Ok(None);
     }
-    request.document.validate()?;
+    request.document.validate_for_device(device)?;
     let project = &request.document.project;
     let wb = project
         .development
@@ -352,6 +355,12 @@ fn prepare_with_measurements(
 
 impl Editor {
     pub(super) fn prepare_analysis_review(&mut self, mut request: analysis::Request) {
+        if self.mask_edit.is_some()
+            || self.auto_crop_edit.is_some()
+            || self.adjustments.confirming()
+        {
+            return;
+        }
         request.revision = self.analysis_generation.fetch_add(1, Ordering::Relaxed) + 1;
         let id = self.request_id();
         self.thumbnails.cancel();
@@ -393,6 +402,8 @@ impl Editor {
         if self.id != request.loaded
             || self.pick.is_some()
             || self.crop_edit.is_some()
+            || self.auto_crop_edit.is_some()
+            || self.mask_edit.is_some()
             || self.current_source != Some(request.selected)
             || self.document.project != request.document.project
             || self.document.path != request.document.path
@@ -403,11 +414,12 @@ impl Editor {
         match result {
             Ok(Some(approved)) => {
                 let replaces_photos = request.document.project.order.iter().any(|id| {
-                    request
-                        .document
-                        .project
-                        .source(*id)
-                        .is_ok_and(|s| s.photo != PhotoSettings::default())
+                    request.document.project.source(*id).is_ok_and(|s| {
+                        s.photo != PhotoSettings::default()
+                            || s.local_adjustments
+                                .as_ref()
+                                .is_some_and(|locals| !locals.adjustments.is_empty())
+                    })
                 });
                 self.analysis_review = Some(Review {
                     request,
@@ -532,6 +544,8 @@ impl Editor {
         };
         if self.pick != Some(Pick::Analysis)
             || self.crop_edit.is_some()
+            || self.auto_crop_edit.is_some()
+            || self.mask_edit.is_some()
             || self.id != review.loaded
             || self.current_source != self.document.project.order.get(self.selected).copied()
             || self.document.project != review.request.document.project

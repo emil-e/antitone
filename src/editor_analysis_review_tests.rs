@@ -53,7 +53,7 @@ fn reply(
         .collect();
     (id, analysis_review::Approved { entries, files })
 }
-fn prepared(editor: &mut Editor, receiver: &mpsc::Receiver<Command>) {
+pub(super) fn prepared(editor: &mut Editor, receiver: &mpsc::Receiver<Command>) {
     let (id, approved) = reply(editor, receiver);
     editor.analysis_areas_result(id, Ok(Some(approved)));
     assert!(editor.analysis_review.is_some(), "{}", editor.status);

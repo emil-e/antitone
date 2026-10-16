@@ -100,13 +100,13 @@ Roll EV receives the median total EV. Each Photo EV receives its total minus tha
 
 ## Install the baseline, not a partial result
 
-Analyze replaces calibration, channel balance, Roll WB/EV and all ordered Photo grading. Photo exposure gets the estimated residual; Photo WB, contrast, pivot, colour preservation, saturation and density return to their actual defaults. Retired/nonordered source grades are untouched.
+Analyze replaces calibration, channel balance, Roll WB/EV and all ordered Photo grading. Photo exposure gets the estimated residual; Photo WB, contrast, pivot, colour preservation, saturation and density return to their actual defaults. Local adjustments and their masks are removed from analyzed photos, including disabled and identity records. Their non-reusing ID allocators are retained. Retired/nonordered source grades are untouched.
 
-Every run reviews sampling areas. Non-default ordered Photo settings add the reset warning to that same review, not a second modal. Pending numeric edits commit before preparation; stale review cannot authorize a changed document or grade. Authored zero is not treated as “untouched.”
+Every run reviews sampling areas. Non-default ordered Global Photo settings or any nonempty local collection add an explicit reset warning to that same review, not a second modal. The warning names local-mask removal and its lack of undo. Pending numeric edits commit before preparation; stale review cannot authorize a changed document or grade. Authored zero is not treated as “untouched.”
 
 Selected global gamma/response, accepted correction and Roll/Photo orientation and crop are preserved. Reviewed per-photo support is saved with the installed baseline; no review draft is saved. Manual edits, picks and area changes never trigger another analysis automatically.
 
-The complete candidate validates, including every Photo's GPU domain, before one atomic installation of both support and grading. Failure, cancellation or stale completion preserves accepted processing and returns to the original working photo without changing multi-selection. Source file revisions are checked through promotion. Cancellation is cooperative; a native call or submitted GPU phase may delay acknowledgement.
+The complete candidate validates, including every source's resulting GPU domain and retained nonordered grades, before one atomic installation of both support and grading. Local-bearing inputs and results use the same complete device-aware preflight as other document operations; resetting ordered masks does not bypass validation of retained non-filmstrip grades. Failure, cancellation or stale completion preserves accepted processing and returns to the original working photo without changing multi-selection. Source file revisions are checked through promotion. Cancellation is cooperative; a native call or submitted GPU phase may delay acknowledgement.
 
 ## Where the estimate can fail
 

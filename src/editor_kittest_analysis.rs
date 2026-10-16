@@ -46,14 +46,11 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
         .unwrap()
         .replaces_photos
     {
-        assert!(
-            harness
-                .get_by_label("Tool warning")
-                .accesskit_node()
-                .description()
-                .unwrap()
-                .contains("Photo adjustments")
-        );
+        let warning = harness.get_by_label("Tool warning");
+        let description = warning.accesskit_node().description().unwrap();
+        assert!(description.contains("Photo adjustments"));
+        assert!(description.contains("local adjustments and masks"));
+        assert!(description.contains("cannot be undone"));
     }
 }
 
@@ -186,6 +183,9 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
     {
         let editor = harness.state_mut();
         editor.roll.gamma = 0.7;
+        editor.dmin.get_or_insert(DVec3::new(0.2, 0.15, 0.1));
+        editor.dmax.get_or_insert(DVec3::new(0.008, 0.005, 0.002));
+        editor.source = false;
         editor.roll_orientation.turn_clockwise();
         editor.photo_orientation.flips.horizontal = true;
         editor.crop = Some(
@@ -199,7 +199,47 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
             tint: -0.05,
         };
         editor.photo.contrast = 1.2;
+        let ids = adjustments::install_locals(editor);
+        let mut locals = editor
+            .document
+            .project
+            .source(editor.current_source.unwrap())
+            .unwrap()
+            .local_adjustments
+            .clone()
+            .unwrap();
+        locals.next_id = 40;
+        locals.adjustments[0].adjustment.photo.exposure = 0.25;
+        locals.adjustments[1].adjustment.enabled = false;
+        for id in editor.document.project.order.clone() {
+            editor
+                .document
+                .project
+                .source_mut(id)
+                .unwrap()
+                .local_adjustments = Some(locals.clone());
+        }
+        let mut retired = editor
+            .document
+            .project
+            .source(editor.current_source.unwrap())
+            .unwrap()
+            .clone();
+        retired.id = SourceId(0);
+        retired.path = "retired-local-reference.dng".into();
+        retired.photo = PhotoSettings::default();
+        editor
+            .document
+            .register_reference(
+                retired,
+                editor.document.project.development.clone().unwrap(),
+            )
+            .unwrap();
+        editor.select_adjustment(super::super::adjustments::Target::Local(ids[0]));
         editor.sync_document();
+        editor
+            .validate_document_candidate(&editor.document)
+            .unwrap();
     }
     harness.step();
     let selected = harness.state().current_source;
@@ -256,6 +296,10 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
         "{}",
         harness.state().status
     );
+    assert_eq!(
+        harness.state().adjustment_target(),
+        super::super::adjustments::Target::Global
+    );
     let after = &harness.state().document.project;
     assert_eq!(after.order, before.order);
     assert!(after.analysis_area.is_none());
@@ -280,6 +324,13 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
                     ..PhotoSettings::default()
                 }
             );
+            let locals = source.local_adjustments.as_ref().unwrap();
+            assert!(locals.adjustments.is_empty());
+            assert_eq!(
+                locals.next_id,
+                prior.local_adjustments.as_ref().unwrap().next_id
+            );
+            source.local_adjustments = prior.local_adjustments.clone();
         }
         source.photo = prior.photo;
         assert_eq!(&source, prior);
@@ -305,6 +356,23 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
         assert!(exposures[0] > exposures[1]);
     }
     settled_targets(harness, case);
+    {
+        let editor = harness.state_mut();
+        let adjustment = before
+            .source(selected.unwrap())
+            .unwrap()
+            .local_adjustments
+            .as_ref()
+            .unwrap()
+            .adjustments[0]
+            .adjustment;
+        editor
+            .edit_adjustments(|locals| {
+                locals.add("Survives failed Analyze".into(), adjustment)?;
+                Ok(())
+            })
+            .unwrap();
+    }
 
     draw_picture(
         harness,

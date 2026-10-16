@@ -88,7 +88,8 @@ pub(super) fn validate_source(
     if snapshot.locals().is_empty() {
         ProcessingParameters::positive(calibration, roll, photo, matrix).map(|_| ())
     } else {
-        let device = device.ok_or_else(|| Error::Gpu("no editor GPU device".into()))?;
+        let device = device
+            .ok_or_else(|| Error::Gpu("local adjustments require an editor GPU device".into()))?;
         GpuPhotoGrade::validate(
             device,
             calibration,
@@ -101,6 +102,27 @@ pub(super) fn validate_source(
 }
 
 impl Editor {
+    pub(super) fn validate_document_candidate(&self, document: &Document) -> Result<(), Error> {
+        document.validate_with_device(self.grades.device.as_ref())
+    }
+
+    pub(super) fn validate_source_candidate(&self, source: &Source) -> Result<(), Error> {
+        let calibration = self.calibration().ok_or(Error::InvalidParameter(
+            "local adjustments require calibration",
+        ))?;
+        validate_source(
+            self.grades.device.as_ref(),
+            self.processing_calibration(calibration)?,
+            self.roll,
+            source,
+            source.photo,
+        )?;
+        if self.current_source == Some(source.id) {
+            self.dust_validate_snapshot(calibration, self.roll, &source.grade_snapshot()?)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn positive_processing_for_source(
         &self,
         calibration: Calibration,
@@ -192,4 +214,4 @@ pub(super) fn image_paint(
 
 #[cfg(test)]
 #[path = "editor_processing_tests.rs"]
-mod tests;
+pub(super) mod tests;
