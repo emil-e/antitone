@@ -164,6 +164,40 @@ fn next_use_and_admission_handle_unknown_keys_ties_and_exhaustion() {
 }
 
 #[test]
+fn retention_prefers_nearer_future_uses_over_lru_order() {
+    let near = [1, 0];
+    let far = [2, 0];
+    let incoming = [3, 0];
+    let later = [4, 0];
+    let mut uses = vec![
+        Use {
+            origin: near,
+            block: 1,
+        },
+        Use {
+            origin: far,
+            block: 3,
+        },
+        Use {
+            origin: incoming,
+            block: 2,
+        },
+        Use {
+            origin: later,
+            block: 4,
+        },
+    ];
+    uses.sort_unstable();
+    let mut cursor = Cursor::new(Forecast { uses, blocks: 5 });
+    assert!(cursor.advance());
+
+    for (resident, victim) in [([near, far], 1), ([far, near], 0)] {
+        assert_eq!(cursor.victim(incoming, resident.into_iter()), Some(victim));
+        assert_eq!(cursor.victim(later, resident.into_iter()), None);
+    }
+}
+
+#[test]
 fn forecasted_consumer_failures_cancel_and_panic_preserve_destination_and_release_owner() {
     use std::sync::Arc;
     let c = composition(
@@ -269,7 +303,7 @@ fn forecasted_consumer_failures_cancel_and_panic_preserve_destination_and_releas
 }
 
 #[test]
-fn forecasted_files_preserve_exact_reconstruction_and_public_order() {
+fn forecasted_complete_files_match_lru_reconstruction() {
     let area = SourceRegion::from([17, 23, 1024, 768]);
     let snapshot = PhotoGradeSnapshot::new(Default::default(), vec![]).unwrap();
     let metadata = ProcessingMetadata::with_grade(RollSettings::new_grade().response, &snapshot);
@@ -328,8 +362,10 @@ fn forecasted_files_preserve_exact_reconstruction_and_public_order() {
                 };
                 let baseline = directory.path().join("baseline");
                 let candidate = directory.path().join("candidate");
+                let forecast =
+                    Forecast::new(c).expect("file comparison requires an admitted forecast");
                 let before = run(&baseline, None);
-                let after = run(&candidate, Forecast::new(c));
+                let after = run(&candidate, Some(forecast));
                 assert_eq!(
                     std::fs::read(&baseline).unwrap(),
                     std::fs::read(&candidate).unwrap()
