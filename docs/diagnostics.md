@@ -112,6 +112,37 @@ A bounded baseline on one complete twelve-source Sony roll at `42f8aa4` measured
 
 The bounded job-local inference-scratch candidate measured 9.49 s on the same cold twelve-source roll, with 12 developments and exact ordered area/evidence and file-revision agreement against that baseline. Scratch writes/reads consumed 0.087 s of wall time and sampled peak process footprint was approximately 667 MiB, versus 666 MiB before; pressure and reported swap counters stayed stable. This first candidate observation is 47% shorter, not a repeated or isolated-device speed guarantee; filesystem caching is uncontrolled. A later partially-warm candidate run measured 8.40 s versus 16.57 s baseline, with 11 versus 22 developments, exact area/evidence agreement and essentially unchanged sampled peak footprint (1178 MiB). A complete 36-source cold roll exercised the capacity fallback: preparation measured 46.60 s versus 56.84 s baseline (18% shorter), with 58 versus 72 developments and exact ordered area/evidence and source-revision agreement. Fourteen fine rasters fit in scratch and the remaining 22 followed the unchanged reacquisition path; sampled peak footprint was approximately 746 MiB versus 745 MiB baseline. Pressure and reported swap counters stayed stable. These runs establish bounded reuse and fallback on the measured cases, not universal latency, pressure safety or photographic accuracy. Re-measure after relevant changes.
 
+### Marked crop quality and original-pixel inspection
+
+Crop quality is a consumer question: report wanted content lost, unwanted border admitted and abstention separately. The read-only [crop diagnostic](../native/crop_quality/mod.rs) uses normal `.antitone` projects and the production proposal/margin functions, without running Analyze, requiring calibration or accepting edits. It does not verify RAW freshness or re-detect boundaries. Removed/reference-only sources are unavailable for ordinary photo proposals. A complete proposal on a source labelled censored/ambiguous is flagged for review, not hidden by that label.
+
+Supply a private manifest, with project paths relative to the manifest and marks/windows in **original developed-source coordinates**, including any active-area origin—not oriented, cropped or preview coordinates. Example coordinates must be adapted to the actual source:
+
+```json
+{"margins_percent":[0,0.5],"cases":[{
+  "project":"roll.antitone","source":1,"observation":"visible_frame",
+  "marks":{"wanted":[[[100,100],[120,100],[120,120],[100,120]]],
+           "unwanted":[[[80,100],[90,100],[90,120],[80,120]]]},
+  "windows":[[80,80,128,128]]
+}]}
+```
+
+`observation` is `visible_frame`, `censored` or `ambiguous`; optional `dense_wanted` marks have their own loss score. Marks are convex quadrilaterals wholly inside the active source. Scores use exact polygon/crop intersection, not bounding boxes. Error areas sum supplied regions, so overlapping marks count repeatedly. Empty categories have a null error, not a successful zero; abstention has no crop-error score. Unmarked/uncertain bands are not assessed, and sparse marked areas must not be presented as whole-picture error percentages. Freeze independent marks before inspecting predictions; record annotation uncertainty and reuse of historical holdouts honestly.
+
+```sh
+mkdir -p .cache
+ANTITONE_CROP_MANIFEST=/absolute/private/marks.json \
+ANTITONE_CROP_OUTPUT="$PWD/.cache/crop-quality-FRESH" \
+  cargo test --locked --offline --release --features project --lib \
+  report_marked_crop_quality -- --ignored --nocapture
+```
+
+For prediction-free native windows, use the same manifest and fresh output, add `ANTITONE_RAW_ROOT=/absolute/read-only-samples`, select `--features editor` and replace the test name with `capture_original_crop_windows`. Each case needs independently chosen windows. Capture is bounded to three explicit sources and twelve windows per source, each at most 256×256 pixels. It uses the existing Normal-pressure/2 GiB free-memory preflight, native geometry bound and swap/footprint/stale-telemetry stops; a cooperative deadline cannot interrupt a native call. Project runtime/development identity, input size/mtime snapshots and original RAW revisions are checked. Original manifest/project/source locators are rechecked for symlink retargeting; relative RAW paths use the normal project locator, not a relocated canonical base. Sources are developed sequentially without native-cache admission or whole-original Rust copies. Partial files without `capture.json` are not a completed observation.
+
+The lossless `.rgb16` files contain little-endian original camera RGB16 in source orientation. PNGs enlarge those pixels 4× with nearest-neighbour sampling and apply only the sRGB transfer to camera channels, at unity exposure—no colour matrix, inversion, correction, repairs, grade or detector overlays. They are viewing aids, not rendered photographs. Capture writes private artifacts only; it neither derives windows from predictions nor generates marks automatically. Ordinary geometry/project tests need no private inputs or native setup.
+
+A frozen exploratory six-case comparison motivates retaining validation rather than its candidate algorithm: the normal detector proposed all four pictured frames, while a strict all-four-side local refiner proposed none; both abstained on two censored controls. Required local support/quorum or straight-line residual gates failed before complete transition envelopes could be assessed. This is no evidence for admitting that refiner or for envelope quality, and no reason to loosen its experimental gates on those cases. The normal 0.5% margin excluded marked unwanted strips but removed some near-edge wanted strips; gross marked interiors remained included. That illustrates an explicit policy tradeoff, not a mandate to change the default. The assistant-reviewed original-pixel transition bands were not expert-certified boundaries, and the cases were untouched only by local-refinement tuning, not pristine project-wide holdouts. [Remaining physical acceptance](plans/region-detection.md#detector-accuracy-and-latency).
+
 ### Private all-roll contacts
 
 The native helper creates ImageIO source previews and contact sheets:

@@ -122,3 +122,7 @@ fn rectangle(active: SourceRegion, q: Quad) -> Result<Crop, Error> {
 #[cfg(test)]
 #[path = "auto_crop_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../native/crop_quality/mod.rs"]
+mod diagnostics;
