@@ -2,6 +2,71 @@ use super::*;
 use tiff::decoder::{Decoder, DecodingResult};
 
 #[test]
+fn spatial_block_visits_preserve_complete_files_and_public_row_major_order() {
+    use std::collections::BTreeSet;
+    for size in [
+        ImageSize {
+            width: 1,
+            height: 1,
+        },
+        ImageSize {
+            width: 129,
+            height: 257,
+        },
+        ImageSize {
+            width: 5248,
+            height: 8128,
+        },
+    ] {
+        let row: Vec<_> = blocks(size).collect();
+        let public: Vec<_> = ordered_blocks(size, BlockOrder::RowMajor).collect();
+        assert_eq!(row, public);
+        let spatial: Vec<_> = ordered_blocks(size, BlockOrder::Spatial2x2).collect();
+        let mut sorted = spatial.clone();
+        sorted.sort_by_key(|(origin, _)| (origin[1], origin[0]));
+        assert_eq!(row, sorted);
+        let origins: BTreeSet<_> = spatial.iter().map(|(origin, _)| *origin).collect();
+        assert_eq!(origins.len(), row.len());
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let size = ImageSize {
+        width: 513,
+        height: 257,
+    };
+    let mut bytes = None;
+    for (i, order) in [BlockOrder::RowMajor, BlockOrder::Spatial2x2]
+        .into_iter()
+        .enumerate()
+    {
+        let path = directory.path().join(format!("order-{i}.tif"));
+        tiff_encoded_ordered(
+            &path,
+            size,
+            OutputTarget::Srgb,
+            Overwrite::Refuse,
+            Response::film().into(),
+            order,
+            |origin, extent| {
+                Ok((origin[1]..origin[1] + extent[1])
+                    .flat_map(|y| {
+                        (origin[0]..origin[0] + extent[0]).map(move |x| {
+                            [(x * 127 + y * 31) as u16, (y * 997) as u16, (x + y) as u16]
+                        })
+                    })
+                    .collect())
+            },
+        )
+        .unwrap();
+        let data = fs::read(path).unwrap();
+        if let Some(expected) = &bytes {
+            assert_eq!(&data, expected);
+        } else {
+            bytes = Some(data);
+        }
+    }
+}
+
+#[test]
 fn encoded_blocks_reopen_exactly_with_bounded_inputs_and_partial_edges() {
     let directory = tempfile::tempdir().unwrap();
     let size = ImageSize {

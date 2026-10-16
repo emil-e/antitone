@@ -6,6 +6,8 @@ pub mod dust_repair;
 pub mod editor;
 #[cfg(feature = "export")]
 pub mod export;
+#[cfg(feature = "export")]
+mod export_timing;
 pub mod flat_field;
 pub mod frame_raster;
 pub mod geometry;

@@ -94,41 +94,56 @@ impl Coverage {
     /// Piecewise-constant source pixels contribute their exact positive intersection area.
     pub fn weight(self, pixel: [u32; 2]) -> f64 {
         let origin = pixel.map(f64::from);
-        let mut vertices = [[0.; 2]; 8];
-        for (dst, point) in vertices.iter_mut().zip(self.corners) {
+        let mut first = [[0.; 2]; 8];
+        let mut second = [[0.; 2]; 8];
+        for (dst, point) in first.iter_mut().zip(self.corners) {
             *dst = [point.0[0] - origin[0], point.0[1] - origin[1]];
         }
+        let (mut vertices, mut next) = (&mut first, &mut second);
         let mut count = 4;
-        for (axis, edge, keep_greater) in
-            [(0, 0., true), (0, 1., false), (1, 0., true), (1, 1., false)]
+        for (axis, edge, greater) in [(0, 0., true), (0, 1., false), (1, 0., true), (1, 1., false)]
         {
             if count == 0 {
                 return 0.;
             }
-            let mut next = [[0.; 2]; 8];
-            let mut n = 0;
             let inside = |p: [f64; 2]| {
-                if keep_greater {
+                if greater {
                     p[axis] >= edge
                 } else {
                     p[axis] <= edge
                 }
             };
-            for i in 0..count {
-                let a = vertices[(i + count - 1) % count];
-                let b = vertices[i];
-                if inside(a) != inside(b) && a[axis] != edge && b[axis] != edge {
+            let mut mask = 0u16;
+            for (i, p) in vertices[..count].iter().enumerate() {
+                mask |= u16::from(inside(*p)) << i;
+            }
+            // Skip only no-op planes; mixed planes retain scalar intersection arithmetic
+            // and vertex order, including the exact-boundary intersection guard.
+            if mask == 0 {
+                return 0.;
+            }
+            if mask == (1u16 << count) - 1 {
+                continue;
+            }
+            let mut a = vertices[count - 1];
+            let mut ai = mask & (1 << (count - 1)) != 0;
+            let mut n = 0;
+            for (i, &b) in vertices[..count].iter().enumerate() {
+                let bi = mask & (1 << i) != 0;
+                if ai != bi && a[axis] != edge && b[axis] != edge {
                     let t = (edge - a[axis]) / (b[axis] - a[axis]);
                     next[n] = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
                     next[n][axis] = edge;
                     n += 1;
                 }
-                if inside(b) {
+                if bi {
                     next[n] = b;
                     n += 1;
                 }
+                a = b;
+                ai = bi;
             }
-            vertices = next;
+            std::mem::swap(&mut vertices, &mut next);
             count = n;
         }
         polygon_area(&vertices[..count]).min(1.)
@@ -176,6 +191,10 @@ fn polygon_area(points: &[[f64; 2]]) -> f64 {
     }
     area.abs() * 0.5
 }
+
+#[cfg(test)]
+#[path = "coverage_weight_tests.rs"]
+mod weight_tests;
 
 #[cfg(test)]
 mod tests {

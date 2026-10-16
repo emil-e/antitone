@@ -244,7 +244,23 @@ fn original_tile_math_and_aces_preserve_existing_independent_gates() {
 }
 
 #[test]
+#[ignore = "CPU-only reconstruction stage profile; synthetic values, no RAW or GPU"]
+fn reconstruction_stages_without_native_source_or_gpu() {
+    for shared_edges in [false, true, true, false] {
+        let start = std::time::Instant::now();
+        let (_, timings) =
+            crate::export_timing::record(|| reconstruction_cache_equivalence(shared_edges));
+        println!("export_geometry shared_edges={shared_edges}");
+        timings.report(start.elapsed());
+    }
+}
+
+#[test]
 fn bounded_cache_reuses_transformed_neighbors_without_changing_reconstruction() {
+    reconstruction_cache_equivalence(true);
+}
+
+fn reconstruction_cache_equivalence(shared_edges: bool) {
     let area = SourceRegion::from([10, 20, 1025, 769]);
     for turns in [
         QuarterTurns::Zero,
@@ -268,17 +284,21 @@ fn bounded_cache_reuses_transformed_neighbors_without_changing_reconstruction() 
         .unwrap();
         let [width, height] = composition.size();
         let size = tile_size(area);
+        let rgb = |[x, y]: [u32; 2]| {
+            DVec3::new(
+                (x * 17 + y * 31) as f64 / 65535. - 0.2,
+                y as f64 * 0.01 - 3.,
+                6.,
+            )
+        };
+        let raster = FrameRaster::full(composition).unwrap();
         let load = |origin: [u32; 2]| -> Result<Vec<[f64; 4]>, Error> {
             Ok((0..size[0] * size[1])
                 .map(|i| {
                     let x = origin[0] + i % size[0];
                     let y = origin[1] + i / size[0];
-                    [
-                        (x * 17 + y * 31) as f64 / 65535. - 0.2,
-                        y as f64 * 0.01 - 3.,
-                        6.,
-                        ((x + y) % 8) as f64,
-                    ]
+                    let p = rgb([x, y]);
+                    [p.x, p.y, p.z, ((x + y) % 8) as f64]
                 })
                 .collect())
         };
@@ -288,16 +308,40 @@ fn bounded_cache_reuses_transformed_neighbors_without_changing_reconstruction() 
         for y in (0..height).step_by(TILE[1] as usize) {
             for x in (0..width).step_by(TILE[0] as usize) {
                 let extent = [TILE[0].min(width - x), TILE[1].min(height - y)];
-                let plain = reconstruct(composition, [x, y], extent, load).unwrap();
-                let cached = reconstruct(composition, [x, y], extent, |origin| {
-                    requests += 1;
-                    cache.read(origin, |origin| {
-                        reads += 1;
-                        load(origin)
+                let plain = reconstruct_with_edges(composition, [x, y], extent, shared_edges, load)
+                    .unwrap();
+                let cached =
+                    reconstruct_with_edges(composition, [x, y], extent, shared_edges, |origin| {
+                        requests += 1;
+                        cache.read(origin, |origin| {
+                            reads += 1;
+                            load(origin)
+                        })
                     })
-                })
-                .unwrap();
+                    .unwrap();
                 assert_eq!(cached, plain);
+                for [dx, dy] in [
+                    [0, 0],
+                    [extent[0] - 1, 0],
+                    [0, extent[1] - 1],
+                    [extent[0] - 1, extent[1] - 1],
+                    [extent[0] / 2, extent[1] / 2],
+                ] {
+                    let expected = crate::sampling::weighted_mean_iter(
+                        raster
+                            .footprint([x + dx, y + dy])
+                            .unwrap()
+                            .pixels(area)
+                            .unwrap()
+                            .map(|(point, weight)| Ok((rgb(point), weight))),
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        cached[(dy * extent[0] + dx) as usize],
+                        expected,
+                        "shared edge coordinates must match independent footprints at block boundaries"
+                    );
+                }
             }
         }
         println!(
@@ -309,6 +353,128 @@ fn bounded_cache_reuses_transformed_neighbors_without_changing_reconstruction() 
             "every turn must reuse neighboring block tiles"
         );
         assert!(cache.peak_bytes() <= super::cache::MAX_PAYLOAD_BYTES);
+    }
+}
+
+#[test]
+fn cached_origins_are_visited_before_misses_without_changing_pixel_reduction() {
+    struct Read {
+        hit: Option<[u32; 2]>,
+        order: Vec<[u32; 2]>,
+    }
+    impl TileReader for Read {
+        type Pixels = Vec<[f64; 4]>;
+        fn cached(&self, origin: [u32; 2]) -> bool {
+            self.hit == Some(origin)
+        }
+        fn read(&mut self, origin: [u32; 2]) -> Result<Self::Pixels, Error> {
+            self.order.push(origin);
+            Ok(tile(origin, [128, 128])
+                .into_iter()
+                .map(|p| p.map(f64::from))
+                .collect())
+        }
+    }
+    let area = SourceRegion::from([0, 0, 385, 385]);
+    let composition = Composition::with_crop(
+        area,
+        RollOrientation::default(),
+        PhotoOrientation::default(),
+        Some(Crop {
+            center: [150., 150.],
+            size: [128, 128],
+            angle: 0.015,
+        }),
+    )
+    .unwrap();
+    let mut plain = Read {
+        hit: None,
+        order: Vec::new(),
+    };
+    let mut cached = Read {
+        hit: Some([128, 128]),
+        order: Vec::new(),
+    };
+    let a = reconstruct_reader(composition, [0, 0], [128, 128], true, &mut plain).unwrap();
+    let b = reconstruct_reader(composition, [0, 0], [128, 128], true, &mut cached).unwrap();
+    assert_eq!(a, b);
+    assert_eq!(cached.order.first(), Some(&[128, 128]));
+    assert_eq!(plain.order.len(), cached.order.len());
+    plain.order.sort();
+    cached.order.sort();
+    assert_eq!(plain.order, cached.order);
+}
+
+#[test]
+fn shared_edges_match_per_pixel_geometry_for_partial_blocks_and_reject_invalid_ranges() {
+    let area = SourceRegion::from([10, 20, 1025, 769]);
+    for turns in [
+        QuarterTurns::Zero,
+        QuarterTurns::One,
+        QuarterTurns::Two,
+        QuarterTurns::Three,
+    ] {
+        for angle in [0., 0.13, -0.2] {
+            let composition = Composition::with_crop(
+                area,
+                RollOrientation {
+                    turns,
+                    horizontal: true,
+                    ..Default::default()
+                },
+                PhotoOrientation::default(),
+                Some(Crop {
+                    center: [522., 404.],
+                    size: [768, 512],
+                    angle,
+                }),
+            )
+            .unwrap();
+            let [w, h] = composition.size();
+            let load = |origin| {
+                Ok::<_, Error>(
+                    tile(origin, tile_size(area))
+                        .into_iter()
+                        .map(|p| p.map(f64::from))
+                        .collect::<Vec<_>>(),
+                )
+            };
+            for origin in [[0, 0], [37, 53], [w - 23, h - 17]] {
+                let extent = [17, 13];
+                let expected =
+                    reconstruct_with_edges(composition, origin, extent, false, load).unwrap();
+                let shared =
+                    reconstruct_with_edges(composition, origin, extent, true, load).unwrap();
+                assert_eq!(shared, expected);
+            }
+            for shared in [false, true] {
+                assert!(
+                    reconstruct_with_edges(
+                        composition,
+                        [w - 1, h - 1],
+                        [2, 2],
+                        shared,
+                        |_| -> Result<Vec<[f64; 4]>, Error> {
+                            panic!("invalid geometry must not read originals")
+                        }
+                    )
+                    .is_err()
+                );
+                assert!(
+                    reconstruct_with_edges(
+                        composition,
+                        [0, 0],
+                        [0, 1],
+                        shared,
+                        |_| -> Result<Vec<[f64; 4]>, Error> {
+                            panic!("empty block must not read originals")
+                        }
+                    )
+                    .unwrap()
+                    .is_empty()
+                );
+            }
+        }
     }
 }
 

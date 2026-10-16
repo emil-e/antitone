@@ -272,27 +272,38 @@ fn exercise(
                         Ok(())
                     };
                     match backend {
-                        Backend::Gpu | Backend::Uncached | Backend::Cached => write_job(
-                            &renderer,
-                            device,
-                            (queue, &gate),
-                            request,
-                            (&path, Overwrite::Refuse),
-                            matches!(backend, Backend::Cached)
-                                || (matches!(backend, Backend::Gpu) && cache_eligible(composition)),
-                            || {
-                                checks += 1;
-                                if checks > 1 {
-                                    if checks.is_multiple_of(2) {
-                                        tile_start = Some(Instant::now());
-                                    } else {
-                                        tile_time += tile_start.take().unwrap().elapsed();
-                                    }
-                                }
-                                stop()
-                            },
-                        )
-                        .map(|stats| job_stats = stats),
+                        Backend::Gpu | Backend::Uncached | Backend::Cached => {
+                            let stage_start = Instant::now();
+                            let (result, timings) = crate::export_timing::record(|| {
+                                write_job(
+                                    &renderer,
+                                    device,
+                                    (queue, &gate),
+                                    request,
+                                    (&path, Overwrite::Refuse),
+                                    matches!(backend, Backend::Cached)
+                                        || (matches!(backend, Backend::Gpu)
+                                            && cache_eligible(composition)),
+                                    || {
+                                        checks += 1;
+                                        if checks > 1 {
+                                            if checks.is_multiple_of(2) {
+                                                tile_start = Some(Instant::now());
+                                            } else {
+                                                tile_time += tile_start.take().unwrap().elapsed();
+                                            }
+                                        }
+                                        stop()
+                                    },
+                                )
+                            });
+                            println!(
+                                "export_stage backend={backend:?} format={format:?} complete={}",
+                                result.is_ok()
+                            );
+                            timings.report(stage_start.elapsed());
+                            result.map(|stats| job_stats = stats)
+                        }
                         #[cfg(feature = "ocio-reference")]
                         Backend::Reference => {
                             reference_samples = write_reference(request, &path, stop)?;

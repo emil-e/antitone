@@ -1,6 +1,8 @@
 //! Original-sample photographic processing; CPU work is geometry, encoding and file safety.
+use crate::export_timing::timed;
 use crate::{
     Error,
+    coverage::Coverage,
     export::{self, ExrPrecision, ImageSize, Overwrite, ProcessingMetadata},
     frame_raster::FrameRaster,
     geometry::{Composition, SourceRegion},
@@ -19,6 +21,11 @@ use std::{collections::BTreeMap, path::Path, sync::Arc};
 use wgpu::util::DeviceExt;
 #[path = "gpu_export_cache.rs"]
 mod cache;
+#[path = "gpu_export_reader.rs"]
+mod reader;
+#[cfg(all(test, target_os = "macos"))]
+use reader::Callback;
+use reader::{JobReader, TileReader};
 #[cfg(all(test, target_os = "macos"))]
 #[path = "gpu_export_cached_tests.rs"]
 mod cached_tests;
@@ -133,72 +140,85 @@ fn write_job(
         return Err(Error::Gpu("CPU and GPU flat-field resources differ".into()));
     }
     let metadata = ProcessingMetadata::with_grade(roll.response, &grade);
-    let grade = GpuPhotoGrade::new(
-        device,
-        scan.processing_calibration(calibration)?,
-        roll,
-        grade,
-        scan.camera_to_ap1,
-        scan.area,
-    )?;
-    let mut tiles = OriginalTiles::new(
-        renderer,
-        (device, queue, submissions),
-        (scan.camera_to_ap1, scan.area),
-        field,
-        grade,
-        format,
-    )?;
-    let tile_size = tiles.size;
-    let mut requests = 0;
-    let mut reads = 0;
-    let mut load = |origin: [u32; 2]| {
-        reads += 1;
-        let pixels = scan.tile_region(
+    let mut tiles = timed!(Setup, {
+        let grade = GpuPhotoGrade::new(
+            device,
+            scan.processing_calibration(calibration)?,
+            roll,
+            grade,
+            scan.camera_to_ap1,
             scan.area,
-            origin[0] - scan.area.x,
-            origin[1] - scan.area.y,
-            tile_size[0],
-            tile_size[1],
+        )?;
+        OriginalTiles::new(
+            renderer,
+            (device, queue, submissions),
+            (scan.camera_to_ap1, scan.area),
+            field,
+            grade,
+            format,
+        )
+    })?;
+    let tile_size = tiles.size;
+    let mut reads = 0;
+    let load = |origin: [u32; 2]| {
+        reads += 1;
+        let pixels = timed!(
+            SourcePrepare,
+            scan.tile_region(
+                scan.area,
+                origin[0] - scan.area.x,
+                origin[1] - scan.area.y,
+                tile_size[0],
+                tile_size[1],
+            )
         )?;
         tiles.read(renderer, device, queue, submissions, origin, &pixels)
     };
-    let mut cache = cache::TileCache::new();
-    if cache_enabled {
-        encode_output(composition, format, metadata, (path, overwrite), |origin| {
-            check()?;
-            requests += 1;
-            let pixels = cache.read(origin, &mut load)?;
-            check()?;
-            Ok(pixels)
-        })?;
-    } else {
-        encode_output(composition, format, metadata, (path, overwrite), |origin| {
-            check()?;
-            requests += 1;
-            let pixels = load(origin)?;
-            check()?;
-            Ok(pixels)
-        })?;
-    }
-    Ok((requests, reads, cache.peak_bytes()))
+    let mut reader = JobReader::new(load, check, cache_enabled);
+    encode_output(
+        composition,
+        format,
+        metadata,
+        (path, overwrite),
+        &mut reader,
+    )?;
+    let requests = reader.requests;
+    let peak = reader.peak_bytes();
+    drop(reader);
+    Ok((requests, reads, peak))
 }
 
-fn encode_output<P: AsRef<[[f64; 4]]>>(
+fn encode_output<R: TileReader>(
     composition: Composition,
     format: Format,
     metadata: ProcessingMetadata,
     (path, overwrite): (&Path, Overwrite),
-    mut read: impl FnMut([u32; 2]) -> Result<P, Error>,
+    read: &mut R,
 ) -> Result<(), Error> {
     let [width, height] = composition.size();
     let size = ImageSize { width, height };
     match format {
         Format::Tiff(target) => {
-            export::tiff_encoded(path, size, target, overwrite, metadata, |origin, extent| {
-                let linear = reconstruct(composition, origin, extent, &mut read)?;
-                target.encode_u16(&linear.iter().map(|v| v.as_vec3()).collect::<Vec<_>>())
-            })
+            let order = if composition.is_exact() {
+                export::BlockOrder::RowMajor
+            } else {
+                export::BlockOrder::Spatial2x2
+            };
+            export::tiff_encoded_ordered(
+                path,
+                size,
+                target,
+                overwrite,
+                metadata,
+                order,
+                |origin, extent| {
+                    let linear = reconstruct_reader(composition, origin, extent, true, read)?;
+                    timed!(
+                        TargetEncode,
+                        target.encode_u16(&linear.iter().map(|v| v.as_vec3()).collect::<Vec<_>>())
+                    )
+                },
+            )
         }
         Format::Exr(precision) => export::exr_blocks(
             path,
@@ -206,64 +226,142 @@ fn encode_output<P: AsRef<[[f64; 4]]>>(
             precision,
             overwrite,
             metadata,
-            |origin, extent| reconstruct(composition, origin, extent, &mut read),
+            |origin, extent| reconstruct_reader(composition, origin, extent, true, read),
         ),
     }
 }
 
 /// Preserve the scalar coverage weights and iteration order; no f32 preview geometry is used.
+#[cfg(all(test, target_os = "macos"))]
 fn reconstruct<P: AsRef<[[f64; 4]]>>(
     composition: Composition,
     origin: [u32; 2],
     extent: [u32; 2],
-    mut read: impl FnMut([u32; 2]) -> Result<P, Error>,
+    read: impl FnMut([u32; 2]) -> Result<P, Error>,
+) -> Result<Vec<DVec3>, Error> {
+    reconstruct_with_edges(composition, origin, extent, true, read)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+fn reconstruct_with_edges<P: AsRef<[[f64; 4]]>>(
+    composition: Composition,
+    origin: [u32; 2],
+    extent: [u32; 2],
+    shared_edges: bool,
+    read: impl FnMut([u32; 2]) -> Result<P, Error>,
+) -> Result<Vec<DVec3>, Error> {
+    reconstruct_reader(
+        composition,
+        origin,
+        extent,
+        shared_edges,
+        &mut Callback(read),
+    )
+}
+
+fn reconstruct_reader<R: TileReader>(
+    composition: Composition,
+    origin: [u32; 2],
+    extent: [u32; 2],
+    shared_edges: bool,
+    read: &mut R,
 ) -> Result<Vec<DVec3>, Error> {
     let area = composition.area();
     let size = tile_size(area);
-    let raster = FrameRaster::full(composition)?;
-    let mut samples = Vec::new();
-    let mut groups = Vec::new();
-    let mut tiles: BTreeMap<[u32; 2], Vec<(usize, usize)>> = BTreeMap::new();
-    for y in origin[1]..origin[1] + extent[1] {
-        for x in origin[0]..origin[0] + extent[0] {
-            let start = samples.len();
-            let mut add = |point: [u32; 2], weight| {
-                let tile = std::array::from_fn(|i| {
-                    let base = [area.x, area.y][i];
-                    let end = base + [area.width, area.height][i];
-                    (base + (point[i] - base) / size[i] * size[i]).min(end - size[i])
-                });
-                let index = ((point[1] - tile[1]) * size[0] + point[0] - tile[0]) as usize;
-                tiles.entry(tile).or_default().push((samples.len(), index));
-                samples.push((DVec3::ZERO, weight));
-            };
-            if composition.is_exact() {
-                add(composition.source_pixel([x, y])?, 1.);
-            } else {
-                for (point, weight) in raster.footprint([x, y])?.pixels(area)? {
-                    add(point, weight);
-                }
-            }
-            groups.push(start..samples.len());
+    let (mut samples, groups, tiles) = timed!(CoveragePlan, {
+        let raster = FrameRaster::full(composition)?;
+        let mut samples = Vec::new();
+        let mut groups = Vec::new();
+        let mut tiles: BTreeMap<[u32; 2], Vec<(usize, usize)>> = BTreeMap::new();
+        let rows = shared_edges && !composition.is_exact() && !extent.contains(&0);
+        let (mut top, mut bottom) = (Vec::new(), Vec::new());
+        if rows {
+            let last = [
+                origin[0]
+                    .checked_add(extent[0] - 1)
+                    .ok_or(Error::NumericalOverflow)?,
+                origin[1]
+                    .checked_add(extent[1] - 1)
+                    .ok_or(Error::NumericalOverflow)?,
+            ];
+            // Establish the same pixel-domain checks before reusing shared edge coordinates.
+            raster.footprint(origin)?;
+            raster.footprint(last)?;
+            top.extend(
+                (origin[0]..=origin[0] + extent[0])
+                    .map(|x| raster.source_point([f64::from(x), f64::from(origin[1])])),
+            );
         }
-    }
+        for y in origin[1]..origin[1] + extent[1] {
+            if rows {
+                bottom.clear();
+                bottom.extend(
+                    (origin[0]..=origin[0] + extent[0])
+                        .map(|x| raster.source_point([f64::from(x), f64::from(y) + 1.])),
+                );
+            }
+            for x in origin[0]..origin[0] + extent[0] {
+                let start = samples.len();
+                let mut add = |point: [u32; 2], weight| {
+                    let tile = std::array::from_fn(|i| {
+                        let base = [area.x, area.y][i];
+                        let end = base + [area.width, area.height][i];
+                        (base + (point[i] - base) / size[i] * size[i]).min(end - size[i])
+                    });
+                    let index = ((point[1] - tile[1]) * size[0] + point[0] - tile[0]) as usize;
+                    tiles.entry(tile).or_default().push((samples.len(), index));
+                    samples.push((DVec3::ZERO, weight));
+                };
+                if composition.is_exact() {
+                    add(composition.source_pixel([x, y])?, 1.);
+                } else {
+                    let i = (x - origin[0]) as usize;
+                    // Cache exact mapped corners, never incremental or preview-affine coordinates.
+                    let footprint = if shared_edges {
+                        Coverage::new([top[i], top[i + 1], bottom[i + 1], bottom[i]])?
+                    } else {
+                        raster.footprint([x, y])?
+                    };
+                    for (point, weight) in footprint.pixels(area)? {
+                        add(point, weight);
+                    }
+                }
+                groups.push(start..samples.len());
+            }
+            if rows {
+                std::mem::swap(&mut top, &mut bottom);
+            }
+        }
+        // Read hits before misses so new uploads cannot evict still-needed cached values.
+        // Only tile visits move: sample slots and each pixel's final reduction stay ordered.
+        let mut tiles: Vec<_> = tiles.into_iter().collect();
+        tiles.sort_by_key(|(origin, _)| !read.cached(*origin));
+        Ok::<_, Error>((samples, groups, tiles))
+    })?;
     for (origin, entries) in tiles {
-        let pixels = read(origin)?;
+        let pixels = timed!(TileAccess, read.read(origin))?;
         let pixels = pixels.as_ref();
         if pixels.len() != (size[0] * size[1]) as usize {
             return Err(Error::InvalidParameter(
                 "invalid original export tile length",
             ));
         }
-        for (sample, index) in entries {
-            let p = pixels[index];
-            samples[sample].0 = DVec3::new(p[0], p[1], p[2]);
-        }
+        timed!(SampleFill, {
+            for (sample, index) in entries {
+                let p = pixels[index];
+                samples[sample].0 = DVec3::new(p[0], p[1], p[2]);
+            }
+        });
     }
-    groups
-        .into_iter()
-        .map(|range| crate::sampling::weighted_mean_iter(samples[range].iter().copied().map(Ok)))
-        .collect()
+    timed!(
+        WeightedMean,
+        groups
+            .into_iter()
+            .map(|range| crate::sampling::weighted_mean_iter(
+                samples[range].iter().copied().map(Ok)
+            ))
+            .collect()
+    )
 }
 
 struct OriginalTiles {

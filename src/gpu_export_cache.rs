@@ -30,6 +30,10 @@ impl TileCache {
         }
     }
 
+    pub(super) fn contains(&self, origin: [u32; 2]) -> bool {
+        self.entries.iter().any(|(key, _)| *key == origin)
+    }
+
     pub(super) fn read(
         &mut self,
         origin: [u32; 2],
