@@ -2,7 +2,7 @@
 
 The editor connects photographic settings, image tools and asynchronous work. Its central rule is simple: **a view may be temporary, but accepted photographic state must remain coherent**.
 
-Roll, Photo and Rendering are editing scopes, not separate pipelines. Roll owns shared scan setup and grading; Photo owns individual grading and composition; Rendering selects the common preview/TIFF target. Changing tabs changes available controls, not the image's processing.
+Roll, Photo and Rendering are editing scopes, not separate pipelines. Roll owns shared scan setup and grading; Photo owns individual grading and composition; Rendering owns the project-wide creative look and common preview/TIFF target. Changing tabs changes available controls, not the image's processing.
 
 The editor uses a neutral dark workspace with amber identity and active-state accents. The shared application header presents the film-edge wordmark without making it an interactive control; File/Export availability remains controller-owned. [Branding assets](../assets/branding/README.md) explain the artwork and regeneration.
 
@@ -47,6 +47,16 @@ Sparse immutable GPU patches retain coordinates and repaired neutral values. Phy
 Released repair edits participate in ordinary [project saving and dirty protection](projects.md#source-owned-dust-repairs); selection and unfinished gestures remain transient.
 
 TIFF/EXR exports and thumbnails remain unrepaired, as do provisional camera-proxy fallback images before working support is ready. The inspector and viewer help explicitly state that output omission; project dirty state owns saved/unsaved status. Restored instructions may be pending or unavailable rather than rendered. [Remaining acceptance](plans/dust-repair.md) includes photographic stage correspondence, resource/latency evidence and physical-input use.
+
+## Look selection prepares before acceptance
+
+Rendering owns one project-wide look. Its dropdown offers None, **Portrait Paper**, **Colour Paper**, **Cinema Print**, **Monochrome Paper** and **Load LUT…**. Selection/reset changes project state, not editor preferences or individual Photo inheritance. The load entry and file dialog declare the scene-referred input-and-output contract; the [colour guide](colour-and-output.md#creative-looks-precede-output-rendering) owns those restrictions and bypasses.
+
+Built-in names and source-product attribution come from the versioned catalog. Hovering an entry or the selected field identifies the studied material and its independent, non-endorsed interpretation. Catalog labels also identify older embedded built-ins without rewriting their saved metadata or numeric samples. Imported and unknown historic names remain as saved; [project storage](projects.md#embed-the-accepted-look-not-a-catalog-reference) preserves their accepted appearance.
+
+Successful imports also appear under **Loaded LUTs** in that dropdown for the rest of the editor session, including across project changes. Switching back reuses the retained numeric samples rather than reopening the file. Repeated identical payloads share one entry; distinct LUTs with colliding names receive display-only suffixes. Opening a project with an embedded imported look adds its accepted asset too. The comparison list is not saved: only the selected look is embedded in the project. These session entries retain CPU samples until the editor closes, not permanent GPU uploads.
+
+Preparation and reselection run on the existing worker with typed task/Cancel feedback. The accepted asset remains active until a current successful reply; superseding selection or a document transition retires older work. Failure is acknowledged without changing the accepted look or adjustments. Finite values beyond the LUT window clip at sampling. Invalid/nonfinite data or GPU failures expose rendering details, and scopes cannot present failed output as valid. The application does not substitute another look. An unavailable original reference is distinguished from one still preparing.
 
 ## Numeric edits own their input
 

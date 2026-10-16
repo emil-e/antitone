@@ -12,6 +12,11 @@ unsafe extern "C" {
     fn antitone_ocio_version() -> *const c_char;
     fn antitone_output_parameters(target: u32, parameters: *mut f64) -> i32;
     fn antitone_ocio_create(target: u32, error: *mut c_char, size: usize) -> *mut c_void;
+    fn antitone_ocio_reference_create(
+        parameters: *const f64,
+        error: *mut c_char,
+        size: usize,
+    ) -> *mut c_void;
     fn antitone_ocio_apply(
         handle: *mut c_void,
         rgb: *mut f32,
@@ -146,6 +151,17 @@ impl CpuRenderer {
         })
     }
 
+    /// Developer-only fixed-reference forward transform, without selected-output range clamps.
+    pub fn new_reference(parameters: [f64; 9]) -> Result<Self, Error> {
+        let mut error = [0; 512];
+        // The native constructor reads exactly nine doubles during this call.
+        let handle = unsafe {
+            antitone_ocio_reference_create(parameters.as_ptr(), error.as_mut_ptr(), error.len())
+        };
+        Ok(Self {
+            handle: NonNull::new(handle).ok_or_else(|| diagnostic(&error))?,
+        })
+    }
     pub fn render(&self, working_ap1: &[DVec3]) -> Result<Vec<Vec3>, Error> {
         let mut pixels = Vec::with_capacity(working_ap1.len());
         for input in working_ap1 {

@@ -129,6 +129,21 @@ impl Composite {
         self.underlay.ensure_submitted(device, queue, gate, context);
     }
 
+    pub(super) fn check(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        image: &GpuImage,
+    ) -> Arc<crate::gpu::look::Check> {
+        self.detail
+            .graded
+            .as_ref()
+            .unwrap()
+            .source
+            .renderer
+            .check_look_image(device, encoder, &image.linear)
+    }
+
     pub(super) fn encode(&self, encoder: &mut wgpu::CommandEncoder, image: &GpuImage) {
         let view = image.linear.create_view(&Default::default());
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

@@ -149,6 +149,11 @@ impl Document {
 
     pub(super) fn validate_with_device(&self, device: Option<&wgpu::Device>) -> Result<()> {
         self.project.require_runtime(&crate::raw::version())?;
+        if let Some(device) = device
+            && let Some(asset) = &self.project.output.look
+        {
+            crate::gpu::look::Lut::require_limits(&device.limits(), asset.lut())?;
+        }
         let calibration = self.project.processing_calibration()?;
         for source in &self.project.sources {
             if let Some(calibration) = calibration {

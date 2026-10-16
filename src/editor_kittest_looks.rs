@@ -1,0 +1,870 @@
+use super::*;
+use crate::looks::builtin::Builtin;
+fn paint_until(harness: &mut Harness<'_, Editor>, done: impl Fn(&Editor) -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(45);
+    loop {
+        harness.step();
+        harness.render().unwrap();
+        if done(harness.state()) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "look paint timed out: {} {:?}",
+            harness.state().status,
+            harness.state().working.error
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    harness.step();
+}
+fn positive_ready(editor: &Editor) -> bool {
+    !editor.busy
+        && editor.working.displayed.as_ref().is_some_and(|view| {
+            let expected = editor
+                .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+                .unwrap();
+            view.processing == expected.signature()
+                && view.target == editor.target
+                && !view.in_flight()
+                && matches!(view.image.look_result(), Some(Ok(())))
+        })
+}
+fn fixture_editor() -> (Harness<'static, Editor>, Rc<RefCell<FloatCapture>>) {
+    let (harness, capture, _, _) = fixture_editor_gpu();
+    (harness, capture)
+}
+
+fn fixture_editor_gpu() -> (
+    Harness<'static, Editor>,
+    Rc<RefCell<FloatCapture>>,
+    wgpu::Device,
+    wgpu::Queue,
+) {
+    let (mut harness, capture, device, queue) = editor_harness_with_gpu(true);
+    harness.run();
+    harness
+        .state_mut()
+        .add_raws(vec![fixture("roll-0.dng"), fixture("roll-1.dng")]);
+    wait_for(&mut harness, |editor| {
+        !editor.busy && editor.ready.is_some()
+    });
+    let editor = harness.state_mut();
+    editor.dmin = Some(DVec3::splat(3000. / 4031.));
+    editor.dmax = Some(DVec3::splat(128. / 4031.));
+    editor.source = false;
+    editor.scopes.visible = true;
+    editor.sync_document();
+    harness.step();
+    stage(&mut harness, "Rendering");
+    paint_until(&mut harness, positive_ready);
+    (harness, capture, device, queue)
+}
+
+fn choose(harness: &mut Harness<'_, Editor>, name: &str) {
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Look")
+        .scroll_to_me();
+    harness.try_run_realtime().unwrap();
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Look")
+        .click();
+    harness.step();
+    harness.step();
+    harness.get_by_label(name).scroll_to_me();
+    harness.try_run_realtime().unwrap();
+    harness.get_by_label(name).click();
+    harness.step();
+}
+#[test]
+fn look_dropdown_contains_load_action_without_a_separate_import_button() {
+    let (mut harness, _) = fixture_editor();
+    let before = harness.state().document.project.clone();
+    for (size, name) in [
+        (egui::vec2(1100., 800.), "normal"),
+        (egui::vec2(800., 600.), "narrow"),
+    ] {
+        harness.set_size(size);
+        harness.run();
+        assert!(harness.query_by_label("Load LUT…").is_none());
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Look")
+            .click();
+        harness.step();
+        harness.step();
+        let load = harness.get_by_label("Load LUT…");
+        assert!(!load.accesskit_node().is_disabled());
+        for builtin in Builtin::ALL {
+            assert!(harness.query_by_label(builtin.name()).is_some());
+            assert!(harness.query_by_label(builtin.source_product()).is_none());
+        }
+        if let Some(output) = std::env::var_os("ANTITONE_UI_CAPTURE") {
+            let output = PathBuf::from(output);
+            std::fs::create_dir_all(&output).unwrap();
+            harness
+                .render()
+                .unwrap()
+                .save(output.join(format!("look-menu-{name}-offscreen.png")))
+                .unwrap();
+        }
+        let time = harness.ctx.input(|input| input.time);
+        harness.input_mut().time = Some(time + 0.2);
+        harness.step();
+        harness.get_by_label("Cinema Print").hover();
+        harness.step();
+        let time = harness.ctx.input(|input| input.time);
+        harness.input_mut().time = Some(time + 1.);
+        harness.step();
+        harness.step();
+        assert!(harness.query_by_label("Independent creative interpretation derived from published KODAK VISION Color Print Film 2383 / 3383 data.\nNot affiliated with or endorsed by the manufacturer.").is_some());
+        if let Some(output) = std::env::var_os("ANTITONE_UI_CAPTURE") {
+            harness
+                .render()
+                .unwrap()
+                .save(PathBuf::from(output).join(format!("look-source-{name}-offscreen.png")))
+                .unwrap();
+        }
+        harness.event(egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        assert!(harness.query_by_label("Load LUT…").is_none());
+        assert!(harness.state().look_pending.is_none());
+        assert_eq!(harness.state().document.project, before);
+    }
+}
+
+#[test]
+fn rendering_widgets_share_builtin_looks_with_views_scopes_and_other_photos_without_regrading() {
+    let (mut harness, _) = fixture_editor();
+    let before = harness.state().document.project.clone();
+    let original = harness.state().working.displayed.as_ref().unwrap().clone();
+    for builtin in Builtin::ALL {
+        choose(&mut harness, builtin.name());
+        paint_until(&mut harness, |editor| {
+            positive_ready(editor)
+                && editor
+                    .document
+                    .project
+                    .output
+                    .look
+                    .as_ref()
+                    .is_some_and(|asset| asset.origin() == &builtin.origin())
+        });
+        let asset = harness
+            .state()
+            .document
+            .project
+            .output
+            .look
+            .clone()
+            .unwrap();
+        assert_eq!(asset.origin(), &builtin.origin());
+        assert_eq!(asset.name(), builtin.name());
+        assert_eq!(
+            harness
+                .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Look")
+                .accesskit_node()
+                .value()
+                .as_deref(),
+            Some(builtin.name())
+        );
+        assert_eq!(asset.lut().size(), 65);
+        if builtin == Builtin::Kodak2383 {
+            let project = harness.state().document.project.clone();
+            let time = harness.ctx.input(|input| input.time);
+            harness.input_mut().time = Some(time + 0.2);
+            harness.step();
+            harness
+                .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Look")
+                .hover();
+            harness.step();
+            let time = harness.ctx.input(|input| input.time);
+            harness.input_mut().time = Some(time + 1.);
+            harness.step();
+            harness.step();
+            assert!(harness.query_by_label("Independent creative interpretation derived from published KODAK VISION Color Print Film 2383 / 3383 data.\nNot affiliated with or endorsed by the manufacturer.").is_some());
+            assert_eq!(harness.state().document.project, project);
+        }
+        assert!(harness.state().look_render_failure().is_none());
+        assert_eq!(harness.state().roll, before.roll);
+        assert_eq!(harness.state().photo, before.sources[0].photo);
+        assert!(
+            harness
+                .state()
+                .working
+                .displayed
+                .as_ref()
+                .unwrap()
+                .same_grade_as(&original)
+        );
+        for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
+            harness.state_mut().target = target;
+            paint_until(&mut harness, |editor| {
+                if !positive_ready(editor) {
+                    return false;
+                }
+                let input = editor.scope_request().unwrap();
+                let settings = crate::scopes::Settings {
+                    target: editor.target,
+                    plot: if editor.scopes.vector {
+                        crate::scopes::Plot::Vector
+                    } else {
+                        editor.scopes.waveform
+                    },
+                    amplification: editor.scopes.amplification,
+                };
+                input
+                    .status(editor.scopes.gpu.as_ref().unwrap(), settings)
+                    .is_some_and(|counts| counts.is_ok())
+            });
+            assert_eq!(
+                harness
+                    .state()
+                    .document
+                    .project
+                    .output
+                    .look
+                    .as_ref()
+                    .unwrap()
+                    .lut()
+                    .id(),
+                asset.lut().id()
+            );
+        }
+        harness
+            .get_by_label("Original-resolution reference")
+            .click();
+        harness.step();
+        paint_until(&mut harness, |editor| {
+            assert!(
+                editor.original.refinement_error.is_none(),
+                "{}",
+                editor.status
+            );
+            positive_ready(editor) && editor.working.reference_ready()
+        });
+        assert!(harness.state().working.compare);
+        assert!(matches!(
+            harness
+                .state()
+                .original
+                .settled
+                .as_ref()
+                .unwrap()
+                .2
+                .look_result(),
+            Some(Ok(()))
+        ));
+        if let Some(output) = std::env::var_os("ANTITONE_UI_CAPTURE") {
+            let output = PathBuf::from(output);
+            std::fs::create_dir_all(&output).unwrap();
+            harness
+                .render()
+                .unwrap()
+                .save(output.join(format!("look-{}-reference-offscreen.png", builtin.id())))
+                .unwrap();
+        }
+        harness
+            .get_by_label("Original-resolution reference")
+            .click();
+        harness.step();
+        paint_until(&mut harness, positive_ready);
+    }
+    let accepted = harness
+        .state()
+        .document
+        .project
+        .output
+        .look
+        .clone()
+        .unwrap();
+    harness.get_by_label("roll-1.dng").click();
+    harness.step();
+    wait_for(&mut harness, |editor| !editor.busy);
+    paint_until(&mut harness, positive_ready);
+    assert_eq!(
+        harness
+            .state()
+            .document
+            .project
+            .output
+            .look
+            .as_ref()
+            .unwrap()
+            .lut()
+            .id(),
+        accepted.lut().id()
+    );
+    harness.get_by_label("View source").click();
+    harness.step();
+    paint_until(&mut harness, |editor| {
+        editor.source
+            && editor
+                .working
+                .displayed
+                .as_ref()
+                .is_some_and(|view| view.processing.look_id().is_none() && !view.in_flight())
+    });
+    assert!(harness.state().look_render_failure().is_none());
+    assert_eq!(
+        harness
+            .state()
+            .document
+            .project
+            .output
+            .look
+            .as_ref()
+            .unwrap()
+            .lut()
+            .id(),
+        accepted.lut().id()
+    );
+    harness.get_by_label("View source").click();
+    harness.step();
+    paint_until(&mut harness, positive_ready);
+    choose(&mut harness, "None");
+    paint_until(&mut harness, positive_ready);
+    assert!(harness.state().document.project.output.look.is_none());
+    for (size, name) in [
+        (egui::vec2(1100., 800.), "normal"),
+        (egui::vec2(800., 600.), "narrow"),
+    ] {
+        harness.set_size(size);
+        harness.run();
+        let image = harness.render().unwrap();
+        if let Some(output) = std::env::var_os("ANTITONE_UI_CAPTURE") {
+            let output = PathBuf::from(output);
+            std::fs::create_dir_all(&output).unwrap();
+            image
+                .save(output.join(format!("looks-{name}-offscreen.png")))
+                .unwrap();
+        }
+    }
+}
+#[test]
+fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restores_pixels() {
+    fn pixels(harness: &Harness<'_, Editor>, capture: &Rc<RefCell<FloatCapture>>) -> Vec<[f32; 4]> {
+        let positions = [
+            harness.state().last_layout.unwrap().0.image.center(),
+            harness.get_by_label("roll-0.dng").rect().center(),
+            harness.get_by_label("roll-1.dng").rect().center(),
+        ];
+        let capture = capture.borrow();
+        positions
+            .into_iter()
+            .map(|point| {
+                capture.pixels
+                    [point.y.floor() as usize * capture.size[0] as usize + point.x.floor() as usize]
+            })
+            .collect()
+    }
+
+    fn read_bins(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        gate: &crate::gpu::SubmissionGate,
+        source: &wgpu::Buffer,
+    ) -> Vec<u32> {
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: source.size(),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(source, 0, &staging, 0, source.size());
+        let submission = gate.submit(queue, [encoder.finish()]);
+        let (send, receive) = std::sync::mpsc::channel();
+        staging.map_async(wgpu::MapMode::Read, .., move |result| {
+            send.send(result).unwrap()
+        });
+        device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(submission),
+                timeout: Some(Duration::from_secs(30)),
+            })
+            .unwrap();
+        receive
+            .recv_timeout(Duration::from_secs(30))
+            .unwrap()
+            .unwrap();
+        let mapped = staging.get_mapped_range(..).unwrap();
+        let values = bytemuck::cast_slice::<u8, u32>(&mapped).to_vec();
+        drop(mapped);
+        staging.unmap();
+        values
+    }
+
+    let (mut harness, capture, device, queue) = fixture_editor_gpu();
+    harness.state_mut().target = OutputTarget::Srgb;
+    harness.state_mut().scopes.vector = true;
+    harness.state_mut().scopes.amplification = 1;
+    let settings = crate::scopes::Settings {
+        target: OutputTarget::Srgb,
+        plot: crate::scopes::Plot::Vector,
+        amplification: 1,
+    };
+    let ready = |editor: &Editor| {
+        positive_ready(editor)
+            && editor
+                .thumbnails
+                .ready_count(&editor.document, editor.target)
+                == 2
+            && editor
+                .scope_request()
+                .ok()
+                .and_then(|input| input.status(editor.scopes.gpu.as_ref().unwrap(), settings))
+                .is_some_and(|result| {
+                    result.is_ok_and(|counts| counts.valid > 0 && counts.invalid == 0)
+                })
+    };
+    paint_until(&mut harness, ready);
+    let before = pixels(&harness, &capture);
+    let scene = DVec3::new(0.18, 0.035, 0.008);
+    let encoded = scene.map(|value| {
+        if value <= 0.0078125 {
+            10.5402377416545 * value + 0.0729055341958355
+        } else {
+            (value.log2() + 9.72) / 17.52
+        }
+    });
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("constant.cube");
+    let mut cube = String::from(
+        "TITLE \"Constant scene colour\"\nLUT_3D_SIZE 2\nDOMAIN_MIN -0.5 -0.5 -0.5\nDOMAIN_MAX 1.1 1.1 1.1\n",
+    );
+    for _ in 0..8 {
+        cube.push_str(&format!(
+            "{:.17} {:.17} {:.17}\n",
+            encoded.x, encoded.y, encoded.z
+        ));
+    }
+    std::fs::write(&file, cube).unwrap();
+    harness
+        .state_mut()
+        .begin_look(look_ui::Source::Imported(file));
+    paint_until(&mut harness, ready);
+
+    // A constant scene colour has a known result regardless of the upstream photograph.
+    // OCIO is independent of the production GPU lookup and selected-output shaders.
+    let linear = crate::rendering::CpuRenderer::new(OutputTarget::Srgb)
+        .unwrap()
+        .render(&[scene])
+        .unwrap()[0];
+    let expected = linear
+        .to_array()
+        .map(|value| OutputTarget::Srgb.encode(f64::from(value)).unwrap());
+    for pixel in pixels(&harness, &capture) {
+        for c in 0..3 {
+            // The composed capture includes the RGBA16Float presentation stage.
+            assert!(
+                (f64::from(pixel[c]) - expected[c]).abs() <= 0.001,
+                "{pixel:?} vs {expected:?}"
+            );
+        }
+    }
+    assert!(
+        before
+            .iter()
+            .all(|pixel| (0..3).any(|c| (f64::from(pixel[c]) - expected[c]).abs() > 0.02))
+    );
+
+    let (expected_bins, _, expected_counts) =
+        crate::scopes::reference([1, 1], &[[linear.x, linear.y, linear.z, 1.]], settings).unwrap();
+    assert_eq!(expected_counts.outside, 0);
+    let editor = harness.state();
+    let counts = editor
+        .scope_request()
+        .unwrap()
+        .status(editor.scopes.gpu.as_ref().unwrap(), settings)
+        .unwrap()
+        .unwrap();
+    assert_eq!(counts.outside, 0);
+    let actual = read_bins(
+        &device,
+        &queue,
+        &editor.submissions,
+        &editor.scopes.gpu.as_ref().unwrap().bins,
+    );
+    for (actual, expected) in actual.iter().zip(expected_bins) {
+        assert_eq!(*actual, expected * counts.valid);
+    }
+
+    choose(&mut harness, "None");
+    paint_until(&mut harness, ready);
+    for (restored, original) in pixels(&harness, &capture).iter().zip(before) {
+        for c in 0..3 {
+            assert!((restored[c] - original[c]).abs() <= 0.001);
+        }
+    }
+}
+
+#[test]
+fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_session_list() {
+    let (mut harness, _) = fixture_editor();
+    let directory = tempfile::tempdir().unwrap();
+    let baseline = (harness.state().roll, harness.state().photo);
+    let mut assets = Vec::new();
+    for index in 0..2 {
+        let file = directory.path().join(format!("compare-{index}.cube"));
+        let mut cube = String::from(
+            "TITLE \"Comparison look\"\nLUT_3D_SIZE 2\nDOMAIN_MIN -0.5 -0.5 -0.5\nDOMAIN_MAX 1 1 1\n",
+        );
+        for b in 0..2 {
+            for g in 0..2 {
+                for r in 0..2 {
+                    cube.push_str(&format!(
+                        "{} {} {}\n",
+                        -0.5 + 1.5 * r as f64 + index as f64 * 0.02,
+                        -0.5 + 1.5 * g as f64,
+                        -0.5 + 1.5 * b as f64
+                    ));
+                }
+            }
+        }
+        std::fs::write(&file, cube).unwrap();
+        harness
+            .state_mut()
+            .begin_look(look_ui::Source::Imported(file.clone()));
+        paint_until(&mut harness, |editor| {
+            positive_ready(editor) && editor.loaded_looks.len() == index + 1
+        });
+        std::fs::remove_file(file).unwrap();
+        assets.push(
+            harness
+                .state()
+                .document
+                .project
+                .output
+                .look
+                .clone()
+                .unwrap(),
+        );
+    }
+    for (size, name) in [
+        (egui::vec2(1100., 800.), "normal"),
+        (egui::vec2(800., 600.), "narrow"),
+    ] {
+        harness.set_size(size);
+        harness.run();
+        let before = harness.state().document.project.clone();
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Look")
+            .click();
+        harness.step();
+        harness.step();
+        assert!(harness.query_by_label("Comparison look").is_some());
+        assert!(harness.query_by_label("Comparison look (2)").is_some());
+        if let Some(output) = std::env::var_os("ANTITONE_UI_CAPTURE") {
+            harness
+                .render()
+                .unwrap()
+                .save(PathBuf::from(output).join(format!("look-loaded-{name}-offscreen.png")))
+                .unwrap();
+        }
+        harness.event(egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        assert_eq!(harness.state().document.project, before);
+    }
+    for (name, expected) in [
+        (Builtin::Kodak2383.name(), None),
+        ("Comparison look", Some(0)),
+        ("None", None),
+        ("Comparison look (2)", Some(1)),
+        (Builtin::PortraEndura.name(), None),
+        ("Comparison look", Some(0)),
+    ] {
+        choose(&mut harness, name);
+        paint_until(&mut harness, positive_ready);
+        if let Some(index) = expected {
+            assert_eq!(
+                harness
+                    .state()
+                    .document
+                    .project
+                    .output
+                    .look
+                    .as_ref()
+                    .unwrap()
+                    .lut()
+                    .id(),
+                assets[index].lut().id()
+            );
+        } else if name == "None" {
+            assert!(harness.state().document.project.output.look.is_none());
+        } else {
+            assert!(matches!(
+                harness
+                    .state()
+                    .document
+                    .project
+                    .output
+                    .look
+                    .as_ref()
+                    .unwrap()
+                    .origin(),
+                crate::looks::LookOrigin::Builtin { .. }
+            ));
+        }
+        assert_eq!(harness.state().loaded_looks.len(), 2);
+        assert_eq!((harness.state().roll, harness.state().photo), baseline);
+    }
+    let path = directory.path().join("comparison.json");
+    harness
+        .state_mut()
+        .queue_save(path.clone(), crate::project::Save::New, None);
+    wait_for(&mut harness, |editor| {
+        !editor.busy && editor.document_pending.is_none()
+    });
+    assert!(!harness.state().document.dirty());
+    let (mut reopened, _) = editor_harness_with_thumbnails(true);
+    reopened.run();
+    open_project(&mut reopened, path.clone());
+    wait_for(&mut reopened, |editor| {
+        !editor.busy && editor.document_pending.is_none() && editor.ready.is_some()
+    });
+    assert!(reopened.state().failure.is_none());
+    assert_eq!(reopened.state().loaded_looks.len(), 1);
+    assert_eq!(
+        reopened.state().loaded_looks[0].lut().id(),
+        assets[0].lut().id()
+    );
+    assert!(!reopened.state().document.dirty());
+    open_project(&mut harness, path);
+    wait_for(&mut harness, |editor| {
+        !editor.busy && editor.document_pending.is_none() && editor.ready.is_some()
+    });
+    assert!(harness.state().failure.is_none());
+    assert_eq!(harness.state().loaded_looks.len(), 2);
+    assert!(!harness.state().document.dirty());
+}
+#[test]
+fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapshot() {
+    let (mut harness, _) = fixture_editor();
+    let directory = tempfile::tempdir().unwrap();
+    choose(&mut harness, Builtin::Kodak2383.name());
+    paint_until(&mut harness, |editor| {
+        positive_ready(editor) && editor.document.project.output.look.is_some()
+    });
+    let (mut reopened, _) = editor_harness_with_thumbnails(true);
+    reopened.run();
+    for imported in [false, true] {
+        if imported {
+            let file = directory.path().join("portable.cube");
+            let mut cube = String::from(
+                "TITLE \"Portable scene look\"\nLUT_3D_SIZE 2\nDOMAIN_MIN -0.5 -0.5 -0.5\nDOMAIN_MAX 1.1 1.1 1.1\n",
+            );
+            for b in 0..2 {
+                for g in 0..2 {
+                    for r in 0..2 {
+                        cube.push_str(&format!(
+                            "{} {} {}\n",
+                            -0.49 + 1.6 * r as f64,
+                            -0.48 + 1.6 * g as f64,
+                            -0.47 + 1.6 * b as f64
+                        ));
+                    }
+                }
+            }
+            std::fs::write(&file, cube).unwrap();
+            harness
+                .state_mut()
+                .begin_look(look_ui::Source::Imported(file.clone()));
+            paint_until(&mut harness, |editor| {
+                positive_ready(editor)
+                    && editor
+                        .document
+                        .project
+                        .output
+                        .look
+                        .as_ref()
+                        .is_some_and(|look| {
+                            matches!(look.origin(), crate::looks::LookOrigin::Imported)
+                        })
+            });
+            std::fs::remove_file(file).unwrap();
+        }
+        let asset = harness
+            .state()
+            .document
+            .project
+            .output
+            .look
+            .clone()
+            .unwrap();
+        let path = directory.path().join(if imported {
+            "imported.antitone.json"
+        } else {
+            "builtin.antitone.json"
+        });
+        harness
+            .state_mut()
+            .queue_save(path.clone(), crate::project::Save::New, None);
+        wait_for(&mut harness, |editor| {
+            !editor.busy && editor.document_pending.is_none()
+        });
+        assert!(harness.state().failure.is_none());
+        assert!(!harness.state().document.dirty());
+        open_project(&mut reopened, path);
+        wait_for(&mut reopened, |editor| {
+            !editor.busy && editor.document_pending.is_none() && editor.ready.is_some()
+        });
+        assert!(reopened.state().failure.is_none());
+        assert_eq!(
+            reopened
+                .state()
+                .document
+                .project
+                .output
+                .look
+                .as_ref()
+                .unwrap()
+                .lut()
+                .id(),
+            asset.lut().id()
+        );
+        assert!(reopened.state().look_pending.is_none());
+        assert!(!reopened.state().document.dirty());
+        if reopened.state().source {
+            reopened.get_by_label("View source").click();
+            reopened.step();
+        }
+        paint_until(&mut reopened, positive_ready);
+    }
+    let asset = harness
+        .state()
+        .document
+        .project
+        .output
+        .look
+        .clone()
+        .unwrap();
+    let path = directory.path().join("snapshot.tif");
+    harness.state_mut().export(
+        path.clone(),
+        OutputFormat::Tiff(OutputTarget::Srgb),
+        Overwrite::Refuse,
+    );
+    harness.state_mut().clear_look();
+    wait_for(&mut harness, |editor| editor.export_pending.is_none());
+    assert!(harness.state().failure.is_none());
+    assert!(harness.state().document.project.output.look.is_none());
+    let mut decoder = tiff::decoder::Decoder::new(std::fs::File::open(path).unwrap()).unwrap();
+    assert!(
+        decoder
+            .get_tag_ascii_string(tiff::tags::Tag::ImageDescription)
+            .unwrap()
+            .contains(&asset.lut().id().to_string())
+    );
+}
+
+#[test]
+fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_it() {
+    let (mut harness, _) = fixture_editor();
+    let baseline = (harness.state().roll, harness.state().photo);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("narrow.cube");
+    let mut cube = String::from(
+        "TITLE \"Narrow scene domain\"\nLUT_3D_SIZE 2\nDOMAIN_MIN 0.99 0.99 0.99\nDOMAIN_MAX 1 1 1\n",
+    );
+    for _ in 0..8 {
+        cube.push_str("0.4 0.4 0.4\n");
+    }
+    std::fs::write(&path, cube).unwrap();
+    harness
+        .state_mut()
+        .begin_look(look_ui::Source::Imported(path.clone()));
+    wait_for(&mut harness, |editor| !editor.busy);
+    std::fs::remove_file(path).unwrap();
+    let accepted = harness
+        .state()
+        .document
+        .project
+        .output
+        .look
+        .as_ref()
+        .unwrap()
+        .lut()
+        .id();
+    paint_until(&mut harness, positive_ready);
+    assert!(harness.state().look_render_failure().is_none());
+    assert_eq!((harness.state().roll, harness.state().photo), baseline);
+    assert_eq!(
+        harness
+            .state()
+            .document
+            .project
+            .output
+            .look
+            .as_ref()
+            .unwrap()
+            .lut()
+            .id(),
+        accepted
+    );
+    assert!(harness.query_by_label("Look rendering failed").is_none());
+    harness.state_mut().begin_pick(Pick::Gamma);
+    harness.step();
+    paint_until(&mut harness, |editor| {
+        assert!(
+            editor.original.refinement_error.is_none(),
+            "{}",
+            editor.status
+        );
+        editor
+            .original
+            .signature
+            .as_ref()
+            .is_some_and(|signature| signature.0.look_id().is_none())
+            && editor.original.settled.is_some()
+    });
+    assert!(harness.state().look_render_failure().is_none());
+    assert_eq!(
+        harness
+            .state()
+            .document
+            .project
+            .output
+            .look
+            .as_ref()
+            .unwrap()
+            .lut()
+            .id(),
+        accepted
+    );
+    harness.get_by_label("Cancel").click();
+    harness.step();
+    paint_until(&mut harness, |editor| {
+        editor.pick.is_none() && editor.pick_return.is_none() && positive_ready(editor)
+    });
+    assert!(harness.state().look_render_failure().is_none());
+    assert_eq!((harness.state().roll, harness.state().photo), baseline);
+    assert_eq!(
+        harness
+            .state()
+            .document
+            .project
+            .output
+            .look
+            .as_ref()
+            .unwrap()
+            .lut()
+            .id(),
+        accepted
+    );
+    choose(&mut harness, "None");
+    paint_until(&mut harness, positive_ready);
+    assert!(harness.state().look_render_failure().is_none());
+    assert!(harness.state().document.project.output.look.is_none());
+}

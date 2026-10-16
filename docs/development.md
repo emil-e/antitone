@@ -167,6 +167,26 @@ cargo test --locked --release --features ui-tests --lib editor::kittest_tests::a
 
 Check both proposal geometry and the composed Apply/Cancel workflow described in [the editor guide](editor.md#auto-crop-is-an-explicit-accepted-edit). `ANTITONE_UI_CAPTURE` enables `auto-crop-` inspection images. Software checks do not establish photographic border accuracy or physical interaction; [remaining acceptance](plans/region-detection.md) covers those boundaries.
 
+## Creative-look checks
+
+The [catalog guide](../assets/looks/README.md) owns photo-free authoring and pinned-reference/compact-fixture regeneration. Application checks distinguish strict asset/storage admission, source-model agreement, fixed-reference numerical gates and composed consumer behavior:
+
+```sh
+cargo test --locked --features project --lib looks::
+cargo test --locked --features project --test look_project
+cargo test --locked --features project --lib project::json
+cargo test --locked --release --features gpu,render,project --test gpu_look_sampling --test gpu_looks
+# Add the independent OCIO CPU all-node forward-reference oracle and original TIFF/EXR checks.
+cargo test --locked --release --features editor,ocio-reference --test gpu_looks --test gpu_look_export
+cargo test --locked --features editor --lib editor::look_ui::tests -- --test-threads=1
+cargo test --locked --features ui-tests --lib editor::kittest_tests::looks -- --test-threads=1
+cargo test --locked --features ui-tests --lib viewer::look_tests
+```
+
+Verify rendered pixels and scope contents against independent expectations, not only agreement between production signatures. Nonlinear interpolation fixtures must distinguish tetrahedral from trilinear sampling. Lifecycle checks preserve accepted selection through failure, cancellation and stale replies, and reopen embedded assets without their original files. Exercise None and EXR bypasses separately. Host-idle completion matters: continuously painting the UI can conceal stranded map callbacks. Admission tests bound streamed payloads before materialization; resource checks account for actual retained ownership.
+
+`ANTITONE_UI_CAPTURE` optionally writes `look*-offscreen.png` captures. These authored-RAW checks do not drive native file dialogs or establish photographic, physical-input or monitor acceptance.
+
 ## Shared GPU queue checks
 
 ```sh

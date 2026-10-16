@@ -30,7 +30,7 @@ impl<K: PartialEq, V> Cache<K, V> {
     }
 
     pub fn can_retain(&self, extra: usize) -> bool {
-        self.bytes
+        self.measured_bytes()
             .checked_add(extra)
             .is_some_and(|bytes| bytes <= self.budget)
     }
@@ -45,25 +45,15 @@ impl<K: PartialEq, V> Cache<K, V> {
             .iter()
             .position(|(candidate, _)| candidate == &key)
         {
-            let (_, previous) = self.entries.remove(index).unwrap();
-            self.bytes -= (self.weight)(&previous);
+            self.entries.remove(index);
         }
-        self.bytes += (self.weight)(&value);
         self.entries.push_back((key, value));
         self.trim();
     }
 
     pub fn retain(&mut self, mut keep: impl FnMut(&K, &V) -> bool) {
-        let bytes = &mut self.bytes;
-        let weight = self.weight;
-        self.entries.retain(|(key, value)| {
-            if keep(key, value) {
-                true
-            } else {
-                *bytes -= weight(value);
-                false
-            }
-        });
+        self.entries.retain(|(key, value)| keep(key, value));
+        self.bytes = self.measured_bytes();
     }
 
     pub fn set_budget(&mut self, budget: usize) {
@@ -76,7 +66,15 @@ impl<K: PartialEq, V> Cache<K, V> {
         self.trim();
     }
 
+    fn measured_bytes(&self) -> usize {
+        self.entries.iter().fold(0usize, |total, (_, value)| {
+            total.saturating_add((self.weight)(value))
+        })
+    }
+
     fn trim(&mut self) {
+        // Retained images may acquire or release downstream look resources after insertion.
+        self.bytes = self.measured_bytes();
         while self.bytes > self.budget {
             let Some(index) = self
                 .entries
@@ -94,6 +92,27 @@ impl<K: PartialEq, V> Cache<K, V> {
 mod tests {
     use super::Cache;
 
+    #[test]
+    fn dynamic_image_resources_are_reweighed_before_admission_eviction_and_removal() {
+        use std::{cell::Cell, rc::Rc};
+        let first = Rc::new(Cell::new(3usize));
+        let second = Rc::new(Cell::new(3usize));
+        let mut cache = Cache::new(10, |value: &Rc<Cell<usize>>| value.get());
+        cache.insert(0, first.clone());
+        cache.insert(1, second.clone());
+        first.set(9);
+        assert!(!cache.can_retain(1));
+        cache.set_budget(10);
+        assert_eq!(cache.entries.len(), 1);
+        assert!(cache.contains(&1));
+        assert_eq!(cache.bytes, 3);
+        second.set(8);
+        cache.retain(|_, _| true);
+        assert_eq!(cache.bytes, 8);
+        cache.insert(2, Rc::new(Cell::new(3)));
+        assert_eq!(cache.entries.len(), 1);
+        assert_eq!(cache.bytes, 3);
+    }
     #[test]
     fn visible_working_set_never_thrashes_even_when_larger_than_optional_budget() {
         let mut cache = Cache::new(16, |_| 1);

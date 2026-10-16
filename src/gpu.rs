@@ -3,6 +3,8 @@ use std::{num::NonZeroU64, sync::Arc};
 
 #[path = "gpu_flat_field.rs"]
 mod flat;
+#[path = "gpu_look.rs"]
+pub mod look;
 pub use flat::{GpuFlatField, SourceGeometry};
 #[path = "gpu_local_adjustments.rs"]
 mod local;

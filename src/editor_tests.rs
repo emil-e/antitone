@@ -1394,7 +1394,7 @@ fn cropped_export_snapshot_survives_later_crop_and_orientation_edits() {
         OutputFormat::Tiff(OutputTarget::Srgb),
         Overwrite::Refuse,
     );
-    let Command::Export(_, _, _, _, roll, photo, composition, _) = receiver.try_recv().unwrap()
+    let Command::Export(_, _, _, _, roll, photo, composition, ..) = receiver.try_recv().unwrap()
     else {
         panic!()
     };
@@ -1466,7 +1466,7 @@ fn export_owns_the_accepted_photo_snapshot_and_rejects_unpreviewable_locals() {
         OutputFormat::Tiff(OutputTarget::Srgb),
         Overwrite::Refuse,
     );
-    let Command::Export(_, _, _, _, _, grade, _, _) = receiver.try_recv().unwrap() else {
+    let Command::Export(_, _, _, _, _, grade, ..) = receiver.try_recv().unwrap() else {
         panic!()
     };
     editor.photo.exposure = 7.;
@@ -1518,7 +1518,7 @@ fn export_holds_the_accepted_orientation_snapshot() {
         OutputFormat::Tiff(OutputTarget::Srgb),
         Overwrite::Refuse,
     );
-    let Command::Export(_, _, _, _, roll, photo, composition, _) = receiver.try_recv().unwrap()
+    let Command::Export(_, _, _, _, roll, photo, composition, ..) = receiver.try_recv().unwrap()
     else {
         panic!()
     };
@@ -1854,7 +1854,7 @@ fn shared_roll_turns_apply_to_new_photos_and_export_snapshots() {
         OutputFormat::Tiff(OutputTarget::Srgb),
         Overwrite::Refuse,
     );
-    let Command::Export(_, _, _, _, _, _, composition, _) = receiver.try_recv().unwrap() else {
+    let Command::Export(_, _, _, _, _, _, composition, ..) = receiver.try_recv().unwrap() else {
         panic!()
     };
     assert_eq!(composition.size(), [576, 864]);

@@ -929,7 +929,18 @@ impl Editor {
                                     frame_point(draw_max),
                                     composition.area(),
                                 );
-                                match processing::image_paint(image, Some(parameters), mapping) {
+                                if let Some(failure) = parameters
+                                    .look()
+                                    .and_then(|look| image.look_failure(look.lut().id()))
+                                {
+                                    error = Some(failure.to_string());
+                                }
+                                match processing::image_paint(
+                                    image,
+                                    Some(parameters),
+                                    mapping,
+                                    ui.ctx(),
+                                ) {
                                     Ok(paint) => {
                                         ui.painter().with_clip_rect(draw).add(
                                             egui_wgpu::Callback::new_paint_callback(draw, paint),

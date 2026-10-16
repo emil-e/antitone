@@ -18,7 +18,6 @@ use crate::{
 };
 use glam::{DMat3, DVec3};
 use std::{collections::BTreeMap, path::Path, sync::Arc};
-use wgpu::util::DeviceExt;
 #[path = "gpu_export_batch.rs"]
 mod batch;
 #[path = "gpu_export_cache.rs"]
@@ -71,9 +70,10 @@ pub struct Request<'a> {
     pub grade: PhotoGradeSnapshot,
     pub composition: Composition,
     pub format: Format,
+    pub look: Option<Arc<crate::looks::LookAsset>>,
 }
 
-/// Runs on a worker. At most one tile/readback is outstanding, with no CPU fallback.
+/// Runs on a worker with one bounded dispatch/readback outstanding and no CPU rendering fallback.
 pub fn write(
     renderer: &GpuRenderer,
     device: &wgpu::Device,
@@ -180,6 +180,7 @@ fn write_job_with_policy(
         grade,
         composition,
         format,
+        look,
     } = request;
     if composition.area() != scan.area {
         return Err(Error::InvalidParameter(
@@ -203,7 +204,13 @@ fn write_job_with_policy(
             .as_ref()
             .map_or(0, forecast::Forecast::payload_bytes)
     );
-    let metadata = ProcessingMetadata::with_grade(roll.response, &grade);
+    let metadata = ProcessingMetadata::with_grade(roll.response, &grade).with_look(
+        if matches!(format, Format::Tiff(_)) {
+            look.as_ref().map(|asset| asset.lut().id().bytes())
+        } else {
+            None
+        },
+    );
     let batch_field = field.clone();
     let mut tiles = timed!(Setup, {
         let grade = GpuPhotoGrade::new(
@@ -214,13 +221,14 @@ fn write_job_with_policy(
             scan.camera_to_ap1,
             scan.area,
         )?;
-        OriginalTiles::new(
+        OriginalTiles::new_with_look(
             renderer,
             (device, queue, submissions),
             (scan.camera_to_ap1, scan.area),
             field,
             grade,
             format,
+            look.as_ref(),
         )
     })?;
     let tile_size = tiles.size;
@@ -259,7 +267,7 @@ fn write_job_with_policy(
                     (scan.camera_to_ap1, geometry.size()),
                     batch_field.clone(),
                     tiles.grade.clone(),
-                    format,
+                    (format, look.as_ref()),
                     Some(geometry),
                 )?);
             }
@@ -561,9 +569,15 @@ fn complete<R: TileReader>(
         timed!(SampleFill, {
             for (sample, index) in entries {
                 let p = pixels[index];
+                // Look-evaluation markers reject only samples used by reconstruction;
+                // unused look outputs in tile padding cannot invalidate a crop.
+                if p[3] < 0. {
+                    return Err(Error::Rendering("Selected look encountered nonfinite input or output in a required original sample.".into()));
+                }
                 samples[sample].0 = DVec3::new(p[0], p[1], p[2]);
             }
-        });
+            Ok::<_, Error>(())
+        })?;
     }
     read.finish()?;
     timed!(
@@ -585,18 +599,34 @@ struct OriginalTiles {
     grade: Arc<GpuPhotoGrade>,
     working: wgpu::Buffer,
     precise: Option<ProcessingKernel>,
-    rendered: Option<(wgpu::Texture, wgpu::BindGroup, wgpu::RenderPipeline)>,
+    rendered: Option<(
+        wgpu::Texture,
+        crate::renderer::RenderBinding,
+        wgpu::RenderPipeline,
+    )>,
     readback: wgpu::Buffer,
 }
 
 impl OriginalTiles {
+    #[cfg(test)]
     fn new(
+        renderer: &GpuRenderer,
+        gpu: (&wgpu::Device, &wgpu::Queue, &SubmissionGate),
+        source: (DMat3, SourceRegion),
+        field: Option<Arc<GpuFlatField>>,
+        grade: GpuPhotoGrade,
+        format: Format,
+    ) -> Result<Self, Error> {
+        Self::new_with_look(renderer, gpu, source, field, grade, format, None)
+    }
+    fn new_with_look(
         renderer: &GpuRenderer,
         (device, queue, submissions): (&wgpu::Device, &wgpu::Queue, &SubmissionGate),
         (matrix, area): (DMat3, SourceRegion),
         field: Option<Arc<GpuFlatField>>,
         grade: GpuPhotoGrade,
         format: Format,
+        look: Option<&Arc<crate::looks::LookAsset>>,
     ) -> Result<Self, Error> {
         let size = tile_size(area);
         let geometry = if field.is_some() || grade.snapshot().locals().iter().any(|a| a.is_active())
@@ -614,7 +644,7 @@ impl OriginalTiles {
             (matrix, size),
             field,
             Arc::new(grade),
-            format,
+            (format, look),
             geometry,
         )
     }
@@ -625,7 +655,7 @@ impl OriginalTiles {
         (matrix, size): (DMat3, [u32; 2]),
         field: Option<Arc<GpuFlatField>>,
         grade: Arc<GpuPhotoGrade>,
-        format: Format,
+        (format, look): (Format, Option<&Arc<crate::looks::LookAsset>>),
         geometry: Option<SourceGeometry>,
     ) -> Result<Self, Error> {
         let mut source =
@@ -655,41 +685,13 @@ impl OriginalTiles {
         });
         let rendered = if let Format::Tiff(target) = format {
             let resources = renderer.target(target);
-            let dimensions = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("export tile dimensions"),
-                contents: bytemuck::cast_slice(&[size[0], size[1], 0, 0]),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
-            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("export pinned ACES resources"),
-                layout: &resources.layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: working.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&resources.tables[0]),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(&resources.tables[1]),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::Sampler(&resources.sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: dimensions.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: resources.hues.as_entire_binding(),
-                    },
-                ],
-            });
+            let group = renderer.render_binding(
+                device,
+                &working,
+                [size[0], size[1], 0, 0],
+                target,
+                look,
+            )?;
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("export original linear target tile"),
                 size: wgpu::Extent3d {
@@ -776,6 +778,8 @@ impl OriginalTiles {
                 &self.grade,
             )?;
         if let Some((texture, group, pipeline)) = &self.rendered {
+            // Per-original markers survive ACES; reconstruction validates only used samples.
+            let _ = group.encode_look(renderer, device, &mut encoder)?;
             let view = texture.create_view(&Default::default());
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -793,7 +797,7 @@ impl OriginalTiles {
                 });
                 // TIFF alone has target resources; EXR never executes the output transform.
                 pass.set_pipeline(pipeline);
-                pass.set_bind_group(0, group, &[]);
+                pass.set_bind_group(0, &group.group, &[]);
                 pass.draw(0..3, 0..1);
             }
             encoder.copy_texture_to_buffer(

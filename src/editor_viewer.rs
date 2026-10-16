@@ -142,6 +142,7 @@ impl Editor {
         });
 
         let warning = self.viewer_warning();
+        let look_error = self.look_render_failure();
         let inspecting = navigating && calibrated && tool.is_none() && !dust_session && !masking;
         let bar = if fullscreen {
             presentation::ViewerBar::Overlay
@@ -168,8 +169,12 @@ impl Editor {
                 } else if self.source || self.ready.is_none() {
                     ""
                 } else if self.working.enabled() && tool.is_none() {
-                    if self.working.error.is_some() {
+                    if look_error.is_some() {
+                        " · Look unavailable"
+                    } else if self.working.error.is_some() {
                         " · View unavailable"
+                    } else if self.working.compare && self.original.refinement_error == Some(self.original.revision()) {
+                        " · Reference unavailable"
                     } else if self.working.compare && self.working.reference_ready() {
                         " · Original reference"
                     } else if self.working.compare {
@@ -353,7 +358,12 @@ impl Editor {
                 } else {
                     egui::Popup::close_id(ui.ctx(), inspection_id);
                 }
-                if let Some(error) = &self.working.error {
+                if let Some(error) = &look_error {
+                    ui.colored_label(egui::Color32::LIGHT_RED, "Look rendering failed");
+                    if TextAction::new("Details").toolbar(60.).name("Look rendering details").show(ui).clicked() {
+                        self.report_failure(FailureKind::LookRendering,error.to_string());
+                    }
+                } else if let Some(error) = &self.working.error {
                     ui.colored_label(egui::Color32::LIGHT_RED, "View unavailable")
                         .on_hover_text(error);
                 }

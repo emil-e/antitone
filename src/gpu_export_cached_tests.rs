@@ -89,6 +89,7 @@ fn cached_jobs_preserve_reopened_pixels_through_correction_locals_and_rotated_re
                 Format::Exr(ExrPrecision::Full),
             ] {
                 let request = || Request {
+                    look: None,
                     scan: &scan,
                     field: field.clone(),
                     calibration,

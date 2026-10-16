@@ -87,7 +87,9 @@ struct Cube : Domain {
             throw std::runtime_error("cannot create LUT");
         f << std::setprecision(12);
         f << "# Antitone independent creative look: " << look_id
-          << " / revision 1\n# ACEScct/AP1/D60 input and output; apply BEFORE ordinary "
+          << " / revision 1\n# Source product: " << look_source_product
+          << "\n# Independent creative interpretation; no manufacturer affiliation or endorsement"
+          << "\n# ACEScct/AP1/D60 input and output; apply BEFORE ordinary "
              "selected-output ACES\n# Tetrahedral interpolation; explicit domain admission "
              "required; no fallback\n# Content selection is not release or physical-calibration "
              "clearance\nTITLE "

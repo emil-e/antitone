@@ -280,6 +280,7 @@ fn exercise(
                 let label = format!("export-{backend:?}-corrected-{corrected}-{format:?}");
                 monitor.phase(&label, || {
                     let request = Request {
+                        look: None,
                         scan: &scan,
                         field: gpu_field.clone(),
                         calibration,
@@ -584,6 +585,7 @@ fn reference_benchmark_counts_samples_and_preserves_bounded_stop_checks() {
     };
     let composition = Composition::new(scan.area, Default::default(), Default::default()).unwrap();
     let request = || Request {
+        look: None,
         scan: &scan,
         field: None,
         calibration,
@@ -628,6 +630,7 @@ fn write_reference(
         grade,
         composition,
         format,
+        look,
         ..
     } = request;
     let metadata = export::ProcessingMetadata::with_grade(roll.response, &grade);
@@ -644,7 +647,13 @@ fn write_reference(
             check()?;
         }
         samples += 1;
-        pipeline.apply(scan.pixel(x, y)?, [x, y]).map(|p| p.rgb)
+        let value = pipeline.apply(scan.pixel(x, y)?, [x, y])?.rgb;
+        if matches!(format, Format::Tiff(_)) {
+            look.as_ref()
+                .map_or(Ok(value), |asset| asset.lut().apply(value))
+        } else {
+            Ok(value)
+        }
     };
     match format {
         Format::Tiff(target) => export::tiff_composed(

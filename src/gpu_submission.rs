@@ -13,7 +13,21 @@ pub struct SubmissionGate(
     #[cfg(test)] Arc<Mutex<Option<SubmissionObserver>>>,
 );
 
+/// Keeps the host polling through asynchronous readback, including after queue completion.
+#[cfg(any(feature = "ui", test))]
+pub(crate) struct PendingWork(Arc<std::sync::atomic::AtomicUsize>);
+#[cfg(any(feature = "ui", test))]
+impl Drop for PendingWork {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::Release);
+    }
+}
 impl SubmissionGate {
+    #[cfg(any(feature = "ui", test))]
+    pub(crate) fn track(&self) -> PendingWork {
+        self.1.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        PendingWork(self.1.clone())
+    }
     pub fn submit(
         &self,
         queue: &wgpu::Queue,
@@ -83,6 +97,21 @@ mod tests {
     use super::*;
     use std::{sync::mpsc, time::Duration};
 
+    #[test]
+    fn pending_readback_keeps_host_polling_until_callback_or_abandonment() {
+        let gate = SubmissionGate::default();
+        let clone = gate.clone();
+        let pending = gate.track();
+        assert!(clone.pending());
+        let callback = move || drop(pending);
+        assert!(clone.pending());
+        callback();
+        assert!(!clone.pending());
+        let pending = gate.track();
+        let abandoned = move || drop(pending);
+        drop(abandoned);
+        assert!(!gate.pending());
+    }
     #[test]
     fn clones_share_the_gate_and_release_it_after_configuration() {
         let gate = SubmissionGate::default();

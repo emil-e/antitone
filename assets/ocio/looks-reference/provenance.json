@@ -1,0 +1,30 @@
+{
+  "ocio": "2.6.0",
+  "reference": {
+    "id": "p3rec50",
+    "parameters": [
+      100.0,
+      0.694,
+      0.306,
+      0.2175,
+      0.7435,
+      0.1405,
+      0.053,
+      0.3127,
+      0.329
+    ],
+    "boundary_start_radius": 0.9
+  },
+  "space": "forward AP1/D60 to fixed reference; inverse fixed reference to AP1/D60",
+  "shader_language": "GLSL_VK_4_6",
+  "table_channels": {
+    "reach.f32": 1,
+    "cusp.f32": 3
+  },
+  "sha256": {
+    "cusp.f32": "bbfdda41e37087b76ae3d5fe1c023a6fb4c826d9f416c6de7e4a0c3e57353de6",
+    "forward.glsl": "1edc3505059cc163943574dc21a5e034929236b8c103074e3718c9ef204cda7c",
+    "inverse.glsl": "f7d11ee14fb7d00e6ae0d76af098b96a0413085b3ebc9a5b721601d03deae71d",
+    "reach.f32": "0b1df450119d7e1875bd72edb598769998cd19836d6bd34520078a33bb5cbd31"
+  }
+}

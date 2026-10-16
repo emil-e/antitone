@@ -625,7 +625,7 @@ pub(crate) struct RenderedView {
     pub processing: ProcessingSignature,
     pub target: OutputTarget,
     graded: Option<Arc<GradedView>>,
-    group: Option<wgpu::BindGroup>,
+    group: Option<crate::renderer::RenderBinding>,
     composite: Option<composite::Composite>,
     submitted: Mutex<bool>,
     complete: Arc<AtomicBool>,
@@ -688,7 +688,7 @@ impl RenderedView {
             input.repairs.bound(),
         )?;
         let graded = previous
-            .filter(|p| p.spec == source.spec && p.processing == processing)
+            .filter(|p| p.spec == source.spec && p.processing.same_photographic(&processing))
             .and_then(|p| p.graded.clone());
         let graded = match graded {
             Some(graded) => graded,
@@ -777,38 +777,13 @@ impl RenderedView {
             height,
             target,
         ))?);
-        let resources = source.renderer.target(target);
-        let size = uniform(device, bytemuck::cast_slice(&[width, height, 1, 0]));
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("immutable accepted physical-view ACES resources"),
-            layout: &resources.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: graded.pixels.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&resources.tables[0]),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&resources.tables[1]),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&resources.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: size.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: resources.hues.as_entire_binding(),
-                },
-            ],
-        });
+        let group = source.renderer.render_binding(
+            device,
+            &graded.pixels,
+            [width, height, 1, 0],
+            target,
+            input.look(),
+        )?;
         Ok(Arc::new(Self {
             image,
             spec: source.spec.clone(),
@@ -867,7 +842,8 @@ impl RenderedView {
     }
 
     pub(crate) fn in_flight(&self) -> bool {
-        *self.submitted.lock().unwrap() && !self.complete.load(Ordering::Acquire)
+        *self.submitted.lock().unwrap()
+            && (!self.complete.load(Ordering::Acquire) || self.image.look_result().is_none())
     }
 
     // Submission, not encoder creation, initializes the cache. Abandoned UI passes cannot poison it.
@@ -887,11 +863,21 @@ impl RenderedView {
         if let Some(composite) = &self.composite {
             composite.ensure_parents(device, queue, submissions, context);
             composite.encode(&mut encoder, &self.image);
+            if self.processing.look_id().is_some() {
+                self.image
+                    .set_look_check(Some(composite.check(device, &mut encoder, &self.image)));
+            }
         } else {
             let graded = self.graded.as_ref().expect("unsubmitted working view");
             if !**initialized.as_ref().unwrap() {
                 graded.source.kernels.grade(device, &mut encoder, graded);
             }
+            let binding = self.group.as_ref().unwrap();
+            self.image.set_look_check(
+                binding
+                    .encode_look(&graded.source.renderer, device, &mut encoder)
+                    .expect("validated physical-view look dispatch"),
+            );
             let view = self.image.linear.create_view(&Default::default());
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("accepted physical-view ACES result"),
@@ -907,17 +893,20 @@ impl RenderedView {
                 ..Default::default()
             });
             pass.set_pipeline(&graded.source.renderer.target(self.target).pipeline);
-            pass.set_bind_group(0, self.group.as_ref().unwrap(), &[]);
+            pass.set_bind_group(0, &binding.group, &[]);
             pass.draw(0..3, 0..1);
         }
         // Submitted bindings own their native versions until completion. The callback owns no
         // renderer/queue or GPU-resource lease: it may run under the shared submission gate.
         let complete = self.complete.clone();
         let context = context.clone();
+        let repaint = context.clone();
         submissions.submit_with_completion(queue, [encoder.finish()], move || {
             complete.store(true, Ordering::Release);
             context.request_repaint();
         });
+        self.image
+            .begin_look_check_tracked(submissions, move || repaint.request_repaint());
         if let Some(initialized) = initialized.as_mut() {
             **initialized = true;
         }

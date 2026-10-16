@@ -136,6 +136,13 @@ impl Editor {
                 }
             }
         };
+        if self.pick.is_some()
+            || self.flat_edit.is_some()
+            || self.pick_return.is_some()
+            || self.analysis_review.is_some()
+        {
+            parameters = parameters.with_look(None);
+        }
         if !self.source && self.flat_edit.is_none() && self.pick_return.is_none() {
             if let Some(signature) = self.dust_signature() {
                 self.schedule_dust_with_wake(signature, ui.ctx());
@@ -283,7 +290,7 @@ impl Editor {
                 }
                 _ => (provisional, Some(parameters), geometry.uv(draw, area)),
             };
-            match processing::image_paint(image, parameters, mapping) {
+            match processing::image_paint(image, parameters, mapping, ui.ctx()) {
                 Ok(paint) => paint,
                 Err(error) => {
                     ui.label(format!("Preview unavailable: {error}"));

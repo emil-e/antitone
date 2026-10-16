@@ -10,6 +10,7 @@ use std::sync::Arc;
 pub struct ProcessingInput {
     parameters: ProcessingParameters,
     grade: Option<Arc<GpuPhotoGrade>>,
+    look: Option<Arc<crate::looks::LookAsset>>,
     #[cfg(feature = "editor")]
     pub(crate) repairs: super::repairs::Snapshot,
 }
@@ -19,6 +20,7 @@ impl From<ProcessingParameters> for ProcessingInput {
         Self {
             parameters,
             grade: None,
+            look: None,
             #[cfg(feature = "editor")]
             repairs: super::repairs::Snapshot::default(),
         }
@@ -30,6 +32,7 @@ impl From<Arc<GpuPhotoGrade>> for ProcessingInput {
         Self {
             parameters: grade.parameters,
             grade: Some(grade),
+            look: None,
             #[cfg(feature = "editor")]
             repairs: super::repairs::Snapshot::default(),
         }
@@ -37,10 +40,23 @@ impl From<Arc<GpuPhotoGrade>> for ProcessingInput {
 }
 
 impl ProcessingInput {
+    /// Rendering is downstream of the photographic constants; inspection never adopts a look.
+    pub fn with_look(mut self, look: Option<Arc<crate::looks::LookAsset>>) -> Self {
+        self.look = if self.parameters.gamma_mode.w > 0.5 {
+            look
+        } else {
+            None
+        };
+        self
+    }
+    pub fn look(&self) -> Option<&Arc<crate::looks::LookAsset>> {
+        self.look.as_ref()
+    }
     pub fn signature(&self) -> ProcessingSignature {
         ProcessingSignature {
             parameters: bytemuck::bytes_of(&self.parameters).try_into().unwrap(),
             grade: self.grade.clone(),
+            look: self.look.as_ref().map(|look| look.lut().id()),
             #[cfg(feature = "editor")]
             repairs: self.repairs.clone(),
         }
@@ -70,12 +86,18 @@ impl ProcessingInput {
 pub struct ProcessingSignature {
     parameters: [u8; ProcessingParameters::BYTE_LEN],
     grade: Option<Arc<GpuPhotoGrade>>,
+    look: Option<crate::looks::LookId>,
     #[cfg(feature = "editor")]
     repairs: super::repairs::Snapshot,
 }
 
-impl PartialEq for ProcessingSignature {
-    fn eq(&self, other: &Self) -> bool {
+impl ProcessingSignature {
+    pub(crate) fn look_id(&self) -> Option<crate::looks::LookId> {
+        self.look
+    }
+
+    /// Look changes rerender, but may reuse an immutable graded AP1 prefix.
+    pub(crate) fn same_photographic(&self, other: &Self) -> bool {
         #[cfg(feature = "editor")]
         if self.repairs != other.repairs {
             return false;
@@ -89,10 +111,17 @@ impl PartialEq for ProcessingSignature {
     }
 }
 
+impl PartialEq for ProcessingSignature {
+    fn eq(&self, other: &Self) -> bool {
+        self.look == other.look && self.same_photographic(other)
+    }
+}
+
 impl std::fmt::Debug for ProcessingSignature {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProcessingSignature")
             .field("parameters", &self.parameters)
+            .field("look", &self.look)
             .field("snapshot", &self.grade.as_ref().map(|g| g.snapshot()))
             .finish_non_exhaustive()
     }

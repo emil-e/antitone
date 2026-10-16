@@ -68,6 +68,51 @@ class CatalogTests(unittest.TestCase):
             {"kodak-endura-metallic", "kodak-endura-premier-metallic"},
         )
 
+    def test_active_names_are_canonical_metadata_with_separate_source_attribution(self):
+        def numeric(header):
+            return [
+                line
+                for line in header.splitlines()
+                if "look_name =" not in line and "look_source_product =" not in line
+            ]
+
+        expected = {
+            PORTRA: ("Portrait Paper", "KODAK PROFESSIONAL PORTRA ENDURA Paper"),
+            "kodak-pro-image-ii": ("Colour Paper", "KODAK PROFESSIONAL PRO IMAGE II Paper"),
+            "kodak-2383": ("Cinema Print", "KODAK VISION Color Print Film 2383 / 3383"),
+            MONO: ("Monochrome Paper", "ILFORD MULTIGRADE RC DELUXE (new generation), filter 2"),
+        }
+        for identifier, (name, source) in expected.items():
+            with self.subTest(look=identifier):
+                item = catalog.load(identifier)
+                self.assertEqual(item.look["name"], name)
+                self.assertEqual(item.look["source_product"], source)
+                generated = looks.header(item)
+                self.assertIn("look_name = " + json.dumps(name) + ";", generated)
+                self.assertIn("look_source_product = " + json.dumps(source) + ";", generated)
+                relabelled = replace(
+                    item,
+                    look={
+                        **item.look,
+                        "name": "Another name",
+                        "source_product": "Another source label",
+                    },
+                )
+                self.assertEqual(numeric(generated), numeric(looks.header(relabelled)))
+        with isolated_assets() as assets:
+            manifest = assets / PORTRA / "look.json"
+            original = catalog.read_json(manifest)
+            for value in (None, "", 7, "Bad\nsource"):
+                changed = {**original, "source_product": value}
+                manifest.write_text(json.dumps(changed))
+                with self.assertRaises(ValueError):
+                    catalog.load(PORTRA, assets)
+            changed = dict(original)
+            del changed["source_product"]
+            manifest.write_text(json.dumps(changed))
+            with self.assertRaises(ValueError):
+                catalog.load(PORTRA, assets)
+
     def test_all_source_ledgers_and_frozen_models(self):
         for identifier in catalog.identifiers():
             with self.subTest(look=identifier):

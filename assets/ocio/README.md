@@ -8,7 +8,11 @@ These are generated algorithms with two 363-entry 2D parameter tables per target
 
 LUT files contain little-endian f32, one channel for table 0 and three channels for table 1. The viewer expands texels to RGBA32Float without changing values and uses nonfiltering samplers.
 
-SHA-256:
+## Fixed reference for creative-look generation
+
+`looks-reference/` separately pins the p3rec50 D65/100-nit **forward and inverse** algorithms and their shared reach/cusp tables, with digests/parameters in `provenance.json`. They serve the native creative-look generator, not the selected output renderer. Its strict compute adapter retains the generated mathematical bodies; changing sRGB/P3 output does not change the creative look. Keep these generated resources outside the text-only material/source catalog. The [look guide](../looks/README.md#native-application-generation) owns generation, conformance fixtures and remaining approximation/acceptance limits.
+
+## Selected-output SHA-256
 
 | File | Digest |
 |---|---|

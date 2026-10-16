@@ -225,6 +225,7 @@ def load(identifier, assets=ASSETS):
             "acceptance_scope",
             "release_clearance",
         ),
+        ("source_product",),
     )
     require(
         revision_one(look["schema_version"])
@@ -245,6 +246,15 @@ def load(identifier, assets=ASSETS):
         isinstance(look["name"], str) and look["name"] and all(ord(c) >= 32 for c in look["name"]),
         "invalid look label",
     )
+    if look["status"] in ("selected", "accepted"):
+        require("source_product" in look, "active look lacks source-product attribution")
+    if "source_product" in look:
+        require(
+            isinstance(look["source_product"], str)
+            and look["source_product"].strip()
+            and all(ord(c) >= 32 for c in look["source_product"]),
+            "invalid source-product attribution",
+        )
     for name in ("model", "source"):
         require(
             isinstance(look[name + "_sha256"], str) and SHA.fullmatch(look[name + "_sha256"]),

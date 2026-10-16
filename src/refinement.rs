@@ -116,7 +116,19 @@ pub fn refine(
     }
     let mut encoder = device.create_command_encoder(&Default::default());
     average.finish(device, &mut encoder, &output.linear);
-    wait_for(device, submissions.submit(queue, [encoder.finish()]))?;
+    if input.look().is_some() {
+        output.set_look_check(Some(renderer.check_look_image(
+            device,
+            &mut encoder,
+            &output.linear,
+        )));
+    }
+    let submission = submissions.submit(queue, [encoder.finish()]);
+    output.begin_look_check(|| {});
+    wait_for(device, submission)?;
+    output
+        .look_result()
+        .ok_or_else(|| Error::Gpu("look validation did not complete".into()))??;
     if generation.load(Ordering::Relaxed) != expected {
         return Ok(None);
     }

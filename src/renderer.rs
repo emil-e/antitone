@@ -6,6 +6,9 @@ use wgpu::util::DeviceExt;
 
 #[path = "renderer_aces.rs"]
 mod aces;
+#[cfg(feature = "project")]
+#[path = "renderer_look_reference.rs"]
+mod look_reference;
 
 pub(crate) const VERTEX: &str = r#"
 struct Vertex { @builtin(position) position: vec4f, @location(0) uv: vec2f }
@@ -36,7 +39,6 @@ pub(crate) struct RendererCache {
     renderer: std::sync::OnceLock<Result<Arc<GpuRenderer>, Error>>,
     submissions: crate::gpu::SubmissionGate,
 }
-
 #[cfg(feature = "editor")]
 impl RendererCache {
     pub(crate) fn new(submissions: crate::gpu::SubmissionGate) -> Self {
@@ -45,7 +47,6 @@ impl RendererCache {
             ..Default::default()
         }
     }
-
     pub(crate) fn prewarm(self: &Arc<Self>, device: wgpu::Device, queue: wgpu::Queue) {
         let cache = self.clone();
         // Initialization errors remain cached and are reported by the foreground get.
@@ -53,7 +54,6 @@ impl RendererCache {
             let _ = cache.get(&device, &queue);
         });
     }
-
     pub(crate) fn get(
         &self,
         device: &wgpu::Device,
@@ -71,6 +71,41 @@ impl RendererCache {
     }
 }
 
+pub(crate) struct RenderBinding {
+    pub group: wgpu::BindGroup,
+    source: wgpu::Buffer,
+    looked: Option<(Arc<crate::gpu::look::Lut>, wgpu::Buffer)>,
+    count: u32,
+    coverage: bool,
+}
+impl RenderBinding {
+    pub(crate) fn look_bytes(&self) -> u64 {
+        self.looked
+            .as_ref()
+            .map_or(0, |(look, buffer)| look.byte_len() + buffer.size())
+    }
+    pub fn encode_look(
+        &self,
+        renderer: &GpuRenderer,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> Result<Option<Arc<crate::gpu::look::Check>>, Error> {
+        let Some((look, output)) = &self.looked else {
+            return Ok(None);
+        };
+        let dispatch = renderer.look_kernel.bind(
+            device,
+            &self.source,
+            output,
+            look.clone(),
+            self.count,
+            self.coverage,
+        )?;
+        renderer.look_kernel.encode(encoder, &dispatch);
+        Ok(Some(dispatch.check))
+    }
+}
+
 pub(crate) struct TargetResources {
     pub pipeline: wgpu::RenderPipeline,
     pub layout: wgpu::BindGroupLayout,
@@ -83,30 +118,37 @@ pub(crate) struct TargetResources {
 /// Image storage and processing signatures remain image-owned.
 pub struct GpuRenderer {
     pub(crate) kernel: ProcessingKernel,
+    pub(crate) submissions: crate::gpu::SubmissionGate,
     #[cfg(feature = "editor")]
     pub(crate) repairs: crate::gpu::repairs::Kernels,
     #[cfg(feature = "ui")]
     pub(crate) display: wgpu::RenderPipeline,
     targets: [TargetResources; 2],
+    look_kernel: crate::gpu::look::Kernel,
+    look_cache: std::sync::Mutex<
+        std::collections::HashMap<crate::looks::LookId, std::sync::Weak<crate::gpu::look::Lut>>,
+    >,
+    #[cfg(feature = "project")]
+    look_reference: std::sync::OnceLock<Result<Arc<look_reference::ReferenceTransforms>, Error>>,
     #[cfg(feature = "ui")]
     pub(crate) average: Arc<AveragePipelines>,
 }
-
 impl GpuRenderer {
     pub async fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Arc<Self>, Error> {
         Self::new_with_submissions(device, queue, crate::gpu::SubmissionGate::default()).await
     }
-
     pub async fn new_with_submissions(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         submissions: crate::gpu::SubmissionGate,
     ) -> Result<Arc<Self>, Error> {
-        let kernel = ProcessingKernel::new_with_submissions(device, queue, submissions).await?;
+        let kernel =
+            ProcessingKernel::new_with_submissions(device, queue, submissions.clone()).await?;
         #[cfg(feature = "ui")]
         let average = Arc::new(AveragePipelines::new(device).await?);
         #[cfg(feature = "editor")]
         let repairs = crate::gpu::repairs::Kernels::new(device).await?;
+        let look_kernel = crate::gpu::look::Kernel::new(device).await?;
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let vertex = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("image fullscreen triangle"),
@@ -123,16 +165,173 @@ impl GpuRenderer {
         }
         Ok(Arc::new(Self {
             kernel,
+            submissions,
             #[cfg(feature = "editor")]
             repairs,
             #[cfg(feature = "ui")]
             display,
             targets,
+            look_kernel,
+            look_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
+            #[cfg(feature = "project")]
+            look_reference: std::sync::OnceLock::new(),
             #[cfg(feature = "ui")]
             average,
         }))
     }
-
+    /// Native worker-only generation. No compiler, Python or OCIO runtime is involved.
+    #[cfg(feature = "project")]
+    pub fn bake_builtin(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        submissions: &crate::gpu::SubmissionGate,
+        builtin: crate::looks::builtin::Builtin,
+        size: u32,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<crate::looks::LookAsset, Error> {
+        use crate::looks::{LookAsset, Lut3D, builtin};
+        let reference = self
+            .look_reference
+            .get_or_init(|| {
+                pollster::block_on(look_reference::ReferenceTransforms::new(device, queue))
+                    .map(Arc::new)
+            })
+            .clone()?;
+        let model = builtin::Model::new(builtin)?;
+        let mapped = model.mapped_nodes(size, cancel)?;
+        let scene = reference.apply(device, queue, submissions, true, &mapped)?;
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(crate::looks::failure("look preparation cancelled"));
+        }
+        let roundtrip = reference.apply(device, queue, submissions, false, &scene)?;
+        let mut nodes = Vec::with_capacity(scene.len());
+        for ((actual, expected), linear) in roundtrip.iter().zip(&mapped).zip(&scene) {
+            if (0..3).any(|c| {
+                !actual[c].is_finite()
+                    || (actual[c] - expected[c]).abs() > 2e-4
+                    || !linear[c].is_finite()
+                    || !(0. ..=1024.).contains(&linear[c])
+            }) {
+                return Err(crate::looks::failure(
+                    "generated LUT failed reference/range admission",
+                ));
+            }
+            nodes.push(std::array::from_fn(|c| {
+                crate::photographic::encode(f64::from(linear[c])) as f32
+            }));
+        }
+        let lut = Arc::new(Lut3D::new(
+            size,
+            [builtin::DOMAIN_MIN as f32; 3],
+            [builtin::domain_max() as f32; 3],
+            nodes,
+        )?);
+        let gray = lut.apply(glam::DVec3::splat(0.18))?;
+        if (gray - glam::DVec3::splat(0.18)).abs().max_element() > 2e-5 {
+            return Err(crate::looks::failure(
+                "generated LUT failed the gray anchor bound",
+            ));
+        }
+        LookAsset::new(builtin.name().into(), builtin.origin(), lut)
+    }
+    pub(crate) fn render_binding(
+        &self,
+        device: &wgpu::Device,
+        source: &wgpu::Buffer,
+        dimensions: [u32; 4],
+        target: OutputTarget,
+        look: Option<&Arc<crate::looks::LookAsset>>,
+    ) -> Result<RenderBinding, Error> {
+        let count = dimensions[0]
+            .checked_mul(dimensions[1])
+            .filter(|n| *n > 0)
+            .ok_or(Error::InvalidParameter("invalid rendered dimensions"))?;
+        let looked = look
+            .map(|asset| {
+                let mut cache = self.look_cache.lock().unwrap();
+                cache.retain(|_, value| value.strong_count() != 0);
+                let id = asset.lut().id();
+                let resource = match cache.get(&id).and_then(std::sync::Weak::upgrade) {
+                    Some(value) => value,
+                    None => {
+                        let value = crate::gpu::look::Lut::new(device, asset.lut())?;
+                        cache.insert(id, Arc::downgrade(&value));
+                        value
+                    }
+                };
+                let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("looked scene-linear AP1"),
+                    size: u64::from(count) * 16,
+                    usage: wgpu::BufferUsages::STORAGE,
+                    mapped_at_creation: false,
+                });
+                Ok::<_, Error>((resource, buffer))
+            })
+            .transpose()?;
+        let pixels = looked.as_ref().map_or(source, |(_, buffer)| buffer);
+        let size = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("rendered dimensions"),
+            contents: bytemuck::cast_slice(&dimensions),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let resources = self.target(target);
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("immutable look and selected-output ACES resources"),
+            layout: &resources.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: pixels.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&resources.tables[0]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&resources.tables[1]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(&resources.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: size.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: resources.hues.as_entire_binding(),
+                },
+            ],
+        });
+        Ok(RenderBinding {
+            group,
+            source: source.clone(),
+            looked,
+            count,
+            coverage: dimensions[2] != 0,
+        })
+    }
+    pub(crate) fn check_look_image(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        image: &wgpu::Texture,
+    ) -> Arc<crate::gpu::look::Check> {
+        self.look_kernel.check_rendered(device, encoder, image)
+    }
+    pub(crate) fn check_look_projection(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        image: &wgpu::Texture,
+        mapping: crate::geometry::TextureMapping,
+    ) -> Result<Arc<crate::gpu::look::Check>, Error> {
+        self.look_kernel
+            .check_projected(device, encoder, image, mapping)
+    }
     pub(crate) fn target(&self, target: OutputTarget) -> &TargetResources {
         &self.targets[target as usize]
     }
@@ -186,7 +385,7 @@ fn target_resources(
         usage: wgpu::BufferUsages::STORAGE,
     });
     let code = format!(
-        "#version 450\nlayout(set=0,binding=3) uniform sampler aces_sampler;\n{generated}\nlayout(set=0,binding=0,std430) readonly buffer Inputs {{ vec4 pixels[]; }};\nlayout(set=0,binding=4,std140) uniform Dimensions {{ uvec4 size; }};\nlayout(location=0) in vec2 uv;\nlayout(location=0) out vec4 result;\nvoid main() {{ uvec2 xy=min(uvec2(max(uv,vec2(0.0))*vec2(size.xy)),size.xy-uvec2(1)); vec4 pixel=pixels[xy.x+xy.y*size.x]; if (size.z!=0u && (uint(pixel.a)&8u)==0u) {{ result=vec4(0.0); return; }} result=antitone_render(vec4(pixel.rgb,1.0)); }}"
+        "#version 450\nlayout(set=0,binding=3) uniform sampler aces_sampler;\n{generated}\nlayout(set=0,binding=0,std430) readonly buffer Inputs {{ vec4 pixels[]; }};\nlayout(set=0,binding=4,std140) uniform Dimensions {{ uvec4 size; }};\nlayout(location=0) in vec2 uv;\nlayout(location=0) out vec4 result;\nvoid main() {{ uvec2 xy=min(uvec2(max(uv,vec2(0.0))*vec2(size.xy)),size.xy-uvec2(1)); vec4 pixel=pixels[xy.x+xy.y*size.x]; if (pixel.a<0.0) {{ result=pixel; return; }} if (size.z!=0u && (uint(pixel.a)&8u)==0u) {{ result=vec4(0.0); return; }} result=antitone_render(vec4(pixel.rgb,1.0)); }}"
     );
     let fragment = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("pinned OCIO GLSL, resource-layout adaptation only"),

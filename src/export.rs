@@ -60,6 +60,7 @@ pub enum Overwrite {
 pub struct ProcessingMetadata {
     response: Response,
     locals: bool,
+    look: Option<[u8; 32]>,
 }
 
 impl ProcessingMetadata {
@@ -70,7 +71,13 @@ impl ProcessingMetadata {
         Self {
             response,
             locals: !grade.locals().is_empty(),
+            look: None,
         }
+    }
+
+    pub fn with_look(mut self, id: Option<[u8; 32]>) -> Self {
+        self.look = id;
+        self
     }
 }
 
@@ -79,6 +86,7 @@ impl From<Response> for ProcessingMetadata {
         Self {
             response,
             locals: false,
+            look: None,
         }
     }
 }
@@ -377,6 +385,12 @@ pub(crate) fn tiff_encoded_ordered(
                 "Antitone model {model}; native-camera RGB inversion to AP1; ACES 2 / OCIO 2.6.0; {target:?} v1 / 100-nit SDR; rendering and encoding in matching target RGB"
             );
             description.push_str(&format!("; photographic={}", crate::photographic::CONTRACT));
+            if let Some(id) = metadata.look {
+                let hash = id.iter().map(|b| format!("{b:02x}")).collect::<String>();
+                description.push_str(&format!(
+                    "; creative-look-blake3={hash}; creative-look-input-range=clip"
+                ));
+            }
             if metadata.locals {
                 description.push_str(&format!(
                     "; local-adjustments={}",

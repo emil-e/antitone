@@ -625,6 +625,11 @@ impl egui_wgpu::CallbackTrait for ScopePaint {
     ) -> Vec<wgpu::CommandBuffer> {
         let key;
         let coverage_ready;
+        let proxy_mapping = self.frame.composition.texture_mapping(
+            self.frame.min,
+            self.frame.max,
+            self.frame.composition.area(),
+        );
         #[cfg(feature = "editor")]
         let rendered = self.rendered.as_ref();
         #[cfg(not(feature = "editor"))]
@@ -635,24 +640,38 @@ impl egui_wgpu::CallbackTrait for ScopePaint {
             key = Key::rendered(view, self.frame, self.settings);
             let mut accepted = view.spec.frame;
             accepted.output = self.frame.output;
-            coverage_ready = accepted == self.frame;
+            coverage_ready =
+                accepted == self.frame && matches!(self.image.look_result(), Some(Ok(())));
         } else {
             let input = self.processing.as_ref().expect("source-backed scope input");
             self.image
-                .prepare_processing(device, encoder, input)
-                .expect("validated processing source");
+                .prepare_rendering(
+                    device,
+                    queue,
+                    encoder,
+                    input,
+                    proxy_mapping,
+                    Some(self.context.clone()),
+                )
+                .expect("validated rendering resources");
             key = Key::new(&self.image, input, self.frame, self.settings);
-            coverage_ready = true;
+            coverage_ready = matches!(self.image.look_result_for(proxy_mapping), Some(Ok(())));
         }
         #[cfg(not(feature = "editor"))]
         {
-            let _ = queue;
             let input = self.processing.as_ref().expect("source-backed scope input");
             self.image
-                .prepare_processing(device, encoder, input)
-                .expect("validated processing source");
+                .prepare_rendering(
+                    device,
+                    queue,
+                    encoder,
+                    input,
+                    proxy_mapping,
+                    Some(self.context.clone()),
+                )
+                .expect("validated rendering resources");
             key = Key::new(&self.image, input, self.frame, self.settings);
-            coverage_ready = true;
+            coverage_ready = matches!(self.image.look_result_for(proxy_mapping), Some(Ok(())));
         }
         let mut cached = self.gpu.prepared.lock().unwrap();
         let matches = cached

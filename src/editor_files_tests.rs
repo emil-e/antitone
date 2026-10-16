@@ -450,6 +450,7 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
             photo,
             composition,
             policy,
+            _,
         ) = receiver.try_recv().unwrap()
         else {
             panic!()

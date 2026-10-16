@@ -16,7 +16,6 @@ var image: texture_2d<f32>;
 var<storage, read_write> sums: array<vec4f>;
 @group(0) @binding(2)
 var<uniform> p: Parameters;
-
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3u) {
     if any(id.xy >= p.extent) {
@@ -37,14 +36,22 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
         return;
     }
     var sum = vec3f(0.);
+    var invalid = 0.;
     for(var y = lo.y; y < hi.y; y++) {
         for(var x = lo.x; x < hi.x; x++) {
             let weight = overlap(start, vec2f(f32(x), f32(y)), p.dx, p.dy);
             if weight > 0. {
-                sum += textureLoad(image, vec2i(x, y) - vec2i(p.origin), 0).rgb * weight;
+                let pixel = textureLoad(image, vec2i(x, y) - vec2i(p.origin), 0);
+                if pixel.a < 0. {
+                    invalid = max(invalid, -pixel.a);
+                }
+                sum += pixel.rgb * weight;
             }
         }
     }
     let index = pixel.x + pixel.y * p.output.x;
-    sums[index] += vec4f(sum / abs(cross(p.dx, p.dy)), 0.);
+    sums[index] = vec4f(
+            sums[index].rgb + sum / abs(cross(p.dx, p.dy)),
+            max(sums[index].a, invalid),
+        );
 }

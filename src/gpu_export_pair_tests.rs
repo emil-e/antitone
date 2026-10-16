@@ -24,16 +24,23 @@ pub(super) fn write_single(
         grade,
         composition,
         format,
+        look,
     } = request;
     if composition.area() != scan.area || scan.flat_field() != field.as_ref().map(|f| f.field()) {
         return Err(Error::InvalidParameter(
             "mismatched single-original diagnostic source",
         ));
     }
-    let metadata = ProcessingMetadata::with_grade(roll.response, &grade);
+    let metadata = ProcessingMetadata::with_grade(roll.response, &grade).with_look(
+        if matches!(format, Format::Tiff(_)) {
+            look.as_ref().map(|asset| asset.lut().id().bytes())
+        } else {
+            None
+        },
+    );
     let mut tiles = timed!(
         Setup,
-        OriginalTiles::new(
+        OriginalTiles::new_with_look(
             renderer,
             (device, queue, gate),
             (scan.camera_to_ap1, scan.area),
@@ -46,7 +53,8 @@ pub(super) fn write_single(
                 scan.camera_to_ap1,
                 scan.area
             )?,
-            format
+            format,
+            look.as_ref()
         )
     )?;
     let size = tiles.size;
@@ -233,7 +241,7 @@ fn paired_originals_preserve_pre_aces_words_flags_and_both_targets_at_coordinate
                         (matrix, geometry.size()),
                         field,
                         single.grade.clone(),
-                        Format::Tiff(target),
+                        (Format::Tiff(target), None),
                         Some(geometry),
                     )
                     .unwrap();

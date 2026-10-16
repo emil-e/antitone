@@ -18,7 +18,7 @@ pub(crate) fn encode(x: f64) -> f64 {
     }
 }
 
-fn decode(q: f64) -> f64 {
+pub(crate) fn decode(q: f64) -> f64 {
     // No ACEScct interchange clip: working RGB stays signed/HDR.
     if q <= CUT {
         (q - OFFSET) / SLOPE

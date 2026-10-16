@@ -18,6 +18,8 @@ pub mod gpu;
 #[cfg(all(feature = "gpu", feature = "export", feature = "raw"))]
 pub mod gpu_export;
 pub mod local_adjustments;
+#[cfg(any(feature = "project", feature = "gpu"))]
+pub mod looks;
 pub mod photographic;
 #[cfg(feature = "ui")]
 pub mod platform;

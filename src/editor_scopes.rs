@@ -337,6 +337,20 @@ impl Editor {
         slot.settings.target = self.target;
         slot.painter
             .rect_filled(slot.plot, 3., egui::Color32::from_gray(6));
+        if let Some(error) = self.look_render_failure() {
+            if let Some(gpu) = &self.scopes.gpu {
+                gpu.invalidate();
+            }
+            scope_notice(
+                &slot.painter,
+                slot.plot,
+                "Look rendering failed".into(),
+                egui::Color32::LIGHT_RED,
+                egui::Align2::CENTER_CENTER,
+            );
+            slot.response.on_hover_text(error.to_string());
+            return;
+        }
         let input = self.scope_request();
         let input = match input {
             Ok(input) => input,

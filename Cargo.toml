@@ -26,6 +26,8 @@ rfd = { version = "=0.17.2", optional = true, default-features = false }
 serde = { version = "=1.0.229", optional = true, features = ["derive", "rc"] }
 serde_json = { version = "=1.0.151", optional = true, features = ["float_roundtrip"] }
 blake3 = { version = "=1.8.7", optional = true }
+base64 = { version = "=0.22.1", optional = true }
+flate2 = { version = "=1.1.10", optional = true, default-features = false, features = ["rust_backend"] }
 image = { version = "=0.25.10", optional = true, default-features = false, features = ["jpeg", "png"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -40,13 +42,13 @@ objc2-quartz-core = { version = "=0.3.2", optional = true, default-features = fa
 [features]
 ui-tests = ["editor", "ocio-reference", "dep:egui_kittest", "image/png"]
 editor = ["ui", "raw", "export", "project", "dep:rfd", "dep:blake3", "dep:image", "dep:objc2-foundation"]
-project = ["dep:serde", "dep:serde_json", "dep:tempfile", "glam/serde"]
+project = ["dep:serde", "dep:serde_json", "dep:tempfile", "dep:blake3", "dep:base64", "dep:flate2", "glam/serde"]
 ui = ["gpu", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:winit", "dep:half", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-core-foundation", "dep:objc2-core-graphics", "dep:objc2-quartz-core"]
 raw = ["dep:cc", "dep:libc"]
 render = ["dep:lcms2"]
 ocio-reference = ["render", "dep:cc"]
 export = ["render", "dep:tiff", "dep:exr", "dep:tempfile", "dep:libc", "dep:half"]
-gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck", "dep:objc2-metal", "glam/bytemuck"]
+gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck", "dep:objc2-metal", "dep:blake3", "glam/bytemuck"]
 
 [build-dependencies]
 cc = { version = "=1.2.62", optional = true }

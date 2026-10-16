@@ -54,6 +54,8 @@ use fullscreen::FullscreenView;
 #[path = "editor_thumbnails.rs"]
 mod thumbnails;
 use thumbnails::Thumbnails;
+#[path = "editor_looks.rs"]
+mod look_ui;
 #[path = "editor_processing.rs"]
 mod processing;
 use processing::Grades;
@@ -207,6 +209,7 @@ struct ExportIdentity {
 }
 
 enum Command {
+    Look(u64, look_ui::Source, Arc<std::sync::atomic::AtomicBool>),
     Unload,
     Analyze(u64, Box<analysis::Request>),
     AnalysisAreas(u64, Box<analysis::Request>),
@@ -251,6 +254,7 @@ enum Command {
         PhotoGradeSnapshot,
         Composition,
         Overwrite,
+        Option<Arc<crate::looks::LookAsset>>,
     ),
 }
 
@@ -266,6 +270,7 @@ enum Measurement {
 }
 
 enum Message {
+    Look(u64, Result<Option<Arc<crate::looks::LookAsset>>, String>),
     DocumentProgress(u64, usize, usize),
     AnalysisSupport(u64, u64, Result<Option<Rect>, String>),
     AnalysisProgress(u64, usize, usize),
@@ -593,8 +598,32 @@ fn backend(
     let mut view_kernels = None;
     let mut dust_screening =
         crate::gpu::dust_screening::Screening::new(&device, &queue, &submissions);
+    #[cfg(test)]
+    let look_cache_directory = tempfile::tempdir().expect("look cache fixture directory");
+    #[cfg(test)]
+    let look_cache = Some(crate::looks::cache::Cache::at(
+        look_cache_directory.path().into(),
+    ));
+    #[cfg(not(test))]
+    let look_cache = crate::looks::cache::Cache::default_location();
+
     while let Ok(command) = commands.recv() {
         match command {
+            Command::Look(id, requested, cancel) => {
+                let result = look_ui::resolve(
+                    requested,
+                    &cancel,
+                    &renderers,
+                    &device,
+                    &queue,
+                    &submissions,
+                    look_cache.as_ref(),
+                )
+                .map_err(|error| error.to_string());
+                if messages.send(Message::Look(id, result)).is_err() {
+                    break;
+                }
+            }
             Command::AnalysisSupport(request, loaded) => {
                 let result = source
                     .as_ref()
@@ -931,7 +960,17 @@ fn backend(
                     break;
                 }
             }
-            Command::Export(id, path, format, calibration, roll, grade, composition, overwrite) => {
+            Command::Export(
+                id,
+                path,
+                format,
+                calibration,
+                roll,
+                grade,
+                composition,
+                overwrite,
+                look,
+            ) => {
                 let result = (|| -> Result<PathBuf, Error> {
                     let (loaded, scan) = source
                         .as_ref()
@@ -947,6 +986,7 @@ fn backend(
                         crate::gpu_export::Request {
                             scan,
                             field: correction.as_ref().map(|c| c.gpu.clone()),
+                            look,
                             calibration,
                             roll,
                             grade,
@@ -1001,6 +1041,8 @@ pub struct Editor {
     pending_preview: Option<thumbnails::SelectedPreview>,
     selection_timing: Option<Arc<SelectionTiming>>,
     busy: bool,
+    look_pending: Option<look_ui::Pending>,
+    loaded_looks: Vec<Arc<crate::looks::LookAsset>>,
     status: String,
     tasks: TaskActivity,
     failure: Option<Failure>,
@@ -1152,6 +1194,8 @@ impl Editor {
             pending_preview: None,
             selection_timing: None,
             busy: false,
+            look_pending: None,
+            loaded_looks: Vec::new(),
             status: "Add a RAW to begin".into(),
             tasks: TaskActivity::default(),
             failure: None,
@@ -1356,6 +1400,7 @@ impl Editor {
     }
 
     fn start_document(&mut self, work: DocumentWork) {
+        self.retire_look();
         self.finish_auto_crop(false);
         self.finish_dust_cleanup();
         self.reset_repairs_pending = matches!(&work, DocumentWork::New | DocumentWork::Open(_));
@@ -1599,6 +1644,7 @@ impl Editor {
                 Message::Dust(request, result) => {
                     self.receive_dust(request, result.map(|r| r.map(|r| *r)))
                 }
+                Message::Look(id, result) => self.receive_look(id, result),
                 Message::Refined(revision, result) => {
                     if let Some(error) = self.original.receive(revision, result) {
                         self.status = error;
@@ -1738,6 +1784,7 @@ impl Editor {
                             self.reset_repairs_pending = false;
                             self.correction = prepared.correction;
                             self.document = prepared.document;
+                            self.remember_current_look();
                             self.adjustments = Adjustments::default();
                             self.mask_edit = None;
                             self.grades.clear();
@@ -2145,6 +2192,7 @@ impl Editor {
                     grade,
                     composition,
                     overwrite,
+                    self.document.project.output.look.clone(),
                 ))
                 .is_err()
             {
@@ -2376,6 +2424,7 @@ impl Editor {
                         start_pick = Some(Pick::Wb);
                     }
                 } else {
+                    self.look_controls(ui);
                     ui.add_enabled_ui(
                         !reviewing
                             && self.crop_edit.is_none()

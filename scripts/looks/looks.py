@@ -54,6 +54,9 @@ def header(definition):
             "namespace look_data {",
             "constexpr const char *look_id = " + json.dumps(definition.id) + ";",
             "constexpr const char *look_name = " + json.dumps(definition.look["name"]) + ";",
+            "constexpr const char *look_source_product = "
+            + json.dumps(definition.look.get("source_product", definition.look["name"]))
+            + ";",
             "constexpr double exposure_compression = "
             + cpp(authoring["exposure_compression"])
             + ";",
@@ -179,6 +182,8 @@ def bake(definition, size, output):
             "status": "passed",
             "look": definition.id,
             "version": definition.look["version"],
+            "name": definition.look["name"],
+            "source_product": definition.look.get("source_product", definition.look["name"]),
             "selection_status": definition.look["status"],
             "release_clearance": definition.look["release_clearance"],
             "numeric_payload_sha256": actual,
@@ -229,7 +234,9 @@ def main(argv=None):
             common()
             for identifier in identifiers():
                 item = load(identifier)
-                print(f"{item.id:42} {item.look['status']:10} {item.model['family']}")
+                print(
+                    f"{item.id:42} {item.look['name']:24} {item.look['status']:10} {item.model['family']}"
+                )
         elif args.command == "check":
             report = {}
             for identifier in identifiers() if args.all else [args.look]:

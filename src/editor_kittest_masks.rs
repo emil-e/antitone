@@ -281,6 +281,13 @@ fn armed_creation_suspends_outside_photo_and_resumes_without_consuming_an_id() {
         arm(&mut h, radial);
         for name in ["Roll", "Rendering"] {
             stage(&mut h, name);
+            if name == "Rendering" {
+                assert!(
+                    h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Look")
+                        .accesskit_node()
+                        .is_disabled()
+                );
+            }
             let image = h.state().last_layout.unwrap().0.image;
             drag(
                 &mut h,

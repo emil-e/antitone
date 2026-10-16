@@ -20,6 +20,7 @@ pub(super) enum Task {
     Analyze(u64),
     AnalysisAreas(u64),
     Export(u64),
+    Look(u64),
 }
 
 /// Scopes IDs that different worker operations may reuse; stale work cannot end another task.
@@ -31,6 +32,7 @@ pub(super) enum TaskRequest {
     Measurement(u64, Pick),
     Analyze(u64),
     Export(u64),
+    Look(u64),
 }
 
 #[derive(Clone, Copy)]
@@ -52,6 +54,7 @@ impl Task {
             Self::Measurement(id, pick) => TaskRequest::Measurement(id, pick),
             Self::Analyze(id) | Self::AnalysisAreas(id) => TaskRequest::Analyze(id),
             Self::Export(id) => TaskRequest::Export(id),
+            Self::Look(id) => TaskRequest::Look(id),
         }
     }
 
@@ -67,10 +70,17 @@ impl Task {
     }
 
     fn cancel_action(self) -> Option<TaskCancel> {
-        matches!(self, Self::Analyze(_) | Self::AnalysisAreas(_)).then_some(TaskCancel {
-            request: self.request(),
-            label: "Cancel analysis",
-        })
+        match self {
+            Self::Analyze(_) | Self::AnalysisAreas(_) => Some(TaskCancel {
+                request: self.request(),
+                label: "Cancel analysis",
+            }),
+            Self::Look(_) => Some(TaskCancel {
+                request: self.request(),
+                label: "Cancel look preparation",
+            }),
+            _ => None,
+        }
     }
 
     fn title(self) -> String {
@@ -85,6 +95,7 @@ impl Task {
             Self::Analyze(_) => "Analyzing roll…".into(),
             Self::AnalysisAreas(_) => "Preparing analysis areas…".into(),
             Self::Export(_) => "Exporting…".into(),
+            Self::Look(_) => "Preparing look…".into(),
             Self::Measurement(_, pick) => {
                 let name = match pick {
                     Pick::Dmin => "Dmin",
@@ -222,7 +233,16 @@ impl TaskActivity {
     pub fn view(&self) -> Option<TaskView> {
         let active = self.active.as_ref()?;
         let (title, measured, cancel) = match active.state {
-            TaskState::Cancelling => ("Cancelling analysis…".into(), None, None),
+            TaskState::Cancelling => (
+                if matches!(active.task, Task::Look(_)) {
+                    "Cancelling look preparation…"
+                } else {
+                    "Cancelling analysis…"
+                }
+                .into(),
+                None,
+                None,
+            ),
             TaskState::Running(progress) => {
                 let measured = match progress {
                     TaskProgress::Indeterminate => None,
@@ -263,6 +283,12 @@ impl TaskActivity {
 
 impl Editor {
     pub(super) fn cancel_task(&mut self, request: TaskRequest) {
+        if let TaskRequest::Look(id) = request {
+            if self.look_pending.as_ref().is_some_and(|p| p.id == id) {
+                self.cancel_look();
+            }
+            return;
+        }
         if let TaskRequest::Analyze(id) = request
             && self
                 .analysis_pending

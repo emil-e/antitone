@@ -44,6 +44,26 @@ void *antitone_ocio_create(uint32_t target, char *error, size_t error_size) {
     }
 }
 
+void *antitone_ocio_reference_create(const double *parameters, char *error, size_t error_size) {
+    try {
+        if (std::string(antitone::OCIO::GetVersion()) != "2.6.0")
+            throw std::runtime_error("OCIO runtime version must be 2.6.0");
+        auto group = antitone::OCIO::GroupTransform::Create();
+        auto ap0 = antitone::OCIO::BuiltinTransform::Create();
+        ap0->setStyle("ACEScg_to_ACES2065-1");
+        group->appendTransform(ap0);
+        group->appendTransform(antitone::OCIO::FixedFunctionTransform::Create(
+            antitone::OCIO::FIXED_FUNCTION_ACES_OUTPUT_TRANSFORM_20, parameters, 9));
+        auto renderer = std::make_unique<Renderer>();
+        renderer->cpu =
+            antitone::OCIO::Config::CreateRaw()->getProcessor(group)->getDefaultCPUProcessor();
+        return renderer.release();
+    } catch (const std::exception &e) {
+        diagnostic(error, error_size, e.what());
+        return nullptr;
+    }
+}
+
 int antitone_ocio_apply(void *handle, float *rgb, size_t count, char *error, size_t error_size) {
     try {
         if (count > LONG_MAX)

@@ -1,6 +1,6 @@
 # Independent creative-look authoring
 
-This catalog preserves independently derived, print-informed creative looks as **small versioned model definitions**. A shared offline tool evaluates them, bakes an output-independent ACEScct/AP1 LUT and checks its identity and numerical contract. It is **not wired into the editor, project format or export**.
+This catalog preserves independently derived, print-informed creative looks as **small versioned model definitions**. A shared offline tool evaluates them, bakes an output-independent ACEScct/AP1 LUT and checks its identity and numerical contract. The editor resolves the four selected/accepted models into the same immutable LUT representation used by imported looks. The four active definitions own independent names in `look.json` and retain the exact source-product references separately in `source_product`. The application, generated cube titles and authoring reports consume that metadata; [editor presentation](../../docs/editor.md#look-selection-prepares-before-acceptance) uses the same catalog metadata. [Colour/output](../../docs/colour-and-output.md#creative-looks-precede-output-rendering) owns placement and import semantics; [projects](../../docs/projects.md#embed-the-accepted-look-not-a-catalog-reference) owns appearance-preserving storage.
 
 The current definitions are:
 
@@ -28,7 +28,7 @@ All definitions share:
 - **0.6** exposure mapping, pivoted at AP1 0.18, with gray-only exposure offsets. No chromatic identity fit, arbitrary contrast/saturation normalization, strength blend or per-image adjustment.
 - The fixed **p3rec50** D65/100-nit authoring reference and its existing radius-0.9 neutral-axis soft boundary, followed by the full pinned ACES inverse. This is a coordinate encoding for one AP1 creative look, not an extra display target or stacked scalar encoding.
 - Ordinary selected-output ACES **after** the creative LUT. The LUT is not a ready-made Rec.709/display transform.
-- **ACEScct/AP1/D60 input and output**, tetrahedral interpolation, explicit input-domain admission, and signed/HDR support. The displayed domain is `[-0.5, 1.0386752042]`; the native calculation retains the original gray-node construction so gray falls on lattice index 38/64 or 57/96. There is no silent out-of-domain fallback.
+- **ACEScct/AP1/D60 input and output**, tetrahedral interpolation, explicit input-domain admission, and signed/HDR support. The displayed domain is `[-0.5, 1.0386752042]`; the native calculation retains the original gray-node construction so gray falls on lattice index 38/64 or 57/96. The offline authoring checks retain explicit domain admission. Application execution clips finite input to this LUT window; it does not reinterpret that window as the limit of valid photographic data or substitute another look.
 - The existing numerical gates: raw gray 1e-9, encoded/baked gray 2e-5 AP1, all-node reference round trip 2e-4, no inverse AP1 components outside `[0,1024]`, and actual-file/local tetrahedral agreement 2e-4 AP1. Nonfinite inputs/residuals fail closed rather than comparing as zero error.
 
 `common/spectral.json` contains shared samples independently evaluated from Wyman/Sloan/Shirley's published analytical observer equations and Planck's law at **5000 K**, with half-weight integration endpoints. It is not a tabulated CIE observer/daylight dataset. `common/status-a.json` is an independent transcription of the original standard. Whole-instrument products are used directly, **not multiplied by the viewing illuminant again**.
@@ -39,7 +39,7 @@ The controlled spectral integration band is 400–700 nm. A wider plotted source
 
 Each look has three small text files:
 
-- **`look.json`**: identity/revision, status, source/model digests, reviewed bake identities and interpretation/release limits.
+- **`look.json`**: identity/revision, canonical name, secondary source-product attribution for active looks, status, source/model digests, reviewed bake identities and interpretation/release limits. Product references identify the independently studied material, not manufacturer authorship or endorsement.
 - **`model.json`**: frozen numerical runtime definition. Color models use exact spectral/coefficient tables; B&W uses its exact scalar parameters/range. Baking reads these values without refitting.
 - **`source.json`**: original-publication citation/edition/pages/process conditions, independent numerical readings, source-curve reconstruction and source-ink/ambiguity intervals. Below-resolution dye tails retain explicit censor flags; reported zero is not proof of exactly zero physical absorption.
 
@@ -47,11 +47,15 @@ The numerical source ledger is evidence distinct from runtime solver agreement. 
 
 These maintained checks validate numerical observations and equations. They **do not reread publisher artwork**, which is not included. Re-digitizing a publication requires obtaining and auditing that edition separately. Do not turn a source-correction or a new fit into an automatic bake-time upgrade of an existing definition.
 
-## Application execution direction (not implemented)
+## Native application generation
 
-The agreed application direction is **one 3D-LUT execution contract**, including the neutral look, so material-derived looks can share a renderer with looks from other sources. Model definitions remain authoritative; their LUTs are derived execution artifacts, not replacements for the source data. Selection should resolve a cached LUT or generate and validate a missing one asynchronously, then upload it. Successful generations should be persistently cached by the complete numerical definition, generator version and LUT specification, rather than the display name. GPU residency is a separate bounded cache.
+All looks, including neutral density, execute through **one 3D-LUT contract**. Models remain authoritative for the built-in catalog; accepted projects embed derived numeric assets instead of requiring their old generators. Built-ins currently use **65³ provisionally**, not a final quality policy. Imports retain their admitted grid size. Samples are float32; final density/precision and broader photographic/device acceptance remain open.
 
-Cold-generation latency has not been measured for application use. It will determine whether first-use generation is sufficient or bundled prebakes are useful. The offline Python/compiler/OCIO toolchain is not an end-user runtime dependency to introduce implicitly: on-demand baking needs an application-ready implementation. Final sampling/precision, other-source admission, selection persistence, preview/export integration and EXR policy remain open.
+The application evaluates frozen materials in Rust double precision and uses offline-pinned OCIO 2.6.0 fixed-reference inverse GPU code to recover scene AP1. [`../ocio/looks-reference/`](../ocio/looks-reference/) contains those generated algorithms, shared reach/cusp tables and provenance, outside the model/source catalog. It is independent of selected sRGB/P3 output. End users do not run Python, a compiler or an OCIO installation. The application does not refit source curves, alter gray offsets or substitute a selected-output inverse.
+
+Generation retains the existing all-node range, fixed-reference round-trip and gray gates. Independent C++ fixtures check the material port, and the diagnostic OCIO CPU forward path checks every generated node against the original **2e-4 fixed-reference RGB** limit. That limit is not absolute scene-AP1 CPU/GPU inverse agreement: floating-point differences in HDR AP1 can exceed 2e-4 while the fixed-reference residual remains much smaller. Neither software agreement nor a GPU inverse/forward round trip proves photographic equivalence or cross-device acceptance.
+
+Selection resolves asynchronously and caches successful assets persistently by definition/generator/specification identity. GPU sample resources are weakly deduplicated and retained by live bindings; image budgets conservatively charge their actual shared LUT and intermediate costs, remeasuring mutable image weights. None has no LUT allocation or sampling pass. In-flight/mandatory working resources remain distinct from optional retention and are not an aggregate memory-pressure guarantee. A single release M5 Pro resolver exercise measured about 0.96 s for a cold Kodak 2383/65³ generation, validation and persistent write, versus 27 ms for cached load/validation after ordinary renderer setup. Renderer setup itself was measured separately (~5.1 s); these are workload-specific observations, excluding presentation/upload and physical input latency. Broader hardware/latency acceptance remains open.
 
 ## Generate and check
 
@@ -83,18 +87,27 @@ LOOKS_NATIVE_TESTS=1 python3 -m unittest discover -s scripts/looks -p 'test_*.py
 
 A bake defaults to `.cache/looks/bakes/ID/SIZE/`, with `look.cube`, `native-checks.json` and `validation.json`. `--output .cache/looks/another-fresh-directory` selects another ignored destination. Source/schema/output-path rejection happens before building or replacing any destination. The driver atomically claims a fresh destination before generation, so a competing invocation cannot replace another bake's validation report. Native or payload failure is nonzero and is never a successful validation report. Build products and generated model headers are cached separately under `.cache/looks/build/` by model/native-source/compiler/dependency identity; only complete builds are atomically published into that cache.
 
+Regenerate fixed-reference resources and compact native conformance fixtures into fresh ignored directories before inspecting/promoting a deliberate update:
+
+```sh
+python3 scripts/looks/generate_reference.py .cache/looks/reference-new
+python3 scripts/looks/generate_conformance.py .cache/looks/conformance-new
+```
+
+The latter first requires reviewed 65³ payload parity, then extracts 256 deterministic nodes per selected look: cube corners, the neutral lattice, axis probes and seeded interior samples. `tests/fixtures/looks/native-65.json` stores encoded CPU outputs and pre-inverse fixed-reference values, not a shipping LUT. Application-generated samples are compared numerically; they do not claim the offline CPU bake's exact payload hash.
+
 Native checks use synthetic inputs. They include the scalar luminance-first ordering witness; checking component-wise remapping would be the wrong invariant for B&W.
 
 ## Asset identity
 
-Both reviewed sizes, **65³ and 97³**, have frozen numeric payload hashes. The identity covers bytes from `LUT_3D_SIZE` through the domains and all node rows, with R changing fastest. Descriptive comments and `TITLE` are excluded. The complete prior independent file digest is separately recorded for traceability. A generation must match the reviewed payload exactly; do not refresh hashes merely to pass a failed check.
+Both reviewed sizes, **65³ and 97³**, have frozen numeric payload hashes. The identity covers bytes from `LUT_3D_SIZE` through the domains and all node rows, with R changing fastest. Descriptive comments and `TITLE` are excluded: independent names and source-product attribution can change without changing the numeric look or model revision. Generated cubes retain attribution in comments, not their primary title. The recorded `reviewed_file_sha256` is the complete prior independent artifact digest for traceability, not the expected digest of a subsequently relabelled file. A generation must match the reviewed payload exactly; do not refresh hashes merely to pass a failed check.
 
-The eight definitions match their reviewed numeric payloads at both sizes on the pinned native stack. Byte identity across other compilers, architectures or OCIO builds is not established. A mismatch is a reason to investigate, not to silently loosen a gate, narrow the domain, nudge an inverse target or normalize the material. A deliberate model/contract change needs a separately reviewed identity/revision.
+The eight definitions match their reviewed numeric payloads at both sizes on the pinned native stack. Byte identity across every compiler, architecture or OCIO build is not established. A mismatch is a reason to investigate, not to silently loosen a gate, narrow the domain, nudge an inverse target or normalize the material. A deliberate model/contract change needs a separately reviewed identity/revision.
 
-The 97³ bakes were used for photographic review and generally improved approximation over 65³, but **no final shipping approximation threshold is agreed**. Interpolation agreement, tiny solver residuals and continuity do not establish photographic/monitor acceptance or universal absence of visible ripples. The CMY path retains its coefficient-table approximation and F32 OCIO arithmetic. Known wider-reference/Rec.2020 output issues are not fixed by this toolkit; it intentionally retains one reviewed authoring reference.
+The 97³ bakes were used for photographic review and generally improved approximation over 65³, but **no final shipping approximation threshold is agreed**. Interpolation agreement, tiny solver residuals and continuity do not establish photographic/monitor acceptance or universal absence of visible ripples. The CMY path retains its coefficient-table approximation and F32 OCIO arithmetic. Floating-point shadow ramps show local slope ripples in the 65³ approximation; 97³ reduces but does not eliminate them. Cinema Print's broad high contrast and near-black compression already exist in the direct frozen model, which approaches a small nonzero black floor. These are separate observations: a plausible print character does not establish adequate LUT smoothness, and interpolation error is not a reason to refit or normalize the material. Known wider-reference/Rec.2020 output issues are not fixed by this toolkit; it intentionally retains one reviewed authoring reference.
 
 ## Rights and exclusions
 
-Only independently authored numerical observations/models and shared implementation are retained here. No external photographic profile, imported finished LUT, reference photograph, experimental gallery, PDF or publisher scan is part of the catalog or a generation dependency. No generated cubes, binaries or logs are maintained assets yet.
+Only independently authored numerical observations/models and shared implementation are retained here. No external photographic profile, imported finished LUT, reference photograph, experimental gallery, PDF or publisher scan is part of the catalog or a generation dependency. No full generated cubes, executables or logs are maintained assets. Pinned reference algorithms/tables and compact numerical test observations are maintained with their provenance.
 
 Original publications, numerical facts, fitted assets, software and source presentation have distinct rights. Every definition records **release clearance as unresolved**; independent derivation is not a legal clean-room certification or an automatic redistribution grant. Keep source/artwork and generated-asset clearance separate from local content acceptance and future packaging decisions. The neutral operating-point parameterization follows OCIO's BSD-3-Clause code; retain its existing [notice](../ocio/LICENSE-OpenColorIO.txt).

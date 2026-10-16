@@ -102,6 +102,7 @@ fn gpu_tiff_matches_scalar_ocio_within_one_rgb16_code_on_authored_patches() {
                 grade: grade.clone(),
                 composition,
                 format: Format::Tiff(target),
+                look: None,
             },
             &gpu,
             Overwrite::Refuse,
@@ -164,6 +165,7 @@ fn gpu_exr_keeps_compensated_precision_through_ap0_on_authored_patches() {
                 grade: grade.clone(),
                 composition,
                 format: Format::Exr(precision),
+                look: None,
             },
             &gpu,
             Overwrite::Refuse,
@@ -388,6 +390,7 @@ fn corrected_ordered_locals_reopen_after_native_permutations_and_rotated_coverag
                     &device,
                     (&queue, &SubmissionGate::default()),
                     Request {
+                        look: None,
                         scan: &scan,
                         field: gpu_field.clone(),
                         calibration,

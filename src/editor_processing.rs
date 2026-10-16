@@ -144,18 +144,21 @@ impl Editor {
         if snapshot.locals().is_empty() {
             let parameters = ProcessingParameters::positive(calibration, roll, photo, matrix)?;
             self.grades.remove(source.id);
-            return Ok(parameters.into());
+            return Ok(ProcessingInput::from(parameters)
+                .with_look(self.document.project.output.look.clone()));
         }
-        self.grades.prepare(
-            source.id,
-            Key {
-                calibration,
-                roll,
-                matrix,
-                area: source.development.active_area.into(),
-            },
-            snapshot,
-        )
+        self.grades
+            .prepare(
+                source.id,
+                Key {
+                    calibration,
+                    roll,
+                    matrix,
+                    area: source.development.active_area.into(),
+                },
+                snapshot,
+            )
+            .map(|input| input.with_look(self.document.project.output.look.clone()))
     }
 
     pub(super) fn positive_processing(
@@ -173,7 +176,10 @@ impl Editor {
             ),
             None => self
                 .positive_parameters(calibration, roll, photo)
-                .map(Into::into),
+                .map(|parameters| {
+                    ProcessingInput::from(parameters)
+                        .with_look(self.document.project.output.look.clone())
+                }),
         }
     }
 
@@ -209,15 +215,19 @@ pub(super) fn image_paint(
     image: Arc<GpuImage>,
     input: Option<ProcessingInput>,
     mapping: crate::geometry::TextureMapping,
+    context: &egui::Context,
 ) -> Result<ImagePaint, Error> {
-    if input.as_ref().is_some_and(|input| input.grade().is_some()) {
+    if input
+        .as_ref()
+        .is_some_and(|input| input.grade().is_some() || input.look().is_some())
+    {
         ImagePaint::with_processing(image, input, mapping)
+            .map(|paint| paint.with_context(context.clone()))
     } else {
-        Ok(ImagePaint::new(
-            image,
-            input.map(|input| input.parameters()),
-            mapping,
-        ))
+        Ok(
+            ImagePaint::new(image, input.map(|input| input.parameters()), mapping)
+                .with_context(context.clone()),
+        )
     }
 }
 

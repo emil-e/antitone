@@ -19,6 +19,8 @@ mod correction;
 mod dust;
 #[path = "editor_kittest_fullscreen.rs"]
 mod fullscreen;
+#[path = "editor_kittest_looks.rs"]
+mod looks;
 #[path = "editor_kittest_masks.rs"]
 mod masks;
 #[path = "editor_kittest_project.rs"]
@@ -438,6 +440,8 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
             FailureKind::FlatCorrection,
             FailureKind::Save,
             FailureKind::Export,
+            FailureKind::Look,
+            FailureKind::LookRendering,
         ] {
             match kind {
                 FailureKind::FlatReference => harness
@@ -466,6 +470,13 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
                     });
                     harness.state_mut().apply_flat_edit();
                 }
+                FailureKind::Look => harness.state_mut().begin_look(look_ui::Source::Imported(
+                    directory.path().join("missing-look.cube"),
+                )),
+                FailureKind::LookRendering => harness.state_mut().report_failure(
+                    FailureKind::LookRendering,
+                    "The selected look encountered a nonfinite scene-linear value.".into(),
+                ),
                 FailureKind::Save => harness.state_mut().queue_save(
                     directory.path().join("missing-parent/project.json"),
                     crate::project::Save::New,
@@ -494,6 +505,8 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
                 FailureKind::FlatCorrection => "correction",
                 FailureKind::Save => "save",
                 FailureKind::Export => "export",
+                FailureKind::Look => "look",
+                FailureKind::LookRendering => "look-rendering",
             };
             let png = harness.render().unwrap();
             if let Some(output) = std::env::var_os("ANTITONE_UI_CAPTURE") {
@@ -589,6 +602,18 @@ fn editor_harness() -> (Harness<'static, Editor>, Rc<RefCell<FloatCapture>>) {
 fn editor_harness_with_thumbnails(
     thumbnails: bool,
 ) -> (Harness<'static, Editor>, Rc<RefCell<FloatCapture>>) {
+    let (harness, capture, _, _) = editor_harness_with_gpu(thumbnails);
+    (harness, capture)
+}
+
+fn editor_harness_with_gpu(
+    thumbnails: bool,
+) -> (
+    Harness<'static, Editor>,
+    Rc<RefCell<FloatCapture>>,
+    wgpu::Device,
+    wgpu::Queue,
+) {
     let (device, queue) = pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,
@@ -621,7 +646,7 @@ fn editor_harness_with_thumbnails(
         .with_step_dt(1. / 60.)
         .renderer(renderer)
         .build_ui_state(|ui, editor| host::App::ui(editor, ui), editor);
-    (harness, capture)
+    (harness, capture, device, queue)
 }
 
 #[test]

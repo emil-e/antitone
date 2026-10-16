@@ -8,6 +8,8 @@ pub(super) enum FailureKind {
     FlatCorrection,
     Save,
     Export,
+    Look,
+    LookRendering,
 }
 
 pub(super) struct Failure {
@@ -37,6 +39,16 @@ impl Failure {
                 Severity::Error,
                 "Could not save project",
                 "Your edits are still in memory and the destination file was not replaced. Review the details, then try saving again.",
+            ),
+            FailureKind::Look => (
+                Severity::Error,
+                "Could not prepare look",
+                "Your existing look and adjustments are unchanged. Review the details, then choose another look or LUT file.",
+            ),
+            FailureKind::LookRendering => (
+                Severity::Error,
+                "Could not render look",
+                "The look could not be rendered. Your selection and photographic adjustments are unchanged. Review the details before trying again.",
             ),
             FailureKind::Export => (
                 Severity::Error,

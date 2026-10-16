@@ -1,4 +1,7 @@
 use wgpu::util::DeviceExt;
+#[cfg(test)]
+#[path = "resample_look_tests.rs"]
+mod look_tests;
 #[path = "resample_windows.rs"]
 pub(crate) mod windows;
 
@@ -17,15 +20,18 @@ struct Parameters { source:vec2u, output:vec2u, origin:vec2u, tile:vec2u, output
  let hi=min(min(vec2u(ceil(end)),p.origin+p.tile),p.source);
  if any(lo>=hi) {return;}
  var sum=vec3f(0.);
+ var invalid=0.;
  for(var y=lo.y;y<hi.y;y++) {
   let wy=max(0.,min(end.y,f32(y+1))-max(start.y,f32(y)));
   for(var x=lo.x;x<hi.x;x++) {
    let wx=max(0.,min(end.x,f32(x+1))-max(start.x,f32(x)));
-   sum+=textureLoad(image,vec2i(vec2u(x,y)-p.origin),0).rgb*wx*wy;
+   let pixel=textureLoad(image,vec2i(vec2u(x,y)-p.origin),0);
+   if pixel.a<0. && wx*wy>0. { invalid=max(invalid,-pixel.a); }
+   sum+=pixel.rgb*wx*wy;
   }
  }
  let index=xy.x+xy.y*p.output.x;
- sums[index]+=vec4f(sum/(scale.x*scale.y),0.);
+ sums[index]=vec4f(sums[index].rgb+sum/(scale.x*scale.y),max(sums[index].a,invalid));
 }
 "#;
 const FINISH: &str = r#"
@@ -35,7 +41,7 @@ const FINISH: &str = r#"
  let p=array<vec2f,3>(vec2f(-1.,-1.),vec2f(3.,-1.),vec2f(-1.,3.))[i];return vec4f(p,0.,1.);
 }
 @fragment fn fragment(@builtin(position) position:vec4f)->@location(0) vec4f {
- let xy=vec2u(position.xy);return vec4f(sums[xy.x+xy.y*size.x].rgb,1.);
+ let xy=vec2u(position.xy);let value=sums[xy.x+xy.y*size.x];return vec4f(value.rgb,select(1.,-value.a,value.a>0.));
 }
 "#;
 

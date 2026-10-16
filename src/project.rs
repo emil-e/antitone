@@ -14,6 +14,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[path = "project_json.rs"]
+mod json;
+
 pub const SCHEMA_VERSION: u32 = 6;
 // Bump when native/raw_bridge.cpp development or scan.rs matrix/normalization/floor contracts change.
 pub const DEVELOPMENT_CONTRACT: &str =
@@ -186,6 +189,8 @@ pub struct Output {
     pub contract: String,
     pub tiff: TiffTarget,
     pub exr: ExrPrecision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub look: Option<std::sync::Arc<crate::looks::LookAsset>>,
 }
 
 impl Default for Output {
@@ -194,6 +199,7 @@ impl Default for Output {
             contract: OUTPUT_CONTRACT.into(),
             tiff: TiffTarget::DisplayP3,
             exr: ExrPrecision::Half,
+            look: None,
         }
     }
 }
@@ -476,7 +482,7 @@ impl Project {
     }
 
     pub fn load(path: &Path) -> Result<Self> {
-        let input = BufReader::new(File::open(path).map_err(failure)?);
+        let input = BufReader::new(json::bounded_strings(File::open(path).map_err(failure)?));
         let project: Self = serde_json::from_reader(input).map_err(failure)?;
         project.validate()?;
         Ok(project)
