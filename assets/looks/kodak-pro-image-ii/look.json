@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "kodak-pro-image-ii",
+  "version": 1,
+  "name": "KODAK PROFESSIONAL PRO IMAGE II Paper",
+  "status": "accepted",
+  "material": "reflection",
+  "authoring": "fixed-print-reference-v1",
+  "model_sha256": "4796173e6f1fa7207c106ffa6f2ea8bacf23ddeff49041996249b64ba723a003",
+  "source_sha256": "09cd2f2f6bd255674ef49c57a446daa695f990eaa842b7b8cd1fda8299f10c51",
+  "reviewed_bakes": {
+    "65": {
+      "numeric_payload_sha256": "d597abc4abae3fe61773984faf7d1072b5f63aa991134dfbad492a226d8d5187",
+      "reviewed_file_sha256": "569165213324987d46895cfcb722357d06e8ca1ac988d959a20b9413c9562510"
+    },
+    "97": {
+      "numeric_payload_sha256": "33c0aec576a27d266afc0f628ddbc44d03cb294cd046d9118a49678780d52561",
+      "reviewed_file_sha256": "cd4057743d7fa1d70405bf02b79602323ca8d9a17c599e540c754ad3d06aaf99"
+    }
+  },
+  "notes": [],
+  "acceptance_scope": "Content selection/qualitative acceptance only where recorded; not release, final approximation or physical calibration approval.",
+  "release_clearance": "unresolved"
+}

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "kodak-portra-endura",
+  "version": 1,
+  "name": "KODAK PROFESSIONAL PORTRA ENDURA Paper",
+  "status": "selected",
+  "material": "reflection",
+  "authoring": "fixed-print-reference-v1",
+  "model_sha256": "cef2e2d213bd4bdc5cec838f01ef7a84699a21bc7e5bd42b3af9c6dd9e6ae6dd",
+  "source_sha256": "25e0c68a97f03a9d5c7aec40f392426c800d463ccf7f48d14a5c570170f239f4",
+  "reviewed_bakes": {
+    "65": {
+      "numeric_payload_sha256": "95429e4bfa265075c051bd9151dfff6fe23d37bd091271d6711b69654dafd1d3",
+      "reviewed_file_sha256": "73083378170bb8e63d7928833276adf7f63f66770b6a792871f181fc163fd7c8"
+    },
+    "97": {
+      "numeric_payload_sha256": "13c16f6bca6cc029f2b10e569b43b145f1209ea9bda6ba78f21904831e77ce60",
+      "reviewed_file_sha256": "90ec60552fe74317e7aaa3fb6d2ebda386b61a1c59c225a77f13a180eec11af0"
+    }
+  },
+  "notes": [
+    "Canonical source-reconstructed Portra selected by the user; the older Portra definition is not included."
+  ],
+  "acceptance_scope": "Content selection/qualitative acceptance only where recorded; not release, final approximation or physical calibration approval.",
+  "release_clearance": "unresolved"
+}

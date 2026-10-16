@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "ilford-multigrade-rc-deluxe-filter-2",
+  "version": 1,
+  "name": "ILFORD MULTIGRADE RC DELUXE (new generation), filter 2 / neutral interpretation",
+  "status": "accepted",
+  "material": "neutral-reflection",
+  "authoring": "fixed-print-reference-v1",
+  "model_sha256": "fb2f527708d90eb5df0b501f7d2201b99ad87b6f53a81331fad4d94ad8e3a7ac",
+  "source_sha256": "580d667b25c2b8710b47bba4d91432b87dd2a965952e899f5f8700b6d74aae04",
+  "reviewed_bakes": {
+    "65": {
+      "numeric_payload_sha256": "bc2d823df1e01bf159ca5b187f3400ac168770114c742f0139149d554c63b4b2",
+      "reviewed_file_sha256": "e16b836e4420120c6d5b6f23ed28a6dc735124ae35e2c35698bbf1eab13fe789"
+    },
+    "97": {
+      "numeric_payload_sha256": "93938781c92d77e9db3f2b5d62d6913f5e7d2868b39c285171706fab29b1bb63",
+      "reviewed_file_sha256": "962fd7677948b698c29b9a9aec30dbec18a6105811f5d5b80eec7a9e56c9cb51"
+    }
+  },
+  "notes": [
+    "AP1 luminance before exposure; neutral scalar interpretation, not measured paper/base colour. No tint or density lookup interpolation."
+  ],
+  "acceptance_scope": "Content selection/qualitative acceptance only where recorded; not release, final approximation or physical calibration approval.",
+  "release_clearance": "unresolved"
+}

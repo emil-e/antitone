@@ -59,6 +59,12 @@ Quality means preserving that photographic model and reconstruction, avoiding un
 
 Exports use immutable settings snapshots, including ordered local processing, so subsequent editor changes cannot change an in-flight file. Local stages evaluate at each original source pixel before TIFF rendering or AP1-to-AP0 EXR averaging. Nonempty local snapshots identify the processing contract in TIFF/EXR metadata, even when their records are inactive; the metadata is not a reconstructible recipe or edit history. Normal editor local export remains blocked by [feature admission](plans/local-adjustments.md), while library export tests exercise it. Same-directory temporary writes protect existing destinations, and replacement needs explicit confirmation. This is not a complete power-loss durability guarantee. Batch export and application export cancellation remain unfinished. [Export performance](plans/export-performance.md) tracks remaining attribution and broader acceptance. Matched reference/GPU measurements and bounded reuse checks establish workload-specific costs, not universal hardware speedups or photographic quality.
 
+## Offline creative-look authoring
+
+The [independent look catalog and authoring tool](../assets/looks/README.md) preserve versioned numerical material definitions and generate checked ACEScct/AP1 creative LUTs. Their fixed wide-reference inverse encodes one output-independent look intended to precede ordinary selected-output ACES. This is separate from the production renderer: no look selection, project persistence, preview/export insertion or EXR policy is implemented here. The current working/output diagram above is unchanged.
+
+The catalog distinguishes selected/accepted content, unconfirmed candidates and shelved definitions. Those statuses do not establish physical material accuracy, final LUT approximation quality or source/asset release clearance. The owning catalog guide describes the source evidence, common evaluator, reproducible payload identities and photo-free checks.
+
 ## Working on this area
 
 - [Rendering](../src/rendering.rs) and [native transform definition](../native/rendering_transform.h): shared OCIO configuration.

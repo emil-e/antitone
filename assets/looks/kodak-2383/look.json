@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "kodak-2383",
+  "version": 1,
+  "name": "KODAK VISION Color Print Film 2383 / 3383",
+  "status": "accepted",
+  "material": "transmission",
+  "authoring": "fixed-print-reference-v1",
+  "model_sha256": "e71ee463ce728c2c120ce166a6aa5da8f302aec63f2781f35d0452d16fca4fd9",
+  "source_sha256": "f79dff94ff4b3220d58fd94c05fe71070f417ffcde2135088f495dc47169b869",
+  "reviewed_bakes": {
+    "65": {
+      "numeric_payload_sha256": "88a69d7ab1e9d9768293655d3af1c5b52a3683734ebb1bfa126370242a579520",
+      "reviewed_file_sha256": "b8d86b9914a263abf6d516a7e02c07f728126151829640401f8bbde1bdfddebb"
+    },
+    "97": {
+      "numeric_payload_sha256": "3ea6b42c96951e51061a16db974fbfeb31aa70d91eb75313bb7ce3c1d8239f91",
+      "reviewed_file_sha256": "fb3425e4aff733bbf3a7a61597d01f700383a9e7386fb602abdc494e9cc380bb"
+    }
+  },
+  "notes": [
+    "Transmission film under the fixed 5000 K creative viewing adaptation, not xenon projection matching; only 400–700 nm integrated."
+  ],
+  "acceptance_scope": "Content selection/qualitative acceptance only where recorded; not release, final approximation or physical calibration approval.",
+  "release_clearance": "unresolved"
+}

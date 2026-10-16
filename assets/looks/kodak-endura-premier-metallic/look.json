@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "kodak-endura-premier-metallic",
+  "version": 1,
+  "name": "KODAK PROFESSIONAL ENDURA Premier Metallic Paper",
+  "status": "shelved",
+  "material": "reflection",
+  "authoring": "fixed-print-reference-v1",
+  "model_sha256": "c152893c0c79603340b7ce4ba61d6015031e25efd11ce47a77e74bb5579e540d",
+  "source_sha256": "6f011e994a52c7fbf136765913fdfd1e8fe5834bdfdbd7085c3d4470c3b962dc",
+  "reviewed_bakes": {
+    "65": {
+      "numeric_payload_sha256": "75bc4c5855d947e545ea901928565aa83094ec71f4e54aa4dda5b155f1066a98",
+      "reviewed_file_sha256": "b16285f7928ff40382f3a18f548fe0d63eab3647a190b50d606819406d660828"
+    },
+    "97": {
+      "numeric_payload_sha256": "bf40ea874216e922b96c2b6914788dc584e5389f19bbf9e8947bc1f86ec5c074",
+      "reviewed_file_sha256": "51e583e929f59d5f1bd32565ae06ade673925d2b72a3fdbf59382cda48cb8888"
+    }
+  },
+  "notes": [
+    "Shelved. Diffuse colour/tone only, not metallic substrate, gloss or directional reflection."
+  ],
+  "acceptance_scope": "Content selection/qualitative acceptance only where recorded; not release, final approximation or physical calibration approval.",
+  "release_clearance": "unresolved"
+}

@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "id": "fixed-print-reference-v1",
+  "ocio_version": "2.6.0",
+  "exposure_compression": 0.6,
+  "pivot_ap1": 0.18,
+  "anchor": "gray-only",
+  "input_output": "ACEScct/AP1/D60",
+  "input_domain": [
+    -0.5,
+    1.0386752042
+  ],
+  "interpolation": "tetrahedral",
+  "supported_cube_sizes": [
+    65,
+    97
+  ],
+  "reference": {
+    "id": "p3rec50",
+    "parameters": [
+      100.0,
+      0.694,
+      0.306,
+      0.2175,
+      0.7435,
+      0.1405,
+      0.053,
+      0.3127,
+      0.329
+    ],
+    "boundary_start_radius": 0.9
+  },
+  "viewing": "Planck 5000 K creative convention; not D50 or xenon projection matching",
+  "source_density_allowance": 0.025,
+  "reference_roundtrip_limit": 0.0002,
+  "native_ap1_range": [
+    0.0,
+    1024.0
+  ],
+  "gray_ap1_limit": 2e-05,
+  "raw_gray_limit": 1e-09,
+  "file_local_tetra_limit": 0.0002
+}

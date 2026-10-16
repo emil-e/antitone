@@ -1,0 +1,166 @@
+{
+  "source_url": "https://law.resource.org/pub/us/cfr/ibr/001/aimm.it2.18.1996.pdf",
+  "publication": "ANSI/ISO 5-3-1995, ANSI/NAPM IT2.18-1996",
+  "definition": "Section 8.3, printed page 5 / PDF page 14: log spectral products for the WHOLE instrument; same products for transmission and reflection. Do not multiply by an illuminant again.",
+  "table": "Table 3, printed page 7 / PDF page 16",
+  "units": "Wavelength nm, log10 spectral product; peak normalized to 5.000",
+  "extraction": "Independent transcription of original standard numerical values.",
+  "blue": {
+    "points": [
+      [
+        420,
+        3.602
+      ],
+      [
+        430,
+        4.819
+      ],
+      [
+        440,
+        5.0
+      ],
+      [
+        450,
+        4.912
+      ],
+      [
+        460,
+        4.62
+      ],
+      [
+        470,
+        4.04
+      ],
+      [
+        480,
+        2.989
+      ],
+      [
+        490,
+        1.566
+      ],
+      [
+        500,
+        0.165
+      ]
+    ],
+    "short_wavelength_log_slope_per_nm": 0.38,
+    "long_wavelength_log_slope_per_nm": -0.14
+  },
+  "green": {
+    "points": [
+      [
+        500,
+        1.65
+      ],
+      [
+        510,
+        3.822
+      ],
+      [
+        520,
+        4.782
+      ],
+      [
+        530,
+        5.0
+      ],
+      [
+        540,
+        4.906
+      ],
+      [
+        550,
+        4.644
+      ],
+      [
+        560,
+        4.221
+      ],
+      [
+        570,
+        3.609
+      ],
+      [
+        580,
+        2.766
+      ],
+      [
+        590,
+        1.579
+      ]
+    ],
+    "short_wavelength_log_slope_per_nm": 0.22,
+    "long_wavelength_log_slope_per_nm": -0.17
+  },
+  "red": {
+    "points": [
+      [
+        600,
+        2.568
+      ],
+      [
+        610,
+        4.638
+      ],
+      [
+        620,
+        5.0
+      ],
+      [
+        630,
+        4.871
+      ],
+      [
+        640,
+        4.604
+      ],
+      [
+        650,
+        4.286
+      ],
+      [
+        660,
+        3.9
+      ],
+      [
+        670,
+        3.551
+      ],
+      [
+        680,
+        3.165
+      ],
+      [
+        690,
+        2.776
+      ],
+      [
+        700,
+        2.383
+      ],
+      [
+        710,
+        1.97
+      ],
+      [
+        720,
+        1.551
+      ],
+      [
+        730,
+        1.141
+      ],
+      [
+        740,
+        0.741
+      ],
+      [
+        750,
+        0.341
+      ]
+    ],
+    "short_wavelength_log_slope_per_nm": 0.27,
+    "long_wavelength_log_slope_per_nm": -0.04
+  }
+}

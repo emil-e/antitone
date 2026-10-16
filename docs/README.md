@@ -12,6 +12,7 @@ Start with [build and run](../README.md), then choose the part of the project yo
 | How does Analyze choose its starting grade? | [Roll analysis](roll-analysis.md) |
 | What does the bare-light reference correct? | [Flat-field correction](flat-field.md) |
 | Why do preview, TIFF and EXR differ? | [Colour and output](colour-and-output.md) |
+| How are independent creative looks authored offline? | [Look catalog and authoring](../assets/looks/README.md) |
 | Which pixels does a crop, pick or export represent? | [Geometry](geometry.md) |
 | How do tools, workers and previews stay coherent? | [Editor](editor.md) |
 | What is saved, and what makes a source compatible? | [Projects](projects.md) |

@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "kodak-ektacolor-edge",
+  "version": 1,
+  "name": "KODAK EKTACOLOR EDGE Paper",
+  "status": "candidate",
+  "material": "reflection",
+  "authoring": "fixed-print-reference-v1",
+  "model_sha256": "1a515854caf86266acf11b672effd9706640ddca51a94580a45916757fa3140f",
+  "source_sha256": "ea06b8c004e5d27af9045bc5ab0a63c9e44c575e0818f4b704a9f6337e01fc36",
+  "reviewed_bakes": {
+    "65": {
+      "numeric_payload_sha256": "1dc3200345384b9a63803f79cd18cb3a294b92076587563a3d3b869f9064a7b6",
+      "reviewed_file_sha256": "5b7f3a9d91136d6ce25752bbf632ef67df2b2bc047a9ab0f11f3186233e7a5f5"
+    },
+    "97": {
+      "numeric_payload_sha256": "981f663ff80d58d5c5185ee8b0a2f849e931caeb320623a9be431b52dcdb4319",
+      "reviewed_file_sha256": "61c57740d71a3c634eab354ca7e6644c3e54f741bf0a81fa3ab0bb29669a1efd"
+    }
+  },
+  "notes": [],
+  "acceptance_scope": "Content selection/qualitative acceptance only where recorded; not release, final approximation or physical calibration approval.",
+  "release_clearance": "unresolved"
+}

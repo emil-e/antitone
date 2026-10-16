@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "kodak-endura-metallic",
+  "version": 1,
+  "name": "KODAK PROFESSIONAL ENDURA Metallic Paper",
+  "status": "shelved",
+  "material": "reflection",
+  "authoring": "fixed-print-reference-v1",
+  "model_sha256": "20370c658444c4d8a6ab86e10989084d11ec68906cfef03278168827f3373467",
+  "source_sha256": "74f415560ba39d9a3a8ff5acda920dd2b3266f52b7fa67035e798417931e41f1",
+  "reviewed_bakes": {
+    "65": {
+      "numeric_payload_sha256": "06517c4ceeaaa8714915aea350efb2f6079d63d0ec5e075d2a7d3d7840211ce4",
+      "reviewed_file_sha256": "a3ff13a81c69c6f26f023f31573964304a2b6e34e4108dbb792141396fb06bb1"
+    },
+    "97": {
+      "numeric_payload_sha256": "1673409d718bc99ab6d0b8afbc3b85c19befc6dacb671aad7cbbdce7bd8b6e86",
+      "reviewed_file_sha256": "dee83090204b8e11655e86370ccbd3cb17436a049882cca754173b3fbcea339e"
+    }
+  },
+  "notes": [
+    "Shelved. Diffuse colour/tone only, not metallic substrate, gloss or directional reflection."
+  ],
+  "acceptance_scope": "Content selection/qualitative acceptance only where recorded; not release, final approximation or physical calibration approval.",
+  "release_clearance": "unresolved"
+}

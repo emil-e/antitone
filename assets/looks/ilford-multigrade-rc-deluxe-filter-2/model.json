@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "family": "neutral-density-analytic",
+  "log_exposure_range": [
+    0.1,
+    4
+  ],
+  "density_parameters": [
+    0.04055263887632872,
+    2.092865790428401,
+    8.29359287367299,
+    2.4552380491508137,
+    0.47519329023506807
+  ]
+}

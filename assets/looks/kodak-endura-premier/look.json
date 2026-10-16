@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "kodak-endura-premier",
+  "version": 1,
+  "name": "KODAK PROFESSIONAL ENDURA Premier Paper",
+  "status": "candidate",
+  "material": "reflection",
+  "authoring": "fixed-print-reference-v1",
+  "model_sha256": "a4ed65c1f30f4fd447a5e58769b4c9171fbc53c53a18213995c7eaea5cc6e27f",
+  "source_sha256": "39b43ff0a23366a52863905e7369f346ae70969fb84f083ae01864a00082a782",
+  "reviewed_bakes": {
+    "65": {
+      "numeric_payload_sha256": "cbb45f23618a92c05df21b6be37795935933e2e08f73019aa9e1b6fd600f6dfe",
+      "reviewed_file_sha256": "168827443afc82bc42bbf74e712c2c28234e7b89755babe656b4e48fc6927fd0"
+    },
+    "97": {
+      "numeric_payload_sha256": "7cbe2726f9a731050377ccecdc71460a55ff77e4d8b44eefdfda61bf03978a2d",
+      "reviewed_file_sha256": "0015ad3260c15e7685e2ea500f4018a44b10c4af870b9f16ed1151a1d98cf2e5"
+    }
+  },
+  "notes": [],
+  "acceptance_scope": "Content selection/qualitative acceptance only where recorded; not release, final approximation or physical calibration approval.",
+  "release_clearance": "unresolved"
+}
