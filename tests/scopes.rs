@@ -308,7 +308,7 @@ fn grading_and_viewport_edits_keep_a_trace_but_other_sources_and_graticules_do_n
                     requested_settings
                 )
                 .is_none(),
-                "held bins must remain labelled Updating"
+                "held bins must not be reported as current diagnostics"
             );
             let pixels = paint_pixels(&device, &queue, encoder, |pass| {
                 let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(256., 256.));

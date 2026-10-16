@@ -16,7 +16,7 @@ Invalid output samples are excluded and visibly counted, not repaired into ordin
 
 ## Measure the visible image
 
-The plots are labelled **Visible image · Approximate**. Pan/zoom isolates the region being graded—a face, for example—while Fit covers the accepted composition. Waveform x follows left-to-right position within that visible image region, never the letterbox/canvas. Crop, orientation and straightening use the same affine composition mapping as the viewer.
+The plots measure the **visible image, approximately**, in the selected output target. Pan/zoom isolates the region being graded—a face, for example—while Fit covers the accepted composition. Waveform x follows left-to-right position within that visible image region, never the letterbox/canvas. Crop, orientation and straightening use the same affine composition mapping as the viewer.
 
 The positive prototype shares the accepted physical-view raster, including the detail/coarse-underlay composite during navigation and the explicit original-resolution reference when displayed. It never measures only the detailed patch while the viewer shows additional underlay content. Reduction remains independently bounded to a 1024-pixel edge; sparse samples can miss a tiny highlight or colour patch. Unsupported transparent coverage is excluded, not counted as black photograph. Counts are not full-resolution TIFF/EXR statistics. Initial/pending proxies use approximate source-region sampling.
 
@@ -26,11 +26,13 @@ Navigation/resize updates analysis when visible coverage changes; equivalent req
 
 Vectorscope amplification narrows the displayed chroma range around neutral. The implementation re-bins cached rendered samples; it does not rerender the photograph or enlarge an old plot bitmap. Samples outside the plot remain counted rather than being pinned to its rim.
 
-RGB/CMY rim annotations indicate direction. The reference boxes indicate nominal 100% code colours. The dashed Skin ray is a conventional hue heuristic, not a target every complexion should meet or an automatic correction. Complexion, light and grading can legitimately move skin away from it.
+Small coloured reference boxes indicate nominal 100% RGB/CMY code colours; their positions communicate both direction and magnitude. Magnification can move them outside the plot. The unlabelled dashed ray is a conventional skin-tone hue heuristic, not a target every complexion should meet or an automatic correction. Complexion, light and grading can legitimately move skin away from it.
 
 ## Keep feedback coherent
 
-Only one reduction/diagnostic readback is outstanding. During grade, pan/zoom or sample-dimension updates, hold the previous coherent trace and its normalization labelled Updating rather than blanking it. Latest-result status still requires exact processing content and visible-frame identity, so an old completion cannot become current. Compatible holding uses logical source authority, not an immutable rendered-image pointer that changes on every edit. A different source/revision, accepted composition, target or vector scale must not inherit incompatible old bins; suspension clears them. RGB/luma selects cached planes without another reduction. No full-image readback or UI-thread GPU wait is introduced.
+Only one reduction/diagnostic readback is outstanding. During grade, pan/zoom or sample-dimension updates, hold the previous coherent trace and its normalization until a compatible replacement is ready. Latest-result status still requires exact processing content and visible-frame identity, so an old completion cannot become current. Compatible holding uses logical source authority, not an immutable rendered-image pointer that changes on every edit. A different source/revision, accepted composition, target or vector scale must not inherit incompatible old bins; suspension clears them. RGB/luma selects cached planes without another reduction. No full-image readback or UI-thread GPU wait is introduced.
+
+The Scopes disclosure collapses the plot and suspends its work. A single header menu selects vectorscope, RGB waveform or luma waveform and, for vectorscope, magnification; its readout shows the active plot and scale. The lower divider resizes the plot, with double-click restoring its default size. Outside-plot counts, invalid samples and errors remain visible in the plot; hover reveals the full message only when it is truncated.
 
 Plot controls do not change photographic processing. Visibility and plot sizing are application preferences; plot selection, magnification and GPU diagnostics are transient.
 

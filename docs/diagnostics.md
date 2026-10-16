@@ -121,7 +121,12 @@ This older diagnostic drives real import/correction and the legacy shared-area a
 cargo test --locked --offline --features ui-tests --lib \
   scope_plot_scale_and_target_widgets_produce_valid_completed_reductions \
   -- --test-threads=1
+cargo test --locked --offline --features ui-tests --lib \
+  compact_scope_header_fits_and_disclosure_preserves_state_at_both_densities \
+  -- --test-threads=1
 ```
+
+The compact-header check covers normal/narrow 1×/2× layouts, disclosure and menu keyboard access, collapsed scheduling, waveform label bounds and unchanged project state. With `ANTITONE_UI_CAPTURE` it writes `scopes-` inspection captures for the plots, menu and collapsed header. These use authored imagery, not photographic acceptance samples.
 
 The authored test exercises [scope modes/amplification](scopes.md), real widgets and completed GPU reductions in both targets. Viewer and scopes must consume the same accepted working result. Source inspection intentionally suspends photographic scopes. Physical interpretation, responsiveness and native appearance remain separate.
 

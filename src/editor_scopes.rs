@@ -30,10 +30,20 @@ impl Default for Scopes {
 pub(super) struct Slot {
     painter: egui::Painter,
     plot: egui::Rect,
-    caption: egui::Rect,
+    response: egui::Response,
     settings: Settings,
 }
 impl Scopes {
+    pub(super) fn menu_label(&self) -> String {
+        if self.vector {
+            format!("Vectorscope · {}×", self.amplification)
+        } else if self.waveform == Plot::Luma {
+            "Luma waveform".into()
+        } else {
+            "RGB waveform".into()
+        }
+    }
+
     pub(super) fn new(device: &wgpu::Device) -> Self {
         let mut state = Self::default();
         match pollster::block_on(GpuScopes::new(device)) {
@@ -48,62 +58,74 @@ impl Scopes {
         target: OutputTarget,
         reserved_height: f32,
     ) -> Option<Slot> {
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut self.visible, "Scopes");
-            if self.visible {
-                egui::ComboBox::from_id_salt("scope-plot")
-                    .selected_text(if self.vector {
-                        "Vectorscope"
-                    } else {
-                        "Waveform"
-                    })
-                    .width(120.)
+        icons::row(ui, |ui| {
+            let width = ui.available_width();
+            // Reserve a stable menu width so switching plots never moves the disclosure.
+            let menu_width = 156.;
+            let was_visible = self.visible;
+            let heading_width = if was_visible {
+                (width - menu_width - ui.spacing().item_spacing.x).max(1.)
+            } else {
+                width
+            };
+            presentation::section_disclosure(ui, "Scopes", &mut self.visible, heading_width);
+            if was_visible != self.visible {
+                ui.ctx().request_repaint();
+            }
+            // Expansion used the full-width heading this frame; show its menu on the next layout.
+            if was_visible && self.visible {
+                egui::ComboBox::from_id_salt("scope-settings")
+                    .selected_text(self.menu_label())
+                    .width(menu_width)
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.vector, false, "Waveform");
-                        ui.selectable_value(&mut self.vector, true, "Vectorscope");
+                        let mut plot = if self.vector {
+                            Plot::Vector
+                        } else {
+                            self.waveform
+                        };
+                        for (value, label) in [
+                            (Plot::Vector, "Vectorscope"),
+                            (Plot::Rgb, "RGB waveform"),
+                            (Plot::Luma, "Luma waveform"),
+                        ] {
+                            if ui.selectable_value(&mut plot, value, label).clicked() {
+                                self.vector = plot == Plot::Vector;
+                                if !self.vector {
+                                    self.waveform = plot;
+                                }
+                                ui.close();
+                            }
+                        }
+                        if self.vector {
+                            ui.separator();
+                            ui.weak("Magnification");
+                            for gain in [1, 2, 4, 8] {
+                                if ui
+                                    .selectable_value(
+                                        &mut self.amplification,
+                                        gain,
+                                        format!("{gain}×"),
+                                    )
+                                    .clicked()
+                                {
+                                    ui.close();
+                                }
+                            }
+                        }
                     });
             }
         });
         if !self.visible {
             return None;
         }
-        icons::row(ui, |ui| {
-            if self.vector {
-                ui.small("Scale");
-                for gain in [1, 2, 4, 8] {
-                    ui.selectable_value(&mut self.amplification, gain, format!("{gain}×"));
-                }
-                if icons::button(
-                    ui,
-                    icons::Icon::Reset,
-                    self.amplification != 1,
-                    "Reset vectorscope scale",
-                    "Reset vectorscope scale to 1×",
-                )
-                .clicked()
-                {
-                    self.amplification = 1;
-                }
-            } else {
-                ui.selectable_value(&mut self.waveform, Plot::Rgb, "RGB");
-                ui.selectable_value(&mut self.waveform, Plot::Luma, "Luma");
-            }
-        });
         let width = ui.available_width();
         // Keep a usable inspector scroll region below the independent scope chrome.
-        let max_height = (ui.available_height() - reserved_height).max(96.);
+        let max_height =
+            (ui.available_height() - reserved_height - 8. - ui.spacing().item_spacing.y).max(96.);
         let height = (width * self.height_ratio).clamp(96., max_height);
         let (plot, response) =
             ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
-        let mut help = String::from(
-            "Approximate scope of the visible image from nearest-centre samples, after the selected ACES output transform and target transfer. Zoom/pan isolates the region being adjusted. Calibration and exports never use these samples.",
-        );
-        if self.vector {
-            help.push_str("\nRim letters/ticks indicate colour direction only; small boxes mark 100% RGB/CMY references. The dashed Skin line is an approximate positive-I hue guide, not a skin-colour correctness test or a standard Display P3 axis.");
-        }
-        response.on_hover_text(help);
-        let (caption, _) =
-            ui.allocate_exact_size(egui::vec2(ui.available_width(), 30.), egui::Sense::hover());
+        let plot_response = response;
         let (divider, response) =
             ui.allocate_exact_size(egui::vec2(width, 8.), egui::Sense::click_and_drag());
         let response = response
@@ -136,7 +158,7 @@ impl Scopes {
         Some(Slot {
             painter: ui.painter().with_clip_rect(ui.clip_rect()),
             plot,
-            caption,
+            response: plot_response,
             settings: Settings {
                 target,
                 plot: if self.vector {
@@ -155,6 +177,7 @@ pub(super) enum ScopeInput {
     Rendered(Arc<crate::gpu::view::RenderedView>, FrameRaster),
 }
 impl ScopeInput {
+    #[cfg(test)]
     pub(super) fn frame(&self) -> FrameRaster {
         match self {
             Self::Proxy(_, _, f) | Self::Rendered(_, f) => *f,
@@ -218,7 +241,7 @@ impl Editor {
     pub(super) fn scope_panel(&mut self, ui: &mut egui::Ui) -> Option<Slot> {
         egui::Frame::new()
             .fill(ui.visuals().faint_bg_color)
-            .inner_margin(8)
+            .inner_margin(4)
             .show(ui, |ui| self.scopes.panel(ui, self.target, 180.))
             .inner
     }
@@ -306,28 +329,30 @@ impl Editor {
                 if let Some(gpu) = &self.scopes.gpu {
                     gpu.invalidate();
                 }
-                slot.painter.text(
-                    slot.plot.center(),
-                    egui::Align2::CENTER_CENTER,
-                    reason,
-                    egui::FontId::proportional(12.),
+                scope_notice(
+                    &slot.painter,
+                    slot.plot,
+                    reason.into(),
                     egui::Color32::GRAY,
+                    egui::Align2::CENTER_CENTER,
                 );
                 return;
             }
         };
-        let frame = input.frame();
         let Some(gpu) = &self.scopes.gpu else {
-            slot.painter.text(
-                slot.plot.center(),
-                egui::Align2::CENTER_CENTER,
-                self.scopes.error.as_deref().unwrap_or("Scopes unavailable"),
-                egui::FontId::proportional(11.),
+            let error = self.scopes.error.as_deref().unwrap_or("Scopes unavailable");
+            if scope_notice(
+                &slot.painter,
+                slot.plot,
+                error.into(),
                 egui::Color32::LIGHT_RED,
-            );
+                egui::Align2::CENTER_CENTER,
+            ) {
+                slot.response.on_hover_text(error);
+            }
             return;
         };
-        let mut trace = slot.plot.shrink(4.);
+        let mut trace = slot.plot.shrink(2.);
         if slot.settings.plot == Plot::Vector {
             trace = egui::Rect::from_center_size(
                 trace.center(),
@@ -335,6 +360,9 @@ impl Editor {
             );
         } else {
             trace.min.x += 24.;
+            // Endpoint labels need vertical breathing room; the vectorscope has no text gutter.
+            trace.min.y += 4.;
+            trace.max.y -= 4.;
         }
         let paint = input.paint(
             gpu.clone(),
@@ -350,50 +378,68 @@ impl Editor {
             trace,
             slot.settings,
         );
-        let target = if self.target == OutputTarget::Srgb {
-            "sRGB"
-        } else {
-            "Display P3"
-        };
-        slot.painter.text(
-            slot.caption.center_top(),
-            egui::Align2::CENTER_TOP,
-            format!("{target} · Visible image · Approximate"),
-            egui::FontId::proportional(10.),
-            egui::Color32::GRAY,
-        );
         let status = input.status(gpu, slot.settings);
         let status = if matches!(input, ScopeInput::Rendered(..)) && self.working.updating {
             None
         } else {
             status
         };
-        let (text, color) = match status {
-            Some(Ok(counts)) if counts.invalid > 0 => (
-                format!("Invalid rendered samples: {}", counts.invalid),
-                egui::Color32::LIGHT_RED,
+        if let Some((text, color)) = scope_feedback(status)
+            && scope_notice(
+                &slot.painter,
+                slot.plot,
+                text.clone(),
+                color,
+                egui::Align2::LEFT_BOTTOM,
+            )
+        {
+            slot.response.on_hover_text(text);
+        }
+    }
+}
+
+fn scope_notice(
+    painter: &egui::Painter,
+    plot: egui::Rect,
+    text: String,
+    color: egui::Color32,
+    align: egui::Align2,
+) -> bool {
+    // Exceptional feedback overlays the plot; only truncated messages need hover details.
+    let painter = painter.with_clip_rect(plot);
+    let mut job = egui::text::LayoutJob::simple(
+        text,
+        egui::FontId::proportional(10.),
+        color,
+        plot.width() - 8.,
+    );
+    job.wrap.max_rows = 3;
+    job.wrap.break_anywhere = true;
+    let galley = painter.layout_job(job);
+    let rect = align.align_size_within_rect(galley.size(), plot.shrink(4.));
+    painter.rect_filled(rect.expand(2.), 2., egui::Color32::from_gray(6));
+    let truncated = galley.elided;
+    painter.galley(rect.min, galley, color);
+    truncated
+}
+
+fn scope_feedback(
+    status: Option<Result<crate::scopes::Counts, String>>,
+) -> Option<(String, egui::Color32)> {
+    match status {
+        Some(Ok(counts)) if counts.invalid > 0 => Some((
+            format!("Invalid rendered samples: {}", counts.invalid),
+            egui::Color32::LIGHT_RED,
+        )),
+        Some(Ok(counts)) if counts.outside > 0 => Some((
+            format!(
+                "Outside plot: {:.1}%",
+                100. * counts.outside as f64 / counts.valid.max(1) as f64
             ),
-            Some(Ok(counts)) if counts.outside > 0 => (
-                format!(
-                    "Outside plot: {:.1}%",
-                    100. * counts.outside as f64 / counts.valid.max(1) as f64
-                ),
-                egui::Color32::GRAY,
-            ),
-            Some(Ok(_)) => (
-                format!("{}×{} samples", frame.output[0], frame.output[1]),
-                egui::Color32::GRAY,
-            ),
-            Some(Err(error)) => (error, egui::Color32::LIGHT_RED),
-            None => ("Updating…".into(), egui::Color32::GRAY),
-        };
-        slot.painter.text(
-            slot.caption.center_bottom(),
-            egui::Align2::CENTER_BOTTOM,
-            text,
-            egui::FontId::proportional(10.),
-            color,
-        );
+            egui::Color32::GRAY,
+        )),
+        Some(Err(error)) => Some((error, egui::Color32::LIGHT_RED)),
+        Some(Ok(_)) | None => None,
     }
 }
 
@@ -426,34 +472,23 @@ fn graticule(painter: &egui::Painter, rect: egui::Rect, settings: Settings) {
         painter.circle_stroke(center, (radius * scale) as f32, stroke);
     }
     let skin_end = direction_on_rim(rect, basis.skin_reference_direction(), 8.);
-    let skin_color = egui::Color32::from_rgb(200, 154, 85);
     painter.extend(egui::Shape::dashed_line(
         &[center, skin_end],
         egui::Stroke::new(1., egui::Color32::from_rgb(160, 123, 68)),
         4.,
         4.,
     ));
-    painter.text(
-        center.lerp(skin_end, 0.65) - egui::vec2(3., 3.),
-        egui::Align2::RIGHT_BOTTOM,
-        "Skin",
-        egui::FontId::proportional(9.),
-        skin_color,
-    );
-    for (label, rgb) in references() {
+    for (_, rgb) in references() {
         let direction = basis.vector(rgb);
         let color = egui::Color32::from_rgb(
             (80. + 150. * rgb.x) as u8,
             (80. + 150. * rgb.y) as u8,
             (80. + 150. * rgb.z) as u8,
         );
-        let galley = painter.layout_no_wrap(label.into(), egui::FontId::proportional(10.), color);
-        let label_rect =
-            egui::Rect::from_center_size(direction_on_rim(rect, direction, 12.), galley.size());
         let point = direction * scale;
         let position = center + egui::vec2(point.x as f32, -point.y as f32);
         let marker = egui::Rect::from_center_size(position, egui::vec2(5., 5.));
-        if rect.shrink(7.).contains(position) && !label_rect.expand(2.).intersects(marker) {
+        if rect.contains_rect(marker) {
             painter.rect_stroke(
                 marker,
                 0.,
@@ -461,15 +496,6 @@ fn graticule(painter: &egui::Painter, rect: egui::Rect, settings: Settings) {
                 egui::StrokeKind::Inside,
             );
         }
-        // Direction ticks stay on the rim; unlike the boxes, they do not indicate chroma magnitude.
-        painter.line_segment(
-            [
-                direction_on_rim(rect, direction, 2.),
-                direction_on_rim(rect, direction, 7.),
-            ],
-            egui::Stroke::new(1., color),
-        );
-        painter.galley(label_rect.min, galley, color);
     }
 }
 

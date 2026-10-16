@@ -97,12 +97,10 @@ impl Editor {
                             if self.working.error.is_some() { " · View unavailable" }
                             else if self.working.compare && self.working.reference_ready() { " · Original reference" }
                             else if self.working.compare { " · Preparing reference" }
-                            else if self.working.updating { " · Updating view" }
-                            else if self.working.displayed.is_some() { " · Working view" }
-                            else { " · Acquiring view" }
+                            else if self.working.displayed.is_none() { " · Acquiring view" }
+                            else { "" }
                         } else if self.original.refining.is_some() { " · Refining" } else if self.original.settled.is_none() { " · Approximate" } else { "" };
-                    let repair_work = if !self.source && self.dust.render_error.is_some() { " · Repair unavailable" }
-                        else if !self.source && self.dust_updating() { " · Updating repairs" } else { "" };
+                    let repair_work = if !self.source && self.dust.render_error.is_some() { " · Repair unavailable" } else { "" };
                     let state = if has_repairs { format!("{target}{quality}{repair_work} · Unsaved repairs") } else { format!("{target}{quality}") };
                     let trailing_width = presentation::CONTROL_HEIGHT + VIEWER_ITEM_GAP + if let Some(group) = tool_group {
                         if reviewing { group.width_named(ui, apply_label) } else { group.width(ui) }

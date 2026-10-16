@@ -250,7 +250,7 @@ fn dust_is_suspended_in_fullscreen_and_never_claims_saved_or_exported_output() {
     assert_eq!(stored, serde_json::to_value(&project).unwrap());
     ready(&mut h, 1);
     assert!(
-        h.get_by_label("Display P3 · Working view · Unsaved repairs")
+        h.get_by_label("Display P3 · Unsaved repairs")
             .rect()
             .height()
             > 0.

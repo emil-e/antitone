@@ -1473,25 +1473,6 @@ impl Editor {
             .find(|repair| repair.id == id)
     }
 
-    pub(super) fn dust_updating(&self) -> bool {
-        let Some(source) = self.current_source else {
-            return false;
-        };
-        let Some(signature) = self.dust_signature() else {
-            return false;
-        };
-        self.dust.pending.is_some()
-            || self
-                .dust
-                .next_stale(
-                    source,
-                    self.id,
-                    signature,
-                    &self.effective_dust_repairs(source),
-                )
-                .is_some()
-    }
-
     pub(super) fn dust_signature(&self) -> Option<Signature> {
         self.dust_signature_for(self.calibration()?, self.roll).ok()
     }

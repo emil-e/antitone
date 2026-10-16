@@ -176,6 +176,115 @@ pub fn dialog_disclosure<R>(
     .0
 }
 
+/// A section disclosure with caller-owned visibility and room for trailing header controls.
+pub fn section_disclosure(ui: &mut Ui, title: &str, open: &mut bool, width: f32) -> egui::Response {
+    let response = section_heading(
+        ui,
+        title,
+        Some(*open),
+        false,
+        egui::vec2(width, CONTROL_HEIGHT),
+        true,
+    );
+    if response.clicked() {
+        *open = !*open;
+    }
+    ui.ctx()
+        .accesskit_node_builder(response.id, |node| node.set_expanded(*open));
+    response
+}
+
+fn section_heading(
+    ui: &mut Ui,
+    title: &str,
+    open: Option<bool>,
+    changed: bool,
+    size: egui::Vec2,
+    inspector: bool,
+) -> egui::Response {
+    let text_color = if inspector {
+        ui.visuals().strong_text_color()
+    } else {
+        ui.visuals().text_color()
+    };
+    let text = ui.painter().layout_no_wrap(
+        title.into(),
+        if inspector {
+            egui::TextStyle::Button
+        } else {
+            egui::TextStyle::Body
+        }
+        .resolve(ui.style()),
+        text_color,
+    );
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let response = ui.interact(
+        rect,
+        ui.make_persistent_id("disclosure"),
+        if open.is_some() {
+            egui::Sense::click()
+        } else {
+            egui::Sense::hover()
+        },
+    );
+    if let Some(open) = open {
+        if response.hovered() || response.has_focus() || response.is_pointer_button_down_on() {
+            let visuals = ui.style().interact(&response);
+            ui.painter().rect(
+                rect,
+                4.,
+                visuals.weak_bg_fill,
+                visuals.bg_stroke,
+                egui::StrokeKind::Inside,
+            );
+        }
+        let icon = if open {
+            Icon::ChevronDown
+        } else {
+            Icon::ChevronRight
+        };
+        icon.paint(
+            ui,
+            egui::Rect::from_center_size(
+                rect.left_center() + egui::vec2(10., 0.),
+                egui::vec2(16., 16.),
+            ),
+            if inspector {
+                ui.style().interact(&response).fg_stroke
+            } else {
+                egui::Stroke::new(1.5, text_color)
+            },
+        );
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::CollapsingHeader,
+                response.enabled(),
+                title,
+            )
+        });
+    } else {
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Label, response.enabled(), title)
+        });
+    }
+    let left = rect.left() + if open.is_some() { 24. } else { 0. };
+    let mut clip = rect;
+    clip.max.x -= if changed { 12. } else { 0. };
+    ui.painter().with_clip_rect(clip).galley(
+        egui::pos2(left, rect.center().y - text.size().y * 0.5),
+        text,
+        text_color,
+    );
+    if changed {
+        ui.painter().circle_filled(
+            rect.right_center() - egui::vec2(5., 0.),
+            2.5,
+            ui.visuals().selection.stroke.color,
+        );
+    }
+    response
+}
+
 const DIALOG_DISCLOSURE_HEIGHT: f32 = 22.;
 
 #[derive(Clone, Copy)]
@@ -253,75 +362,14 @@ fn section_impl<R>(
             } else {
                 DIALOG_DISCLOSURE_HEIGHT
             };
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
-            let response = ui.interact(
-                rect,
-                ui.make_persistent_id("disclosure"),
-                if default_open.is_some() {
-                    egui::Sense::click()
-                } else {
-                    egui::Sense::hover()
-                },
+            let response = section_heading(
+                ui,
+                title,
+                default_open.map(|_| open),
+                changed,
+                egui::vec2(width, height),
+                inspector,
             );
-            if default_open.is_some() {
-                if response.hovered()
-                    || response.has_focus()
-                    || response.is_pointer_button_down_on()
-                {
-                    let visuals = ui.style().interact(&response);
-                    ui.painter().rect(
-                        rect,
-                        4.,
-                        visuals.weak_bg_fill,
-                        visuals.bg_stroke,
-                        egui::StrokeKind::Inside,
-                    );
-                }
-                let icon = if open {
-                    Icon::ChevronDown
-                } else {
-                    Icon::ChevronRight
-                };
-                icon.paint(
-                    ui,
-                    egui::Rect::from_center_size(
-                        rect.left_center() + egui::vec2(10., 0.),
-                        egui::vec2(16., 16.),
-                    ),
-                    if inspector {
-                        ui.style().interact(&response).fg_stroke
-                    } else {
-                        egui::Stroke::new(1.5, text_color)
-                    },
-                );
-                response.widget_info(|| {
-                    egui::WidgetInfo::labeled(
-                        egui::WidgetType::CollapsingHeader,
-                        response.enabled(),
-                        title,
-                    )
-                });
-            } else {
-                response.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::WidgetType::Label, response.enabled(), title)
-                });
-            }
-            let left = rect.left() + if default_open.is_some() { 24. } else { 0. };
-            let marker_width = if changed { 12. } else { 0. };
-            let mut clip = rect;
-            clip.max.x -= marker_width;
-            ui.painter().with_clip_rect(clip).galley(
-                egui::pos2(left, rect.center().y - text.size().y * 0.5),
-                text,
-                text_color,
-            );
-            if changed {
-                ui.painter().circle_filled(
-                    rect.right_center() - egui::vec2(5., 0.),
-                    2.5,
-                    ui.visuals().selection.stroke.color,
-                );
-            }
             if let Some(enabled) = reset_enabled {
                 reset = reset_button(ui, enabled, title).clicked();
             }

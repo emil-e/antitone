@@ -1,7 +1,10 @@
 use super::{frame, key, pointer};
 use crate::editor::{
     icons::{self, Icon},
-    presentation::{SectionHeader, collect_expansion, labelled_row, restore_expansion, section},
+    presentation::{
+        SectionHeader, collect_expansion, labelled_row, restore_expansion, section,
+        section_disclosure,
+    },
 };
 use egui::{Context, Event, Response, Ui};
 use std::collections::BTreeMap;
@@ -122,6 +125,60 @@ fn labelled_rows_return_caller_responses_and_keep_focus_and_activation() {
                 context.memory(|memory| memory.focused()),
                 Some(responses[1].id)
             );
+        }
+    }
+}
+
+#[test]
+fn compact_disclosure_keeps_shared_semantics_focus_and_independent_trailing_controls() {
+    for scale in [1., 2.] {
+        for width in [270., 315.] {
+            for enabled in [true, false] {
+                let context = Context::default();
+                context.set_pixels_per_point(scale);
+                context.enable_accesskit();
+                let mut open = true;
+                let render = |open: &mut bool, events| {
+                    frame(&context, width, enabled, events, |ui| {
+                        icons::row(ui, |ui| {
+                            let width = ui.available_width() - 164.;
+                            let header = section_disclosure(ui, "Scopes", open, width);
+                            let menu = ui.button("Plot settings");
+                            (header, menu)
+                        })
+                        .inner
+                    })
+                };
+                render(&mut open, vec![]);
+                let ((header, menu), output) = render(&mut open, vec![]);
+                assert!(header.rect.right() <= menu.rect.left());
+                assert_eq!(header.rect.height(), 28.);
+                let node = &output
+                    .platform_output
+                    .accesskit_update
+                    .as_ref()
+                    .unwrap()
+                    .nodes
+                    .iter()
+                    .find(|(_, node)| node.label() == Some("Scopes"))
+                    .unwrap()
+                    .1;
+                assert_eq!(node.is_expanded(), Some(true));
+                render(&mut open, pointer(header.rect.center(), true));
+                render(&mut open, pointer(header.rect.center(), false));
+                assert_eq!(open, !enabled);
+                if enabled {
+                    context.memory_mut(|memory| memory.request_focus(header.id));
+                    render(&mut open, key(egui::Key::Space));
+                    assert!(open);
+                    render(&mut open, key(egui::Key::Tab));
+                    assert_eq!(context.memory(|memory| memory.focused()), Some(menu.id));
+                    assert!(
+                        collect_expansion(&context).is_empty(),
+                        "caller owns visibility, not inspector preferences"
+                    );
+                }
+            }
         }
     }
 }

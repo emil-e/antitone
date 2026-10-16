@@ -691,7 +691,7 @@ impl egui_wgpu::CallbackTrait for ScopePaint {
             }
         }
         *self.group.lock().unwrap() = cached.as_mut().and_then(|prepared| {
-            // Keep the previous complete trace during grade/navigation updates, labelled Updating.
+            // Keep the previous complete trace during grade/navigation updates.
             // Its bins and normalization stay together; source/composition/graticule changes reject it.
             if !prepared.key.can_hold(&key) {
                 return None;

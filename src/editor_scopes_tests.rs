@@ -8,6 +8,86 @@ fn vectorscope_is_the_initial_editor_plot() {
 }
 
 #[test]
+fn scope_feedback_reports_invalid_samples_outside_counts_and_errors() {
+    use crate::scopes::Counts;
+    let counts = Counts {
+        valid: 100,
+        invalid: 0,
+        outside: 0,
+    };
+    assert_eq!(
+        scope_feedback(Some(Ok(Counts {
+            outside: 12,
+            ..counts
+        })))
+        .unwrap()
+        .0,
+        "Outside plot: 12.0%"
+    );
+    let (text, color) = scope_feedback(Some(Ok(Counts {
+        invalid: 3,
+        outside: 12,
+        ..counts
+    })))
+    .unwrap();
+    assert_eq!(text, "Invalid rendered samples: 3");
+    assert_eq!(color, egui::Color32::LIGHT_RED);
+    assert_eq!(
+        scope_feedback(Some(Err("Reduction failed".into()))).unwrap(),
+        ("Reduction failed".into(), color)
+    );
+}
+
+#[test]
+fn scope_notices_stay_within_small_plots_and_bound_long_errors() {
+    for dpi in [1., 2.] {
+        let context = egui::Context::default();
+        context.set_pixels_per_point(dpi);
+        for width in [88., 250.] {
+            let plot = egui::Rect::from_min_size(egui::pos2(10., 10.), egui::vec2(width, 96.));
+            for align in [egui::Align2::LEFT_BOTTOM, egui::Align2::CENTER_CENTER] {
+                for text in [
+                    "No image".into(),
+                    "Invalid rendered samples: 123".into(),
+                    "GPU reduction failed: ".to_owned() + &"long diagnostic ".repeat(100),
+                ] {
+                    let long_error = text.len() > 100;
+                    let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+                        let truncated = scope_notice(
+                            ui.painter(),
+                            plot,
+                            text.clone(),
+                            egui::Color32::LIGHT_RED,
+                            align,
+                        );
+                        assert_eq!(
+                            truncated, long_error,
+                            "only elided notices need hover details"
+                        );
+                    });
+                    output.textures_delta.clear();
+                    let text = output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| {
+                            if let egui::Shape::Text(text) = &shape.shape {
+                                assert_eq!(shape.clip_rect, plot);
+                                Some(text)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap();
+                    assert!(plot.contains_rect(text.visual_bounding_rect()));
+                    assert!(text.galley.rows.len() <= 3);
+                    assert_eq!(text.galley.elided, long_error);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn plot_switch_and_amplification_keep_slot_height_and_processing_state() {
     let context = egui::Context::default();
     for (width, height) in [(315., 600.), (270., 396.)] {
@@ -87,7 +167,7 @@ fn scope_height_follows_width_and_is_bounded_in_short_windows() {
         assert!(
             output.shapes.iter().any(|shape| {
                 matches!(&shape.shape, egui::Shape::LineSegment { points, stroke }
-                if points[0].y > slot.caption.bottom() && stroke.width > 0. && stroke.color.a() > 0)
+                if points[0].y > slot.plot.bottom() && stroke.width > 0. && stroke.color.a() > 0)
             }),
             "divider must be visible even when idle"
         );
@@ -101,7 +181,8 @@ fn scope_height_follows_width_and_is_bounded_in_short_windows() {
     }
     let (short, _) = panel_frame(&mut scopes, &context, egui::vec2(480., 360.), vec![]);
     assert!(short.plot.height() >= 96. && short.plot.height() < previous);
-    assert!(short.painter.clip_rect().contains_rect(short.caption));
+    assert!(short.painter.clip_rect().contains_rect(short.plot));
+    assert!(short.plot.bottom() + 12. <= short.painter.clip_rect().bottom() - 120.);
     assert_eq!(
         scopes.height_ratio, 0.85,
         "window limits must not overwrite preference"
@@ -120,7 +201,7 @@ fn scope_divider_drag_release_reset_and_width_scaling_are_stable_at_both_dpis() 
         }
         let (initial, _) = panel_frame(&mut scopes, &context, size, vec![]);
         let divider_center = |slot: &Slot| {
-            slot.caption.center_bottom()
+            slot.plot.center_bottom()
                 + egui::vec2(0., context.global_style().spacing.item_spacing.y + 4.)
         };
         let start = divider_center(&initial);
@@ -279,7 +360,7 @@ fn vector_reference_markers_are_coloured_separately_from_the_graticule() {
 }
 
 #[test]
-fn rim_directions_and_skin_guide_remain_fixed_visible_and_clipped_at_every_gain() {
+fn skin_guide_and_reference_boxes_follow_plot_geometry_at_every_gain() {
     let context = egui::Context::default();
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
         for side in [88., 200.] {
@@ -307,19 +388,14 @@ fn rim_directions_and_skin_guide_remain_fixed_visible_and_clipped_at_every_gain(
                     },
                 );
                 output.textures_delta.clear();
-                let mut labels = Vec::new();
+                let mut boxes = Vec::new();
                 let mut dashes = Vec::new();
                 for shape in &output.shapes {
                     match &shape.shape {
-                        egui::Shape::Text(text) => {
+                        egui::Shape::Rect(rect) => {
                             assert_eq!(shape.clip_rect, trace);
-                            assert!(
-                                trace.expand(0.5).contains_rect(text.visual_bounding_rect()),
-                                "{target:?} side={side} {}: {:?}",
-                                text.galley.job.text,
-                                text.visual_bounding_rect()
-                            );
-                            labels.push((text.galley.job.text.clone(), text.pos));
+                            assert!(trace.contains_rect(rect.rect));
+                            boxes.push(rect.rect);
                         }
                         egui::Shape::LineSegment { points, stroke }
                             if stroke.color == egui::Color32::from_rgb(160, 123, 68) =>
@@ -332,19 +408,31 @@ fn rim_directions_and_skin_guide_remain_fixed_visible_and_clipped_at_every_gain(
                         _ => {}
                     }
                 }
-                assert_eq!(
-                    labels
-                        .iter()
-                        .map(|(label, _)| label.as_str())
-                        .collect::<Vec<_>>(),
-                    ["Skin", "R", "M", "B", "C", "G", "Y"]
-                );
+                let basis = Basis::new(target);
+                let scale = side as f64 / (2. * basis.extent / amplification as f64);
+                let expected: Vec<_> = references()
+                    .into_iter()
+                    .filter_map(|(_, rgb)| {
+                        let point = basis.vector(rgb) * scale;
+                        let marker = egui::Rect::from_center_size(
+                            trace.center() + egui::vec2(point.x as f32, -point.y as f32),
+                            egui::vec2(5., 5.),
+                        );
+                        trace.contains_rect(marker).then_some(marker)
+                    })
+                    .collect();
+                assert_eq!(boxes, expected);
+                if amplification == 1 {
+                    assert_eq!(boxes.len(), 6);
+                }
+                if amplification == 8 {
+                    assert!(boxes.is_empty());
+                }
                 assert!(dashes.len() >= 3);
-                if let Some((old_labels, old_dashes)) = &previous {
-                    assert_eq!(&labels, old_labels);
+                if let Some(old_dashes) = &previous {
                     assert_eq!(&dashes, old_dashes);
                 }
-                previous = Some((labels, dashes));
+                previous = Some(dashes);
             }
         }
     }

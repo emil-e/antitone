@@ -730,6 +730,238 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_refer
     );
 }
 
+fn open_scope_settings(harness: &mut Harness<'_, Editor>) {
+    harness.step();
+    let current = harness.state().scopes.menu_label();
+    harness
+        .get_by(|node| {
+            node.role() == egui::accesskit::Role::ComboBox
+                && node.value().as_deref() == Some(current.as_str())
+        })
+        .click();
+    harness.step();
+    harness.step();
+}
+
+#[test]
+fn compact_scope_header_fits_and_disclosure_preserves_state_at_both_densities() {
+    fn key(harness: &mut Harness<'_, Editor>, key: egui::Key) {
+        for pressed in [true, false] {
+            harness.event(egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+        }
+    }
+    let mut harness = tools::calibrated_harness();
+    let project = harness.state().document.project.clone();
+    let source = harness.state().current_source;
+    for scale in [1., 2.] {
+        harness
+            .input_mut()
+            .viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .unwrap()
+            .native_pixels_per_point = Some(scale);
+        harness.step();
+        for (layout, size, width) in [
+            ("normal", egui::vec2(1100., 800.), 315.),
+            ("narrow", egui::vec2(800., 600.), 270.),
+        ] {
+            set_layout(&mut harness, size, width);
+            wait_settled(&mut harness);
+            for (plot, label) in [
+                (crate::scopes::Plot::Vector, "Vectorscope"),
+                (crate::scopes::Plot::Rgb, "RGB waveform"),
+                (crate::scopes::Plot::Luma, "Luma waveform"),
+            ] {
+                open_scope_settings(&mut harness);
+                harness.get_by_label(label).click();
+                harness.step();
+                harness.step();
+                let current = harness.state().scopes.menu_label();
+                let header = harness.get_by_label("Scopes");
+                assert_eq!(header.accesskit_node().data().is_expanded(), Some(true));
+                let heading = header.rect();
+                let menu = harness
+                    .get_by(|node| {
+                        node.role() == egui::accesskit::Role::ComboBox
+                            && node.value().as_deref() == Some(current.as_str())
+                    })
+                    .rect();
+                assert!(heading.left() >= size.x - width);
+                assert!(heading.right() <= menu.left());
+                assert!(menu.right() <= size.x);
+                assert!((heading.center().y - menu.center().y).abs() <= 1. / scale);
+                harness.event(egui::Event::PointerGone);
+                harness.step();
+                harness.render().unwrap();
+                wait_for(&mut harness, |editor| {
+                    let input = editor.scope_request().unwrap();
+                    let settings = crate::scopes::Settings {
+                        target: editor.target,
+                        plot,
+                        amplification: 1,
+                    };
+                    matches!(input.status(editor.scopes.gpu.as_ref().unwrap(), settings), Some(Ok(counts)) if counts.invalid == 0)
+                });
+                let png = harness.render().unwrap();
+                let trace = harness
+                    .output()
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Callback(callback)
+                            if callback.rect.left() >= size.x - width =>
+                        {
+                            Some(callback.rect)
+                        }
+                        _ => None,
+                    })
+                    .expect("scope callback in inspector");
+                let plot_rect = harness
+                    .output()
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Rect(rect)
+                            if rect.rect.left() >= size.x - width
+                                && rect.fill == egui::Color32::from_gray(6)
+                                && rect.rect.height() >= 96. =>
+                        {
+                            Some(rect.rect)
+                        }
+                        _ => None,
+                    })
+                    .unwrap();
+                assert!(
+                    plot_rect.top() - heading.bottom() <= 8.,
+                    "plot follows the header"
+                );
+                for shape in &harness.output().shapes {
+                    if let egui::Shape::Text(text) = &shape.shape
+                        && text.pos.x >= size.x - width
+                        && ["0", "25", "50", "75", "100"].contains(&text.galley.job.text.as_str())
+                    {
+                        assert!(
+                            plot_rect.contains_rect(text.visual_bounding_rect()),
+                            "waveform endpoint label is clipped"
+                        );
+                    }
+                }
+                assert!(trace.top() > heading.bottom());
+                assert!(trace.bottom() < size.y - 180.);
+                if plot == crate::scopes::Plot::Vector {
+                    assert!((trace.width() - trace.height()).abs() < 0.01);
+                }
+                save_capture(&png, &format!("scopes-compact-{layout}-{scale}x-{plot:?}"));
+            }
+            open_scope_settings(&mut harness);
+            harness.get_by_label("Vectorscope").click();
+            harness.step();
+            open_scope_settings(&mut harness);
+            for label in [
+                "Vectorscope",
+                "RGB waveform",
+                "Luma waveform",
+                "1×",
+                "2×",
+                "4×",
+                "8×",
+            ] {
+                let rect = harness.get_by_label(label).rect();
+                assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(rect));
+            }
+            let png = harness.render().unwrap();
+            save_capture(&png, &format!("scopes-menu-{layout}-{scale}x"));
+            key(&mut harness, egui::Key::Escape);
+            let expanded = harness.get_by_label("Scopes").rect();
+            let current = harness.state().scopes.menu_label();
+            let menu_right = harness
+                .get_by(|node| {
+                    node.role() == egui::accesskit::Role::ComboBox
+                        && node.value().as_deref() == Some(current.as_str())
+                })
+                .rect()
+                .right();
+            harness.get_by_label("Scopes").focus();
+            harness.step();
+            key(&mut harness, egui::Key::Space);
+            assert!(!harness.state().scopes.visible);
+            assert!(!harness.state().preferences.scopes_visible);
+            assert_eq!(
+                harness
+                    .get_by_label("Scopes")
+                    .accesskit_node()
+                    .data()
+                    .is_expanded(),
+                Some(false)
+            );
+            let collapsed = harness.get_by_label("Scopes").rect();
+            assert_eq!(collapsed.left(), expanded.left());
+            assert!((collapsed.right() - menu_right).abs() <= 1. / scale);
+            assert!(collapsed.width() > expanded.width());
+            let expand_at = collapsed.right_center() - egui::vec2(12., 0.);
+            harness.hover_at(expand_at);
+            harness.step();
+            let png = harness.render().unwrap();
+            save_capture(&png, &format!("scopes-collapsed-{layout}-{scale}x"));
+            let reductions = harness
+                .state()
+                .scopes
+                .gpu
+                .as_ref()
+                .unwrap()
+                .reduction_count();
+            for _ in 0..3 {
+                harness.step();
+                harness.render().unwrap();
+            }
+            assert_eq!(
+                harness
+                    .state()
+                    .scopes
+                    .gpu
+                    .as_ref()
+                    .unwrap()
+                    .reduction_count(),
+                reductions
+            );
+            for pressed in [true, false] {
+                harness.event(egui::Event::PointerButton {
+                    pos: expand_at,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                harness.step();
+            }
+            harness.step();
+            assert!(harness.state().scopes.visible);
+            assert!(harness.state().preferences.scopes_visible);
+            key(&mut harness, egui::Key::Tab);
+            let current = harness.state().scopes.menu_label();
+            assert!(
+                harness
+                    .get_by(|node| {
+                        node.role() == egui::accesskit::Role::ComboBox
+                            && node.value().as_deref() == Some(current.as_str())
+                    })
+                    .is_focused()
+            );
+            key(&mut harness, egui::Key::Space);
+            assert!(harness.query_by_label("Magnification").is_some());
+            key(&mut harness, egui::Key::Escape);
+            assert_eq!(harness.state().document.project, project);
+            assert_eq!(harness.state().current_source, source);
+        }
+    }
+}
+
 #[test]
 fn scope_plot_scale_and_target_widgets_produce_valid_completed_reductions() {
     let (mut harness, _capture, _directory) = calibrated_workflow();
@@ -743,36 +975,16 @@ fn scope_plot_scale_and_target_widgets_produce_valid_completed_reductions() {
             crate::scopes::Plot::Luma,
             crate::scopes::Plot::Vector,
         ] {
-            let current = if harness.state().scopes.vector {
-                "Vectorscope"
-            } else {
-                "Waveform"
-            };
+            open_scope_settings(&mut harness);
             harness
-                .get_by(|node| {
-                    node.role() == egui::accesskit::Role::ComboBox
-                        && node.value().as_deref() == Some(current)
-                })
-                .click();
-            harness.step();
-            harness.step();
-            harness
-                .get_by_label(if plot == crate::scopes::Plot::Vector {
-                    "Vectorscope"
-                } else {
-                    "Waveform"
+                .get_by_label(match plot {
+                    crate::scopes::Plot::Vector => "Vectorscope",
+                    crate::scopes::Plot::Rgb => "RGB waveform",
+                    crate::scopes::Plot::Luma => "Luma waveform",
                 })
                 .click();
             harness.step();
             if plot != crate::scopes::Plot::Vector {
-                harness
-                    .get_by_label(if plot == crate::scopes::Plot::Rgb {
-                        "RGB"
-                    } else {
-                        "Luma"
-                    })
-                    .click();
-                harness.step();
                 assert!(!harness.state().scopes.vector);
                 assert_eq!(harness.state().scopes.waveform, plot);
             } else {
@@ -784,6 +996,7 @@ fn scope_plot_scale_and_target_widgets_produce_valid_completed_reductions() {
                 &[1][..]
             } {
                 if plot == crate::scopes::Plot::Vector {
+                    open_scope_settings(&mut harness);
                     harness.get_by_label(&format!("{amplification}×")).click();
                     harness.step();
                     assert_eq!(harness.state().scopes.amplification, *amplification);
