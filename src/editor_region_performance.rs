@@ -76,18 +76,21 @@ fn stage_summary_uses_exclusive_accounting_and_nearest_rank_source_percentiles()
     timings.samples = vec![
         region_timing::Sample {
             stage: "inner",
+            source: None,
             start_seconds: 0.,
             seconds: 1.,
             exclusive_seconds: 1.,
         },
         region_timing::Sample {
             stage: "inner",
+            source: None,
             start_seconds: 2.,
             seconds: 3.,
             exclusive_seconds: 3.,
         },
         region_timing::Sample {
             stage: "outer",
+            source: None,
             start_seconds: 0.,
             seconds: 10.,
             exclusive_seconds: 6.,
@@ -319,7 +322,26 @@ fn profile_complete_roll_area_preparation() {
             });
             let wall = prepare_start.elapsed();
             let native = native_report(&events.lock().unwrap(), prepare_start);
-            let expected_developments = 2 * paths.len() - if arm == "warm" { 2 } else { 0 };
+            let calls = |stage: &str| timings.samples.iter().filter(|s| s.stage == stage).count();
+            let mut expected_by_source = BTreeMap::<String, u64>::new();
+            for sample in timings
+                .samples
+                .iter()
+                .filter(|s| matches!(s.stage, "coarse_acquire" | "fine_acquire"))
+            {
+                let id = SourceId(sample.source.expect("acquisition source context"));
+                let path = request
+                    .document
+                    .source_path(id)
+                    .map_err(|e| e.to_string())?;
+                let expected = expected_by_source
+                    .entry(path.file_name().unwrap().to_string_lossy().into_owned())
+                    .or_default();
+                if arm != "warm" || Some(&id) != request.document.project.order.last() {
+                    *expected += 1;
+                }
+            }
+            let expected_developments = expected_by_source.values().sum::<u64>();
             let entries = prepared
                 .as_ref()
                 .ok()
@@ -331,13 +353,14 @@ fn profile_complete_roll_area_preparation() {
                 "limits":"Production provider only, no import/decode seed in preparation wall time, no UI/presentation or photographic acceptance. Native times are nested inside acquisition. Exclusive stage times must be used for accounting.",
                 "files":revisions,
                 "preparation":stage_report(&timings,wall),"native":native,"seed":seed_report,
+                "expected_developments":expected_developments,"expected_by_source":expected_by_source,
                 "optional_budget_bytes":if arm=="warm" {WARM_BUDGET} else {0},
                 "retained_bytes_after":request.document.cache().charges().retained,
                 "entries":entries,"error":prepared.as_ref().err().map(ToString::to_string),
             });
             write_new(&output.join("report.json"), &report)?;
             println!(
-                "region_summary arm={arm} photos={} seconds={:.6} native_developments={} expected_native_developments={expected_developments} report={}",
+                "region_summary arm={arm} photos={} seconds={:.6} native_developments={} expected_native_developments={expected_developments:?} report={}",
                 paths.len(),
                 wall.as_secs_f64(),
                 report["native"]["developments"],
@@ -355,7 +378,36 @@ fn profile_complete_roll_area_preparation() {
                 "preparation changed accepted state"
             );
             assert_eq!(approved.files, revisions);
-            assert_eq!(report["native"]["developments"], expected_developments);
+            let developed = report["native"]["developments"].as_u64().unwrap() as usize;
+            assert_eq!(developed as u64, expected_developments);
+            assert_eq!(calls("coarse_acquire"), paths.len());
+            for (index, path) in paths.iter().enumerate() {
+                let file = path.file_name().unwrap().to_str().unwrap();
+                let count = report["native"]["developments_by_source"][file]
+                    .as_u64()
+                    .unwrap_or(0);
+                assert_eq!(
+                    count, expected_by_source[file],
+                    "unexpected native work for {file}"
+                );
+                let id = Some(request.document.project.order[index].0);
+                assert_eq!(
+                    timings
+                        .samples
+                        .iter()
+                        .filter(|s| s.stage == "coarse_acquire" && s.source == id)
+                        .count(),
+                    1
+                );
+                assert!(
+                    timings
+                        .samples
+                        .iter()
+                        .filter(|s| s.stage == "fine_acquire" && s.source == id)
+                        .count()
+                        <= 1
+                );
+            }
             assert_eq!(approved.entries.len(), paths.len());
             if let Some(reference) = &comparison {
                 assert_eq!(reference["roll"], report["roll"]);

@@ -92,9 +92,10 @@ Photographic numerical correspondence is not bitwise identity with scalar floati
 cargo test --locked --no-default-features --test roll_analysis --test roll_sampling
 cargo test --locked --lib roll_analysis::
 cargo test --locked --features editor --lib editor::analysis::tests -- --test-threads=1
+cargo test --locked --features editor --lib editor::analysis_review:: -- --test-threads=1
 ```
 
-The first two exercise synthetic populations and curve fitting. Editor checks additionally cover preparation/review snapshots, cancellation and atomic installation of support with the full Photo-grade reset, including retirement of prior working/original views.
+The first two exercise synthetic populations and curve fitting. Editor checks additionally cover preparation/review snapshots, cancellation and atomic installation of support with the full Photo-grade reset, including retirement of prior working/original views. Preparation checks compare exact RGB16 scratch reuse with full/unavailable-storage reacquisition, preserve authored areas and file freshness, and verify that reuse adds no native source retention.
 
 To check the actual picture-area and Analyze controls with authored RAWs, use the [framework prerequisites](#framework-ui-regressions) and run:
 

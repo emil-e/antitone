@@ -6,9 +6,14 @@ use crate::{
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[path = "editor_region_measurements.rs"]
+mod measurements;
 #[cfg(all(test, target_os = "macos"))]
 #[path = "editor_region_performance.rs"]
 mod performance;
+#[cfg(all(test, target_os = "macos"))]
+#[path = "editor_region_preparation_tests.rs"]
+mod preparation_tests;
 
 #[derive(Clone)]
 pub(super) struct Approved {
@@ -78,11 +83,36 @@ pub(super) fn verify(request: &analysis::Request) -> Result<(), Error> {
     Ok(())
 }
 
+fn fine_measurement(scan: &Scan) -> Result<([u32; 2], Vec<[u16; 3]>), Error> {
+    let (w, h, rgb) = timed!("fine_preview", scan.preview_source(3072))?;
+    let rgb = timed!(
+        "fine_pack",
+        rgb.into_iter().map(|p| [p[0], p[1], p[2]]).collect()
+    );
+    Ok(([w, h], rgb))
+}
+
 pub(super) fn prepare(
     request: &analysis::Request,
     generation: &AtomicU64,
     developments: &development::Scheduler,
+    progress: impl FnMut(usize, usize),
+) -> Result<Option<Approved>, Error> {
+    prepare_with_measurements(
+        request,
+        generation,
+        developments,
+        progress,
+        &mut measurements::Measurements::default(),
+    )
+}
+
+fn prepare_with_measurements(
+    request: &analysis::Request,
+    generation: &AtomicU64,
+    developments: &development::Scheduler,
     mut progress: impl FnMut(usize, usize),
+    measurements: &mut measurements::Measurements,
 ) -> Result<Option<Approved>, Error> {
     let cancelled = || generation.load(Ordering::Relaxed) != request.revision;
     if cancelled() {
@@ -124,16 +154,21 @@ pub(super) fn prepare(
         .iter()
         .any(|v| !v.areas.ready() || !v.areas.opening_edited && !v.areas.opening_shared);
     let mut captures = vec![];
+    let mut saved: Vec<_> = (0..project.order.len()).map(|_| None).collect();
     for (index, id) in project.order.iter().enumerate() {
         if cancelled() {
             return Ok(None);
         }
         progress(index, project.order.len() * 2);
+        if cancelled() {
+            return Ok(None);
+        }
         if need_model {
             let expected = project.source(*id)?;
             let path = request.document.source_path(*id)?;
             let Some(scan) = timed!(
                 "coarse_acquire",
+                id.0,
                 analysis::develop_scan(
                     developments,
                     &request.document,
@@ -160,6 +195,16 @@ pub(super) fn prepare(
                 "candidate_grouping",
                 Capture::new(scan.area, [w, h], rgb, evidence)
             )?);
+            if cancelled() {
+                return Ok(None);
+            }
+            if !(entries[index].areas.opening_edited && entries[index].areas.picture_edited) {
+                let (w, h) = scan.preview_dimensions(3072)?;
+                if measurements.can_store([w, h]) {
+                    let (size, rgb) = fine_measurement(&scan)?;
+                    saved[index] = timed!("measurement_write", measurements.store(size, &rgb));
+                }
+            }
         }
         if thumbnails::FileKey::new(&request.document.source_path(*id)?) != files[index] {
             return Err(Error::UnusableSample(
@@ -201,6 +246,9 @@ pub(super) fn prepare(
             return Ok(None);
         }
         progress(project.order.len() + index, project.order.len() * 2);
+        if cancelled() {
+            return Ok(None);
+        }
         if need_model
             && !(entries[index].areas.opening_edited && entries[index].areas.picture_edited)
         {
@@ -211,28 +259,37 @@ pub(super) fn prepare(
             let within = groups[group].iter().position(|&i| i == index).unwrap();
             let expected = project.source(*id)?;
             let path = request.document.source_path(*id)?;
-            let Some(scan) = timed!(
-                "fine_acquire",
-                analysis::develop_scan(
-                    developments,
-                    &request.document,
-                    expected,
-                    &path,
-                    wb,
-                    cancelled,
-                )
-            )?
-            else {
-                return Ok(None);
+            if thumbnails::FileKey::new(&path) != files[index] {
+                return Err(Error::UnusableSample(
+                    "source changed while preparing analysis areas",
+                ));
+            }
+            let cached = saved[index]
+                .take()
+                .and_then(|key| timed!("measurement_read", measurements.load(key)));
+            let ([w, h], rgb) = if let Some(measurement) = cached {
+                measurement
+            } else {
+                let Some(scan) = timed!(
+                    "fine_acquire",
+                    id.0,
+                    analysis::develop_scan(
+                        developments,
+                        &request.document,
+                        expected,
+                        &path,
+                        wb,
+                        cancelled,
+                    )
+                )?
+                else {
+                    return Ok(None);
+                };
+                let actual = document::source_metadata(&path, &scan.source().metadata())?;
+                document::verify_source(expected, &actual)?;
+                document::verify_scan(&actual, &scan)?;
+                fine_measurement(&scan)?
             };
-            let actual = document::source_metadata(&path, &scan.source().metadata())?;
-            document::verify_source(expected, &actual)?;
-            document::verify_scan(&actual, &scan)?;
-            let (w, h, rgb) = timed!("fine_preview", scan.preview_source(3072))?;
-            let rgb: Vec<_> = timed!(
-                "fine_pack",
-                rgb.into_iter().map(|p| [p[0], p[1], p[2]]).collect()
-            );
             let previous = &entries[index].areas;
             let mut suggested = timed!(
                 "fine_areas",

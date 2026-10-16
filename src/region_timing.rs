@@ -1,5 +1,15 @@
 //! Explicit test-only preparation timings; ordinary builds evaluate only the marked expression.
 macro_rules! timed {
+    ($stage:literal, $source:expr, $body:expr) => {{
+        #[cfg(test)]
+        {
+            $crate::region_timing::measure_for($stage, Some($source), || $body)
+        }
+        #[cfg(not(test))]
+        {
+            $body
+        }
+    }};
     ($stage:literal, $body:expr) => {{
         #[cfg(test)]
         {
@@ -25,6 +35,7 @@ mod recording {
     #[derive(Debug, serde::Serialize)]
     pub(crate) struct Sample {
         pub stage: &'static str,
+        pub source: Option<u64>,
         pub start_seconds: f64,
         pub seconds: f64,
         pub exclusive_seconds: f64,
@@ -38,6 +49,7 @@ mod recording {
 
     struct Scope {
         stage: &'static str,
+        source: Option<u64>,
         start: Instant,
     }
     impl Drop for Scope {
@@ -52,6 +64,7 @@ mod recording {
                 }
                 timings.samples.push(Sample {
                     stage: self.stage,
+                    source: self.source,
                     start_seconds: self.start.duration_since(timings.origin).as_secs_f64(),
                     seconds: elapsed.as_secs_f64(),
                     exclusive_seconds: elapsed.saturating_sub(children).as_secs_f64(),
@@ -60,12 +73,20 @@ mod recording {
         }
     }
     pub(crate) fn measure<T>(stage: &'static str, run: impl FnOnce() -> T) -> T {
+        measure_for(stage, None, run)
+    }
+    pub(crate) fn measure_for<T>(
+        stage: &'static str,
+        source: Option<u64>,
+        run: impl FnOnce() -> T,
+    ) -> T {
         let scope = ACTIVE.with(|active| {
             let mut active = active.borrow_mut();
             active.as_mut().map(|timings| {
                 timings.children.push(Duration::ZERO);
                 Scope {
                     stage,
+                    source,
                     start: Instant::now(),
                 }
             })
@@ -110,7 +131,7 @@ mod recording {
         });
         let (result, timings) = record(|| {
             super::timed!("outer", {
-                super::timed!("inner", {
+                super::timed!("inner", 7, {
                     calls += 1;
                 });
                 Err::<(), _>("stop")
@@ -122,6 +143,8 @@ mod recording {
         let inner = &timings.samples[0];
         let outer = &timings.samples[1];
         assert_eq!(inner.stage, "inner");
+        assert_eq!(inner.source, Some(7));
+        assert_eq!(outer.source, None);
         assert_eq!(outer.stage, "outer");
         assert!(outer.seconds >= inner.seconds);
         assert!((outer.exclusive_seconds + inner.seconds - outer.seconds).abs() < 1e-9);
