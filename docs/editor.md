@@ -185,6 +185,22 @@ Use the existing component families rather than copying their painting or intera
 
 Presentation receives display-ready state and returns responses. Controllers still own availability, IDs, accepted/draft state, resets and dispatch. Cards receive selected/active/availability state, and their caption supplies the unelided semantic filename; they do not own images, selection, virtualization or workers. Pinned section titles expose label semantics without disclosure/focus behavior. Stage tool shelves use `ToolShelf`/`ToolButton` for immediate commands and selected canvas tools, and `ToolIdentity::inspector` for expanded contextual controls. In the workspace, the fixed viewer bar hosts tool identity and Apply/Cancel or session Done without resizing the canvas; only selection/frame artwork belongs over the photograph. Photo-only inspection uses the shared floating-bar variant rather than moving tool transactions onto the image.
 
+### Tooltips and contextual help
+
+A tooltip earns its place by answering a question about the hovered item that its visible label does not already answer. **No tooltip is the default for a self-explanatory labelled control.** Do not attach documentation to a widget just because the API accepts help text.
+
+- **Useful content:** name an icon-only action, give its shortcut, clarify a non-obvious unit or effect, explain how an unavailable action becomes available, or reveal a full path/truncated value. Accessible names remain meaningful without hover text.
+- **Keep it local and brief:** normally one short sentence, ideally under 80 characters. Start actions with a verb; describe the user's result rather than the implementation. This is a writing target, not a truncation rule for paths or diagnostic details.
+- **Delete repetition:** do not restate a visible label unless adding a useful shortcut or consequence. Reuse built-in widget help instead of stacking generic input instructions on it. Do not enumerate everything an action leaves unchanged.
+- **Use the right home:** gesture lists belong in the relevant help popover; resizer help belongs on the resizer, not every item in the panel. Processing theory, numerical guards and cache/pipeline guarantees belong in the owning contributor guide, not a tooltip. For example, a filmstrip card reveals its path, not preview internals, strip resizing and selection instructions.
+- **Never hide a requirement:** task instructions, destructive consequences, failures and important limitations must have visible presentation. Tooltips may supplement an existing visible error marker with detail, but must not become the sole indication that something failed. Information users need to keep referring to belongs in persistent UI or explicit help, not a transient hover.
+
+Before adding help, ask: *What is unclear here? Does this text resolve it? Is this the right place? Can it be deleted or shortened?* Verify the composed feature as well as any shared component, including disabled state and unelided identity where applicable. Do not enforce copy quality with arbitrary string-length gates.
+
+Use the shared/egui tooltip path, not feature-local hover windows. Tooltip text is not a substitute for accessible names, descriptions or keyboard help. When changing tooltip mechanics, verify focus access, dismissal, pointer travel and persistence; existing hover calls alone do not establish those guarantees.
+
+The content policy follows [Apple's help guidance](https://developer.apple.com/design/human-interface-guidelines/offering-help) and [Fluent's tooltip guidance](https://fluent2.microsoft.design/components/web/react/core/tooltip/usage). [W3C's hover/focus guidance](https://www.w3.org/WAI/WCAG22/Understanding/content-on-hover-or-focus.html) is a useful behavioral checklist when working on the interaction itself.
+
 ### Typography roles
 
 Reading text should be quiet; short instrument markings give the workspace its camera-body character. The editor embeds [IBM Plex Sans](../assets/fonts/README.md): Text for ordinary controls, explanations, filenames and numeric entry; Medium for stage tabs, active viewer-tool names and compact zoom/source-EV readouts. The Arimo wordmark remains separate artwork. Default glyph fallbacks and monospace text are retained.

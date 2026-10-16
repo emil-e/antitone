@@ -110,20 +110,20 @@ impl Editor {
                         ui.painter().layout_no_wrap(state.clone(), egui::TextStyle::Small.resolve(ui.style()), ui.visuals().text_color()).size().x
                     };
                     let show_zoom_steps = tool.is_none() && !dust_session || ui.available_width() >= trailing_width + presentation::CONTROL_HEIGHT + VIEWER_ITEM_GAP + if self.source { 224. } else { 192. };
-                    if icons::button(ui, Icon::Fit, navigating, if cropping { "Fit source" } else { "Fit" }, "Fit the image (Z); crop mode fits the full source.").clicked() {
+                    if icons::button(ui, Icon::Fit, navigating, if cropping { "Fit source" } else { "Fit" }, if cropping { "Fit the full source (Z)." } else { "Fit the image (Z)." }).clicked() {
                         self.viewport.fit();
                     }
                     let layout = if cropping { self.crop_edit.as_ref().and_then(|edit| edit.layout) } else { None }.or(self.last_layout.map(|(layout, _)| layout));
                     let zoom = layout.map_or("—".into(), |layout| format!("{:.0}%", 100. * layout.scale * ui.ctx().pixels_per_point()));
-                    let zoom = TextAction::new(&zoom).readout().enabled(navigating).toolbar(50.).name("100%").help("Show 100%: one source pixel per physical display pixel.").show(ui);
+                    let zoom = TextAction::new(&zoom).readout().enabled(navigating).toolbar(50.).name("100%").help("Zoom to 100% (one image pixel per display pixel).").show(ui);
                     if zoom.clicked() { zoom_action = Some(1.); }
                     if show_zoom_steps {
                         for (icon, name, factor) in [(Icon::ZoomOut, "Zoom out", 1. / 1.25), (Icon::ZoomIn, "Zoom in", 1.25)] {
-                            if icons::button(ui, icon, navigating, name, "Zoom around the viewer centre.").clicked() { zoom_action = Some(-factor); }
+                            if icons::button(ui, icon, navigating, name, name).clicked() { zoom_action = Some(-factor); }
                         }
                     }
                     let (icon, name) = if fullscreen { (Icon::ExitFullscreen, "Exit fullscreen") } else { (Icon::Fullscreen, "Fullscreen viewing") };
-                    if icons::button(ui, icon, self.fullscreen_available(), name, "Photo-only fullscreen (F); F or Escape returns to the workspace.").clicked() {
+                    if icons::button(ui, icon, self.fullscreen_available(), name, if fullscreen { "Exit fullscreen (F or Escape)." } else { "View photo fullscreen (F)." }).clicked() {
                         self.toggle_fullscreen(ui.ctx());
                     }
                     ui.separator();
@@ -134,13 +134,13 @@ impl Editor {
                     }
                     if !self.source && tool.is_none() && self.working.enabled() {
                         ui.add_enabled_ui(inspecting, |ui| {
-                            icons::toggle(ui, Icon::Inspection, &mut self.working.compare, "Original-resolution reference", "Switch in place between the working view and original-sample GPU reference. While the current reference prepares, controls continue to show the working view. Export is unchanged.");
+                            icons::toggle(ui, Icon::Inspection, &mut self.working.compare, "Original-resolution reference", "Compare with original-resolution processing; export is unchanged.");
                         });
                     }
                     let inspection_id = ui.make_persistent_id("source-inspection-popup");
                     if self.source {
                         let exposure = format!("Source {:+.2} EV", self.source_exposure);
-                        let inspection = icons::button(ui, Icon::Inspection, navigating, "Source inspection", &format!("{exposure} · Adjust source-preview brightness only; grade and export are unchanged."));
+                        let inspection = icons::button(ui, Icon::Inspection, navigating, "Source inspection", "Adjust source-preview brightness.");
                         egui::Popup::from_toggle_button_response(&inspection)
                             .id(inspection_id)
                             .layout(egui::Layout::top_down(egui::Align::Min))
@@ -172,6 +172,12 @@ impl Editor {
                             ui.small(if dust_session { "Scroll changes brush size · Cmd/Ctrl-scroll or pinch zooms" } else { "Scroll pans · Cmd/Ctrl-scroll or pinch zooms" });
                             ui.small("Click: Fit / 100% outside cleanup · Z: Fit · F: Fullscreen");
                             ui.small("Zoomed drag pans · Space-drag / middle-drag always pans");
+                            if !fullscreen && tool.is_none() && !dust_session {
+                                ui.separator();
+                                ui.label(egui::RichText::new("Filmstrip selection").strong());
+                                ui.small("Cmd-click toggles selection · Shift-click selects a range");
+                                ui.small("Shift–Cmd–A: select active photo only");
+                            }
                             if fullscreen { ui.small("F or Escape: return to the workspace"); }
                             if cropping {
                                 ui.separator();
@@ -203,9 +209,10 @@ impl Editor {
                         } else if let Some(group) = session_group {
                             finish_dust = group.show(ui).inner.clicked();
                         } else {
-                            ui.add(egui::Label::new(egui::RichText::new(state).small().weak()).truncate()).on_hover_text(if has_repairs {
-                                "Preview-only dust repairs: not saved or exported. New/Open or quitting discards them. Thumbnails remain unrepaired; scopes follow the accepted viewer result."
-                            } else { "Shared preview / thumbnail / scope / TIFF target · 100 nit. EXR is scene-linear AP0. Cached preview remains provisional while the full-resolution RAW develops." });
+                            let help = if has_repairs {
+                                format!("{state}\nRepairs are not saved or exported; New/Open or quitting discards them.")
+                            } else { state.clone() };
+                            ui.add(egui::Label::new(egui::RichText::new(state).small().weak()).truncate()).on_hover_text(help);
                         }
                     });
                 });

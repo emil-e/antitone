@@ -732,8 +732,7 @@ impl Editor {
                         ui,
                         available && !repairs.is_empty(),
                         "dust repairs",
-                    )
-                    .on_hover_text("Remove every dust repair from this photo.");
+                    );
                     ui.weak(format!("{} repairs", repairs.len()));
                     reset
                 })
@@ -742,7 +741,7 @@ impl Editor {
             |ui, reset| {
                 ui.horizontal(|ui| {
                     ui.label("Brush size").on_hover_text(
-                        "Full-resolution source-pixel diameter; scroll over the image to resize.",
+                        "Diameter in source pixels.",
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.weak(format!("{} px", self.dust.brush_size));

@@ -246,6 +246,43 @@ fn document_work_still_blocks_navigation_when_a_selected_load_was_pending() {
 }
 
 #[test]
+fn card_tooltips_reveal_only_the_source_path_even_when_selection_is_disabled() {
+    for disabled in [false, true] {
+        let (mut editor, _, _) = crate::editor::tests::fixture();
+        editor.document = super::tests::fixture();
+        editor.document.project.order.truncate(1);
+        editor.current_source = Some(editor.document.project.order[0]);
+        editor.busy = disabled;
+        let path = editor
+            .document
+            .source_path(editor.current_source.unwrap())
+            .unwrap()
+            .display()
+            .to_string();
+        let context = egui::Context::default();
+        context.style_mut_of(egui::Theme::Dark, |style| {
+            style.interaction.tooltip_delay = 0.
+        });
+        frame(&mut editor, &context, vec![]);
+        let output = frame(&mut editor, &context, vec![]);
+        let point = point(&output, "photo-0.ARW");
+        let mut visible = false;
+        for _ in 0..4 {
+            let output = frame(&mut editor, &context, vec![Event::PointerMoved(point)]);
+            for shape in &output.shapes {
+                if let egui::Shape::Text(text) = &shape.shape
+                    && text.galley.job.text.starts_with(&path)
+                {
+                    assert_eq!(text.galley.job.text, path);
+                    visible = true;
+                }
+            }
+        }
+        assert!(visible, "full source path must remain available on hover");
+    }
+}
+
+#[test]
 fn disabled_cards_keep_actionable_error_tooltips() {
     let (mut editor, _, _) = crate::editor::tests::fixture();
     editor.document = super::tests::fixture();

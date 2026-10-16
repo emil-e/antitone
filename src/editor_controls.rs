@@ -30,7 +30,7 @@ pub(super) fn active_tool<R>(
                         Icon::Reset,
                         enabled,
                         "Reset draft",
-                        "Reset draft crop and angle; keeps orientation and colour.",
+                        "Reset crop and angle.",
                     )
                     .clicked()
                 })
@@ -121,56 +121,76 @@ pub fn parameter(ui: &mut Ui, kind: Parameter, value: &mut f64) -> (Response, Re
     };
     ui.push_id(kind.label(), |ui| {
         let help = match kind {
-            Parameter::Contrast => "Log-domain contrast in ACEScct around Pivot. 1 is identity; no added S-curve.",
-            Parameter::Pivot => "Neutral pivot in linear AP1; 0.18 is the initial reference, not calibrated scene grey.",
-            Parameter::ColourMix => "Reduces contrast-driven colour changes. 0: RGB log contrast. 1: black-relative ratio preservation. Intermediate values blend outputs in AP1 before ACES; unchanged displayed saturation is not guaranteed.",
-            Parameter::Saturation => "1 is identity; 0 is grey. Signed/HDR AP1 colour separation before unchanged ACES.",
-            Parameter::Density => "0: constant AP1 luminance. 1: HSV-like maximum anchor (darkening on saturation increase). Intermediate values blend endpoint outputs, not print-film simulation.",
+            Parameter::Contrast => "Adjust contrast around Pivot; 1 leaves contrast unchanged.",
+            Parameter::Pivot => "Set the brightness that contrast pivots around.",
+            Parameter::ColourMix => "Reduce colour shifts caused by contrast.",
+            Parameter::Saturation => "0 makes the image grey; 1 leaves saturation unchanged.",
+            Parameter::Density => "Higher values darken colours more as saturation increases.",
             _ => "",
         };
-        let (numeric, reset, label) = labelled_row(ui, kind.label(), (!help.is_empty()).then_some(help), |ui, label| {
-            let reset = reset_button(ui, *value != kind.default(), kind.label());
-            if reset.clicked() {
-                *value = kind.default();
-            }
-            if matches!(kind, Parameter::Exposure) {
-                ui.label("EV");
-            }
-            let numeric = ui.push_id("numeric", |ui| {
-                ui.add_sized(
-                    [85., ui.spacing().interact_size.y],
-                    egui::DragValue::new(value)
-                        .speed(match kind { Parameter::Shoulder => 0.0001, Parameter::Pivot => 0.001, _ => 0.01 })
-                        .range(kind.range())
-                        .clamp_existing_to_range(false)
-                        .min_decimals(2)
-                        .max_decimals(6)
-                        .update_while_editing(false),
-                ).on_hover_text(
-                    "Click to enter a value; drag to adjust. Shift-drag for fine adjustment. Enter commits; Escape cancels.",
-                )
-            }).inner;
-            (numeric.labelled_by(label), reset, label)
-        }).inner;
-        let step = kind.step() * if ui.input(|i| i.modifiers.shift) { 0.1 } else { 1. };
-        let slider = ui.scope(|ui| {
-            ui.spacing_mut().slider_width = ui.available_width();
-            ui.add(
-                egui::Slider::new(value, kind.slider_range())
-                    .clamping(egui::SliderClamping::Edits)
-                    .show_value(false)
-                    .logarithmic(matches!(kind, Parameter::Pivot))
-                    .smart_aim(false)
-                    .step_by(step),
-            ).on_hover_text(if matches!(kind, Parameter::Exposure) {
-                "Slider: ±3 EV; numeric entry: ±16 EV. Arrow keys adjust; Shift uses finer steps."
+        let (numeric, reset, label) = labelled_row(
+            ui,
+            kind.label(),
+            (!help.is_empty()).then_some(help),
+            |ui, label| {
+                let reset = reset_button(ui, *value != kind.default(), kind.label());
+                if reset.clicked() {
+                    *value = kind.default();
+                }
+                if matches!(kind, Parameter::Exposure) {
+                    ui.label("EV");
+                }
+                let numeric = ui
+                    .push_id("numeric", |ui| {
+                        ui.add_sized(
+                            [85., ui.spacing().interact_size.y],
+                            egui::DragValue::new(value)
+                                .speed(match kind {
+                                    Parameter::Shoulder => 0.0001,
+                                    Parameter::Pivot => 0.001,
+                                    _ => 0.01,
+                                })
+                                .range(kind.range())
+                                .clamp_existing_to_range(false)
+                                .min_decimals(2)
+                                .max_decimals(6)
+                                .update_while_editing(false),
+                        )
+                    })
+                    .inner;
+                (numeric.labelled_by(label), reset, label)
+            },
+        )
+        .inner;
+        let step = kind.step()
+            * if ui.input(|i| i.modifiers.shift) {
+                0.1
             } else {
-                "Arrow keys adjust the focused slider. Hold Shift for finer steps."
+                1.
+            };
+        let slider = ui
+            .scope(|ui| {
+                ui.spacing_mut().slider_width = ui.available_width();
+                ui.add(
+                    egui::Slider::new(value, kind.slider_range())
+                        .clamping(egui::SliderClamping::Edits)
+                        .show_value(false)
+                        .logarithmic(matches!(kind, Parameter::Pivot))
+                        .smart_aim(false)
+                        .step_by(step),
+                )
+                .on_hover_text(if matches!(kind, Parameter::Exposure) {
+                    "Slider: ±3 EV; type a value for up to ±16 EV."
+                } else {
+                    "Hold Shift for finer steps."
+                })
             })
-        }).inner.labelled_by(label);
+            .inner
+            .labelled_by(label);
         ui.add_space(6.);
         (slider, numeric, reset)
-    }).inner
+    })
+    .inner
 }
 
 pub fn calibration(
@@ -184,7 +204,7 @@ pub fn calibration(
     ui.push_id(id, |ui| {
         let pick = labelled_row(ui, label, Some(meaning), |ui, _| {
             let name = format!("Pick {label}");
-            icons::button(ui, Icon::Pick, enabled, &name, meaning).clicked()
+            icons::button(ui, Icon::Pick, enabled, &name, &name).clicked()
         })
         .inner;
         if let Some(rgb) = rgb {
@@ -246,16 +266,6 @@ impl ColorControl {
             tint: value.y,
         }
     }
-    fn tooltip(self) -> &'static str {
-        match self {
-            Self::GammaBalance => {
-                "RGB directions represent relative native-camera log gamma. Image response depends on the negative and its calibration; this is not a saturation or RGB-gain control."
-            }
-            Self::WhiteBalance => {
-                "RGB directions represent the local AP1 neutral-white response to Bradford WB. Warmth/tint remain cone-gain coordinates, not RGB channel gains or physical Kelvin."
-            }
-        }
-    }
 }
 
 pub fn color(ui: &mut Ui, kind: ColorControl, value: &mut Balance, can_pick: bool) -> bool {
@@ -314,8 +324,16 @@ fn color_inputs(ui: &mut Ui, kind: ColorControl, value: &mut Balance, can_pick: 
     parameter(ui, Parameter::Tint, &mut value.tint);
     icons::row(ui, |ui| {
         ui.label("Neutral reference");
-        icons::button(ui, Icon::Pick, can_pick, "Pick neutral…", "Measure one full-resolution patch. The fitted correction replaces these same warmth/tint values.").clicked()
-    }).inner
+        icons::button(
+            ui,
+            Icon::Pick,
+            can_pick,
+            "Pick neutral…",
+            "Set balance from a neutral patch.",
+        )
+        .clicked()
+    })
+    .inner
 }
 
 #[derive(Clone, Copy, Default)]
@@ -426,10 +444,7 @@ fn wheel(ui: &mut Ui, kind: ColorControl, value: &mut Balance) -> Response {
         4.,
         ui.visuals().text_color(),
     );
-    response.on_hover_ui(|ui| {
-        ui.label("Click or drag to position. Shift-drag for 10× finer adjustment.");
-        ui.label(kind.tooltip());
-    })
+    response.on_hover_text("Shift-drag for finer adjustment.")
 }
 
 #[cfg(test)]

@@ -32,6 +32,8 @@ Distinguish established requirements from implementation choices and experimenta
 
 Follow [the editor guide](docs/editor.md#build-ui-from-shared-presentation) and existing components for layout, controls, viewer tools, dialogs and task feedback. Reuse their visual and interaction language.
 
+Follow the editor's [tooltip and contextual-help policy](docs/editor.md#tooltips-and-contextual-help): no tooltip is the default for self-explanatory labelled controls. Keep useful help brief and local; do not put pipeline explanations or unrelated gestures in hover text.
+
 Presentation receives state and returns actions; domain semantics and transactions remain with their owners. Extend shared components for real supported variants. Keep genuinely one-off UI local without copying an existing family or creating speculative abstractions.
 
 Verify both the component and its composed feature.

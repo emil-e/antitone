@@ -378,7 +378,7 @@ impl SessionToolGroup<'_> {
             .enabled(self.done_enabled)
             .primary()
             .toolbar(0.)
-            .help("Finish the active tool (Escape).")
+            .help("Done (Escape).")
     }
 
     fn content_width(self, ui: &Ui) -> f32 {
@@ -510,7 +510,7 @@ impl ToolGroup<'_> {
         TextAction::new("Cancel")
             .enabled(self.cancel_enabled)
             .toolbar(0.)
-            .help("Cancel the active tool (Escape).")
+            .help("Cancel (Escape).")
     }
 
     fn apply(self, label: &'static str) -> TextAction<'static> {
@@ -518,7 +518,7 @@ impl ToolGroup<'_> {
             .enabled(self.apply_enabled)
             .primary()
             .toolbar(0.)
-            .help("Apply the active tool (Enter).")
+            .help("Apply (Enter).")
     }
 
     fn content_width(self, ui: &Ui, apply_label: &'static str) -> f32 {

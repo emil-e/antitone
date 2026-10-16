@@ -262,6 +262,37 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
 }
 
 #[test]
+fn filmstrip_selection_guidance_is_available_in_explicit_viewer_help() {
+    for size in [egui::vec2(1100., 800.), egui::vec2(800., 600.)] {
+        let (mut editor, _send, _receiver) = fixture();
+        add_ready_fixture(&mut editor);
+        let context = egui::Context::default();
+        warm(&mut editor, &context, size);
+        let before = editor.document.project.clone();
+        let text = labels(&mut editor, &context, size, vec![]);
+        let help = text
+            .iter()
+            .find(|(s, _)| s == "Viewer help")
+            .unwrap()
+            .1
+            .center();
+        click(&mut editor, &context, size, help);
+        let text = labels(&mut editor, &context, size, vec![]);
+        for instruction in [
+            "Filmstrip selection",
+            "Cmd-click toggles selection · Shift-click selects a range",
+            "Shift–Cmd–A: select active photo only",
+        ] {
+            let bounds = text.iter().find(|(s, _)| s == instruction).unwrap().1;
+            assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(bounds));
+        }
+        frame(&mut editor, &context, size, key(egui::Key::Escape));
+        assert!(!egui::Popup::is_any_open(&context));
+        assert_eq!(editor.document.project, before);
+    }
+}
+
+#[test]
 fn bar_inspector_and_help_own_pointer_drag_wheel_and_escape_before_the_canvas() {
     let size = egui::vec2(800., 600.);
     for cropping in [false, true] {

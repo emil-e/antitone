@@ -443,13 +443,29 @@ impl Editor {
                                 if TextAction::new("Analyze roll").primary().show(ui).clicked() {
                                     analyze = true;
                                 }
-                                if TextAction::new("Edit shared picture area…").help("One picture rectangle for the roll. Use Analyze roll to review and edit individual areas.").show(ui).clicked() {
+                                if TextAction::new("Edit shared picture area…")
+                                    .help("Apply one sampling rectangle to the roll.")
+                                    .show(ui)
+                                    .clicked()
+                                {
                                     self.begin_pick(Pick::Analysis);
                                 }
                             });
                         },
                     );
-                    if (self.document.project.analysis_area.is_some() || self.document.project.analysis_regions.iter().any(|e|self.document.project.order.contains(&e.source))) && TextAction::new("Reset sampling areas").enabled(!self.busy && self.pick.is_none() && self.crop_edit.is_none()).help("Discard accepted sampling areas; the next Analyze prepares new suggestions. Processing stays unchanged.").show(ui).clicked() {
+                    if (self.document.project.analysis_area.is_some()
+                        || self
+                            .document
+                            .project
+                            .analysis_regions
+                            .iter()
+                            .any(|e| self.document.project.order.contains(&e.source)))
+                        && TextAction::new("Reset sampling areas")
+                            .enabled(!self.busy && self.pick.is_none() && self.crop_edit.is_none())
+                            .help("Suggest new areas on the next Analyze; keep the current grade.")
+                            .show(ui)
+                            .clicked()
+                    {
                         self.reset_analysis_area();
                     }
                     if self.analysis_picture().is_none() {

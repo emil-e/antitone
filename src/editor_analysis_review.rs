@@ -620,7 +620,7 @@ impl Editor {
                 ui.selectable_value(&mut next_picture, true, "Picture statistics");
             });
         });
-        ui.small("Browse the filmstrip and edit photo exceptions. One confirmation covers the roll, not a crop or pixel-validity guarantee.").on_hover_text("Opening edits update automatic picture coverage against retained frame evidence. Authored picture areas stay fixed; editing does not silently change the other photos.");
+        ui.small("Browse the filmstrip and edit photo exceptions. One confirmation covers the roll, not a crop or pixel-validity guarantee.");
         if replaces {
             presentation::notice_heading(
                 ui,

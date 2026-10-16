@@ -778,11 +778,12 @@ impl Editor {
             let layout = ContactSheetLayout::new(ui.available_height(), height < 90.);
             let pitch = layout.pitch();
             let count = self.document.project.order.len();
-            egui::ScrollArea::horizontal().show_viewport(ui,|ui,viewport| {
-                let width = (count as f32*pitch).max(ui.available_width());
-                let (content,_) = ui.allocate_exact_size(egui::vec2(width,layout.size().y),egui::Sense::hover());
-                let first = (viewport.min.x/pitch).floor().max(0.) as usize;
-                let last = (viewport.max.x/pitch).ceil().max(0.) as usize;
+            egui::ScrollArea::horizontal().show_viewport(ui, |ui, viewport| {
+                let width = (count as f32 * pitch).max(ui.available_width());
+                let (content, _) = ui
+                    .allocate_exact_size(egui::vec2(width, layout.size().y), egui::Sense::hover());
+                let first = (viewport.min.x / pitch).floor().max(0.) as usize;
+                let last = (viewport.max.x / pitch).ceil().max(0.) as usize;
                 let last = last.min(count);
                 for index in first.min(count)..last {
                     visible.push(index);
@@ -790,26 +791,76 @@ impl Editor {
                     let source = self.document.project.source(id).expect("filmstrip source");
                     let path = self.document.source_path(id).expect("filmstrip locator");
                     let active = self.current_source == Some(id);
-                    let selected = if self.pick.is_some() { active } else { active || self.roll_selection.contains(id) };
+                    let selected = if self.pick.is_some() {
+                        active
+                    } else {
+                        active || self.roll_selection.contains(id)
+                    };
                     let response_id = ui.id().with(id.0);
-                    let card = layout.begin(ui,content.min+egui::vec2(index as f32*pitch,0.),response_id,selected,active,selection_enabled);
+                    let card = layout.begin(
+                        ui,
+                        content.min + egui::vec2(index as f32 * pitch, 0.),
+                        response_id,
+                        selected,
+                        active,
+                        selection_enabled,
+                    );
                     let image_rect = card.image_rect;
-                    let key = self.document.project.development.as_ref().map(|development|ImageKey { source:SourceKey::new(source,development,FileKey::new(&path)),target:self.target,field:self.correction.as_ref().map(|c|FieldKey(c.settings.map.clone())) });
-                    if let Some(key) = &key { protected.push(key.clone()); }
-                    let entry = key.as_ref().and_then(|key|self.thumbnails.cache.get(key)).cloned();
+                    let key = self
+                        .document
+                        .project
+                        .development
+                        .as_ref()
+                        .map(|development| ImageKey {
+                            source: SourceKey::new(source, development, FileKey::new(&path)),
+                            target: self.target,
+                            field: self
+                                .correction
+                                .as_ref()
+                                .map(|c| FieldKey(c.settings.map.clone())),
+                        });
+                    if let Some(key) = &key {
+                        protected.push(key.clone());
+                    }
+                    let entry = key
+                        .as_ref()
+                        .and_then(|key| self.thumbnails.cache.get(key))
+                        .cloned();
                     let parameters = self.thumbnail_parameters(source);
                     let mut error = None;
-                    match (entry,parameters) {
-                        (Some(Ok(image)),Ok(parameters)) => {
-                            let photo_orientation = if self.current_source == Some(source.id) { self.photo_orientation } else { source.orientation };
-                            let crop = if self.current_source == Some(source.id) { self.crop } else { source.crop };
+                    match (entry, parameters) {
+                        (Some(Ok(image)), Ok(parameters)) => {
+                            let photo_orientation = if self.current_source == Some(source.id) {
+                                self.photo_orientation
+                            } else {
+                                source.orientation
+                            };
+                            let crop = if self.current_source == Some(source.id) {
+                                self.crop
+                            } else {
+                                source.crop
+                            };
                             let composition = if self.analysis_review.is_some() {
-                                Composition::new(source.development.active_area.into(), RollOrientation::default(), PhotoOrientation::default())
-                            } else { Composition::with_crop(source.development.active_area.into(), self.roll_orientation, photo_orientation, crop) }
-                                .expect("document source has a valid active area");
+                                Composition::new(
+                                    source.development.active_area.into(),
+                                    RollOrientation::default(),
+                                    PhotoOrientation::default(),
+                                )
+                            } else {
+                                Composition::with_crop(
+                                    source.development.active_area.into(),
+                                    self.roll_orientation,
+                                    photo_orientation,
+                                    crop,
+                                )
+                            }
+                            .expect("document source has a valid active area");
                             let dimensions = composition.size();
-                            let aspect = dimensions[0] as f32/dimensions[1] as f32;
-                            let size = egui::vec2((image_rect.height()*aspect).min(image_rect.width()),(image_rect.width()/aspect).min(image_rect.height()));
+                            let aspect = dimensions[0] as f32 / dimensions[1] as f32;
+                            let size = egui::vec2(
+                                (image_rect.height() * aspect).min(image_rect.width()),
+                                (image_rect.width() / aspect).min(image_rect.height()),
+                            );
                             let full = egui::Rect::from_center_size(image_rect.center(), size);
                             let draw = full.intersect(ui.clip_rect());
                             // egui-wgpu clamps offscreen viewports; remap clipped, pixel-rounded bounds instead of squeezing the whole image.
@@ -821,69 +872,146 @@ impl Editor {
                             if draw_max.x > draw_min.x && draw_max.y > draw_min.y {
                                 let frame_point = |point: egui::Vec2| {
                                     let fraction = (point - min) / extent;
-                                    crate::geometry::FramePoint([f64::from(fraction.x) * f64::from(dimensions[0]), f64::from(fraction.y) * f64::from(dimensions[1])])
+                                    crate::geometry::FramePoint([
+                                        f64::from(fraction.x) * f64::from(dimensions[0]),
+                                        f64::from(fraction.y) * f64::from(dimensions[1]),
+                                    ])
                                 };
-                                let mapping = composition.texture_mapping(frame_point(draw_min), frame_point(draw_max), composition.area());
-                                match processing::image_paint(image,Some(parameters),mapping) {
-                                    Ok(paint) => { ui.painter().with_clip_rect(draw).add(egui_wgpu::Callback::new_paint_callback(draw,paint)); }
-                                    Err(message) => { error = Some(message.to_string()); }
+                                let mapping = composition.texture_mapping(
+                                    frame_point(draw_min),
+                                    frame_point(draw_max),
+                                    composition.area(),
+                                );
+                                match processing::image_paint(image, Some(parameters), mapping) {
+                                    Ok(paint) => {
+                                        ui.painter().with_clip_rect(draw).add(
+                                            egui_wgpu::Callback::new_paint_callback(draw, paint),
+                                        );
+                                    }
+                                    Err(message) => {
+                                        error = Some(message.to_string());
+                                    }
                                 }
                             }
-                            if let Some(areas)=self.review_areas(id) {
-                                let picture=self.analysis_review.as_ref().is_some_and(|r|r.picture);
-                                if let Some(q)=if picture{areas.picture}else{areas.opening} {
-                                    let a=source.development.active_area;
-                                    let points=q.map(|p|full.min+egui::vec2(((p[0]-f64::from(a[0]))/f64::from(a[2]))as f32*full.width(),((p[1]-f64::from(a[1]))/f64::from(a[3]))as f32*full.height()));
-                                    ui.painter().with_clip_rect(draw).add(egui::Shape::closed_line(points.to_vec(),ui.visuals().selection.stroke));
+                            if let Some(areas) = self.review_areas(id) {
+                                let picture =
+                                    self.analysis_review.as_ref().is_some_and(|r| r.picture);
+                                if let Some(q) = if picture {
+                                    areas.picture
+                                } else {
+                                    areas.opening
+                                } {
+                                    let a = source.development.active_area;
+                                    let points = q.map(|p| {
+                                        full.min
+                                            + egui::vec2(
+                                                ((p[0] - f64::from(a[0])) / f64::from(a[2])) as f32
+                                                    * full.width(),
+                                                ((p[1] - f64::from(a[1])) / f64::from(a[3])) as f32
+                                                    * full.height(),
+                                            )
+                                    });
+                                    ui.painter().with_clip_rect(draw).add(
+                                        egui::Shape::closed_line(
+                                            points.to_vec(),
+                                            ui.visuals().selection.stroke,
+                                        ),
+                                    );
                                 }
                             }
                         }
-                        (Some(Err(message)),_) => { error = Some(message); }
-                        (_,Err(message)) => { error = Some(message.to_string()); }
-                        (None,Ok(_)) => {
+                        (Some(Err(message)), _) => {
+                            error = Some(message);
+                        }
+                        (_, Err(message)) => {
+                            error = Some(message.to_string());
+                        }
+                        (None, Ok(_)) => {
                             if let Some(key) = key {
                                 if let Some(texture) = self.thumbnails.embedded.get(&key.source) {
                                     let dimensions = texture.size_vec2();
-                                    let scale = (image_rect.width()/dimensions.x).min(image_rect.height()/dimensions.y);
-                                    let rect = egui::Rect::from_center_size(image_rect.center(),dimensions*scale);
-                                    let painter = ui.painter().with_clip_rect(image_rect.intersect(ui.clip_rect()));
-                                    painter.image(texture.id(),rect,egui::Rect::from_min_max(egui::Pos2::ZERO,egui::pos2(1.,1.)),egui::Color32::WHITE);
+                                    let scale = (image_rect.width() / dimensions.x)
+                                        .min(image_rect.height() / dimensions.y);
+                                    let rect = egui::Rect::from_center_size(
+                                        image_rect.center(),
+                                        dimensions * scale,
+                                    );
+                                    let painter = ui
+                                        .painter()
+                                        .with_clip_rect(image_rect.intersect(ui.clip_rect()));
+                                    painter.image(
+                                        texture.id(),
+                                        rect,
+                                        egui::Rect::from_min_max(
+                                            egui::Pos2::ZERO,
+                                            egui::pos2(1., 1.),
+                                        ),
+                                        egui::Color32::WHITE,
+                                    );
                                     card.camera_badge(ui);
                                 } else {
                                     card.loading(ui);
                                 }
                                 if self.thumbnails.embedded.get(&key.source).is_some()
-                                    || !key.source.store_key().is_some_and(|key| self.thumbnails.sources.contains_proxy(&key)) {
-                                    camera_wanted.push((index,key.clone(),path.clone(),source.clone()));
+                                    || !key.source.store_key().is_some_and(|key| {
+                                        self.thumbnails.sources.contains_proxy(&key)
+                                    })
+                                {
+                                    camera_wanted.push((
+                                        index,
+                                        key.clone(),
+                                        path.clone(),
+                                        source.clone(),
+                                    ));
                                 }
-                                wanted.push((index,key,path.clone(),source.clone()));
+                                wanted.push((index, key, path.clone(), source.clone()));
                             }
                         }
                     }
-                    if error.is_some() { card.error(ui); }
-                    if let Some(a)=self.review_areas(id).filter(|a|a.needs_inspection()) { card.area_review_badge(ui,!a.ready()); }
+                    if error.is_some() {
+                        card.error(ui);
+                    }
+                    if let Some(a) = self.review_areas(id).filter(|a| a.needs_inspection()) {
+                        card.area_review_badge(ui, !a.ready());
+                    }
                     let name = path.file_name().unwrap_or_default().to_string_lossy();
-                    card.caption(ui,&name);
-                    if card.response.clicked() && selection_enabled { select = Some((index, ui.input(|input| input.modifiers))); }
-                    if self.roll_edit_available() && card.response.secondary_clicked() && !selected {
+                    card.caption(ui, &name);
+                    if card.response.clicked() && selection_enabled {
+                        select = Some((index, ui.input(|input| input.modifiers)));
+                    }
+                    if self.roll_edit_available() && card.response.secondary_clicked() && !selected
+                    {
                         select = Some((index, egui::Modifiers::NONE));
                     }
-                    if self.roll_edit_available() && card.response.enabled() && card.response.has_focus()
-                        && !egui::Popup::is_any_open(ui.ctx()) {
+                    if self.roll_edit_available()
+                        && card.response.enabled()
+                        && card.response.has_focus()
+                        && !egui::Popup::is_any_open(ui.ctx())
+                    {
                         self.select_active_shortcut(ui.ctx());
-                        if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
-                            || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)) {
+                        if ui.input_mut(|input| {
+                            input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
+                                || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
+                        }) {
                             remove = true;
                         }
                     }
                     card.response.context_menu(|ui| {
-                        if ui.add_enabled(self.roll_edit_available() && selected, egui::Button::new("Remove selected photos…")).clicked() {
+                        if ui
+                            .add_enabled(
+                                self.roll_edit_available() && selected,
+                                egui::Button::new("Remove selected photos…"),
+                            )
+                            .clicked()
+                        {
                             remove = true;
                             ui.close();
                         }
                     });
-                    let help = error.unwrap_or_else(||format!("{}\nCamera previews show embedded, ungraded camera framing until the developed thumbnail is ready. Drag the strip's top edge to resize.\nShift–Cmd–A: select active photo only.",path.display()));
-                    card.response.on_hover_text(&help).on_disabled_hover_text(help);
+                    let help = error.unwrap_or_else(|| path.display().to_string());
+                    card.response
+                        .on_hover_text(&help)
+                        .on_disabled_hover_text(help);
                 }
             });
         });

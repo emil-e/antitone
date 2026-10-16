@@ -29,12 +29,12 @@ fn direct_viewer(ui: &mut Ui, group: ToolGroup<'_>) -> egui::InnerResponse<ToolA
     let cancel = TextAction::new("Cancel")
         .enabled(group.cancel_enabled)
         .toolbar(0.)
-        .help("Cancel the active tool (Escape).");
+        .help("Cancel (Escape).");
     let apply = TextAction::new("Apply")
         .enabled(group.apply_enabled)
         .primary()
         .toolbar(0.)
-        .help("Apply the active tool (Enter).");
+        .help("Apply (Enter).");
     let title_width = egui::WidgetText::from(title.clone())
         .into_galley(
             ui,

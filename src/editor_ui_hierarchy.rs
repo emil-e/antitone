@@ -38,10 +38,7 @@ pub fn stage_tabs(ui: &mut Ui, selected: &mut usize) {
             "Photo",
             "Composition and photographic grade for this image.",
         ),
-        (
-            "Rendering",
-            "Shared rendered appearance: matching preview, thumbnails, scopes and TIFF target; not the monitor profile. EXR bypasses it.",
-        ),
+        ("Rendering", "Output colour space for preview and TIFF."),
     ];
     let size = egui::TextStyle::Button.resolve(ui.style()).size;
     let texts: Vec<_> = tabs

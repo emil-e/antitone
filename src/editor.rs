@@ -2097,8 +2097,8 @@ impl Editor {
                             ui.horizontal(|ui| {
                                 if icons::button(ui, Icon::TurnLeft, true, "Turn left", "Turn the shared scan baseline 90° left.").clicked() { self.roll_orientation.turn_counterclockwise(); }
                                 if icons::button(ui, Icon::TurnRight, true, "Turn right", "Turn the shared scan baseline 90° right.").clicked() { self.roll_orientation.turn_clockwise(); }
-                                if icons::button(ui, Icon::FlipHorizontal, true, "Flip horizontal", "Flip the shared scan baseline left/right; photo exceptions apply afterward.").clicked() { self.roll_orientation.horizontal ^= true; }
-                                if icons::button(ui, Icon::FlipVertical, true, "Flip vertical", "Flip the shared scan baseline top/bottom; photo exceptions apply afterward.").clicked() { self.roll_orientation.vertical ^= true; }
+                                if icons::button(ui, Icon::FlipHorizontal, true, "Flip horizontal", "Flip all scans left/right.").clicked() { self.roll_orientation.horizontal ^= true; }
+                                if icons::button(ui, Icon::FlipVertical, true, "Flip vertical", "Flip all scans top/bottom.").clicked() { self.roll_orientation.vertical ^= true; }
                             });
                         });
                         if reset { self.roll_orientation = RollOrientation::default(); }
@@ -2114,13 +2114,13 @@ impl Editor {
                     presentation::section(ui, "roll-calibration", "Calibration", SectionHeader { summary: calibration_summary, changed: false, reset: None, default_open: Some(true) }, |ui| {
                         if controls::calibration(
                             ui, "dmin", "Dmin (film base)", self.dmin, can_pick,
-                            "Minimum-density film base. Linear native-camera RGB, not optical-density numbers.",
+                            "Measure an unexposed area of film base.",
                         ) {
                             start_pick = Some(Pick::Dmin);
                         }
                         if controls::calibration(
                             ui, "dmax", "Dmax", self.dmax, can_pick,
-                            "Maximum-density film reference. Linear native-camera RGB, not optical-density numbers.",
+                            "Measure the densest film reference.",
                         ) {
                             start_pick = Some(Pick::Dmax);
                         }
@@ -2163,7 +2163,7 @@ impl Editor {
                                     crate::processing::Response::Original => {
                                         ui.label("Classic curve · camera model 4");
                                         if presentation::TextAction::new("Use adjustable response").help(
-                                            "Explicitly use toe 2.5 with shoulder off. Calibration, gamma, balance and exposure are kept; this changes the response, not RAW development or ACES.",
+                                            "Start with toe 2.5 and shoulder off; keep other adjustments.",
                                         ).show(ui).clicked() {
                                             self.roll.response = crate::processing::Response::film();
                                         }
@@ -2171,9 +2171,7 @@ impl Editor {
                                     crate::processing::Response::Film { toe, shoulder } => {
                                         controls::parameter(ui, Parameter::Toe, toe);
                                         controls::parameter(ui, Parameter::Shoulder, shoulder);
-                                        ui.label("Shoulder: 0 = off").on_hover_text(
-                                            "Settings with an inverse pole in the scan-floor domain or unsupported GPU precision/range are rejected. Above-base values use signed-root numerical continuation, not physical film exposure.",
-                                        );
+                                        ui.label("Shoulder: 0 = off");
                                     }
                                 }
                             },
@@ -2266,7 +2264,7 @@ impl Editor {
                                 });
                         });
                         ui.small("Preview + TIFF · 100 nit").on_hover_text(
-                            "Shared ACES 2 SDR target for preview, thumbnails, scopes and TIFF encoding/ICC. Not the monitor profile: presentation is tagged extended sRGB for OS monitor management. EXR remains scene-linear AP0 and bypasses this target.",
+                            "Choose the output colour space, not the monitor profile. EXR is unaffected.",
                         );
                     });
                     if reset { self.target = OutputTarget::DisplayP3; }
