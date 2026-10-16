@@ -328,8 +328,7 @@ fn card_responses_preserve_hover_mouse_keyboard_and_inherited_disabled_behavior(
 }
 
 #[test]
-fn card_availability_preserves_ids_and_full_caption_semantics_without_disabling_following_widgets()
-{
+fn card_availability_preserves_ids_captions_and_following_widgets() {
     let context = Context::default();
     let name = "京都_Summer_Scan_Reference_Roll01_Frame_04397.ARW";
     let draw = |enabled, selected, events| {
@@ -470,8 +469,16 @@ fn active_background_preserves_geometry_selection_outline_and_filename_semantics
                     active_frame.rect.contains_rect(active.2),
                     "caption shares the active background"
                 );
-                assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
-                    egui::Shape::Rect(rect) if rect.rect == active.1 && rect.fill == Color32::from_gray(14).gamma_multiply(opacity))), "image well remains dark");
+                assert!(
+                    output.shapes.iter().any(|shape| match &shape.shape {
+                        egui::Shape::Rect(rect) => {
+                            rect.rect == active.1
+                                && rect.fill == Color32::from_gray(14).gamma_multiply(opacity)
+                        }
+                        _ => false,
+                    }),
+                    "image well remains dark"
+                );
                 assert_eq!(output.shapes.len(), before.shapes.len());
                 assert!(
                     !output

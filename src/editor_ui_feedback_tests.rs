@@ -12,14 +12,22 @@ fn frame(
 ) -> (bool, FullOutput) {
     context.enable_accesskit();
     let mut acknowledged = false;
-    let mut output = context.run_ui(egui::RawInput {
-        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(width, 600.))),
-        events, ..Default::default()
-    }, |ui| {
-        acknowledged = FeedbackDialog { severity, title: "Operation could not complete",
-            explanation: "Your accepted settings are unchanged. Review the details before trying again.", details }
+    let mut output = context.run_ui(
+        egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(width, 600.))),
+            events,
+            ..Default::default()
+        },
+        |ui| {
+            acknowledged = FeedbackDialog {
+                severity,
+                title: "Operation could not complete",
+                explanation: "Your accepted settings are unchanged. Review the details before trying again.",
+                details,
+            }
             .show(ui.ctx(), Id::new("test-feedback"), escape_available);
-    });
+        },
+    );
     output.textures_delta.clear();
     (acknowledged, output)
 }
@@ -46,8 +54,14 @@ fn severity_is_written_accessible_and_visually_distinct_with_safe_acknowledgemen
         assert!(text(&output, label).is_some());
         assert!(text(&output, "technical reason").is_none());
         assert!(text(&output, "Technical details").is_none());
-        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text)
-            if text.galley.job.text == "Details" && text.galley.job.sections[0].format.color == context.global_style().visuals.text_color())));
+        assert!(output.shapes.iter().any(|shape| match &shape.shape {
+            egui::Shape::Text(text) => {
+                text.galley.job.text == "Details"
+                    && text.galley.job.sections[0].format.color
+                        == context.global_style().visuals.text_color()
+            }
+            _ => false,
+        }));
         assert!(!output.shapes.iter().any(
             |shape| matches!(&shape.shape, egui::Shape::LineSegment { points, .. }
             if (points[0].y - points[1].y).abs() < 0.1 && (points[0].x - points[1].x).abs() > 200.)
@@ -73,8 +87,13 @@ fn severity_is_written_accessible_and_visually_distinct_with_safe_acknowledgemen
             Severity::Warning => context.global_style().visuals.warn_fg_color,
             Severity::Error => context.global_style().visuals.error_fg_color,
         };
-        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text)
-            if text.galley.job.text == label && text.galley.job.sections[0].format.color == expected)));
+        assert!(output.shapes.iter().any(|shape| match &shape.shape {
+            egui::Shape::Text(text) => {
+                text.galley.job.text == label
+                    && text.galley.job.sections[0].format.color == expected
+            }
+            _ => false,
+        }));
         for pressed in [true, false] {
             assert!(
                 !frame(

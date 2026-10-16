@@ -43,6 +43,7 @@ pub(crate) struct AveragePipelines {
     compute: [wgpu::ComputePipeline; 2],
     finish: wgpu::RenderPipeline,
 }
+
 impl AveragePipelines {
     pub(crate) async fn new(device: &wgpu::Device) -> Result<Self, crate::Error> {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
@@ -107,6 +108,7 @@ pub struct AreaAverage {
     dimensions: [u32; 4],
     affine: Option<[[f32; 2]; 3]>,
 }
+
 impl AreaAverage {
     pub async fn new(
         device: &wgpu::Device,
@@ -116,6 +118,7 @@ impl AreaAverage {
         let pipelines = std::sync::Arc::new(AveragePipelines::new(device).await?);
         Self::new_shared(device, pipelines, source, output)
     }
+
     pub(crate) fn new_shared(
         device: &wgpu::Device,
         pipelines: std::sync::Arc<AveragePipelines>,
@@ -124,6 +127,7 @@ impl AreaAverage {
     ) -> Result<Self, crate::Error> {
         Self::create(device, pipelines, source, output, None)
     }
+
     pub async fn new_affine(
         device: &wgpu::Device,
         raster: crate::frame_raster::FrameRaster,
@@ -131,6 +135,7 @@ impl AreaAverage {
         let pipelines = std::sync::Arc::new(AveragePipelines::new(device).await?);
         Self::new_affine_shared(device, pipelines, raster)
     }
+
     pub(crate) fn new_affine_shared(
         device: &wgpu::Device,
         pipelines: std::sync::Arc<AveragePipelines>,
@@ -145,6 +150,7 @@ impl AreaAverage {
             Some(raster.affine()?),
         )
     }
+
     fn create(
         device: &wgpu::Device,
         pipelines: std::sync::Arc<AveragePipelines>,
@@ -181,6 +187,7 @@ impl AreaAverage {
             affine,
         })
     }
+
     pub fn accumulate(
         &self,
         device: &wgpu::Device,
@@ -192,6 +199,7 @@ impl AreaAverage {
             self.accumulate_window(device, encoder, tile, origin, window);
         }
     }
+
     pub(crate) fn windows(&self, tile: &wgpu::Texture, origin: [u32; 2]) -> Vec<windows::Window> {
         let output = [self.dimensions[2], self.dimensions[3]];
         windows::bounded(if let Some(affine) = self.affine {
@@ -205,6 +213,7 @@ impl AreaAverage {
             )
         })
     }
+
     pub(crate) fn accumulate_window(
         &self,
         device: &wgpu::Device,
@@ -270,6 +279,7 @@ impl AreaAverage {
         pass.set_bind_group(0, &group, &[]);
         pass.dispatch_workgroups(extent[0].div_ceil(8), extent[1].div_ceil(8), 1);
     }
+
     pub fn finish(
         &self,
         device: &wgpu::Device,

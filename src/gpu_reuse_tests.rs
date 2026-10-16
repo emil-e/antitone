@@ -36,6 +36,7 @@ const ENTRIES: [&str; 9] = [
 ];
 
 use super::response::ResponseKey;
+
 #[derive(Debug, PartialEq, Eq)]
 struct PrefixKey {
     response: ResponseKey,
@@ -45,6 +46,7 @@ struct PrefixKey {
     geometry: Vec<u8>,
     global: Option<Vec<u8>>,
 }
+
 impl PrefixKey {
     fn new(
         identity_revision: [u64; 2],
@@ -70,6 +72,7 @@ fn calibration() -> Calibration {
         input_floor: 1. / 65535.,
     }
 }
+
 fn camera_matrix() -> DMat3 {
     DMat3::from_cols(
         DVec3::new(0.6062, 0.0161, -0.0031),
@@ -77,6 +80,7 @@ fn camera_matrix() -> DMat3 {
         DVec3::new(0.0136, -0.2088, 1.1521),
     )
 }
+
 fn zero_y_matrix() -> DMat3 {
     let rgb = Inversion::new(calibration(), RollSettings::new_grade())
         .unwrap()
@@ -87,6 +91,7 @@ fn zero_y_matrix() -> DMat3 {
     let cancel = (-y.x * rgb.x - y.y * rgb.y + 0.25 * y.z * rgb.z) / (y.y * rgb.z);
     DMat3::from_cols(DVec3::X, DVec3::Y, DVec3::new(0., cancel, -0.25))
 }
+
 fn area() -> SourceRegion {
     SourceRegion {
         x: 12,
@@ -95,10 +100,12 @@ fn area() -> SourceRegion {
         height: 5472,
     }
 }
+
 fn geometry() -> SourceGeometry {
     let a = area();
     SourceGeometry::new([a.x, a.y, a.width, a.height], SIZE).unwrap()
 }
+
 fn photographic() -> PhotoSettings {
     PhotoSettings {
         exposure: 0.25,
@@ -113,6 +120,7 @@ fn photographic() -> PhotoSettings {
         ..Default::default()
     }
 }
+
 fn snapshot(global: PhotoSettings, count: usize, nonlinear: bool) -> PhotoGradeSnapshot {
     let locals = (0..count)
         .map(|i| LocalAdjustment {
@@ -245,6 +253,7 @@ struct Probe {
     prefix: wgpu::Buffer,
     output: wgpu::Buffer,
 }
+
 impl Probe {
     async fn new(device: &wgpu::Device, pixels: usize) -> Self {
         let shader = [
@@ -321,6 +330,7 @@ impl Probe {
             output: buffer("experimental AP1 output", pixels as u64 * 16),
         }
     }
+
     fn encode(
         &self,
         device: &wgpu::Device,
@@ -386,6 +396,7 @@ impl Probe {
         }
     }
 }
+
 pub(super) fn read_words(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -407,11 +418,13 @@ pub(super) fn read_words(
     let mapped = read.get_mapped_range(..).unwrap();
     bytemuck::cast_slice(&mapped).to_vec()
 }
+
 fn median(values: &[f64]) -> f64 {
     let mut values = values.to_vec();
     values.sort_by(f64::total_cmp);
     values[values.len() / 2]
 }
+
 pub(super) fn exact(case: &str, candidate: &str, expected: &[u32], actual: &[u32]) {
     assert_eq!(actual.len(), expected.len());
     for (i, (a, b)) in actual.iter().zip(expected).enumerate() {

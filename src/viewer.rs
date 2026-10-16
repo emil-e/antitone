@@ -23,12 +23,15 @@ struct Presentation {
     uv_x: [f32; 4],
     uv_y: [f32; 4],
 }
+
 enum ImageSource {
     Owned(Box<ProcessingSource>),
     Shared(Arc<ProcessingSource>),
 }
+
 impl std::ops::Deref for ImageSource {
     type Target = ProcessingSource;
+
     fn deref(&self) -> &Self::Target {
         match self {
             Self::Owned(source) => source,
@@ -36,6 +39,7 @@ impl std::ops::Deref for ImageSource {
         }
     }
 }
+
 impl ImageSource {
     fn mutable(&mut self) -> Result<&mut ProcessingSource, Error> {
         match self {
@@ -43,6 +47,7 @@ impl ImageSource {
             Self::Shared(_) => Err(Error::InvalidParameter("shared proxy source is immutable")),
         }
     }
+
     fn write(&self, queue: &wgpu::Queue, pixels: &[[u16; 4]]) -> Result<(), Error> {
         match self {
             Self::Owned(source) => source.write(queue, pixels),
@@ -50,6 +55,7 @@ impl ImageSource {
         }
     }
 }
+
 struct ImageProcessing {
     renderer: Arc<GpuRenderer>,
     target: OutputTarget,
@@ -57,6 +63,7 @@ struct ImageProcessing {
     working: wgpu::Buffer,
     aces_group: wgpu::BindGroup,
 }
+
 pub struct GpuImage {
     last_parameters: std::sync::Mutex<Option<ProcessingSignature>>,
     source_revision: std::sync::atomic::AtomicU64,
@@ -67,6 +74,7 @@ pub struct GpuImage {
     presentation: Presentation,
     visible_group: std::sync::Mutex<Option<(TextureMapping, wgpu::BindGroup)>>,
 }
+
 impl GpuImage {
     pub async fn new(
         device: &wgpu::Device,
@@ -89,6 +97,7 @@ impl GpuImage {
         )
         .await
     }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn new_shared(
         renderer: &Arc<GpuRenderer>,
@@ -115,6 +124,7 @@ impl GpuImage {
         )
         .await
     }
+
     pub async fn new_rendered(
         device: &wgpu::Device,
         _queue: &wgpu::Queue,
@@ -132,6 +142,7 @@ impl GpuImage {
         )
         .await
     }
+
     pub async fn new_rendered_shared(
         renderer: &GpuRenderer,
         device: &wgpu::Device,
@@ -149,6 +160,7 @@ impl GpuImage {
         )
         .await
     }
+
     async fn create(
         device: &wgpu::Device,
         width: u32,
@@ -256,11 +268,13 @@ impl GpuImage {
             visible_group: std::sync::Mutex::new(None),
         })
     }
+
     pub fn processing_byte_len(&self) -> (u64, u64) {
         self.processing
             .as_ref()
             .map_or((0, 0), |p| (p.source.byte_len(), p.working.size()))
     }
+
     pub fn set_geometry(&mut self, geometry: SourceGeometry) -> Result<(), Error> {
         let processing = self
             .processing
@@ -291,6 +305,7 @@ impl GpuImage {
         *self.last_parameters.lock().unwrap() = None;
         Ok(())
     }
+
     pub fn write_source(&self, queue: &wgpu::Queue, pixels: &[[u16; 4]]) -> Result<(), Error> {
         let processing = self
             .processing
@@ -432,6 +447,7 @@ impl GpuImage {
         pass.draw(0..3, 0..1);
         Ok(())
     }
+
     pub fn presentation_group(
         &self,
         device: &wgpu::Device,
@@ -457,15 +473,18 @@ impl GpuImage {
         *cached = Some((uv, group.clone()));
         group
     }
+
     pub fn paint_group(&self, pass: &mut wgpu::RenderPass<'static>, group: &wgpu::BindGroup) {
         pass.set_pipeline(&self.display);
         pass.set_bind_group(0, group, &[]);
         pass.draw(0..3, 0..1);
     }
+
     pub fn paint(&self, pass: &mut wgpu::RenderPass<'static>) {
         self.paint_group(pass, &self.display_group);
     }
 }
+
 fn make_presentation_group(
     device: &wgpu::Device,
     display: &wgpu::RenderPipeline,
@@ -493,6 +512,7 @@ fn make_presentation_group(
         ],
     })
 }
+
 pub struct ImagePaint {
     #[cfg(feature = "editor")]
     rendered: Option<(
@@ -505,6 +525,7 @@ pub struct ImagePaint {
     uv: TextureMapping,
     group: std::sync::Mutex<Option<wgpu::BindGroup>>,
 }
+
 impl ImagePaint {
     #[cfg(feature = "editor")]
     pub(crate) fn rendered(
@@ -521,6 +542,7 @@ impl ImagePaint {
             rendered: Some((view, submissions, context)),
         }
     }
+
     pub fn new(
         image: Arc<GpuImage>,
         parameters: Option<ProcessingParameters>,
@@ -535,6 +557,7 @@ impl ImagePaint {
             group: std::sync::Mutex::new(None),
         }
     }
+
     pub fn with_processing(
         image: Arc<GpuImage>,
         processing: Option<ProcessingInput>,
@@ -553,6 +576,7 @@ impl ImagePaint {
         })
     }
 }
+
 impl egui_wgpu::CallbackTrait for ImagePaint {
     fn prepare(
         &self,
@@ -576,6 +600,7 @@ impl egui_wgpu::CallbackTrait for ImagePaint {
         }
         Vec::new()
     }
+
     fn paint(
         &self,
         _info: egui::PaintCallbackInfo,

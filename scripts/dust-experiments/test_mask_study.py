@@ -28,5 +28,5 @@ class RepairSupport(unittest.TestCase):
         self.assertEqual(int(core.sum()), 9)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

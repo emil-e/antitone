@@ -23,6 +23,7 @@ pub(super) fn fixture() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Comman
     });
     (editor, send, receiver)
 }
+
 #[test]
 fn refinement_worker_uses_the_submission_gate_supplied_to_the_host() {
     pollster::block_on(async {
@@ -255,39 +256,47 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
         }
     });
 }
+
 #[test]
 fn source_inspection_is_transient_and_pick_commands_never_receive_its_gain() {
     let (mut editor, send, receiver) = fixture();
     editor.sync_document();
     let project = editor.document.project.clone();
-    let settings = (editor.dmin, editor.dmax, editor.roll, editor.photo);
+    let expected_dmin = editor.dmin;
+    let expected_dmax = editor.dmax;
+    let expected_roll = editor.roll;
+    let expected_photo = editor.photo;
+
     editor.source_exposure = 2.3456789;
     editor.source = true;
     editor.sync_document();
     assert_eq!(editor.document.project, project);
+
     editor.begin_pick(Pick::Dmin);
     editor.region = Some(patch());
     editor.apply_pick();
     let Command::Pick(id, kind, _, _, roll, photo) = receiver.try_recv().unwrap() else {
         panic!()
     };
-    assert_eq!(roll, settings.2);
-    assert_eq!(photo, settings.3);
+    assert_eq!(roll, expected_roll);
+    assert_eq!(photo, expected_photo);
+
     send.send(Message::Picked(
         id,
         kind,
-        Ok(Measurement::Reference(settings.0.unwrap())),
+        Ok(Measurement::Reference(expected_dmin.unwrap())),
     ))
     .unwrap();
     editor.receive();
-    assert_eq!(
-        (editor.dmin, editor.dmax, editor.roll, editor.photo),
-        settings
-    );
+    assert_eq!(editor.dmin, expected_dmin);
+    assert_eq!(editor.dmax, expected_dmax);
+    assert_eq!(editor.roll, expected_roll);
+    assert_eq!(editor.photo, expected_photo);
     assert_eq!(editor.source_exposure, 2.3456789);
     editor.sync_document();
     assert_eq!(editor.document.project, project);
 }
+
 #[test]
 fn every_picker_preserves_precise_edge_navigation_and_orientation_on_entry() {
     let (mut editor, _send, _receiver) = fixture();
@@ -322,6 +331,7 @@ fn every_picker_preserves_precise_edge_navigation_and_orientation_on_entry() {
         assert_eq!(editor.viewport, precise);
     }
 }
+
 #[test]
 fn rejected_reference_and_cancel_restore_view_without_changing_processing() {
     let (mut editor, send, _receiver) = fixture();
@@ -361,6 +371,7 @@ fn rejected_reference_and_cancel_restore_view_without_changing_processing() {
     editor.finish_pick();
     assert!(editor.source);
 }
+
 #[test]
 fn completing_initial_calibration_leaves_forced_source_view_but_preserves_explicit_inspection() {
     for order in [[Pick::Dmin, Pick::Dmax], [Pick::Dmax, Pick::Dmin]] {
@@ -555,6 +566,7 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
     assert!(editor.status.contains("rejected"));
     assert!(!editor.source);
 }
+
 #[test]
 fn stopped_pick_worker_clears_busy_and_stale_samples_do_not_apply() {
     let (mut editor, send, receiver) = fixture();
@@ -579,6 +591,7 @@ fn stopped_pick_worker_clears_busy_and_stale_samples_do_not_apply() {
     editor.receive();
     assert_eq!(editor.photo, old);
 }
+
 pub(super) fn add_ready_fixture(editor: &mut Editor) {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::METAL,
@@ -632,6 +645,7 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
         development,
     });
 }
+
 pub(super) fn app_frame(
     editor: &mut Editor,
     context: &egui::Context,
@@ -690,6 +704,7 @@ pub(super) fn ui_labels(output: egui::FullOutput) -> Vec<(String, egui::Rect)> {
     }
     labels
 }
+
 #[test]
 fn crop_inspector_settings_remain_photo_only_without_transaction_buttons() {
     let (mut editor, _send, _receiver) = fixture();
@@ -773,6 +788,7 @@ fn crop_inspector_settings_remain_photo_only_without_transaction_buttons() {
         saved
     );
 }
+
 #[test]
 fn tab_clicks_show_only_the_selected_scope_without_changing_view_or_crop_draft() {
     let (mut editor, _send, _receiver) = fixture();
@@ -1042,6 +1058,7 @@ fn crop_button_and_enter_escape_keys_apply_or_restore_the_starting_view() {
         }
     }
 }
+
 #[test]
 fn picker_toolbar_layout_does_not_rescale_a_fitted_composition() {
     let (mut editor, _send, _receiver) = fixture();
@@ -1083,6 +1100,7 @@ fn picker_toolbar_layout_does_not_rescale_a_fitted_composition() {
         );
     }
 }
+
 #[test]
 fn neutral_picker_exit_preserves_deliberate_navigation_not_its_initial_fit() {
     let (mut editor, _send, _receiver) = fixture();
@@ -1117,6 +1135,7 @@ fn neutral_picker_exit_preserves_deliberate_navigation_not_its_initial_fit() {
         assert!((returned.source_point(returned.canvas.center()) - anchor).length() < 0.002);
     }
 }
+
 #[test]
 fn crop_draft_cancel_and_apply_are_transactional_and_source_owned() {
     let (mut editor, _send, receiver) = fixture();
@@ -1182,6 +1201,7 @@ fn crop_draft_cancel_and_apply_are_transactional_and_source_owned() {
     editor.finish_crop(true);
     assert!(editor.crop.is_none());
 }
+
 #[test]
 fn straightened_drafts_and_picks_are_transactional_and_measure_canvas_coverage() {
     let (mut editor, _send, receiver) = fixture();
@@ -1317,6 +1337,7 @@ fn cropped_picker_views_preserve_source_anchor_and_restore_exact_working_view() 
         );
     }
 }
+
 #[test]
 fn cropped_export_snapshot_survives_later_crop_and_orientation_edits() {
     let (mut editor, _send, receiver) = fixture();
@@ -1346,6 +1367,7 @@ fn cropped_export_snapshot_survives_later_crop_and_orientation_edits() {
     assert_eq!(composition.size(), [79, 127]);
     assert_eq!(composition.source_pixel([0, 0]).unwrap(), [326, 218]);
 }
+
 #[test]
 fn roll_reference_source_restores_working_orientation_and_precise_viewport() {
     let (mut editor, _send, receiver) = fixture();
@@ -1389,6 +1411,7 @@ fn roll_reference_source_restores_working_orientation_and_precise_viewport() {
     assert_eq!(editor.photo_orientation, photo_orientation);
     assert_eq!(editor.viewport, viewport);
 }
+
 #[test]
 fn export_owns_the_accepted_photo_snapshot_and_rejects_unpreviewable_locals() {
     use crate::{
@@ -1468,6 +1491,7 @@ fn export_holds_the_accepted_orientation_snapshot() {
     assert_eq!(composition.size(), [576, 864]);
     assert_eq!(composition.source_pixel([0, 0]).unwrap(), [875, 582]);
 }
+
 #[test]
 fn orientation_buttons_transform_displayed_photo_and_preserve_crop_and_other_scopes() {
     let (mut editor, _send, _receiver) = fixture();
@@ -1556,6 +1580,7 @@ fn orientation_buttons_transform_displayed_photo_and_preserve_crop_and_other_sco
     }
     assert!(editor.photo_orientation.is_identity());
 }
+
 #[test]
 fn flip_buttons_are_repeatable_scoped_actions_and_disabled_when_busy_or_picking() {
     for section in ["Composition", "Scan orientation"] {
@@ -1751,6 +1776,7 @@ fn roll_turn_controls_preserve_photo_crop_and_grade_and_are_disabled_during_pick
         unchanged
     );
 }
+
 #[test]
 fn shared_roll_turns_apply_to_new_photos_and_export_snapshots() {
     let (mut editor, send, receiver) = fixture();
@@ -1798,6 +1824,7 @@ fn shared_roll_turns_apply_to_new_photos_and_export_snapshots() {
     assert_eq!(composition.size(), [576, 864]);
     assert_eq!(composition.source_pixel([0, 0]).unwrap(), [12, 582]);
 }
+
 #[test]
 fn contextual_crop_reset_preserves_orientation_grade_and_accepted_state_until_apply() {
     let (mut editor, _send, _receiver) = fixture();
@@ -1825,6 +1852,7 @@ fn contextual_crop_reset_preserves_orientation_grade_and_accepted_state_until_ap
     assert!(editor.roll_orientation.horizontal);
     assert_eq!((editor.roll, editor.photo, editor.dmin, editor.dmax), grade);
 }
+
 #[test]
 fn navigation_invalidates_pending_overwrite() {
     let (mut editor, _send, receiver) = fixture();
@@ -1839,6 +1867,7 @@ fn navigation_invalidates_pending_overwrite() {
         Command::Load(1, _, _, _, _, _, _)
     ));
 }
+
 fn patch() -> Coverage {
     Coverage::rectangle(Rect {
         x: 12,
@@ -1847,6 +1876,7 @@ fn patch() -> Coverage {
         height: 32,
     })
 }
+
 #[test]
 fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
     let (mut editor, send, receiver) = fixture();
@@ -1896,6 +1926,7 @@ fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
     assert!(editor.region.is_none());
     assert!(receiver.try_recv().is_err());
 }
+
 #[test]
 fn rectangle_mapping_is_independent_of_view_scale() {
     let area = Rect {
@@ -1909,19 +1940,32 @@ fn rectangle_mapping_is_independent_of_view_scale() {
             .layout(canvas, area, 1.)
             .rectangle(start, end)
     };
-    let a = rectangle(
+    let full_scale_rect = rectangle(
         egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900., 600.)),
         area,
         egui::pos2(100., 200.),
         egui::pos2(300., 400.),
     );
-    let b = rectangle(
+    let half_scale_rect = rectangle(
         egui::Rect::from_min_size(egui::pos2(50., 20.), egui::vec2(450., 300.)),
         area,
         egui::pos2(100., 120.),
         egui::pos2(200., 220.),
     );
-    assert_eq!((a.x, a.y, a.width, a.height), (b.x, b.y, b.width, b.height));
+    assert_eq!(
+        (
+            full_scale_rect.x,
+            full_scale_rect.y,
+            full_scale_rect.width,
+            full_scale_rect.height
+        ),
+        (
+            half_scale_rect.x,
+            half_scale_rect.y,
+            half_scale_rect.width,
+            half_scale_rect.height
+        ),
+    );
 }
 
 fn controls_frame(
@@ -1932,6 +1976,7 @@ fn controls_frame(
 ) -> Vec<(String, egui::Rect)> {
     controls_frame_sized(editor, context, width, 2000., events)
 }
+
 fn controls_frame_sized(
     editor: &mut Editor,
     context: &egui::Context,
@@ -2054,6 +2099,7 @@ fn click_section_button(editor: &mut Editor, context: &egui::Context, section: &
         );
     }
 }
+
 fn click_section_reset(editor: &mut Editor, context: &egui::Context, name: &str) {
     let text = controls_frame(editor, context, 315., vec![]);
     let title = text
@@ -2095,6 +2141,7 @@ fn click_section_reset(editor: &mut Editor, context: &egui::Context, name: &str)
         );
     }
 }
+
 #[test]
 fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
     for width in [270., 315.] {
@@ -2135,7 +2182,8 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
             }
             if tab == 0 {
                 assert!(!labels.contains(&"Gamma balance"));
-                assert!(!labels.contains(&"Toe") && !labels.contains(&"Shoulder"));
+                assert!(!labels.contains(&"Toe"));
+                assert!(!labels.contains(&"Shoulder"));
             }
             assert!(!labels.contains(&if tab == 0 {
                 "Crop & straighten"
@@ -2195,6 +2243,7 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
         }
     }
 }
+
 #[test]
 fn section_expansion_is_scope_specific_and_does_not_change_project_state() {
     let context = egui::Context::default();
@@ -2329,6 +2378,7 @@ fn section_and_color_resets_preserve_calibration_and_other_edit_scopes() {
     assert_eq!(editor.roll.balance, Balance::default());
     assert_eq!(editor.roll.exposure, 2.);
     assert_eq!(editor.photo, photo);
+
     editor.roll.gamma = 0.9;
     editor.roll.balance = Balance {
         warmth: 0.2,
@@ -2337,21 +2387,25 @@ fn section_and_color_resets_preserve_calibration_and_other_edit_scopes() {
     click_section_reset(&mut editor, &context, "Gamma balance");
     assert_eq!(editor.roll.gamma, 0.9);
     assert_eq!(editor.roll.balance, Balance::default());
+
     click_section_reset(&mut editor, &context, "Toe & shoulder");
     assert_eq!(editor.roll.response, crate::processing::Response::film());
     assert_eq!(editor.roll.gamma, 0.9);
     assert_eq!(editor.roll.balance, Balance::default());
     assert_eq!(editor.roll.exposure, 2.);
     assert_eq!(editor.photo, photo);
+
     click_section_reset(&mut editor, &context, "Exposure");
     assert_eq!(editor.roll.exposure, 0.);
     assert_eq!(editor.roll.gamma, 0.9);
     assert_eq!(editor.photo, photo);
+
     let roll = editor.roll;
     editor.tab = 1;
     click_section_reset(&mut editor, &context, "White balance");
     assert_eq!(editor.photo.wb, Balance::default());
     assert_eq!(editor.photo.exposure, -1.);
+
     click_section_reset(&mut editor, &context, "Exposure");
     assert_eq!(editor.photo.exposure, 0.);
     assert_eq!(editor.roll, roll);

@@ -8,11 +8,13 @@ pub(super) struct SelectionTiming {
     pending_painted: AtomicBool,
     ready_painted: AtomicBool,
 }
+
 impl SelectionTiming {
     #[cfg(all(test, feature = "ui-tests"))]
     pub(super) fn ready_was_painted(&self) -> bool {
         self.ready_painted.load(Ordering::Relaxed)
     }
+
     pub fn new(id: u64, started: std::time::Instant) -> Self {
         Self {
             id,
@@ -22,11 +24,13 @@ impl SelectionTiming {
         }
     }
 }
+
 pub(super) struct SelectionPaint {
     image: ImagePaint,
     timing: Option<Arc<SelectionTiming>>,
     pending: bool,
 }
+
 impl SelectionPaint {
     pub fn new(image: ImagePaint, timing: Option<Arc<SelectionTiming>>, pending: bool) -> Self {
         Self {
@@ -36,6 +40,7 @@ impl SelectionPaint {
         }
     }
 }
+
 impl CallbackTrait for SelectionPaint {
     fn prepare(
         &self,
@@ -48,6 +53,7 @@ impl CallbackTrait for SelectionPaint {
         self.image
             .prepare(device, queue, screen, encoder, resources)
     }
+
     fn paint(
         &self,
         info: egui::PaintCallbackInfo,
@@ -55,6 +61,7 @@ impl CallbackTrait for SelectionPaint {
         resources: &egui_wgpu::CallbackResources,
     ) {
         self.image.paint(info, pass, resources);
+
         if let Some(timing) = &self.timing {
             let painted = if self.pending {
                 &timing.pending_painted
@@ -72,6 +79,7 @@ impl CallbackTrait for SelectionPaint {
         }
     }
 }
+
 impl Editor {
     pub(super) fn validate_pending_preview(&mut self) {
         if self.pending_preview.as_ref().is_some_and(|preview| {
@@ -91,10 +99,12 @@ impl Editor {
             self.pending_preview = None;
         }
     }
+
     pub(super) fn selected_view(&self) -> Option<(Rect, crate::viewer::GpuProxy, bool)> {
         if let Some(ready) = &self.ready {
             return Some((ready.area, ready.proxy.clone(), false));
         }
+
         self.pending_preview
             .as_ref()
             .map(|preview| (preview.area(), preview.proxy.clone(), true))

@@ -6,6 +6,7 @@ use crate::{
 
 type TestReader =
     JobReader<fn([u32; 2]) -> Result<Vec<[f64; 4]>, Error>, fn() -> Result<(), Error>>;
+
 fn load(origin: [u32; 2]) -> Result<Vec<[f64; 4]>, Error> {
     Ok((0..TILE[0] * TILE[1])
         .map(|i| {
@@ -20,9 +21,11 @@ fn load(origin: [u32; 2]) -> Result<Vec<[f64; 4]>, Error> {
         })
         .collect())
 }
+
 fn reader() -> TestReader {
     JobReader::new(load, || Ok(()), true)
 }
+
 fn composition(turns: QuarterTurns, angle: Option<f64>) -> Composition {
     Composition::with_crop(
         SourceRegion::from([0, 0, 513, 385]),
@@ -39,6 +42,7 @@ fn composition(turns: QuarterTurns, angle: Option<f64>) -> Composition {
     )
     .unwrap()
 }
+
 fn metadata() -> ProcessingMetadata {
     crate::processing::Response::film().into()
 }

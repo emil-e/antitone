@@ -29,12 +29,14 @@ struct Key {
     settings: Settings,
     frame: FrameRaster,
 }
+
 fn accumulation_settings(mut settings: Settings) -> Settings {
     if settings.plot == Plot::Luma {
         settings.plot = Plot::Rgb;
     }
     settings
 }
+
 impl Key {
     fn new(
         image: &Arc<GpuImage>,
@@ -52,6 +54,7 @@ impl Key {
             frame,
         }
     }
+
     #[cfg(feature = "editor")]
     fn rendered(
         view: &crate::gpu::view::RenderedView,
@@ -67,6 +70,7 @@ impl Key {
             frame,
         }
     }
+
     fn matches(&self, request: &Self) -> bool {
         self.can_hold(request)
             && self.image.ptr_eq(&request.image)
@@ -74,6 +78,7 @@ impl Key {
             && self.frame == request.frame
             && self.processing == request.processing
     }
+
     fn can_hold(&self, request: &Self) -> bool {
         let same_source =
             self.image.ptr_eq(&request.image) && self.source_revision == request.source_revision;
@@ -88,11 +93,13 @@ impl Key {
             && self.frame.composition == request.frame.composition
     }
 }
+
 struct Prepared {
     key: Key,
     plot: Plot,
     group: Option<wgpu::BindGroup>,
 }
+
 #[derive(Default)]
 struct Diagnostic {
     revision: u64,
@@ -463,6 +470,7 @@ impl GpuScopes {
             None
         }
     }
+
     pub fn invalidate(&self) {
         if self.prepared.lock().unwrap().take().is_some() {
             let mut diagnostic = self.diagnostic.lock().unwrap();
@@ -539,6 +547,7 @@ pub struct ScopePaint {
     pub context: egui::Context,
     group: Mutex<Option<wgpu::BindGroup>>,
 }
+
 impl ScopePaint {
     #[cfg(feature = "editor")]
     pub(crate) fn rendered(
@@ -560,6 +569,7 @@ impl ScopePaint {
             group: Mutex::new(None),
         }
     }
+
     pub fn new(
         gpu: Arc<GpuScopes>,
         image: Arc<GpuImage>,
@@ -580,6 +590,7 @@ impl ScopePaint {
             group: Mutex::new(None),
         }
     }
+
     pub fn with_processing(
         gpu: Arc<GpuScopes>,
         image: Arc<GpuImage>,
@@ -602,6 +613,7 @@ impl ScopePaint {
         })
     }
 }
+
 impl egui_wgpu::CallbackTrait for ScopePaint {
     fn prepare(
         &self,
@@ -724,6 +736,7 @@ impl egui_wgpu::CallbackTrait for ScopePaint {
         }
         Vec::new()
     }
+
     fn paint(
         &self,
         _info: egui::PaintCallbackInfo,

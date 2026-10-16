@@ -192,6 +192,7 @@ fn state() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
     editor.sync_document();
     (editor, send, receiver)
 }
+
 fn pending(editor: &mut Editor) -> u64 {
     let id = editor.request_id();
     let revision = editor.analysis_generation.fetch_add(1, Ordering::Relaxed) + 1;
@@ -219,6 +220,7 @@ fn pending(editor: &mut Editor) -> u64 {
     editor.busy = true;
     id
 }
+
 fn outcome(editor: &Editor) -> Outcome {
     let mut document = editor
         .analysis_pending
@@ -253,6 +255,7 @@ fn outcome(editor: &Editor) -> Outcome {
         support: rect([12, 12, 800, 600]),
     }
 }
+
 #[test]
 fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preserving_geometry() {
     let (mut editor, send, _) = state();
@@ -346,6 +349,7 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
     assert_eq!(editor.roll.exposure, 0.); // Manual zero is not an auto-placement trigger.
     assert_eq!(editor.photo, manual_photo);
 }
+
 #[test]
 fn failure_cancel_and_invalid_gpu_combination_preserve_all_processing_state() {
     for mode in 0..3 {
@@ -383,6 +387,7 @@ fn failure_cancel_and_invalid_gpu_combination_preserve_all_processing_state() {
         assert!(!editor.busy);
     }
 }
+
 #[test]
 fn stale_request_generation_source_document_and_controls_cannot_install() {
     for mode in 0..5 {
@@ -417,6 +422,7 @@ fn stale_request_generation_source_document_and_controls_cannot_install() {
         assert_eq!(editor.document.project, before);
     }
 }
+
 #[test]
 fn area_accept_cancel_and_invalid_edits_do_not_change_calibration_or_exposure() {
     let (mut editor, _, _) = state();
@@ -441,6 +447,7 @@ fn area_accept_cancel_and_invalid_edits_do_not_change_calibration_or_exposure() 
     assert_eq!(editor.document.project.dmin, original.dmin);
     assert_eq!(editor.document.project.dmax, original.dmax);
 }
+
 #[test]
 fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_requested_work() {
     for (settled, outstanding) in [(false, true), (true, true), (true, false)] {
@@ -923,6 +930,7 @@ fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade(
 fn wait(editor: &mut Editor) {
     wait_with_limit(editor, Duration::from_secs(180));
 }
+
 fn wait_with_limit(editor: &mut Editor, limit: Duration) {
     let start = std::time::Instant::now();
     while editor.busy {

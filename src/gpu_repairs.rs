@@ -17,6 +17,7 @@ pub(crate) struct Patch {
     region: SourceRegion,
     bound: DVec3,
 }
+
 impl Patch {
     pub fn new(device: &wgpu::Device, evaluated: Arc<EvaluatedRepair>) -> Result<Arc<Self>, Error> {
         let support = evaluated.support();
@@ -66,6 +67,7 @@ impl Patch {
 
 #[derive(Clone, Default)]
 pub(crate) struct Snapshot(pub Vec<Arc<Patch>>);
+
 impl Snapshot {
     pub fn bound(&self) -> DVec3 {
         self.0
@@ -73,11 +75,13 @@ impl Snapshot {
             .fold(DVec3::ZERO, |bound, patch| bound.max(patch.bound))
     }
 }
+
 impl PartialEq for Snapshot {
     fn eq(&self, other: &Self) -> bool {
         self.0.len() == other.0.len() && self.0.iter().zip(&other.0).all(|(a, b)| Arc::ptr_eq(a, b))
     }
 }
+
 impl std::fmt::Debug for Snapshot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("NeutralRepairs")
@@ -91,6 +95,7 @@ pub(crate) struct Kernels {
     neutral: wgpu::ComputePipeline,
     copy: wgpu::ComputePipeline,
 }
+
 impl Kernels {
     pub async fn new(device: &wgpu::Device) -> Result<Self, Error> {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
@@ -268,6 +273,7 @@ impl Kernels {
         Ok(())
     }
 }
+
 fn uniform(device: &wgpu::Device, bytes: &[u8]) -> wgpu::Buffer {
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: None,
@@ -275,12 +281,14 @@ fn uniform(device: &wgpu::Device, bytes: &[u8]) -> wgpu::Buffer {
         usage: wgpu::BufferUsages::UNIFORM,
     })
 }
+
 fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
     wgpu::BindGroupEntry {
         binding,
         resource: buffer.as_entire_binding(),
     }
 }
+
 fn intersects(a: SourceRegion, b: SourceRegion) -> bool {
     a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
 }

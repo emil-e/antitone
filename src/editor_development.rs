@@ -19,6 +19,7 @@ pub(super) enum Priority {
     Visible,
     Eager,
 }
+
 #[derive(Clone)]
 pub(super) struct Request {
     pub path: PathBuf,
@@ -31,6 +32,7 @@ pub(super) struct Request {
     pub parent: Option<Arc<SourceStore>>,
     pub retain: bool,
 }
+
 impl Request {
     fn joins(&self, other: &Self) -> bool {
         self.key
@@ -44,10 +46,12 @@ impl Request {
                 .zip(other.parent.as_ref().or(other.store.as_ref()))
                 .is_some_and(|(a, b)| Arc::ptr_eq(a, b))
     }
+
     fn retired(&self) -> bool {
         self.store.as_ref().is_some_and(|store| store.is_closed())
     }
 }
+
 #[cfg(test)]
 #[derive(Clone, Copy, Debug)]
 pub(super) enum NativePhase {
@@ -64,12 +68,14 @@ type NativeObserver = Arc<
         + Sync,
 >;
 type Completion = Result<Arc<DevelopedSource>, String>;
+
 struct Consumer {
     id: u64,
     priority: Priority,
     store: Option<Arc<SourceStore>>,
     retain: bool,
 }
+
 struct Task {
     id: u64,
     request: Request,
@@ -79,6 +85,7 @@ struct Task {
     result: Mutex<Option<Completion>>,
     ready: Condvar,
 }
+
 impl Task {
     fn priority(&self) -> Priority {
         self.demands
@@ -89,6 +96,7 @@ impl Task {
             .min()
             .unwrap_or(Priority::Eager)
     }
+
     fn scopes(&self) -> Vec<(Arc<SourceStore>, bool)> {
         let mut scopes: Vec<_> = self
             .request
@@ -104,23 +112,28 @@ impl Task {
         }));
         scopes
     }
+
     fn retired(&self) -> bool {
         self.request.retired() && self.scopes().iter().all(|(store, _)| store.is_closed())
     }
+
     fn abandoned(&self) -> bool {
         !self.started.load(Ordering::Relaxed) && self.demands.lock().unwrap().is_empty()
     }
 }
+
 struct State {
     tasks: Vec<Arc<Task>>,
     queue: Vec<Arc<Task>>,
     next: u64,
     closed: bool,
 }
+
 struct Shared {
     state: Mutex<State>,
     changed: Condvar,
 }
+
 impl Shared {
     fn close(&self) {
         let tasks = {
@@ -135,28 +148,34 @@ impl Shared {
         }
     }
 }
+
 struct Owner(Arc<Shared>);
+
 impl Drop for Owner {
     fn drop(&mut self) {
         self.0.close();
     }
 }
+
 #[derive(Clone)]
 pub(super) struct Scheduler {
     owner: Arc<Owner>,
     #[cfg(all(test, target_os = "macos"))]
     worker: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
 }
+
 struct Demand {
     shared: Arc<Shared>,
     task: Arc<Task>,
     id: u64,
     store: Option<Arc<SourceStore>>,
 }
+
 pub(super) struct Ticket {
     demand: Demand,
     _owner: Arc<Owner>,
 }
+
 impl Ticket {
     pub fn result(&self) -> Result<Option<Arc<DevelopedSource>>, Error> {
         if self
@@ -179,6 +198,7 @@ impl Ticket {
             .transpose()
             .map_err(Error::Project)
     }
+
     fn wait(&self, cancelled: impl Fn() -> bool) -> Result<Arc<DevelopedSource>, Error> {
         loop {
             if cancelled() {
@@ -200,6 +220,7 @@ impl Ticket {
         }
     }
 }
+
 impl Drop for Demand {
     fn drop(&mut self) {
         let retired = {
@@ -213,6 +234,7 @@ impl Drop for Demand {
         self.shared.changed.notify_all();
     }
 }
+
 impl Scheduler {
     pub fn new() -> Self {
         #[cfg(test)]
@@ -224,6 +246,7 @@ impl Scheduler {
             Self::start_native()
         }
     }
+
     #[cfg(test)]
     pub(super) fn new_observed(
         observe: impl Fn(
@@ -237,10 +260,12 @@ impl Scheduler {
     ) -> Self {
         Self::start_native(Arc::new(observe))
     }
+
     fn start_native(#[cfg(test)] observe: NativeObserver) -> Self {
         Self::start(move |shared| {
             // Paused unpacked handles remain worker-local across queue arbitration.
             let mut unpacked: HashMap<u64, (Source, crate::raw::RawFile)> = HashMap::new();
+
             run(shared, |task| {
                 if task.retired() {
                     unpacked.remove(&task.id);
@@ -278,6 +303,7 @@ impl Scheduler {
                     {
                         return Ok(Some(source));
                     }
+
                     #[cfg(test)]
                     observe(&task.request.path, NativePhase::Open, None)?;
                     let (record, mut raw) =
@@ -290,6 +316,7 @@ impl Scheduler {
                     if let Some(expected) = &task.request.expected {
                         document::verify_source(expected, &record).map_err(|e| e.to_string())?;
                     }
+
                     // Queue priority is not a different pixel policy or a smaller CPU budget.
                     raw.set_development_priority(crate::raw::DevelopmentPriority::Foreground);
                     #[cfg(test)]
@@ -311,6 +338,7 @@ impl Scheduler {
             });
         })
     }
+
     fn start(worker: impl FnOnce(Arc<Shared>) + Send + 'static) -> Self {
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
@@ -333,6 +361,7 @@ impl Scheduler {
             worker: Arc::new(Mutex::new(Some(_worker))),
         }
     }
+
     #[cfg(all(test, target_os = "macos"))]
     pub(super) fn close_and_wait(&self) -> Result<(), String> {
         self.close();
@@ -344,9 +373,11 @@ impl Scheduler {
         }
         Ok(())
     }
+
     pub fn close(&self) {
         self.owner.0.close();
     }
+
     #[cfg(test)]
     pub(super) fn test_executor(
         mut step: impl FnMut(&std::path::Path) -> Result<Option<Arc<DevelopedSource>>, String>
@@ -355,6 +386,7 @@ impl Scheduler {
     ) -> Self {
         Self::start(move |shared| run(shared, |task| step(&task.request.path)))
     }
+
     #[cfg(test)]
     pub(super) fn waiter_count(&self) -> usize {
         self.owner
@@ -367,6 +399,7 @@ impl Scheduler {
             .map(|task| task.demands.lock().unwrap().len())
             .sum()
     }
+
     pub fn load(
         &self,
         request: Request,
@@ -378,6 +411,7 @@ impl Scheduler {
         }
         self.submit(request, priority)?.wait(cancelled)
     }
+
     pub fn submit(&self, mut request: Request, priority: Priority) -> Result<Ticket, Error> {
         if request.retired() {
             return Err(Error::UnusableSample("source demand retired"));
@@ -434,6 +468,7 @@ impl Scheduler {
         })
     }
 }
+
 fn run(
     shared: Arc<Shared>,
     mut step: impl FnMut(&Task) -> Result<Option<Arc<DevelopedSource>>, String>,
@@ -508,6 +543,7 @@ fn run(
         }
     }
 }
+
 fn finish(shared: &Shared, task: &Arc<Task>, result: Completion) {
     // Keep the task/result owned outside both metadata locks, including final release.
     *task.result.lock().unwrap() = Some(result);

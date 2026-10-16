@@ -22,8 +22,9 @@ pub(crate) struct ScreenInput<'a> {
 }
 
 pub(crate) trait Screener {
-    /// Declining acceleration leaves the supported domain and exact CPU search intact.
+    /// Return false to use the exact CPU search without screening.
     fn admit(&self, frame: usize, context: usize, candidates: usize) -> bool;
+    /// Returns no screening result when cancelled.
     fn screen(
         &mut self,
         input: ScreenInput<'_>,
@@ -35,9 +36,11 @@ pub(crate) struct Execution<'a> {
     pub screener: Option<&'a mut dyn Screener>,
     pub cancelled: &'a dyn Fn() -> bool,
 }
+
 fn never_cancel() -> bool {
     false
 }
+
 impl Default for Execution<'_> {
     fn default() -> Self {
         Self {
@@ -55,6 +58,7 @@ pub(super) struct Filter {
     pub scores: HashMap<[usize; 2], f64>,
     pub best: f64,
 }
+
 impl Filter {
     pub fn allows(&self, x: usize, y: usize, best: f64) -> bool {
         self.bounds[(y - self.y0) * self.nx + x - self.x0] <= competitive_score(best)
@@ -159,6 +163,7 @@ pub(super) fn prepare(
     {
         return Ok(None);
     }
+
     let mut eligible = Vec::new();
     for y in y0..=yend {
         if (execution.cancelled)() {
@@ -170,6 +175,7 @@ pub(super) fn prepare(
             }
         }
     }
+
     let mut nearest = eligible.clone();
     nearest.sort_by_key(|p| {
         (
@@ -189,6 +195,7 @@ pub(super) fn prepare(
     }
     seeds.sort_unstable();
     seeds.dedup();
+
     let mut best = f64::INFINITY;
     let mut scores = HashMap::new();
     for source in seeds {
@@ -204,6 +211,7 @@ pub(super) fn prepare(
             scores.insert(source, score);
         }
     }
+
     let mut bounds = vec![f64::NAN; count]; // Ineligible, including when best is infinity.
     for p in &eligible {
         bounds[(p[1] - y0) * nx + p[0] - x0] = 0.;
@@ -218,6 +226,7 @@ pub(super) fn prepare(
             best,
         }));
     }
+
     let Some(features) = pack(c, execution.cancelled) else {
         return Ok(None);
     };
@@ -229,7 +238,7 @@ pub(super) fn prepare(
     // Missing paired context can make full-target denominators much too loose.
     // Pay for per-candidate coverage only when the best seed exposes that loss;
     // choosing either upper bound changes work, never eligibility or final scores.
-    let seed = scores
+    let best_seed = scores
         .iter()
         .min_by(|a, b| a.1.total_cmp(b.1).then_with(|| a.0.cmp(b.0)))
         .map(|(p, _)| *p)
@@ -237,7 +246,7 @@ pub(super) fn prepare(
     let mut paired = [0.; 2];
     let mut upper_totals = [0u32; 2];
     for (i, &weight) in c.weights.iter().enumerate() {
-        let source = (seed[1] + i / c.size[0]) * c.width + seed[0] + i % c.size[0];
+        let source = (best_seed[1] + i / c.size[0]) * c.width + best_seed[0] + i % c.size[0];
         if c.known[i] && !c.mask[source] {
             paired[0] += weight;
         }
@@ -249,6 +258,7 @@ pub(super) fn prepare(
             upper_totals[1] += weights[i] >> 9;
         }
     }
+
     let paired_weights = paired_coverage_needed(paired, totals);
     let units = (1u64 << 28) as f64;
     let Some(sums) = screen.screen(
@@ -275,6 +285,7 @@ pub(super) fn prepare(
     if sums.len() != eligible.len() {
         return Err(Error::Gpu("repair screening result length differs".into()));
     }
+
     for (p, sum) in eligible.iter().zip(sums) {
         if sum[2] > c.known.len() as u64
             || sum[0] > sum[2] * 3 * 4095u64.pow(2) * 256

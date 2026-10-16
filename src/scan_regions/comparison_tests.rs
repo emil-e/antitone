@@ -11,9 +11,11 @@ fn pixels(path: &Path) -> Vec<[u16; 3]> {
         .map(|v| std::array::from_fn(|c| u16::from_le_bytes([v[2 * c], v[2 * c + 1]])))
         .collect()
 }
+
 fn json(path: &Path) -> serde_json::Value {
     serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
 }
+
 fn populations(c: &Capture, a: &Areas) -> [usize; 2] {
     let active = c.area;
     let budget = 8192usize;
@@ -125,7 +127,14 @@ fn compare_shared_holder_with_frozen_local_baseline() {
             if !new.ready() || after[1] < 512 {
                 inadequate.push(format!("{roll_name}/{name}: {after:?}"));
             }
-            let report = serde_json::json!({"roll":roll_name,"source":name,"local":old,"shared":new,"local_centres":before,"shared_centres":after});
+            let report = serde_json::json!({
+                "roll": roll_name,
+                "source": name,
+                "local": old,
+                "shared": new,
+                "local_centres": before,
+                "shared_centres": after,
+            });
             std::fs::write(
                 out.join(format!("{name}.json")),
                 serde_json::to_vec_pretty(&report).unwrap(),
@@ -164,7 +173,14 @@ fn compare_shared_holder_with_frozen_local_baseline() {
         if film_total < 2048 {
             inadequate.push(format!("{roll_name}: pooled film {film_total}"));
         }
-        let report = serde_json::json!({"roll":roll_name,"photos":captures.len(),"shared":shared,"exceptions":exceptions,"min_picture_centres":min_picture,"film_centres":film_total});
+        let report = serde_json::json!({
+            "roll": roll_name,
+            "photos": captures.len(),
+            "shared": shared,
+            "exceptions": exceptions,
+            "min_picture_centres": min_picture,
+            "film_centres": film_total,
+        });
         eprintln!("{report}");
         reports.push(report);
     }

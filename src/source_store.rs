@@ -20,6 +20,7 @@ pub struct SourceKey {
     source: SourceDevelopment,
     development: Development,
 }
+
 impl SourceKey {
     pub fn capture(
         path: &Path,
@@ -33,6 +34,7 @@ impl SourceKey {
         };
         Self::from_revision(&locator, FileKey::new(&locator), source, development)
     }
+
     pub(crate) fn from_revision(
         path: &Path,
         file: FileKey,
@@ -47,9 +49,11 @@ impl SourceKey {
             development: development.clone(),
         })
     }
+
     pub(crate) fn current(&self) -> bool {
         self.file.current_at(&self.locator)
     }
+
     fn matches(&self, source: &DevelopedSource) -> bool {
         let Ok(image) = source.camera_image() else {
             return false;
@@ -65,6 +69,7 @@ impl SourceKey {
                     input_floor: source.input_floor(),
                 }
     }
+
     fn matches_proxy(&self, proxy: &CameraProxy) -> bool {
         proxy.width > 0
             && proxy.height > 0
@@ -74,6 +79,7 @@ impl SourceKey {
             && proxy.matrix.to_cols_array_2d() == self.source.camera_to_ap1
     }
 }
+
 impl PartialEq for SourceKey {
     fn eq(&self, other: &Self) -> bool {
         self.file == other.file
@@ -89,20 +95,24 @@ pub struct Charges {
     pub retained: u64,
     pub leased_only: u64,
 }
+
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
     Native,
     Proxy,
 }
+
 #[derive(Clone)]
 enum Owned {
     Native(Arc<DevelopedSource>),
     Proxy(Arc<CameraProxy>),
 }
+
 enum Borrowed {
     Native(Weak<DevelopedSource>),
     Proxy(Weak<CameraProxy>),
 }
+
 impl Owned {
     fn kind(&self) -> Kind {
         match self {
@@ -110,6 +120,7 @@ impl Owned {
             Self::Proxy(_) => Kind::Proxy,
         }
     }
+
     fn downgrade(&self) -> Borrowed {
         match self {
             Self::Native(source) => Borrowed::Native(Arc::downgrade(source)),
@@ -117,6 +128,7 @@ impl Owned {
         }
     }
 }
+
 impl Borrowed {
     fn kind(&self) -> Kind {
         match self {
@@ -124,18 +136,21 @@ impl Borrowed {
             Self::Proxy(_) => Kind::Proxy,
         }
     }
+
     fn live(&self) -> bool {
         match self {
             Self::Native(source) => source.strong_count() != 0,
             Self::Proxy(proxy) => proxy.strong_count() != 0,
         }
     }
+
     fn upgrade(&self) -> Option<Owned> {
         match self {
             Self::Native(source) => source.upgrade().map(Owned::Native),
             Self::Proxy(proxy) => proxy.upgrade().map(Owned::Proxy),
         }
     }
+
     fn same(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Native(a), Self::Native(b)) => a.ptr_eq(b),
@@ -144,12 +159,14 @@ impl Borrowed {
         }
     }
 }
+
 struct Entry {
     key: SourceKey,
     resource: Borrowed,
     retained: Option<Owned>,
     bytes: u64,
 }
+
 struct State {
     entries: VecDeque<Entry>,
     protected: Vec<SourceKey>,
@@ -157,13 +174,16 @@ struct State {
     bytes: u64,
     closed: bool,
 }
+
 impl State {
     fn prune(&mut self) {
         self.entries.retain(|entry| entry.resource.live());
     }
+
     fn essential(&self, entry: &Entry) -> bool {
         entry.resource.kind() == Kind::Proxy && self.protected.contains(&entry.key)
     }
+
     fn protected_bytes(&self) -> u64 {
         self.entries
             .iter()
@@ -171,6 +191,7 @@ impl State {
             .map(|entry| entry.bytes)
             .sum()
     }
+
     fn charges(&self) -> Charges {
         Charges {
             retained: self.bytes - self.protected_bytes(),
@@ -182,6 +203,7 @@ impl State {
                 .sum(),
         }
     }
+
     fn remove_ownership(&mut self, index: usize, removed: &mut Vec<Owned>) {
         let entry = &mut self.entries[index];
         if let Some(resource) = entry.retained.take() {
@@ -189,6 +211,7 @@ impl State {
             removed.push(resource);
         }
     }
+
     fn trim(&mut self, removed: &mut Vec<Owned>) {
         while self.charges().retained > self.budget {
             let index = self
@@ -199,12 +222,14 @@ impl State {
             self.remove_ownership(index, removed);
         }
     }
+
     fn keep(&mut self, entry: &mut Entry, resource: Owned) {
         if entry.retained.is_none() && (entry.bytes <= self.budget || self.essential(entry)) {
             self.bytes += entry.bytes;
             entry.retained = Some(resource);
         }
     }
+
     fn evict(&mut self, key: &SourceKey, removed: &mut Vec<Owned>) {
         for index in 0..self.entries.len() {
             if self.entries[index].key == *key {
@@ -220,6 +245,7 @@ impl State {
 pub struct SourceStore {
     state: Mutex<State>,
 }
+
 impl SourceStore {
     pub fn new(budget: u64) -> Self {
         Self {
@@ -232,6 +258,7 @@ impl SourceStore {
             }),
         }
     }
+
     fn get_resource(&self, key: &SourceKey, kind: Kind) -> Option<Owned> {
         if !key.current() {
             self.evict(key);
@@ -265,18 +292,21 @@ impl SourceStore {
             None
         }
     }
+
     pub fn get(&self, key: &SourceKey) -> Option<Arc<DevelopedSource>> {
         match self.get_resource(key, Kind::Native)? {
             Owned::Native(source) => Some(source),
             Owned::Proxy(_) => unreachable!(),
         }
     }
+
     pub fn get_proxy(&self, key: &SourceKey) -> Option<Arc<CameraProxy>> {
         match self.get_resource(key, Kind::Proxy)? {
             Owned::Proxy(proxy) => Some(proxy),
             Owned::Native(_) => unreachable!(),
         }
     }
+
     /// Unavailable allocation accounting disables admission, not authoritative processing.
     pub fn publish_source(
         &self,
@@ -288,6 +318,7 @@ impl SourceStore {
         };
         self.publish(key, source, bytes)
     }
+
     /// Explicit nonzero source charges support callers/tests with their own accounting boundary.
     /// Duplicate completion returns the existing lease; None means stale/closed.
     pub fn publish(
@@ -310,6 +341,7 @@ impl SourceStore {
             _ => unreachable!(),
         }
     }
+
     pub fn publish_proxy(
         &self,
         key: SourceKey,
@@ -330,6 +362,7 @@ impl SourceStore {
             _ => unreachable!(),
         }
     }
+
     fn publish_resource(
         &self,
         key: SourceKey,
@@ -391,6 +424,7 @@ impl SourceStore {
             Ok(None)
         }
     }
+
     fn insert(
         state: &mut State,
         key: SourceKey,
@@ -413,12 +447,14 @@ impl SourceStore {
         state.entries.push_back(entry);
         Ok(())
     }
+
     /// Drop all cache ownership under this stale key; leases remain valid.
     pub fn evict(&self, key: &SourceKey) {
         let mut removed = Vec::new();
         self.state.lock().unwrap().evict(key, &mut removed);
         drop(removed);
     }
+
     pub fn set_budget(&self, budget: u64) {
         let mut removed = Vec::new();
         {
@@ -428,6 +464,7 @@ impl SourceStore {
         }
         drop(removed);
     }
+
     /// Protect only proxy ownership. Newly unprotected proxies compete in the same byte LRU.
     pub fn protect_proxies(&self, keys: Vec<SourceKey>) {
         let mut removed = Vec::new();
@@ -440,9 +477,11 @@ impl SourceStore {
         }
         drop(removed);
     }
+
     pub fn is_closed(&self) -> bool {
         self.state.lock().unwrap().closed
     }
+
     #[cfg(feature = "editor")]
     pub(crate) fn contains_proxy(&self, key: &SourceKey) -> bool {
         let state = self.state.lock().unwrap();
@@ -451,6 +490,7 @@ impl SourceStore {
                 entry.key == *key && entry.resource.kind() == Kind::Proxy && entry.resource.live()
             })
     }
+
     #[cfg(all(test, feature = "editor"))]
     pub(crate) fn proxy_count(&self) -> usize {
         let state = self.state.lock().unwrap();
@@ -460,6 +500,7 @@ impl SourceStore {
             .filter(|entry| entry.resource.kind() == Kind::Proxy && entry.resource.live())
             .count()
     }
+
     /// Accepted same-document replacement only. Retire old ownership before admission;
     /// transfer handles/metadata, never pixels. Drained handles are retiring resources,
     /// not instant physical reclamation credit. No lock spans validation or destruction.
@@ -497,6 +538,7 @@ impl SourceStore {
             }
         }
     }
+
     pub fn can_retain(&self, extra: u64) -> bool {
         let state = self.state.lock().unwrap();
         !state.closed
@@ -506,14 +548,17 @@ impl SourceStore {
                 .checked_add(extra)
                 .is_some_and(|bytes| bytes <= state.budget)
     }
+
     pub fn charges(&self) -> Charges {
         let mut state = self.state.lock().unwrap();
         state.prune();
         state.charges()
     }
+
     pub fn protected_bytes(&self) -> u64 {
         self.state.lock().unwrap().protected_bytes()
     }
+
     pub fn close(&self) {
         let mut removed = Vec::new();
         {

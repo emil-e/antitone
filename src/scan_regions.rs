@@ -23,6 +23,7 @@ pub struct Material {
     pub ys: Vec<u32>,
     pub labels: String,
 }
+
 impl Material {
     fn nearest(values: &[u32], point: f64) -> usize {
         let i = values.partition_point(|&v| f64::from(v) < point - 0.5);
@@ -35,6 +36,7 @@ impl Material {
             b
         }
     }
+
     fn label(&self, p: [f64; 2]) -> u8 {
         if p.iter()
             .zip(self.size)
@@ -45,6 +47,7 @@ impl Material {
         self.labels.as_bytes()
             [Self::nearest(&self.ys, p[1]) * self.xs.len() + Self::nearest(&self.xs, p[0])]
     }
+
     fn validate(&self) -> Result<(), Error> {
         let valid = self.size.iter().all(|&v| (16..=768).contains(&v))
             && self.xs.len() <= 96
@@ -101,10 +104,12 @@ pub struct Areas {
     #[serde(default)]
     pub picture_edited: bool,
 }
+
 impl Areas {
     pub fn coverage(quad: Quad) -> Result<Coverage, Error> {
         Coverage::new(quad.map(SourcePoint))
     }
+
     pub fn validate(&self, active: SourceRegion) -> Result<(), Error> {
         active.validate()?;
         for q in [self.opening, self.picture].into_iter().flatten() {
@@ -187,9 +192,11 @@ impl Areas {
         }
         Ok(())
     }
+
     pub fn ready(&self) -> bool {
         self.opening.is_some() && self.picture.is_some()
     }
+
     pub fn needs_inspection(&self) -> bool {
         !self.ready()
             || self.opening_exception
@@ -203,6 +210,7 @@ impl Areas {
                     .zip(self.picture_weak)
                     .any(|(&observed, weak)| !observed && !weak)
     }
+
     pub fn edit_opening(&mut self, coverage: Coverage) {
         self.opening = Some(coverage.corners().map(|p| p.0));
         self.opening_observed = [false; 4];
@@ -212,6 +220,7 @@ impl Areas {
         // Authored film support replaces the automatic material hypothesis.
         self.material = None;
     }
+
     pub fn edit_picture(&mut self, coverage: Coverage) {
         self.picture = Some(coverage.corners().map(|p| p.0));
         self.picture_constraints.clear();
@@ -220,6 +229,7 @@ impl Areas {
         self.picture_weak = [false; 4];
         self.picture_edited = true;
     }
+
     /// Change statistical coverage, not independently measured picture edges or authored edits.
     pub fn refit_picture(&mut self, active: SourceRegion) {
         if !self.picture_edited
@@ -230,6 +240,7 @@ impl Areas {
                 .and_then(|opening| geometry.fit(active, opening));
         }
     }
+
     pub fn contains_footprint(
         &self,
         footprint: SourceRegion,
@@ -303,6 +314,7 @@ fn inside(p: [f64; 2], polygon: &Quad) -> bool {
     });
     cross.iter().all(|&v| v >= 0.) || cross.iter().all(|&v| v <= 0.)
 }
+
 fn quantile(values: impl IntoIterator<Item = f64>, fraction: f64) -> Option<f64> {
     let mut values: Vec<_> = values.into_iter().collect();
     if values.is_empty() {
@@ -311,6 +323,7 @@ fn quantile(values: impl IntoIterator<Item = f64>, fraction: f64) -> Option<f64>
     values.sort_by(f64::total_cmp);
     Some(values[((values.len() - 1) as f64 * fraction).floor() as usize])
 }
+
 fn median(values: impl IntoIterator<Item = f64>) -> f64 {
     let mut v: Vec<_> = values.into_iter().collect();
     v.sort_by(f64::total_cmp);
@@ -320,11 +333,13 @@ fn median(values: impl IntoIterator<Item = f64>) -> f64 {
         v[v.len() / 2]
     }
 }
+
 fn centres(extent: u32, count: u32) -> Vec<u32> {
     (0..count)
         .map(|i| (((2 * u64::from(i) + 1) * u64::from(extent)) / (2 * u64::from(count))) as u32)
         .collect()
 }
+
 fn invalid(message: &'static str) -> Error {
     Error::InvalidParameter(message)
 }

@@ -5,6 +5,7 @@ const AREA: Rect = Rect {
     width: 8640,
     height: 5760,
 };
+
 struct Harness {
     editor: Editor,
     context: egui::Context,
@@ -12,6 +13,7 @@ struct Harness {
     enabled: bool,
     _receiver: mpsc::Receiver<Command>,
 }
+
 impl Harness {
     fn new() -> Self {
         let (commands, receiver) = mpsc::channel();
@@ -29,6 +31,7 @@ impl Harness {
             _receiver: receiver,
         }
     }
+
     fn frame(&mut self, events: Vec<egui::Event>) -> (CanvasLayout, bool, egui::CursorIcon) {
         self.time += 1. / 60.;
         let mut result = None;
@@ -63,6 +66,7 @@ impl Harness {
         let (geometry, panning) = result.unwrap();
         (geometry, panning, cursor)
     }
+
     fn press(
         &mut self,
         point: egui::Pos2,
@@ -79,6 +83,7 @@ impl Harness {
             },
         ])
     }
+
     fn native(&mut self) -> CanvasLayout {
         let (fit, _, _) = self.frame(vec![]);
         self.editor
@@ -87,6 +92,7 @@ impl Harness {
         self.frame(vec![]).0
     }
 }
+
 fn wheel(delta: egui::Vec2, modifiers: egui::Modifiers) -> egui::Event {
     egui::Event::MouseWheel {
         unit: egui::MouseWheelUnit::Point,
@@ -95,6 +101,7 @@ fn wheel(delta: egui::Vec2, modifiers: egui::Modifiers) -> egui::Event {
         phase: egui::TouchPhase::Move,
     }
 }
+
 #[test]
 fn plain_scroll_pans_both_axes_without_changing_zoom_or_fit_mode() {
     let mut h = Harness::new();
@@ -112,6 +119,7 @@ fn plain_scroll_pans_both_axes_without_changing_zoom_or_fit_mode() {
     h.frame(vec![wheel(egui::vec2(30., -20.), egui::Modifiers::NONE)]);
     assert!(h.editor.viewport.zoom.is_none());
 }
+
 #[test]
 fn modified_wheel_and_native_pinch_use_egui_scale_once_and_preserve_anchor() {
     for modifiers in [egui::Modifiers::CTRL, egui::Modifiers::COMMAND] {
@@ -138,6 +146,7 @@ fn modified_wheel_and_native_pinch_use_egui_scale_once_and_preserve_anchor() {
     assert!((after.scale / initial.scale - 1.25).abs() < 1e-6);
     assert!((after.source_point(point) - initial.source_point(point)).length() < 0.001);
 }
+
 fn touch(id: u64, phase: egui::TouchPhase, point: egui::Pos2) -> egui::Event {
     egui::Event::Touch {
         device_id: egui::TouchDeviceId(1),
@@ -147,6 +156,7 @@ fn touch(id: u64, phase: egui::TouchPhase, point: egui::Pos2) -> egui::Event {
         force: None,
     }
 }
+
 #[test]
 fn multi_touch_preserves_previous_center_at_translated_center_and_ignores_synthetic_duplicates() {
     let mut h = Harness::new();
@@ -173,6 +183,7 @@ fn multi_touch_preserves_previous_center_at_translated_center_and_ignores_synthe
     );
     assert!((after.source_point(moved) - initial.source_point(center)).length() < 0.001);
 }
+
 #[test]
 fn click_toggles_native_and_fit_and_primary_drag_pans_only_without_a_picker() {
     let mut h = Harness::new();
@@ -206,6 +217,7 @@ fn click_toggles_native_and_fit_and_primary_drag_pans_only_without_a_picker() {
     assert_eq!(cursor, egui::CursorIcon::Crosshair);
     assert_eq!(after.image, before.image);
 }
+
 #[test]
 fn pan_hover_preserves_fit_small_zoom_picker_and_disabled_cursors() {
     let mut h = Harness::new();
@@ -287,6 +299,7 @@ fn picker_cursors_share_rectangle_hit_testing_and_no_image_click_changes_view() 
     );
     assert_eq!(h.editor.viewport.zoom, zoom);
 }
+
 #[test]
 fn middle_and_space_primary_drag_pan_during_picking() {
     for button in [egui::PointerButton::Middle, egui::PointerButton::Primary] {
@@ -310,6 +323,7 @@ fn middle_and_space_primary_drag_pan_during_picking() {
         assert!((after.image.min - initial.image.min - egui::vec2(20., 10.)).length() < 0.001);
     }
 }
+
 #[test]
 fn z_fits_without_text_focus_but_does_not_intercept_numeric_text() {
     let mut h = Harness::new();

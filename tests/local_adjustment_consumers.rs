@@ -25,6 +25,7 @@ const AREA: SourceRegion = SourceRegion {
     width: 23,
     height: 19,
 };
+
 fn calibration() -> Calibration {
     Calibration {
         dmin: DVec3::new(0.8, 0.7, 0.9),
@@ -32,6 +33,7 @@ fn calibration() -> Calibration {
         input_floor: antitone::processing::CAMERA_INPUT_FLOOR,
     }
 }
+
 fn adjustments() -> Vec<LocalAdjustment> {
     vec![
         LocalAdjustment {
@@ -72,6 +74,7 @@ fn adjustments() -> Vec<LocalAdjustment> {
         },
     ]
 }
+
 fn input(device: &wgpu::Device, cal: Calibration, locals: Vec<LocalAdjustment>) -> ProcessingInput {
     Arc::new(
         GpuPhotoGrade::new(
@@ -86,6 +89,7 @@ fn input(device: &wgpu::Device, cal: Calibration, locals: Vec<LocalAdjustment>) 
     )
     .into()
 }
+
 async fn device() -> (wgpu::Device, wgpu::Queue) {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::METAL,
@@ -94,6 +98,7 @@ async fn device() -> (wgpu::Device, wgpu::Queue) {
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
     adapter.request_device(&Default::default()).await.unwrap()
 }
+
 fn codes([x, y]: [u32; 2]) -> [u16; 4] {
     [
         600 + ((x * 13 + y * 7) % 31) as u16 * 37,
@@ -102,10 +107,12 @@ fn codes([x, y]: [u32; 2]) -> [u16; 4] {
         65535,
     ]
 }
+
 fn smooth(t: f64) -> f64 {
     let t = t.clamp(0., 1.);
     t * t * (3. - 2. * t)
 }
+
 fn local_reference(mut rgb: DVec3, pixel: [u32; 2]) -> DVec3 {
     let [x, y] = pixel.map(|v| f64::from(v) + 0.5);
     let linear = 0.8 * smooth(((x - 122.) * 16. + (y - 74.) * 15.) / (16. * 16. + 15. * 15.));
@@ -136,6 +143,7 @@ fn local_reference(mut rgb: DVec3, pixel: [u32; 2]) -> DVec3 {
     )
     .unwrap()
 }
+
 async fn image(
     renderer: &Arc<antitone::renderer::GpuRenderer>,
     device: &wgpu::Device,
@@ -161,6 +169,7 @@ async fn image(
     image.set_flat_field(field, geometry).unwrap();
     image
 }
+
 async fn read_image(device: &wgpu::Device, queue: &wgpu::Queue, image: &GpuImage) -> Vec<[f32; 4]> {
     let texture = &image.linear;
     let row = (texture.width() * 16).div_ceil(256) * 256;
@@ -199,6 +208,7 @@ async fn read_image(device: &wgpu::Device, queue: &wgpu::Queue, image: &GpuImage
     buffer.unmap();
     pixels
 }
+
 fn read_buffer(device: &wgpu::Device, queue: &wgpu::Queue, source: &wgpu::Buffer) -> Vec<u32> {
     let staging = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
@@ -219,6 +229,7 @@ fn read_buffer(device: &wgpu::Device, queue: &wgpu::Queue, source: &wgpu::Buffer
     staging.unmap();
     result
 }
+
 fn screen() -> egui_wgpu::ScreenDescriptor {
     egui_wgpu::ScreenDescriptor {
         size_in_pixels: [600, 400],

@@ -7,23 +7,33 @@
 namespace looks {
 using V = std::array<double, 3>;
 using M = std::array<V, 3>;
+
 inline V operator+(V a, V b) {
     for (int i = 0; i < 3; ++i)
         a[i] += b[i];
     return a;
 }
+
 inline V operator-(V a, V b) {
     for (int i = 0; i < 3; ++i)
         a[i] -= b[i];
     return a;
 }
+
 inline V operator*(V a, double b) {
     for (auto &x : a)
         x *= b;
     return a;
 }
-inline double dot(V a, V b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
-inline V mul(M a, V b) { return {dot(a[0], b), dot(a[1], b), dot(a[2], b)}; }
+
+inline double dot(V a, V b) {
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+inline V mul(M a, V b) {
+    return {dot(a[0], b), dot(a[1], b), dot(a[2], b)};
+}
+
 inline M mul(M a, M b) {
     M c{};
     for (int i = 0; i < 3; ++i)
@@ -32,6 +42,7 @@ inline M mul(M a, M b) {
                 c[i][j] += a[i][k] * b[k][j];
     return c;
 }
+
 inline M inverse(M a) {
     M b{{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}};
     for (int j = 0; j < 3; ++j) {
@@ -59,10 +70,12 @@ inline M inverse(M a) {
     }
     return b;
 }
+
 inline const M AP1_XYZ{{{.6624541811085053, .13400420645643313, .1561876870049078},
                         {.27222871678091454, .6740817658111483, .05368951740793705},
                         {-.005574649490394108, .004060733528982826, 1.0103391003129971}}};
 inline const M BRADFORD{{{.8951, .2664, -.1614}, {-.7502, 1.7135, .0367}, {.0389, -.0685, 1.0296}}};
+
 inline M adaptation(V from, V to) {
     V f = mul(BRADFORD, from), t = mul(BRADFORD, to);
     M d{};
@@ -70,19 +83,23 @@ inline M adaptation(V from, V to) {
         d[i][i] = t[i] / f[i];
     return mul(mul(inverse(BRADFORD), d), BRADFORD);
 }
+
 inline double encode(double x) {
     return x <= .0078125 ? 10.5402377416545 * x + .0729055341958355 : (std::log2(x) + 9.72) / 17.52;
 }
+
 inline double decode(double x) {
     return x <= .155251141552511 ? (x - .0729055341958355) / 10.5402377416545
                                  : std::exp2(17.52 * x - 9.72);
 }
+
 inline double maxabs(V a) {
     for (double value : a)
         if (!std::isfinite(value))
             throw std::runtime_error("nonfinite vector in numerical admission");
     return std::max({std::abs(a[0]), std::abs(a[1]), std::abs(a[2])});
 }
+
 inline bool inCube(V v, double tolerance = 0) {
     return std::all_of(v.begin(), v.end(), [tolerance](double value) {
         return std::isfinite(value) && value >= -tolerance && value <= 1 + tolerance;

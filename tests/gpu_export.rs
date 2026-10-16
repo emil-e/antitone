@@ -32,6 +32,7 @@ fn context() -> (wgpu::Device, wgpu::Queue, Arc<GpuRenderer>) {
         (device, queue, renderer)
     })
 }
+
 fn source() -> (
     Scan,
     Calibration,
@@ -67,6 +68,7 @@ fn source() -> (
     .unwrap();
     (scan, calibration, roll, grade, composition)
 }
+
 fn tiff(path: &Path) -> Vec<u16> {
     let mut decoder = Decoder::new(std::fs::File::open(path).unwrap()).unwrap();
     let DecodingResult::U16(values) = decoder.read_image().unwrap() else {

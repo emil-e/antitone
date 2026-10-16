@@ -77,8 +77,12 @@ async fn run(camera: bool) -> Result<(), Box<dyn std::error::Error>> {
             if !generated.contains(&declaration) {
                 return Err("unexpected generated OCIO resource declaration".into());
             }
-            generated = generated.replace(&declaration,
-                &format!("layout(set=0, binding = {binding}) uniform texture2D {name};\n#define {name}Sampler sampler2D({name}, aces_sampler)"));
+            generated = generated.replace(
+                &declaration,
+                &format!(
+                    "layout(set=0, binding = {binding}) uniform texture2D {name};\n#define {name}Sampler sampler2D({name}, aces_sampler)"
+                ),
+            );
         }
         let fragment_source = format!(
             "#version 450\nlayout(set=0, binding=3) uniform sampler aces_sampler;\n{generated}\nlayout(set=0, binding=0, std430) readonly buffer Inputs {{ vec4 pixels[]; }};\nlayout(location=0) out vec4 result;\nvoid main() {{ int index = int(gl_FragCoord.x) + int(gl_FragCoord.y) * {width}; result = index < {pixels} ? antitone_render(vec4(pixels[index].rgb, 1.0)) : vec4(0.0); }}\n"
@@ -316,7 +320,10 @@ async fn run(camera: bool) -> Result<(), Box<dyn std::error::Error>> {
                 || !reference.is_finite()
                 || error > 2e-5 + 2e-4 * reference.abs()
             {
-                return Err(format!("{target} CPU/GPU mismatch component={index} actual={actual} expected={reference} error={error}").into());
+                return Err(format!(
+                    "{target} CPU/GPU mismatch component={index} actual={actual} expected={reference} error={error}"
+                )
+                .into());
             }
         }
         println!(

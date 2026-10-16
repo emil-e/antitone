@@ -22,10 +22,12 @@ fn seed(editor: &mut Editor) {
         feather: 0.8,
     };
 }
+
 fn screen(editor: &Editor, point: SourcePoint) -> egui::Pos2 {
     let layout = editor.last_layout.unwrap().0;
     layout.screen_frame_point(layout.composition.source_to_frame(point))
 }
+
 fn point(mask: GradientMask, unit: DVec2) -> SourcePoint {
     let GradientMask::Radial {
         center,
@@ -44,6 +46,7 @@ fn point(mask: GradientMask, unit: DVec2) -> SourcePoint {
             .to_array(),
     )
 }
+
 fn open_mask_controls(harness: &mut Harness<'_, Editor>) {
     harness.try_run_realtime().unwrap();
     adjustments::open_drawer(harness);

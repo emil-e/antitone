@@ -17,6 +17,7 @@ fn jpeg(width: u32, height: u32, flip: i32) -> crate::raw::EmbeddedThumbnail {
         color_space: 1,
     }
 }
+
 #[test]
 fn authored_dng_extraction_reaches_the_oriented_display_referred_placeholder_decoder() {
     let path =
@@ -91,6 +92,7 @@ fn jpeg_decode_is_bounded_oriented_and_display_referred_without_upscaling() {
     assert!(decode(unknown).unwrap().is_none());
     assert!(decode(jpeg(8, 4, 9)).unwrap().is_none());
 }
+
 #[test]
 fn embedded_icc_and_exif_are_honoured_without_camera_inversion() {
     use image::ImageEncoder;
@@ -117,6 +119,7 @@ fn embedded_icc_and_exif_are_honoured_without_camera_inversion() {
     assert_eq!(image.size, [8, 4]);
     assert_eq!(image.pixels[0], egui::Color32::from_rgb(127, 127, 127));
 }
+
 fn state() -> (
     EmbeddedPreviews,
     mpsc::Receiver<Request>,
@@ -134,6 +137,7 @@ fn state() -> (
         send,
     )
 }
+
 fn wanted(document: &Document, index: usize) -> (usize, ImageKey, PathBuf, Source) {
     let id = document.project.order[index];
     (
@@ -143,6 +147,7 @@ fn wanted(document: &Document, index: usize) -> (usize, ImageKey, PathBuf, Sourc
         document.project.source(id).unwrap().clone(),
     )
 }
+
 fn complete(request: Request, send: &mpsc::Sender<ResultMessage>, available: bool) {
     send.send(ResultMessage {
         ticket: request.ticket,
@@ -151,6 +156,7 @@ fn complete(request: Request, send: &mpsc::Sender<ResultMessage>, available: boo
     })
     .unwrap();
 }
+
 #[test]
 fn visible_jpeg_pass_is_independent_bounded_and_drops_completed_or_offscreen_placeholders() {
     let document = fixture();
@@ -179,6 +185,7 @@ fn visible_jpeg_pass_is_independent_bounded_and_drops_completed_or_offscreen_pla
         "no recent/offscreen JPEG retention after proper replacement"
     );
 }
+
 #[test]
 fn unavailable_cancelled_and_disconnected_previews_do_not_retry_or_block_raw_work() {
     let document = fixture();
@@ -211,6 +218,7 @@ fn unavailable_cancelled_and_disconnected_previews_do_not_retry_or_block_raw_wor
     assert!(previews.commands.is_none());
     assert_eq!(previews.entries[0].0, request.key);
 }
+
 #[test]
 fn critical_pressure_cancels_jpeg_installation_but_preserves_visible_textures() {
     let document = fixture();
@@ -272,6 +280,7 @@ fn stale_document_source_stats_and_development_reject_previews() {
         assert!(previews.entries.is_empty(), "{stale} must not install");
     }
 }
+
 #[test]
 fn camera_images_and_badges_fit_polished_wells_and_clip_without_squeezing_or_hiding_filenames() {
     let mut edges = [false; 2];

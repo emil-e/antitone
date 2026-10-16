@@ -13,6 +13,7 @@ pub struct ProcessingInput {
     #[cfg(feature = "editor")]
     pub(crate) repairs: super::repairs::Snapshot,
 }
+
 impl From<ProcessingParameters> for ProcessingInput {
     fn from(parameters: ProcessingParameters) -> Self {
         Self {
@@ -23,6 +24,7 @@ impl From<ProcessingParameters> for ProcessingInput {
         }
     }
 }
+
 impl From<Arc<GpuPhotoGrade>> for ProcessingInput {
     fn from(grade: Arc<GpuPhotoGrade>) -> Self {
         Self {
@@ -33,6 +35,7 @@ impl From<Arc<GpuPhotoGrade>> for ProcessingInput {
         }
     }
 }
+
 impl ProcessingInput {
     pub fn signature(&self) -> ProcessingSignature {
         ProcessingSignature {
@@ -43,6 +46,7 @@ impl ProcessingInput {
         }
     }
 }
+
 #[cfg(all(feature = "ui", feature = "render"))]
 impl ProcessingInput {
     pub(crate) fn require_source(&self, source: &ProcessingSource) -> Result<(), Error> {
@@ -51,9 +55,11 @@ impl ProcessingInput {
         }
         Ok(())
     }
+
     pub(crate) fn parameters(&self) -> ProcessingParameters {
         self.parameters
     }
+
     pub(crate) fn grade(&self) -> Option<&GpuPhotoGrade> {
         self.grade.as_deref()
     }
@@ -67,6 +73,7 @@ pub struct ProcessingSignature {
     #[cfg(feature = "editor")]
     repairs: super::repairs::Snapshot,
 }
+
 impl PartialEq for ProcessingSignature {
     fn eq(&self, other: &Self) -> bool {
         #[cfg(feature = "editor")]
@@ -81,6 +88,7 @@ impl PartialEq for ProcessingSignature {
             }
     }
 }
+
 impl std::fmt::Debug for ProcessingSignature {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProcessingSignature")

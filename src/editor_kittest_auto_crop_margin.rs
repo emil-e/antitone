@@ -16,6 +16,7 @@ pub(super) fn expected_crop(h: &Harness<'_, Editor>, source: SourceId, percent: 
     )
     .unwrap()
 }
+
 #[test]
 fn live_slider_and_precise_numeric_drafts_preserve_the_background_and_zero_restores_originals() {
     for (name, size, width) in [

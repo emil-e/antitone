@@ -18,6 +18,7 @@ fn editor() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
         .unwrap();
     (editor, send, commands)
 }
+
 fn response(request: &Request, active: SourceRegion) -> Response {
     let evaluated = Arc::new(
         crate::dust_repair::evaluate(&request.repair, active, |_| Ok([0.1, 0.2, 2.])).unwrap(),
@@ -40,6 +41,7 @@ fn gpu_editor() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
     e.working = WorkingView::new(device);
     (e, send, commands)
 }
+
 fn high_response(e: &mut Editor) -> Response {
     let request = Request {
         request: e.request_id(),

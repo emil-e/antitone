@@ -12,6 +12,7 @@ fn calibration() -> Calibration {
         input_floor: 1e-6,
     }
 }
+
 fn close(a: DVec3, b: DVec3) {
     for c in 0..3 {
         assert!(
@@ -20,6 +21,7 @@ fn close(a: DVec3, b: DVec3) {
         );
     }
 }
+
 fn forward(cal: Calibration, roll: RollSettings, exposure: DVec3) -> DVec3 {
     let (toe, k) = roll.response.shape().unwrap();
     let g = roll.channel_gammas().unwrap();
@@ -45,6 +47,7 @@ fn new_grades_opt_into_film_and_original_settings_remain_original() {
     assert_eq!(Response::Original.processing_model(), 4);
     assert_eq!(Response::film().processing_model(), 4);
 }
+
 #[test]
 fn film_one_zero_is_bit_identical_to_original_scalar_execution() {
     let cal = calibration();
@@ -80,6 +83,7 @@ fn film_one_zero_is_bit_identical_to_original_scalar_execution() {
         }
     }
 }
+
 #[test]
 fn film_anchors_forward_inverse_and_monotonic_floor_domain() {
     let cal = calibration();
@@ -118,6 +122,7 @@ fn film_anchors_forward_inverse_and_monotonic_floor_domain() {
         }
     }
 }
+
 #[test]
 fn signed_continuation_has_no_pedestal_or_above_base_clamp() {
     let cal = calibration();
@@ -149,6 +154,7 @@ fn signed_continuation_has_no_pedestal_or_above_base_clamp() {
         }
     }
 }
+
 #[test]
 fn invalid_shapes_nonfinite_inputs_and_floor_poles_are_rejected() {
     let cal = calibration();
@@ -192,6 +198,7 @@ fn invalid_shapes_nonfinite_inputs_and_floor_poles_are_rejected() {
             .is_err()
     );
 }
+
 #[test]
 fn neutral_fit_uses_actual_response_and_keeps_unrelated_settings() {
     let cal = calibration();

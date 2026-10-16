@@ -14,6 +14,7 @@ enum Kind {
     Linear,
     Radial,
 }
+
 impl Kind {
     fn title(self) -> &'static str {
         match self {
@@ -21,6 +22,7 @@ impl Kind {
             Self::Radial => "Radial gradient",
         }
     }
+
     fn help(self) -> &'static str {
         match self {
             Self::Linear => {
@@ -32,10 +34,12 @@ impl Kind {
         }
     }
 }
+
 enum MaskDrag {
     Linear(LinearDrag),
     Radial(radial::RadialDrag),
 }
+
 impl MaskDrag {
     fn update(&self, point: egui::Pos2) -> GradientMask {
         match self {
@@ -60,6 +64,7 @@ pub(super) struct MaskEdit {
     drag: Option<MaskDrag>,
     error: Option<String>,
 }
+
 #[derive(Clone, Copy)]
 enum Handle {
     New,
@@ -67,16 +72,19 @@ enum Handle {
     End,
     Body,
 }
+
 struct LinearDrag {
     handle: Handle,
     point: SourcePoint,
     mask: Option<GradientMask>,
     layout: CanvasLayout,
 }
+
 impl MaskEdit {
     pub(super) fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }
+
     pub(super) fn creation_label(&self) -> String {
         format!(
             "{} {}",
@@ -84,16 +92,20 @@ impl MaskEdit {
             self.kind.title().to_lowercase()
         )
     }
+
     pub(super) fn creating(&self) -> bool {
         self.id.is_none()
     }
+
     #[cfg(test)]
     pub(super) fn valid(&self) -> bool {
         self.mask.is_some_and(|mask| mask.validate().is_ok())
     }
+
     pub(super) fn dragging(&self) -> bool {
         self.drag.is_some()
     }
+
     fn candidate(&self) -> Result<(Source, AdjustmentId), Error> {
         let mask = self
             .mask
@@ -134,14 +146,17 @@ impl MaskEdit {
         Ok((source, id))
     }
 }
+
 fn source_point(layout: CanvasLayout, point: egui::Pos2) -> SourcePoint {
     layout
         .composition
         .frame_to_source(layout.frame_point(point))
 }
+
 fn screen_point(layout: CanvasLayout, point: SourcePoint) -> egui::Pos2 {
     layout.screen_frame_point(layout.composition.source_to_frame(point))
 }
+
 fn handle_at(mask: Option<GradientMask>, layout: CanvasLayout, point: egui::Pos2) -> Handle {
     let Some(GradientMask::Linear { start, end }) = mask else {
         return Handle::New;
@@ -162,6 +177,7 @@ fn handle_at(mask: Option<GradientMask>, layout: CanvasLayout, point: egui::Pos2
         Handle::New
     }
 }
+
 impl LinearDrag {
     fn update(&self, point: egui::Pos2) -> GradientMask {
         let next = source_point(self.layout, point);
@@ -191,6 +207,7 @@ impl LinearDrag {
         }
     }
 }
+
 fn hits(mask: GradientMask, layout: CanvasLayout, point: egui::Pos2) -> bool {
     match mask {
         GradientMask::Linear { .. } => !matches!(handle_at(Some(mask), layout, point), Handle::New),
@@ -213,6 +230,7 @@ impl Editor {
         source.crop = self.crop;
         Ok(source)
     }
+
     fn selected_mask(&self) -> Option<LocalAdjustment> {
         let adjustments::Target::Local(id) = self.adjustment_target() else {
             return None;
@@ -228,6 +246,7 @@ impl Editor {
             .find(|record| record.id == id)
             .map(|record| record.adjustment)
     }
+
     pub(super) fn mask_help(&self) -> Option<&'static str> {
         if !self.adjustments.drawer_open() {
             return None;
@@ -244,6 +263,7 @@ impl Editor {
             })
             .map(Kind::help)
     }
+
     pub(super) fn mask_handles_available(&self) -> bool {
         self.adjustments.drawer_open()
             && !self.adjustments.dragging()
@@ -261,6 +281,7 @@ impl Editor {
             && !self.adjustments.confirming()
             && self.fullscreen.is_none()
     }
+
     pub(super) fn mask_pointer_interest(&self, layout: CanvasLayout, point: egui::Pos2) -> bool {
         self.mask_handles_available()
             && (self.mask_edit.is_some()
@@ -268,12 +289,15 @@ impl Editor {
                     .selected_mask()
                     .is_some_and(|adjustment| hits(adjustment.mask, layout, point)))
     }
+
     pub(super) fn begin_linear_mask(&mut self, id: Option<AdjustmentId>) {
         self.begin_mask(Kind::Linear, id);
     }
+
     pub(super) fn begin_radial_mask(&mut self, id: Option<AdjustmentId>) {
         self.begin_mask(Kind::Radial, id);
     }
+
     fn begin_mask(&mut self, kind: Kind, id: Option<AdjustmentId>) {
         if self.busy
             || self.ready.is_none()
@@ -341,12 +365,14 @@ impl Editor {
             Err(error) => self.status = format!("Mask unavailable: {error}"),
         }
     }
+
     fn mask_is_current(&self, edit: &MaskEdit) -> bool {
         edit.loaded == self.id
             && self.mask_source().ok().as_ref() == Some(&edit.source)
             && self.roll == edit.roll
             && self.calibration() == Some(edit.calibration)
     }
+
     pub(super) fn finish_mask(&mut self, accept: bool) {
         let Some(mut edit) = self.mask_edit.take() else {
             return;
@@ -392,6 +418,7 @@ impl Editor {
             }
         }
     }
+
     pub(super) fn mask_preview_source(&self) -> Option<&Source> {
         if self.fullscreen.is_some() || self.tab != 1 || !self.adjustments.drawer_open() {
             return None;
@@ -401,6 +428,7 @@ impl Editor {
             .filter(|edit| edit.id.is_some() && self.mask_is_current(edit))
             .and_then(|edit| edit.preview.as_ref())
     }
+
     pub(super) fn view_processing(
         &self,
         calibration: Calibration,
@@ -413,6 +441,7 @@ impl Editor {
             self.positive_processing(calibration, roll, photo)
         }
     }
+
     pub(super) fn mask_interaction(
         &mut self,
         ui: &egui::Ui,
@@ -521,6 +550,7 @@ impl Editor {
             ui.ctx().request_repaint();
         }
     }
+
     pub(super) fn paint_mask(&self, ui: &egui::Ui, layout: CanvasLayout) {
         if !self.adjustments.drawer_open()
             || self.fullscreen.is_some()

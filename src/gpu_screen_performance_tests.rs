@@ -15,6 +15,7 @@ struct InputRaster {
     matrix: DMat3,
     gather_ms: f64,
 }
+
 impl InputRaster {
     fn synthetic(size: [u32; 2]) -> Self {
         let start = Instant::now();
@@ -38,6 +39,7 @@ impl InputRaster {
             gather_ms: start.elapsed().as_secs_f64() * 1000.,
         }
     }
+
     #[cfg(feature = "raw")]
     fn raw(scan: &crate::scan::Scan, calibration: Calibration, size: [u32; 2]) -> Self {
         let start = Instant::now();
@@ -80,6 +82,7 @@ struct ScreenTarget {
     group: wgpu::BindGroup,
     target: OutputTarget,
 }
+
 impl ScreenTarget {
     fn new(
         device: &wgpu::Device,
@@ -106,6 +109,7 @@ impl ScreenTarget {
         });
         Self::with_texture(device, renderer, output, texture, target)
     }
+
     fn with_texture(
         device: &wgpu::Device,
         renderer: &GpuRenderer,
@@ -156,6 +160,7 @@ impl ScreenTarget {
             target,
         }
     }
+
     fn encode(&self, renderer: &GpuRenderer, encoder: &mut wgpu::CommandEncoder) {
         let view = self.texture.create_view(&Default::default());
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -175,6 +180,7 @@ impl ScreenTarget {
         pass.set_bind_group(0, &self.group, &[]);
         pass.draw(0..3, 0..1);
     }
+
     fn words(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<u32> {
         let row = (self.texture.width() * 16).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
@@ -223,6 +229,7 @@ struct Timing {
     encode_ms: f64,
     completion_ms: f64,
 }
+
 #[derive(Clone, Copy, Debug)]
 enum Cut {
     None,
@@ -230,6 +237,7 @@ enum Cut {
     Camera,
     BeforeLastLocal,
 }
+
 struct ScreenProbe {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -240,6 +248,7 @@ struct ScreenProbe {
     area: SourceRegion,
     peak_resource_bytes: usize,
 }
+
 impl ScreenProbe {
     async fn new(input: &InputRaster, corrected: bool) -> Self {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -322,6 +331,7 @@ impl ScreenProbe {
             peak_resource_bytes: 0,
         }
     }
+
     fn grade(
         &self,
         snapshot: PhotoGradeSnapshot,
@@ -336,6 +346,7 @@ impl ScreenProbe {
             self.area,
         )
     }
+
     fn run(
         &self,
         grade: Option<&GpuPhotoGrade>,
@@ -380,6 +391,7 @@ impl ScreenProbe {
             completion_ms: start.elapsed().as_secs_f64() * 1000.,
         }
     }
+
     fn sample_memory(&mut self, phase: &str) {
         let bytes = allocated_resource_bytes(&self.device).unwrap();
         self.peak_resource_bytes = self.peak_resource_bytes.max(bytes);
@@ -392,6 +404,7 @@ impl ScreenProbe {
                 .as_nanos()
         );
     }
+
     fn build(&self, grade: &GpuPhotoGrade, cut: Cut) {
         match cut {
             Cut::Log => {
@@ -412,6 +425,7 @@ impl ScreenProbe {
             Cut::None => {}
         }
     }
+
     fn suffix(&self, grade: &GpuPhotoGrade, cut: Cut) -> Option<GpuPhotoGrade> {
         if matches!(cut, Cut::BeforeLastLocal) {
             Some(
@@ -429,6 +443,7 @@ impl ScreenProbe {
             None
         }
     }
+
     fn steps(cut: Cut) -> Option<&'static [usize]> {
         match cut {
             Cut::None => None,

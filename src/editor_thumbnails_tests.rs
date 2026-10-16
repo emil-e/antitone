@@ -1,4 +1,5 @@
 use super::*;
+
 pub(super) fn fixture() -> Document {
     let directory = Arc::new(tempfile::tempdir().unwrap());
     let mut document = Document::default();
@@ -30,6 +31,7 @@ pub(super) fn fixture() -> Document {
     }
     document
 }
+
 pub(super) fn key(document: &Document, id: SourceId) -> ImageKey {
     ImageKey {
         source: SourceKey::new(
@@ -44,6 +46,7 @@ pub(super) fn key(document: &Document, id: SourceId) -> ImageKey {
             .map(|f| FieldKey(f.map.clone())),
     }
 }
+
 #[test]
 fn transient_reference_with_the_same_development_cannot_seed_the_working_photo() {
     let (mut editor, _, _) = super::super::tests::fixture();
@@ -163,6 +166,7 @@ fn cache_is_bounded_lru_and_replacement_does_not_grow_it() {
     assert_eq!(cache.get(&0), Some(&42));
     assert_eq!(cache.entries.len(), CAPACITY);
 }
+
 #[test]
 fn source_cache_key_excludes_grading_but_includes_locator_revision_matrix_wb_and_id() {
     let mut document = fixture();
@@ -201,6 +205,7 @@ fn source_cache_key_excludes_grading_but_includes_locator_revision_matrix_wb_and
     candidate.target = OutputTarget::Srgb;
     assert_ne!(candidate, original);
 }
+
 #[test]
 fn correction_changes_image_identity_without_invalidating_unconverted_raw_proxies() {
     let mut document = fixture();
@@ -229,6 +234,7 @@ fn correction_changes_image_identity_without_invalidating_unconverted_raw_proxie
     document.project.flat_field = None;
     assert_eq!(key(&document, id), plain);
 }
+
 #[test]
 fn cancelled_gpu_ticket_releases_admission_and_stale_results_do_not_install() {
     let document = fixture();
@@ -284,6 +290,7 @@ fn cancelled_gpu_ticket_releases_admission_and_stale_results_do_not_install() {
     );
     assert!(receiver.try_recv().is_ok());
 }
+
 #[test]
 fn changed_document_identity_rejects_result_and_worker_disconnection_clears_pending() {
     let mut document = fixture();
@@ -325,6 +332,7 @@ fn changed_document_identity_rejects_result_and_worker_disconnection_clears_pend
     assert!(thumbnails.commands.is_none());
     assert!(thumbnails.cache.get(&key(&document, id)).unwrap().is_err());
 }
+
 #[test]
 fn filmstrip_resize_and_selection_preserve_project_state_and_loading_placeholders() {
     let (commands, receiver) = mpsc::channel();
@@ -428,6 +436,7 @@ fn filmstrip_resize_and_selection_preserve_project_state_and_loading_placeholder
     assert!((editor.preferences.filmstrip_height - resized.height()).abs() < 1.);
     assert_eq!(editor.document.project, before);
 }
+
 #[test]
 fn restored_filmstrip_height_survives_window_constraints_and_a_fresh_context() {
     let (mut editor, _send, _receiver) = crate::editor::tests::fixture();
@@ -466,8 +475,7 @@ fn restored_filmstrip_height_survives_window_constraints_and_a_fresh_context() {
 }
 
 #[test]
-fn thumbnail_parameters_follow_actual_roll_and_each_photo_without_inspection_gain_or_source_redecode()
- {
+fn thumbnail_grades_follow_roll_and_photo_without_inspection_gain_or_redecode() {
     let (commands, _receiver) = mpsc::channel();
     let (_send, messages) = mpsc::channel();
     let mut editor = Editor::state(
@@ -1067,7 +1075,7 @@ fn hidden_filmstrip_keeps_cpu_only_eager_completion_and_pressure_gates() {
     let mut output = context.run_ui(Default::default(), |ui| editor.hidden_filmstrip(ui));
     output.textures_delta.clear();
     assert!(jobs.try_recv().is_err());
-    editor.thumbnails.attempted.clear();
+    editor.thumbnails.attempted_sources.clear();
     for pressure in [memory::Pressure::Warning, memory::Pressure::Critical] {
         editor.thumbnails.pressure_override = Some(pressure);
         let mut output = context.run_ui(Default::default(), |ui| editor.hidden_filmstrip(ui));

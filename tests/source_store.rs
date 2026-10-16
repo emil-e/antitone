@@ -17,6 +17,7 @@ struct Input {
     development: Development,
     key: SourceKey,
 }
+
 impl Input {
     fn new() -> Self {
         let file = fixture::bayer_dng();
@@ -49,6 +50,7 @@ impl Input {
             key,
         }
     }
+
     fn source(&self) -> Arc<DevelopedSource> {
         Scan::open(self.file.path(), Some(WB))
             .unwrap()

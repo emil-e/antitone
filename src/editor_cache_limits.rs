@@ -10,6 +10,7 @@ pub(super) struct CacheLimits {
     pub cpu_bytes: u64,
     pub gpu_bytes: u64,
 }
+
 impl CacheLimits {
     pub fn valid(self) -> bool {
         [self.cpu_bytes, self.gpu_bytes]
@@ -24,11 +25,13 @@ pub(super) enum GpuMemory {
     Discrete { dedicated_bytes: Option<u64> },
     Unknown,
 }
+
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Hardware {
     pub ram_bytes: Option<u64>,
     pub gpu: GpuMemory,
 }
+
 impl Hardware {
     /// Policy fractions select defaults only; none of these facts estimates live headroom.
     pub fn defaults(self) -> CacheLimits {
@@ -81,6 +84,7 @@ impl Hardware {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn starting_defaults_distinguish_shared_ram_dedicated_vram_and_unknown_capacity() {
         let limits = Hardware {
@@ -142,6 +146,7 @@ mod tests {
             );
         }
     }
+
     #[test]
     fn exact_mib_units_allow_zero_without_inventing_hardware_minima() {
         assert!(

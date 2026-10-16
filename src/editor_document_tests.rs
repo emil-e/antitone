@@ -81,6 +81,7 @@ fn fixture(directory: &Path) -> Document {
     }
     document
 }
+
 #[test]
 fn authored_dng_import_selects_as_shot_wb_and_open_preserves_saved_gains() {
     let raw_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
@@ -183,6 +184,7 @@ fn stable_identity_keeps_photo_edits_independent_of_order_and_locator() {
     );
     assert_eq!(document.project.order, [two, one]);
 }
+
 #[test]
 fn saved_snapshot_and_save_as_preserve_exact_settings_and_relative_locators() {
     let directory = tempfile::tempdir().unwrap();
@@ -230,6 +232,7 @@ fn saved_snapshot_and_save_as_preserve_exact_settings_and_relative_locators() {
         b"fixture source bytes"
     );
 }
+
 #[test]
 fn input_source_collision_guard_rejects_even_a_json_named_raw() {
     let directory = tempfile::tempdir().unwrap();
@@ -243,6 +246,7 @@ fn input_source_collision_guard_rejects_even_a_json_named_raw() {
     assert!(error.to_string().contains("input RAW"));
     assert_eq!(std::fs::read(&path).unwrap(), before);
 }
+
 #[cfg(unix)]
 #[test]
 fn relative_save_as_uses_physical_directory_bases_without_requiring_sources_to_exist() {
@@ -270,6 +274,7 @@ fn relative_save_as_uses_physical_directory_bases_without_requiring_sources_to_e
     );
     assert!(saved.source_path(id).unwrap().ends_with("../one.ARW"));
 }
+
 #[test]
 fn open_empty_document_checks_runtime_and_retains_unavailable_nonfilmstrip_records() {
     let directory = tempfile::tempdir().unwrap();

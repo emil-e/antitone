@@ -1,4 +1,5 @@
 use super::*;
+
 #[test]
 fn authored_opening_and_picture_keep_distinct_full_footprint_membership() {
     let active = SourceRegion {
@@ -62,6 +63,7 @@ fn authored_opening_and_picture_keep_distinct_full_footprint_membership() {
     ));
     areas.validate(active).unwrap();
 }
+
 #[test]
 fn authored_geometry_replaces_automatic_masks_and_half_planes() {
     let mut a = Areas {
@@ -85,6 +87,7 @@ fn authored_geometry_replaces_automatic_masks_and_half_planes() {
     assert!(a.material.is_none() && a.picture_constraints.is_empty());
     assert!(a.opening_edited && a.picture_edited);
 }
+
 #[test]
 fn material_rejects_malformed_grids_and_checks_interior_cells_not_just_corners() {
     let mut m = Material {
@@ -142,6 +145,7 @@ fn retained_rectangle_baseline_parity() {
         serde_json::from_slice(&std::fs::read(root.join("roll-input/rolls.json")).unwrap())
             .unwrap();
     let filter = std::env::var("ANTITONE_REGION_ROLL").ok();
+
     fn pixels(path: &Path) -> Vec<[u16; 3]> {
         std::fs::read(path)
             .unwrap()

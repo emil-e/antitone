@@ -38,6 +38,10 @@ Presentation receives state and returns actions; domain semantics and transactio
 
 Verify both the component and its composed feature.
 
+## Keep source readable
+
+Follow the neighboring code: separate declarations and logical phases with blank lines, name values by role outside conventional mathematics, and expand dense control flow or macros even when the formatter accepts them. Comments explain contracts and non-obvious constraints, not obvious steps. Inspect complete touched functions and run `python3 scripts/check-format.py` before finishing; formatter success is not a readability review.
+
 ## Keep documentation useful
 
 Write for prospective contributors: explain the problem, mental model, rationale and important guarantees. Leave implementation inventories and exhaustive detail to code and tests.

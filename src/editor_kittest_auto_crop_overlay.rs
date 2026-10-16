@@ -34,6 +34,7 @@ pub(super) fn wait_context(h: &mut Harness<'_, Editor>) {
         ),
     }
 }
+
 fn pointer(h: &mut Harness<'_, Editor>, at: egui::Pos2, pressed: bool) {
     h.hover_at(at);
     h.event(egui::Event::PointerButton {
@@ -44,6 +45,7 @@ fn pointer(h: &mut Harness<'_, Editor>, at: egui::Pos2, pressed: bool) {
     });
     h.step();
 }
+
 #[test]
 fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only_on_apply() {
     for (name, size, width) in [
@@ -189,6 +191,7 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
         assert_eq!(h.state().document.project, expected);
     }
 }
+
 #[test]
 fn numeric_popup_disabled_and_hidden_artwork_input_cannot_accidentally_accept_or_edit_a_draft() {
     let (mut h, _directory) = setup();

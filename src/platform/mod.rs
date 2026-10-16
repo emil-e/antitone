@@ -20,6 +20,7 @@ pub fn device_limits(supported: wgpu::Limits) -> wgpu::Limits {
 
 #[cfg(test)]
 mod tests {
+
     #[test]
     fn device_limits_raise_only_view_storage_capacities_to_supported_values() {
         for (binding, buffer) in [

@@ -15,6 +15,7 @@ async fn device() -> wgpu::Device {
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
     adapter.request_device(&Default::default()).await.unwrap().0
 }
+
 fn locals() -> LocalAdjustments {
     let mut locals = LocalAdjustments::default();
     for (name, mask, photo) in [
@@ -61,6 +62,7 @@ fn locals() -> LocalAdjustments {
     locals.next_id = 30;
     locals
 }
+
 fn unsupported_locals() -> LocalAdjustments {
     let mut locals = LocalAdjustments::default();
     let base = self::locals().adjustments[0].adjustment;
@@ -83,6 +85,7 @@ fn unsupported_locals() -> LocalAdjustments {
     }
     locals
 }
+
 fn calibrated(directory: &Path) -> Document {
     let mut document = fixture(directory);
     document.project.roll = RollSettings::new_grade();

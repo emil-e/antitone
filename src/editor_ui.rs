@@ -413,6 +413,7 @@ impl ToolIdentity<'_> {
     fn icon(self, ui: &mut Ui, busy: bool) {
         self.icon_warned(ui, busy, None);
     }
+
     fn icon_warned(self, ui: &mut Ui, busy: bool, warning: Option<&str>) {
         let (rect, response) =
             ui.allocate_exact_size(Vec2::splat(TOOL_ICON_SIZE), egui::Sense::hover());
@@ -481,6 +482,7 @@ fn tool_identity_width(ui: &Ui, identity: ToolIdentity<'_>) -> f32 {
 fn paint_tool_identity(ui: &mut Ui, identity: ToolIdentity<'_>, busy: bool) {
     paint_tool_identity_warned(ui, identity, busy, None);
 }
+
 fn paint_tool_identity_warned(
     ui: &mut Ui,
     identity: ToolIdentity<'_>,

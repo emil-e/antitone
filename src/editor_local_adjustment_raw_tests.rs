@@ -74,10 +74,12 @@ fn locals(area: SourceRegion, count: usize, photographic: bool) -> Vec<LocalAdju
         })
         .collect()
 }
+
 fn median(mut times: Vec<f64>) -> f64 {
     times.sort_by(f64::total_cmp);
     times[times.len() / 2]
 }
+
 fn completion(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -95,6 +97,7 @@ fn completion(
         .unwrap();
     start.elapsed().as_secs_f64() * 1000.
 }
+
 fn read_buffer(device: &wgpu::Device, queue: &wgpu::Queue, output: &wgpu::Buffer) -> Vec<Vec4> {
     let read = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
@@ -112,6 +115,7 @@ fn read_buffer(device: &wgpu::Device, queue: &wgpu::Queue, output: &wgpu::Buffer
         output.size() as usize,
     )
 }
+
 fn read_image(device: &wgpu::Device, queue: &wgpu::Queue, image: &GpuImage) -> Vec<Vec4> {
     let texture = &image.linear;
     let row = (texture.width() * 16).div_ceil(256) * 256;
@@ -137,6 +141,7 @@ fn read_image(device: &wgpu::Device, queue: &wgpu::Queue, image: &GpuImage) -> V
     queue.submit([encoder.finish()]);
     mapped_pixels(device, &read, row as usize, texture.width() as usize * 16)
 }
+
 fn mapped_pixels(
     device: &wgpu::Device,
     read: &wgpu::Buffer,

@@ -66,6 +66,7 @@ impl DevelopedSource {
             input_floor: crate::processing::CAMERA_INPUT_FLOOR,
         })
     }
+
     /// Explicit native allocations plus this Rust payload/string capacity, charged once.
     /// Excludes SDK-private/stdlib heap, Arc/store bookkeeping and allocator-held VM;
     /// this is not total native heap or process footprint. None disables cache admission.
@@ -75,30 +76,39 @@ impl DevelopedSource {
             .checked_add(size_of::<Self>() as u64)?
             .checked_add(self.camera_model.capacity() as u64)
     }
+
     pub fn metadata(&self) -> Metadata {
         self.raw.metadata()
     }
+
     pub fn camera_to_ap1(&self) -> DMat3 {
         self.camera_to_ap1
     }
+
     pub fn camera_model(&self) -> &str {
         &self.camera_model
     }
+
     pub fn area(&self) -> Rect {
         self.area
     }
+
     pub fn fixed_wb(&self) -> [f64; 4] {
         self.fixed_wb
     }
+
     pub fn input_floor(&self) -> f64 {
         self.input_floor
     }
+
     pub fn camera_image(&self) -> Result<Developed<'_>> {
         self.raw.camera_image()
     }
+
     pub fn sensor_diagnostics(&self) -> Result<SensorDiagnostics> {
         self.raw.sensor_diagnostics()
     }
+
     pub fn region_sensor_diagnostics(&self, area: Rect) -> Result<SensorDiagnostics> {
         self.raw.region_sensor_diagnostics(area)
     }
@@ -112,8 +122,10 @@ pub struct CameraProxy {
     pub(crate) pixels: Vec<[u16; 4]>,
     pub(crate) matrix: DMat3,
 }
+
 impl CameraProxy {
     pub const MAX_EDGE: u32 = 256;
+
     pub fn from_scan(scan: &Scan) -> Result<Self> {
         let (width, height, pixels) = scan.preview_source(Self::MAX_EDGE)?;
         Ok(Self {
@@ -123,9 +135,11 @@ impl CameraProxy {
             matrix: scan.camera_to_ap1,
         })
     }
+
     pub fn dimensions(&self) -> [u32; 2] {
         [self.width, self.height]
     }
+
     pub fn retained_bytes(&self) -> u64 {
         (self.pixels.capacity() * size_of::<[u16; 4]>() + size_of::<Self>()) as u64
     }
@@ -146,6 +160,7 @@ impl Scan {
     pub fn open(path: &Path, fixed_wb: Option<[f64; 4]>) -> Result<Self> {
         Self::open_with_priority(path, fixed_wb, crate::raw::DevelopmentPriority::Foreground)
     }
+
     pub fn open_with_priority(
         path: &Path,
         fixed_wb: Option<[f64; 4]>,
@@ -155,6 +170,7 @@ impl Scan {
         raw.set_development_priority(priority);
         Self::from_raw(raw, fixed_wb)
     }
+
     pub(crate) fn from_raw(raw: RawFile, fixed_wb: Option<[f64; 4]>) -> Result<Self> {
         Ok(Self::from_source(Arc::new(DevelopedSource::from_raw(
             raw, fixed_wb,
@@ -183,6 +199,7 @@ impl Scan {
         let image = self.source.camera_image()?;
         Ok((image.width, image.height))
     }
+
     pub fn set_flat_field(&mut self, field: Option<Arc<FlatField>>) -> Result<()> {
         let floor = if let Some(field) = &field {
             let [x, y, width, height] = field.area();
@@ -314,6 +331,7 @@ impl Scan {
     pub fn flat_field(&self) -> Option<&Arc<FlatField>> {
         self.flat_field.as_ref()
     }
+
     pub fn effective_floor(&self) -> f64 {
         self.corrected_floor
     }
@@ -533,6 +551,7 @@ impl Scan {
         }
         Ok(())
     }
+
     pub fn reference_coverage(&mut self, coverage: Coverage) -> Result<DVec3> {
         if let Some(region) = coverage.exact_rectangle(self.area) {
             return self.reference(region);
@@ -550,6 +569,7 @@ impl Scan {
         }
         Ok(mean)
     }
+
     fn patch_coverage(&mut self, coverage: Coverage) -> Result<Vec<(DVec3, f64)>> {
         self.checked_coverage(coverage)?;
         coverage
@@ -565,6 +585,7 @@ impl Scan {
             })
             .collect()
     }
+
     pub fn roll_neutral_coverage(
         &mut self,
         coverage: Coverage,
@@ -578,6 +599,7 @@ impl Scan {
         let matrix = self.camera_to_ap1;
         sampling::roll_neutral_weighted(calibration, roll, &self.patch_coverage(coverage)?, matrix)
     }
+
     pub fn photo_neutral_coverage(
         &mut self,
         coverage: Coverage,

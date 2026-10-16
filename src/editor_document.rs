@@ -11,16 +11,19 @@ use std::{
 };
 
 type Result<T> = std::result::Result<T, Error>;
+
 fn failure(error: impl std::fmt::Display) -> Error {
     Error::Project(error.to_string())
 }
 
 struct CacheScope(Arc<SourceStore>);
+
 impl Drop for CacheScope {
     fn drop(&mut self) {
         self.0.close();
     }
 }
+
 #[derive(Clone)]
 pub(super) struct Document {
     pub project: Project,
@@ -31,6 +34,7 @@ pub(super) struct Document {
     #[cfg(test)]
     pub(super) fixture_directory: Option<Arc<tempfile::TempDir>>,
 }
+
 impl Default for Document {
     fn default() -> Self {
         let project = Project::default();
@@ -45,17 +49,21 @@ impl Default for Document {
         }
     }
 }
+
 impl Document {
     pub fn cache(&self) -> &Arc<SourceStore> {
         &self.cache.0
     }
+
     pub fn parent_cache(&self) -> Option<&Arc<SourceStore>> {
         self.parent_cache.as_ref()
     }
+
     pub fn fork_cache(&mut self) {
         self.parent_cache = Some(self.cache.0.clone());
         self.cache = Arc::new(CacheScope(Arc::new(SourceStore::new(0))));
     }
+
     pub fn accept_cache(&mut self, previous: &Arc<SourceStore>) {
         if let Some(parent) = self.parent_cache.take()
             && Arc::ptr_eq(&parent, previous)
@@ -78,16 +86,20 @@ impl Document {
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
+
             parent.transfer_to(&self.cache.0, &allowed);
         }
     }
+
     pub fn dirty(&self) -> bool {
         self.project != self.saved
     }
+
     pub fn source_path(&self, id: SourceId) -> Result<PathBuf> {
         self.project
             .resolve_path(id, self.path.as_deref().unwrap_or(Path::new(".")))
     }
+
     pub fn find_source(&self, path: &Path) -> Option<SourceId> {
         self.project.sources.iter().find_map(|source| {
             self.source_path(source.id)
@@ -96,14 +108,17 @@ impl Document {
                 .map(|_| source.id)
         })
     }
+
     #[cfg(test)]
     pub fn validate(&self) -> Result<()> {
         self.validate_with_device(None)
     }
+
     /// Preflight the complete document without publishing grades or retaining offscreen images.
     pub fn validate_for_device(&self, device: &wgpu::Device) -> Result<()> {
         self.validate_with_device(Some(device))
     }
+
     pub(super) fn validate_with_device(&self, device: Option<&wgpu::Device>) -> Result<()> {
         self.project.require_runtime(&crate::raw::version())?;
         let calibration = self.project.processing_calibration()?;
@@ -138,10 +153,12 @@ impl Document {
         }
         Ok(())
     }
+
     #[cfg(test)]
     pub fn open(path: &Path) -> Result<Self> {
         Self::open_with_progress(path, None, |_, _| {})
     }
+
     pub fn open_with_progress(
         path: &Path,
         device: Option<&wgpu::Device>,
@@ -169,10 +186,12 @@ impl Document {
         }
         Ok(document)
     }
+
     #[cfg(test)]
     pub fn import(&mut self, paths: &[PathBuf]) -> Result<()> {
         self.import_with_progress(paths, None, |_, _| {})
     }
+
     pub fn import_with_progress(
         &mut self,
         paths: &[PathBuf],
@@ -182,7 +201,7 @@ impl Document {
         let started = std::time::Instant::now();
         progress(0, paths.len());
         for (index, path) in paths.iter().enumerate() {
-            let (source, wb) = read_source(path)?;
+            let (source, as_shot_wb) = read_source(path)?;
             if let Some(id) = self.find_source(&source.path) {
                 verify_source(self.project.source(id)?, &source)?;
                 if !self.project.order.contains(&id) {
@@ -190,10 +209,11 @@ impl Document {
                 }
                 self.project.source_mut(id)?.reference_only = false;
             } else {
-                self.register(source, Development::new(crate::raw::version(), wb))?;
+                self.register(source, Development::new(crate::raw::version(), as_shot_wb))?;
             }
             progress(index + 1, paths.len());
         }
+
         self.validate_with_device(device)?;
         println!(
             "raw_import sources={} seconds={:.6}",
@@ -202,6 +222,7 @@ impl Document {
         );
         Ok(())
     }
+
     pub fn register(&mut self, source: Source, development: Development) -> Result<SourceId> {
         if self.project.development.is_none() {
             self.project.development = Some(development);
@@ -211,6 +232,7 @@ impl Document {
         }
         self.project.add_source(source)
     }
+
     pub fn register_reference(
         &mut self,
         mut source: Source,
@@ -225,10 +247,12 @@ impl Document {
         self.project.remove_from_filmstrip(id)?;
         Ok(id)
     }
+
     #[cfg(test)]
     pub fn save(&self, path: &Path, policy: Save) -> Result<Self> {
         self.save_with_device(path, policy, None)
     }
+
     pub fn save_with_device(
         &self,
         path: &Path,
@@ -276,6 +300,7 @@ pub(super) fn absolute(path: &Path) -> Result<PathBuf> {
         std::env::current_dir().map_err(failure)?.join(path)
     })
 }
+
 pub(super) fn same_path(a: &Path, b: &Path) -> bool {
     if a == b {
         return true;
@@ -288,6 +313,7 @@ pub(super) fn same_path(a: &Path, b: &Path) -> bool {
     // Missing source records are valid; canonical paths only supplement locator equality.
     matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b)
 }
+
 fn rebase_relative(path: &Path, old_parent: &Path, new_parent: &Path) -> Result<PathBuf> {
     let directory = |path: &Path| match path.canonicalize() {
         Ok(path) => Ok(path),
@@ -315,6 +341,7 @@ fn rebase_relative(path: &Path, old_parent: &Path, new_parent: &Path) -> Result<
     }
     Ok(relative)
 }
+
 fn metadata_development(metadata: &Metadata) -> Result<SourceDevelopment> {
     let matrix = metadata.camera_to_ap1()?;
     let area = metadata.image_area()?;
@@ -326,10 +353,12 @@ fn metadata_development(metadata: &Metadata) -> Result<SourceDevelopment> {
         input_floor: crate::processing::CAMERA_INPUT_FLOOR,
     })
 }
+
 pub(super) fn read_source(path: &Path) -> Result<(Source, [f64; 4])> {
     let (source, raw) = open_source(path)?;
     Ok((source, raw.metadata.as_shot_wb()))
 }
+
 pub(super) fn open_source(path: &Path) -> Result<(Source, RawFile)> {
     let path = absolute(path)?;
     let started = std::time::Instant::now();
@@ -341,6 +370,7 @@ pub(super) fn open_source(path: &Path) -> Result<(Source, RawFile)> {
     );
     Ok((source_metadata(&path, &raw.metadata)?, raw))
 }
+
 pub(super) fn source_metadata(path: &Path, metadata: &Metadata) -> Result<Source> {
     Ok(Source {
         id: SourceId(0),
@@ -353,6 +383,7 @@ pub(super) fn source_metadata(path: &Path, metadata: &Metadata) -> Result<Source
         crop: None,
     })
 }
+
 pub(super) fn verify_source(expected: &Source, actual: &Source) -> Result<()> {
     if expected.development != actual.development {
         return Err(failure(format!(
@@ -362,6 +393,7 @@ pub(super) fn verify_source(expected: &Source, actual: &Source) -> Result<()> {
     }
     Ok(())
 }
+
 pub(super) fn verify_scan(source: &Source, scan: &Scan) -> Result<()> {
     let (width, height) = scan.dimensions()?;
     let area = scan.area;

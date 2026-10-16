@@ -26,6 +26,7 @@ pub struct ImageSize {
     pub width: u32,
     pub height: u32,
 }
+
 impl ImageSize {
     fn count(self) -> Result<usize> {
         if self.width == 0
@@ -40,11 +41,13 @@ impl ImageSize {
             .ok_or(Error::NumericalOverflow)
     }
 }
+
 #[derive(Debug, Clone, Copy)]
 pub enum ExrPrecision {
     Half,
     Full,
 }
+
 #[derive(Debug, Clone, Copy, Default)]
 pub enum Overwrite {
     #[default]
@@ -58,6 +61,7 @@ pub struct ProcessingMetadata {
     response: Response,
     locals: bool,
 }
+
 impl ProcessingMetadata {
     pub fn with_grade(
         response: Response,
@@ -69,6 +73,7 @@ impl ProcessingMetadata {
         }
     }
 }
+
 impl From<Response> for ProcessingMetadata {
     fn from(response: Response) -> Self {
         Self {
@@ -79,12 +84,15 @@ impl From<Response> for ProcessingMetadata {
 }
 
 struct Icc(&'static [u8]);
+
 impl tiff::encoder::TiffValue for Icc {
     const BYTE_LEN: u8 = 1;
     const FIELD_TYPE: tiff::tags::Type = tiff::tags::Type::UNDEFINED;
+
     fn count(&self) -> usize {
         self.0.len()
     }
+
     fn data(&self) -> std::borrow::Cow<'_, [u8]> {
         std::borrow::Cow::Borrowed(self.0)
     }
@@ -126,6 +134,7 @@ fn exclusive_rename(from: &Path, to: &Path) -> Result<()> {
     }
     Ok(())
 }
+
 #[cfg(not(target_os = "macos"))]
 fn exclusive_rename(_from: &Path, _to: &Path) -> Result<()> {
     Err(Error::Export(
@@ -247,6 +256,7 @@ pub fn exr_composed(
 
 // Square units avoid orientation-dependent repeated work without a large fixed workspace.
 pub(crate) const BLOCK: [u32; 2] = [128, 128];
+
 fn blocks(size: ImageSize) -> impl Iterator<Item = ([u32; 2], [u32; 2])> {
     (0..size.height)
         .step_by(BLOCK[1] as usize)
@@ -476,9 +486,9 @@ pub(crate) fn exr_blocks(
                         FlatSamples::F16(values) => {
                             if value.abs() > 65504.0 {
                                 return Err(Error::Export(
-                                "AP0 output exceeds finite half-float range; choose full-float EXR"
-                                    .into(),
-                            ));
+                                    "AP0 output exceeds finite half-float range; choose full-float EXR"
+                                        .into(),
+                                ));
                             }
                             values[index] = half::f16::from_f64(value);
                         }

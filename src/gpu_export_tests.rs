@@ -16,6 +16,7 @@ pub(super) fn context() -> (wgpu::Device, wgpu::Queue, Arc<GpuRenderer>) {
         (device, queue, renderer)
     })
 }
+
 fn codes(point: [u32; 2]) -> [u16; 4] {
     let [x, y] = point;
     match (x + y) % 13 {
@@ -29,6 +30,7 @@ fn codes(point: [u32; 2]) -> [u16; 4] {
         ],
     }
 }
+
 pub(super) fn tile(origin: [u32; 2], size: [u32; 2]) -> Vec<[u16; 4]> {
     (0..size[0] * size[1])
         .map(|i| codes([origin[0] + i % size[0], origin[1] + i / size[0]]))
@@ -362,11 +364,14 @@ fn cached_origins_are_visited_before_misses_without_changing_pixel_reduction() {
         hit: Option<[u32; 2]>,
         order: Vec<[u32; 2]>,
     }
+
     impl TileReader for Read {
         type Pixels = Vec<[f64; 4]>;
+
         fn cached(&self, origin: [u32; 2]) -> bool {
             self.hit == Some(origin)
         }
+
         fn read(&mut self, origin: [u32; 2]) -> Result<Self::Pixels, Error> {
             self.order.push(origin);
             Ok(tile(origin, [128, 128])

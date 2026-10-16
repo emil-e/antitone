@@ -6,6 +6,7 @@ mod tests;
 
 #[derive(Clone)]
 pub(crate) struct GpuProxy(Arc<ProxyState>);
+
 struct ProxyState {
     device: wgpu::Device,
     renderer: Arc<GpuRenderer>,
@@ -13,6 +14,7 @@ struct ProxyState {
     size: [u32; 2],
     active: std::sync::Mutex<Option<(OutputTarget, Arc<GpuImage>)>>,
 }
+
 impl GpuProxy {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
@@ -39,6 +41,7 @@ impl GpuProxy {
             active: Default::default(),
         })))
     }
+
     pub(crate) fn image(&self, target: OutputTarget) -> Result<Arc<GpuImage>, Error> {
         let mut active = self.0.active.lock().unwrap();
         if let Some((current, image)) = &*active
@@ -60,9 +63,11 @@ impl GpuProxy {
         *active = Some((target, image.clone()));
         Ok(image)
     }
+
     pub(crate) fn release_output(&self) {
         self.0.active.lock().unwrap().take();
     }
+
     pub(crate) fn byte_len(&self) -> u64 {
         let active = self.0.active.lock().unwrap();
         self.0.source.byte_len()
@@ -71,10 +76,12 @@ impl GpuProxy {
                     + u64::from(self.0.size[0]) * u64::from(self.0.size[1]) * 16
             })
     }
+
     #[cfg(all(test, feature = "ui-tests"))]
     pub(crate) fn output_retained(&self) -> bool {
         self.0.active.lock().unwrap().is_some()
     }
+
     #[cfg(all(test, feature = "ui-tests"))]
     pub(crate) fn same_source(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)

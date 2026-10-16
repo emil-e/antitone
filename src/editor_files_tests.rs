@@ -47,6 +47,7 @@ fn ui_frame(
         })
         .collect()
 }
+
 fn click(editor: &mut Editor, context: &egui::Context, point: egui::Pos2) {
     for pressed in [true, false] {
         ui_frame(
@@ -64,6 +65,7 @@ fn click(editor: &mut Editor, context: &egui::Context, point: egui::Pos2) {
         );
     }
 }
+
 #[test]
 fn menu_row_and_cancel_discard_dialog_dispatch_use_the_existing_header() {
     let (mut editor, _send, receiver) = fixture();
@@ -104,6 +106,7 @@ fn menu_row_and_cancel_discard_dialog_dispatch_use_the_existing_header() {
     };
     assert!(matches!(*work, DocumentWork::New));
 }
+
 #[test]
 fn save_transition_prompts_are_neutral_and_make_edit_loss_conditional_on_not_saving() {
     for (transition, explanation) in [
@@ -210,6 +213,7 @@ fn command_save_commits_pending_numeric_text_before_snapshot() {
         7.123456789
     );
 }
+
 #[test]
 fn viewport_close_is_vetoed_until_the_dirty_document_decision() {
     let (mut editor, _send, receiver) = fixture();
@@ -253,6 +257,7 @@ fn viewport_close_is_vetoed_until_the_dirty_document_decision() {
     assert!(!editor.allow_close);
     assert!(receiver.try_recv().is_err());
 }
+
 #[test]
 fn export_cannot_replace_the_open_project_document() {
     let (mut editor, _send, receiver) = fixture();
@@ -273,6 +278,7 @@ fn export_cannot_replace_the_open_project_document() {
     assert!(!editor.busy);
     assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Export);
 }
+
 #[test]
 fn document_and_export_decisions_ignore_outside_clicks_and_cancel_without_dispatch() {
     use super::super::presentation::tests::key;
@@ -486,6 +492,7 @@ fn fixture() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
     editor.sync_document();
     (editor, send, receiver)
 }
+
 #[test]
 fn orientation_is_source_owned_and_restored_without_changing_grade_on_load() {
     let (mut editor, _send, receiver) = fixture();
@@ -547,6 +554,7 @@ fn orientation_is_source_owned_and_restored_without_changing_grade_on_load() {
     assert_eq!(editor.roll_orientation, editor.document.project.orientation);
     assert!(matches!(receiver.try_recv().unwrap(), Command::Load(..)));
 }
+
 #[test]
 fn failed_and_stale_document_results_preserve_state_and_active_request() {
     let (mut editor, send, receiver) = fixture();
@@ -592,6 +600,7 @@ fn failed_and_stale_document_results_preserve_state_and_active_request() {
     assert_eq!(editor.photo.exposure, 7.123456789012345);
     assert!(editor.document.dirty());
 }
+
 #[test]
 fn save_failure_preserves_dirty_state_and_does_not_continue_transition() {
     let (mut editor, send, receiver) = fixture();
@@ -618,6 +627,7 @@ fn save_failure_preserves_dirty_state_and_does_not_continue_transition() {
     );
     assert!(receiver.try_recv().is_err());
 }
+
 #[test]
 fn save_snapshot_flushes_current_photo_and_retains_other_source_settings() {
     let (mut editor, _send, receiver) = fixture();
@@ -653,6 +663,7 @@ fn save_snapshot_flushes_current_photo_and_retains_other_source_settings() {
         editor.roll.response.processing_model()
     );
 }
+
 #[test]
 fn new_resets_development_and_rejects_previous_document_messages() {
     let (mut editor, send, _receiver) = fixture();
@@ -687,6 +698,7 @@ fn new_resets_development_and_rejects_previous_document_messages() {
     assert!(editor.dmin.is_none());
     assert!(editor.id > previous);
 }
+
 #[test]
 fn navigation_and_view_state_do_not_dirty_a_saved_document() {
     let (mut editor, _send, receiver) = fixture();
@@ -727,6 +739,7 @@ fn navigation_and_view_state_do_not_dirty_a_saved_document() {
     assert_eq!(editor.document.project, before);
     assert!(!editor.document.dirty());
 }
+
 #[test]
 fn dirty_open_new_and_close_are_guarded_without_dispatching_or_allowing_close() {
     let (mut editor, _send, receiver) = fixture();
@@ -743,6 +756,7 @@ fn dirty_open_new_and_close_are_guarded_without_dispatching_or_allowing_close() 
         editor.transition = None;
     }
 }
+
 #[test]
 fn command_save_uses_the_current_document_after_control_processing() {
     let (mut editor, _send, receiver) = fixture();

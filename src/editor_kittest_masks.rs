@@ -15,10 +15,12 @@ fn click(harness: &mut Harness<'_, Editor>, label: &str) {
     harness.step();
     harness.try_run_realtime().unwrap();
 }
+
 fn arm(harness: &mut Harness<'_, Editor>, radial: bool) {
     adjustments::open_drawer(harness);
     click(harness, if radial { "Add radial" } else { "Add linear" });
 }
+
 fn accepted_mask(editor: &Editor) -> GradientMask {
     editor
         .document
@@ -32,6 +34,7 @@ fn accepted_mask(editor: &Editor) -> GradientMask {
         .adjustment
         .mask
 }
+
 pub(super) fn pointer(harness: &mut Harness<'_, Editor>, point: egui::Pos2, pressed: bool) {
     harness.hover_at(point);
     harness.event(egui::Event::PointerButton {
@@ -42,11 +45,13 @@ pub(super) fn pointer(harness: &mut Harness<'_, Editor>, point: egui::Pos2, pres
     });
     harness.step();
 }
+
 pub(super) fn hold_drag(harness: &mut Harness<'_, Editor>, start: egui::Pos2, end: egui::Pos2) {
     pointer(harness, start, true);
     harness.hover_at(end);
     harness.step();
 }
+
 fn endpoint(editor: &Editor) -> egui::Pos2 {
     let GradientMask::Linear { end, .. } = accepted_mask(editor) else {
         unreachable!()

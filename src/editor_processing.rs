@@ -12,16 +12,19 @@ struct Key {
     matrix: glam::DMat3,
     area: SourceRegion,
 }
+
 struct Entry {
     id: SourceId,
     key: Key,
     grade: Arc<GpuPhotoGrade>,
 }
+
 #[derive(Default)]
 pub(super) struct Grades {
     device: Option<wgpu::Device>,
     entries: RefCell<Vec<Entry>>,
 }
+
 impl Grades {
     pub(super) fn new(device: wgpu::Device) -> Self {
         Self {
@@ -29,17 +32,21 @@ impl Grades {
             ..Default::default()
         }
     }
+
     pub(super) fn clear(&self) {
         self.entries.borrow_mut().clear();
     }
+
     fn remove(&self, id: SourceId) {
         self.entries.borrow_mut().retain(|entry| entry.id != id);
     }
+
     pub(super) fn retain(&self, sources: &[SourceId]) {
         self.entries
             .borrow_mut()
             .retain(|entry| sources.contains(&entry.id));
     }
+
     fn prepare(
         &self,
         id: SourceId,
@@ -72,6 +79,7 @@ impl Grades {
         Ok(input)
     }
 }
+
 fn snapshot(source: &Source, photo: PhotoSettings) -> Result<PhotoGradeSnapshot, Error> {
     PhotoGradeSnapshot::new(photo, source.grade_snapshot()?.locals().to_vec())
 }
@@ -149,6 +157,7 @@ impl Editor {
             snapshot,
         )
     }
+
     pub(super) fn positive_processing(
         &self,
         calibration: Calibration,

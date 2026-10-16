@@ -19,6 +19,7 @@ struct NativeEvent {
     phase: &'static str,
     at: Instant,
 }
+
 fn native_report(events: &[NativeEvent], origin: Instant) -> Value {
     let mut counts = BTreeMap::<&str, usize>::new();
     let mut seconds = BTreeMap::<&str, f64>::new();
@@ -27,6 +28,7 @@ fn native_report(events: &[NativeEvent], origin: Instant) -> Value {
             *counts.entry(&event.file).or_default() += 1;
         }
     }
+
     for pair in events.windows(2) {
         let name = match (pair[0].phase, pair[1].phase) {
             ("open", "unpack_begin") => "open_validate",
@@ -41,35 +43,61 @@ fn native_report(events: &[NativeEvent], origin: Instant) -> Value {
         "developments": counts.values().sum::<usize>(),
         "developments_by_source": counts,
         "seconds": seconds,
-        "events": events.iter().map(|e| json!({
-            "source":e.file, "phase":e.phase, "start_seconds":e.at.duration_since(origin).as_secs_f64()
+        "events": events.iter().map(|event| json!({
+            "source": event.file,
+            "phase": event.phase,
+            "start_seconds": event.at.duration_since(origin).as_secs_f64(),
         })).collect::<Vec<_>>()
     })
 }
+
 fn stage_report(timings: &region_timing::Timings, wall: Duration) -> Value {
     let mut stages = BTreeMap::<&str, Vec<&region_timing::Sample>>::new();
     for sample in &timings.samples {
         stages.entry(sample.stage).or_default().push(sample);
     }
-    let rows: Vec<_> = stages.into_iter().map(|(stage, samples)| {
-        let mut values: Vec<_> = samples.iter().map(|s| s.seconds).collect();
-        values.sort_by(f64::total_cmp);
-        let percentile = |q: f64| values[((values.len() as f64 * q).ceil() as usize).saturating_sub(1)];
-        let inclusive = values.iter().sum::<f64>();
-        let exclusive = samples.iter().map(|s| s.exclusive_seconds).sum::<f64>();
-        println!("region_stage phase={stage} calls={} inclusive_seconds={inclusive:.6} exclusive_seconds={exclusive:.6} p50_seconds={:.6} p95_seconds={:.6}", values.len(), percentile(0.5), percentile(0.95));
-        json!({"stage":stage,"calls":values.len(),"inclusive_seconds":inclusive,"exclusive_seconds":exclusive,"p50_seconds":percentile(0.5),"p95_seconds":percentile(0.95),"max_seconds":values.last()})
-    }).collect();
+
+    let rows: Vec<_> = stages
+        .into_iter()
+        .map(|(stage, samples)| {
+            let mut values: Vec<_> = samples.iter().map(|s| s.seconds).collect();
+            values.sort_by(f64::total_cmp);
+            let percentile =
+                |q: f64| values[((values.len() as f64 * q).ceil() as usize).saturating_sub(1)];
+            let inclusive = values.iter().sum::<f64>();
+            let exclusive = samples.iter().map(|s| s.exclusive_seconds).sum::<f64>();
+
+            println!(
+                "region_stage phase={stage} calls={} inclusive_seconds={inclusive:.6} exclusive_seconds={exclusive:.6} p50_seconds={:.6} p95_seconds={:.6}",
+                values.len(),
+                percentile(0.5),
+                percentile(0.95),
+            );
+            json!({
+                "stage": stage,
+                "calls": values.len(),
+                "inclusive_seconds": inclusive,
+                "exclusive_seconds": exclusive,
+                "p50_seconds": percentile(0.5),
+                "p95_seconds": percentile(0.95),
+                "max_seconds": values.last(),
+            })
+        })
+        .collect();
     let accounted = timings
         .samples
         .iter()
         .map(|s| s.exclusive_seconds)
         .sum::<f64>();
     json!({
-        "wall_seconds":wall.as_secs_f64(), "accounted_seconds":accounted,
-        "residual_seconds":wall.as_secs_f64()-accounted, "stages":rows, "samples":timings.samples
+        "wall_seconds": wall.as_secs_f64(),
+        "accounted_seconds": accounted,
+        "residual_seconds": wall.as_secs_f64() - accounted,
+        "stages": rows,
+        "samples": timings.samples,
     })
 }
+
 #[test]
 fn stage_summary_uses_exclusive_accounting_and_nearest_rank_source_percentiles() {
     let (_, mut timings) = region_timing::record(|| ());
@@ -145,6 +173,7 @@ fn within_limit(start: Instant, monitor: &cache_observation::Monitor) -> Result<
     }
     Ok(())
 }
+
 fn write_new(path: &Path, report: &Value) -> Result<()> {
     use std::io::Write;
     let mut file = fs::OpenOptions::new()

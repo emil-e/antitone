@@ -53,12 +53,15 @@ impl Metadata {
     pub fn make(&self) -> String {
         ffi_string(&self.make)
     }
+
     pub fn model(&self) -> String {
         ffi_string(&self.model)
     }
+
     pub fn decoder(&self) -> String {
         ffi_string(&self.decoder)
     }
+
     pub fn camera_to_srgb(&self) -> DMat3 {
         DMat3::from_cols_array(&self.rgb_cam)
     }
@@ -66,6 +69,7 @@ impl Metadata {
     pub fn camera_model(&self) -> String {
         format!("{} {}", self.make(), self.model())
     }
+
     /// Selects as-shot gains, sharing green with an unspecified second green on three-color sources.
     /// Raw metadata and explicitly supplied development gains remain unchanged.
     pub fn as_shot_wb(&self) -> [f64; 4] {
@@ -75,6 +79,7 @@ impl Metadata {
         }
         wb
     }
+
     pub fn camera_to_ap1(&self) -> Result<DMat3, Error> {
         let camera_to_srgb = self.camera_to_srgb();
         if !camera_to_srgb.is_finite() || camera_to_srgb.determinant().abs() < 1e-8 {
@@ -224,6 +229,7 @@ pub enum DevelopmentPriority {
     Foreground,
     Background,
 }
+
 impl DevelopmentPriority {
     fn threads(self, cpus: usize, pressure: crate::resources::MemoryPressure) -> c_int {
         use crate::resources::MemoryPressure;
@@ -236,6 +242,7 @@ impl DevelopmentPriority {
         };
         cpus.saturating_sub(2).max(1).min(cap) as c_int
     }
+
     fn current_threads(self) -> c_int {
         self.threads(
             std::thread::available_parallelism().map_or(1, usize::from),
@@ -322,6 +329,7 @@ impl RawFile {
     pub fn set_development_priority(&mut self, priority: DevelopmentPriority) {
         self.priority = priority;
     }
+
     pub(crate) fn ensure_unpacked(&mut self) -> Result<(), Error> {
         if self.unpacked {
             return Ok(());
@@ -342,6 +350,7 @@ impl RawFile {
         self.unpacked = true;
         Ok(())
     }
+
     /// Explicit whole-sensor statistics, cached independently of decoding/development.
     pub fn unpack(&mut self) -> Result<SensorDiagnostics, Error> {
         if let Some(diagnostics) = self.diagnostics {
@@ -521,23 +530,28 @@ pub(crate) struct FrozenRaw {
 // its unpacker/TLS data; destruction frees instance-owned resources without creator-
 // thread affinity, and can occur only after the last owner/borrow has retired.
 unsafe impl Send for FrozenRaw {}
+
 unsafe impl Sync for FrozenRaw {}
 
 impl FrozenRaw {
     pub(crate) fn retained_bytes(&self) -> Option<u64> {
         self.retained_bytes
     }
+
     pub(crate) fn metadata(&self) -> Metadata {
         self.raw.metadata
     }
+
     pub(crate) fn camera_image(&self) -> Result<Developed<'_>, Error> {
         self.raw.camera_image()
     }
+
     pub(crate) fn sensor_diagnostics(&self) -> Result<SensorDiagnostics, Error> {
         self.raw
             .diagnostics
             .map_or_else(|| self.raw.sensor_diagnostics(), Ok)
     }
+
     pub(crate) fn region_sensor_diagnostics(&self, area: Rect) -> Result<SensorDiagnostics, Error> {
         self.raw.unpacked_region_sensor_diagnostics(area)
     }

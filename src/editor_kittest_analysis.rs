@@ -80,6 +80,7 @@ fn select_area(h: &mut Harness<'_, Editor>, picture: bool) {
     h.step();
     assert_eq!(h.state().analysis_review.as_ref().unwrap().picture, picture);
 }
+
 fn confirm(harness: &mut Harness<'_, Editor>) {
     let mut buttons = harness
         .get_all_by_role_and_label(egui::accesskit::Role::Button, "Analyze roll")
@@ -477,6 +478,7 @@ fn missing_area_cues_follow_the_photo_and_clear_without_an_inspector_panel() {
     wait_for(&mut h, |e| !e.busy);
     assert_eq!(h.state().document.project, before);
 }
+
 #[test]
 fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() {
     let (mut harness, _) = editor_harness_with_thumbnails(true);
@@ -659,6 +661,7 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
     assert_eq!(harness.state().preferences.scopes_visible, scopes_visible);
     assert_eq!(harness.state().document.project, before);
 }
+
 #[test]
 fn analyze_widgets_preserve_area_cancel_failure_and_both_settled_targets() {
     let (mut harness, _) = editor_harness();

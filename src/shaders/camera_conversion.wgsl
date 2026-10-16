@@ -3,11 +3,22 @@ struct CameraMatrix {
     low: array<vec4f, 3>,
     tail: array<vec4f, 3>,
 }
-@group(0) @binding(3) var<uniform> camera_matrix: CameraMatrix;
+@group(0) @binding(3)
+var<uniform> camera_matrix: CameraMatrix;
 
 // Keep conversion precision in temporaries, not in the retained RGB16 source buffer.
-struct Triple { h: f32, l: f32, t: f32 }
-struct ConvertedScan { high: vec3f, low: vec3f, tail: vec3f }
+struct Triple {
+    h: f32,
+    l: f32,
+    t: f32,
+}
+
+struct ConvertedScan {
+    high: vec3f,
+    low: vec3f,
+    tail: vec3f,
+}
+
 fn two_sum(a: f32, b: f32) -> vec2f {
     // Magnitude ordering satisfies FastTwoSum's precondition without assuming
     // an expansion stayed ordered across cancellation.
@@ -17,6 +28,7 @@ fn two_sum(a: f32, b: f32) -> vec2f {
     let s = fma(1.0, large, small);
     return vec2f(s, fma(1.0, small, fma(1.0, large, -s)));
 }
+
 fn add_term(a: Triple, b: f32) -> Triple {
     let x = two_sum(a.h, b);
     let y = two_sum(a.l, x.y);
@@ -26,24 +38,36 @@ fn add_term(a: Triple, b: f32) -> Triple {
     let l = two_sum(h.y, fma(1.0, n.y, z.y));
     return Triple(h.x, l.x, l.y);
 }
+
 fn add(a: Triple, b: Triple) -> Triple {
     var sum = add_term(a, b.h);
-    if b.l != 0.0 { sum = add_term(sum, b.l); }
-    if b.t != 0.0 { sum = add_term(sum, b.t); }
+    if b.l != 0.0 {
+        sum = add_term(sum, b.l);
+    }
+    if b.t != 0.0 {
+        sum = add_term(sum, b.t);
+    }
     return sum;
 }
+
 fn product(a: f32, b: f32) -> Triple {
     let h = fma(a, b, 0.0);
     return Triple(h, fma(a, b, -h), 0.0);
 }
+
 fn scale_expansion(a: Triple, b: f32) -> Triple {
     let head = product(a.h, b);
     let middle = add(head, product(a.l, b));
     return add(middle, product(a.t, b));
 }
+
 fn multiply(a: Triple, b: Triple) -> Triple {
-    if a.l == 0.0 && a.t == 0.0 { return scale_expansion(b, a.h); }
-    if b.l == 0.0 && b.t == 0.0 { return scale_expansion(a, b.h); }
+    if a.l == 0.0 && a.t == 0.0 {
+        return scale_expansion(b, a.h);
+    }
+    if b.l == 0.0 && b.t == 0.0 {
+        return scale_expansion(a, b.h);
+    }
     let hh = product(a.h, b.h);
     let hl = product(a.h, b.l);
     let lh = product(a.l, b.h);
@@ -63,16 +87,21 @@ fn multiply(a: Triple, b: Triple) -> Triple {
     tail = add(tail, product(a.t, b.t));
     return add(Triple(head.x, head.y, 0.0), tail);
 }
+
 // Match the scalar f64 rounding between normalization, products and sums.
 fn round53(a: Triple) -> Triple {
-    if a.h == 0.0 { return a; }
+    if a.h == 0.0 {
+        return a;
+    }
     // Rescale small cancellations so the rounding quantum is a normal f32.
     let scale = select(1.0, 18446744073709551616.0, abs(a.h) <= 0x1p-74f);
     let value = Triple(a.h * scale, a.l * scale, a.t * scale);
     let bits = bitcast<u32>(abs(value.h));
     var e = (bits >> 23u) & 255u;
     let correction = select(value.l, value.t, value.l == 0.0);
-    if (bits & 0x7fffffu) == 0u && sign(value.h) * correction < 0.0 { e -= 1u; }
+    if (bits & 0x7fffffu) == 0u && sign(value.h) * correction < 0.0 {
+        e -= 1u;
+    }
     let step = bitcast<f32>((e - 52u) << 23u);
     let units = value.l / step;
     let whole = floor(units);
@@ -85,6 +114,7 @@ fn round53(a: Triple) -> Triple {
     let result = add_term(Triple(value.h, whole * step, 0.0), rounded * step);
     return Triple(result.h / scale, result.l / scale, result.t / scale);
 }
+
 fn normalized(code: u32) -> Triple {
     let value = f32(code);
     let h = value / 65535.0;
@@ -93,25 +123,34 @@ fn normalized(code: u32) -> Triple {
     let t = fma(-l, 65535.0, rem) / 65535.0;
     return round53(Triple(h, l, t));
 }
+
 fn convert_camera(code: vec2u) -> ConvertedScan {
     let x = normalized(code.x & 65535u);
     let y = normalized(code.x >> 16u);
     let z = normalized(code.y & 65535u);
     return convert_components(x, y, z);
 }
+
 fn convert_components(x: Triple, y: Triple, z: Triple) -> ConvertedScan {
     return ConvertedScan(vec3f(x.h, y.h, z.h), vec3f(x.l, y.l, z.l), vec3f(x.t, y.t, z.t));
 }
+
 fn camera_source_to_ap1(scan: ConvertedScan) -> ConvertedScan {
     var working: ConvertedScan;
-    for (var c = 0u; c < 3u; c++) {
+    for(var c = 0u; c < 3u; c++) {
         var sum = Triple(0.0, 0.0, 0.0);
-        for (var j = 0u; j < 3u; j++) {
-            let m = Triple(camera_matrix.high[j][c], camera_matrix.low[j][c], camera_matrix.tail[j][c]);
+        for(var j = 0u; j < 3u; j++) {
+            let m = Triple(
+                    camera_matrix.high[j][c],
+                    camera_matrix.low[j][c],
+                    camera_matrix.tail[j][c],
+                );
             let s = Triple(scan.high[j], scan.low[j], scan.tail[j]);
             sum = round53(add(sum, round53(multiply(m, s))));
         }
-        working.high[c] = sum.h; working.low[c] = sum.l; working.tail[c] = sum.t;
+        working.high[c] = sum.h;
+        working.low[c] = sum.l;
+        working.tail[c] = sum.t;
     }
     return working;
 }

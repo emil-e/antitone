@@ -19,6 +19,7 @@ fn record(path: &str) -> Source {
         crop: None,
     }
 }
+
 #[test]
 fn reference_registration_does_not_add_a_photo_or_hide_an_existing_one() {
     let mut document = Document::default();
@@ -38,6 +39,7 @@ fn reference_registration_does_not_add_a_photo_or_hide_an_existing_one() {
     assert_eq!(document.project.order, vec![photo]);
     assert!(document.project.source(reference).unwrap().reference_only);
 }
+
 #[test]
 fn flat_preview_cancel_failure_and_stale_messages_preserve_document_and_working_context() {
     let (commands, receiver) = mpsc::channel();
@@ -102,6 +104,7 @@ fn flat_preview_cancel_failure_and_stale_messages_preserve_document_and_working_
         "reference unavailable"
     );
 }
+
 #[test]
 fn failed_map_acceptance_restores_transient_edit_without_accepting_document_changes() {
     let (commands, receiver) = mpsc::channel();

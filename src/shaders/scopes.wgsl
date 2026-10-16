@@ -5,11 +5,15 @@ struct Parameters {
     uv_x: vec4f,
     uv_y: vec4f,
 }
-@group(0) @binding(0) var image: texture_2d<f32>;
-@group(0) @binding(1) var<uniform> p: Parameters;
-@group(0) @binding(2) var<storage, read_write> bins: array<atomic<u32>>;
+@group(0) @binding(0)
+var image: texture_2d<f32>;
+@group(0) @binding(1)
+var<uniform> p: Parameters;
+@group(0) @binding(2)
+var<storage, read_write> bins: array<atomic<u32>>;
 // valid, invalid, off-plot, reserved; then sample totals for each waveform column.
-@group(0) @binding(3) var<storage, read_write> totals: array<atomic<u32>>;
+@group(0) @binding(3)
+var<storage, read_write> totals: array<atomic<u32>>;
 
 fn bin(v: f32) -> u32 {
     return min(u32(max(v, 0.) * 256.), 255u);
@@ -17,7 +21,9 @@ fn bin(v: f32) -> u32 {
 
 @compute @workgroup_size(16, 16)
 fn reduce(@builtin(global_invocation_id) id: vec3u) {
-    if any(id.xy >= p.size.xy) { return; }
+    if any(id.xy >= p.size.xy) {
+        return;
+    }
     let uv = (vec2f(id.xy) + .5) / vec2f(p.size.xy);
     let mapped = p.uv_x.xy + uv.x * p.uv_x.zw + uv.y * p.uv_y.xy;
     if any(mapped < vec2f(0.)) || any(mapped > vec2f(1.)) {
@@ -27,13 +33,19 @@ fn reduce(@builtin(global_invocation_id) id: vec3u) {
     let source_size = textureDimensions(image);
     let xy = min(vec2u(mapped * vec2f(source_size)), source_size - vec2u(1));
     let pixel = textureLoad(image, vec2i(xy), 0);
-    if pixel.a <= 0. { return; }
+    if pixel.a <= 0. {
+        return;
+    }
     let rgb = pixel.rgb;
     if !all(rgb >= vec3f(0.)) || !all(rgb <= vec3f(1.)) {
         atomicAdd(&totals[1], 1u);
         return;
     }
-    let encoded = select(1.055 * pow(rgb, vec3f(1. / 2.4)) - .055, 12.92 * rgb, rgb <= vec3f(.0031308));
+    let encoded = select(
+            1.055 * pow(rgb, vec3f(1. / 2.4)) - .055,
+            12.92 * rgb,
+            rgb <= vec3f(.0031308),
+        );
     let y = dot(p.luma_gain.xyz, encoded);
     atomicAdd(&totals[0], 1u);
     let column = bin((f32(id.x) + .5) / f32(p.size.x));
@@ -51,7 +63,7 @@ fn reduce(@builtin(global_invocation_id) id: vec3u) {
         }
     } else {
         let values = vec4f(encoded, y);
-        for (var c = 0u; c < 4u; c++) {
+        for(var c = 0u; c < 4u; c++) {
             atomicAdd(&bins[c * 65536u + bin(1. - values[c]) * 256u + column], 1u);
         }
     }

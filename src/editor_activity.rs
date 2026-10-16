@@ -61,6 +61,7 @@ impl Task {
             Self::Import(_) | Self::Open(_) | Self::Analyze(_) | Self::AnalysisAreas(_)
         )
     }
+
     fn modal(self) -> bool {
         matches!(self.request(), TaskRequest::Document(_))
     }

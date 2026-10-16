@@ -6,6 +6,7 @@ using namespace looks;
 
 struct Core {
     double rawGray = 0, gray = 0, offsets = 0, mapping = 0, roundtrip = 0, monoEqualY = 0;
+
     Core(const Reference &look) {
         Reference unit(1.);
         Domain domain;
@@ -86,6 +87,7 @@ struct Core {
             roundtrip > 2e-4 || monoEqualY > 1e-12)
             throw std::runtime_error("core admission failed");
     }
+
     void json(std::ostream &out) const {
         out << "\"raw_gray_error\":" << rawGray << ",\"gray_ap1_error\":" << gray
             << ",\"compression_offset_change\":" << offsets
@@ -94,6 +96,7 @@ struct Core {
             << ",\"mono_equal_y_error\":" << monoEqualY;
     }
 };
+
 int main(int argc, char **argv) {
     try {
         if (std::string(OCIO::GetVersion()) != "2.6.0")

@@ -5,6 +5,7 @@ use std::{collections::VecDeque, sync::Arc};
 // Share the slice owner without copying a completed tile into a second sample allocation.
 #[derive(Clone)]
 pub(super) struct SharedTile(Arc<Box<[[f64; 4]]>>);
+
 impl AsRef<[[f64; 4]]> for SharedTile {
     fn as_ref(&self) -> &[[f64; 4]] {
         self.0.as_ref().as_ref()
@@ -22,6 +23,7 @@ pub(super) struct TileCache {
     entries: VecDeque<([u32; 2], SharedTile)>,
     peak_bytes: usize,
 }
+
 impl TileCache {
     pub(super) fn new() -> Self {
         Self {

@@ -1,6 +1,7 @@
 use super::*;
 use crate::gpu_export::reader::{JobReader, TileReader};
 use std::{cell::Cell, rc::Rc};
+
 fn pixels(origins: &[Origin]) -> Vec<Pixel> {
     origins
         .iter()

@@ -10,11 +10,13 @@ use std::{
 };
 use wgpu::util::DeviceExt;
 
-// An optional acceleration working set, not permission to enlarge repair processing.
-// Includes packed CPU/GPU features and weights, coordinates, results/staging,
-// host result/bound/eligibility vectors and seed storage. Driver bytes are separate.
+// Optional host/device screening working-set estimate, not total GPU memory.
+// Includes packed features and weights, coordinates, results/staging,
+// host result/bound/eligibility vectors and seed storage. Driver bytes are separate;
+// this does not enlarge repair processing limits.
 const MAX_BYTES: u64 = 64 * 1024 * 1024;
 const SLICE_POINTS: usize = 32 * 1024 * 1024;
+
 fn working_bytes(frame: usize, context: usize, candidates: usize) -> Option<u64> {
     (frame as u64)
         .checked_mul(40)?
@@ -29,6 +31,7 @@ pub(crate) struct Screening<'a> {
     submissions: &'a SubmissionGate,
     pipeline: Option<wgpu::ComputePipeline>,
 }
+
 impl<'a> Screening<'a> {
     pub fn new(
         device: &'a wgpu::Device,
@@ -42,11 +45,13 @@ impl<'a> Screening<'a> {
             pipeline: None,
         }
     }
+
     fn alignment(&self) -> usize {
         (self.device.limits().min_storage_buffer_offset_alignment as usize)
             .div_ceil(8)
             .max(1)
     }
+
     fn initialize(&mut self) -> Result<(), Error> {
         if self.pipeline.is_some() {
             return Ok(());
@@ -76,6 +81,7 @@ impl<'a> Screening<'a> {
         self.pipeline = Some(pipeline);
         Ok(())
     }
+
     fn wait(&self, submission: wgpu::SubmissionIndex) -> Result<(), Error> {
         self.device
             .poll(wgpu::PollType::Wait {
@@ -86,6 +92,7 @@ impl<'a> Screening<'a> {
         Ok(())
     }
 }
+
 impl Screener for Screening<'_> {
     fn admit(&self, frame: usize, context: usize, candidates: usize) -> bool {
         let limits = self.device.limits();
@@ -111,6 +118,7 @@ impl Screener for Screening<'_> {
                 .and_then(|n| n.checked_mul(2))
                 .is_some_and(|n| n <= SLICE_POINTS)
     }
+
     fn screen(
         &mut self,
         input: ScreenInput<'_>,
@@ -138,6 +146,7 @@ impl Screener for Screening<'_> {
         {
             return Err(Error::Gpu("invalid dust screening input".into()));
         }
+
         let height = frame / width;
         let local_height = context / local_width;
         let fits = |[x, y]: [u32; 2]| {
@@ -156,10 +165,12 @@ impl Screener for Screening<'_> {
         if count == 0 {
             return Ok(Some(Vec::new()));
         }
+
         self.initialize()?;
         if cancelled() {
             return Ok(None);
         }
+
         let validation = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let allocation = self.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
         let storage = |contents: &[u8]| {
@@ -173,6 +184,7 @@ impl Screener for Screening<'_> {
         let features = storage(bytemuck::cast_slice(input.features));
         let weights = storage(bytemuck::cast_slice(input.weights));
         let candidates = storage(bytemuck::cast_slice(input.candidates));
+
         let mut params = [
             input.width,
             input.target[0],
@@ -207,11 +219,13 @@ impl Screener for Screening<'_> {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+
         let allocation_error = pollster::block_on(allocation.pop());
         let validation_error = pollster::block_on(validation.pop());
         if let Some(error) = allocation_error.or(validation_error) {
             return Err(Error::Gpu(error.to_string()));
         }
+
         let pipeline = self.pipeline.as_ref().unwrap();
         let alignment = self.alignment();
         let passes = if input.paired_weights { 2 } else { 1 };
@@ -283,6 +297,7 @@ impl Screener for Screening<'_> {
         if cancelled() {
             return Ok(None);
         }
+
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, bytes);
         let submission = self.submissions.submit(self.queue, [encoder.finish()]);
@@ -300,6 +315,7 @@ impl Screener for Screening<'_> {
         let mapped = readback
             .get_mapped_range(..)
             .map_err(|e| Error::Gpu(e.to_string()))?;
+
         let sums = bytemuck::cast_slice::<u8, [u32; 8]>(&mapped)
             .iter()
             .map(|v| {

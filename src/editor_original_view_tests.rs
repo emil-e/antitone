@@ -1,4 +1,5 @@
 use super::*;
+
 fn request(ev: f64) -> (Signature, ProcessingInput) {
     let input = ProcessingInput::from(ProcessingParameters::source_inspection(ev).unwrap());
     let area = Rect {
@@ -22,6 +23,7 @@ fn request(ev: f64) -> (Signature, ProcessingInput) {
         input,
     )
 }
+
 #[test]
 fn original_jobs_are_purpose_bound_and_cancelled_work_keeps_admission_until_completion() {
     let mut owner = OriginalView::new(Arc::default());
@@ -74,6 +76,7 @@ fn original_jobs_are_purpose_bound_and_cancelled_work_keeps_admission_until_comp
         "leaving a tool cancels, but completion releases admission"
     );
 }
+
 #[test]
 fn ordinary_views_without_working_device_never_become_original_tool_requests() {
     let (mut editor, _, commands) = super::super::tests::fixture();
@@ -95,6 +98,7 @@ fn ordinary_views_without_working_device_never_become_original_tool_requests() {
             .any(|c| matches!(c, Command::Refine(..)))
     );
 }
+
 #[test]
 fn leaving_unbuilt_reference_releases_idle_authority_without_revision_churn() {
     let mut owner = OriginalView::new(Arc::default());
@@ -109,6 +113,7 @@ fn leaving_unbuilt_reference_releases_idle_authority_without_revision_churn() {
     owner.last_edit = std::time::Instant::now() - Duration::from_secs(1);
     assert!(owner.idle());
 }
+
 #[test]
 fn original_worker_failure_latches_once_and_rejects_unrequested_completions() {
     let mut owner = OriginalView::new(Arc::default());

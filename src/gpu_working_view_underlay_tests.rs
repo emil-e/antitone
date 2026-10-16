@@ -22,6 +22,7 @@ fn source(
         }),
     })
 }
+
 fn sample(pixels: &[[f32; 4]], size: [u32; 2], uv: [f64; 2]) -> [f64; 4] {
     if uv.into_iter().any(|v| !(0. ..1.).contains(&v)) {
         return [0.; 4];
@@ -54,6 +55,7 @@ fn sample(pixels: &[[f32; 4]], size: [u32; 2], uv: [f64; 2]) -> [f64; 4] {
     }
     sum
 }
+
 fn mapped(map: TextureMapping, uv: [f64; 2]) -> [f64; 2] {
     std::array::from_fn(|c| {
         f64::from(map.origin[c])

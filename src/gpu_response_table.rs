@@ -8,6 +8,7 @@ pub(super) const BYTE_LEN: u64 = CODES * 40;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct ResponseKey([u8; 176]);
+
 impl ResponseKey {
     pub(super) fn new(p: ProcessingParameters) -> Self {
         // Match native_response/invert_film, including gain inside the final log/exp.
@@ -27,6 +28,7 @@ impl ResponseKey {
         Self(bytemuck::cast_slice(&words).try_into().unwrap())
     }
 }
+
 struct Entry {
     key: ResponseKey,
     buffer: wgpu::Buffer,
@@ -40,6 +42,7 @@ pub(super) struct ResponseCache {
     latest: Mutex<Option<Entry>>,
     pub(super) empty: wgpu::Buffer,
 }
+
 impl ResponseCache {
     pub(super) fn new(
         device: &wgpu::Device,
@@ -67,6 +70,7 @@ impl ResponseCache {
             }),
         }
     }
+
     pub(super) fn buffer(
         &self,
         device: &wgpu::Device,

@@ -404,6 +404,7 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
         }
     });
 }
+
 #[cfg(target_os = "macos")]
 fn read(device: &wgpu::Device, buffer: &wgpu::Buffer, bytes: u64) -> Vec<Vec4> {
     let (send, receive) = std::sync::mpsc::channel();

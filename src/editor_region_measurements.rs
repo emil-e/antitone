@@ -10,21 +10,25 @@ pub(super) struct Measurement {
     size: [u32; 2],
     offset: u64,
 }
+
 #[derive(Default)]
 pub(super) struct Measurements {
     file: Option<File>,
     bytes: u64,
     failed: bool,
 }
+
 impl Measurements {
     fn bytes(size: [u32; 2]) -> Option<u64> {
         size.iter()
             .all(|&n| (1..=3072).contains(&n))
             .then(|| u64::from(size[0]) * u64::from(size[1]) * 6)
     }
+
     pub fn can_store(&self, size: [u32; 2]) -> bool {
         !self.failed && Self::bytes(size).is_some_and(|n| n <= LIMIT - self.bytes)
     }
+
     pub fn store(&mut self, size: [u32; 2], rgb: &[[u16; 3]]) -> Option<Measurement> {
         if !self.can_store(size) || rgb.len() as u64 * 6 != Self::bytes(size)? {
             return None;
@@ -50,6 +54,7 @@ impl Measurements {
         self.bytes += Self::bytes(size)?;
         Some(measurement)
     }
+
     pub fn load(&mut self, measurement: Measurement) -> Option<([u32; 2], Vec<[u16; 3]>)> {
         let file = self.file.as_mut()?;
         let mut rgb = vec![[0; 3]; (Self::bytes(measurement.size)? / 6) as usize];
@@ -62,6 +67,7 @@ impl Measurements {
         }
         Some((measurement.size, rgb))
     }
+
     #[cfg(test)]
     pub(super) fn unavailable() -> Self {
         Self {
@@ -69,6 +75,7 @@ impl Measurements {
             ..Default::default()
         }
     }
+
     #[cfg(test)]
     pub(super) fn full() -> Self {
         Self {
@@ -76,6 +83,7 @@ impl Measurements {
             ..Default::default()
         }
     }
+
     fn discard(&mut self) {
         self.file = None;
         self.bytes = 0;
@@ -86,6 +94,7 @@ impl Measurements {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn scratch_round_trips_exact_codes_and_distinct_sizes_without_native_source_retention() {
         let mut scratch = Measurements::default();
@@ -105,6 +114,7 @@ mod tests {
             );
         }
     }
+
     #[test]
     fn scratch_admission_is_bounded_and_malformed_inputs_do_not_allocate_a_file() {
         let mut scratch = Measurements::default();
@@ -120,6 +130,7 @@ mod tests {
         scratch.bytes = LIMIT;
         assert!(!scratch.can_store([1, 1]));
     }
+
     #[test]
     fn truncated_scratch_abstains_and_retires_all_previously_saved_handles() {
         let mut scratch = Measurements::default();
@@ -131,6 +142,7 @@ mod tests {
         assert!(!scratch.can_store([1, 1]));
         assert!(scratch.file.is_none());
     }
+
     #[test]
     fn write_failure_disables_optional_scratch_instead_of_exposing_partial_measurements() {
         let dir = tempfile::tempdir().unwrap();

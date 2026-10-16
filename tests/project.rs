@@ -61,6 +61,7 @@ fn fixture(directory: &std::path::Path) -> (Project, SourceId, SourceId) {
     };
     (project, dmin_source_id, dmax_source_id)
 }
+
 #[test]
 fn accepted_per_source_analysis_support_roundtrips_and_rejects_invalid_association_or_drafts() {
     use antitone::{coverage::Coverage, scan_regions::Areas};
@@ -129,6 +130,7 @@ fn accepted_per_source_analysis_support_roundtrips_and_rejects_invalid_associati
     assert!(legacy.analysis_regions[0].areas.picture_geometry.is_none());
     legacy.validate().unwrap();
 }
+
 #[test]
 fn photographic_settings_roundtrip_and_absent_fields_preserve_current_grades() {
     let directory = tempfile::tempdir().unwrap();
@@ -223,6 +225,7 @@ fn orientation_roundtrip_keeps_legacy_identity_and_numerical_state() {
     std::fs::write(&path, invalid).unwrap();
     assert!(Project::load(&path).is_err());
 }
+
 #[test]
 fn roll_turns_preserve_flip_only_documents_and_roundtrip_without_changing_photos_or_grade() {
     use antitone::geometry::{Flips, QuarterTurns, RollOrientation};
@@ -302,6 +305,7 @@ fn roll_turns_preserve_flip_only_documents_and_roundtrip_without_changing_photos
         assert!(Project::load(&path).is_err());
     }
 }
+
 #[test]
 fn crops_roundtrip_by_source_id_and_reject_outside_fractional_or_empty_coverage() {
     use antitone::{crop::Crop, geometry::SourceRegion};
@@ -395,6 +399,7 @@ fn crops_roundtrip_by_source_id_and_reject_outside_fractional_or_empty_coverage(
     value["sources"][0]["crop"]["basis"] = serde_json::json!(1.);
     assert!(serde_json::from_value::<Project>(value).is_err());
 }
+
 #[test]
 fn atomic_roundtrip_preserves_calibration_and_output_after_removal_and_missing_sources() {
     let dir = tempfile::tempdir().unwrap();
@@ -445,6 +450,7 @@ fn atomic_roundtrip_preserves_calibration_and_output_after_removal_and_missing_s
     assert!(restored.require_runtime("0.22.0").is_ok());
     assert!(restored.require_runtime("new decoder").is_err());
 }
+
 #[test]
 fn references_are_rgb_only_and_survive_removal_of_all_source_records() {
     let dir = tempfile::tempdir().unwrap();
@@ -469,6 +475,7 @@ fn references_are_rgb_only_and_survive_removal_of_all_source_records() {
     project.save(&path, Save::New).unwrap();
     assert_eq!(Project::load(&path).unwrap(), project);
 }
+
 #[test]
 fn output_contract_and_old_schemas_are_rejected_without_reinterpretation() {
     let dir = tempfile::tempdir().unwrap();
@@ -491,6 +498,7 @@ fn output_contract_and_old_schemas_are_rejected_without_reinterpretation() {
     legacy.validate().unwrap();
     assert!(legacy.require_runtime("0.22.0").is_err());
 }
+
 #[test]
 fn changed_photo_bytes_do_not_change_saved_state_or_invalidate_calibration() {
     let dir = tempfile::tempdir().unwrap();
@@ -508,6 +516,7 @@ fn changed_photo_bytes_do_not_change_saved_state_or_invalidate_calibration() {
             .contains("fingerprint")
     );
 }
+
 #[test]
 fn source_locators_keep_stable_ids_and_runtime_identity_is_checked_at_roll_level() {
     let dir = tempfile::tempdir().unwrap();
@@ -524,6 +533,7 @@ fn source_locators_keep_stable_ids_and_runtime_identity_is_checked_at_roll_level
     project.processing_model += 1;
     assert!(project.require_runtime("0.22.0").is_err());
 }
+
 #[test]
 fn failed_save_and_unknown_schema_never_damage_the_previous_document() {
     let dir = tempfile::tempdir().unwrap();
@@ -545,6 +555,7 @@ fn failed_save_and_unknown_schema_never_damage_the_previous_document() {
     std::fs::write(&path, serde_json::to_vec(&project).unwrap()).unwrap();
     assert!(Project::load(&path).is_err());
 }
+
 #[test]
 fn malformed_source_identity_order_and_rgb_references_are_rejected_before_serialization() {
     let dir = tempfile::tempdir().unwrap();

@@ -1,5 +1,6 @@
 use super::super::{lines::Group, material::Selection, rectangles};
 use super::*;
+
 fn fixture(faint: bool, fuzz: bool) -> (Capture, Selection) {
     let size = [192, 128];
     let mut rgb = vec![[10500; 3]; 192 * 128];
@@ -42,9 +43,11 @@ fn fixture(faint: bool, fuzz: bool) -> (Capture, Selection) {
         },
     )
 }
+
 fn fit(c: &Capture, s: Selection) -> Areas {
     rectangles::fit(c, s, c.size, &c.rgb).unwrap()
 }
+
 fn corners(notch: bool, missing: bool) -> (Capture, Selection) {
     let (mut c, mut s) = fixture(false, false);
     for y in 0..128 {
@@ -76,6 +79,7 @@ fn corners(notch: bool, missing: bool) -> (Capture, Selection) {
         .collect();
     (c, s)
 }
+
 #[test]
 fn one_capture_cannot_supply_peer_material_evidence_and_wrong_roll_targets_reject() {
     let (mut c, _) = fixture(false, true);
@@ -87,6 +91,7 @@ fn one_capture_cannot_supply_peer_material_evidence_and_wrong_roll_targets_rejec
     c.rgb.fill([1234; 3]);
     assert!(model.areas(0, &c, c.size, &c.rgb).is_err());
 }
+
 #[test]
 fn finite_but_overflowing_half_planes_reject_instead_of_admitting_nan_comparisons() {
     let (c, _) = fixture(false, false);
@@ -96,6 +101,7 @@ fn finite_but_overflowing_half_planes_reject_instead_of_admitting_nan_comparison
     };
     assert!(a.validate(c.area).is_err());
 }
+
 #[test]
 fn contradictory_saved_provenance_is_rejected_before_presentation() {
     let (c, _) = fixture(false, false);
@@ -106,9 +112,9 @@ fn contradictory_saved_provenance_is_rejected_before_presentation() {
     };
     assert!(a.validate(c.area).is_err());
 }
+
 #[test]
-fn independent_lateral_sides_disambiguate_bottom_holder_corners_without_filling_missing_observations()
- {
+fn lateral_evidence_disambiguates_bottom_corners_without_inventing_observations() {
     let (c, s) = corners(false, false);
     let a = fit(&c, s);
     assert!(a.opening_observed[0] && a.opening_observed[1] && a.opening_observed[3]);
@@ -119,11 +125,13 @@ fn independent_lateral_sides_disambiguate_bottom_holder_corners_without_filling_
     assert!(a.opening_observed[0] && a.opening_observed[1]);
     assert!(!a.opening_observed[3]);
 }
+
 #[test]
 fn retained_interior_material_contradictions_still_veto_bottom_measurement() {
     let (c, s) = corners(true, false);
     assert!(!fit(&c, s).opening_observed[3]);
 }
+
 #[test]
 fn fine_terminal_tips_are_excluded_without_relabelling_the_material_grid() {
     let (c, s) = fixture(false, true);
@@ -142,6 +150,7 @@ fn fine_terminal_tips_are_excluded_without_relabelling_the_material_grid() {
         }
     }
 }
+
 #[test]
 fn censored_or_deep_unsupported_dark_scenes_are_not_observed_opening_sides() {
     for width in [30, 100] {
@@ -154,6 +163,7 @@ fn censored_or_deep_unsupported_dark_scenes_are_not_observed_opening_sides() {
         assert!(!fit(&c, s).opening_observed[0]);
     }
 }
+
 #[test]
 fn faint_picture_border_retains_faint_content_and_freezing_membership_is_not_a_value_filter() {
     let (mut c, s) = fixture(true, false);
@@ -180,6 +190,7 @@ fn faint_picture_border_retains_faint_content_and_freezing_membership_is_not_a_v
     assert!(a.contains_footprint(footprint, c.area, true));
     assert!(!a.picture_observed.iter().any(|v| *v));
 }
+
 #[test]
 fn absent_frame_transitions_remain_statistical_coverage_not_observed_physical_sides() {
     let (c, s) = fixture(false, false);

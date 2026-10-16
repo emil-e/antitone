@@ -49,6 +49,7 @@ mod tests;
 
 // Matching square source/destination units avoid repeated thin-strip work after quarter turns.
 const TILE: [u32; 2] = export::BLOCK;
+
 fn tile_size(area: SourceRegion) -> [u32; 2] {
     [TILE[0].min(area.width), TILE[1].min(area.height)]
 }
@@ -333,12 +334,14 @@ fn reconstruct_reader<R: TileReader>(
 }
 
 type TileVisits = ([u32; 2], Vec<(usize, usize)>);
+
 struct ReconstructionPlan {
     samples: Vec<(DVec3, f64)>,
     groups: Vec<std::ops::Range<usize>>,
     tiles: Vec<TileVisits>,
     tile_size: [u32; 2],
 }
+
 impl ReconstructionPlan {
     // Full-resolution footprints are unit squares under rotation/reflection, not resized ROIs.
     // A conservative 4x4 source-cell envelope per pixel plus vector growth fits this bound
@@ -361,6 +364,7 @@ impl ReconstructionPlan {
         }
         Ok(bytes)
     }
+
     fn admitted(self) -> Result<Self, Error> {
         if self.payload_bytes()? > Self::MAX_PAYLOAD_BYTES {
             return Err(Error::Export(
@@ -370,6 +374,7 @@ impl ReconstructionPlan {
         Ok(self)
     }
 }
+
 fn plan(
     composition: Composition,
     origin: [u32; 2],
@@ -452,6 +457,7 @@ fn plan(
         tile_size: size,
     })
 }
+
 fn complete<R: TileReader>(
     ReconstructionPlan {
         mut samples,
@@ -503,6 +509,7 @@ struct OriginalTiles {
     rendered: Option<(wgpu::Texture, wgpu::BindGroup, wgpu::RenderPipeline)>,
     readback: wgpu::Buffer,
 }
+
 impl OriginalTiles {
     fn new(
         renderer: &GpuRenderer,
@@ -532,6 +539,7 @@ impl OriginalTiles {
             geometry,
         )
     }
+
     fn new_geometry(
         renderer: &GpuRenderer,
         (device, queue, submissions): (&wgpu::Device, &wgpu::Queue, &SubmissionGate),
@@ -643,6 +651,7 @@ impl OriginalTiles {
             readback,
         })
     }
+
     fn read(
         &mut self,
         renderer: &GpuRenderer,
@@ -662,6 +671,7 @@ impl OriginalTiles {
         };
         self.read_geometry(renderer, device, queue, submissions, geometry, pixels)
     }
+
     fn read_geometry(
         &mut self,
         renderer: &GpuRenderer,

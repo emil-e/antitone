@@ -1,5 +1,6 @@
 //! The complete-raster oracle must detect a corrupted final cell and nonfinite input.
 use super::*;
+
 #[test]
 fn physical_view_comparison_includes_padded_final_workgroup_and_nonfinite_values() {
     pollster::block_on(async {

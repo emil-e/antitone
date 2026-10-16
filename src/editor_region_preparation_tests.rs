@@ -37,6 +37,7 @@ fn request() -> (analysis::Request, tempfile::TempDir, wgpu::Device) {
         device,
     )
 }
+
 fn observed() -> (development::Scheduler, Arc<AtomicUsize>) {
     let count = Arc::new(AtomicUsize::new(0));
     let observed = count.clone();

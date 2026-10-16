@@ -20,6 +20,7 @@ async fn device() -> (wgpu::Device, wgpu::Queue) {
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
     adapter.request_device(&Default::default()).await.unwrap()
 }
+
 fn calibration() -> Calibration {
     Calibration {
         dmin: DVec3::new(0.19, 0.14, 0.12),
@@ -27,6 +28,7 @@ fn calibration() -> Calibration {
         input_floor: 1. / 65535.,
     }
 }
+
 fn matrix() -> DMat3 {
     DMat3::from_cols(
         DVec3::new(0.6062, 0.0161, -0.0031),
@@ -34,6 +36,7 @@ fn matrix() -> DMat3 {
         DVec3::new(0.0136, -0.2088, 1.1521),
     )
 }
+
 fn output(device: &wgpu::Device, pixels: usize) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
@@ -42,6 +45,7 @@ fn output(device: &wgpu::Device, pixels: usize) -> wgpu::Buffer {
         mapped_at_creation: false,
     })
 }
+
 fn pixels() -> Vec<[u16; 4]> {
     (0u32..65536)
         .map(|i| {
@@ -54,6 +58,7 @@ fn pixels() -> Vec<[u16; 4]> {
         })
         .collect()
 }
+
 fn encode(
     device: &wgpu::Device,
     kernel: &ProcessingKernel,
@@ -65,6 +70,7 @@ fn encode(
     kernel.encode(device, &mut encoder, source, output, parameters);
     encoder.finish()
 }
+
 fn compare(
     device: &wgpu::Device,
     queue: &wgpu::Queue,

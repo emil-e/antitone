@@ -150,6 +150,7 @@ fn failed_blocks_and_competing_destinations_preserve_existing_files_and_clean_te
         width: 1,
         height: 1,
     };
+
     fn write(
         path: &Path,
         overwrite: Overwrite,

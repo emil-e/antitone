@@ -30,6 +30,7 @@ fn frame_with_size(
     output.textures_delta.clear();
     output
 }
+
 fn key(key: egui::Key) -> Vec<egui::Event> {
     vec![egui::Event::Key {
         key,
@@ -39,6 +40,7 @@ fn key(key: egui::Key) -> Vec<egui::Event> {
         modifiers: egui::Modifiers::NONE,
     }]
 }
+
 fn ready() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
     let (mut editor, sender, receiver) = super::super::tests::fixture();
     super::super::tests::add_ready_fixture(&mut editor);

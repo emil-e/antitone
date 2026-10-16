@@ -134,6 +134,7 @@ mod diagnostics {
         },
         time::Duration,
     };
+
     #[derive(Clone, Default)]
     pub(super) struct Metrics {
         live: Arc<AtomicUsize>,
@@ -141,6 +142,7 @@ mod diagnostics {
         plans: Arc<AtomicUsize>,
         peak_plans: Arc<AtomicUsize>,
     }
+
     impl Metrics {
         pub(super) fn charge(&self, bytes: usize) -> Charge {
             let live = self.live.fetch_add(bytes, Ordering::Relaxed) + bytes;
@@ -153,6 +155,7 @@ mod diagnostics {
                 plans: self.plans.clone(),
             }
         }
+
         pub(super) fn report(&self, planning: Duration, wait: Duration, blocks: usize) {
             assert_eq!(self.live.load(Ordering::Relaxed), 0);
             let peak = self.peak.load(Ordering::Relaxed);
@@ -168,11 +171,13 @@ mod diagnostics {
             );
         }
     }
+
     pub(super) struct Charge {
         bytes: usize,
         live: Arc<AtomicUsize>,
         plans: Arc<AtomicUsize>,
     }
+
     impl Drop for Charge {
         fn drop(&mut self) {
             self.live.fetch_sub(self.bytes, Ordering::Relaxed);

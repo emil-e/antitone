@@ -88,6 +88,7 @@ impl Presentation {
         let previous = app.presentationOptions();
         Ok(Self { app, previous })
     }
+
     fn show(&self, focused: bool) {
         use objc2_app_kit::NSApplicationPresentationOptions as Options;
         // These paired auto-hide options preserve system access and do not create a fullscreen Space.

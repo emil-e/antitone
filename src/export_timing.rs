@@ -38,6 +38,7 @@ mod recording {
         DestinationFinalize,
         SourcePrepare,
     }
+
     impl Stage {
         const ALL: [Self; 12] = [
             Self::Setup,
@@ -54,11 +55,13 @@ mod recording {
             Self::SourcePrepare,
         ];
     }
+
     #[derive(Default)]
     pub(crate) struct Timings {
         elapsed: [Duration; 12],
         calls: [u64; 12],
     }
+
     impl Timings {
         pub(crate) fn report(&self, total: Duration) {
             for stage in Stage::ALL {
@@ -84,7 +87,11 @@ mod recording {
             );
         }
     }
-    thread_local! { static ACTIVE: RefCell<Option<Timings>> = const { RefCell::new(None) }; }
+
+    thread_local! {
+        static ACTIVE: RefCell<Option<Timings>> = const { RefCell::new(None) };
+    }
+
     pub(crate) fn measure<T>(stage: Stage, run: impl FnOnce() -> T) -> T {
         if !ACTIVE.with(|active| active.borrow().is_some()) {
             return run();
@@ -100,6 +107,7 @@ mod recording {
         });
         result
     }
+
     pub(crate) fn record<T>(run: impl FnOnce() -> T) -> (T, Timings) {
         ACTIVE.with(|active| {
             let mut active = active.borrow_mut();
@@ -109,7 +117,9 @@ mod recording {
             );
             *active = Some(Timings::default());
         });
+
         struct Reset;
+
         impl Drop for Reset {
             fn drop(&mut self) {
                 ACTIVE.with(|active| {

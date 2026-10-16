@@ -7,6 +7,7 @@ pub(super) struct Cache<K, V> {
     weight: fn(&V) -> usize,
     protected: Vec<K>,
 }
+
 impl<K: PartialEq, V> Cache<K, V> {
     pub fn new(budget: usize, weight: fn(&V) -> usize) -> Self {
         Self {
@@ -17,6 +18,7 @@ impl<K: PartialEq, V> Cache<K, V> {
             protected: Vec::new(),
         }
     }
+
     pub fn get(&mut self, key: &K) -> Option<&V> {
         let index = self
             .entries
@@ -26,14 +28,17 @@ impl<K: PartialEq, V> Cache<K, V> {
         self.entries.push_back(entry);
         self.entries.back().map(|(_, value)| value)
     }
+
     pub fn can_retain(&self, extra: usize) -> bool {
         self.bytes
             .checked_add(extra)
             .is_some_and(|bytes| bytes <= self.budget)
     }
+
     pub fn contains(&self, key: &K) -> bool {
         self.entries.iter().any(|(candidate, _)| candidate == key)
     }
+
     pub fn insert(&mut self, key: K, value: V) {
         if let Some(index) = self
             .entries
@@ -47,6 +52,7 @@ impl<K: PartialEq, V> Cache<K, V> {
         self.entries.push_back((key, value));
         self.trim();
     }
+
     pub fn retain(&mut self, mut keep: impl FnMut(&K, &V) -> bool) {
         let bytes = &mut self.bytes;
         let weight = self.weight;
@@ -59,14 +65,17 @@ impl<K: PartialEq, V> Cache<K, V> {
             }
         });
     }
+
     pub fn set_budget(&mut self, budget: usize) {
         self.budget = budget;
         self.trim();
     }
+
     pub fn protect(&mut self, keys: Vec<K>) {
         self.protected = keys;
         self.trim();
     }
+
     fn trim(&mut self) {
         while self.bytes > self.budget {
             let Some(index) = self
@@ -84,6 +93,7 @@ impl<K: PartialEq, V> Cache<K, V> {
 #[cfg(test)]
 mod tests {
     use super::Cache;
+
     #[test]
     fn visible_working_set_never_thrashes_even_when_larger_than_optional_budget() {
         let mut cache = Cache::new(16, |_| 1);
@@ -101,6 +111,7 @@ mod tests {
         cache.protect((17..34).collect());
         assert!(cache.entries.is_empty());
     }
+
     #[test]
     fn discarding_inactive_generations_updates_the_byte_accounting() {
         let mut cache = Cache::new(5, |value: &usize| *value);
@@ -113,6 +124,7 @@ mod tests {
         cache.set_budget(3);
         assert_eq!(cache.entries.front().unwrap().0, 2);
     }
+
     #[test]
     fn idle_prefetch_admission_does_not_evict_or_refresh_retained_work() {
         let mut cache = Cache::new(8, |v: &usize| *v);
@@ -125,6 +137,7 @@ mod tests {
         assert!(cache.can_retain(4));
         assert!(!cache.can_retain(usize::MAX));
     }
+
     #[test]
     fn byte_accounting_replacement_lru_and_pressure_eviction() {
         let mut cache = Cache::new(8, |v: &Vec<u8>| v.len());

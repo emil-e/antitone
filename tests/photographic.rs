@@ -14,6 +14,7 @@ fn near(actual: DVec3, expected: DVec3) {
         );
     }
 }
+
 fn inputs() -> Vec<DVec3> {
     let mut out = vec![DVec3::new(1., -0.4, 0.02), DVec3::new(4., 0.3, 0.02)];
     for value in [-1., -1e-12, 0., 1e-12, 0.0078125, 0.18, 1., 16., 1e10] {

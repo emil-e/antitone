@@ -42,10 +42,6 @@ Loading/import/picker/Analyze failures still use passive status. Broader acknowl
 
 Next: exercise document work, export inspection and Analyze cancellation in the native editor. Preserve accepted-state transactions, stale-result rejection, foreground priority and destination safety. Coordinate optional background presentation with [thumbnail follow-up](visual-feedback.md#triaged-thumbnail-follow-up).
 
-## Code readability and style
-
-Authored-source cleanup remains separate work. Agree language/tooling, file scope and small behavior-preserving slices before editing; exclude generated/vendor files and samples. Preserve numerical, compatibility, ownership and unsafe preconditions. Do not turn formatting or comments into an architectural redesign or claim repository-wide compliance from a local check.
-
 ## Export and release work
 
 - Design batch snapshots, reference-only exclusions, collision/per-photo failure handling, metadata and progress/cancellation.

@@ -5,6 +5,7 @@ pub(super) struct Composite {
     underlay: Arc<RenderedView>,
     group: wgpu::BindGroup,
 }
+
 impl RenderedView {
     pub(crate) fn composite(
         device: &wgpu::Device,
@@ -115,6 +116,7 @@ impl RenderedView {
         }))
     }
 }
+
 impl Composite {
     pub(super) fn ensure_parents(
         &self,
@@ -126,6 +128,7 @@ impl Composite {
         self.detail.ensure_submitted(device, queue, gate, context);
         self.underlay.ensure_submitted(device, queue, gate, context);
     }
+
     pub(super) fn encode(&self, encoder: &mut wgpu::CommandEncoder, image: &GpuImage) {
         let view = image.linear.create_view(&Default::default());
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -182,6 +185,7 @@ pub(super) fn pipeline(
         cache: None,
     })
 }
+
 pub(super) fn mapping(old: FrameRaster, frame: FrameRaster) -> TextureMapping {
     let origin = old.source_point([0., 0.]).0;
     let right = old.source_point([f64::from(old.output[0]), 0.]).0;

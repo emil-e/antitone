@@ -9,6 +9,7 @@ pub(super) struct MarginDrag {
     start: [f64; 2],
     percent: f64,
 }
+
 impl MarginDrag {
     fn margin(self, point: SourcePoint) -> f64 {
         let local = self.proposal.local_point(point);
@@ -23,6 +24,7 @@ impl MarginDrag {
             .clamp(0., framing::MAX_MARGIN_PERCENT)
     }
 }
+
 fn hit(q: [egui::Pos2; 4], point: egui::Pos2) -> Option<[i8; 2]> {
     if let Some((_, h)) = crop_editor::outline_handles(q)
         .into_iter()
@@ -43,6 +45,7 @@ fn hit(q: [egui::Pos2; 4], point: egui::Pos2) -> Option<[i8; 2]> {
         (point.distance(q[a] + d * t) <= 6.).then_some(h)
     })
 }
+
 fn cursor(q: [egui::Pos2; 4], handle: [i8; 2]) -> egui::CursorIcon {
     let d = (q[1] - q[0]).normalized() * f32::from(handle[0])
         + (q[3] - q[0]).normalized() * f32::from(handle[1]);
@@ -53,6 +56,7 @@ fn cursor(q: [egui::Pos2; 4], handle: [i8; 2]) -> egui::CursorIcon {
         _ => egui::CursorIcon::ResizeNeSw,
     }
 }
+
 impl Editor {
     pub(in crate::editor) fn auto_crop_context(&self) -> bool {
         self.fullscreen.is_none()
@@ -64,6 +68,7 @@ impl Editor {
                 .as_ref()
                 .is_some_and(|d| d.belongs_to(self))
     }
+
     pub(super) fn auto_crop_margin_entry(&self) -> Option<&Entry> {
         let id = self.current_source?;
         self.auto_crop_edit
@@ -73,11 +78,13 @@ impl Editor {
             .find(|e| e.source == id)
             .filter(|e| e.current(self) && self.loaded_crop_source_current(id, &e.file))
     }
+
     pub(in crate::editor) fn auto_crop_artwork_visible(&self, ui: &egui::Ui) -> bool {
         self.auto_crop_context()
             && self.auto_crop_edit.as_ref().is_some_and(|d| d.show_outline)
             && !ui.input(|i| i.key_down(egui::Key::H))
     }
+
     pub(in crate::editor) fn auto_crop_outline(
         &self,
         layout: CanvasLayout,
@@ -96,6 +103,7 @@ impl Editor {
                 .map(|p| layout.screen_frame_point(layout.composition.source_to_frame(p))),
         )
     }
+
     pub(in crate::editor) fn auto_crop_margin_interaction(
         &mut self,
         ui: &egui::Ui,

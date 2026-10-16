@@ -16,6 +16,7 @@ type Signature = (
     Option<ViewRequest>,
     Composition,
 );
+
 pub(super) struct OriginalView {
     pub generation: Arc<AtomicU64>,
     pub signature: Option<Signature>,
@@ -25,6 +26,7 @@ pub(super) struct OriginalView {
     pub last_edit: std::time::Instant,
     pub refinement_error: Option<u64>,
 }
+
 impl OriginalView {
     pub fn new(generation: Arc<AtomicU64>) -> Self {
         Self {
@@ -37,9 +39,11 @@ impl OriginalView {
             refinement_error: None,
         }
     }
+
     pub fn revision(&self) -> u64 {
         self.generation.load(Ordering::Relaxed)
     }
+
     pub fn invalidate(&mut self) {
         self.generation.fetch_add(1, Ordering::Relaxed);
         self.signature = None;
@@ -48,6 +52,7 @@ impl OriginalView {
         self.refinement_error = None;
         // Keep the admission token until this job reports completion, even after cancellation.
     }
+
     pub fn discard(&mut self) {
         if self.signature.is_some() || self.settled.is_some() {
             self.invalidate();
@@ -55,6 +60,7 @@ impl OriginalView {
             self.cancel_pending();
         }
     }
+
     pub fn cancel_pending(&mut self) {
         if self
             .refining
@@ -66,6 +72,7 @@ impl OriginalView {
             }
         }
     }
+
     pub fn observe(&mut self, purpose: OriginalPurpose, signature: Signature) {
         if self.purpose != Some(purpose) || self.signature.as_ref() != Some(&signature) {
             self.invalidate();
@@ -74,15 +81,17 @@ impl OriginalView {
             self.last_edit = std::time::Instant::now();
         }
     }
+
     pub fn leave(&mut self) {
         if self.purpose == Some(OriginalPurpose::Tool)
-            || self.purpose.is_some() && self.settled.is_none()
+            || (self.purpose.is_some() && self.settled.is_none())
         {
             self.invalidate();
         } else {
             self.cancel_pending();
         }
     }
+
     pub fn idle(&self) -> bool {
         self.refining.is_none()
             && (self.signature.is_none()
@@ -90,6 +99,7 @@ impl OriginalView {
                 || self.refinement_error == Some(self.revision()))
             && self.last_edit.elapsed() >= Duration::from_millis(250)
     }
+
     pub fn schedule(
         &mut self,
         id: u64,
@@ -129,6 +139,7 @@ impl OriginalView {
         }
         None
     }
+
     pub fn receive(
         &mut self,
         revision: u64,

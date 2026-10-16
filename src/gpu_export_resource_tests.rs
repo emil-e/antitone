@@ -349,40 +349,66 @@ fn exercise(
                     tile_time.as_secs_f64(),
                     start.elapsed().saturating_sub(tile_time).as_secs_f64()
                 );
-                monitor.phase("reopen-full-file-with-view-retained", || -> Result<(),Error> {
-                    match format {
-                        Format::Tiff(target) => {
-                            let mut decoder = tiff::decoder::Decoder::new(std::fs::File::open(&path).map_err(|e|Error::Export(e.to_string()))?).map_err(|e|Error::Export(e.to_string()))?;
-                            assert_eq!(decoder.dimensions().unwrap(),(width,height));
-                            assert_eq!(decoder.get_tag_u8_vec(tiff::tags::Tag::Unknown(34675)).unwrap(),crate::profiles::icc(target));
-                            let mut samples = 0;
-                            for strip in 0..decoder.strip_count().unwrap() {
-                                monitor.check().map_err(Error::Gpu)?;
-                                let tiff::decoder::DecodingResult::U16(pixels) = decoder.read_chunk(strip).unwrap() else { panic!("not RGB16") };
-                                samples += pixels.len();
-                            }
-                            assert_eq!(samples,width as usize*height as usize*3);
-                        }
-                        Format::Exr(_) => {
-                            use exr::prelude::*;
-                            let image = read().no_deep_data().largest_resolution_level().rgba_channels(
-                                |_,_| [0_u64;3],
-                                |counts: &mut [u64;3],_,(r,g,b,a): (f32,f32,f32,f32)| {
-                                    assert!([r,g,b,a].iter().all(|v|v.is_finite()));
-                                    assert_eq!(a,1.);
-                                    counts[0] += 1;
-                                    counts[1] += u64::from(r.min(g).min(b)<0.);
-                                    counts[2] += u64::from(r.max(g).max(b)>1.);
+                monitor.phase(
+                    "reopen-full-file-with-view-retained",
+                    || -> Result<(), Error> {
+                        match format {
+                            Format::Tiff(target) => {
+                                let mut decoder = tiff::decoder::Decoder::new(
+                                    std::fs::File::open(&path).map_err(|e| Error::Export(e.to_string()))?,
+                                )
+                                .map_err(|e| Error::Export(e.to_string()))?;
+                                assert_eq!(decoder.dimensions().unwrap(), (width, height));
+                                assert_eq!(
+                                    decoder
+                                        .get_tag_u8_vec(tiff::tags::Tag::Unknown(34675))
+                                        .unwrap(),
+                                    crate::profiles::icc(target)
+                                );
+                                let mut samples = 0;
+                                for strip in 0..decoder.strip_count().unwrap() {
+                                    monitor.check().map_err(Error::Gpu)?;
+                                    let tiff::decoder::DecodingResult::U16(pixels) =
+                                        decoder.read_chunk(strip).unwrap()
+                                    else {
+                                        panic!("not RGB16")
+                                    };
+                                    samples += pixels.len();
                                 }
-                            ).first_valid_layer().all_attributes().non_parallel().from_file(&path).map_err(|e|crate::Error::Export(e.to_string()))?;
-                            assert_eq!(image.layer_data.size,Vec2(width as usize,height as usize));
-                            let counts = image.layer_data.channel_data.pixels;
-                            assert_eq!(counts[0],u64::from(width)*u64::from(height));
-                            println!("export_resources reopened_EXR pixels={} signed_pixels={} hdr_pixels={}",counts[0],counts[1],counts[2]);
+                                assert_eq!(samples, width as usize * height as usize * 3);
+                            }
+                            Format::Exr(_) => {
+                                use exr::prelude::*;
+                                let image = read()
+                                    .no_deep_data()
+                                    .largest_resolution_level()
+                                    .rgba_channels(
+                                        |_, _| [0_u64; 3],
+                                        |counts: &mut [u64; 3], _, (r, g, b, a): (f32, f32, f32, f32)| {
+                                            assert!([r, g, b, a].iter().all(|v| v.is_finite()));
+                                            assert_eq!(a, 1.);
+                                            counts[0] += 1;
+                                            counts[1] += u64::from(r.min(g).min(b) < 0.);
+                                            counts[2] += u64::from(r.max(g).max(b) > 1.);
+                                        },
+                                    )
+                                    .first_valid_layer()
+                                    .all_attributes()
+                                    .non_parallel()
+                                    .from_file(&path)
+                                    .map_err(|e| crate::Error::Export(e.to_string()))?;
+                                assert_eq!(image.layer_data.size, Vec2(width as usize, height as usize));
+                                let counts = image.layer_data.channel_data.pixels;
+                                assert_eq!(counts[0], u64::from(width) * u64::from(height));
+                                println!(
+                                    "export_resources reopened_EXR pixels={} signed_pixels={} hdr_pixels={}",
+                                    counts[0], counts[1], counts[2]
+                                );
+                            }
                         }
-                    }
-                    Ok(())
-                })?;
+                        Ok(())
+                    },
+                )?;
                 monitor.phase(
                     "grade-retained-detail-after-export-no-original-reacquisition",
                     || -> Result<(), Error> {

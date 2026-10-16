@@ -6,6 +6,7 @@ pub(super) const SIDES: [&str; 4] = ["left", "right", "top", "bottom"];
 pub(super) struct Surface {
     pub median_camera_rgb: [f64; 3],
 }
+
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct Line {
     pub midpoint_pixel: f64,
@@ -23,23 +24,28 @@ pub(super) struct Line {
     #[serde(default)]
     pub rank: usize,
 }
+
 impl Line {
     pub fn spans(&self) -> Vec<[f64; 2]> {
         self.span_intervals
             .clone()
             .unwrap_or_else(|| vec![self.span_fraction])
     }
+
     pub fn fraction(&self) -> f64 {
         self.spans().iter().map(|[a, b]| b - a).sum()
     }
+
     pub fn observed(&self, fraction: f64) -> bool {
         self.spans()
             .iter()
             .any(|[a, b]| *a <= fraction && fraction <= *b)
     }
+
     pub fn physical_angle(&self, side: usize) -> f64 {
         self.angle_degrees * if side < 2 { -1. } else { 1. }
     }
+
     pub fn equation(&self, side: usize, size: [u32; 2]) -> [f64; 3] {
         let slope = self.angle_degrees.to_radians().tan();
         let p = self.midpoint_pixel + 0.5;
@@ -49,6 +55,7 @@ impl Line {
             [-slope, 1., p - slope * f64::from(size[0]) / 2.]
         }
     }
+
     pub fn cross(&self, side: usize, size: [u32; 2], along: f64) -> f64 {
         let [a, b, c] = self.equation(side, size);
         if side < 2 {
@@ -57,6 +64,7 @@ impl Line {
             (c - a * along) / b
         }
     }
+
     pub fn distance(&self, other: &Self, side: usize, size: [u32; 2]) -> f64 {
         let [a, b, c] = self.equation(side, size);
         let axis = usize::from(side < 2);
@@ -77,6 +85,7 @@ impl Line {
             .fold(0., f64::max)
     }
 }
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct Evidence {
     #[serde(alias = "oriented_line_candidates")]
@@ -84,6 +93,7 @@ pub struct Evidence {
     #[serde(alias = "segment_line_candidates")]
     pub(super) segments: BTreeMap<String, Vec<Line>>,
 }
+
 impl Evidence {
     #[cfg(feature = "raw")]
     pub fn observe(size: [u32; 2], rgb: &[[u16; 3]]) -> Result<Self, Error> {
@@ -108,12 +118,14 @@ impl Evidence {
         result
     }
 }
+
 #[derive(Clone, Debug)]
 pub(super) struct Family {
     pub indices: [Option<usize>; 4],
     pub score: f64,
     pub complete: bool,
 }
+
 #[derive(Clone, Debug)]
 pub(super) struct Group {
     pub lines: [Vec<Line>; 4],
@@ -126,6 +138,7 @@ pub struct Capture {
     pub rgb: Vec<[u16; 3]>,
     pub(super) group: Group,
 }
+
 impl Capture {
     pub fn new(
         area: SourceRegion,
@@ -149,6 +162,7 @@ impl Capture {
             group,
         })
     }
+
     pub(super) fn rgb(&self, p: [i32; 2]) -> Option<[u16; 3]> {
         if p.iter()
             .zip(self.size)
@@ -159,6 +173,7 @@ impl Capture {
             Some(self.rgb[p[1] as usize * self.size[0] as usize + p[0] as usize])
         }
     }
+
     pub(super) fn within(&self, p: [f64; 2], side: usize, family: &Family) -> bool {
         family.indices.iter().enumerate().all(|(s, i)| {
             s == side
@@ -173,9 +188,11 @@ impl Capture {
                 })
         })
     }
+
     pub(super) fn selected_line(&self, family: &Family, side: usize) -> Option<&Line> {
         family.indices[side].map(|i| &self.group.lines[side][i])
     }
+
     pub(super) fn source_point(&self, p: [f64; 2]) -> [f64; 2] {
         [
             f64::from(self.area.x) + p[0] * f64::from(self.area.width) / f64::from(self.size[0]),
@@ -183,6 +200,7 @@ impl Capture {
         ]
     }
 }
+
 fn group(evidence: &Evidence, size: [u32; 2]) -> Result<Group, Error> {
     let mut lines: [Vec<Line>; 4] = std::array::from_fn(|_| vec![]);
     for s in 0..4 {

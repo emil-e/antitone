@@ -10,6 +10,7 @@ pub(super) struct LogPrefixKey {
     correction: Option<Arc<crate::flat_field::FlatField>>,
     geometry: Vec<u8>,
 }
+
 impl LogPrefixKey {
     pub(super) fn new(
         stamp: [u64; 2],

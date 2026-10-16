@@ -8,10 +8,12 @@ pub(super) enum Execution {
     ComputeConstants,
     ComputeStorageHues,
 }
+
 impl Execution {
     fn compute(self) -> bool {
         !matches!(self, Self::FragmentConstants | Self::FragmentStorageHues)
     }
+
     fn storage_hues(self) -> bool {
         !matches!(self, Self::FragmentConstants | Self::ComputeConstants)
     }
@@ -29,7 +31,12 @@ fn execution_shader(target: OutputTarget, execution: Execution) -> (String, Vec<
         let declaration =
             format!("layout(set=0, binding = {binding}) uniform sampler2D {name}Sampler;");
         assert_eq!(code.matches(&declaration).count(), 1);
-        code = code.replace(&declaration, &format!("layout(set=0, binding = {binding}) uniform texture2D {name};\n#define {name}Sampler sampler2D({name}, aces_sampler)"));
+        code = code.replace(
+            &declaration,
+            &format!(
+                "layout(set=0, binding = {binding}) uniform texture2D {name};\n#define {name}Sampler sampler2D({name}, aces_sampler)"
+            ),
+        );
     }
     let declaration = code
         .lines()
@@ -48,7 +55,10 @@ fn execution_shader(target: OutputTarget, execution: Execution) -> (String, Vec<
         .collect();
     assert_eq!(hues.len(), 363);
     if execution.storage_hues() {
-        code = code.replace(&declaration, "layout(set=0,binding=5,std430) readonly buffer Hues { float aces_gamut_cusp_table_0_hues_array[]; };");
+        code = code.replace(
+            &declaration,
+            "layout(set=0,binding=5,std430) readonly buffer Hues { float aces_gamut_cusp_table_0_hues_array[]; };",
+        );
     }
     if execution.compute() {
         let mut fetches = 0;
@@ -81,11 +91,13 @@ enum ExecutionPipeline {
     Fragment(wgpu::RenderPipeline),
     Compute(wgpu::ComputePipeline),
 }
+
 pub(super) struct Executable {
     pipeline: ExecutionPipeline,
     group: wgpu::BindGroup,
     pub(super) rendered: ScreenTarget,
 }
+
 impl Executable {
     pub(super) async fn new(
         device: &wgpu::Device,
@@ -303,6 +315,7 @@ impl Executable {
             rendered,
         }
     }
+
     fn encode(&self, encoder: &mut wgpu::CommandEncoder) {
         let group = &self.group;
         match &self.pipeline {
@@ -356,6 +369,7 @@ pub(super) async fn context() -> (wgpu::Device, wgpu::Queue, Arc<GpuRenderer>) {
     let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
     (device, queue, renderer)
 }
+
 pub(super) fn complete(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -377,6 +391,7 @@ pub(super) fn complete(
         completion_ms: start.elapsed().as_secs_f64() * 1000.,
     }
 }
+
 fn pixels(size: [u32; 2]) -> Vec<[f32; 4]> {
     let levels = [
         -1., -0.2, 0., 0.00001, 0.001, 0.01, 0.05, 0.18, 0.5, 1., 2., 8., 32., 1000.,
@@ -393,6 +408,7 @@ fn pixels(size: [u32; 2]) -> Vec<[f32; 4]> {
         })
         .collect()
 }
+
 pub(super) fn require_agreement(actual: &[u32], expected: &[u32]) -> f32 {
     assert_eq!(actual.len(), expected.len());
     let mut maximum = 0_f32;

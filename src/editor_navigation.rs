@@ -20,7 +20,7 @@ impl Editor {
         let picking = (self.pick.is_some() || masking) && self.fullscreen.is_none();
         let dusting = self.dust.cleanup && self.tab == 1 && self.fullscreen.is_none();
         let canvas_tool =
-            picking || dusting || self.auto_crop_edit.is_some() && self.fullscreen.is_none();
+            picking || dusting || (self.auto_crop_edit.is_some() && self.fullscreen.is_none());
         let (zoom, translation, touch, pointer, space) = ui.input(|input| {
             (
                 input.zoom_delta(),
@@ -146,10 +146,12 @@ impl Editor {
         (geometry, panning)
     }
 }
+
 fn can_pan(geometry: CanvasLayout) -> bool {
     geometry.image.width() > geometry.canvas.width()
         || geometry.image.height() > geometry.canvas.height()
 }
+
 fn picker_cursor(
     geometry: CanvasLayout,
     point: egui::Pos2,

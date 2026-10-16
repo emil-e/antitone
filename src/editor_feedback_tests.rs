@@ -174,8 +174,7 @@ fn matching_save_success_resolves_the_failure_but_starting_a_retry_does_not() {
 }
 
 #[test]
-fn correction_failures_are_classified_from_work_and_stale_or_unrelated_results_do_not_retire_them()
-{
+fn stale_and_unrelated_results_do_not_retire_classified_correction_failures() {
     let (mut editor, send, receiver) = fixture();
     let before = editor.document.project.clone();
     editor.start_document(DocumentWork::Correction(
@@ -231,8 +230,7 @@ fn correction_failures_are_classified_from_work_and_stale_or_unrelated_results_d
 }
 
 #[test]
-fn rejected_support_warns_without_changing_region_or_processing_and_successful_acceptance_resolves_it()
- {
+fn rejected_support_preserves_region_and_grade_until_matching_resolution() {
     let (mut editor, _send, receiver) = fixture();
     add_ready_fixture(&mut editor);
     editor.pick = Some(Pick::Flat);

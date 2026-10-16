@@ -17,6 +17,7 @@ use std::{
 };
 type Result<T> = std::result::Result<T, String>;
 const GROWTH_LIMIT: u64 = 2 << 30;
+
 #[derive(Clone, Copy, Debug)]
 struct Reading {
     footprint: u64,
@@ -27,6 +28,7 @@ struct Reading {
     free: u64,
     speculative_free: u64,
 }
+
 #[allow(deprecated)]
 fn reading(device: &wgpu::Device) -> Result<Reading> {
     let mut pressure = 0u32;
@@ -93,6 +95,7 @@ fn reading(device: &wgpu::Device) -> Result<Reading> {
         speculative_free: u64::from(vm.speculative_count) * page,
     })
 }
+
 struct Status {
     latest: Reading,
     sampled: Instant,
@@ -102,11 +105,13 @@ struct Status {
     samples: u64,
     stopped: Option<String>,
 }
+
 pub(super) struct Monitor {
     status: Mutex<Status>,
     baseline: u64,
     swapouts: u64,
 }
+
 impl Monitor {
     fn record(&self, read: Result<Reading>) {
         let mut status = self.status.lock().unwrap();
@@ -136,6 +141,7 @@ impl Monitor {
             }
         }
     }
+
     pub(super) fn check(&self) -> Result<()> {
         let mut status = self.status.lock().unwrap();
         if status.sampled.elapsed() > Duration::from_secs(2) {
@@ -145,6 +151,7 @@ impl Monitor {
             Err(format!("cache observation stopped: {reason}"))
         })
     }
+
     pub(super) fn phase<T, E: std::fmt::Display>(
         &self,
         name: &str,
@@ -170,6 +177,7 @@ impl Monitor {
         result
     }
 }
+
 pub(super) fn source_bound(m: &crate::raw::Metadata) -> Result<u64> {
     let bytes = u64::from(m.width)
         .checked_mul(u64::from(m.height))
@@ -184,6 +192,7 @@ pub(super) fn source_bound(m: &crate::raw::Metadata) -> Result<u64> {
         .ok_or("source exceeds diagnostic geometry/600 MiB bound")?;
     Ok(bytes)
 }
+
 pub(super) fn wait(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -195,6 +204,7 @@ pub(super) fn wait(
         })
         .map(|_| ())
 }
+
 fn preflight(read: Reading) -> Result<()> {
     if read.pressure != 1 || read.free < GROWTH_LIMIT {
         return Err(format!(

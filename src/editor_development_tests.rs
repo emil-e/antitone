@@ -23,6 +23,7 @@ fn request(path: &std::path::Path, store: Arc<SourceStore>) -> Request {
         retain: false,
     }
 }
+
 fn until(scheduler: &Scheduler, condition: impl Fn(&State) -> bool) {
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     let shared = &scheduler.owner.0;

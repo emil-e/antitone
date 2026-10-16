@@ -1,5 +1,6 @@
 //! Conservative affine support and bounded submission windows; neither changes sampling quality.
 pub(crate) type Window = ([u32; 2], [u32; 2]);
+
 pub(crate) fn affine_output(
     affine: [[f32; 2]; 3],
     output: [u32; 2],
@@ -46,6 +47,7 @@ pub(crate) fn affine_output(
         [hi[0].saturating_sub(lo[0]), hi[1].saturating_sub(lo[1])],
     )
 }
+
 pub(crate) fn bounded((origin, extent): Window) -> Vec<Window> {
     let mut result = Vec::new();
     for y in (0..extent[1]).step_by(128) {
@@ -61,6 +63,7 @@ pub(crate) fn bounded((origin, extent): Window) -> Vec<Window> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn magnified_support_is_bounded_without_changing_coverage_or_resolution() {
         let output = [5120, 2880];

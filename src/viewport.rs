@@ -14,6 +14,7 @@ pub struct Viewport {
     center: Option<FramePoint>,
     preserve_anchor: bool,
 }
+
 #[derive(Clone, Copy, Debug)]
 pub struct CanvasLayout {
     pub canvas: egui::Rect,
@@ -22,10 +23,12 @@ pub struct CanvasLayout {
     pub composition: Composition,
     pub scale: f32,
 }
+
 impl Viewport {
     pub fn fit(&mut self) {
         *self = Self::default();
     }
+
     pub fn layout(
         &mut self,
         canvas: egui::Rect,
@@ -40,6 +43,7 @@ impl Viewport {
         .expect("viewport requires a valid active area");
         self.layout_composition(canvas, composition, pixels_per_point)
     }
+
     pub fn layout_composition(
         &mut self,
         canvas: egui::Rect,
@@ -78,6 +82,7 @@ impl Viewport {
             scale,
         }
     }
+
     /// Crop editing fits the entire source once, then never clamps/refits to the shrinking frame.
     pub fn layout_crop(
         &mut self,
@@ -106,6 +111,7 @@ impl Viewport {
         self.preserve_anchor = true;
         self.layout_composition(canvas, composition, pixels_per_point)
     }
+
     /// Switches viewed domains without changing physical magnification or the source anchor.
     pub fn reframe(&mut self, previous: CanvasLayout, next: Composition, pixels_per_point: f32) {
         let source = previous
@@ -115,6 +121,7 @@ impl Viewport {
         self.zoom = Some(previous.scale * pixels_per_point);
         self.preserve_anchor = true;
     }
+
     pub fn zoom_at(
         &mut self,
         geometry: CanvasLayout,
@@ -129,6 +136,7 @@ impl Viewport {
         let center = local - (anchor - geometry.canvas.center()) / (zoom / pixels_per_point);
         self.center = Some(FramePoint([f64::from(center.x), f64::from(center.y)]));
     }
+
     pub fn pan(&mut self, geometry: CanvasLayout, pixels_per_point: f32, delta: Vec2) {
         self.preserve_anchor = false;
         self.zoom = Some(geometry.scale * pixels_per_point);
@@ -140,27 +148,33 @@ impl Viewport {
         self.center = Some(FramePoint([f64::from(center.x), f64::from(center.y)]));
     }
 }
+
 impl CanvasLayout {
     pub fn frame_point(self, point: Pos2) -> FramePoint {
         let p = (point - self.image.min) / self.scale;
         FramePoint([f64::from(p.x), f64::from(p.y)])
     }
+
     pub fn screen_frame_point(self, point: FramePoint) -> Pos2 {
         self.image.min + egui::vec2(point.0[0] as f32, point.0[1] as f32) * self.scale
     }
+
     pub fn source_point(self, point: Pos2) -> Pos2 {
         let source = self.composition.frame_to_source(self.frame_point(point));
         egui::pos2(source.0[0] as f32, source.0[1] as f32)
     }
+
     pub fn screen_point(self, point: Pos2) -> Pos2 {
         let frame = self
             .composition
             .source_to_frame(SourcePoint([f64::from(point.x), f64::from(point.y)]));
         self.screen_frame_point(frame)
     }
+
     pub fn screen_region(self, region: Rect) -> egui::Rect {
         self.screen_coverage(Coverage::rectangle(region))
     }
+
     pub fn visible_area(self) -> Rect {
         let clipped = self.canvas.intersect(self.image);
         let (min, max) = self.visible_frame(clipped);
@@ -170,6 +184,7 @@ impl CanvasLayout {
             .bounds(self.composition.area())
             .unwrap()
     }
+
     fn visible_frame(self, clipped: egui::Rect) -> (FramePoint, FramePoint) {
         let size = self.composition.size();
         let min = self.frame_point(clipped.min);
@@ -183,6 +198,7 @@ impl CanvasLayout {
             })),
         )
     }
+
     pub fn frame_raster(self, pixels_per_point: f32) -> FrameRaster {
         let (min, max) = self.visible_frame(self.canvas.intersect(self.image));
         let output = std::array::from_fn(|i| {
@@ -191,6 +207,7 @@ impl CanvasLayout {
         });
         FrameRaster::new(self.composition, min, max, output).expect("visible frame is constrained")
     }
+
     pub fn physical_draw(self, pixels_per_point: f32) -> egui::Rect {
         let visible = self.canvas.intersect(self.image);
         let aligned = egui::Rect::from_min_max(
@@ -203,6 +220,7 @@ impl CanvasLayout {
             visible
         }
     }
+
     /// Match the callback's physical pixel grid, without capping at source sampling pitch.
     pub fn physical_frame_raster(self, pixels_per_point: f32) -> FrameRaster {
         let draw = self.physical_draw(pixels_per_point);
@@ -212,6 +230,7 @@ impl CanvasLayout {
         FrameRaster::new(self.composition, min, max, output)
             .expect("visible physical frame is constrained")
     }
+
     pub fn frame_bounds(self, coverage: Coverage) -> (FramePoint, FramePoint) {
         let corners = coverage
             .corners()
@@ -241,10 +260,12 @@ impl CanvasLayout {
             })),
         )
     }
+
     pub fn screen_coverage(self, coverage: Coverage) -> egui::Rect {
         let (min, max) = self.frame_bounds(coverage);
         egui::Rect::from_min_max(self.screen_frame_point(min), self.screen_frame_point(max))
     }
+
     pub fn frame_selection(self, start: FramePoint, end: FramePoint) -> Coverage {
         let size = self.composition.size().map(f64::from);
         let snap = |v: f64| {
@@ -269,6 +290,7 @@ impl CanvasLayout {
             .coverage(min, max)
             .expect("constrained frame selection")
     }
+
     pub fn pick_patch(self, point: Pos2, side: u32) -> Coverage {
         let p = self.frame_point(point);
         let size = self.composition.size();
@@ -285,6 +307,7 @@ impl CanvasLayout {
             )
             .expect("constrained frame patch")
     }
+
     pub fn output_size(self, region: Rect, pixels_per_point: f32) -> [u32; 2] {
         [
             ((region.width as f32 * self.scale * pixels_per_point).ceil() as u32)
@@ -293,6 +316,7 @@ impl CanvasLayout {
                 .clamp(1, region.height),
         ]
     }
+
     pub fn uv(self, draw: egui::Rect, sampled: Rect) -> TextureMapping {
         self.composition.texture_mapping(
             self.frame_point(draw.min),
@@ -300,9 +324,11 @@ impl CanvasLayout {
             sampled,
         )
     }
+
     pub fn rectangle(self, start: Pos2, end: Pos2) -> Rect {
         source_rectangle(self.area, self.source_point(start), self.source_point(end))
     }
+
     pub fn patch(self, point: Pos2, side: u32) -> Rect {
         let p = self.source_point(point);
         let width = side.min(self.area.width);
@@ -321,6 +347,7 @@ impl CanvasLayout {
         }
     }
 }
+
 #[derive(Clone, Copy)]
 pub enum PickDrag {
     New(FramePoint),
@@ -333,6 +360,7 @@ pub enum PickDrag {
         basis: Option<[[f64; 2]; 2]>,
     },
 }
+
 impl PickDrag {
     pub fn begin(geometry: CanvasLayout, point: Pos2, region: Option<Coverage>) -> Self {
         if let Some(region) = region {
@@ -384,6 +412,7 @@ impl PickDrag {
         }
         Self::New(geometry.frame_point(point))
     }
+
     pub fn update(self, geometry: CanvasLayout, point: Pos2) -> Coverage {
         let point = geometry.frame_point(point);
         match self {
@@ -464,6 +493,7 @@ mod tests {
         width: 8640,
         height: 5760,
     };
+
     #[test]
     fn rotated_sampling_resize_keeps_pose_and_fixed_corner_and_move_keeps_shape() {
         let g = Viewport::default().layout(
@@ -490,6 +520,7 @@ mod tests {
         let moved = PickDrag::begin(g, center, Some(q)).update(g, center + egui::vec2(10., 20.));
         assert!((moved.area() - q.area()).abs() < 1e-6);
     }
+
     #[test]
     fn off_source_statistical_coverage_does_not_move_when_clicked() {
         let g = Viewport::default().layout(
@@ -503,6 +534,7 @@ mod tests {
         let p = g.screen_coverage(q).center();
         assert_eq!(PickDrag::begin(g, p, Some(q)).update(g, p), q);
     }
+
     #[test]
     fn oriented_layout_preserves_source_patches_and_zoom_anchors() {
         use crate::geometry::QuarterTurns;
@@ -575,6 +607,7 @@ mod tests {
             }
         }
     }
+
     #[test]
     fn uncropped_reframing_keeps_magnification_and_source_anchor_even_in_letterboxed_edges() {
         use crate::{crop::Crop, geometry::QuarterTurns};
@@ -630,6 +663,7 @@ mod tests {
             }
         }
     }
+
     #[test]
     fn fit_and_retina_one_to_one_have_correct_scale_and_roundtrips() {
         let canvas = egui::Rect::from_min_size(egui::pos2(50., 20.), egui::vec2(900., 600.));
@@ -646,6 +680,7 @@ mod tests {
         assert_eq!((region.width, region.height), (1800, 1200));
         assert_eq!(detail.output_size(region, 2.), [1800, 1200]);
     }
+
     #[test]
     fn pointer_zoom_preserves_anchor_and_pan_clamps_to_source_bounds() {
         let canvas = egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(900., 600.));
@@ -663,6 +698,7 @@ mod tests {
         view.fit();
         assert_eq!(view.layout(canvas, AREA, 2.).image, canvas);
     }
+
     #[test]
     fn rotated_full_frame_selection_has_stable_integer_bounds_for_numeric_controls() {
         let canvas = egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(900., 600.));
@@ -687,6 +723,7 @@ mod tests {
             assert_eq!(layout.frame_bounds(coverage), (FramePoint([0., 0.]), max));
         }
     }
+
     #[test]
     fn rectangle_move_and_corner_resize_keep_valid_source_bounds() {
         let canvas = egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(900., 600.));
@@ -735,6 +772,7 @@ mod tests {
         assert_eq!(edge.x + edge.width, AREA.x + AREA.width);
         assert_eq!(edge.y + edge.height, AREA.y + AREA.height);
     }
+
     #[test]
     fn picker_measurements_are_source_coordinates_at_any_zoom_and_pan() {
         let canvas = egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(900., 600.));

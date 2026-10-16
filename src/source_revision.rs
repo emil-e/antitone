@@ -16,6 +16,7 @@ pub(crate) struct FileRevision {
     #[cfg(unix)]
     pub(crate) changed: (i64, i64),
 }
+
 impl FileRevision {
     fn read(path: &Path) -> std::io::Result<Self> {
         #[cfg(unix)]
@@ -41,6 +42,7 @@ pub(crate) struct FileKey {
     pub(crate) path: PathBuf,
     pub(crate) revision: Option<FileRevision>,
 }
+
 impl FileKey {
     pub(crate) fn new(path: &Path) -> Self {
         Self {
@@ -49,6 +51,7 @@ impl FileKey {
             revision: FileRevision::read(path).ok(),
         }
     }
+
     #[cfg(all(feature = "raw", feature = "project"))]
     pub(crate) fn current_at(&self, locator: &Path) -> bool {
         self.revision.is_some() && Self::new(locator) == *self

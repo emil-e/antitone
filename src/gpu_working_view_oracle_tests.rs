@@ -25,6 +25,7 @@ fn cropped(area: SourceRegion, region: SourceRegion, output: [u32; 2], angle: f6
     )
     .unwrap()
 }
+
 fn close(expected: DVec3, actual: [f32; 4]) {
     for c in 0..3 {
         assert!(
@@ -34,6 +35,7 @@ fn close(expected: DVec3, actual: [f32; 4]) {
         );
     }
 }
+
 #[test]
 fn physical_view_colour_matches_scalar_continuous_source_masks() {
     pollster::block_on(async {
@@ -93,6 +95,7 @@ fn physical_view_colour_matches_scalar_continuous_source_masks() {
         assert_eq!(read(&device, &queue, &source.pixels), values);
     });
 }
+
 fn field(area: SourceRegion) -> Arc<crate::flat_field::FlatField> {
     Arc::new(
         crate::flat_field::FlatField::from_nodes(
@@ -108,6 +111,7 @@ fn field(area: SourceRegion) -> Arc<crate::flat_field::FlatField> {
         .unwrap(),
     )
 }
+
 #[test]
 fn physical_view_original_footprints_match_scalar_correction_signed_hdr_and_floor_provenance() {
     pollster::block_on(async {
@@ -180,6 +184,7 @@ fn physical_view_original_footprints_match_scalar_correction_signed_hdr_and_floo
         assert!(actual.iter().any(|p| p[..3].iter().any(|v| *v > 1.)));
     });
 }
+
 fn raw_cases(region: SourceRegion) -> Vec<(&'static str, PhotoGradeSnapshot)> {
     let simple = |photo| PhotoGradeSnapshot::new(photo, vec![]).unwrap();
     let centre = [
@@ -258,6 +263,7 @@ fn raw_cases(region: SourceRegion) -> Vec<(&'static str, PhotoGradeSnapshot)> {
         ),
     ]
 }
+
 #[test]
 #[ignore = "private RAW: 180 production colour/original-precision comparisons; no gallery or sampling-acceptance claim"]
 fn physical_view_colour_raw_correspondence() {
@@ -344,6 +350,7 @@ fn physical_view_colour_raw_correspondence() {
         assert_eq!(comparisons, 180);
     });
 }
+
 #[test]
 fn physical_view_encoded_versions_survive_owner_release_and_abandoned_encoders_do_not_initialize() {
     pollster::block_on(async {

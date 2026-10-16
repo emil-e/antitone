@@ -36,6 +36,7 @@ pub struct SupportMask {
     size: [u32; 2],
     bits: Vec<bool>,
 }
+
 impl SupportMask {
     pub fn new(origin: [u32; 2], size: [u32; 2], bits: Vec<bool>) -> Result<Self, Error> {
         let count = usize::try_from(
@@ -56,15 +57,19 @@ impl SupportMask {
             ))?;
         Ok(Self { origin, size, bits })
     }
+
     pub fn origin(&self) -> [u32; 2] {
         self.origin
     }
+
     pub fn size(&self) -> [u32; 2] {
         self.size
     }
+
     pub fn bits(&self) -> &[bool] {
         &self.bits
     }
+
     pub fn selected_points(&self) -> impl Iterator<Item = [u32; 2]> + '_ {
         let width = self.size[0] as usize;
         self.bits
@@ -77,6 +82,7 @@ impl SupportMask {
                 ])
             })
     }
+
     /// Exact support groups in the healer's donor order, for donor geometry presentation.
     pub fn grouped_supports(&self) -> Vec<Self> {
         let width = self.size[0] as usize;
@@ -113,6 +119,7 @@ impl SupportMask {
         }
         self.bits[((y - self.origin[1]) * self.size[0] + x - self.origin[0]) as usize]
     }
+
     fn intersects(&self, other: &Self) -> bool {
         let left = self.origin[0].max(other.origin[0]);
         let top = self.origin[1].max(other.origin[1]);
@@ -138,13 +145,16 @@ pub struct RepairSet {
     repairs: Vec<Repair>,
     selected: Option<RepairId>,
 }
+
 impl RepairSet {
     pub fn repairs(&self) -> &[Repair] {
         &self.repairs
     }
+
     pub fn selected(&self) -> Option<RepairId> {
         self.selected
     }
+
     pub fn insert(
         &mut self,
         support: SupportMask,
@@ -168,6 +178,7 @@ impl RepairSet {
         self.selected = Some(id);
         Ok(id)
     }
+
     pub fn select(&mut self, id: Option<RepairId>) -> Result<(), Error> {
         if id.is_some_and(|id| !self.repairs.iter().any(|repair| repair.id == id)) {
             return Err(Error::InvalidParameter("unknown repair ID"));
@@ -175,6 +186,7 @@ impl RepairSet {
         self.selected = id;
         Ok(())
     }
+
     pub fn remove(&mut self, id: RepairId) -> Result<Repair, Error> {
         let index = self
             .repairs
@@ -187,25 +199,30 @@ impl RepairSet {
         }
         Ok(repair)
     }
+
     pub fn set_enabled(&mut self, id: RepairId, enabled: bool) -> Result<(), Error> {
         self.repair_mut(id)?.enabled = enabled;
         Ok(())
     }
+
     pub fn set_donor(&mut self, id: RepairId, donor: DonorChoice) -> Result<(), Error> {
         self.repair_mut(id)?.donor = donor;
         Ok(())
     }
+
     pub fn set_support(&mut self, id: RepairId, support: SupportMask) -> Result<(), Error> {
         self.require_independent(&support, Some(id))?;
         self.repair_mut(id)?.support = support;
         Ok(())
     }
+
     fn repair_mut(&mut self, id: RepairId) -> Result<&mut Repair, Error> {
         self.repairs
             .iter_mut()
             .find(|repair| repair.id == id)
             .ok_or(Error::InvalidParameter("unknown repair ID"))
     }
+
     fn require_independent(
         &self,
         support: &SupportMask,
@@ -238,15 +255,18 @@ pub struct EvaluatedRepair {
     pub donors: Vec<DonorMatch>,
     values: Vec<Ap1>,
 }
+
 impl EvaluatedRepair {
     pub fn support(&self) -> &SupportMask {
         &self.support
     }
+
     pub fn pixels(&self) -> impl Iterator<Item = ([u32; 2], Ap1)> + '_ {
         self.support
             .selected_points()
             .map(|point| (point, self.pixel(point, [0.; 3])))
     }
+
     pub fn pixel(&self, point: [u32; 2], base: Ap1) -> Ap1 {
         if !self.support.contains(point) {
             return base;
@@ -475,10 +495,12 @@ enum DonorSearch {
     #[cfg(test)]
     Exhaustive,
 }
+
 impl DonorSearch {
     fn is_bounded(self) -> bool {
         matches!(self, Self::Bounded)
     }
+
     fn ceiling(self, best: f64) -> Option<f64> {
         match self {
             Self::Bounded => Some(competitive_score(best)),
@@ -487,6 +509,7 @@ impl DonorSearch {
         }
     }
 }
+
 fn competitive_score(best: f64) -> f64 {
     best * 1.01 + 1e-12
 }
@@ -503,6 +526,7 @@ fn heal_ranked_with_search(
 }
 
 type Healed = (Vec<Ap1>, Vec<DonorMatch>);
+
 fn heal_with_execution(
     image: &[Ap1],
     size: [u32; 2],
@@ -914,6 +938,7 @@ fn donor_order(
         .then_with(|| a.1.cmp(&b.1))
         .then_with(|| a.2.cmp(&b.2))
 }
+
 fn select_donor(
     candidates: &[(f64, usize, usize)],
     target: [usize; 2],
@@ -925,6 +950,7 @@ fn select_donor(
         .min_by(|a, b| donor_order(a, b, target))
         .copied()
 }
+
 fn can_beat_zero_winner(
     winner: (f64, usize, usize),
     source: [usize; 2],
@@ -952,11 +978,13 @@ struct MatchContext<'a> {
     contrast: f64,
     gradient_scale: f64,
 }
+
 #[derive(Clone, Copy)]
 struct MatchWeights {
     color: f64,
     gradient: f64,
 }
+
 impl MatchWeights {
     fn new(weights: &[f64], valid_target: &[bool]) -> Self {
         Self {
@@ -969,6 +997,7 @@ impl MatchWeights {
         }
     }
 }
+
 fn matching_score(context: MatchContext<'_>) -> Result<f64, Error> {
     matching_score_bounded(
         context,
@@ -977,6 +1006,7 @@ fn matching_score(context: MatchContext<'_>) -> Result<f64, Error> {
     )
     .map(|score| score.expect("unbounded matching never prunes"))
 }
+
 fn matching_score_bounded(
     context: MatchContext<'_>,
     totals: MatchWeights,
@@ -1041,6 +1071,7 @@ fn dimensions(size: [u32; 2], count: usize) -> Result<[usize; 2], Error> {
     }
     Ok([width, height])
 }
+
 fn offset(value: usize, delta: i32) -> Option<usize> {
     if delta < 0 {
         value.checked_sub(delta.unsigned_abs() as usize)
@@ -1048,9 +1079,11 @@ fn offset(value: usize, delta: i32) -> Option<usize> {
         value.checked_add(delta as usize)
     }
 }
+
 fn distance(x: usize, y: usize, tx: usize, ty: usize) -> f64 {
     ((x as f64 - tx as f64).powi(2) + (y as f64 - ty as f64).powi(2)).sqrt()
 }
+
 fn selected_bounds(mask: &[bool], width: usize) -> Option<[usize; 4]> {
     let mut bounds = [usize::MAX, usize::MAX, 0, 0];
     let mut any = false;
@@ -1078,6 +1111,7 @@ struct DonorEligibility<'a> {
     #[cfg(test)]
     local_width: usize,
 }
+
 impl<'a> DonorEligibility<'a> {
     fn new(
         mask: &'a [bool],
@@ -1104,6 +1138,7 @@ impl<'a> DonorEligibility<'a> {
             local_width,
         }
     }
+
     fn clean(&self, x: usize, y: usize, _search: DonorSearch) -> bool {
         #[cfg(test)]
         if matches!(_search, DonorSearch::Exhaustive) {
@@ -1165,6 +1200,7 @@ fn grouped_components(mask: &[bool], width: usize, height: usize) -> Vec<Vec<usi
         .filter(|group| !group.is_empty())
         .collect()
 }
+
 fn dilate(mask: &[bool], width: usize, height: usize, radius: usize) -> Vec<bool> {
     let mut output = vec![false; mask.len()];
     for y in 0..height {
@@ -1178,6 +1214,7 @@ fn dilate(mask: &[bool], width: usize, height: usize, radius: usize) -> Vec<bool
     }
     output
 }
+
 fn exact_distance_squares(width: usize, height: usize) -> bool {
     (width.saturating_sub(1) as u64)
         .checked_pow(2)
@@ -1199,6 +1236,7 @@ fn distance_to_unknown(
     // in this range. Apply the same sqrt once to the exact minimum, not once
     // per possible unknown pixel. Keep the scalar path beyond that guarantee.
     let exact = exact_distance_squares(width, height);
+
     #[derive(Clone, Copy)]
     struct Site {
         base: u64,
@@ -1363,6 +1401,7 @@ fn gaussian_blur(image: &[Ap1], width: usize, height: usize) -> Vec<Ap1> {
     }
     output
 }
+
 fn sobel(image: &[Ap1], width: usize, height: usize) -> Vec<[f32; 6]> {
     let mut output = vec![[0.; 6]; image.len()];
     let smooth = [1., 2., 1.];
@@ -1385,6 +1424,7 @@ fn sobel(image: &[Ap1], width: usize, height: usize) -> Vec<[f32; 6]> {
     }
     output
 }
+
 fn reflected(mut value: isize, size: usize) -> usize {
     if size == 1 {
         return 0;
@@ -1462,6 +1502,7 @@ fn harmonic_fill(
     }
     Ok(output)
 }
+
 fn conjugate_gradient(rhs: &[f64], apply: &impl Fn(&[f64], &mut [f64])) -> Result<Vec<f64>, Error> {
     let mut x = vec![0.; rhs.len()];
     let mut residual = rhs.to_vec();
@@ -1495,9 +1536,11 @@ fn conjugate_gradient(rhs: &[f64], apply: &impl Fn(&[f64], &mut [f64])) -> Resul
     }
     Err(Error::NumericalOverflow)
 }
+
 fn dot(a: &[f64], b: &[f64]) -> f64 {
     a.iter().zip(b).map(|(a, b)| a * b).sum()
 }
+
 fn neighbors4(
     x: usize,
     y: usize,
@@ -1513,6 +1556,7 @@ fn neighbors4(
     .into_iter()
     .flatten()
 }
+
 fn limited_biharmonic(
     image: &[Ap1],
     mask: &[bool],

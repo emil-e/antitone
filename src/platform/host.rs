@@ -68,6 +68,7 @@ pub fn run<A: App + 'static>(
 }
 
 struct Repaint(Instant);
+
 struct Host<A, F> {
     title: String,
     create: Option<F>,

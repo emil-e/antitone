@@ -20,6 +20,7 @@ pub(super) struct Approved {
     pub entries: Vec<SourceAnalysis>,
     pub files: Vec<thumbnails::FileKey>,
 }
+
 pub(super) struct Review {
     pub request: analysis::Request,
     pub approved: Approved,
@@ -76,6 +77,7 @@ fn verify_file(request: &analysis::Request, approved: &Approved) -> Result<(), E
     }
     Ok(())
 }
+
 pub(super) fn verify(request: &analysis::Request) -> Result<(), Error> {
     if let Some(approved) = &request.areas {
         verify_file(request, approved)?;
@@ -382,6 +384,7 @@ impl Editor {
             self.status = "RAW worker stopped; grade unchanged".into();
         }
     }
+
     pub(super) fn analysis_areas_result(
         &mut self,
         id: u64,
@@ -444,6 +447,7 @@ impl Editor {
             }
         }
     }
+
     pub(super) fn review_areas(&self, id: SourceId) -> Option<&Areas> {
         self.analysis_review
             .as_ref()?
@@ -453,6 +457,7 @@ impl Editor {
             .find(|r| r.source == id)
             .map(|r| &r.areas)
     }
+
     pub(super) fn stash_review_region(&mut self) {
         if self.analysis_pending.is_some() {
             return;
@@ -496,6 +501,7 @@ impl Editor {
             entry.areas.refit_picture(active);
         }
     }
+
     pub(super) fn refresh_review_region(&mut self) {
         self.region = self
             .analysis_review
@@ -514,6 +520,7 @@ impl Editor {
             .and_then(|q| Areas::coverage(q).ok());
         self.pick_drag = None;
     }
+
     pub(super) fn browse_analysis_review(&mut self, id: SourceId) {
         if self.analysis_review.is_none() || self.analysis_pending.is_some() {
             return;
@@ -523,6 +530,7 @@ impl Editor {
         self.analysis_review.as_mut().unwrap().loaded = self.id;
         self.refresh_review_region();
     }
+
     pub(super) fn end_analysis_review(&mut self) {
         let Some(review) = self.analysis_review.take() else {
             return;
@@ -533,6 +541,7 @@ impl Editor {
         self.finish_pick();
         self.status = notice;
     }
+
     pub(super) fn confirm_analysis_review(&mut self) {
         if self.busy || self.ready.is_none() || self.analysis_pending.is_some() {
             return;
@@ -566,6 +575,7 @@ impl Editor {
         }
         self.start_analysis(request);
     }
+
     pub(super) fn review_area_at(
         &self,
         geometry: crate::viewport::CanvasLayout,
@@ -599,10 +609,10 @@ impl Editor {
                 .map(|p| geometry.screen_frame_point(geometry.composition.source_to_frame(p)));
             let distance = (0..4)
                 .map(|i| {
-                    let a = q[i];
-                    let delta = q[(i + 1) % 4] - a;
-                    let t = ((point - a).dot(delta) / delta.length_sq()).clamp(0., 1.);
-                    point.distance(a + delta * t)
+                    let edge_start = q[i];
+                    let edge = q[(i + 1) % 4] - edge_start;
+                    let t = ((point - edge_start).dot(edge) / edge.length_sq()).clamp(0., 1.);
+                    point.distance(edge_start + edge * t)
                 })
                 .min_by(f32::total_cmp)
                 .unwrap();
@@ -634,6 +644,7 @@ impl Editor {
         }
         Some(review.picture)
     }
+
     pub(super) fn select_review_area(
         &mut self,
         geometry: crate::viewport::CanvasLayout,
@@ -650,6 +661,7 @@ impl Editor {
             self.refresh_review_region();
         }
     }
+
     pub(super) fn paint_review_areas(
         &self,
         ui: &egui::Ui,
@@ -763,6 +775,7 @@ impl Editor {
             );
         }
     }
+
     pub(super) fn review_warning(&self, id: SourceId) -> Option<&'static str> {
         let areas = self.review_areas(id)?;
         match (areas.opening.is_some(), areas.picture.is_some()) {

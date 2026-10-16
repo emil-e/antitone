@@ -14,8 +14,17 @@ fn click(h: &mut Harness<'_, Editor>, p: egui::Pos2, modifiers: egui::Modifiers)
     }
     h.step();
 }
+
 fn brush_ring_at(h: &Harness<'_, Editor>, point: egui::Pos2) -> bool {
-    h.output().shapes.iter().any(|shape|matches!(&shape.shape,egui::Shape::Circle(circle) if circle.center.distance(point)<0.01 && circle.fill==egui::Color32::TRANSPARENT && circle.stroke.width==1.5))
+    h.output().shapes.iter().any(|shape| {
+        matches!(
+            &shape.shape,
+            egui::Shape::Circle(circle)
+                if circle.center.distance(point) < 0.01
+                    && circle.fill == egui::Color32::TRANSPARENT
+                    && circle.stroke.width == 1.5
+        )
+    })
 }
 
 fn ready(h: &mut Harness<'_, Editor>, count: usize) {
@@ -25,6 +34,7 @@ fn ready(h: &mut Harness<'_, Editor>, count: usize) {
             && e.working.idle()
     });
 }
+
 fn pixels(e: &Editor, source: SourceId, id: RepairId) -> usize {
     e.dust
         .repairs(source)
@@ -37,6 +47,7 @@ fn pixels(e: &Editor, source: SourceId, id: RepairId) -> usize {
         .selected_points()
         .count()
 }
+
 fn key(h: &mut Harness<'_, Editor>, key: egui::Key) {
     for pressed in [true, false] {
         h.event(egui::Event::Key {

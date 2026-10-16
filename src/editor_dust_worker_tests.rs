@@ -11,6 +11,7 @@ fn authored_dust_backend_slices_share_presentation_queue_and_retire_without_fail
         let gate = crate::gpu::SubmissionGate::default();
         let renderers = Arc::new(crate::renderer::RendererCache::new(gate.clone()));
         let (_, reference) = prepare(&document, &device, &queue, &renderers);
+
         let epoch = Arc::new(AtomicU64::new(1));
         let (commands, receiver) = mpsc::channel();
         let (send, messages) = mpsc::channel();
@@ -36,6 +37,7 @@ fn authored_dust_backend_slices_share_presentation_queue_and_retire_without_fail
                     .unwrap();
             }
         }));
+
         let worker_device = device.clone();
         let worker_queue = queue.clone();
         let worker_gate = gate.clone();
@@ -57,6 +59,7 @@ fn authored_dust_backend_slices_share_presentation_queue_and_retire_without_fail
                 )
             })
             .unwrap();
+
         let source_id = document.project.order[0];
         let record = document.project.source(source_id).unwrap();
         let load = |id| {
@@ -77,6 +80,7 @@ fn authored_dust_backend_slices_share_presentation_queue_and_retire_without_fail
             Message::Ready(1, Ok(ready)) => ready,
             _ => panic!("source not ready"),
         };
+
         let (mut editor, _, _) = crate::editor::tests::fixture();
         editor.document = document.clone();
         editor.current_source = Some(source_id);
@@ -106,6 +110,7 @@ fn authored_dust_backend_slices_share_presentation_queue_and_retire_without_fail
             false,
         );
         editor.commit_dust_mask();
+
         let context = egui::Context::default();
         let (wake, woken) = mpsc::channel();
         context.set_request_repaint_callback(move |_| {
@@ -119,14 +124,16 @@ fn authored_dust_backend_slices_share_presentation_queue_and_retire_without_fail
             idle_frame();
         }
         let _ = woken.try_iter().count();
+
         armed.store(true, Ordering::Release);
         editor.schedule_dust_with_wake(editor.dust_signature().unwrap(), &context);
-        let first = editor.dust.pending_request().unwrap();
+        let first_request = editor.dust.pending_request().unwrap();
         paused
             .recv_timeout(Duration::from_secs(10))
             .expect("automatic heal did not reach two GPU slices");
         assert_eq!(slices.load(Ordering::Relaxed), 2);
-        assert_eq!(editor.dust.pending_request(), Some(first));
+        assert_eq!(editor.dust.pending_request(), Some(first_request));
+
         // Offscreen presentation uses the same queue/gate while the backend is paused
         // after a submitted slice. The observer itself must not hold the gate.
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -172,12 +179,13 @@ fn authored_dust_backend_slices_share_presentation_queue_and_retire_without_fail
                 timeout: None,
             })
             .unwrap();
+
         epoch.store(2, Ordering::Relaxed); // Source retirement, not viewport generation.
         resume.send(()).unwrap();
         match messages.recv_timeout(Duration::from_secs(10)).unwrap() {
             Message::Dust(id, Ok(None)) => {
-                assert_eq!(id, first);
-                assert_eq!(editor.dust.pending_request(), Some(first));
+                assert_eq!(id, first_request);
+                assert_eq!(editor.dust.pending_request(), Some(first_request));
                 editor.receive_dust(id, Ok(None));
             }
             _ => panic!("retired heal did not acknowledge cancellation"),
@@ -186,6 +194,7 @@ fn authored_dust_backend_slices_share_presentation_queue_and_retire_without_fail
         woken
             .recv_timeout(Duration::from_secs(2))
             .expect("cancel acknowledgment must wake an idle UI");
+
         for _ in 0..3 {
             idle_frame();
         }
@@ -198,13 +207,13 @@ fn authored_dust_backend_slices_share_presentation_queue_and_retire_without_fail
         editor.id = 2;
         editor.ready = Some(*ready);
         editor.schedule_dust_with_wake(editor.dust_signature().unwrap(), &context);
-        let second = editor
+        let second_request = editor
             .dust
             .pending_request()
             .expect("cancelled repair was incorrectly memoized as failed");
         let result = match messages.recv_timeout(Duration::from_secs(10)).unwrap() {
             Message::Dust(id, Ok(Some(result))) => {
-                assert_eq!(id, second);
+                assert_eq!(id, second_request);
                 result
             }
             _ => panic!("subsequent heal failed"),
@@ -212,6 +221,7 @@ fn authored_dust_backend_slices_share_presentation_queue_and_retire_without_fail
         woken
             .recv_timeout(Duration::from_secs(2))
             .expect("completed heal must wake an idle UI without pointer input");
+
         let request = dust::Request {
             wake: context.clone(),
             request: result.request,
@@ -236,6 +246,7 @@ fn authored_dust_backend_slices_share_presentation_queue_and_retire_without_fail
                 .map(|(p, v)| (p, v.map(f32::to_bits)))
                 .collect::<Vec<_>>()
         );
+
         let metadata = |r: &dust::Response| {
             r.evaluated
                 .donors
@@ -252,12 +263,14 @@ fn authored_dust_backend_slices_share_presentation_queue_and_retire_without_fail
                 .collect::<Vec<_>>()
         };
         assert_eq!(metadata(&expected), metadata(&result));
-        editor.receive_dust(second, Ok(Some(*result)));
+
+        editor.receive_dust(second_request, Ok(Some(*result)));
         assert_eq!(editor.dust.pending_request(), None);
         assert!(
             editor.dust.has_evaluation(source_id, request.repair.id),
             "accepted repair must be admitted, not silently dropped"
         );
+
         drop(editor);
         drop(commands);
         worker.join().unwrap();

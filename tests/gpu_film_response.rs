@@ -9,6 +9,7 @@ use glam::{DMat3, DVec3};
 fn camera(code: [u16; 4]) -> DVec3 {
     DVec3::new(code[0] as f64, code[1] as f64, code[2] as f64) / 65535.
 }
+
 fn read(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -44,6 +45,7 @@ fn read(
     read.unmap();
     result
 }
+
 #[test]
 fn film_gpu_matches_full_f64_for_shapes_matrices_balances_wb_and_exposure_extremes() {
     pollster::block_on(async {
@@ -229,6 +231,7 @@ fn film_gpu_matches_full_f64_for_shapes_matrices_balances_wb_and_exposure_extrem
         );
     });
 }
+
 #[test]
 fn inverse_pole_cannot_hide_behind_a_floor_anchored_dmax() {
     let gamma = 0.65;

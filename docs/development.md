@@ -14,6 +14,27 @@ cargo test --locked --no-default-features
 
 Cargo uses the committed lockfile. Add `--offline` when caches are populated and downloads are undesirable; omit it for a first build.
 
+## Source formatting
+
+Run `python3 scripts/check-format.py` before handing off a change. It checks tracked and new authored Rust, native, Python, WGSL and Swift sources, plus shell syntax; ignored caches, samples and generated OCIO GLSL are excluded. `--write` applies the configured formatters, but never changes lint rules or fixes code automatically. Neither mode builds the editor or needs native dependencies.
+
+Rust uses the checked-in toolchain. Native formatting requires **clang-format 22.1.8** on `PATH`; Swift uses `swift-format` from the selected Xcode toolchain with `.swift-format`. Install the other formatters in ignored checkout-local storage:
+
+```sh
+python3 -m venv .cache/format-tools/venv
+.cache/format-tools/venv/bin/python -m pip install 'ruff==0.17.1'
+cargo install --git https://github.com/wgsl-analyzer/wgsl-analyzer \
+  --rev 58a9aba79a0e0f9d3fef12a5ef0e577b3c4a2ae4 --locked \
+  --root .cache/format-tools wgslfmt
+
+python3 scripts/check-format.py
+python3 scripts/check-format.py --write
+```
+
+`RUFF`, `WGSLFMT` and `CLANG_FORMAT` can point to existing compatible executables. Ruff's version and conservative syntax/undefined-name/unused-code checks live in `ruff.toml`. The WGSL formatter is pinned by revision because its package version does not distinguish development snapshots; that revision builds with the project's Rust toolchain. Upgrade tools deliberately and inspect their output rather than mixing versions in one cleanup.
+
+Formatters preserve many existing paragraphing choices and can leave dense Rust macros or deeply nested expressions untouched. Inspect the finished functions as prose: formatting success alone does not establish readability.
+
 ## Feature-specific checks
 
 Production and reference dependencies are separate:

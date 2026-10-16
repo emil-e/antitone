@@ -14,6 +14,7 @@ pub(super) struct Scopes {
     pub(super) gpu: Option<Arc<GpuScopes>>,
     error: Option<String>,
 }
+
 impl Default for Scopes {
     fn default() -> Self {
         Self {
@@ -27,12 +28,14 @@ impl Default for Scopes {
         }
     }
 }
+
 pub(super) struct Slot {
     painter: egui::Painter,
     plot: egui::Rect,
     response: egui::Response,
     settings: Settings,
 }
+
 impl Scopes {
     pub(super) fn menu_label(&self) -> String {
         if self.vector {
@@ -52,6 +55,7 @@ impl Scopes {
         }
         state
     }
+
     fn panel(
         &mut self,
         ui: &mut egui::Ui,
@@ -176,6 +180,7 @@ pub(super) enum ScopeInput {
     Proxy(Arc<GpuImage>, Box<ProcessingInput>, FrameRaster),
     Rendered(Arc<crate::gpu::view::RenderedView>, FrameRaster),
 }
+
 impl ScopeInput {
     #[cfg(test)]
     pub(super) fn frame(&self) -> FrameRaster {
@@ -183,6 +188,7 @@ impl ScopeInput {
             Self::Proxy(_, _, f) | Self::Rendered(_, f) => *f,
         }
     }
+
     pub(super) fn status(
         &self,
         gpu: &GpuScopes,
@@ -195,6 +201,7 @@ impl ScopeInput {
             Self::Rendered(view, frame) => gpu.status_rendered(view, *frame, settings),
         }
     }
+
     fn paint(
         &self,
         gpu: Arc<GpuScopes>,
@@ -218,6 +225,7 @@ impl ScopeInput {
         }
     }
 }
+
 impl Editor {
     pub(super) fn scope_request(&self) -> Result<ScopeInput, &'static str> {
         let (ready, parameters, composition) = self.scope_basis()?;
@@ -238,6 +246,7 @@ impl Editor {
             Ok(ScopeInput::Proxy(image, Box::new(parameters), frame))
         }
     }
+
     pub(super) fn scope_panel(&mut self, ui: &mut egui::Ui) -> Option<Slot> {
         egui::Frame::new()
             .fill(ui.visuals().faint_bg_color)
@@ -253,6 +262,7 @@ impl Editor {
         let (ready, parameters, composition) = self.scope_basis()?;
         self.proxy_scope_input(ready, parameters, composition)
     }
+
     fn scope_basis(&self) -> Result<(&Ready, ProcessingInput, Composition), &'static str> {
         if self.source || self.pick_return.is_some() || self.flat_edit.is_some() {
             return Err("Positive grade only");
@@ -282,6 +292,7 @@ impl Editor {
         self.last_layout.ok_or("Waiting for view")?;
         Ok((ready, parameters, composition))
     }
+
     fn proxy_scope_input(
         &self,
         ready: &Ready,

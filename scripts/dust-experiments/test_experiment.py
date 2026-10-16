@@ -4,15 +4,26 @@ import unittest
 import cv2
 import numpy as np
 
-from experiment import REPAIRS, analysis_gray, candidate_mask, harmonic_fill, mask_from_shapes, repair
+from experiment import (
+    REPAIRS,
+    analysis_gray,
+    candidate_mask,
+    harmonic_fill,
+    mask_from_shapes,
+    repair,
+)
 
 
 class Repairs(unittest.TestCase):
     def setUp(self):
         y, x = np.mgrid[:96, :96]
-        self.image = np.stack((0.04 + x * 0.0001, -0.02 + y * 0.0002, 1.1 + x * 0.0003), axis=2).astype(np.float32)
+        self.image = np.stack(
+            (0.04 + x * 0.0001, -0.02 + y * 0.0002, 1.1 + x * 0.0003), axis=2
+        ).astype(np.float32)
         self.image[0, 0] = (-0.0, 0.0, -0.0)
-        self.mask = mask_from_shapes(self.image.shape, [{"kind": "circle", "center": [48, 48], "radius": 6}])
+        self.mask = mask_from_shapes(
+            self.image.shape, [{"kind": "circle", "center": [48, 48], "radius": 6}]
+        )
 
     def test_all_methods_ignore_masked_input_and_preserve_outside(self):
         a, b = self.image.copy(), self.image.copy()
@@ -22,7 +33,9 @@ class Repairs(unittest.TestCase):
                 result, _ = repair(a, self.mask, method)
                 other, _ = repair(b, self.mask, method)
                 np.testing.assert_array_equal(result, other)
-                np.testing.assert_array_equal(result[~self.mask].view(np.uint32), self.image[~self.mask].view(np.uint32))
+                np.testing.assert_array_equal(
+                    result[~self.mask].view(np.uint32), self.image[~self.mask].view(np.uint32)
+                )
                 self.assertTrue(np.isfinite(result).all())
                 self.assertLess(result[self.mask, 1].max(), 0)  # Signed green retained.
                 self.assertGreater(result[self.mask, 2].min(), 1)  # HDR blue retained.
@@ -50,7 +63,7 @@ class Repairs(unittest.TestCase):
             for donor in donors:
                 _, _, w, h = donor["target"]
                 x, y = donor["source"]
-                self.assertFalse(mask[y:y + h, x:x + w].any())
+                self.assertFalse(mask[y : y + h, x : x + w].any())
 
     def test_fixed_donor_is_used_and_masked_truth_is_ignored(self):
         a, b = self.image.copy(), self.image.copy()
@@ -59,8 +72,12 @@ class Repairs(unittest.TestCase):
             result, donors = repair(a, self.mask, method, donor_offset=[-32, 0])
             other, _ = repair(b, self.mask, method, donor_offset=[-32, 0])
             np.testing.assert_array_equal(result.view(np.uint32), other.view(np.uint32))
-            np.testing.assert_array_equal(result[~self.mask].view(np.uint32), self.image[~self.mask].view(np.uint32))
-            self.assertEqual(donors[0]["source"], [donors[0]["target"][0] - 32, donors[0]["target"][1]])
+            np.testing.assert_array_equal(
+                result[~self.mask].view(np.uint32), self.image[~self.mask].view(np.uint32)
+            )
+            self.assertEqual(
+                donors[0]["source"], [donors[0]["target"][0] - 32, donors[0]["target"][1]]
+            )
         np.testing.assert_allclose(result[self.mask], self.image[self.mask], atol=2e-7, rtol=0)
 
     def test_invalid_fixed_donors_reject(self):

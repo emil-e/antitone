@@ -1,12 +1,15 @@
 #!/bin/sh
 set -eu
+
 cd "$(dirname "$0")/.."
 ./scripts/build-openmp.sh
+
 cache=.cache/native-deps
 archive="$cache/LibRaw-0.22.0.tar.gz"
 source="$cache/LibRaw-0.22.0-openmp"
 openmp="$PWD/$cache/openmp-22.1.8-install"
 mkdir -p "$cache"
+
 if [ ! -f "$archive" ]; then
     if [ -f .cache/deps/LibRaw-0.22.0.tar.gz ]; then
         cp .cache/deps/LibRaw-0.22.0.tar.gz "$archive"
@@ -20,6 +23,7 @@ if [ ! -d "$source" ]; then
     mkdir -p "$source"
     tar -xf "$archive" -C "$source" --strip-components=1
 fi
+
 make -C "$source" -f Makefile.devel -j4 CC=/usr/bin/clang CXX=/usr/bin/clang++ \
     CFLAGS="-DLIBRAW_USE_AUTOPTR -DUSE_ZLIB -g -I. -pedantic -Wno-long-long -Wno-overflow -O3 -Wall -mmacosx-version-min=14.0 -Xclang -fopenmp -I$openmp/include" \
     lib/libraw_r.a

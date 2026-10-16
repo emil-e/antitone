@@ -34,6 +34,7 @@ fn local_records() -> LocalAdjustments {
     locals.next_id = 50;
     locals
 }
+
 fn proposal(document: &Document) -> roll_analysis::Proposal {
     roll_analysis::Proposal {
         dmin: DVec3::new(0.8, 0.4, 0.2),

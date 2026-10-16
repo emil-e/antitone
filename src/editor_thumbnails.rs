@@ -13,6 +13,7 @@ use lru::Cache;
 #[path = "editor_embedded_preview.rs"]
 mod embedded;
 const SOURCE_SIZE: u32 = Proxy::MAX_EDGE;
+
 #[derive(Clone, Debug, PartialEq)]
 struct SourceKey {
     id: SourceId,
@@ -20,13 +21,16 @@ struct SourceKey {
     source: SourceDevelopment,
     development: Development,
 }
+
 impl SourceKey {
     fn store_key_at(&self, path: &std::path::Path) -> Option<NativeKey> {
         NativeKey::from_revision(path, self.file.clone(), &self.source, &self.development)
     }
+
     fn store_key(&self) -> Option<NativeKey> {
         self.store_key_at(&self.file.path)
     }
+
     fn new(source: &Source, development: &Development, file: FileKey) -> Self {
         Self {
             id: source.id,
@@ -36,13 +40,16 @@ impl SourceKey {
         }
     }
 }
+
 #[derive(Clone, Debug)]
 struct FieldKey(Arc<crate::flat_field::FlatField>);
+
 impl PartialEq for FieldKey {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0) || self.0 == other.0
     }
 }
+
 #[derive(Clone, Debug, PartialEq)]
 struct ImageKey {
     source: SourceKey,
@@ -50,6 +57,7 @@ struct ImageKey {
     field: Option<FieldKey>,
 }
 pub(super) use crate::scan::CameraProxy as Proxy;
+
 impl Proxy {
     pub(super) async fn image(
         &self,
@@ -79,16 +87,19 @@ impl Proxy {
         Ok(Arc::new(image))
     }
 }
+
 pub(super) struct SelectedPreview {
     request: u64,
     key: SourceKey,
     field: Option<FieldKey>,
     pub(super) proxy: crate::viewer::GpuProxy,
 }
+
 impl SelectedPreview {
     pub(super) fn area(&self) -> Rect {
         self.key.source.active_area.into()
     }
+
     pub(super) fn current(
         &self,
         request: u64,
@@ -111,6 +122,7 @@ impl SelectedPreview {
                 })
     }
 }
+
 struct Job {
     ticket: u64,
     key: ImageKey,
@@ -121,19 +133,21 @@ struct Job {
     render: bool,
     priority: development::Priority,
 }
+
 struct Outcome {
     ticket: u64,
     key: ImageKey,
     image: Result<Option<Arc<GpuImage>>, String>,
     proper: bool,
 }
+
 pub(super) struct Thumbnails {
     cache: Cache<ImageKey, Result<Arc<GpuImage>, String>>,
     pub(super) sources: Arc<SourceStore>,
     selected_key: Option<NativeKey>,
     visible_keys: Vec<NativeKey>,
     // Demand history, not GPU residency or an availability guarantee.
-    attempted: Vec<SourceKey>,
+    attempted_sources: Vec<SourceKey>,
     budgets: memory::CacheBudgets,
     view_reservation: usize,
     pub(super) limits: cache_limits::CacheLimits,
@@ -153,6 +167,7 @@ pub(super) struct Thumbnails {
     #[cfg(test)]
     pressure_override: Option<memory::Pressure>,
 }
+
 impl Default for Thumbnails {
     fn default() -> Self {
         let limits = cache_limits::Hardware::current(None).defaults();
@@ -175,7 +190,7 @@ impl Default for Thumbnails {
             sources: Arc::new(SourceStore::new(budgets.sources as u64)),
             selected_key: None,
             visible_keys: Vec::new(),
-            attempted: Vec::new(),
+            attempted_sources: Vec::new(),
             budgets,
             view_reservation: 0,
             limits,
@@ -193,6 +208,7 @@ impl Default for Thumbnails {
         }
     }
 }
+
 impl Thumbnails {
     pub(super) fn selected_preview(
         &mut self,
@@ -261,6 +277,7 @@ impl Thumbnails {
         );
         Ok(Some(preview))
     }
+
     #[cfg(test)]
     pub fn seed(
         &mut self,
@@ -272,6 +289,7 @@ impl Thumbnails {
         let path = file.path.clone();
         self.seed_at(source, development, &path, file, proxy);
     }
+
     pub(super) fn seed_at(
         &mut self,
         source: &Source,
@@ -292,34 +310,40 @@ impl Thumbnails {
             eprintln!("Selected proxy cache admission rejected: {error}");
         }
     }
+
     pub(super) fn release_selected(&mut self) {
         self.selected_key = None;
         self.protect_cpu();
     }
+
     pub(super) fn refresh_hidden_memory(&mut self) {
         self.cache.protect(Vec::new());
         self.visible_keys.clear();
         self.protect_cpu();
         self.update_memory();
     }
+
     fn protect_cpu(&self) {
         let mut keys = self.visible_keys.clone();
         keys.extend(self.selected_key.clone());
         self.sources.protect_proxies(keys);
     }
+
     pub(super) fn bind_sources(&mut self, sources: Arc<SourceStore>) {
         if !Arc::ptr_eq(&self.sources, &sources) {
             self.cancel();
             self.selected_key = None;
             self.visible_keys.clear();
-            self.attempted.clear();
+            self.attempted_sources.clear();
             self.sources = sources;
         }
         self.sources.set_budget(self.budgets.sources as u64);
     }
+
     pub(super) fn default_limits(&self) -> cache_limits::CacheLimits {
         cache_limits::Hardware::current(self.gpu.as_ref().map(|(device, _, _)| device)).defaults()
     }
+
     // Optional reference retention/building shares the existing image-cache allowance.
     // Selected working pixels remain mandatory, like selected/visible source leases.
     pub(super) fn reserve_view(&mut self, bytes: usize) -> bool {
@@ -329,10 +353,12 @@ impl Thumbnails {
             .set_budget(self.budgets.images.saturating_sub(self.view_reservation));
         admitted
     }
+
     pub(super) fn set_limits(&mut self, limits: cache_limits::CacheLimits) {
         self.limits = limits;
         self.update_memory();
     }
+
     pub(super) fn update_memory(&mut self) {
         #[cfg(not(test))]
         let pressure = crate::resources::memory_pressure();
@@ -342,6 +368,7 @@ impl Thumbnails {
             .unwrap_or_else(crate::resources::memory_pressure);
         self.apply_budgets(memory::CacheBudgets::new(self.limits, pressure));
     }
+
     fn apply_budgets(&mut self, budgets: memory::CacheBudgets) {
         if budgets == self.budgets {
             return;
@@ -354,6 +381,7 @@ impl Thumbnails {
             .set_budget(self.budgets.images.saturating_sub(self.view_reservation));
         self.sources.set_budget(self.budgets.sources as u64);
     }
+
     fn cancel_offscreen(&mut self, wanted: &[ImageKey]) {
         if let Some((ticket, key)) = &self.pending
             && self.generation.load(std::sync::atomic::Ordering::Relaxed) == *ticket
@@ -362,6 +390,7 @@ impl Thumbnails {
             self.cancel();
         }
     }
+
     pub fn new(
         device: wgpu::Device,
         queue: wgpu::Queue,
@@ -376,6 +405,7 @@ impl Thumbnails {
             developments,
         )
     }
+
     #[cfg(all(test, feature = "ui-tests"))]
     pub(super) fn without_disk(&self, developments: development::Scheduler) -> Self {
         let (device, queue, renderers) = self.gpu.as_ref().expect("thumbnail GPU resources");
@@ -387,6 +417,7 @@ impl Thumbnails {
             developments,
         )
     }
+
     #[cfg(test)]
     fn with_disk(
         device: wgpu::Device,
@@ -402,6 +433,7 @@ impl Thumbnails {
             development::Scheduler::new(),
         )
     }
+
     fn with_developments(
         device: wgpu::Device,
         queue: wgpu::Queue,
@@ -436,6 +468,7 @@ impl Thumbnails {
         });
         state
     }
+
     #[cfg(test)]
     pub(super) fn ready_count(&self, document: &Document, target: OutputTarget) -> usize {
         self.cache
@@ -463,6 +496,7 @@ impl Thumbnails {
             })
             .count()
     }
+
     pub fn cancel(&mut self) {
         self.pending = None;
         self.pending_render = false;
@@ -470,6 +504,7 @@ impl Thumbnails {
         self.generation
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
+
     pub fn receive(&mut self, document: &Document) {
         loop {
             let outcome = match self.messages.as_ref().map(|messages| messages.try_recv()) {
@@ -511,9 +546,9 @@ impl Thumbnails {
                     && current
                 {
                     if (outcome.proper || outcome.image.is_err())
-                        && !self.attempted.contains(&outcome.key.source)
+                        && !self.attempted_sources.contains(&outcome.key.source)
                     {
-                        self.attempted.push(outcome.key.source.clone());
+                        self.attempted_sources.push(outcome.key.source.clone());
                     }
                     match outcome.image {
                         Ok(Some(image)) => self.cache.insert(outcome.key, Ok(image)),
@@ -524,6 +559,7 @@ impl Thumbnails {
             }
         }
     }
+
     #[cfg(test)]
     fn request(
         &mut self,
@@ -534,6 +570,7 @@ impl Thumbnails {
     ) {
         self.request_mode(key, path, source, correction, true);
     }
+
     #[cfg(test)]
     fn request_mode(
         &mut self,
@@ -556,6 +593,7 @@ impl Thumbnails {
             },
         );
     }
+
     fn request_prioritized(
         &mut self,
         key: ImageKey,
@@ -611,6 +649,7 @@ struct ThumbnailMetrics {
     renderer_seconds: f64,
     image_seconds: f64,
 }
+
 fn make_image(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -655,6 +694,7 @@ impl Editor {
             },
         )
     }
+
     fn thumbnail_work_allowed(&self) -> bool {
         !self.busy
             && self.thumbnails.budgets.pressure != memory::Pressure::Critical
@@ -667,6 +707,7 @@ impl Editor {
             && self.overwrite.is_none()
             && self.removal_pending.is_none()
     }
+
     pub(super) fn hidden_filmstrip(&mut self, ui: &egui::Ui) {
         self.thumbnails.refresh_hidden_memory();
         if !self.thumbnail_work_allowed()
@@ -686,7 +727,7 @@ impl Editor {
                         .as_ref()
                         .map(|c| FieldKey(c.settings.map.clone())),
                 };
-                if !self.thumbnails.attempted.contains(&key.source)
+                if !self.thumbnails.attempted_sources.contains(&key.source)
                     && !self.thumbnails.cache.contains(&key)
                 {
                     self.thumbnails.request_prioritized(
@@ -705,6 +746,7 @@ impl Editor {
             ui.ctx().request_repaint_after(Duration::from_millis(50));
         }
     }
+
     pub(super) fn filmstrip(&mut self, ui: &mut egui::Ui) {
         self.thumbnails.bind_sources(self.document.cache().clone());
         if self.thumbnails.memory_watch.is_none() {
@@ -714,6 +756,7 @@ impl Editor {
         self.thumbnails.update_memory();
         self.filmstrip_with_budgets(ui, self.thumbnails.budgets);
     }
+
     fn filmstrip_with_budgets(&mut self, ui: &mut egui::Ui, budgets: memory::CacheBudgets) {
         if self.ready.is_none() && self.pending_preview.is_none() && self.flat_edit.is_none() {
             self.thumbnails.release_selected();
@@ -1075,7 +1118,7 @@ impl Editor {
                         .map(|c| FieldKey(c.settings.map.clone())),
                 };
                 eligible.push(key.clone());
-                if !self.thumbnails.attempted.contains(&key.source)
+                if !self.thumbnails.attempted_sources.contains(&key.source)
                     && !self.thumbnails.cache.contains(&key)
                 {
                     wanted.push((index, key, path, source.clone()));

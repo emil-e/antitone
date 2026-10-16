@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Whole-frame native-resolution candidate discovery, NOT automatic dust labelling."""
+
 import argparse
 import json
 from pathlib import Path
@@ -25,9 +26,13 @@ def candidates(camera, tile=768, halo=48, polarity="both"):
             gray = analysis_gray(rgb)
             noise = noise_map(gray)
             responses = [gray - cv2.GaussianBlur(gray, (0, 0), s) for s in (2, 5, 12)]
-            response = np.maximum.reduce(responses if polarity == "positive" else [np.abs(r) for r in responses])
+            response = np.maximum.reduce(
+                responses if polarity == "positive" else [np.abs(r) for r in responses]
+            )
             score = response / noise
-            count, labels, stats, centers = cv2.connectedComponentsWithStats((score >= 6).astype(np.uint8), connectivity=8)
+            count, labels, stats, centers = cv2.connectedComponentsWithStats(
+                (score >= 6).astype(np.uint8), connectivity=8
+            )
             local = []
             for i in range(1, count):
                 bx, by, bw, bh, area = map(int, stats[i])
@@ -38,18 +43,30 @@ def candidates(camera, tile=768, halo=48, polarity="both"):
                     continue
                 if not (6 <= area <= 1800 and 4 <= max(bw, bh) <= 192):
                     continue
-                patch_score = score[by:by + bh, bx:bx + bw]
-                component = labels[by:by + bh, bx:bx + bw] == i
+                patch_score = score[by : by + bh, bx : bx + bw]
+                component = labels[by : by + bh, bx : bx + bw] == i
                 peak = float(patch_score[component].max())
                 compactness = area / (bw * bh)
                 rank = peak * np.sqrt(compactness) / (1 + max(bw, bh) / 32)
-                local.append({"x": int(round(cx)), "y": int(round(cy)), "bbox": [bx + x0, by + y0, bw, bh],
-                              "area": area, "peak": peak, "rank": float(rank), "tile": [x, y]})
+                local.append(
+                    {
+                        "x": int(round(cx)),
+                        "y": int(round(cy)),
+                        "bbox": [bx + x0, by + y0, bw, bh],
+                        "area": area,
+                        "peak": peak,
+                        "rank": float(rank),
+                        "tile": [x, y],
+                    }
+                )
             # Retain spatial diversity, not just repeated responses from one textured object.
             local.sort(key=lambda c: c["rank"], reverse=True)
             kept = []
             for item in local:
-                if all((item["x"] - other["x"]) ** 2 + (item["y"] - other["y"]) ** 2 > 48 ** 2 for other in kept):
+                if all(
+                    (item["x"] - other["x"]) ** 2 + (item["y"] - other["y"]) ** 2 > 48**2
+                    for other in kept
+                ):
                     kept.append(item)
                 if len(kept) == 5:
                     break
@@ -59,7 +76,7 @@ def candidates(camera, tile=768, halo=48, polarity="both"):
 
 def density_patch(camera, x, y, radius):
     h, w = camera.shape[:2]
-    patch = camera[max(0, y - radius):min(h, y + radius), max(0, x - radius):min(w, x + radius)]
+    patch = camera[max(0, y - radius) : min(h, y + radius), max(0, x - radius) : min(w, x + radius)]
     gray = analysis_gray(patch.astype(np.float32) / 65535)
     low, high = np.percentile(gray, (1, 99))
     # Explicit diagnostic contrast mapping ONLY. Never feeds processing or repair.
@@ -76,29 +93,47 @@ def main():
     args = parser.parse_args()
     start = time.perf_counter()
     info = json.loads((args.frame / "frame.json").read_text())
-    camera = np.memmap(args.frame / "camera.rgb16", dtype="<u2", mode="r", shape=(info["height"], info["width"], 3))
+    camera = np.memmap(
+        args.frame / "camera.rgb16", dtype="<u2", mode="r", shape=(info["height"], info["width"], 3)
+    )
     args.output.mkdir(parents=True, exist_ok=False)
     found = candidates(camera, polarity=args.polarity)
     for i, item in enumerate(found):
         item["id"] = i
         item["source_xy"] = [item["x"] + info["region"][0], item["y"] + info["region"][1]]
-    (args.output / "candidates.json").write_text(json.dumps({"frame": info, "candidates": found,
-        "polarity": args.polarity,
-        "status": "unlabelled search proposals; contrast-normalized density images are diagnostic only",
-        "seconds": time.perf_counter() - start}, indent=2))
+    (args.output / "candidates.json").write_text(
+        json.dumps(
+            {
+                "frame": info,
+                "candidates": found,
+                "polarity": args.polarity,
+                "status": "unlabelled search proposals; contrast-normalized density images are diagnostic only",
+                "seconds": time.perf_counter() - start,
+            },
+            indent=2,
+        )
+    )
     for page in range((min(args.limit, len(found)) + 24) // 25):
-        subset = found[page * 25:min((page + 1) * 25, args.limit)]
+        subset = found[page * 25 : min((page + 1) * 25, args.limit)]
         sheet = Image.new("RGB", (1280, 360 * ((len(subset) + 4) // 5)), "#222222")
         draw = ImageDraw.Draw(sheet)
         for j, item in enumerate(subset):
             ox, oy = (j % 5) * 256, (j // 5) * 360
-            draw.text((ox + 3, oy + 3), f"#{item['id']} {item['source_xy']} s={item['peak']:.1f}", fill="white")
+            draw.text(
+                (ox + 3, oy + 3),
+                f"#{item['id']} {item['source_xy']} s={item['peak']:.1f}",
+                fill="white",
+            )
             context = density_patch(camera, item["x"], item["y"], 96)
             sheet.paste(context, (ox, oy + 24))
-            zoom = density_patch(camera, item["x"], item["y"], 16).resize((128, 128), Image.Resampling.NEAREST)
+            zoom = density_patch(camera, item["x"], item["y"], 16).resize(
+                (128, 128), Image.Resampling.NEAREST
+            )
             sheet.paste(zoom, (ox, oy + 224))
         sheet.save(args.output / f"atlas-{page}.png")
-    print(f"{Path(info['source']).name}: {len(found)} unlabelled proposals, {time.perf_counter() - start:.1f}s")
+    print(
+        f"{Path(info['source']).name}: {len(found)} unlabelled proposals, {time.perf_counter() - start:.1f}s"
+    )
 
 
 if __name__ == "__main__":

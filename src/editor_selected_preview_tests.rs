@@ -8,6 +8,7 @@ async fn gpu() -> (wgpu::Device, wgpu::Queue) {
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
     adapter.request_device(&Default::default()).await.unwrap()
 }
+
 fn proxy() -> Arc<Proxy> {
     Arc::new(Proxy {
         width: 3,
@@ -16,6 +17,7 @@ fn proxy() -> Arc<Proxy> {
         matrix: glam::DMat3::IDENTITY,
     })
 }
+
 fn add_source(editor: &mut Editor, path: PathBuf) -> SourceId {
     std::fs::write(&path, b"cache fixture, not a RAW").unwrap();
     let development = editor.document.project.development.clone().unwrap();
@@ -52,6 +54,7 @@ fn add_source(editor: &mut Editor, path: PathBuf) -> SourceId {
     );
     id
 }
+
 fn frame(editor: &mut Editor, context: &egui::Context) -> egui::FullOutput {
     context.run_ui(
         egui::RawInput {
@@ -64,6 +67,7 @@ fn frame(editor: &mut Editor, context: &egui::Context) -> egui::FullOutput {
         |ui| host::App::ui(editor, ui),
     )
 }
+
 fn draw(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -143,10 +147,14 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
         }));
         editor.sync_document();
         let before = editor.document.project.clone();
+
         editor.load(path);
         assert!(matches!(commands.try_recv().unwrap(), Command::Load(..)));
-        assert!(editor.ready.is_none() && editor.pending_preview.is_some() && editor.busy);
+        assert!(editor.ready.is_none());
+        assert!(editor.pending_preview.is_some());
+        assert!(editor.busy);
         assert!(editor.scope_input().is_err());
+
         editor.begin_pick(Pick::Gamma);
         editor.begin_crop();
         editor.export(
@@ -154,8 +162,10 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
             OutputFormat::Tiff(OutputTarget::Srgb),
             Overwrite::Refuse,
         );
-        assert!(editor.pick.is_none() && editor.crop_edit.is_none());
+        assert!(editor.pick.is_none());
+        assert!(editor.crop_edit.is_none());
         assert!(commands.try_recv().is_err());
+
         let context = egui::Context::default();
         let mut renderer = egui_wgpu::Renderer::new(
             &device,
@@ -168,11 +178,19 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                 editor.source = source;
                 editor.source_exposure = 2.;
                 let output = frame(&mut editor, &context);
-                let cached_caption = output.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text.contains(" · Cached preview") && t.pos.y >= editor.last_layout.unwrap().0.canvas.bottom()));
-                assert!(editor.ready.is_none() && editor.pending_preview.is_some());
+                let cached_caption = output.shapes.iter().any(|shape| match &shape.shape {
+                    egui::Shape::Text(text) => {
+                        text.galley.job.text.contains(" · Cached preview")
+                            && text.pos.y >= editor.last_layout.unwrap().0.canvas.bottom()
+                    }
+                    _ => false,
+                });
+                assert!(editor.ready.is_none());
+                assert!(editor.pending_preview.is_some());
                 assert_eq!(editor.last_layout.unwrap().0.composition.size(), [400, 600]);
                 draw(&device, &queue, &context, &mut renderer, output);
                 assert!(cached_caption);
+
                 let expected = if source {
                     editor.source_parameters(2.).unwrap()
                 } else {
@@ -198,6 +216,7 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                 );
             }
         }
+
         editor.target = OutputTarget::DisplayP3;
         editor.sync_document();
         assert_eq!(editor.document.project, before);
@@ -226,6 +245,7 @@ fn cached_selected_images_do_not_alias_filmstrip_processing() {
             )
             .await
             .unwrap();
+
         editor.load(path);
         let selected = editor
             .selected_view()
@@ -234,6 +254,7 @@ fn cached_selected_images_do_not_alias_filmstrip_processing() {
             .image(editor.target)
             .unwrap();
         assert!(!Arc::ptr_eq(&image, &selected));
+
         let mut encoder = device.create_command_encoder(&Default::default());
         let source = editor.source_parameters(2.).unwrap();
         let positive = editor
@@ -258,6 +279,7 @@ fn pending_replacements_ignore_old_ready_and_clear_on_failure_or_document_work()
         let b = directory.path().join("b.ARW");
         add_source(&mut editor, a.clone());
         let b_id = add_source(&mut editor, b.clone());
+
         editor.load(a);
         let first = editor.id;
         editor.load(b.clone());
@@ -267,15 +289,19 @@ fn pending_replacements_ignore_old_ready_and_clear_on_failure_or_document_work()
             .unwrap();
         editor.receive();
         assert_eq!(editor.current_source, Some(b_id));
-        assert!(editor.busy && editor.pending_preview.is_some() && editor.ready.is_none());
+        assert!(editor.busy);
+        assert!(editor.pending_preview.is_some());
+        assert!(editor.ready.is_none());
+
         messages
             .send(Message::Ready(second, Err("current load failed".into())))
             .unwrap();
         editor.receive();
-        assert!(
-            !editor.busy && editor.pending_preview.is_none() && editor.selection_timing.is_none()
-        );
+        assert!(!editor.busy);
+        assert!(editor.pending_preview.is_none());
+        assert!(editor.selection_timing.is_none());
         assert_eq!(editor.status, "current load failed");
+
         editor.load(b);
         assert!(editor.pending_preview.is_some());
         editor.start_document(DocumentWork::New);
@@ -299,7 +325,9 @@ fn unavailable_changed_or_incompatible_cached_sources_keep_the_loading_placehold
         editor.validate_pending_preview();
         assert!(editor.pending_preview.is_none());
         editor.load(path.clone());
-        assert!(editor.pending_preview.is_none() && editor.ready.is_none() && editor.busy);
+        assert!(editor.pending_preview.is_none());
+        assert!(editor.ready.is_none());
+        assert!(editor.busy);
         let development = editor.document.project.development.clone().unwrap();
         editor.thumbnails.seed(
             editor.document.project.source(id).unwrap(),
@@ -359,7 +387,9 @@ fn correction_is_preview_owned_and_change_invalidates_only_pending_display() {
         assert_eq!(editor.document.project, before);
         editor.correction = None;
         editor.validate_pending_preview();
-        assert!(editor.pending_preview.is_none() && editor.busy && editor.ready.is_none());
+        assert!(editor.pending_preview.is_none());
+        assert!(editor.busy);
+        assert!(editor.ready.is_none());
         assert!(matches!(commands.try_recv().unwrap(), Command::Load(..)));
         assert!(commands.try_recv().is_err());
     });
@@ -399,7 +429,9 @@ fn authoritative_ready_replaces_pending_and_active_proxy_survives_optional_press
             .send(Message::Ready(editor.id, Ok(Box::new(ready))))
             .unwrap();
         editor.receive();
-        assert!(editor.ready.is_some() && editor.pending_preview.is_none() && !editor.busy);
+        assert!(editor.ready.is_some());
+        assert!(editor.pending_preview.is_none());
+        assert!(!editor.busy);
         assert!(!editor.selected_view().unwrap().2);
         editor.source = false;
         assert_eq!(editor.scope_input().err(), Some("Waiting for view"));
@@ -432,6 +464,7 @@ fn local_snapshots_reach_pending_previews_and_cached_thumbnails_without_rebuildi
         editor.grades = Grades::new(device.clone());
         let path = directory.path().join("local.ARW");
         let id = add_source(&mut editor, path.clone());
+
         let source_key = SourceKey::new(
             editor.document.project.source(id).unwrap(),
             editor.document.project.development.as_ref().unwrap(),
@@ -442,6 +475,7 @@ fn local_snapshots_reach_pending_previews_and_cached_thumbnails_without_rebuildi
             .sources
             .get_proxy(&source_key.store_key_at(&path).unwrap())
             .unwrap();
+
         let mut locals = LocalAdjustments::default();
         locals
             .add(
@@ -467,9 +501,12 @@ fn local_snapshots_reach_pending_previews_and_cached_thumbnails_without_rebuildi
             .source_mut(id)
             .unwrap()
             .local_adjustments = Some(locals);
+
         editor.load(path.clone());
         assert!(matches!(commands.try_recv().unwrap(), Command::Load(..)));
-        assert!(editor.pending_preview.is_some() && editor.busy && editor.ready.is_none());
+        assert!(editor.pending_preview.is_some());
+        assert!(editor.busy);
+        assert!(editor.ready.is_none());
         let captured = editor
             .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
             .unwrap();
@@ -510,6 +547,7 @@ fn local_snapshots_reach_pending_previews_and_cached_thumbnails_without_rebuildi
             assert!(!Arc::ptr_eq(&selected, &thumbnail));
             let source_revision = selected.source_revision();
             let thumbnail_revision = thumbnail.source_revision();
+
             for source_mode in [false, true] {
                 editor.source = source_mode;
                 editor.source_exposure = 2.;
@@ -548,6 +586,7 @@ fn local_snapshots_reach_pending_previews_and_cached_thumbnails_without_rebuildi
                     "cached preview must not schedule full-source work"
                 );
             }
+
             editor.source = false;
             editor
                 .document
@@ -627,7 +666,9 @@ fn roll_sampling_load_does_not_admit_pending_working_preview() {
         editor.pick = Some(Pick::Dmin);
         editor.pick_roll_source(id);
         assert!(editor.pending_preview.is_none() && editor.selection_timing.is_none());
-        assert!(editor.ready.is_none() && editor.busy && editor.pick == Some(Pick::Dmin));
+        assert!(editor.ready.is_none());
+        assert!(editor.busy);
+        assert_eq!(editor.pick, Some(Pick::Dmin));
         assert!(matches!(commands.try_recv().unwrap(), Command::Load(..)));
     });
 }

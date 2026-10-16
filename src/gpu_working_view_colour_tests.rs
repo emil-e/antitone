@@ -24,8 +24,16 @@ fn precise_kernels(device: &wgpu::Device, base: &ViewKernels) -> Arc<ViewKernels
     );
     let local = replace(
         local,
-        "if any(source < local_context.area.xy) || any(source >= local_context.area.xy + local_context.area.zw) { return input; }",
-        "if !precise_le(number(f32(local_context.area.x)), source[0]) || !precise_le(number(f32(local_context.area.y)), source[1]) || precise_le(number(f32(local_context.area.x + local_context.area.z)), source[0]) || precise_le(number(f32(local_context.area.y + local_context.area.w)), source[1]) { return input; }",
+        r#"if any(source < local_context.area.xy)
+        || any(source >= local_context.area.xy + local_context.area.zw) {
+        return input;
+    }"#,
+        r#"if !precise_le(number(f32(local_context.area.x)), source[0])
+        || !precise_le(number(f32(local_context.area.y)), source[1])
+        || precise_le(number(f32(local_context.area.x + local_context.area.z)), source[0])
+        || precise_le(number(f32(local_context.area.y + local_context.area.w)), source[1]) {
+        return input;
+    }"#,
     );
     let local = replace(
         local,
@@ -61,6 +69,7 @@ fn precise_kernels(device: &wgpu::Device, base: &ViewKernels) -> Arc<ViewKernels
         compose: base.compose.clone(),
     })
 }
+
 fn source_with_kernel(source: &Arc<ViewSource>, kernels: Arc<ViewKernels>) -> Arc<ViewSource> {
     Arc::new(ViewSource {
         spec: source.spec.clone(),
@@ -69,6 +78,7 @@ fn source_with_kernel(source: &Arc<ViewSource>, kernels: Arc<ViewKernels>) -> Ar
         kernels,
     })
 }
+
 pub(super) fn authored_source(
     device: &wgpu::Device,
     renderer: Arc<crate::renderer::GpuRenderer>,
@@ -104,6 +114,7 @@ pub(super) fn authored_source(
         }),
     })
 }
+
 fn render(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -124,6 +135,7 @@ fn render(
         },
     )
 }
+
 fn render_with_basis(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -155,6 +167,7 @@ fn render_with_basis(
     );
     view
 }
+
 fn adversaries() -> Vec<[f32; 4]> {
     let mut v = Vec::new();
     for x in [
@@ -203,6 +216,7 @@ fn adversaries() -> Vec<[f32; 4]> {
     }
     v
 }
+
 fn photo() -> PhotoSettings {
     PhotoSettings {
         exposure: 0.25,
@@ -217,6 +231,7 @@ fn photo() -> PhotoSettings {
         ..Default::default()
     }
 }
+
 fn local_pair(area: SourceRegion) -> Vec<LocalAdjustment> {
     let x = area.x as f64;
     let y = area.y as f64;
@@ -250,6 +265,7 @@ fn local_pair(area: SourceRegion) -> Vec<LocalAdjustment> {
         },
     ]
 }
+
 fn domain_cases(area: SourceRegion) -> Vec<(String, PhotoGradeSnapshot)> {
     let mut cases = Vec::new();
     let simple = |p| PhotoGradeSnapshot::new(p, vec![]).unwrap();
@@ -417,6 +433,7 @@ fn domain_cases(area: SourceRegion) -> Vec<(String, PhotoGradeSnapshot)> {
     assert_eq!(cases.len(), 95);
     cases
 }
+
 fn compare(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -431,6 +448,7 @@ fn compare(
         (&b.graded.as_ref().unwrap().pixels, &b.image.linear),
     )
 }
+
 fn compare_rasters(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -503,6 +521,7 @@ fn compare_rasters(
         .try_into()
         .unwrap()
 }
+
 fn assert_comparison(case: &str, words: [u32; 8]) {
     println!(
         "physical_view_colour case={case} ap1_units={} linear_max={} encoded_max={} failures={:?}",
@@ -517,6 +536,7 @@ fn assert_comparison(case: &str, words: [u32; 8]) {
         "{case}: {words:?}"
     );
 }
+
 #[test]
 fn physical_view_colour_identity_and_recovery_preserve_complete_raster_and_flags() {
     pollster::block_on(async {
@@ -574,6 +594,7 @@ fn physical_view_colour_identity_and_recovery_preserve_complete_raster_and_flags
         assert_eq!(read(&device, &queue, &source.pixels), values);
     });
 }
+
 #[test]
 #[ignore = "95 signed/HDR production-vs-original-precision colour cases; not photographic sampling acceptance"]
 fn physical_view_colour_domain() {

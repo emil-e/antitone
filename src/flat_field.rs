@@ -29,6 +29,7 @@ impl<'de> serde::Deserialize<'de> for FlatField {
         Self::from_nodes(nodes.area, nodes.size, nodes.gains).map_err(serde::de::Error::custom)
     }
 }
+
 impl FlatField {
     /// Nodes include the rectangle edges; evaluation uses source pixel-centre coordinates.
     /// Outside this support the field is deliberately identity, not an extrapolated estimate.
@@ -37,6 +38,7 @@ impl FlatField {
         field.validate()?;
         Ok(field)
     }
+
     pub fn validate(&self) -> Result<(), Error> {
         let Self { area, size, gains } = self;
         check_area(*area)?;
@@ -129,12 +131,15 @@ impl FlatField {
     pub fn area(&self) -> [u32; 4] {
         self.area
     }
+
     pub fn size(&self) -> [usize; 2] {
         self.size
     }
+
     pub fn nodes(&self) -> &[DVec3] {
         &self.gains
     }
+
     pub fn bounds(&self) -> (DVec3, DVec3) {
         self.gains
             .iter()
@@ -142,6 +147,7 @@ impl FlatField {
                 (min.min(*g), max.max(*g))
             })
     }
+
     /// One camera RGB16 code amplified by the largest gain, including identity outside support.
     /// Bilinear gain extrema occur at nodes.
     pub fn precision_floor(&self) -> Result<f64, Error> {
@@ -151,6 +157,7 @@ impl FlatField {
         }
         Ok(floor)
     }
+
     pub fn processing_calibration(
         &self,
         mut calibration: crate::processing::Calibration,
@@ -163,6 +170,7 @@ impl FlatField {
         calibration.input_floor = self.precision_floor()?;
         calibration.validate()
     }
+
     pub fn gain(&self, point: [f64; 2]) -> Result<DVec3, Error> {
         if point.iter().any(|v| !v.is_finite()) {
             return Err(Error::InvalidParameter("nonfinite flat-field coordinate"));
@@ -183,6 +191,7 @@ impl FlatField {
         Ok(a * (1. - dy) + b * dy)
     }
 }
+
 /// Propose central rectangular illumination from block luminance profiles.
 /// Boundary cells are discarded; ambiguity returns no rectangle, never an assumed mask.
 #[cfg(feature = "raw")]
@@ -238,6 +247,7 @@ pub(crate) fn propose_support(values: &[f64], size: [usize; 2], center: f64) -> 
     }
     (lit as f64 / count as f64 >= 0.99).then_some([left, top, right, bottom])
 }
+
 fn check_area(a: [u32; 4]) -> Result<(), Error> {
     if a[2] == 0
         || a[3] == 0
@@ -248,12 +258,14 @@ fn check_area(a: [u32; 4]) -> Result<(), Error> {
     }
     Ok(())
 }
+
 fn contains(a: [u32; 4], p: [f64; 2]) -> bool {
     p[0] >= a[0] as f64
         && p[1] >= a[1] as f64
         && p[0] < (a[0] + a[2]) as f64
         && p[1] < (a[1] + a[3]) as f64
 }
+
 fn solve(mut a: [[f64; 3]; 3], mut b: [f64; 3]) -> Result<[f64; 3], Error> {
     for k in 0..3 {
         let pivot = (k..3)
@@ -282,6 +294,7 @@ fn solve(mut a: [[f64; 3]; 3], mut b: [f64; 3]) -> Result<[f64; 3], Error> {
     }
     Ok(x)
 }
+
 fn plane(points: &[[f64; 3]]) -> Result<[f64; 3], Error> {
     let mut a = [[0.; 3]; 3];
     let mut b = [0.; 3];
@@ -296,6 +309,7 @@ fn plane(points: &[[f64; 3]]) -> Result<[f64; 3], Error> {
     }
     solve(a, b)
 }
+
 fn kernel(at: usize, size: usize) -> Result<Vec<(usize, f64)>, Error> {
     let radius = (3. * SIGMA) as usize;
     let mut a = [[0.; 3]; 3];
@@ -322,6 +336,7 @@ fn kernel(at: usize, size: usize) -> Result<Vec<(usize, f64)>, Error> {
         })
         .collect())
 }
+
 fn smooth_surface(values: &[f64], w: usize, h: usize) -> Result<Vec<f64>, Error> {
     let mut repaired = values.to_vec();
     for y in 0..h {
@@ -372,6 +387,7 @@ fn smooth_surface(values: &[f64], w: usize, h: usize) -> Result<Vec<f64>, Error>
     }
     Ok(result)
 }
+
 fn sample(values: &[f64], w: usize, h: usize, x: f64, y: f64) -> f64 {
     let x0 = (x.floor().max(0.) as usize).min(w - 2);
     let y0 = (y.floor().max(0.) as usize).min(h - 2);

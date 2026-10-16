@@ -15,6 +15,7 @@ pub(super) struct PairLoader<L> {
     #[cfg(test)]
     pub dispatches: u64,
 }
+
 impl<L> PairLoader<L> {
     pub fn new(load: L, pixels: usize, paired: bool) -> Self {
         Self {
@@ -29,6 +30,7 @@ impl<L> PairLoader<L> {
         }
     }
 }
+
 impl<L: FnMut(&[Origin]) -> Result<Vec<Pixel>, Error>> TileLoader for PairLoader<L> {
     fn prepare(&mut self, misses: impl Iterator<Item = Origin>) -> Result<(), Error> {
         if self.pending.is_some() || !self.misses.is_empty() {
@@ -39,12 +41,14 @@ impl<L: FnMut(&[Origin]) -> Result<Vec<Pixel>, Error>> TileLoader for PairLoader
         }
         Ok(())
     }
+
     fn finish(&mut self) -> Result<(), Error> {
         if self.pending.is_some() || !self.misses.is_empty() {
             return Err(Error::Export("unconsumed original batch".into()));
         }
         Ok(())
     }
+
     fn load(&mut self, origin: Origin) -> Result<Vec<Pixel>, Error> {
         if let Some((expected, pixels)) = self.pending.take() {
             if origin != expected {

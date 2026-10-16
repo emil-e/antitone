@@ -4,6 +4,7 @@
 
 namespace looks {
 namespace OCIO = OCIO_NAMESPACE;
+
 inline V ocio(OCIO::ConstCPUProcessorRcPtr processor, V x) {
     float rgb[3] = {float(x[0]), float(x[1]), float(x[2])};
     processor->applyRGB(rgb);
@@ -12,7 +13,11 @@ inline V ocio(OCIO::ConstCPUProcessorRcPtr processor, V x) {
             throw std::runtime_error("nonfinite OCIO result");
     return {rgb[0], rgb[1], rgb[2]};
 }
-inline V xy(double x, double y) { return {x / y, 1, (1 - x - y) / y}; }
+
+inline V xy(double x, double y) {
+    return {x / y, 1, (1 - x - y) / y};
+}
+
 inline M primaries() {
     const auto &p = reference_parameters;
     M m{};
@@ -27,6 +32,7 @@ inline M primaries() {
             m[r][c] *= scale[c];
     return m;
 }
+
 inline OCIO::ConstCPUProcessorRcPtr rendering(bool inverse = false) {
     auto group = OCIO::GroupTransform::Create();
     auto ap0 = OCIO::BuiltinTransform::Create();
@@ -44,10 +50,12 @@ inline OCIO::ConstCPUProcessorRcPtr rendering(bool inverse = false) {
     }
     return OCIO::Config::CreateRaw()->getProcessor(group)->getDefaultCPUProcessor();
 }
+
 struct Reference {
     Material source;
     M referenceXYZ, toReference;
     OCIO::ConstCPUProcessorRcPtr inverseDRT, forwardDRT;
+
     explicit Reference(double compression = exposure_compression)
         : source(compression), referenceXYZ(primaries()) {
         toReference = mul(mul(inverse(referenceXYZ),
@@ -57,7 +65,11 @@ struct Reference {
         inverseDRT = rendering(true);
         forwardDRT = rendering();
     }
-    V raw(V input) const { return source(input); }
+
+    V raw(V input) const {
+        return source(input);
+    }
+
     V map(V raw) const {
         V value = mul(toReference, raw);
         const double y = dot(referenceXYZ[1], value);
@@ -77,6 +89,9 @@ struct Reference {
             throw std::runtime_error("reference boundary mapping failed");
         return value;
     }
-    V operator()(V input) const { return ocio(inverseDRT, map(raw(input))); }
+
+    V operator()(V input) const {
+        return ocio(inverseDRT, map(raw(input)));
+    }
 };
 } // namespace looks

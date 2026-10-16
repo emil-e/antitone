@@ -21,9 +21,11 @@ pub const DEVELOPMENT_CONTRACT: &str =
 pub const OUTPUT_CONTRACT: &str = "ocio-2.6.0-aces2-100nit-antitone-srgb-displayp3-v2";
 const MAX_DOCUMENT_BYTES: u64 = 8 * 1024 * 1024;
 type Result<T> = std::result::Result<T, Error>;
+
 fn failure(error: impl std::fmt::Display) -> Error {
     Error::Project(error.to_string())
 }
+
 fn require(condition: bool, message: &str) -> Result<()> {
     if condition {
         Ok(())
@@ -35,6 +37,7 @@ fn require(condition: bool, message: &str) -> Result<()> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct SourceId(pub u64);
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Development {
@@ -44,6 +47,7 @@ pub struct Development {
     pub inversion_space: String,
     pub working_space: String,
 }
+
 impl Development {
     pub fn new(backend_version: String, fixed_wb: [f64; 4]) -> Self {
         Self {
@@ -54,6 +58,7 @@ impl Development {
             working_space: "AP1/D60".into(),
         }
     }
+
     fn validate(&self) -> Result<()> {
         require(
             !self.backend_version.is_empty()
@@ -65,12 +70,14 @@ impl Development {
         )
     }
 }
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CameraBasis {
     pub camera_model: String,
     pub camera_to_ap1: [[f64; 3]; 3],
 }
+
 impl CameraBasis {
     pub fn require_source(&self, source: &SourceDevelopment) -> Result<()> {
         require(
@@ -78,6 +85,7 @@ impl CameraBasis {
             "native-camera basis differs; use a separate roll/calibration",
         )
     }
+
     fn validate(&self) -> Result<()> {
         require(
             !self.camera_model.trim().is_empty(),
@@ -86,6 +94,7 @@ impl CameraBasis {
         crate::processing::validate_camera_matrix(DMat3::from_cols_array_2d(&self.camera_to_ap1))
     }
 }
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceDevelopment {
@@ -95,6 +104,7 @@ pub struct SourceDevelopment {
     pub camera_to_ap1: [[f64; 3]; 3],
     pub input_floor: f64,
 }
+
 impl SourceDevelopment {
     pub fn camera_basis(&self) -> CameraBasis {
         CameraBasis {
@@ -102,6 +112,7 @@ impl SourceDevelopment {
             camera_to_ap1: self.camera_to_ap1,
         }
     }
+
     fn validate(&self) -> Result<()> {
         self.camera_basis().validate()?;
         require(
@@ -118,9 +129,11 @@ impl SourceDevelopment {
         )
     }
 }
+
 fn contains(area: [u32; 4], region: [u32; 4]) -> bool {
     SourceRegion::from(area).contains_region(SourceRegion::from(region))
 }
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Source {
@@ -136,6 +149,7 @@ pub struct Source {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crop: Option<Crop>,
 }
+
 impl Source {
     fn validate(&self) -> Result<()> {
         require(!self.path.as_os_str().is_empty(), "empty source path")?;
@@ -150,18 +164,21 @@ impl Source {
         Ok(())
     }
 }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TiffTarget {
     DisplayP3,
     Srgb,
 }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExrPrecision {
     Half,
     Full,
 }
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Output {
@@ -169,6 +186,7 @@ pub struct Output {
     pub tiff: TiffTarget,
     pub exr: ExrPrecision,
 }
+
 impl Default for Output {
     fn default() -> Self {
         Self {
@@ -217,6 +235,7 @@ pub struct Project {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub analysis_regions: Vec<SourceAnalysis>,
 }
+
 impl Default for Project {
     fn default() -> Self {
         Self {
@@ -239,11 +258,13 @@ impl Default for Project {
         }
     }
 }
+
 #[derive(Debug, Clone, Copy)]
 pub enum Save {
     New,
     Replace,
 }
+
 impl Project {
     pub fn source(&self, id: SourceId) -> Result<&Source> {
         self.sources
@@ -251,12 +272,14 @@ impl Project {
             .find(|source| source.id == id)
             .ok_or_else(|| failure("unknown source ID"))
     }
+
     pub fn source_mut(&mut self, id: SourceId) -> Result<&mut Source> {
         self.sources
             .iter_mut()
             .find(|source| source.id == id)
             .ok_or_else(|| failure("unknown source ID"))
     }
+
     pub fn add_source(&mut self, mut source: Source) -> Result<SourceId> {
         source.validate()?;
         require(
@@ -278,16 +301,19 @@ impl Project {
         self.next_source_id = next;
         Ok(id)
     }
+
     pub fn require_camera_basis(&self, source: &SourceDevelopment) -> Result<()> {
         self.camera_basis
             .as_ref()
             .map_or(Ok(()), |basis| basis.require_source(source))
     }
+
     pub fn remove_from_filmstrip(&mut self, id: SourceId) -> Result<()> {
         self.source(id)?;
         self.order.retain(|candidate| *candidate != id);
         Ok(())
     }
+
     pub fn resolve_path(&self, id: SourceId, project_path: &Path) -> Result<PathBuf> {
         let path = &self.source(id)?.path;
         Ok(if path.is_absolute() {
@@ -296,6 +322,7 @@ impl Project {
             project_path.parent().unwrap_or(Path::new(".")).join(path)
         })
     }
+
     pub fn calibration(&self) -> Result<Option<Calibration>> {
         let (Some(dmin), Some(dmax)) = (self.dmin, self.dmax) else {
             return Ok(None);
@@ -309,9 +336,11 @@ impl Project {
         };
         Ok(Some(calibration.validate()?))
     }
+
     pub fn active_flat_field(&self) -> Option<&FlatFieldSettings> {
         self.flat_field.as_ref().filter(|field| field.enabled)
     }
+
     pub fn processing_calibration(&self) -> Result<Option<Calibration>> {
         self.calibration()?
             .map(|calibration| match self.active_flat_field() {
@@ -320,6 +349,7 @@ impl Project {
             })
             .transpose()
     }
+
     pub fn validate(&self) -> Result<()> {
         require(self.schema == SCHEMA_VERSION, "unsupported project schema")?;
         require(
@@ -415,6 +445,7 @@ impl Project {
         }
         Ok(())
     }
+
     pub fn require_runtime(&self, backend_version: &str) -> Result<()> {
         self.validate()?;
         if let Some(development) = &self.development {
@@ -431,6 +462,7 @@ impl Project {
             "output transform contract differs from this runtime",
         )
     }
+
     pub fn load(path: &Path) -> Result<Self> {
         let mut bytes = Vec::new();
         File::open(path)
@@ -446,6 +478,7 @@ impl Project {
         project.validate()?;
         Ok(project)
     }
+
     pub fn save(&self, path: &Path, policy: Save) -> Result<()> {
         self.validate()?;
         let bytes = serde_json::to_vec_pretty(self).map_err(failure)?;

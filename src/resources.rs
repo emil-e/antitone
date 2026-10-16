@@ -4,6 +4,7 @@ pub(crate) enum MemoryPressure {
     Warning,
     Critical,
 }
+
 pub(crate) fn memory_pressure() -> MemoryPressure {
     match sysctl::<u32>(c"kern.memorystatus_vm_pressure_level") {
         Some(level) if level >= 4 => MemoryPressure::Critical,
@@ -11,10 +12,12 @@ pub(crate) fn memory_pressure() -> MemoryPressure {
         _ => MemoryPressure::Normal,
     }
 }
+
 #[cfg(feature = "editor")]
 pub(crate) fn physical_memory() -> u64 {
     sysctl::<u64>(c"hw.memsize").unwrap_or(0)
 }
+
 #[cfg(target_os = "macos")]
 fn sysctl<T: Default>(name: &std::ffi::CStr) -> Option<T> {
     let mut value = T::default();
@@ -31,6 +34,7 @@ fn sysctl<T: Default>(name: &std::ffi::CStr) -> Option<T> {
     };
     (status == 0 && size == std::mem::size_of::<T>()).then_some(value)
 }
+
 #[cfg(not(target_os = "macos"))]
 fn sysctl<T: Default>(_name: &std::ffi::CStr) -> Option<T> {
     None

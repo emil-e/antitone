@@ -27,6 +27,7 @@ fn context() -> (wgpu::Device, wgpu::Queue, ProcessingKernel) {
         (device, queue, kernel)
     })
 }
+
 fn calibration() -> Calibration {
     Calibration {
         dmin: DVec3::new(0.19, 0.14, 0.12),
@@ -34,6 +35,7 @@ fn calibration() -> Calibration {
         input_floor: 1. / 65535.,
     }
 }
+
 fn matrix() -> DMat3 {
     DMat3::from_cols(
         DVec3::new(0.6062, 0.0161, -0.0031),
@@ -41,6 +43,7 @@ fn matrix() -> DMat3 {
         DVec3::new(0.0136, -0.2088, 1.1521),
     )
 }
+
 fn adjustment(mask: GradientMask, photo: PhotoSettings) -> LocalAdjustment {
     LocalAdjustment {
         mask,
@@ -50,6 +53,7 @@ fn adjustment(mask: GradientMask, photo: PhotoSettings) -> LocalAdjustment {
         strength: 1.,
     }
 }
+
 fn codes(point: [u32; 2]) -> [u16; 4] {
     match (point[0] + point[1]) % 9 {
         0 => [0; 4],
@@ -64,12 +68,14 @@ fn codes(point: [u32; 2]) -> [u16; 4] {
         ],
     }
 }
+
 fn pixels(raster: SourceRaster) -> Vec<[u16; 4]> {
     let [width, height] = raster.size();
     (0..width * height)
         .map(|i| codes(raster.source_pixel([i % width, i / width]).unwrap()))
         .collect()
 }
+
 fn source(
     device: &wgpu::Device,
     area: SourceRegion,
@@ -88,6 +94,7 @@ fn source(
     assert_eq!(source.byte_len(), pixels.len() as u64 * 8);
     (source, pixels)
 }
+
 #[allow(clippy::too_many_arguments)]
 fn read(
     device: &wgpu::Device,
@@ -132,12 +139,14 @@ fn read(
     read.unmap();
     result
 }
+
 fn smooth(t: f64) -> f64 {
     let t = t.clamp(0., 1.);
     let u = t.min(1. - t);
     let v = u * u * (3. - 2. * u);
     if t <= 0.5 { v } else { 1. - v }
 }
+
 fn coverage(mask: GradientMask, point: [f64; 2]) -> f64 {
     let point = DVec2::from_array(point);
     match mask {
@@ -167,6 +176,7 @@ fn coverage(mask: GradientMask, point: [f64; 2]) -> f64 {
         }
     }
 }
+
 fn local_reference(mut rgb: DVec3, locals: &[LocalAdjustment], point: [f64; 2]) -> DVec3 {
     for a in locals {
         if !a.enabled || a.strength == 0. {
@@ -208,6 +218,7 @@ fn local_reference(mut rgb: DVec3, locals: &[LocalAdjustment], point: [f64; 2]) 
     }
     rgb
 }
+
 fn assert_reference(
     actual: &[[f32; 4]],
     pixels: &[[u16; 4]],
@@ -255,6 +266,7 @@ fn assert_reference(
         "fixture must exercise signed/HDR working data"
     );
 }
+
 #[test]
 fn analytic_linear_radial_and_ordered_weighted_controls_match_independent_reference() {
     let (device, queue, kernel) = context();
@@ -371,6 +383,7 @@ fn analytic_linear_radial_and_ordered_weighted_controls_match_independent_refere
         }
     }
 }
+
 #[test]
 fn roll_and_photo_wb_precede_local_grading_at_the_current_default_gamma() {
     let (device, queue, kernel) = context();
@@ -670,8 +683,7 @@ fn default_response_ordered_locals_preserve_corrected_noisy_shadows_and_floor_fl
 }
 
 #[test]
-fn no_locals_disabled_identity_and_zero_coverage_keep_legacy_bits_and_geometry_is_required_only_when_active()
- {
+fn local_bypasses_preserve_bits_and_only_active_masks_require_geometry() {
     let (device, queue, kernel) = context();
     let area = SourceRegion::from([0, 0, 8, 8]);
     let pixels = pixels(SourceRaster::new(area, [8, 8]).unwrap());
@@ -786,6 +798,7 @@ fn no_locals_disabled_identity_and_zero_coverage_keep_legacy_bits_and_geometry_i
         assert_eq!(bits(&actual), bits(&baseline));
     }
 }
+
 #[test]
 fn source_centres_at_large_origins_preserve_subpixel_mask_geometry() {
     let (device, queue, kernel) = context();
@@ -845,6 +858,7 @@ fn source_centres_at_large_origins_preserve_subpixel_mask_geometry() {
         );
     }
 }
+
 #[test]
 fn proxy_and_padded_tiles_agree_with_same_full_source_pixels() {
     let (device, queue, kernel) = context();
@@ -938,6 +952,7 @@ fn proxy_and_padded_tiles_agree_with_same_full_source_pixels() {
         }
     }
 }
+
 #[test]
 fn full_and_fractional_weights_cover_extreme_ev_neutral_wb_and_zero_y() {
     let (device, queue, kernel) = context();

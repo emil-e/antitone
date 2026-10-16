@@ -37,22 +37,26 @@ int main(int argc, char **argv) try {
     }
     size_t cameraCount = 0;
     if (withCamera) {
-        std::ifstream camera(".cache/probes/camera-working-ap1-model4.f32", std::ios::binary | std::ios::ate);
+        std::ifstream camera(".cache/probes/camera-working-ap1-model4.f32",
+                             std::ios::binary | std::ios::ate);
         if (!camera) {
             std::fprintf(stderr, "Generate camera references before requesting --camera\n");
             return 7;
         }
         const auto bytes = camera.tellg();
-        if (bytes <= 0 || bytes % sizeof(inputs[0]) != 0) return 7;
+        if (bytes <= 0 || bytes % sizeof(inputs[0]) != 0)
+            return 7;
         cameraCount = bytes / sizeof(inputs[0]);
         const auto offset = inputs.size();
         inputs.resize(offset + cameraCount);
         camera.seekg(0);
-        if (!camera.read(reinterpret_cast<char *>(inputs.data() + offset), bytes)) return 7;
+        if (!camera.read(reinterpret_cast<char *>(inputs.data() + offset), bytes))
+            return 7;
     }
     std::printf("camera_pixels=%zu (explicit --camera extension)\n", cameraCount);
     std::ofstream inputFile(".cache/probes/aces-inputs-ap1.f32", std::ios::binary);
-    inputFile.write(reinterpret_cast<const char *>(inputs.data()), inputs.size() * sizeof(inputs[0]));
+    inputFile.write(reinterpret_cast<const char *>(inputs.data()),
+                    inputs.size() * sizeof(inputs[0]));
     inputFile.close();
     for (int target = 0; target < 2; ++target) {
         auto processor = antitone::rendering(target);
@@ -62,8 +66,11 @@ int main(int argc, char **argv) try {
         for (float value : {0.f, .001f, .01f, .18f, 1.f, 10.f, 1000.f}) {
             float pixel[4] = {value, value, value, 1.f};
             cpu->applyRGBA(pixel);
-            for (int c = 0; c < 3; ++c) if (!std::isfinite(pixel[c])) return 2;
-            neutralError = std::max(neutralError, std::max(std::abs(pixel[0] - pixel[1]), std::abs(pixel[0] - pixel[2])));
+            for (int c = 0; c < 3; ++c)
+                if (!std::isfinite(pixel[c]))
+                    return 2;
+            neutralError = std::max(neutralError, std::max(std::abs(pixel[0] - pixel[1]),
+                                                           std::abs(pixel[0] - pixel[2])));
             std::printf("neutral %.6g -> %.8g %.8g %.8g\n", value, pixel[0], pixel[1], pixel[2]);
         }
         auto outputs = inputs;
@@ -76,15 +83,20 @@ int main(int argc, char **argv) try {
             previousAP0->applyRGBA(reference.data());
             cpu->applyRGBA(pixel.data());
             for (int c = 0; c < 3; ++c) {
-                if (!std::isfinite(pixel[c]) || !std::isfinite(reference[c])) return 3;
+                if (!std::isfinite(pixel[c]) || !std::isfinite(reference[c]))
+                    return 3;
                 const float error = std::abs(pixel[c] - reference[c]);
                 basisError = std::max(basisError, error);
-                if (error > 2e-5f + 2e-4f * std::abs(reference[c])) return 6;
+                if (error > 2e-5f + 2e-4f * std::abs(reference[c]))
+                    return 6;
             }
         }
         std::printf("AP1_entry_vs_converted_AP0_reference_max_error=%.8g\n", basisError);
-        std::ofstream referenceFile(std::string(".cache/probes/") + (target ? "display-p3" : "srgb") + "-ap1-reference.f32", std::ios::binary);
-        referenceFile.write(reinterpret_cast<const char *>(outputs.data()), outputs.size() * sizeof(outputs[0]));
+        std::ofstream referenceFile(std::string(".cache/probes/") +
+                                        (target ? "display-p3" : "srgb") + "-ap1-reference.f32",
+                                    std::ios::binary);
+        referenceFile.write(reinterpret_cast<const char *>(outputs.data()),
+                            outputs.size() * sizeof(outputs[0]));
         std::printf("conformance_pixels=%zu\n", outputs.size());
         auto shader = OCIO::GpuShaderDesc::CreateShaderDesc();
         shader->setLanguage(OCIO::GPU_LANGUAGE_GLSL_VK_4_6);
@@ -95,26 +107,38 @@ int main(int argc, char **argv) try {
         const char *name = target ? "display-p3" : "srgb";
         std::ofstream code(std::string(".cache/probes/") + name + "-ap1.glsl");
         code << shader->getShaderText();
-        std::printf("neutral_max_error=%.8g textures=%u textures3d=%u uniforms=%u\n", neutralError, shader->getNumTextures(), shader->getNum3DTextures(), shader->getNumUniforms());
+        std::printf("neutral_max_error=%.8g textures=%u textures3d=%u uniforms=%u\n", neutralError,
+                    shader->getNumTextures(), shader->getNum3DTextures(), shader->getNumUniforms());
         for (unsigned i = 0; i < shader->getNumTextures(); ++i) {
             const char *texture, *sampler;
             unsigned width, height;
             OCIO::GpuShaderDesc::TextureType channels;
             OCIO::GpuShaderDesc::TextureDimensions dimensions;
             OCIO::Interpolation interpolation;
-            shader->getTexture(i, texture, sampler, width, height, channels, dimensions, interpolation);
+            shader->getTexture(i, texture, sampler, width, height, channels, dimensions,
+                               interpolation);
             const float *values;
             shader->getTextureValues(i, values);
-            const size_t count = width * height * (channels == OCIO::GpuShaderDesc::TEXTURE_RGB_CHANNEL ? 3 : 1);
-            for (size_t v = 0; v < count; ++v) if (!std::isfinite(values[v])) return 4;
-            std::printf("texture=%s sampler=%s width=%u height=%u channels=%d binding=%u interpolation=%d\n", texture, sampler, width, height, static_cast<int>(channels), shader->getTextureShaderBindingIndex(i), static_cast<int>(interpolation));
-            std::ofstream data(std::string(".cache/probes/") + name + "-ap1-lut-" + std::to_string(i) + ".f32", std::ios::binary);
+            const size_t count =
+                width * height * (channels == OCIO::GpuShaderDesc::TEXTURE_RGB_CHANNEL ? 3 : 1);
+            for (size_t v = 0; v < count; ++v)
+                if (!std::isfinite(values[v]))
+                    return 4;
+            std::printf(
+                "texture=%s sampler=%s width=%u height=%u channels=%d binding=%u interpolation=%d\n",
+                texture, sampler, width, height, static_cast<int>(channels),
+                shader->getTextureShaderBindingIndex(i), static_cast<int>(interpolation));
+            std::ofstream data(std::string(".cache/probes/") + name + "-ap1-lut-" +
+                                   std::to_string(i) + ".f32",
+                               std::ios::binary);
             data.write(reinterpret_cast<const char *>(values), count * sizeof(float));
         }
-        if (neutralError > 2e-5f) return 5;
+        if (neutralError > 2e-5f)
+            return 5;
     }
     return 0;
 } catch (const std::exception &e) {
+
     std::fprintf(stderr, "OCIO probe: %s\n", e.what());
     return 1;
 }

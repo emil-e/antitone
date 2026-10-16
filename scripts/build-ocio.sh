@@ -1,9 +1,12 @@
 #!/bin/sh
 set -eu
+
 cd "$(dirname "$0")/.."
+
 cache=.cache/deps
 archive="$cache/OpenColorIO-2.6.0.tar.gz"
 mkdir -p "$cache"
+
 if [ ! -f "$archive" ]; then
     curl --fail --location https://codeload.github.com/AcademySoftwareFoundation/OpenColorIO/tar.gz/refs/tags/v2.6.0 -o "$archive"
 fi
@@ -11,6 +14,7 @@ printf '%s  %s\n' 784ac37bde5b9c6e5dc15f23d1235bd1452d376cdc03627d6d6dd310f375a7
 if [ ! -d "$cache/OpenColorIO-2.6.0" ]; then
     tar -xzf "$archive" -C "$cache"
 fi
+
 # Scope compiler selection to this build and its CMake ExternalProject children.
 export CC=/usr/bin/clang CXX=/usr/bin/clang++
 cmake -S "$cache/OpenColorIO-2.6.0" -B "$cache/ocio-build" -G Ninja \

@@ -25,6 +25,7 @@ pub(crate) struct ViewSourceSpec {
     inspection: bool,
     field: Option<Arc<crate::flat_field::FlatField>>,
 }
+
 impl PartialEq for ViewSourceSpec {
     fn eq(&self, other: &Self) -> bool {
         self.authority == other.authority
@@ -37,6 +38,7 @@ impl PartialEq for ViewSourceSpec {
             && bytemuck::bytes_of(&self.neutral) == bytemuck::bytes_of(&other.neutral)
     }
 }
+
 impl ViewSourceSpec {
     pub(crate) fn same_source(&self, other: &Self) -> bool {
         let mut other = other.clone();
@@ -44,10 +46,12 @@ impl ViewSourceSpec {
         other.repairs = self.repairs.clone();
         self == &other
     }
+
     pub(crate) fn with_repairs(mut self, repairs: super::repairs::Snapshot) -> Self {
         self.repairs = repairs;
         self
     }
+
     pub(crate) fn underlay(&self) -> Result<Self, Error> {
         let composition = self.frame.composition;
         let mut frame = FrameRaster::full(composition)?;
@@ -59,6 +63,7 @@ impl ViewSourceSpec {
             ..self.clone()
         })
     }
+
     // Calibration is already normalized by the correction owner, exactly as for the precise path.
     pub(crate) fn new(
         authority: u64,
@@ -76,6 +81,7 @@ impl ViewSourceSpec {
         )?;
         Self::with_parameters(authority, frame, matrix, neutral, field, false)
     }
+
     pub(crate) fn inspection(
         authority: u64,
         frame: FrameRaster,
@@ -91,9 +97,11 @@ impl ViewSourceSpec {
             true,
         )
     }
+
     pub(crate) fn is_inspection(&self) -> bool {
         self.inspection
     }
+
     fn with_parameters(
         authority: u64,
         frame: FrameRaster,
@@ -136,6 +144,7 @@ pub(crate) fn colour_shader() -> String {
     ]
     .join("\n")
 }
+
 pub(crate) struct ViewKernels {
     grade: wgpu::ComputePipeline,
     inspection: wgpu::ComputePipeline,
@@ -143,6 +152,7 @@ pub(crate) struct ViewKernels {
     copy: wgpu::RenderPipeline,
     compose: wgpu::RenderPipeline,
 }
+
 impl ViewKernels {
     pub(crate) async fn new(device: &wgpu::Device) -> Result<Arc<Self>, Error> {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
@@ -197,6 +207,7 @@ impl ViewKernels {
             compose,
         }))
     }
+
     fn copy(
         &self,
         device: &wgpu::Device,
@@ -240,6 +251,7 @@ impl ViewKernels {
         pass.set_bind_group(0, &group, &[]);
         pass.draw(0..3, 0..1);
     }
+
     #[allow(clippy::too_many_arguments)]
     fn filter(
         &self,
@@ -293,6 +305,7 @@ impl ViewKernels {
         pass.dispatch_workgroups(extent[0].div_ceil(8), extent[1].div_ceil(8), 1);
         Ok(())
     }
+
     fn grade(
         &self,
         device: &wgpu::Device,
@@ -374,6 +387,7 @@ pub(crate) struct ViewSource {
     kernels: Arc<ViewKernels>,
     pixels: wgpu::Buffer,
 }
+
 impl ViewSource {
     #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
@@ -604,6 +618,7 @@ struct GradedView {
     view: ViewUniform,
     submitted: Mutex<bool>,
 }
+
 /// One immutable target-linear raster and its exact logical authority. Viewer/scopes share this.
 pub(crate) struct RenderedView {
     pub image: Arc<GpuImage>,
@@ -616,6 +631,7 @@ pub(crate) struct RenderedView {
     submitted: Mutex<bool>,
     complete: Arc<AtomicBool>,
 }
+
 impl RenderedView {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
@@ -694,6 +710,7 @@ impl RenderedView {
         };
         Self::from_graded(device, source, input, target, graded)
     }
+
     pub(crate) fn inspection(
         device: &wgpu::Device,
         source: Arc<ViewSource>,
@@ -744,6 +761,7 @@ impl RenderedView {
             })?;
         Self::from_graded(device, source, input, target, graded)
     }
+
     fn from_graded(
         device: &wgpu::Device,
         source: Arc<ViewSource>,
@@ -804,6 +822,7 @@ impl RenderedView {
             complete: Arc::new(AtomicBool::new(false)),
         }))
     }
+
     pub(crate) fn reference(
         image: Arc<GpuImage>,
         spec: ViewSourceSpec,
@@ -822,6 +841,7 @@ impl RenderedView {
             complete: Arc::new(AtomicBool::new(true)),
         })
     }
+
     pub(crate) fn matches(
         &self,
         spec: &ViewSourceSpec,
@@ -830,6 +850,7 @@ impl RenderedView {
     ) -> bool {
         self.spec == *spec && self.processing == *processing && self.target == target
     }
+
     #[cfg(all(test, feature = "ui-tests"))]
     pub(crate) fn same_source_as(&self, other: &Self) -> bool {
         self.graded
@@ -837,6 +858,7 @@ impl RenderedView {
             .zip(other.graded.as_ref())
             .is_some_and(|(a, b)| Arc::ptr_eq(&a.source, &b.source))
     }
+
     #[cfg(all(test, feature = "ui-tests"))]
     pub(crate) fn same_grade_as(&self, other: &Self) -> bool {
         self.graded
@@ -844,9 +866,11 @@ impl RenderedView {
             .zip(other.graded.as_ref())
             .is_some_and(|(a, b)| Arc::ptr_eq(a, b))
     }
+
     pub(crate) fn in_flight(&self) -> bool {
         *self.submitted.lock().unwrap() && !self.complete.load(Ordering::Acquire)
     }
+
     // Submission, not encoder creation, initializes the cache. Abandoned UI passes cannot poison it.
     pub(crate) fn ensure_submitted(
         self: &Arc<Self>,
@@ -900,11 +924,13 @@ impl RenderedView {
         }
         *submitted = true;
     }
+
     /// Map a new visible frame into the retained result while original support is being replaced.
     pub(crate) fn mapping(&self, frame: FrameRaster) -> TextureMapping {
         composite::mapping(self.spec.frame, frame)
     }
 }
+
 fn uniform(device: &wgpu::Device, bytes: &[u8]) -> wgpu::Buffer {
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: None,
@@ -912,6 +938,7 @@ fn uniform(device: &wgpu::Device, bytes: &[u8]) -> wgpu::Buffer {
         usage: wgpu::BufferUsages::UNIFORM,
     })
 }
+
 fn view_bytes(device: &wgpu::Device, size: [u32; 2]) -> Result<u64, Error> {
     let bytes = u64::from(size[0])
         .checked_mul(u64::from(size[1]))
@@ -928,6 +955,7 @@ fn view_bytes(device: &wgpu::Device, size: [u32; 2]) -> Result<u64, Error> {
     }
     Ok(bytes)
 }
+
 fn float_buffer(device: &wgpu::Device, size: [u32; 2]) -> Result<wgpu::Buffer, Error> {
     let bytes = view_bytes(device, size)?;
     Ok(device.create_buffer(&wgpu::BufferDescriptor {
@@ -939,12 +967,14 @@ fn float_buffer(device: &wgpu::Device, size: [u32; 2]) -> Result<wgpu::Buffer, E
         mapped_at_creation: false,
     }))
 }
+
 fn split_pair(pair: [f64; 2]) -> [[f32; 4]; 3] {
     let h = pair.map(|v| v as f32);
     let l: [f32; 2] = std::array::from_fn(|c| (pair[c] - f64::from(h[c])) as f32);
     let t: [f32; 2] = std::array::from_fn(|c| (pair[c] - f64::from(h[c]) - f64::from(l[c])) as f32);
     [h, l, t].map(|v| [v[0], v[1], 0., 0.])
 }
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct ViewUniform {
@@ -954,6 +984,7 @@ struct ViewUniform {
     dy: [[f32; 4]; 3],
     gain: [f32; 4],
 }
+
 impl ViewUniform {
     fn new(frame: FrameRaster, roll: RollSettings, photo: PhotoSettings) -> Result<Self, Error> {
         let origin = frame.source_point([0.5, 0.5]).0;

@@ -7,6 +7,7 @@ pub(super) struct CacheBudgets {
     pub images: usize,
     pub pressure: Pressure,
 }
+
 impl CacheBudgets {
     pub fn new(limits: CacheLimits, pressure: Pressure) -> Self {
         assert!(limits.valid());
@@ -21,6 +22,7 @@ impl CacheBudgets {
             pressure,
         }
     }
+
     #[cfg(test)]
     pub fn for_memory(bytes: u64, pressure: Pressure) -> Self {
         Self::new(
@@ -33,9 +35,11 @@ impl CacheBudgets {
         )
     }
 }
+
 pub(super) struct PressureWatch {
     _alive: std::sync::Arc<()>,
 }
+
 impl PressureWatch {
     pub fn new(context: egui::Context) -> Self {
         let alive = std::sync::Arc::new(());
@@ -61,6 +65,7 @@ impl PressureWatch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn pressure_stops_optional_retention_without_changing_or_increasing_limits() {
         let limits = CacheLimits {

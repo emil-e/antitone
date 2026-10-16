@@ -1,4 +1,5 @@
 """Photo-free catalog/source tests; opt-in native checks use existing OCIO setup."""
+
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -44,23 +45,35 @@ def change_data(assets, identifier, filename, transform, update_digest=True):
 
 class CatalogTests(unittest.TestCase):
     def test_canonical_set_and_selection(self):
-        self.assertEqual(set(catalog.identifiers()), {PORTRA, MONO, "kodak-2383", "kodak-pro-image-ii",
-                         "kodak-endura-premier", "kodak-ektacolor-edge", "kodak-endura-metallic",
-                         "kodak-endura-premier-metallic"})
+        self.assertEqual(
+            set(catalog.identifiers()),
+            {
+                PORTRA,
+                MONO,
+                "kodak-2383",
+                "kodak-pro-image-ii",
+                "kodak-endura-premier",
+                "kodak-ektacolor-edge",
+                "kodak-endura-metallic",
+                "kodak-endura-premier-metallic",
+            },
+        )
         statuses = {i: catalog.load(i).look["status"] for i in catalog.identifiers()}
         self.assertEqual(statuses[PORTRA], "selected")
         self.assertEqual(statuses[MONO], "accepted")
         self.assertEqual(statuses["kodak-2383"], "accepted")
         self.assertEqual(statuses["kodak-pro-image-ii"], "accepted")
-        self.assertEqual({i for i, s in statuses.items() if s == "shelved"},
-                         {"kodak-endura-metallic", "kodak-endura-premier-metallic"})
+        self.assertEqual(
+            {i for i, s in statuses.items() if s == "shelved"},
+            {"kodak-endura-metallic", "kodak-endura-premier-metallic"},
+        )
 
     def test_all_source_ledgers_and_frozen_models(self):
         for identifier in catalog.identifiers():
             with self.subTest(look=identifier):
                 result = derive.validate(catalog.load(identifier))
-                self.assertLessEqual(result["source_interval_error"], .025)
-                self.assertLessEqual(result["source_coverage_error"], .025)
+                self.assertLessEqual(result["source_interval_error"], 0.025)
+                self.assertLessEqual(result["source_coverage_error"], 0.025)
 
     def test_portra_is_source_reconstructed_not_old_tabulated_definition(self):
         item = catalog.load(PORTRA)
@@ -70,9 +83,14 @@ class CatalogTests(unittest.TestCase):
     def test_unresolved_spectral_tails_keep_censor_metadata(self):
         rows = catalog.load(PORTRA).source["dye_readings"]["yellow"]
         self.assertTrue(rows[-1]["censored_below_graph_resolution"])
-        self.assertEqual(rows[-1]["density"], 0.)
+        self.assertEqual(rows[-1]["density"], 0.0)
         with isolated_assets() as assets:
-            change_data(assets, PORTRA, "source.json", lambda s: s["dye_readings"]["yellow"][-1].pop("censored_below_graph_resolution"))
+            change_data(
+                assets,
+                PORTRA,
+                "source.json",
+                lambda s: s["dye_readings"]["yellow"][-1].pop("censored_below_graph_resolution"),
+            )
             with self.assertRaises(ValueError):
                 catalog.load(PORTRA, assets)
 
@@ -82,7 +100,9 @@ class CatalogTests(unittest.TestCase):
         self.assertNotIn("dye_density", item.model)
         self.assertEqual(set(item.source["reading_uncertainty"]), {"density", "log_exposure"})
         self.assertNotIn("densitometry", item.source["conditions"])
-        self.assertEqual(item.model["density_parameters"], item.source["reconstruction"]["parameters"][0])
+        self.assertEqual(
+            item.model["density_parameters"], item.source["reconstruction"]["parameters"][0]
+        )
         generated = looks.header(item)
         self.assertIn("#define LOOK_NEUTRAL_DENSITY 1", generated)
         self.assertIn("mono_parameters[5]", generated)
@@ -109,40 +129,53 @@ class CatalogTests(unittest.TestCase):
     def test_wrong_monochrome_response_is_rejected(self):
         item = catalog.load(MONO)
         source = copy.deepcopy(item.source)
-        source["reconstruction"]["parameters"][0][3] += .2
+        source["reconstruction"]["parameters"][0][3] += 0.2
         with self.assertRaises(ValueError):
             derive.validate(replace(item, source=source))
 
     def test_wrong_effective_coefficients_are_rejected(self):
         item = catalog.load(PORTRA)
         model = copy.deepcopy(item.model)
-        model["effective_coefficients"][100][0] += .02
+        model["effective_coefficients"][100][0] += 0.02
         with self.assertRaisesRegex(ValueError, "source densities"):
             derive.validate(replace(item, model=model))
 
     def test_shared_observer_is_generated_not_arbitrary_table(self):
         _, spectral, _ = catalog.common()
         derive.common_equations(spectral)
-        spectral["observer"][20][0] += .001
+        spectral["observer"][20][0] += 0.001
         with self.assertRaisesRegex(ValueError, "observer"):
             derive.common_equations(spectral)
 
     def test_changed_frozen_data_requires_explicit_identity_update(self):
         with isolated_assets() as assets:
-            change_data(assets, PORTRA, "model.json", lambda m: m["effective_coefficients"][0].__setitem__(0, .2), False)
+            change_data(
+                assets,
+                PORTRA,
+                "model.json",
+                lambda m: m["effective_coefficients"][0].__setitem__(0, 0.2),
+                False,
+            )
             with self.assertRaisesRegex(ValueError, "changed frozen"):
                 catalog.load(PORTRA, assets)
 
     def test_negative_density_is_rejected_even_with_updated_digest(self):
         with isolated_assets() as assets:
-            change_data(assets, PORTRA, "model.json", lambda m: m["dye_density"][0].__setitem__(0, -.1))
+            change_data(
+                assets, PORTRA, "model.json", lambda m: m["dye_density"][0].__setitem__(0, -0.1)
+            )
             with self.assertRaisesRegex(ValueError, "negative"):
                 catalog.load(PORTRA, assets)
 
     def test_boolean_and_wrong_shape_are_not_numeric_model_data(self):
         for invalid in (True, [1, 2]):
             with isolated_assets() as assets:
-                change_data(assets, PORTRA, "model.json", lambda m: m["effective_coefficients"].__setitem__(0, invalid))
+                change_data(
+                    assets,
+                    PORTRA,
+                    "model.json",
+                    lambda m: m["effective_coefficients"].__setitem__(0, invalid),
+                )
                 with self.assertRaises(ValueError):
                     catalog.load(PORTRA, assets)
 
@@ -154,13 +187,23 @@ class CatalogTests(unittest.TestCase):
 
     def test_nonuniform_exposure_grid_is_rejected(self):
         with isolated_assets() as assets:
-            change_data(assets, PORTRA, "model.json", lambda m: m["log_exposure"].__setitem__(10, m["log_exposure"][10] + .001))
+            change_data(
+                assets,
+                PORTRA,
+                "model.json",
+                lambda m: m["log_exposure"].__setitem__(10, m["log_exposure"][10] + 0.001),
+            )
             with self.assertRaisesRegex(ValueError, "nonuniform"):
                 catalog.load(PORTRA, assets)
 
     def test_reversed_source_interval_is_rejected(self):
         with isolated_assets() as assets:
-            change_data(assets, PORTRA, "source.json", lambda s: s["constraints"][0]["channel_intervals"].__setitem__(0, [1., 0.]))
+            change_data(
+                assets,
+                PORTRA,
+                "source.json",
+                lambda s: s["constraints"][0]["channel_intervals"].__setitem__(0, [1.0, 0.0]),
+            )
             with self.assertRaisesRegex(ValueError, "reversed"):
                 catalog.load(PORTRA, assets)
 
@@ -168,7 +211,13 @@ class CatalogTests(unittest.TestCase):
         looks.CACHE.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=looks.CACHE) as folder:
             path = Path(folder) / "input.json"
-            for text in ('{"x": NaN}', '{"x": Infinity}', '{"x":1,"x":2}', '{"x":1e999}', '{"x":' + '1' + '0' * 400 + '}'):
+            for text in (
+                '{"x": NaN}',
+                '{"x": Infinity}',
+                '{"x":1,"x":2}',
+                '{"x":1e999}',
+                '{"x":' + "1" + "0" * 400 + "}",
+            ):
                 path.write_text(text)
                 with self.assertRaises(ValueError):
                     catalog.read_json(path)
@@ -184,7 +233,7 @@ class CatalogTests(unittest.TestCase):
                     catalog.load(PORTRA, assets)
 
     def test_changed_authoring_gates_and_unknown_fields_are_rejected(self):
-        for key, value in (("reference_roundtrip_limit", 1.), ("unexpected", 1.)):
+        for key, value in (("reference_roundtrip_limit", 1.0), ("unexpected", 1.0)):
             with isolated_assets() as assets:
                 path = assets / "common/authoring.json"
                 data = catalog.read_json(path)
@@ -212,7 +261,9 @@ class CatalogTests(unittest.TestCase):
         listed = subprocess.run([sys.executable, str(cli), "list"], capture_output=True, text=True)
         self.assertEqual(listed.returncode, 0, listed.stderr)
         self.assertIn("shelved", listed.stdout)
-        failed = subprocess.run([sys.executable, str(cli), "bake", PORTRA, "--size", "33"], capture_output=True)
+        failed = subprocess.run(
+            [sys.executable, str(cli), "bake", PORTRA, "--size", "33"], capture_output=True
+        )
         self.assertNotEqual(failed.returncode, 0)
 
     def test_bake_refuses_existing_or_tracked_output_before_building(self):
@@ -235,11 +286,17 @@ class CatalogTests(unittest.TestCase):
                 (output / "validation.json").write_text('{"status":"passed","owner":"other"}\n')
                 return Path("unused-native-tool"), {}
 
-            with mock.patch.object(looks, "build", side_effect=competitor), mock.patch.object(looks.subprocess, "run") as run:
+            with (
+                mock.patch.object(looks, "build", side_effect=competitor),
+                mock.patch.object(looks.subprocess, "run") as run,
+            ):
                 with self.assertRaises(FileExistsError):
                     looks.bake(item, 65, output)
                 run.assert_not_called()
-            self.assertEqual(catalog.read_json(output / "validation.json"), {"status": "passed", "owner": "other"})
+            self.assertEqual(
+                catalog.read_json(output / "validation.json"),
+                {"status": "passed", "owner": "other"},
+            )
             self.assertEqual({p.name for p in output.iterdir()}, {"validation.json"})
 
     def test_failed_compile_does_not_publish_partial_cache_executable(self):
@@ -258,7 +315,11 @@ class CatalogTests(unittest.TestCase):
                 candidate.write_bytes(b"partial")
                 raise subprocess.CalledProcessError(1, command)
 
-            with mock.patch.dict(os.environ, {"OCIO_PREFIX": str(prefix), "CXX": "test-compiler"}), mock.patch.object(looks, "CACHE", root / "build-cache"), mock.patch.object(looks.subprocess, "run", side_effect=compiler):
+            with (
+                mock.patch.dict(os.environ, {"OCIO_PREFIX": str(prefix), "CXX": "test-compiler"}),
+                mock.patch.object(looks, "CACHE", root / "build-cache"),
+                mock.patch.object(looks.subprocess, "run", side_effect=compiler),
+            ):
                 with self.assertRaises(subprocess.CalledProcessError):
                     looks.build(catalog.load(PORTRA))
             self.assertEqual(list((root / "build-cache").rglob("look-tool")), [])
@@ -286,7 +347,9 @@ class CatalogTests(unittest.TestCase):
             self.assertNotEqual(catalog.payload_hash(a), catalog.payload_hash(b))
 
 
-@unittest.skipUnless(os.environ.get("LOOKS_NATIVE_TESTS") == "1", "opt-in native tests require existing pinned OCIO")
+@unittest.skipUnless(
+    os.environ.get("LOOKS_NATIVE_TESTS") == "1", "opt-in native tests require existing pinned OCIO"
+)
 class NativeTests(unittest.TestCase):
     def test_all_native_synthetic_contracts(self):
         for identifier in catalog.identifiers():
@@ -302,7 +365,9 @@ class NativeTests(unittest.TestCase):
             output = Path(folder)
             sentinel = output / "validation.json"
             sentinel.write_text('{"owner":"other"}\n')
-            result = subprocess.run([str(executable), "bake", "65", str(output)], capture_output=True)
+            result = subprocess.run(
+                [str(executable), "bake", "65", str(output)], capture_output=True
+            )
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(sentinel.read_text(), '{"owner":"other"}\n')
             self.assertEqual({p.name for p in output.iterdir()}, {"validation.json"})
@@ -311,28 +376,49 @@ class NativeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=looks.CACHE) as folder:
             root = Path(folder)
             for relative in ("assets/looks", "native/looks", "scripts/looks"):
-                shutil.copytree(catalog.ROOT / relative, root / relative, ignore=shutil.ignore_patterns("__pycache__"))
+                shutil.copytree(
+                    catalog.ROOT / relative,
+                    root / relative,
+                    ignore=shutil.ignore_patterns("__pycache__"),
+                )
             cli = root / "scripts/looks/looks.py"
-            checked = subprocess.run([sys.executable, str(cli), "check", "--all"], capture_output=True, text=True)
+            checked = subprocess.run(
+                [sys.executable, str(cli), "check", "--all"], capture_output=True, text=True
+            )
             self.assertEqual(checked.returncode, 0, checked.stderr)
             self.assertEqual(json.loads(checked.stdout)["status"], "passed")
             env = os.environ.copy()
             # The source-only copy deliberately has no dependency installation.
             # Reuse the parent's normal prefix, including its default location.
-            env["OCIO_PREFIX"] = str(Path(env.get("OCIO_PREFIX", catalog.ROOT / ".cache/deps/ocio-install")).resolve())
-            baked = subprocess.run([sys.executable, str(cli), "bake", PORTRA, "--size", "65"], capture_output=True, text=True, env=env)
+            env["OCIO_PREFIX"] = str(
+                Path(env.get("OCIO_PREFIX", catalog.ROOT / ".cache/deps/ocio-install")).resolve()
+            )
+            baked = subprocess.run(
+                [sys.executable, str(cli), "bake", PORTRA, "--size", "65"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
             self.assertEqual(baked.returncode, 0, baked.stderr)
             self.assertEqual(json.loads(baked.stdout)["status"], "passed")
             self.assertFalse((root / "native/rendering_transform.h").exists())
             report = catalog.read_json(root / ".cache/looks/bakes" / PORTRA / "65/validation.json")
-            self.assertEqual(report["numeric_payload_sha256"], catalog.load(PORTRA).look["reviewed_bakes"]["65"]["numeric_payload_sha256"])
+            self.assertEqual(
+                report["numeric_payload_sha256"],
+                catalog.load(PORTRA).look["reviewed_bakes"]["65"]["numeric_payload_sha256"],
+            )
 
     def test_native_invalid_arguments_do_not_create_outputs(self):
         executable, _ = looks.build(catalog.load(PORTRA))
         looks.CACHE.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=looks.CACHE) as folder:
             output = Path(folder) / "invalid"
-            for args in ([], ["check", "extra"], ["bake", "65junk", str(output)], ["bake", "2", str(output)]):
+            for args in (
+                [],
+                ["check", "extra"],
+                ["bake", "65junk", str(output)],
+                ["bake", "2", str(output)],
+            ):
                 result = subprocess.run([str(executable), *args], capture_output=True)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(output.exists())

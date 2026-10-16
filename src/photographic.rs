@@ -17,6 +17,7 @@ pub(crate) fn encode(x: f64) -> f64 {
         (x.log2() + 9.72) / 17.52
     }
 }
+
 fn decode(q: f64) -> f64 {
     // No ACEScct interchange clip: working RGB stays signed/HDR.
     if q <= CUT {
@@ -25,6 +26,7 @@ fn decode(q: f64) -> f64 {
         (q * 17.52 - 9.72).exp2()
     }
 }
+
 fn finite(rgb: DVec3) -> Result<DVec3, Error> {
     if rgb.is_finite() {
         Ok(rgb)
@@ -32,6 +34,7 @@ fn finite(rgb: DVec3) -> Result<DVec3, Error> {
         Err(Error::NumericalOverflow)
     }
 }
+
 fn mix(a: DVec3, b: DVec3, t: f64) -> DVec3 {
     if t == 0. || a == b {
         a
@@ -49,6 +52,7 @@ pub struct Grade {
     pub(crate) q0: f64,
     pub(crate) black: f64,
 }
+
 impl Grade {
     pub fn new(photo: PhotoSettings) -> Result<Self, Error> {
         for (value, low, high, name) in [
@@ -81,6 +85,7 @@ impl Grade {
             black: decode(q0),
         })
     }
+
     fn tone(&self, x: f64) -> f64 {
         if x == self.photo.pivot {
             x
@@ -88,6 +93,7 @@ impl Grade {
             decode(self.qp + self.photo.contrast * (encode(x) - self.qp))
         }
     }
+
     fn gain(&self, y: f64) -> f64 {
         let a = self.photo.contrast;
         let delta = a * if y <= TOE {
@@ -117,6 +123,7 @@ impl Grade {
             }
         }
     }
+
     #[cfg(feature = "gpu")]
     pub(crate) fn intermediate_bound(&self, input: f64) -> f64 {
         let mut peak = input;

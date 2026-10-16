@@ -42,6 +42,7 @@ async fn device() -> (wgpu::Device, wgpu::Queue) {
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
     adapter.request_device(&Default::default()).await.unwrap()
 }
+
 fn texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -74,6 +75,7 @@ fn texture(
     );
     image
 }
+
 fn read(device: &wgpu::Device, queue: &wgpu::Queue, source: &wgpu::Buffer) -> Vec<u32> {
     let staging = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,

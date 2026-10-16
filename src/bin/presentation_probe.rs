@@ -70,7 +70,10 @@ fn main() -> ProbeResult<()> {
         }
         println!("presentation submitted_frames={presented}");
         if presented == 0 && !interactive {
-            return Err("window remained occluded; offscreen checks passed but onscreen presentation was not exercised".into());
+            return Err(
+                "window remained occluded; offscreen checks passed but onscreen presentation was not exercised"
+                    .into(),
+            );
         }
         Ok(())
     }
@@ -149,6 +152,7 @@ struct Probe {
     frame: usize,
     interactive: bool,
 }
+
 #[cfg(target_os = "macos")]
 impl host::App for Probe {
     fn submission_gate(&self) -> &antitone::platform::SubmissionGate {
@@ -182,7 +186,9 @@ impl host::App for Probe {
             rect,
             Paint(self.chart.clone()),
         ));
-        ui.label("Layer configuration and transfer/readback are tested. Physical monitor matching is not yet proven.");
+        ui.label(
+            "Layer configuration and transfer/readback are tested. Physical monitor matching is not yet proven.",
+        );
         if !self.interactive {
             if self.worker.is_some() {
                 if self.frame == 1 {
@@ -246,6 +252,7 @@ struct Chart {
     pipeline: wgpu::RenderPipeline,
     group: wgpu::BindGroup,
 }
+
 impl Chart {
     fn new(device: &wgpu::Device, patches: &[Vec4], format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -293,7 +300,9 @@ impl Chart {
         Self { pipeline, group }
     }
 }
+
 struct Paint(Arc<Chart>);
+
 impl egui_wgpu::CallbackTrait for Paint {
     fn paint(
         &self,

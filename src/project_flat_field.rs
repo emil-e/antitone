@@ -12,6 +12,7 @@ pub struct FlatFieldSettings {
     pub roll_development: Development,
     pub map: Arc<FlatField>,
 }
+
 impl FlatFieldSettings {
     pub fn new(reference: &Source, map: Arc<FlatField>, roll_development: &Development) -> Self {
         Self {
@@ -23,12 +24,14 @@ impl FlatFieldSettings {
             map,
         }
     }
+
     pub fn require_source(&self, development: &SourceDevelopment) -> Result<()> {
         require(
             *development == self.development,
             "flat-field source dimensions/development differ from the reference",
         )
     }
+
     pub(super) fn validate(&self, project: &Project) -> Result<()> {
         require(self.contract == CONTRACT, "unsupported flat-field contract")?;
         self.map.validate()?;

@@ -37,6 +37,7 @@ pub(super) struct Draft {
     pub(super) show_outline: bool,
     drag: Option<overlay::MarginDrag>,
 }
+
 impl Draft {
     fn belongs_to(&self, editor: &Editor) -> bool {
         self.document
@@ -46,6 +47,7 @@ impl Draft {
             && self.order == editor.document.project.order
     }
 }
+
 impl Entry {
     fn current(&self, editor: &Editor) -> bool {
         let Ok(source) = editor.document.project.source(self.source) else {
@@ -69,9 +71,11 @@ impl Entry {
                 })
     }
 }
+
 fn accepted(crop: Crop, active: Rect) -> Option<Crop> {
     (crop != Crop::from_region(active)).then_some(crop)
 }
+
 fn reason(error: Error) -> String {
     match error {
         Error::UnusableSample(s) => s.to_owned(),
@@ -89,6 +93,7 @@ impl Editor {
             && self.analysis_review.is_none()
             && self.removal_pending.is_none()
     }
+
     pub(super) fn auto_crop_valid(&self) -> bool {
         self.auto_crop_edit.as_ref().is_some_and(|d| {
             d.belongs_to(self)
@@ -98,6 +103,7 @@ impl Editor {
                     .all(|e| e.current(self) && !d.problems.iter().any(|(id, _)| *id == e.source))
         })
     }
+
     pub(super) fn auto_crop_editable(&self) -> bool {
         !self.busy
             && self.fullscreen.is_none()
@@ -107,6 +113,7 @@ impl Editor {
             && !self.dust.cleanup
             && self.auto_crop_valid()
     }
+
     pub(super) fn auto_crop_action(&mut self, ui: &mut egui::Ui, target: Target, label: &str) {
         let available = if target == Target::Photo {
             !self.busy && self.crop_edit.is_some() && self.ready.is_some()
@@ -122,6 +129,7 @@ impl Editor {
             self.auto_crop_requested = Some(target);
         }
     }
+
     pub(super) fn auto_crop_controls(&mut self, ui: &mut egui::Ui) {
         let Some(edit) = &mut self.auto_crop_edit else {
             return;
@@ -174,6 +182,7 @@ impl Editor {
             self.adjust_auto_crop_margin(margin);
         }
     }
+
     fn record_crop_problem(&mut self, source: SourceId, reason: String) {
         let Some(edit) = &mut self.auto_crop_edit else {
             return;
@@ -184,6 +193,7 @@ impl Editor {
             edit.problems.push((source, reason));
         }
     }
+
     pub(super) fn auto_crop_batch_warning(&self) -> Option<&'static str> {
         let edit = self.auto_crop_edit.as_ref()?;
         if edit.entries.is_empty() {
@@ -194,6 +204,7 @@ impl Editor {
             None
         }
     }
+
     pub(super) fn auto_crop_problem(&self, id: SourceId) -> Option<&str> {
         let edit = self.auto_crop_edit.as_ref()?;
         let entry = edit.entries.iter().find(|entry| entry.source == id);
@@ -214,6 +225,7 @@ impl Editor {
         }
         problem.map(|(_, reason)| reason.as_str())
     }
+
     fn loaded_crop_source_current(&self, id: SourceId, file: &thumbnails::FileKey) -> bool {
         if self.current_source != Some(id) {
             return true;
@@ -231,6 +243,7 @@ impl Editor {
             })
         })
     }
+
     fn crop_proposal(&self, id: SourceId) -> Result<Entry, Error> {
         let source = self.document.project.source(id)?;
         let areas = &self
@@ -270,6 +283,7 @@ impl Editor {
             constraints: areas.picture_constraints.clone(),
         })
     }
+
     fn auto_crop_photo(&mut self) {
         if self.busy || self.fullscreen.is_some() || self.crop_edit.is_none() {
             return;
@@ -295,6 +309,7 @@ impl Editor {
             }
         }
     }
+
     pub(super) fn auto_crop(&mut self, target: Target) {
         if target == Target::Photo {
             self.auto_crop_photo();
@@ -358,6 +373,7 @@ impl Editor {
             edit.summary = self.status.clone();
         }
     }
+
     /// An explicit presentation-only override. The accepted document and current crop stay untouched.
     pub(super) fn auto_crop_preview(&self, id: SourceId) -> Option<Option<Crop>> {
         let edit = self.auto_crop_edit.as_ref()?;
@@ -370,6 +386,7 @@ impl Editor {
             .filter(|e| e.current(self))
             .map(|e| e.draft)
     }
+
     pub(super) fn adjust_auto_crop_margin(&mut self, percent: f64) {
         if !self.auto_crop_editable() {
             return;
@@ -423,6 +440,7 @@ impl Editor {
             }
         }
     }
+
     pub(super) fn finish_auto_crop(&mut self, apply: bool) {
         if apply && self.busy {
             return;

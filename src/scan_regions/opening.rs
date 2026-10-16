@@ -200,6 +200,7 @@ pub(super) fn rail(
 ) -> Option<f64> {
     fitted_rail(size, angle, side, points, 4.).map(|r| r.midpoint)
 }
+
 fn fitted_rail(
     size: [u32; 2],
     angle: f64,
@@ -238,6 +239,7 @@ fn fitted_rail(
         midpoint: median(values),
     })
 }
+
 fn terminal_rails(
     size: [u32; 2],
     angle: f64,
@@ -276,6 +278,7 @@ fn terminal_rails(
         fitted_rail(size, angle, side, points, spread)
     })
 }
+
 fn pose(size: [u32; 2], outside: &[bool]) -> f64 {
     let [w, h] = size.map(|v| v as usize);
     let mut angles = vec![];
@@ -388,6 +391,7 @@ fn inscribe(size: [u32; 2], angle: f64, mut allowed: impl FnMut([f64; 2]) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn an_inscribed_cell_must_fit_in_full_not_only_at_its_centre() {
         let allowed = |p: [f64; 2]| p[0] + p[1] >= 9.3;

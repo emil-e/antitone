@@ -43,14 +43,17 @@ fn integer_sums(input: &ScreenInput<'_>, source: [u32; 2], processed: usize) -> 
     }
     result
 }
+
 struct ScalarScreen {
     calls: usize,
     prefix: usize,
 }
+
 impl Screener for ScalarScreen {
     fn admit(&self, _: usize, _: usize, _: usize) -> bool {
         true
     }
+
     fn screen(
         &mut self,
         input: ScreenInput<'_>,
@@ -66,6 +69,7 @@ impl Screener for ScalarScreen {
         ))
     }
 }
+
 fn fixture(name: &str) -> (Vec<Ap1>, Repair) {
     let image = (0u32..160 * 160)
         .map(|i| {
@@ -120,8 +124,10 @@ fn fixture(name: &str) -> (Vec<Ap1>, Repair) {
     };
     (image, repair)
 }
+
 type PixelBits = Vec<([u32; 2], [u32; 3])>;
 type DonorBits = Vec<([u32; 4], [u32; 2], u64, usize, u64)>;
+
 fn bits(e: &EvaluatedRepair) -> (PixelBits, DonorBits) {
     (
         e.pixels().map(|(p, v)| (p, v.map(f32::to_bits))).collect(),
@@ -139,6 +145,7 @@ fn bits(e: &EvaluatedRepair) -> (PixelBits, DonorBits) {
             .collect(),
     )
 }
+
 fn compare(screen: &mut dyn Screener, name: &str) {
     let (image, repair) = fixture(name);
     let active = SourceRegion {
@@ -296,6 +303,7 @@ fn cancelled_preparation_is_none_without_sampling_or_screening() {
     assert!(result.is_none());
     assert_eq!(samples.get(), 0);
     assert_eq!(screen.calls, 0);
+
     let calls = Cell::new(0);
     assert!(
         distance_to_unknown(&vec![true; 4096], 64, 64, &|| {
@@ -309,10 +317,12 @@ fn cancelled_preparation_is_none_without_sampling_or_screening() {
 #[test]
 fn screening_errors_propagate_and_cancelled_screening_is_not_a_failure() {
     struct Failing;
+
     impl Screener for Failing {
         fn admit(&self, _: usize, _: usize, _: usize) -> bool {
             true
         }
+
         fn screen(
             &mut self,
             _: ScreenInput<'_>,
@@ -321,11 +331,14 @@ fn screening_errors_propagate_and_cancelled_screening_is_not_a_failure() {
             Err(Error::Gpu("screening failed".into()))
         }
     }
+
     struct Cancel<'a>(&'a Cell<bool>);
+
     impl Screener for Cancel<'_> {
         fn admit(&self, _: usize, _: usize, _: usize) -> bool {
             true
         }
+
         fn screen(
             &mut self,
             _: ScreenInput<'_>,
@@ -335,6 +348,7 @@ fn screening_errors_propagate_and_cancelled_screening_is_not_a_failure() {
             Ok(None)
         }
     }
+
     let (image, repair) = fixture("gradient");
     let active = SourceRegion {
         x: 0,
@@ -352,7 +366,12 @@ fn screening_errors_propagate_and_cancelled_screening_is_not_a_failure() {
             cancelled: &|| false,
         },
     );
-    assert!(matches!(result,Err(Error::Gpu(message)) if message=="screening failed"));
+
+    assert!(matches!(
+        result,
+        Err(Error::Gpu(message)) if message == "screening failed"
+    ));
+
     let stop = Cell::new(false);
     let mut screen = Cancel(&stop);
     assert!(
@@ -421,6 +440,7 @@ fn quantized_terms_bound_reference_subtractions_and_normalizations() {
         }
     }
     assert!(positive > 10_000);
+
     for q in [-32767i32, -4096, -1, 0, 1, 4096, 32767] {
         let edge = q as f64 / 1024.;
         for value in [edge.next_down(), edge, edge.next_up()] {
@@ -432,6 +452,7 @@ fn quantized_terms_bound_reference_subtractions_and_normalizations() {
             }
         }
     }
+
     assert_eq!(quantize(f64::NAN), i16::MIN);
     assert_eq!(quantize(f64::INFINITY), i16::MIN);
 }
@@ -450,6 +471,7 @@ fn hosted_gpu_screening_matches_cpu_and_scalar_integer_prefixes() {
     for name in ["gradient", "hdr", "periodic", "flat", "zero-seed"] {
         compare(&mut screen, name);
     }
+
     let width = 96;
     let image = (0..width * width)
         .map(|i| {
@@ -508,8 +530,10 @@ fn hosted_gpu_screening_matches_cpu_and_scalar_integer_prefixes() {
             assert_eq!(sum, integer_sums(&input, *source, sum[2] as usize));
         }
     }
+
     check_paired_ceilings(&mut screen);
     assert!(!screen.admit(4_000_000, 4_000_000, 66049));
+
     let input = ScreenInput {
         features: &features,
         weights: &weights,
@@ -549,10 +573,13 @@ fn retained_gpu_screening_preserves_all_donor_and_pixel_bits() {
     let mut screen = crate::gpu::dust_screening::Screening::new(&device, &queue, &gate);
     let mut comparisons = 0;
     for line in std::fs::read_to_string(manifest).unwrap().lines() {
-        let f = line.split('\t').collect::<Vec<_>>();
-        assert_eq!(f.len(), 7);
-        let size = [f[3].parse::<u32>().unwrap(), f[4].parse::<u32>().unwrap()];
-        let bytes = std::fs::read(f[1]).unwrap();
+        let fields = line.split('\t').collect::<Vec<_>>();
+        assert_eq!(fields.len(), 7);
+        let size = [
+            fields[3].parse::<u32>().unwrap(),
+            fields[4].parse::<u32>().unwrap(),
+        ];
+        let bytes = std::fs::read(fields[1]).unwrap();
         assert_eq!(bytes.len(), size[0] as usize * size[1] as usize * 12);
         let image = bytes
             .as_chunks::<12>()
@@ -564,7 +591,8 @@ fn retained_gpu_screening_preserves_all_donor_and_pixel_bits() {
                 })
             })
             .collect::<Vec<_>>();
-        let mask = std::fs::read(f[2]).unwrap();
+
+        let mask = std::fs::read(fields[2]).unwrap();
         assert_eq!(mask.len(), image.len());
         let points = mask
             .iter()
@@ -579,20 +607,24 @@ fn retained_gpu_screening_preserves_all_donor_and_pixel_bits() {
             points.iter().map(|p| p[0]).max().unwrap() + 1,
             points.iter().map(|p| p[1]).max().unwrap() + 1,
         ];
-        let ss = [end[0] - origin[0], end[1] - origin[1]];
+        let support_size = [end[0] - origin[0], end[1] - origin[1]];
         let support = SupportMask::new(
             origin,
-            ss,
-            (0..ss[0] * ss[1])
+            support_size,
+            (0..support_size[0] * support_size[1])
                 .map(|i| {
-                    mask[((origin[1] + i / ss[0]) * size[0] + origin[0] + i % ss[0]) as usize] != 0
+                    mask[((origin[1] + i / support_size[0]) * size[0]
+                        + origin[0]
+                        + i % support_size[0]) as usize]
+                        != 0
                 })
                 .collect(),
         )
         .unwrap();
+
         let mut choices = vec![DonorChoice::Automatic];
-        let dx = f[5].parse::<i32>().unwrap();
-        let dy = f[6].parse::<i32>().unwrap();
+        let dx = fields[5].parse::<i32>().unwrap();
+        let dy = fields[6].parse::<i32>().unwrap();
         if dx != i32::MAX {
             choices.push(DonorChoice::Offset([dx, dy]));
         }
@@ -623,7 +655,7 @@ fn retained_gpu_screening_preserves_all_donor_and_pixel_bits() {
             )
             .unwrap()
             .unwrap();
-            assert_eq!(bits(&expected), bits(&actual), "{} {donor:?}", f[0]);
+            assert_eq!(bits(&expected), bits(&actual), "{} {donor:?}", fields[0]);
             comparisons += 1;
         }
     }

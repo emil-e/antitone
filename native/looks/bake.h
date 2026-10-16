@@ -7,8 +7,10 @@
 
 namespace looks {
 namespace fs = std::filesystem;
+
 struct Domain {
     double lo = -.5, hi = lo + (encode(.18) - lo) * (64. / 38.);
+
     V input(V linear) const {
         for (double &v : linear) {
             v = encode(v);
@@ -18,11 +20,13 @@ struct Domain {
         return linear;
     }
 };
+
 struct Cube : Domain {
     int size;
     std::vector<V> nodes;
     size_t outsideRange = 0, roundtripFailures = 0;
     double roundtripMax = 0;
+
     explicit Cube(const Reference &look, int n) : size(n) {
         if (n != 65 && n != 97)
             throw std::runtime_error("supported cube sizes are 65 and 97");
@@ -48,7 +52,11 @@ struct Cube : Domain {
         if (roundtripFailures || outsideRange)
             throw std::runtime_error("all-node reference/range admission failed");
     }
-    size_t index(std::array<int, 3> q) const { return (q[2] * size + q[1]) * size + q[0]; }
+
+    size_t index(std::array<int, 3> q) const {
+        return (q[2] * size + q[1]) * size + q[0];
+    }
+
     V apply(V linear) const {
         V log = input(linear), fraction{};
         std::array<int, 3> q{};
@@ -72,6 +80,7 @@ struct Cube : Domain {
             v = decode(v);
         return out;
     }
+
     void write(const fs::path &path) const {
         std::ofstream f(path);
         if (!f)
@@ -91,6 +100,7 @@ struct Cube : Domain {
             throw std::runtime_error("LUT write failed");
     }
 };
+
 inline OCIO::ConstCPUProcessorRcPtr load(const fs::path &path) {
     auto file = OCIO::FileTransform::Create();
     std::string name = path.string();
@@ -98,6 +108,7 @@ inline OCIO::ConstCPUProcessorRcPtr load(const fs::path &path) {
     file->setInterpolation(OCIO::INTERP_TETRAHEDRAL);
     return OCIO::Config::CreateRaw()->getProcessor(file)->getDefaultCPUProcessor();
 }
+
 inline V fileApply(OCIO::ConstCPUProcessorRcPtr file, const Domain &domain, V input) {
     V out = ocio(file, domain.input(input));
     for (double &v : out)

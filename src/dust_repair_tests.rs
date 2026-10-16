@@ -53,6 +53,7 @@ fn circle(size: [u32; 2], center: [i32; 2], radius: i32) -> Vec<bool> {
     }
     mask
 }
+
 fn gradient(size: [u32; 2]) -> Vec<Ap1> {
     (0..size[1])
         .flat_map(|y| {
@@ -66,6 +67,7 @@ fn gradient(size: [u32; 2]) -> Vec<Ap1> {
         })
         .collect()
 }
+
 fn outside_bits_equal(a: &[Ap1], b: &[Ap1], mask: &[bool]) -> bool {
     a.iter()
         .zip(b)

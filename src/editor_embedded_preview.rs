@@ -11,11 +11,13 @@ struct Request {
     path: PathBuf,
     source: Source,
 }
+
 struct ResultMessage {
     ticket: u64,
     key: SourceKey,
     image: Result<Option<egui::ColorImage>, String>,
 }
+
 #[derive(Default)]
 pub(super) struct EmbeddedPreviews {
     entries: Vec<(SourceKey, Option<egui::TextureHandle>)>,
@@ -24,6 +26,7 @@ pub(super) struct EmbeddedPreviews {
     generation: Arc<std::sync::atomic::AtomicU64>,
     pending: Option<(u64, SourceKey)>,
 }
+
 impl EmbeddedPreviews {
     pub(super) fn new(repaint: Arc<std::sync::OnceLock<egui::Context>>) -> Self {
         let (commands, receiver) = mpsc::channel();
@@ -68,10 +71,12 @@ impl EmbeddedPreviews {
         });
         state
     }
+
     pub(super) fn cancel(&self) {
         self.generation
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
+
     pub(super) fn receive(&mut self, document: &Document, context: &egui::Context) {
         loop {
             let message = match self.messages.as_ref().map(|messages| messages.try_recv()) {
@@ -117,12 +122,14 @@ impl EmbeddedPreviews {
             self.entries.push((message.key, texture));
         }
     }
+
     pub(super) fn get(&self, key: &SourceKey) -> Option<&egui::TextureHandle> {
         self.entries
             .iter()
             .find(|(candidate, _)| candidate == key)
             .and_then(|(_, image)| image.as_ref())
     }
+
     pub(super) fn request_visible(
         &mut self,
         wanted: &[(usize, ImageKey, PathBuf, Source)],
@@ -169,10 +176,12 @@ impl EmbeddedPreviews {
             self.entries.push((key.source.clone(), None));
         }
     }
+
     pub(super) fn pending(&self) -> bool {
         self.pending.is_some()
     }
 }
+
 fn current(key: &SourceKey, document: &Document) -> bool {
     document
         .project
@@ -185,6 +194,7 @@ fn current(key: &SourceKey, document: &Document) -> bool {
                 && SourceKey::new(source, development, FileKey::new(&path)) == *key
         })
 }
+
 fn load(request: &Request, active: &impl Fn() -> bool) -> Result<Option<egui::ColorImage>, String> {
     if !active() || FileKey::new(&request.path) != request.key.file {
         return Ok(None);
@@ -203,6 +213,7 @@ fn load(request: &Request, active: &impl Fn() -> bool) -> Result<Option<egui::Co
     }
     Ok(image)
 }
+
 fn decode(thumbnail: crate::raw::EmbeddedThumbnail) -> Result<Option<egui::ColorImage>, String> {
     let mut decoder = image::codecs::jpeg::JpegDecoder::new(std::io::Cursor::new(thumbnail.jpeg))
         .map_err(|e| e.to_string())?;

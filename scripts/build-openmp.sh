@@ -1,12 +1,15 @@
 #!/bin/sh
 set -eu
+
 cd "$(dirname "$0")/.."
+
 cache=.cache/native-deps
 version=22.1.8
 archive="$cache/llvm-project-$version.src.tar.xz"
 source="$cache/llvm-project-$version.src"
 prefix="$PWD/$cache/openmp-$version-install"
 mkdir -p "$cache"
+
 if [ ! -f "$archive" ]; then
     curl --fail --location "https://github.com/llvm/llvm-project/releases/download/llvmorg-$version/llvm-project-$version.src.tar.xz" -o "$archive.tmp"
     mv "$archive.tmp" "$archive"
@@ -17,6 +20,7 @@ if [ ! -d "$source/openmp" ]; then
         "llvm-project-$version.src/openmp" "llvm-project-$version.src/cmake" \
         "llvm-project-$version.src/llvm/cmake" "llvm-project-$version.src/LICENSE.TXT"
 fi
+
 cmake -S "$source/openmp" -B "$cache/openmp-$version-build" \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=/usr/bin/clang \
     -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_OSX_ARCHITECTURES=arm64 \
@@ -26,5 +30,6 @@ cmake -S "$source/openmp" -B "$cache/openmp-$version-build" \
     -DLIBOMP_INSTALL_ALIASES=OFF -DOPENMP_ENABLE_LIBOMPTARGET=OFF
 cmake --build "$cache/openmp-$version-build" --parallel 4
 cmake --install "$cache/openmp-$version-build"
+
 mkdir -p "$prefix/share/licenses"
 cp "$source/openmp/LICENSE.TXT" "$prefix/share/licenses/LLVM-OpenMP.txt"

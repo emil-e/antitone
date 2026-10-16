@@ -390,6 +390,7 @@ fn wait(device: &wgpu::Device, queue: &wgpu::Queue) {
         })
         .unwrap();
 }
+
 #[cfg(feature = "ocio-reference")]
 fn pixels(device: &wgpu::Device, queue: &wgpu::Queue, image: &GpuImage) -> Vec<u8> {
     let width = image.linear.width();

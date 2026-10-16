@@ -386,6 +386,7 @@ fn composed_tiff_and_ap0_exr_reopen_with_matching_dimensions_and_pixel_permutati
         );
     }
 }
+
 fn check_exports(crop: Option<Crop>, turns: QuarterTurns) {
     let directory = tempfile::tempdir().unwrap();
     let area = SourceRegion {

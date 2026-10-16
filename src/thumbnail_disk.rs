@@ -10,6 +10,7 @@ use std::{
 
 const MAGIC: &[u8; 8] = b"ANTTHM02";
 const LIMIT: u64 = 128 << 20;
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Header {
@@ -20,10 +21,12 @@ struct Header {
     height: u32,
     checksum: String,
 }
+
 pub(super) struct DiskCache {
     root: PathBuf,
     budget: u64,
 }
+
 impl DiskCache {
     #[cfg(test)]
     pub(super) fn at(root: PathBuf) -> Self {
@@ -32,12 +35,14 @@ impl DiskCache {
             budget: LIMIT,
         }
     }
+
     pub fn default_location() -> Option<Self> {
         std::env::var_os("HOME").map(|home| Self {
             root: PathBuf::from(home).join(".cache/antitone/thumbnails-v2"),
             budget: LIMIT,
         })
     }
+
     fn path(&self, key: &SourceKey) -> io::Result<PathBuf> {
         if key.file.revision.is_none() {
             return Err(invalid("source file stats unavailable for thumbnail reuse"));
@@ -49,6 +54,7 @@ impl DiskCache {
             .root
             .join(format!("{}.rgb16", blake3::hash(&identity).to_hex())))
     }
+
     pub fn load(&self, key: &SourceKey) -> io::Result<Option<Arc<Proxy>>> {
         let path = self.path(key)?;
         let mut file = match fs::File::open(&path) {
@@ -98,12 +104,14 @@ impl DiskCache {
             matrix: glam::DMat3::from_cols_array_2d(&header.source.camera_to_ap1),
         })))
     }
+
     pub fn store_if_missing(&self, key: &SourceKey, proxy: &Proxy) -> io::Result<()> {
         if !self.path(key)?.exists() {
             self.store(key, proxy)?;
         }
         Ok(())
     }
+
     pub fn store(&self, key: &SourceKey, proxy: &Proxy) -> io::Result<()> {
         fs::create_dir_all(&self.root)?;
         let bytes = bytemuck::cast_slice(&proxy.pixels);
@@ -123,6 +131,7 @@ impl DiskCache {
         file.persist(self.path(key)?).map_err(|e| e.error)?;
         self.prune()
     }
+
     fn prune(&self) -> io::Result<()> {
         let mut entries = Vec::new();
         let mut total = 0;
@@ -148,6 +157,7 @@ impl DiskCache {
         Ok(())
     }
 }
+
 fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
@@ -155,6 +165,7 @@ fn invalid(message: &str) -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn fixture() -> (SourceKey, Proxy) {
         let key = SourceKey {
             id: crate::project::SourceId(1),
@@ -188,6 +199,7 @@ mod tests {
         };
         (key, proxy)
     }
+
     #[test]
     fn exact_pixels_survive_restart_and_source_ids_do_not_affect_disk_identity() {
         let directory = tempfile::tempdir().unwrap();
@@ -206,6 +218,7 @@ mod tests {
         key.development.fixed_wb[0] = 2.;
         assert!(cache.load(&key).unwrap().is_none());
     }
+
     #[test]
     fn changed_stats_locators_and_unavailable_stats_do_not_reuse_disk_pixels() {
         let directory = tempfile::tempdir().unwrap();
@@ -223,6 +236,7 @@ mod tests {
         assert!(cache.store(&changed, &proxy).is_err());
         assert_eq!(cache.load(&key).unwrap().unwrap().pixels, proxy.pixels);
     }
+
     #[test]
     fn corrupt_truncated_and_wrong_identity_entries_are_rejected() {
         let directory = tempfile::tempdir().unwrap();
@@ -249,6 +263,7 @@ mod tests {
         fs::copy(cache.path(&key).unwrap(), cache.path(&other).unwrap()).unwrap();
         assert!(cache.load(&other).is_err());
     }
+
     #[test]
     fn disk_pruning_bounds_storage_and_unavailable_cache_is_an_io_error() {
         let directory = tempfile::tempdir().unwrap();

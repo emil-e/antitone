@@ -25,16 +25,19 @@ struct Source {
     calibration: Calibration,
     matrix: DMat3,
 }
+
 impl Source {
     fn index(&self, [x, y]: [u32; 2]) -> usize {
         assert!(x >= self.area.x && x < self.area.x + self.area.width);
         assert!(y >= self.area.y && y < self.area.y + self.area.height);
         ((y - self.area.y) * self.area.width + x - self.area.x) as usize
     }
+
     fn pixels(&self) -> impl Iterator<Item = [u32; 2]> + '_ {
         (self.area.y..self.area.y + self.area.height)
             .flat_map(move |y| (self.area.x..self.area.x + self.area.width).map(move |x| [x, y]))
     }
+
     fn corrected(mut self) -> Self {
         let a = self.area;
         let field = FlatField::from_nodes(
@@ -218,6 +221,7 @@ struct Stages {
     locals: LocalGrade,
     full: SpatialPipeline,
 }
+
 impl Stages {
     fn new(source: &Source, grade: PhotoGradeSnapshot) -> Self {
         let roll = RollSettings {
@@ -243,11 +247,13 @@ impl Stages {
             full: SpatialPipeline::new(source.calibration, roll, grade, source.matrix).unwrap(),
         }
     }
+
     fn before_creative(&self, camera: DVec3) -> InvertedPixel {
         let mut pixel = self.inversion.apply(camera).unwrap();
         pixel.rgb = self.matrix * pixel.rgb;
         pixel
     }
+
     fn after_creative(&self, mut pixel: InvertedPixel, point: SourcePoint) -> InvertedPixel {
         pixel.rgb = self.global.apply(pixel.rgb).unwrap();
         self.locals.apply(pixel, point).unwrap()
@@ -259,6 +265,7 @@ struct Support {
     // Test-only quadrature. Every point is an actual original pixel; duplicate selections retain their weight.
     samples: Vec<([u32; 2], f64)>,
 }
+
 fn support(frame: FrameRaster, pixel: [u32; 2], side: u32) -> Support {
     let mut samples = Vec::new();
     for y in 0..side {
@@ -275,9 +282,11 @@ fn support(frame: FrameRaster, pixel: [u32; 2], side: u32) -> Support {
     }
     Support { samples }
 }
+
 fn mean(values: impl Iterator<Item = (DVec3, f64)>) -> DVec3 {
     crate::sampling::weighted_mean_iter(values.map(Ok)).unwrap()
 }
+
 fn flags(values: impl Iterator<Item = [bool; 3]>) -> [bool; 3] {
     values.fold([false; 3], |a, b| std::array::from_fn(|i| a[i] || b[i]))
 }
@@ -289,6 +298,7 @@ struct Comparison {
     exact_contributions: usize,
     exact_unique_originals: usize,
 }
+
 fn compare(
     source: &Source,
     frame: FrameRaster,
@@ -400,6 +410,7 @@ fn compare(
         exact_unique_originals: exact_unique_originals.len(),
     }
 }
+
 fn error(reference: &[DVec3], candidate: &[DVec3]) -> (f64, f64) {
     assert_eq!(reference.len(), candidate.len());
     let mut square = 0.;
@@ -412,6 +423,7 @@ fn error(reference: &[DVec3], candidate: &[DVec3]) -> (f64, f64) {
     }
     ((square / (3 * reference.len()) as f64).sqrt(), max)
 }
+
 fn report(
     kind: &str,
     corrected: bool,

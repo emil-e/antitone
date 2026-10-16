@@ -20,6 +20,7 @@ fn frame(
     output.textures_delta.clear();
     output
 }
+
 fn labels(
     editor: &mut Editor,
     context: &egui::Context,
@@ -28,6 +29,7 @@ fn labels(
 ) -> Vec<(String, egui::Rect)> {
     ui_labels(frame(editor, context, size, events))
 }
+
 fn pointer(pos: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
     vec![
         egui::Event::PointerMoved(pos),
@@ -39,6 +41,7 @@ fn pointer(pos: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
         },
     ]
 }
+
 fn key(key: egui::Key) -> Vec<egui::Event> {
     vec![egui::Event::Key {
         key,
@@ -48,11 +51,13 @@ fn key(key: egui::Key) -> Vec<egui::Event> {
         modifiers: egui::Modifiers::NONE,
     }]
 }
+
 fn click(editor: &mut Editor, context: &egui::Context, size: egui::Vec2, pos: egui::Pos2) {
     for pressed in [true, false] {
         frame(editor, context, size, pointer(pos, pressed));
     }
 }
+
 fn warm(editor: &mut Editor, context: &egui::Context, size: egui::Vec2) {
     for _ in 0..4 {
         frame(editor, context, size, vec![]);
@@ -254,7 +259,14 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                         .any(|(_, node)| node.value()
                             == Some(format!("Active tool: {title}").as_str()))
                 );
-                assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Rect(rect) if rect.fill == tint && rect.rect.contains_rect(identity) && rect.rect.contains_rect(apply))));
+                assert!(output.shapes.iter().any(|shape| match &shape.shape {
+                    egui::Shape::Rect(rect) => {
+                        rect.fill == tint
+                            && rect.rect.contains_rect(identity)
+                            && rect.rect.contains_rect(apply)
+                    }
+                    _ => false,
+                }));
             }
             editor.finish_pick();
         }

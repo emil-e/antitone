@@ -19,12 +19,14 @@ pub(super) struct Trace {
     peak_outstanding: u64,
     peak_resource_bytes: usize,
 }
+
 #[derive(Clone, Copy)]
 struct Input {
     first: Instant,
     last: Instant,
     count: u64,
 }
+
 pub(super) struct Frame {
     id: u64,
     input: Option<Input>,
@@ -39,16 +41,19 @@ pub(super) struct Frame {
     pub submit_end: Option<Instant>,
     pub present_end: Option<Instant>,
 }
+
 struct Completion {
     frame: u64,
     at: Instant,
     remaining: u64,
 }
+
 impl Trace {
     pub(super) fn from_env() -> Option<Self> {
         (std::env::var_os("ANTITONE_LATENCY_TRACE").as_deref() == Some(std::ffi::OsStr::new("1")))
             .then(Self::new)
     }
+
     fn new() -> Self {
         let (send, receive) = mpsc::channel();
         println!(
@@ -65,6 +70,7 @@ impl Trace {
             peak_resource_bytes: 0,
         }
     }
+
     pub(super) fn input(&mut self) {
         let at = Instant::now();
         match &mut self.input {
@@ -81,6 +87,7 @@ impl Trace {
             }
         }
     }
+
     pub(super) fn begin(&mut self) -> Frame {
         self.next_frame += 1;
         Frame {
@@ -98,12 +105,14 @@ impl Trace {
             present_end: None,
         }
     }
+
     pub(super) fn submitting(&mut self, frame: &mut Frame) {
         frame.submit_start = Some(Instant::now());
         self.peak_outstanding = self
             .peak_outstanding
             .max(self.outstanding.fetch_add(1, Ordering::Relaxed) + 1);
     }
+
     pub(super) fn completion(&self, frame: &Frame) -> impl FnOnce() + Send + 'static + use<> {
         let id = frame.id;
         let outstanding = self.outstanding.clone();
@@ -118,6 +127,7 @@ impl Trace {
             });
         }
     }
+
     pub(super) fn finish(
         &mut self,
         frame: Frame,
@@ -149,6 +159,7 @@ impl Trace {
             bytes.map_or_else(|| "-".to_owned(), |bytes| bytes.to_string())
         );
     }
+
     pub(super) fn configured(&self, start: Instant, width: u32, height: u32) {
         println!(
             "latency_configure start_ns={} end_ns={} width={width} height={height}",
@@ -156,6 +167,7 @@ impl Trace {
             self.ns(Instant::now())
         );
     }
+
     pub(super) fn flush(&self) {
         for done in self.receive.try_iter() {
             println!(
@@ -166,13 +178,16 @@ impl Trace {
             );
         }
     }
+
     pub(super) fn pending(&self) -> bool {
         self.outstanding.load(Ordering::Relaxed) != 0
     }
+
     pub(super) fn poll_deadline(&self) -> Option<Instant> {
         self.pending()
             .then(|| Instant::now() + Duration::from_millis(2))
     }
+
     pub(super) fn summary(&self) {
         self.flush();
         println!(
@@ -183,6 +198,7 @@ impl Trace {
             self.outstanding.load(Ordering::Relaxed)
         );
     }
+
     fn ns(&self, at: Instant) -> u128 {
         at.duration_since(self.origin).as_nanos()
     }

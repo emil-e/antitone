@@ -9,6 +9,7 @@ use crate::{
 pub struct Coverage {
     corners: [SourcePoint; 4],
 }
+
 impl Coverage {
     pub fn new(corners: [SourcePoint; 4]) -> Result<Self, Error> {
         if corners.iter().flat_map(|p| p.0).any(|v| !v.is_finite()) {
@@ -29,6 +30,7 @@ impl Coverage {
         }
         Ok(Self { corners })
     }
+
     pub fn rectangle(region: SourceRegion) -> Self {
         let x = f64::from(region.x);
         let y = f64::from(region.y);
@@ -38,12 +40,15 @@ impl Coverage {
             corners: [[x, y], [right, y], [right, bottom], [x, bottom]].map(SourcePoint),
         }
     }
+
     pub fn corners(self) -> [SourcePoint; 4] {
         self.corners
     }
+
     pub fn area(self) -> f64 {
         polygon_area(&self.corners.map(|p| p.0))
     }
+
     pub fn bounds(self, active: SourceRegion) -> Result<SourceRegion, Error> {
         active.validate()?;
         let min: [f64; 2] = std::array::from_fn(|axis| {
@@ -80,6 +85,7 @@ impl Coverage {
         }
         .validate()
     }
+
     pub fn exact_rectangle(self, active: SourceRegion) -> Option<SourceRegion> {
         let region = self.bounds(active).ok()?;
         if self.area() != f64::from(region.width) * f64::from(region.height) {
@@ -91,6 +97,7 @@ impl Coverage {
             .all(|p| expected.contains(p))
             .then_some(region)
     }
+
     /// Piecewise-constant source pixels contribute their exact positive intersection area.
     pub fn weight(self, pixel: [u32; 2]) -> f64 {
         let origin = pixel.map(f64::from);
@@ -148,6 +155,7 @@ impl Coverage {
         }
         polygon_area(&vertices[..count]).min(1.)
     }
+
     pub fn pixels(
         self,
         active: SourceRegion,
@@ -160,6 +168,7 @@ impl Coverage {
             })
         }))
     }
+
     /// Native diagnostics inspect exactly the cells contributing to the developed-pixel mean.
     pub fn row_spans(
         self,
@@ -179,6 +188,7 @@ impl Coverage {
         }))
     }
 }
+
 fn polygon_area(points: &[[f64; 2]]) -> f64 {
     if points.len() < 3 {
         return 0.;
@@ -199,6 +209,7 @@ mod weight_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn diagnostic_spans_exclude_bad_bounding_box_corners_and_include_weighted_boundaries() {
         let active = SourceRegion {
@@ -236,6 +247,7 @@ mod tests {
             .unwrap();
         assert_eq!(mean, glam::DVec3::splat(0.25));
     }
+
     #[test]
     fn malformed_or_outside_coverage_is_rejected() {
         for points in [
@@ -258,6 +270,7 @@ mod tests {
                 .is_err()
         );
     }
+
     #[test]
     fn diamond_coverage_has_independent_fractional_weights_and_matching_spans() {
         let active = SourceRegion {

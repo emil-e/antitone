@@ -12,6 +12,7 @@ fn calibration() -> Calibration {
         input_floor: 1. / 65535.,
     }
 }
+
 fn matrix() -> DMat3 {
     DMat3::from_cols(
         DVec3::new(1.1, 0.03, -0.07),
@@ -19,6 +20,7 @@ fn matrix() -> DMat3 {
         DVec3::new(-0.03, 0.08, 1.3),
     )
 }
+
 fn forward(cal: Calibration, roll: RollSettings, positive: DVec3) -> DVec3 {
     let (toe, shoulder) = roll.response.shape().unwrap();
     let gammas = roll.channel_gammas().unwrap();
@@ -30,6 +32,7 @@ fn forward(cal: Calibration, roll: RollSettings, positive: DVec3) -> DVec3 {
         cal.dmin[c] * (-density).exp()
     }))
 }
+
 fn close(a: DVec3, b: DVec3) {
     assert!(
         (a - b).abs().max_element() <= 2e-12 + 2e-11 * b.abs().max_element(),

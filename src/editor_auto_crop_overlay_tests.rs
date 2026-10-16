@@ -92,6 +92,7 @@ fn margin_drag_uses_source_axes_through_all_turns_reflections_and_nonzero_origin
         }
     }
 }
+
 #[test]
 fn drag_clamps_the_shared_margin_and_outside_points_do_not_hit_an_edge() {
     let proposal = Crop {
@@ -115,6 +116,7 @@ fn drag_clamps_the_shared_margin_and_outside_points_do_not_hit_an_edge() {
     assert_eq!(hit(q, egui::pos2(60., 50.)), None);
     assert_eq!(hit(q, egui::pos2(200., 50.)), None);
 }
+
 #[test]
 fn shared_outline_shades_outside_but_not_inside_rotated_and_reflected_frames() {
     let canvas = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(500., 400.));

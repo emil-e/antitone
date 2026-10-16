@@ -10,6 +10,7 @@ const ACTIVE: SourceRegion = SourceRegion {
     width: 8639,
     height: 5757,
 };
+
 fn evidence(angle: f64) -> Areas {
     Areas {
         picture_geometry: Some(PictureGeometry {
@@ -21,6 +22,7 @@ fn evidence(angle: f64) -> Areas {
         ..Default::default()
     }
 }
+
 fn inside(p: [f64; 2], q: Quad) -> bool {
     (0..4).all(|i| {
         let a = q[i];
@@ -28,6 +30,7 @@ fn inside(p: [f64; 2], q: Quad) -> bool {
         (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]) >= -1e-6
     })
 }
+
 #[test]
 fn margin_is_equal_distance_per_edge_not_uniform_aspect_scaling() {
     let base = Crop {
@@ -177,6 +180,7 @@ fn mapped_frame_retains_angle_origin_and_content_through_every_turn_and_reflecti
         }
     }
 }
+
 #[test]
 fn sampling_opening_picture_and_authored_opening_do_not_change_framing() {
     let mut areas = evidence(0.75);
@@ -193,6 +197,7 @@ fn sampling_opening_picture_and_authored_opening_do_not_change_framing() {
     areas.edit_picture(crate::coverage::Coverage::rectangle(inner));
     assert!(propose(ACTIVE, &areas).is_err());
 }
+
 #[test]
 fn abstains_for_weak_missing_invalid_off_source_and_nonrectangular_evidence() {
     let baseline = evidence(0.25);
@@ -221,6 +226,7 @@ fn abstains_for_weak_missing_invalid_off_source_and_nonrectangular_evidence() {
     assert!(propose(ACTIVE, &a).is_err());
     assert!(propose(ACTIVE, &Areas::default()).is_err());
 }
+
 #[test]
 fn edge_fit_residual_is_measured_in_capture_pixels_not_source_pixels() {
     for active in [
@@ -266,6 +272,7 @@ fn zero_angle_uses_inward_integer_edges_without_constraining_or_moving_measured_
         "do not silently shrink an off-source frame"
     );
 }
+
 #[test]
 fn nonuniform_raster_mapping_is_inscribed_not_assumed_orthogonal() {
     let active = SourceRegion {

@@ -95,6 +95,7 @@ struct FloatRenderer {
     renderer: egui_wgpu::Renderer,
     capture: Rc<RefCell<FloatCapture>>,
 }
+
 impl FloatRenderer {
     fn new(
         device: &wgpu::Device,
@@ -118,6 +119,7 @@ impl FloatRenderer {
         }
     }
 }
+
 impl TestRenderer for FloatRenderer {
     fn handle_delta(&mut self, delta: &mut egui::TexturesDelta) {
         for (id, updates) in delta.set.drain() {
@@ -130,6 +132,7 @@ impl TestRenderer for FloatRenderer {
             self.renderer.free_texture(&id);
         }
     }
+
     fn render(
         &mut self,
         ctx: &egui::Context,

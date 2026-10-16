@@ -2,11 +2,13 @@ use super::lines::{Family, Line};
 use super::*;
 use crate::region_timing::timed;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
 #[derive(Clone)]
 struct Base {
     mean: [f64; 3],
     spread: [f64; 3],
 }
+
 pub struct RollModel {
     area: SourceRegion,
     size: [u32; 2],
@@ -21,17 +23,20 @@ pub struct RollModel {
     positions: Vec<[Vec<(f64, f64, f64)>; 4]>,
     pub(super) opening: Option<super::opening::Shared>,
 }
+
 pub(super) struct Selection {
     pub material: Material,
     pub upper: Option<[f64; 3]>,
     pub family: Option<Family>,
     pub supported: [bool; 4],
 }
+
 fn logs(v: [u16; 3]) -> Option<[f64; 3]> {
     v.iter()
         .all(|&v| v > 1 && v < 65535)
         .then(|| v.map(|v| f64::from(v).log2()))
 }
+
 fn affinity(v: [u16; 3], base: &Base) -> Option<f64> {
     let v = logs(v)?;
     Some(
@@ -42,6 +47,7 @@ fn affinity(v: [u16; 3], base: &Base) -> Option<f64> {
             .exp(),
     )
 }
+
 fn dark_affinity(v: [u16; 3], tail: Option<[f64; 3]>) -> Option<f64> {
     let t = tail?;
     let exponent = (0..3)
@@ -55,6 +61,7 @@ fn dark_affinity(v: [u16; 3], tail: Option<[f64; 3]>) -> Option<f64> {
         1. / (1. + exponent.exp())
     })
 }
+
 fn neighbours(i: usize, w: usize, h: usize) -> impl Iterator<Item = usize> {
     let x = i % w;
     let y = i / w;
@@ -67,12 +74,14 @@ fn neighbours(i: usize, w: usize, h: usize) -> impl Iterator<Item = usize> {
     .into_iter()
     .flatten()
 }
+
 fn connected(allowed: &[bool], w: usize, h: usize) -> BTreeSet<usize> {
     let seeds: Vec<_> = (0..w * h)
         .filter(|&i| allowed[i] && (i % w == 0 || i % w == w - 1 || i / w == 0 || i / w == h - 1))
         .collect();
     let mut found: BTreeSet<_> = seeds.iter().copied().collect();
     let mut queue: VecDeque<_> = seeds.into();
+
     while let Some(i) = queue.pop_front() {
         for j in neighbours(i, w, h) {
             if allowed[j] && found.insert(j) {
@@ -82,6 +91,7 @@ fn connected(allowed: &[bool], w: usize, h: usize) -> BTreeSet<usize> {
     }
     found
 }
+
 fn fit_base(grids: &[Vec<[u16; 3]>]) -> Option<Base> {
     let mut hist: BTreeMap<[i32; 3], Vec<f64>> = BTreeMap::new();
     let mut selected = vec![];
@@ -98,6 +108,7 @@ fn fit_base(grids: &[Vec<[u16; 3]>]) -> Option<Base> {
         }
         selected.extend(bright);
     }
+
     let deltas: Vec<_> = (-1..=1)
         .flat_map(|a| (-1..=1).flat_map(move |b| (-1..=1).map(move |c| [a, b, c])))
         .collect();
@@ -120,6 +131,7 @@ fn fit_base(grids: &[Vec<[u16; 3]>]) -> Option<Base> {
             peaks.push((key, population));
         }
     }
+
     peaks.sort_by(|(a, ap), (b, bp)| {
         b.iter()
             .sum::<i32>()
@@ -127,6 +139,7 @@ fn fit_base(grids: &[Vec<[u16; 3]>]) -> Option<Base> {
             .then_with(|| bp.total_cmp(ap))
             .then_with(|| a.cmp(b))
     });
+
     let key = peaks.first()?.0;
     let values: Vec<_> = selected
         .into_iter()
@@ -138,6 +151,7 @@ fn fit_base(grids: &[Vec<[u16; 3]>]) -> Option<Base> {
     });
     Some(Base { mean, spread })
 }
+
 fn line_position(capture: &Capture, side: usize, line: &Line) -> f64 {
     let axis = usize::from(side >= 2);
     let origin = if axis == 0 {
@@ -154,6 +168,7 @@ fn line_position(capture: &Capture, side: usize, line: &Line) -> f64 {
         + (line.midpoint_pixel + 0.5) * f64::from(extent) / f64::from(capture.size[axis]))
         / (f64::from(capture.area.width.max(capture.area.height)) / 768.)
 }
+
 impl RollModel {
     /// Pool the normal fine-measurement interiors before freezing roll support.
     /// Authored geometry and evidence-backed photo exceptions remain independent.
@@ -172,9 +187,11 @@ impl RollModel {
         }
         Ok(())
     }
+
     pub fn fit(captures: &[Capture]) -> Result<Self, Error> {
         Self::fit_refs(&captures.iter().collect::<Vec<_>>())
     }
+
     pub fn fit_refs(captures: &[&Capture]) -> Result<Self, Error> {
         let first = captures.first().ok_or(invalid("empty region roll"))?;
         let size = first.size;
@@ -308,6 +325,7 @@ impl RollModel {
             opening,
         })
     }
+
     pub(super) fn owns(&self, index: usize, c: &Capture) -> bool {
         self.area == c.area
             && self.size == c.size
@@ -322,6 +340,7 @@ impl RollModel {
                     .eq(grid.iter().copied())
             })
     }
+
     fn partition(&self, index: usize) -> Option<Material> {
         if self.grids.len() < 2 {
             return None;
@@ -404,6 +423,7 @@ impl RollModel {
             labels: String::from_utf8(labels).expect("ASCII material labels"),
         })
     }
+
     fn appearance(&self, index: usize, p: [f64; 2], rgb: [u16; 3]) -> Option<f64> {
         let i =
             Material::nearest(&self.ys, p[1]) * self.xs.len() + Material::nearest(&self.xs, p[0]);
@@ -429,6 +449,7 @@ impl RollModel {
             })
             .max_by(f64::total_cmp)
     }
+
     fn side_prior(
         &self,
         index: usize,
@@ -500,6 +521,7 @@ impl RollModel {
         let layout = (support + uniform) / self.grids.len() as f64;
         4. * (appearance.ln() + layout.ln())
     }
+
     pub(super) fn select(&self, index: usize, capture: &Capture) -> Option<Selection> {
         let material = timed!("material_partition", self.partition(index))?;
         let upper = self.upper;
@@ -593,6 +615,7 @@ impl RollModel {
         })
     }
 }
+
 fn indices(extent: u32, count: u32) -> BTreeSet<u32> {
     (0..count)
         .map(|i| {
@@ -601,6 +624,7 @@ fn indices(extent: u32, count: u32) -> BTreeSet<u32> {
         })
         .collect()
 }
+
 fn side_evidence(c: &Capture, m: &Material, f: &Family, s: usize, l: &Line) -> (bool, bool, f64) {
     let axis = usize::from(s < 2);
     let inward = if s == 0 || s == 2 { 1. } else { -1. };

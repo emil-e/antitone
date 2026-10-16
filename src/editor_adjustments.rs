@@ -14,6 +14,7 @@ struct OrderKey {
     source: SourceId,
     id: AdjustmentId,
 }
+
 struct OrderDrag {
     key: OrderKey,
     locals: LocalAdjustments,
@@ -34,16 +35,20 @@ pub(super) struct Adjustments {
     target_visible: bool,
     order_drag: Option<OrderDrag>,
 }
+
 impl Adjustments {
     pub(super) fn confirming(&self) -> bool {
         self.deletion.is_some()
     }
+
     pub(super) fn drawer_open(&self) -> bool {
         self.open
     }
+
     pub(super) fn dragging(&self) -> bool {
         self.order_drag.is_some()
     }
+
     pub(super) fn close_drawer(&mut self) {
         self.open = false;
         self.target_visible = false;
@@ -83,6 +88,7 @@ impl Editor {
             })
             .map_or(Target::Global, |(_, id)| Target::Local(id))
     }
+
     pub(super) fn select_adjustment(&mut self, target: Target) {
         self.adjustments.selected = match target {
             Target::Global => None,
@@ -104,6 +110,7 @@ impl Editor {
         }
         self.adjustments.rename = None;
     }
+
     pub(super) fn open_adjustments(&mut self) {
         self.adjustments.open = true;
         if self.adjustment_target() == Target::Global {
@@ -122,6 +129,7 @@ impl Editor {
         self.adjustments.reveal_drawer = true;
         self.adjustments.target_visible = false;
     }
+
     pub(super) fn close_adjustments(&mut self) {
         self.finish_mask(false);
         self.adjustments.close_drawer();
@@ -135,6 +143,7 @@ impl Editor {
             *target = Target::Global;
         }
     }
+
     fn adjustment_actions_available(&self) -> bool {
         !self.busy
             && self.ready.is_some()
@@ -147,6 +156,7 @@ impl Editor {
             && self.analysis_review.is_none()
             && !self.adjustments.confirming()
     }
+
     pub(super) fn edit_adjustments(
         &mut self,
         edit: impl FnOnce(&mut LocalAdjustments) -> Result<(), Error>,
@@ -171,6 +181,7 @@ impl Editor {
         }
         Ok(())
     }
+
     fn order_drag(&self, id: AdjustmentId) -> Result<OrderDrag, Error> {
         let source = self
             .current_source
@@ -195,6 +206,7 @@ impl Editor {
             locals,
         })
     }
+
     fn reorder_adjustment(&mut self, drag: OrderDrag, slot: usize) -> Result<(), Error> {
         if drag.key.loaded != self.id || Some(drag.key.source) != self.current_source {
             return Err(Error::InvalidParameter(
@@ -220,6 +232,7 @@ impl Editor {
             Ok(())
         })
     }
+
     fn apply_adjustment_action(&mut self, action: Action) {
         if !self.adjustment_actions_available() || !self.adjustments.open {
             return;
@@ -282,6 +295,7 @@ impl Editor {
             self.status = format!("Adjustment edit rejected: {error}");
         }
     }
+
     pub(super) fn sync_adjustment_drag(&mut self, ctx: &egui::Context) {
         if self.adjustments.order_drag.as_ref().is_some_and(|drag| {
             drag.key.loaded != self.id
@@ -296,6 +310,7 @@ impl Editor {
             egui::DragAndDrop::take_payload::<OrderKey>(ctx);
         }
     }
+
     pub(super) fn adjustment_owns_delete(&self) -> bool {
         self.tab == 1
             && !self.dust.cleanup
@@ -307,6 +322,7 @@ impl Editor {
             && self.analysis_review.is_none()
             && self.adjustments.open
     }
+
     pub(super) fn delete_selected_adjustment(&mut self) {
         if !self.adjustments.dragging()
             && let Target::Local(id) = self.adjustment_target()
@@ -314,6 +330,7 @@ impl Editor {
             self.apply_adjustment_action(Action::Delete(id));
         }
     }
+
     pub(super) fn adjustment_target_label(&self, ui: &mut egui::Ui) {
         if self.mask_edit.is_some() || self.adjustments.target_visible {
             return;
@@ -338,6 +355,7 @@ impl Editor {
                 .on_hover_text(name);
         });
     }
+
     pub(super) fn adjustment_launcher(&mut self, ui: &mut egui::Ui, enabled: bool) {
         let changed = self
             .current_source
@@ -715,9 +733,17 @@ impl Editor {
             return;
         };
         let title = format!("Delete {}?", record.name);
-        let choice = presentation::DecisionDialog::new(&title,
+        let choice = presentation::DecisionDialog::new(
+            &title,
             "This removes the adjustment and its mask. It cannot be undone. Other adjustments and the RAW file are unchanged.",
-            "Delete adjustment").warning().show(context, egui::Id::new("delete-local-adjustment"), escape_available);
+            "Delete adjustment",
+        )
+        .warning()
+        .show(
+            context,
+            egui::Id::new("delete-local-adjustment"),
+            escape_available,
+        );
         if choice == Some(presentation::DialogChoice::Cancel) {
             self.adjustments.deletion = None;
         } else if choice == Some(presentation::DialogChoice::Confirm) {
@@ -750,6 +776,7 @@ fn mask_icon(mask: crate::local_adjustments::GradientMask) -> icons::Icon {
         crate::local_adjustments::GradientMask::Radial { .. } => icons::Icon::RadialGradient,
     }
 }
+
 fn record_mut(
     locals: &mut LocalAdjustments,
     id: AdjustmentId,

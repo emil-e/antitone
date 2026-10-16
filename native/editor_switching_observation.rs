@@ -12,6 +12,7 @@ struct Paint {
     renderer: egui_wgpu::Renderer,
     target: wgpu::Texture,
 }
+
 impl Paint {
     fn new(device: &wgpu::Device) -> Self {
         let context = egui::Context::default();
@@ -39,6 +40,7 @@ impl Paint {
             }),
         }
     }
+
     fn frame(
         &mut self,
         editor: &mut Editor,
@@ -102,6 +104,7 @@ impl Paint {
         calibration::wait(device, queue).map_err(|e| e.to_string())?;
         Ok((output, ui_seconds, start.elapsed().as_secs_f64()))
     }
+
     fn card(output: &egui::FullOutput, name: &str) -> Result<(egui::Pos2, bool)> {
         let node = output
             .platform_output
@@ -120,6 +123,7 @@ impl Paint {
         ))
     }
 }
+
 fn pointer(point: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
     vec![
         egui::Event::PointerMoved(point),
@@ -131,6 +135,7 @@ fn pointer(point: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
         },
     ]
 }
+
 fn workload(
     monitor: &Arc<Monitor>,
     device: &wgpu::Device,
@@ -383,6 +388,7 @@ fn workload(
     monitor.phase("switch_released", || calibration::wait(device, queue))?;
     Ok(())
 }
+
 #[test]
 #[ignore = "bounded real Editor two-source repeated input/paint exercise; local RAWs and Metal"]
 fn retained_source_switching_and_busy_input() {

@@ -25,6 +25,7 @@ pub struct Crop {
     )]
     pub angle: f64,
 }
+
 impl Crop {
     pub fn from_region(region: SourceRegion) -> Self {
         Self {
@@ -36,6 +37,7 @@ impl Crop {
             angle: 0.,
         }
     }
+
     pub fn source_point(self, local: [f64; 2]) -> SourcePoint {
         let [x, y] = std::array::from_fn(|axis| local[axis] - f64::from(self.size[axis]) * 0.5);
         let (s, c) = self.angle.sin_cos();
@@ -44,6 +46,7 @@ impl Crop {
             self.center[1] + s * x + c * y,
         ])
     }
+
     pub fn local_point(self, source: SourcePoint) -> [f64; 2] {
         let x = source.0[0] - self.center[0];
         let y = source.0[1] - self.center[1];
@@ -53,6 +56,7 @@ impl Crop {
             -s * x + c * y + f64::from(self.size[1]) * 0.5,
         ]
     }
+
     pub fn coverage(self) -> Result<Coverage, Error> {
         if self.size.contains(&0)
             || self.center.iter().any(|v| !v.is_finite())
@@ -66,6 +70,7 @@ impl Crop {
         let [w, h] = self.size.map(f64::from);
         Coverage::new([[0., 0.], [w, 0.], [w, h], [0., h]].map(|p| self.source_point(p)))
     }
+
     /// Source iteration bounds, not a substitute for the rotated crop's actual coverage.
     pub fn region(self, active: SourceRegion) -> Result<SourceRegion, Error> {
         active.validate()?;
@@ -100,6 +105,7 @@ impl Crop {
         }
         Ok(region)
     }
+
     /// Turns the image beneath the frame about its source centre, shrinking to valid coverage.
     pub fn straightened(self, active: SourceRegion, angle: f64) -> Result<Self, Error> {
         self.region(active)?;
@@ -118,6 +124,7 @@ impl Crop {
         }
         .constrained(active)
     }
+
     /// Constrains an interactive proposal explicitly, snapping zero-angle crop edges to full pixels.
     pub fn constrained(self, active: SourceRegion) -> Result<Self, Error> {
         active.validate()?;
@@ -217,6 +224,7 @@ mod tests {
         width: 51,
         height: 33,
     };
+
     #[test]
     fn extreme_rotated_aspects_fit_without_losing_the_minimum_frame_or_pivot() {
         for angle in [-89_f64, -45., -13.7, 0.1, 19.3, 44., 89.] {
@@ -245,6 +253,7 @@ mod tests {
         });
         assert!(edge.straightened(tiny, 0.3).is_err());
     }
+
     #[test]
     fn crop_roundtrips_source_edges_and_rejects_invalid_or_unsupported_framing() {
         let crop = Crop::from_region(AREA);

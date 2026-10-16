@@ -8,6 +8,7 @@ mod dust_worker;
 mod lazy_worker;
 
 const BUDGET: u64 = 8 << 20;
+
 fn document(path: &std::path::Path) -> Document {
     let mut document = Document::default();
     let (source, _) = document::open_source(path).unwrap();
@@ -17,6 +18,7 @@ fn document(path: &std::path::Path) -> Document {
     document.cache().set_budget(BUDGET);
     document
 }
+
 fn wb(document: &Document) -> Option<[f64; 4]> {
     document
         .project
@@ -24,6 +26,7 @@ fn wb(document: &Document) -> Option<[f64; 4]> {
         .as_ref()
         .map(|development| development.fixed_wb)
 }
+
 fn codes(scan: &Scan) -> Vec<[u16; 4]> {
     let image = scan.source().camera_image().unwrap();
     (0..image.height)
@@ -31,6 +34,7 @@ fn codes(scan: &Scan) -> Vec<[u16; 4]> {
         .map(|(x, y)| image.pixel_codes(x, y).unwrap())
         .collect()
 }
+
 fn key(document: &Document) -> SourceKey {
     let id = document.project.order[0];
     SourceKey::capture(
@@ -40,6 +44,7 @@ fn key(document: &Document) -> SourceKey {
     )
     .unwrap()
 }
+
 async fn gpu() -> (wgpu::Device, wgpu::Queue) {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::METAL,
@@ -53,6 +58,7 @@ async fn gpu() -> (wgpu::Device, wgpu::Queue) {
         .await
         .unwrap()
 }
+
 fn prepare(
     document: &Document,
     device: &wgpu::Device,
@@ -227,7 +233,7 @@ fn cpu_only_proper_work_persists_disk_at_zero_limits_then_materializes_on_demand
             seed.clone(),
         );
         assert!(
-            !thumbnails.attempted.contains(&image_key.source),
+            !thumbnails.attempted_sources.contains(&image_key.source),
             "a seed is not yet a durable completed attempt"
         );
         thumbnails.release_selected();
@@ -238,7 +244,7 @@ fn cpu_only_proper_work_persists_disk_at_zero_limits_then_materializes_on_demand
             std::thread::sleep(Duration::from_millis(1));
         }
         assert!(thumbnails.pending.is_none());
-        assert!(thumbnails.attempted.contains(&image_key.source));
+        assert!(thumbnails.attempted_sources.contains(&image_key.source));
         assert!(thumbnails.cache.entries.is_empty());
         assert_eq!(document.cache().charges().retained, 0);
         assert_eq!(document.cache().protected_bytes(), 0);

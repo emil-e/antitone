@@ -13,6 +13,7 @@ fn wait(editor: &mut Editor) {
         std::thread::sleep(Duration::from_millis(1));
     }
 }
+
 #[test]
 fn export_completion_cannot_retire_new_source_or_document_operations() {
     for document in [false, true] {
@@ -66,6 +67,7 @@ fn tiff_pixels(path: &std::path::Path) -> Vec<u16> {
     };
     values
 }
+
 #[test]
 fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_without_ocio() {
     pollster::block_on(async {

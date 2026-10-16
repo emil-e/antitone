@@ -1,6 +1,5 @@
 import unittest
 
-import cv2
 import numpy as np
 
 import experiment as e
@@ -10,10 +9,13 @@ from experiment import nearest_competitive_candidate
 class DonorRefinements(unittest.TestCase):
     def setUp(self):
         y, x = np.mgrid[:96, :96]
-        self.image = np.stack((0.04 + x * 0.0001, -0.02 + y * 0.0002,
-                               1.1 + x * 0.0003), axis=2).astype(np.float32)
+        self.image = np.stack(
+            (0.04 + x * 0.0001, -0.02 + y * 0.0002, 1.1 + x * 0.0003), axis=2
+        ).astype(np.float32)
         self.image[0, 0] = (-0.0, 0.0, -0.0)
-        self.mask = e.mask_from_shapes(self.image.shape, [{"kind": "circle", "center": [48, 48], "radius": 6}])
+        self.mask = e.mask_from_shapes(
+            self.image.shape, [{"kind": "circle", "center": [48, 48], "radius": 6}]
+        )
 
     def test_masked_truth_independence_known_bits_and_signed_hdr(self):
         a, b = self.image.copy(), self.image.copy()
@@ -35,7 +37,9 @@ class DonorRefinements(unittest.TestCase):
         for method in e.DONOR_REFINEMENTS:
             with self.subTest(method=method):
                 result, donors = e.repair(self.image, self.mask, method, donor_offset=[17, 0])
-                np.testing.assert_allclose(result[self.mask], self.image[self.mask], atol=3e-7, rtol=0)
+                np.testing.assert_allclose(
+                    result[self.mask], self.image[self.mask], atol=3e-7, rtol=0
+                )
                 self.assertTrue(e.outside_bit_exact(result, self.image, self.mask))
                 self.assertEqual(donors[0]["source"][0], donors[0]["target"][0] + 17)
 
@@ -73,8 +77,15 @@ class DonorRefinements(unittest.TestCase):
         y, x = np.mgrid[:96, :96]
         image = np.repeat((0.04 + y * 0.0001)[:, :, None], 3, axis=2).astype(np.float32)
         image[:, 47:50] += 0.08
-        mask = e.mask_from_shapes(image.shape, [{"kind": "circle", "center": [48, 48], "radius": 4}])
-        for method in ("donor-heal-structure", "donor-heal-refined", "donor-heal-boundary", "donor-heal-ranked"):
+        mask = e.mask_from_shapes(
+            image.shape, [{"kind": "circle", "center": [48, 48], "radius": 4}]
+        )
+        for method in (
+            "donor-heal-structure",
+            "donor-heal-refined",
+            "donor-heal-boundary",
+            "donor-heal-ranked",
+        ):
             with self.subTest(method=method):
                 result, donors = e.repair(image, mask, method)
                 self.assertEqual(donors[0]["source"][0], donors[0]["target"][0])
@@ -107,21 +118,23 @@ class DonorRefinements(unittest.TestCase):
         h, w = target_known.shape
         for y in range(scores.shape[0]):
             for x in range(scores.shape[1]):
-                paired = target_known & source_known[y:y + h, x:x + w]
+                paired = target_known & source_known[y : y + h, x : x + w]
                 paired_weights = weights[paired].astype(np.float64)
                 self.assertAlmostEqual(counts[y, x], paired_weights.sum(), places=5)
-                delta = search[y:y + h, x:x + w][paired].astype(np.float64) - template[paired]
-                expected = np.sum(delta ** 2 * paired_weights[:, None]) / (paired_weights.sum() * 3)
+                delta = search[y : y + h, x : x + w][paired].astype(np.float64) - template[paired]
+                expected = np.sum(delta**2 * paired_weights[:, None]) / (paired_weights.sum() * 3)
                 self.assertAlmostEqual(scores[y, x], expected, places=5)
 
 
 class Biharmonic(unittest.TestCase):
     def test_quadratic_reconstruction_and_known_bytes(self):
         y, x = np.mgrid[:64, :64]
-        image = np.stack((0.000025 * ((x - 32) ** 2 + (y - 32) ** 2),
-                          -0.02 + x * 0.0001, 1.1 + y * 0.0002), axis=2).astype(np.float32)
+        image = np.stack(
+            (0.000025 * ((x - 32) ** 2 + (y - 32) ** 2), -0.02 + x * 0.0001, 1.1 + y * 0.0002),
+            axis=2,
+        ).astype(np.float32)
         image[0, 0] = (-0.0, 0.0, -0.0)
-        mask = (x - 32) ** 2 + (y - 32) ** 2 <= 10 ** 2
+        mask = (x - 32) ** 2 + (y - 32) ** 2 <= 10**2
         a, b = image.copy(), image.copy()
         a[mask], b[mask] = -100, 100
         result = e.biharmonic_fill(a, mask)
@@ -134,17 +147,21 @@ class Biharmonic(unittest.TestCase):
 
     def test_limited_refinement_is_deterministic_and_keeps_known_bits(self):
         y, x = np.mgrid[:64, :64]
-        image = np.repeat((0.000025 * ((x - 32) ** 2 + (y - 32) ** 2))[:, :, None], 3, axis=2).astype(np.float32)
+        image = np.repeat(
+            (0.000025 * ((x - 32) ** 2 + (y - 32) ** 2))[:, :, None], 3, axis=2
+        ).astype(np.float32)
         image[0, 0] = (-0.0, 0.0, -0.0)
-        mask = (x - 32) ** 2 + (y - 32) ** 2 <= 10 ** 2
+        mask = (x - 32) ** 2 + (y - 32) ** 2 <= 10**2
         a, b = image.copy(), image.copy()
         a[mask], b[mask] = -100, 100
         result = e.biharmonic_fill(a, mask, iterations=8)
         other = e.biharmonic_fill(b, mask, iterations=8)
         np.testing.assert_array_equal(result.view(np.uint32), other.view(np.uint32))
         self.assertTrue(e.outside_bit_exact(result, image, mask))
-        self.assertLess(float(np.mean((result[mask] - image[mask]) ** 2)),
-                        float(np.mean((e.harmonic_fill(a, mask)[mask] - image[mask]) ** 2)))
+        self.assertLess(
+            float(np.mean((result[mask] - image[mask]) ** 2)),
+            float(np.mean((e.harmonic_fill(a, mask)[mask] - image[mask]) ** 2)),
+        )
 
     def test_missing_exterior_rejects_and_empty_is_identity(self):
         image = np.zeros((16, 16, 3), np.float32)

@@ -1,5 +1,6 @@
 #!/bin/sh
 set -eu
+
 cd "$(dirname "$0")/.."
 
 if [ "$(uname -s)" != Darwin ]; then

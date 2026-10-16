@@ -7,6 +7,7 @@ enum Input {
     Native(development::Ticket),
     Retired,
 }
+
 struct Work {
     job: Job,
     input: Result<Input, Error>,
@@ -14,6 +15,7 @@ struct Work {
     cache_hit: bool,
     metrics: ThumbnailMetrics,
 }
+
 struct Worker {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -23,11 +25,13 @@ struct Worker {
     repaint: Arc<std::sync::OnceLock<egui::Context>>,
     developments: development::Scheduler,
 }
+
 impl Worker {
     fn active(&self, job: &Job) -> bool {
         self.generation.load(std::sync::atomic::Ordering::Relaxed) == job.ticket
             && !job.store.is_closed()
     }
+
     fn begin(&self, job: Job) -> Work {
         let started = std::time::Instant::now();
         let native_key = job.key.source.store_key_at(&job.path);
@@ -92,6 +96,7 @@ impl Worker {
             metrics,
         }
     }
+
     fn finish(&self, mut work: Work) -> Outcome {
         let mut proper = false;
         let job = &work.job;
@@ -172,6 +177,7 @@ impl Worker {
         }
     }
 }
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn worker(
     device: wgpu::Device,

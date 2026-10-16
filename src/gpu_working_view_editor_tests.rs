@@ -40,6 +40,7 @@ async fn context() -> (
     let kernels = ViewKernels::new(&device).await.unwrap();
     (device, queue, renderer, kernels)
 }
+
 fn scan() -> Scan {
     Scan::open(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
@@ -47,6 +48,7 @@ fn scan() -> Scan {
     )
     .unwrap()
 }
+
 fn calibration() -> Calibration {
     Calibration {
         dmin: DVec3::new(0.19, 0.14, 0.12),
@@ -54,10 +56,12 @@ fn calibration() -> Calibration {
         input_floor: crate::processing::CAMERA_INPUT_FLOOR,
     }
 }
+
 fn frame(scan: &Scan) -> FrameRaster {
     FrameRaster::full(Composition::new(scan.area, Default::default(), Default::default()).unwrap())
         .unwrap()
 }
+
 fn processing_input(
     cal: Calibration,
     roll: RollSettings,
@@ -68,6 +72,7 @@ fn processing_input(
         .unwrap()
         .into()
 }
+
 fn read(device: &wgpu::Device, queue: &wgpu::Queue, source: &wgpu::Buffer) -> Vec<[f32; 4]> {
     let staging = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
@@ -93,6 +98,7 @@ fn read(device: &wgpu::Device, queue: &wgpu::Queue, source: &wgpu::Buffer) -> Ve
     staging.unmap();
     result
 }
+
 fn image(device: &wgpu::Device, queue: &wgpu::Queue, image: &GpuImage) -> Vec<[f32; 4]> {
     let width = image.linear.width();
     let height = image.linear.height();
@@ -125,8 +131,7 @@ fn image(device: &wgpu::Device, queue: &wgpu::Queue, image: &GpuImage) -> Vec<[f
 }
 
 #[test]
-fn physical_view_source_keys_exclude_grading_but_include_authority_response_correction_and_physical_view()
- {
+fn acquisition_keys_track_authority_response_correction_and_view_but_not_grading() {
     let scan = scan();
     let frame = frame(&scan);
     let roll = RollSettings::new_grade();

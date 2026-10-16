@@ -61,6 +61,7 @@ impl Report {
         }
         Ok(())
     }
+
     fn validate_fullscreen(&self, presented: u64) -> Result<(), &'static str> {
         self.validate(presented)?;
         if !(self.fullscreen_entered && self.fullscreen_returned && self.presentation_restored) {
@@ -76,6 +77,7 @@ struct PaintAck {
     report: Arc<Mutex<Report>>,
     index: usize,
 }
+
 impl egui_wgpu::CallbackTrait for PaintAck {
     fn paint(
         &self,
@@ -100,12 +102,15 @@ impl host::App for NativeApp {
     fn submission_gate(&self) -> &SubmissionGate {
         &self.submissions
     }
+
     fn photo_fullscreen(&self) -> bool {
         self.mode == Mode::Fullscreen && self.index == 1
     }
+
     fn on_exit(&mut self) {
         self.report.lock().unwrap().exited = true;
     }
+
     fn ui(&mut self, ui: &mut egui::Ui) {
         ui.heading("Antitone native host test");
         ui.label("Resize/focus forwarding and explicit close completion; no personal state.");
@@ -338,10 +343,8 @@ fn main() -> host::Result<()> {
             _ => return Err("unknown native host case".into()),
         },
         _ => {
-            return Err(
-                "usage: native_host --run [lifecycle|fullscreen|editor|early-close|timeout|process-timeout]"
-                    .into(),
-            );
+            return Err("usage: native_host --run [lifecycle|fullscreen|editor|early-close|timeout|process-timeout]"
+                .into());
         }
     };
     if mode == Mode::Editor && !cfg!(feature = "editor") {

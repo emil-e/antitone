@@ -9,6 +9,7 @@ pub struct SourceRegion {
     pub width: u32,
     pub height: u32,
 }
+
 impl SourceRegion {
     pub fn validate(self) -> Result<Self, Error> {
         if self.width == 0
@@ -20,6 +21,7 @@ impl SourceRegion {
         }
         Ok(self)
     }
+
     /// Constrains an interactive selection to this region, including a one-pixel minimum.
     pub fn clamped_selection(self, start: SourcePoint, end: SourcePoint) -> Self {
         let x = (start.0[0].min(end.0[0]).floor() as u32).clamp(self.x, self.x + self.width - 1);
@@ -33,6 +35,7 @@ impl SourceRegion {
             height: bottom - y,
         }
     }
+
     pub fn contains_region(self, region: Self) -> bool {
         region.width > 0
             && region.height > 0
@@ -61,12 +64,15 @@ impl From<[u32; 4]> for SourceRegion {
 #[cfg_attr(feature = "project", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "project", serde(transparent))]
 pub struct SourcePoint(pub [f64; 2]);
+
 /// A continuous position in the oriented full active area, before crop/straightening.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OrientedPoint(pub [f64; 2]);
+
 /// A continuous position in the final composed frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FramePoint(pub [f64; 2]);
+
 /// A continuous position in a declared raster grid, in pixel-edge units.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RasterPoint(pub [f64; 2]);
@@ -77,6 +83,7 @@ pub struct SourceRaster {
     region: SourceRegion,
     size: [u32; 2],
 }
+
 impl SourceRaster {
     pub fn new(region: SourceRegion, size: [u32; 2]) -> Result<Self, Error> {
         region.validate()?;
@@ -85,12 +92,15 @@ impl SourceRaster {
         }
         Ok(Self { region, size })
     }
+
     pub fn region(self) -> SourceRegion {
         self.region
     }
+
     pub fn size(self) -> [u32; 2] {
         self.size
     }
+
     pub fn source_point(self, point: RasterPoint) -> SourcePoint {
         SourcePoint([
             f64::from(self.region.x)
@@ -99,6 +109,7 @@ impl SourceRaster {
                 + point.0[1] * f64::from(self.region.height) / f64::from(self.size[1]),
         ])
     }
+
     pub fn raster_point(self, point: SourcePoint) -> RasterPoint {
         RasterPoint([
             (point.0[0] - f64::from(self.region.x)) * f64::from(self.size[0])
@@ -107,6 +118,7 @@ impl SourceRaster {
                 / f64::from(self.region.height),
         ])
     }
+
     /// Selects an original integer source pixel, without floating-point rounding.
     pub fn source_pixel(self, pixel: [u32; 2]) -> Result<[u32; 2], Error> {
         if pixel[0] >= self.size[0] || pixel[1] >= self.size[1] {
@@ -133,10 +145,12 @@ pub struct Flips {
     pub horizontal: bool,
     pub vertical: bool,
 }
+
 impl Flips {
     pub fn is_identity(&self) -> bool {
         !self.horizontal && !self.vertical
     }
+
     fn apply(self, point: [f64; 2], size: [u32; 2]) -> [f64; 2] {
         [
             if self.horizontal {
@@ -164,10 +178,12 @@ pub enum QuarterTurns {
     Two,
     Three,
 }
+
 impl QuarterTurns {
     fn is_zero(&self) -> bool {
         *self == Self::Zero
     }
+
     fn clockwise(self) -> Self {
         match self {
             Self::Zero => Self::One,
@@ -176,6 +192,7 @@ impl QuarterTurns {
             Self::Three => Self::Zero,
         }
     }
+
     fn counterclockwise(self) -> Self {
         match self {
             Self::Zero => Self::Three,
@@ -184,12 +201,14 @@ impl QuarterTurns {
             Self::Three => Self::Two,
         }
     }
+
     fn size(self, size: [u32; 2]) -> [u32; 2] {
         match self {
             Self::One | Self::Three => [size[1], size[0]],
             _ => size,
         }
     }
+
     fn apply(self, [x, y]: [f64; 2], [width, height]: [u32; 2]) -> [f64; 2] {
         match self {
             Self::Zero => [x, y],
@@ -198,6 +217,7 @@ impl QuarterTurns {
             Self::Three => [y, f64::from(width) - x],
         }
     }
+
     fn inverse(self) -> Self {
         match self {
             Self::One => Self::Three,
@@ -220,6 +240,7 @@ pub struct RollOrientation {
     pub horizontal: bool,
     pub vertical: bool,
 }
+
 impl RollOrientation {
     fn discrete(self) -> PhotoOrientation {
         PhotoOrientation {
@@ -230,19 +251,23 @@ impl RollOrientation {
             },
         }
     }
+
     pub fn is_identity(&self) -> bool {
         self.discrete().is_identity()
     }
+
     /// Turns the shared scan baseline; per-photo exceptions are applied afterward.
     pub fn turn_clockwise(&mut self) {
         self.turns = self.turns.clockwise();
         std::mem::swap(&mut self.horizontal, &mut self.vertical);
     }
+
     pub fn turn_counterclockwise(&mut self) {
         self.turns = self.turns.counterclockwise();
         std::mem::swap(&mut self.horizontal, &mut self.vertical);
     }
 }
+
 impl From<Flips> for RollOrientation {
     fn from(flips: Flips) -> Self {
         Self {
@@ -261,25 +286,30 @@ pub struct PhotoOrientation {
     pub turns: QuarterTurns,
     pub flips: Flips,
 }
+
 impl PhotoOrientation {
     pub fn is_identity(&self) -> bool {
         self.turns.is_zero() && self.flips.is_identity()
     }
+
     fn apply(self, point: [f64; 2], size: [u32; 2]) -> [f64; 2] {
         self.flips
             .apply(self.turns.apply(point, size), self.turns.size(size))
     }
+
     fn unapply(self, point: [f64; 2], size: [u32; 2]) -> [f64; 2] {
         self.turns.inverse().apply(
             self.flips.apply(point, self.turns.size(size)),
             self.turns.size(size),
         )
     }
+
     /// Rotates the currently displayed photo, including its displayed-axis flips.
     pub fn turn_clockwise(&mut self) {
         self.turns = self.turns.clockwise();
         std::mem::swap(&mut self.flips.horizontal, &mut self.flips.vertical);
     }
+
     pub fn turn_counterclockwise(&mut self) {
         self.turns = self.turns.counterclockwise();
         std::mem::swap(&mut self.flips.horizontal, &mut self.flips.vertical);
@@ -293,6 +323,7 @@ pub struct Orientation {
     roll: RollOrientation,
     photo: PhotoOrientation,
 }
+
 impl Orientation {
     pub fn new(
         area: SourceRegion,
@@ -305,15 +336,19 @@ impl Orientation {
             photo,
         })
     }
+
     pub fn area(self) -> SourceRegion {
         self.area
     }
+
     pub fn size(self) -> [u32; 2] {
         self.size_for([self.area.width, self.area.height])
     }
+
     fn size_for(self, size: [u32; 2]) -> [u32; 2] {
         self.photo.turns.size(self.roll.turns.size(size))
     }
+
     pub fn source_to_oriented(self, point: SourcePoint) -> OrientedPoint {
         let local = [
             point.0[0] - f64::from(self.area.x),
@@ -323,6 +358,7 @@ impl Orientation {
         let rolled = self.roll.discrete().apply(local, size);
         OrientedPoint(self.photo.apply(rolled, self.roll.turns.size(size)))
     }
+
     pub fn oriented_to_source(self, point: OrientedPoint) -> SourcePoint {
         let size = [self.area.width, self.area.height];
         let unphoto = self.photo.unapply(point.0, self.roll.turns.size(size));
@@ -340,6 +376,7 @@ pub struct Composition {
     orientation: Orientation,
     crop: Crop,
 }
+
 impl Composition {
     pub fn new(
         area: SourceRegion,
@@ -348,6 +385,7 @@ impl Composition {
     ) -> Result<Self, Error> {
         Self::with_crop(area, roll, photo, None)
     }
+
     pub fn with_crop(
         area: SourceRegion,
         roll: RollOrientation,
@@ -359,23 +397,29 @@ impl Composition {
         crop.region(area)?;
         Ok(Self { orientation, crop })
     }
+
     pub fn area(self) -> SourceRegion {
         self.orientation.area()
     }
+
     pub fn region(self) -> SourceRegion {
         self.crop
             .region(self.area())
             .expect("validated composition coverage")
     }
+
     pub fn size(self) -> [u32; 2] {
         self.orientation.size_for(self.crop.size)
     }
+
     pub fn crop(self) -> Crop {
         self.crop
     }
+
     pub fn is_exact(self) -> bool {
         self.crop.angle == 0.
     }
+
     /// Reflection changes the sign of a displayed image-under-frame straighten action.
     pub fn handedness(self) -> f64 {
         let roll = self.orientation.roll;
@@ -386,6 +430,7 @@ impl Composition {
             1.
         }
     }
+
     pub fn source_to_frame(self, point: SourcePoint) -> FramePoint {
         let local = self.crop.local_point(point);
         let rolled = self
@@ -399,6 +444,7 @@ impl Composition {
                 .apply(rolled, self.orientation.roll.turns.size(self.crop.size)),
         )
     }
+
     pub fn frame_to_source(self, point: FramePoint) -> SourcePoint {
         let unphoto = self
             .orientation
@@ -411,6 +457,7 @@ impl Composition {
                 .unapply(unphoto, self.crop.size),
         )
     }
+
     pub fn coverage(self, min: FramePoint, max: FramePoint) -> Result<Coverage, Error> {
         Coverage::new(
             [
@@ -422,6 +469,7 @@ impl Composition {
             .map(|p| self.frame_to_source(p)),
         )
     }
+
     /// Snaps a frame-aligned crop proposal to source edges and constrains its coverage.
     pub fn crop_from_frame(self, min: FramePoint, max: FramePoint) -> Crop {
         let extent = std::array::from_fn::<_, 2, _>(|axis| {
@@ -454,6 +502,7 @@ impl Composition {
         .constrained(self.area())
         .expect("validated basis admits a positive frame")
     }
+
     /// Exact output-to-source pixel permutation, including the active-area origin.
     pub fn source_pixel(self, pixel: [u32; 2]) -> Result<[u32; 2], Error> {
         let size = self.size();
@@ -471,6 +520,7 @@ impl Composition {
         ]));
         Ok([point.0[0].floor() as u32, point.0[1].floor() as u32])
     }
+
     /// Converts an axis-aligned frame rectangle into source-texture UV coordinates.
     pub fn texture_mapping(
         self,
@@ -503,6 +553,7 @@ pub struct TextureMapping {
     pub x_axis: [f32; 2],
     pub y_axis: [f32; 2],
 }
+
 impl TextureMapping {
     pub const IDENTITY: Self = Self {
         origin: [0., 0.],
@@ -510,6 +561,7 @@ impl TextureMapping {
         y_axis: [0., 1.],
     };
 }
+
 impl From<[f32; 4]> for TextureMapping {
     fn from([x, y, width, height]: [f32; 4]) -> Self {
         Self {

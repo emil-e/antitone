@@ -23,6 +23,7 @@ pub(super) struct Request {
     pub picture: Option<Rect>,
     pub areas: Option<analysis_review::Approved>,
 }
+
 pub(super) struct Pending {
     pub id: u64,
     pub request: Request,
@@ -52,8 +53,8 @@ fn require_statistics(
             "too few eligible roll film samples for Dmin",
         ));
     }
-    if frames.iter().any(|f| {
-        f.balance_samples < MIN_BALANCE_SAMPLES || f.exposure_samples < MIN_PICTURE_SAMPLES
+    if frames.iter().any(|frame| {
+        frame.balance_samples < MIN_BALANCE_SAMPLES || frame.exposure_samples < MIN_PICTURE_SAMPLES
     }) {
         return Err(Error::UnusableSample(
             "too few positive picture statistics; adjust the picture area or check the capture",
@@ -76,6 +77,7 @@ pub(super) fn rect([x, y, width, height]: [u32; 4]) -> Rect {
         height,
     }
 }
+
 fn array(r: Rect) -> [u32; 4] {
     [r.x, r.y, r.width, r.height]
 }
@@ -93,9 +95,11 @@ pub(super) fn suggest(support: Rect) -> Rect {
 }
 
 fn picture_area(explicit: Option<Rect>, support: Option<Rect>) -> Result<Rect, Error> {
-    explicit.or_else(|| support.map(suggest)).ok_or(Error::UnusableSample(
-        "no roll illumination-area suggestion; use Edit picture area to select the film picture, excluding the holder"
-    ))
+    explicit
+        .or_else(|| support.map(suggest))
+        .ok_or(Error::UnusableSample(
+            "no roll illumination-area suggestion; use Edit picture area to select the film picture, excluding the holder",
+        ))
 }
 
 pub(super) fn run(
@@ -362,6 +366,7 @@ impl Editor {
                     .and_then(|r| r.analysis_support.flatten())
             })
     }
+
     pub(super) fn analysis_picture(&self) -> Option<Rect> {
         self.document
             .project
@@ -369,6 +374,7 @@ impl Editor {
             .map(rect)
             .or_else(|| self.analysis_support().map(suggest))
     }
+
     pub(super) fn request_analysis_support(&mut self) {
         self.region = self.analysis_picture().map(Coverage::rectangle);
         if self.region.is_some()
@@ -390,6 +396,7 @@ impl Editor {
             self.status = "RAW worker stopped".into();
         }
     }
+
     pub(super) fn analysis_support_result(
         &mut self,
         request: u64,
@@ -418,6 +425,7 @@ impl Editor {
             Err(error) => self.status = error,
         }
     }
+
     pub(super) fn roll_tool_shelf(&mut self, ui: &mut egui::Ui) -> bool {
         use icons::Icon;
         use presentation::{ToolButton, ToolShelf};
@@ -433,6 +441,7 @@ impl Editor {
             && !reviewing
             && self.removal_pending.is_none();
         let mut analyze = false;
+
         #[derive(Clone, Copy)]
         enum Orientation {
             Left,
@@ -529,6 +538,7 @@ impl Editor {
         });
         analyze
     }
+
     pub(super) fn analysis_controls(&mut self, ui: &mut egui::Ui) {
         if self.analysis_review.is_some() || self.analysis_pending.is_some() {
             return;
@@ -578,6 +588,7 @@ impl Editor {
             },
         );
     }
+
     pub(super) fn reset_analysis_area(&mut self) {
         self.document.project.analysis_area = None;
         let order = &self.document.project.order;
@@ -666,6 +677,7 @@ impl Editor {
             self.end_analysis_review();
         }
     }
+
     pub(super) fn cancel_analysis(&mut self) {
         self.analysis_generation.fetch_add(1, Ordering::Relaxed);
         if let Some(pending) = self
@@ -677,6 +689,7 @@ impl Editor {
         }
         self.status = "Cancelling analysis…".into();
     }
+
     pub(super) fn analysis_result(
         &mut self,
         id: u64,
@@ -753,6 +766,7 @@ impl Editor {
         }
         self.end_analysis_review();
     }
+
     pub(super) fn apply_analysis_area(&mut self) {
         let Some(coverage) = self.region else {
             return;

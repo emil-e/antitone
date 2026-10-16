@@ -234,7 +234,13 @@ impl Editor {
             &title,
             "The photos will be removed from this roll. Your RAW files are not changed. This cannot be undone.",
             "Remove photos",
-        ).warning().show(context, egui::Id::new("remove-roll-photos"), escape_available);
+        )
+        .warning()
+        .show(
+            context,
+            egui::Id::new("remove-roll-photos"),
+            escape_available,
+        );
         match choice {
             Some(presentation::DialogChoice::Cancel) => self.removal_pending = None,
             Some(presentation::DialogChoice::Confirm) => self.remove_selected_photos(),

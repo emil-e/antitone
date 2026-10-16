@@ -71,6 +71,7 @@ fn setup() -> (Harness<'static, Editor>, tempfile::TempDir) {
     assert!(!h.state().document.dirty(), "{}", h.state().status);
     (h, directory)
 }
+
 fn click_action(h: &mut Harness<'_, Editor>, label: &str) {
     h.get_by_role_and_label(egui::accesskit::Role::Button, label)
         .scroll_to_me();
@@ -80,6 +81,7 @@ fn click_action(h: &mut Harness<'_, Editor>, label: &str) {
     h.step();
     h.step();
 }
+
 fn prior_crop(h: &mut Harness<'_, Editor>) -> Crop {
     let e = h.state_mut();
     let a = e.ready.as_ref().unwrap().area;
@@ -95,6 +97,7 @@ fn prior_crop(h: &mut Harness<'_, Editor>) -> Crop {
     save_existing_project(h);
     crop
 }
+
 fn wait_crop(h: &mut Harness<'_, Editor>, crop: Crop) {
     assert!(h.state().auto_crop_edit.is_none());
     wait_for(h, |e| {
@@ -121,6 +124,7 @@ fn wait_crop(h: &mut Harness<'_, Editor>, crop: Crop) {
         _ => panic!("scopes must consume the accepted physical working/original view"),
     }
 }
+
 fn assert_lifecycle(h: &Harness<'_, Editor>, size: egui::Vec2) {
     let canvas = h
         .state()
@@ -148,6 +152,7 @@ fn assert_lifecycle(h: &Harness<'_, Editor>, size: egui::Vec2) {
     );
     assert!(h.query_by_label("Show crop overlay").is_none());
 }
+
 #[test]
 fn unavailable_outlines_have_compact_tool_and_thumbnail_cues_at_both_layouts() {
     for (name, size, width) in [
@@ -359,6 +364,7 @@ fn photo_auto_crop_initializes_the_normal_crop_draft_at_both_layouts() {
         assert_eq!(h.state().document.project, expected);
     }
 }
+
 #[test]
 fn roll_shelf_keeps_orientation_and_tools_fixed_and_preserves_photo_exceptions() {
     for (name, size, width) in [
@@ -415,6 +421,7 @@ fn roll_shelf_keeps_orientation_and_tools_fixed_and_preserves_photo_exceptions()
         save_capture(&h.render().unwrap(), &format!("simple-roll-shelf-{name}"));
     }
 }
+
 #[test]
 fn whole_roll_entry_ignores_selection_and_keeps_abstentions_unchanged() {
     let (mut h, _directory) = setup();
@@ -453,6 +460,7 @@ fn whole_roll_entry_ignores_selection_and_keeps_abstentions_unchanged() {
     assert_eq!(h.state().document.project, expected);
     assert!(h.state().auto_crop_edit.is_none());
 }
+
 #[test]
 fn fullscreen_pauses_auto_crop_and_escape_returns_to_the_tool_before_cancelling_it() {
     let (mut h, _directory) = setup();

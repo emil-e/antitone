@@ -1,4 +1,5 @@
 use super::*;
+
 fn monitor() -> Monitor {
     let read = Reading {
         footprint: 100,
@@ -23,6 +24,7 @@ fn monitor() -> Monitor {
         }),
     }
 }
+
 #[test]
 #[ignore = "read-only process/system preflight observation; no RAW or export work"]
 fn resource_preflight_only() {

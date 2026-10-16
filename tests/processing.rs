@@ -8,6 +8,7 @@ use antitone::processing::{
     exposure_multiplier,
 };
 use antitone::sampling::{mean, photo_neutral, roll_neutral};
+use glam::{DMat3, DVec3};
 
 #[test]
 fn ungraded_positive_excludes_photographic_roll_controls_but_preserves_inversion_and_signed_hdr() {
@@ -65,21 +66,23 @@ fn weighted_neutral_picks_match_repeated_full_resolution_pixels_not_bounding_box
     let weighted = [(patch[0], 0.5), (patch[1], 1.), (patch[2], 0.5)];
     let repeated = [patch[0], patch[1], patch[1], patch[2]];
     assert!((weighted_mean(&weighted).unwrap() - mean(&repeated).unwrap()).length() < 1e-15);
-    let a = photo_neutral_weighted(&weighted).unwrap();
-    let b = photo_neutral(&repeated).unwrap();
-    assert!((a.warmth - b.warmth).abs() < 1e-14 && (a.tint - b.tint).abs() < 1e-14);
+
+    let weighted_balance = photo_neutral_weighted(&weighted).unwrap();
+    let repeated_balance = photo_neutral(&repeated).unwrap();
+    assert!((weighted_balance.warmth - repeated_balance.warmth).abs() < 1e-14);
+    assert!((weighted_balance.tint - repeated_balance.tint).abs() < 1e-14);
+
     let roll = RollSettings::default();
-    let a = roll_neutral_weighted(cal, roll, &weighted, matrix).unwrap();
-    let b = roll_neutral(cal, roll, &repeated, matrix).unwrap();
-    assert!((a.warmth - b.warmth).abs() < 1e-9 && (a.tint - b.tint).abs() < 1e-9);
-    assert!(
-        (a.warmth - correct.balance.warmth).abs() < 1e-8
-            && (a.tint - correct.balance.tint).abs() < 1e-8
-    );
+    let weighted_roll_balance = roll_neutral_weighted(cal, roll, &weighted, matrix).unwrap();
+    let repeated_roll_balance = roll_neutral(cal, roll, &repeated, matrix).unwrap();
+    assert!((weighted_roll_balance.warmth - repeated_roll_balance.warmth).abs() < 1e-9);
+    assert!((weighted_roll_balance.tint - repeated_roll_balance.tint).abs() < 1e-9);
+    assert!((weighted_roll_balance.warmth - correct.balance.warmth).abs() < 1e-8);
+    assert!((weighted_roll_balance.tint - correct.balance.tint).abs() < 1e-8);
+
     assert!(weighted_mean(&[(patch[0], 0.)]).is_err());
     assert!(weighted_mean(&[(patch[0], f64::NAN)]).is_err());
 }
-use glam::{DMat3, DVec3};
 
 const ABS: f64 = 2e-12;
 const REL: f64 = 2e-11;

@@ -17,7 +17,8 @@ static_assert(sizeof(AntitoneRawThumbnail) == 32);
 
 namespace {
 int check(int code, char *error, size_t size) {
-    if (code) std::snprintf(error, size, "%s", LibRaw::strerror(code));
+    if (code)
+        std::snprintf(error, size, "%s", LibRaw::strerror(code));
     return code;
 }
 
@@ -26,20 +27,24 @@ class ThreadBudget {
     int threads = omp_get_max_threads();
     int dynamic = omp_get_dynamic();
     int blocktime = kmp_get_blocktime();
+
 public:
     explicit ThreadBudget(int count) {
         omp_set_dynamic(0);
         omp_set_num_threads(count);
         kmp_set_blocktime(0); // Sleeping workers must not compete with UI work after a tile/job.
     }
+
     ~ThreadBudget() {
         kmp_set_blocktime(blocktime);
         omp_set_num_threads(threads);
         omp_set_dynamic(dynamic);
     }
 };
+
 int check_threads(int threads, char *error, size_t size) {
-    if (threads >= 1 && threads <= 8) return 0;
+    if (threads >= 1 && threads <= 8)
+        return 0;
     std::snprintf(error, size, "RAW thread budget must be between 1 and 8");
     return -1;
 }
@@ -92,17 +97,24 @@ extern "C" uint64_t antitone_raw_retained_bytes(void *handle) {
     // Match the explicit allocations released by pinned LibRaw::recycle, plus the owner.
     // SDK-private pools, datastream/stdlib storage and allocator-held VM are not measured.
     std::array<const void *, 11 + LIBRAW_AFDATA_MAXCOUNT> blocks = {
-        handle, d.image, d.rawdata.raw_alloc, d.thumbnail.thumb,
-        internal.internal_data.meta_data, internal.output_data.histogram,
-        internal.output_data.oprof, d.color.profile, d.rawdata.ph1_cblack,
-        d.rawdata.ph1_rblack, d.idata.xmpdata
-    };
+        handle,
+        d.image,
+        d.rawdata.raw_alloc,
+        d.thumbnail.thumb,
+        internal.internal_data.meta_data,
+        internal.output_data.histogram,
+        internal.output_data.oprof,
+        d.color.profile,
+        d.rawdata.ph1_cblack,
+        d.rawdata.ph1_rblack,
+        d.idata.xmpdata};
     for (size_t i = 0; i < LIBRAW_AFDATA_MAXCOUNT; ++i)
         blocks[11 + i] = d.makernotes.common.afdata[i].AFInfoData;
     uint64_t total = 0;
     for (size_t i = 0; i < blocks.size(); ++i) {
         const auto *block = blocks[i];
-        if (!block || std::find(blocks.begin(), blocks.begin() + i, block) != blocks.begin() + i) continue;
+        if (!block || std::find(blocks.begin(), blocks.begin() + i, block) != blocks.begin() + i)
+            continue;
 #if defined(__APPLE__)
         const auto bytes = malloc_size(block);
 #elif defined(__linux__)
@@ -110,7 +122,8 @@ extern "C" uint64_t antitone_raw_retained_bytes(void *handle) {
 #else
         const auto bytes = _msize(const_cast<void *>(block));
 #endif
-        if (!bytes || bytes == SIZE_MAX || bytes > UINT64_MAX - total) return 0;
+        if (!bytes || bytes == SIZE_MAX || bytes > UINT64_MAX - total)
+            return 0;
         total += bytes;
     }
     return total;
@@ -119,26 +132,33 @@ extern "C" uint64_t antitone_raw_retained_bytes(void *handle) {
 #endif
 }
 
-extern "C" const char *antitone_raw_version() { return LibRaw::version(); }
+extern "C" const char *antitone_raw_version() {
+    return LibRaw::version();
+}
 
-extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out, char *error, size_t size) try {
+extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out, char *error,
+                                   size_t size) try {
     auto raw = std::make_unique<LibRaw>();
     raw->imgdata.params.use_camera_matrix = 1;
     int code = raw->open_file(path);
-    if (check(code, error, size)) return nullptr;
-    if (raw->imgdata.idata.colors != 3 || !raw->imgdata.idata.filters || raw->imgdata.idata.filters == 9) {
+    if (check(code, error, size))
+        return nullptr;
+    if (raw->imgdata.idata.colors != 3 || !raw->imgdata.idata.filters ||
+        raw->imgdata.idata.filters == 9) {
         std::snprintf(error, size, "Initial developer requires a three-color Bayer RAW");
         return nullptr;
     }
     metadata(*raw, *out);
     return raw.release();
 } catch (const std::bad_alloc &) {
+
     // Allocation failure must not unwind across the Rust C ABI.
     std::snprintf(error, size, "Unable to allocate LibRaw developer");
     return nullptr;
 }
 
-extern "C" int antitone_raw_thumbnail(void *handle, AntitoneRawThumbnail *out, char *error, size_t size) try {
+extern "C" int antitone_raw_thumbnail(void *handle, AntitoneRawThumbnail *out, char *error,
+                                      size_t size) try {
     *out = {};
     auto &raw = *static_cast<LibRaw *>(handle);
     const auto &list = raw.imgdata.thumbs_list;
@@ -146,57 +166,73 @@ extern "C" int antitone_raw_thumbnail(void *handle, AntitoneRawThumbnail *out, c
     uint64_t smallest = UINT64_MAX;
     for (int index = 0; index < list.thumbcount; ++index) {
         const auto &item = list.thumblist[index];
-        if (item.tformat != LIBRAW_INTERNAL_THUMBNAIL_JPEG || !item.twidth || !item.theight
-            || item.twidth > 2048 || item.theight > 2048 || !item.tlength || item.tlength > 1024 * 1024) continue;
+        if (item.tformat != LIBRAW_INTERNAL_THUMBNAIL_JPEG || !item.twidth || !item.theight ||
+            item.twidth > 2048 || item.theight > 2048 || !item.tlength ||
+            item.tlength > 1024 * 1024)
+            continue;
         uint64_t area = uint64_t(item.twidth) * item.theight;
-        if (area < smallest) { selected = index; smallest = area; }
+        if (area < smallest) {
+            selected = index;
+            smallest = area;
+        }
     }
-    if (selected < 0) return 0;
+    if (selected < 0)
+        return 0;
     int code = raw.unpack_thumb_ex(selected);
-    if (check(code, error, size)) return code;
+    if (check(code, error, size))
+        return code;
     const auto &thumb = raw.imgdata.thumbnail;
-    if (thumb.tformat != LIBRAW_THUMBNAIL_JPEG || !thumb.thumb || !thumb.tlength
-        || thumb.tlength > 1024 * 1024 || !thumb.twidth || !thumb.theight
-        || thumb.twidth > 2048 || thumb.theight > 2048) return 0;
+    if (thumb.tformat != LIBRAW_THUMBNAIL_JPEG || !thumb.thumb || !thumb.tlength ||
+        thumb.tlength > 1024 * 1024 || !thumb.twidth || !thumb.theight || thumb.twidth > 2048 ||
+        thumb.theight > 2048)
+        return 0;
     // Borrowed until the handle's next thumbnail extraction or close; Rust copies before either.
     out->jpeg = reinterpret_cast<const uint8_t *>(thumb.thumb);
     out->bytes = thumb.tlength;
     out->width = thumb.twidth;
     out->height = thumb.theight;
-    out->flip = list.thumblist[selected].tflip == 0xffff ? raw.imgdata.sizes.flip : list.thumblist[selected].tflip;
+    out->flip = list.thumblist[selected].tflip == 0xffff ? raw.imgdata.sizes.flip
+                                                         : list.thumblist[selected].tflip;
     out->color_space = raw.imgdata.color.ExifColorSpace;
     return 0;
 } catch (const std::bad_alloc &) {
+
     std::snprintf(error, size, "Unable to allocate embedded JPEG preview");
     return -1;
 }
 
 extern "C" int antitone_raw_unpack(void *handle, int threads, char *error, size_t size) {
-    if (check_threads(threads, error, size)) return -1;
+    if (check_threads(threads, error, size))
+        return -1;
     ThreadBudget budget(threads);
     auto &raw = *static_cast<LibRaw *>(handle);
     int code = raw.unpack();
-    if (check(code, error, size)) return code;
+    if (check(code, error, size))
+        return code;
     const auto &d = raw.imgdata.rawdata;
     if (!d.raw_image || d.color.cblack[4] || d.color.cblack[5]) {
-        std::snprintf(error, size, "Probe requires integer Bayer data without a repeated black pattern");
+        std::snprintf(error, size,
+                      "Probe requires integer Bayer data without a repeated black pattern");
         return -1;
     }
     return 0;
 }
 
-extern "C" int antitone_raw_sensor_diagnostics(const void *handle, AntitoneRawDiagnostics *out, char *error, size_t size) {
+extern "C" int antitone_raw_sensor_diagnostics(const void *handle, AntitoneRawDiagnostics *out,
+                                               char *error, size_t size) {
     const auto &s = static_cast<const LibRaw *>(handle)->imgdata.rawdata.sizes;
     return antitone_raw_region_diagnostics(handle, 0, 0, s.width, s.height, out, error, size);
 }
 
-extern "C" int antitone_raw_region_diagnostics(const void *handle, uint32_t x0, uint32_t y0, uint32_t width, uint32_t height,
-    AntitoneRawDiagnostics *out, char *error, size_t size) {
+extern "C" int antitone_raw_region_diagnostics(const void *handle, uint32_t x0, uint32_t y0,
+                                               uint32_t width, uint32_t height,
+                                               AntitoneRawDiagnostics *out, char *error,
+                                               size_t size) {
     const auto &d = static_cast<const LibRaw *>(handle)->imgdata.rawdata;
     const auto &s = d.sizes;
     const auto &c = d.color;
-    if (!d.raw_image || !width || !height || x0 >= s.width || y0 >= s.height
-        || width > s.width - x0 || height > s.height - y0) {
+    if (!d.raw_image || !width || !height || x0 >= s.width || y0 >= s.height ||
+        width > s.width - x0 || height > s.height - y0) {
         std::snprintf(error, size, "Invalid sensor sampling rectangle");
         return -1;
     }
@@ -217,12 +253,14 @@ extern "C" int antitone_raw_region_diagnostics(const void *handle, uint32_t x0, 
 }
 
 extern "C" int antitone_raw_develop(void *handle, const double *wb, int output_color, int threads,
-    AntitoneRawView *view, char *error, size_t size) {
-    if (check_threads(threads, error, size)) return -1;
+                                    AntitoneRawView *view, char *error, size_t size) {
+    if (check_threads(threads, error, size))
+        return -1;
     ThreadBudget budget(threads);
     auto &raw = *static_cast<LibRaw *>(handle);
     auto &p = raw.imgdata.params;
-    for (int c = 0; c < 4; ++c) p.user_mul[c] = static_cast<float>(wb[c]);
+    for (int c = 0; c < 4; ++c)
+        p.user_mul[c] = static_cast<float>(wb[c]);
     p.output_color = output_color;
     p.output_bps = 16;
     p.gamm[0] = p.gamm[1] = 1.0;
@@ -241,7 +279,8 @@ extern "C" int antitone_raw_develop(void *handle, const double *wb, int output_c
     p.use_fuji_rotate = 0;
     p.camera_profile = p.output_profile = nullptr;
     int code = raw.dcraw_process();
-    if (check(code, error, size)) return code;
+    if (check(code, error, size))
+        return code;
     const auto &d = raw.imgdata;
     if (!d.image || d.idata.colors != 3) {
         std::snprintf(error, size, "Developer did not return a three-channel camera image");
@@ -253,8 +292,11 @@ extern "C" int antitone_raw_develop(void *handle, const double *wb, int output_c
     view->maximum = d.color.maximum;
     view->data_maximum = d.color.data_maximum;
     view->warnings = d.process_warnings;
-    for (int c = 0; c < 4; ++c) view->pre_mul[c] = d.color.pre_mul[c];
+    for (int c = 0; c < 4; ++c)
+        view->pre_mul[c] = d.color.pre_mul[c];
     return 0;
 }
 
-extern "C" void antitone_raw_close(void *handle) { delete static_cast<LibRaw *>(handle); }
+extern "C" void antitone_raw_close(void *handle) {
+    delete static_cast<LibRaw *>(handle);
+}

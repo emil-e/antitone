@@ -36,6 +36,7 @@ pub(crate) struct RendererCache {
     renderer: std::sync::OnceLock<Result<Arc<GpuRenderer>, Error>>,
     submissions: crate::gpu::SubmissionGate,
 }
+
 #[cfg(feature = "editor")]
 impl RendererCache {
     pub(crate) fn new(submissions: crate::gpu::SubmissionGate) -> Self {
@@ -44,6 +45,7 @@ impl RendererCache {
             ..Default::default()
         }
     }
+
     pub(crate) fn prewarm(self: &Arc<Self>, device: wgpu::Device, queue: wgpu::Queue) {
         let cache = self.clone();
         // Initialization errors remain cached and are reported by the foreground get.
@@ -51,6 +53,7 @@ impl RendererCache {
             let _ = cache.get(&device, &queue);
         });
     }
+
     pub(crate) fn get(
         &self,
         device: &wgpu::Device,
@@ -88,10 +91,12 @@ pub struct GpuRenderer {
     #[cfg(feature = "ui")]
     pub(crate) average: Arc<AveragePipelines>,
 }
+
 impl GpuRenderer {
     pub async fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Arc<Self>, Error> {
         Self::new_with_submissions(device, queue, crate::gpu::SubmissionGate::default()).await
     }
+
     pub async fn new_with_submissions(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -127,6 +132,7 @@ impl GpuRenderer {
             average,
         }))
     }
+
     pub(crate) fn target(&self, target: OutputTarget) -> &TargetResources {
         &self.targets[target as usize]
     }

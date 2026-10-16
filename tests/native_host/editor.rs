@@ -47,23 +47,29 @@ pub(super) struct EditorApp {
     pub requested: bool,
     pub index: usize,
 }
+
 impl host::App for EditorApp {
     fn submission_gate(&self) -> &SubmissionGate {
         self.editor.submission_gate()
     }
+
     fn processing_revision(&self) -> Option<(u64, u64)> {
         host::App::processing_revision(&self.editor)
     }
+
     fn photo_fullscreen(&self) -> bool {
         self.editor.photo_fullscreen()
     }
+
     fn photo_fullscreen_changed(&mut self, active: bool) {
         self.editor.photo_fullscreen_changed(active);
     }
+
     fn on_exit(&mut self) {
         self.editor.on_exit();
         self.report.lock().unwrap().exited = true;
     }
+
     fn ui(&mut self, ui: &mut egui::Ui) {
         self.editor.ui(ui);
         if ui.input(|input| input.viewport().close_requested()) {

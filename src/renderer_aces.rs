@@ -14,7 +14,12 @@ pub(super) fn adapt(pinned: &str) -> Result<(String, Vec<f32>), Error> {
                 "unexpected pinned OCIO resource declaration".into(),
             ));
         }
-        generated = generated.replace(&declaration, &format!("layout(set=0, binding = {binding}) uniform texture2D {name};\n#define {name}Sampler sampler2D({name}, aces_sampler)"));
+        generated = generated.replace(
+            &declaration,
+            &format!(
+                "layout(set=0, binding = {binding}) uniform texture2D {name};\n#define {name}Sampler sampler2D({name}, aces_sampler)"
+            ),
+        );
     }
 
     // A dynamically indexed constant array is very expensive on the

@@ -15,6 +15,7 @@ pub(super) struct CropEdit {
     pub(super) auto_problem: Option<String>,
     reveal_controls: bool,
 }
+
 #[derive(Clone, Copy)]
 enum CropDrag {
     Move {
@@ -45,12 +46,14 @@ fn handles(image: egui::Rect) -> [(egui::Pos2, [i8; 2]); 8] {
         (image.center_bottom(), [0, 1]),
     ]
 }
+
 fn handle_at(image: egui::Rect, point: egui::Pos2) -> Option<[i8; 2]> {
     handles(image)
         .into_iter()
         .find(|(position, _)| position.distance(point) <= 9.)
         .map(|(_, handle)| handle)
 }
+
 fn aspect_label(ratio: Option<f64>) -> String {
     let Some(ratio) = ratio else {
         return "Free".into();
@@ -124,6 +127,7 @@ impl Editor {
         self.original.invalidate();
         self.status = "Crop draft; changes are not applied".into();
     }
+
     pub(super) fn initialize_crop_frame(&mut self, crop: Crop) {
         let edit = self
             .crop_edit
@@ -136,6 +140,7 @@ impl Editor {
         self.last_layout = None;
         self.original.invalidate();
     }
+
     pub(super) fn finish_crop(&mut self, apply: bool) {
         let Some(edit) = self.crop_edit.take() else {
             return;
@@ -155,6 +160,7 @@ impl Editor {
         self.last_layout = None;
         self.original.invalidate();
     }
+
     pub(super) fn photo_tool_shelf(&mut self, ui: &mut egui::Ui) {
         use icons::Icon;
         use presentation::{ToolButton, ToolShelf};
@@ -182,6 +188,7 @@ impl Editor {
             .and_then(|source| self.dust.repairs(source))
             .is_some_and(|set| !set.repairs().is_empty());
         let mut action = None;
+
         enum Action {
             TurnLeft,
             TurnRight,
@@ -315,6 +322,7 @@ impl Editor {
             });
         }
     }
+
     pub(super) fn crop_tool_controls(&mut self, ui: &mut egui::Ui, reset: bool) {
         use icons::Icon;
         let edit = self.crop_edit.as_mut().unwrap();
@@ -333,71 +341,78 @@ impl Editor {
         let mut degrees = -edit.draft.angle.to_degrees() * composition.handedness();
         let previous_degrees = degrees;
         let mut reset_angle = false;
-        egui::Grid::new("crop-parameters").min_col_width(0.).min_row_height(28.).spacing(egui::vec2(8., 4.)).show(ui, |ui| {
-            ui.label("Aspect");
-            egui::ComboBox::from_id_salt("crop-aspect")
-                .width(96.)
-                .selected_text(aspect_label(edit.ratio))
-                .show_ui(ui, |ui| {
-                    for (label, ratio) in [
-                        ("Free", None),
-                        ("Current", Some(f64::from(size[0]) / f64::from(size[1]))),
-                        (
-                            "Original",
-                            Some(f64::from(full.size()[0]) / f64::from(full.size()[1])),
-                        ),
-                        ("1:1", Some(1.)),
-                        ("3:2", Some(1.5)),
-                        ("4:3", Some(4. / 3.)),
-                        ("5:4", Some(1.25)),
-                        ("16:9", Some(16. / 9.)),
-                    ] {
-                        ui.selectable_value(&mut edit.ratio, ratio, label);
-                    }
-                });
-            if icons::button(
-                ui,
-                Icon::Swap,
-                edit.ratio.is_some(),
-                "Swap portrait / landscape",
-                "Swap portrait / landscape",
-            )
-            .clicked()
-            {
-                edit.ratio = edit.ratio.map(|r| 1. / r);
-            }
-            ui.end_row();
-            let angle_label = ui.label("Angle");
-            let angle = ui.add_sized([96., 28.],
-                egui::DragValue::new(&mut degrees)
-                    .range(-180.0..=180.0)
-                    .speed(0.1)
-                    .fixed_decimals(2)
-                    .update_while_editing(false)
-                    .suffix("°"),
-            ).labelled_by(angle_label.id);
-            if controls::numeric_cancelled(ui, &angle) || !ui.is_enabled() {
-                degrees = previous_degrees;
-            }
-            reset_angle = icons::button(
-                ui,
-                Icon::Reset,
-                degrees != 0.,
-                "Reset straighten",
-                "Reset straighten",
-            )
-            .clicked();
-            ui.end_row();
-            ui.label("Guides");
-            icons::toggle(
-                ui,
-                Icon::Guides,
-                &mut edit.guides,
-                "Thirds guides",
-                "Show thirds guides. Composition aid only; never affects measurements or exports.",
-            );
-            ui.end_row();
-        });
+        egui::Grid::new("crop-parameters")
+            .min_col_width(0.)
+            .min_row_height(28.)
+            .spacing(egui::vec2(8., 4.))
+            .show(ui, |ui| {
+                ui.label("Aspect");
+                egui::ComboBox::from_id_salt("crop-aspect")
+                    .width(96.)
+                    .selected_text(aspect_label(edit.ratio))
+                    .show_ui(ui, |ui| {
+                        for (label, ratio) in [
+                            ("Free", None),
+                            ("Current", Some(f64::from(size[0]) / f64::from(size[1]))),
+                            (
+                                "Original",
+                                Some(f64::from(full.size()[0]) / f64::from(full.size()[1])),
+                            ),
+                            ("1:1", Some(1.)),
+                            ("3:2", Some(1.5)),
+                            ("4:3", Some(4. / 3.)),
+                            ("5:4", Some(1.25)),
+                            ("16:9", Some(16. / 9.)),
+                        ] {
+                            ui.selectable_value(&mut edit.ratio, ratio, label);
+                        }
+                    });
+                if icons::button(
+                    ui,
+                    Icon::Swap,
+                    edit.ratio.is_some(),
+                    "Swap portrait / landscape",
+                    "Swap portrait / landscape",
+                )
+                .clicked()
+                {
+                    edit.ratio = edit.ratio.map(|r| 1. / r);
+                }
+                ui.end_row();
+                let angle_label = ui.label("Angle");
+                let angle = ui
+                    .add_sized(
+                        [96., 28.],
+                        egui::DragValue::new(&mut degrees)
+                            .range(-180.0..=180.0)
+                            .speed(0.1)
+                            .fixed_decimals(2)
+                            .update_while_editing(false)
+                            .suffix("°"),
+                    )
+                    .labelled_by(angle_label.id);
+                if controls::numeric_cancelled(ui, &angle) || !ui.is_enabled() {
+                    degrees = previous_degrees;
+                }
+                reset_angle = icons::button(
+                    ui,
+                    Icon::Reset,
+                    degrees != 0.,
+                    "Reset straighten",
+                    "Reset straighten",
+                )
+                .clicked();
+                ui.end_row();
+                ui.label("Guides");
+                icons::toggle(
+                    ui,
+                    Icon::Guides,
+                    &mut edit.guides,
+                    "Thirds guides",
+                    "Show thirds guides. Composition aid only; never affects measurements or exports.",
+                );
+                ui.end_row();
+            });
         if edit.ratio != previous_ratio
             && let Some(ratio) = edit.ratio
         {
@@ -447,6 +462,7 @@ impl Editor {
             }
         }
     }
+
     pub(super) fn crop_interaction(
         &mut self,
         ui: &egui::Ui,
@@ -644,6 +660,7 @@ impl Editor {
         edit.layout = Some(layout);
         layout
     }
+
     pub(super) fn crop_rotation_cursor(
         &self,
         ui: &egui::Ui,

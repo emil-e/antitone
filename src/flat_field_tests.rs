@@ -41,6 +41,7 @@ fn production_rectangle_proposal_handles_different_openings_dust_and_ambiguity()
     assert_eq!(propose_support(&round, [w, h], 1.), None);
     assert_eq!(propose_support(&vec![0.; w * h], [w, h], 1.), None);
 }
+
 #[test]
 fn bilinear_source_coordinates_and_identity_outside_support_are_explicit() {
     let field = FlatField::from_nodes(
@@ -62,6 +63,7 @@ fn bilinear_source_coordinates_and_identity_outside_support_are_explicit() {
     assert!(field.gain([f64::NAN, 0.]).is_err());
     assert_eq!(field.bounds(), (DVec3::ONE, DVec3::splat(4.)));
 }
+
 #[test]
 fn malformed_geometry_and_unrepresentable_nodes_are_rejected() {
     for area in [[0, 0, 0, 12], [u32::MAX, 0, 2, 2], [0, u32::MAX, 2, 2]] {
@@ -74,6 +76,7 @@ fn malformed_geometry_and_unrepresentable_nodes_are_rejected() {
         assert!(FlatField::from_nodes([0, 0, 80, 60], [2, 2], vec![DVec3::splat(bad); 4]).is_err());
     }
 }
+
 #[test]
 fn global_tint_is_neutralized_in_ap1_while_center_luminance_is_preserved() {
     let camera = DVec3::new(0.11, 0.09, 0.13);
@@ -98,6 +101,7 @@ fn global_tint_is_neutralized_in_ap1_while_center_luminance_is_preserved() {
     assert_eq!(field.area(), [0, 0, 800, 600]);
     assert_eq!(field.size(), [21, 17]);
 }
+
 #[test]
 fn smooth_nonradial_color_shading_is_removed_including_boundaries() {
     let [w, h] = [81, 61];
@@ -150,6 +154,7 @@ fn smooth_nonradial_color_shading_is_removed_including_boundaries() {
         );
     }
 }
+
 #[test]
 fn isolated_dust_does_not_become_a_local_compensation_spike() {
     let size = [41, 31];
@@ -179,6 +184,7 @@ fn isolated_dust_does_not_become_a_local_compensation_spike() {
         assert!((*ga - *gb).abs().max_element() < 1e-10);
     }
 }
+
 #[test]
 fn pixel_grid_noise_is_attenuated_instead_of_becoming_gain_texture() {
     let (w, h) = (61, 41);
@@ -213,6 +219,7 @@ fn pixel_grid_noise_is_attenuated_instead_of_becoming_gain_texture() {
         .sqrt();
     assert!(rms < 0.00015, "gain noise rms={rms}");
 }
+
 #[test]
 fn corner_trend_is_not_mistaken_for_dust() {
     let (w, h) = (61, 41);
@@ -232,6 +239,7 @@ fn corner_trend_is_not_mistaken_for_dust() {
         assert!((a - b).abs() < 1e-10);
     }
 }
+
 #[test]
 fn corrected_camera_precision_bound_uses_maximum_gain_without_resampling_calibration() {
     use crate::processing::Calibration;
@@ -272,6 +280,7 @@ fn corrected_camera_precision_bound_uses_maximum_gain_without_resampling_calibra
         FlatField::from_nodes([100, 200, 80, 40], [2, 2], vec![DVec3::splat(0.8); 4]).unwrap();
     assert_eq!(attenuating.precision_floor().unwrap(), base);
 }
+
 #[test]
 fn unusable_reference_inputs_do_not_produce_a_field() {
     let size = [7, 7];

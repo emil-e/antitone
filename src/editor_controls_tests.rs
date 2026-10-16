@@ -32,6 +32,7 @@ fn frame(
     output.textures_delta.clear();
     responses.unwrap()
 }
+
 fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
     egui::Event::Key {
         key,
@@ -41,6 +42,7 @@ fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
         modifiers,
     }
 }
+
 fn pointer(position: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
     vec![
         egui::Event::PointerMoved(position),
@@ -52,6 +54,7 @@ fn pointer(position: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
         },
     ]
 }
+
 #[test]
 fn inward_margin_uses_shared_precision_keyboard_steps_and_actual_default() {
     for width in [230., 315.] {
@@ -139,6 +142,7 @@ fn drawing_preserves_manual_precision_and_exposure_outside_normal_slider_range()
         }
     }
 }
+
 #[test]
 fn mask_parameters_preserve_precision_clamp_edits_and_reset_only_when_enabled() {
     for width in [230., 315.] {
@@ -235,6 +239,7 @@ fn slider_keyboard_steps_are_precise_and_shift_is_finer() {
         assert!((value - expected).abs() < 1e-12, "{value}");
     }
 }
+
 #[test]
 fn numeric_entry_commits_full_range_and_escape_cancels_without_hidden_rounding() {
     let context = egui::Context::default();
@@ -328,6 +333,7 @@ fn numeric_entry_commits_full_range_and_escape_cancels_without_hidden_rounding()
     );
     assert_eq!(value, 12.345678);
 }
+
 #[test]
 fn tab_focus_allows_numeric_entry_without_a_mouse() {
     let context = egui::Context::default();
@@ -379,6 +385,7 @@ fn tab_focus_allows_numeric_entry_without_a_mouse() {
     );
     assert_eq!(value, -11.25);
 }
+
 #[test]
 fn disabling_a_pending_numeric_edit_does_not_commit_it() {
     let context = egui::Context::default();
@@ -432,6 +439,7 @@ fn disabling_a_pending_numeric_edit_does_not_commit_it() {
     );
     assert_eq!(value, 0.);
 }
+
 #[test]
 fn parameter_reset_uses_actual_default_and_disabled_controls_do_not_edit() {
     for enabled in [true, false] {
@@ -490,6 +498,7 @@ fn parameter_reset_uses_actual_default_and_disabled_controls_do_not_edit() {
         }
     }
 }
+
 #[test]
 fn contrast_rows_accept_wider_endpoints_and_reset_to_identity() {
     assert_eq!(Parameter::Contrast.range(), 0.4..=1.6);
@@ -650,6 +659,7 @@ fn wheel_adapters_roundtrip_full_coordinate_square_and_do_not_change_processing(
             > 0.01
     );
 }
+
 #[test]
 fn wheel_pointer_updates_the_same_coordinates_and_disabled_wheels_are_read_only() {
     for kind in [ColorControl::GammaBalance, ColorControl::WhiteBalance] {
@@ -691,6 +701,7 @@ fn wheel_pointer_updates_the_same_coordinates_and_disabled_wheels_are_read_only(
         }
     }
 }
+
 fn wheel_frame(
     context: &egui::Context,
     balance: &mut Balance,
@@ -1398,6 +1409,7 @@ fn resolve_orientation_keeps_blue_right_and_yellow_left_for_artwork_and_input() 
     assert!(yellow.x > yellow.z && yellow.y > yellow.z);
     assert!((yellow.x - yellow.y).abs() < 1e-12);
 }
+
 #[test]
 fn wb_wheel_directions_match_local_neutral_response_not_rgb_channel_gains() {
     let epsilon = 1e-7;
@@ -1516,7 +1528,16 @@ fn collapsed_sections_keep_adjustments_summaries_and_independent_resets() {
     assert!(collapsed.numeric.is_none());
     assert_eq!(collapsed.other.as_ref().unwrap().id, other_id);
     assert_eq!(value, 1.23456789);
-    assert!(collapsed.output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == "Adjusted · +1.23 EV")));
+    assert!(
+        collapsed
+            .output
+            .shapes
+            .iter()
+            .any(|shape| match &shape.shape {
+                egui::Shape::Text(text) => text.galley.job.text == "Adjusted · +1.23 EV",
+                _ => false,
+            })
+    );
     assert!(
         collapsed.output.shapes.iter().any(
             |shape| matches!(&shape.shape, egui::Shape::Circle(circle) if circle.radius == 2.5)

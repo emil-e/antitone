@@ -422,7 +422,10 @@ fn main() -> Result<()> {
         return render(&pixels, width, height, Path::new(&a[4]));
     }
     if a.first().map(String::as_str) != Some("extract") || !matches!(a.len(), 14 | 18) {
-        return Err("Usage: antitone-dust-source-probe tiff SOURCE_DIRECTORY INPUT.ap1-f32 NEW_OUTPUT.tif srgb|display-p3\n       antitone-dust-source-probe develop SOURCE_DIRECTORY CAMERA_F32 MASK_U8 NEW_AP1\n       antitone-dust-source-probe camera PHOTO.ARW WB_REFERENCE.ARW NEW_DIRECTORY\n       antitone-dust-source-probe extract DMIN.ARW x y w h DMAX.ARW x y w h PHOTO.ARW NEW_DIRECTORY MAX_SIDE [x y w h]\n       antitone-dust-source-probe render INPUT.ap1-f32 WIDTH HEIGHT NEW_OUTPUT.ppm [INSPECTION_EV]".into());
+        return Err(
+            "Usage: antitone-dust-source-probe tiff SOURCE_DIRECTORY INPUT.ap1-f32 NEW_OUTPUT.tif srgb|display-p3\n       antitone-dust-source-probe develop SOURCE_DIRECTORY CAMERA_F32 MASK_U8 NEW_AP1\n       antitone-dust-source-probe camera PHOTO.ARW WB_REFERENCE.ARW NEW_DIRECTORY\n       antitone-dust-source-probe extract DMIN.ARW x y w h DMAX.ARW x y w h PHOTO.ARW NEW_DIRECTORY MAX_SIDE [x y w h]\n       antitone-dust-source-probe render INPUT.ap1-f32 WIDTH HEIGHT NEW_OUTPUT.ppm [INSPECTION_EV]"
+                .into(),
+        );
     }
     let a = &a[1..];
     let start = Instant::now();

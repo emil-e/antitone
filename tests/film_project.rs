@@ -3,6 +3,7 @@ use antitone::{
     processing::Response,
     project::{Development, Project, Save},
 };
+
 fn project() -> Project {
     Project {
         development: Some(Development::new(
@@ -19,6 +20,7 @@ fn project() -> Project {
         ..Project::default()
     }
 }
+
 #[test]
 fn ap0_project_schemas_and_models_reject_without_reinterpreting_calibration() {
     let directory = tempfile::tempdir().unwrap();
@@ -38,6 +40,7 @@ fn ap0_project_schemas_and_models_reject_without_reinterpreting_calibration() {
         assert!(incompatible.validate().is_err());
     }
 }
+
 #[test]
 fn camera_model_roundtrips_explicit_response_and_rejects_missing_or_unknown_shape() {
     let directory = tempfile::tempdir().unwrap();
@@ -68,6 +71,7 @@ fn camera_model_roundtrips_explicit_response_and_rejects_missing_or_unknown_shap
         }
     }
 }
+
 #[test]
 fn project_validation_rejects_shape_and_calibrated_shoulder_pole() {
     let mut p = project();

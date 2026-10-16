@@ -81,6 +81,7 @@ pub struct Settings {
     pub plot: Plot,
     pub amplification: u32,
 }
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -90,6 +91,7 @@ impl Default for Settings {
         }
     }
 }
+
 impl Settings {
     pub fn validate(self, size: [u32; 2]) -> Result<Self, Error> {
         if ![1, 2, 4, 8].contains(&self.amplification)
@@ -101,6 +103,7 @@ impl Settings {
         }
         Ok(self)
     }
+
     pub fn half_extent(self) -> f64 {
         Basis::new(self.target).extent / self.amplification as f64
     }

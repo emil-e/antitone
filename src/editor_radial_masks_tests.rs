@@ -21,6 +21,7 @@ fn layout(turns: usize, flipped: bool) -> CanvasLayout {
         1.,
     )
 }
+
 fn mask() -> GradientMask {
     GradientMask::Radial {
         center: SourcePoint([1120.125, 900.375]),
@@ -29,6 +30,7 @@ fn mask() -> GradientMask {
         feather: 0.8,
     }
 }
+
 fn handle(mask: GradientMask, layout: CanvasLayout, target: Handle) -> egui::Pos2 {
     handles(mask, layout)
         .into_iter()
@@ -36,6 +38,7 @@ fn handle(mask: GradientMask, layout: CanvasLayout, target: Handle) -> egui::Pos
         .unwrap()
         .0
 }
+
 fn close(a: SourcePoint, b: SourcePoint) {
     assert!(
         (DVec2::from_array(a.0) - DVec2::from_array(b.0)).length() < 0.001,

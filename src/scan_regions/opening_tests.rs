@@ -144,6 +144,7 @@ fn ragged_individual_edges_can_strengthen_a_common_interior_without_perfect_loca
         }
     }
 }
+
 fn moved_capture(dx: usize) -> Capture {
     let mut c = capture(1, 0.);
     let original = c.rgb.clone();
@@ -155,6 +156,7 @@ fn moved_capture(dx: usize) -> Capture {
     }
     c
 }
+
 #[test]
 fn paired_motion_is_a_photo_exception_not_a_scene_edge_or_a_shared_redefinition() {
     let captures = [
@@ -185,6 +187,7 @@ fn paired_motion_is_a_photo_exception_not_a_scene_edge_or_a_shared_redefinition(
         "two incompatible captures cannot establish a common aperture"
     );
 }
+
 #[test]
 fn unsupported_scene_darkness_and_single_captures_do_not_define_a_shared_holder() {
     let mut c = capture(1, 0.);
@@ -278,9 +281,9 @@ fn fine_measurements_strengthen_one_shared_interior_but_preserve_authored_and_ex
     assert_eq!(areas[1], authored);
     assert!(model.refine_areas(&mut areas[..3]).is_err());
 }
+
 #[test]
-fn opening_changes_refit_automatic_picture_coverage_without_moving_frame_evidence_or_authored_edits()
- {
+fn opening_refits_automatic_picture_but_preserves_frame_evidence_and_authored_edits() {
     let active = SourceRegion {
         x: 12,
         y: 20,

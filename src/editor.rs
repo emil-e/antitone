@@ -121,17 +121,20 @@ enum Pick {
     Flat,
     Analysis,
 }
+
 struct PickReturn {
     path: PathBuf,
     selected: usize,
     adjustment: Option<(SourceId, adjustments::Target)>,
 }
+
 #[derive(Clone, Copy)]
 struct PickView {
     source: bool,
     viewport: Viewport,
     anchored: Viewport,
 }
+
 struct Ready {
     file: thumbnails::FileKey,
     thumbnail: Option<(thumbnails::FileKey, Arc<thumbnails::Proxy>)>,
@@ -144,6 +147,7 @@ struct Ready {
     record: Source,
     development: Development,
 }
+
 enum DocumentWork {
     Import(Document, Vec<PathBuf>, Option<(u64, SourceId)>),
     Open(PathBuf),
@@ -151,6 +155,7 @@ enum DocumentWork {
     Save(Document, PathBuf, crate::project::Save),
     Correction(Document, Option<SourceId>),
 }
+
 struct Prepared {
     document: Document,
     ready: Option<Ready>,
@@ -159,12 +164,14 @@ struct Prepared {
     correction: Option<Arc<Correction>>,
     preserve_view: bool,
 }
+
 struct LoadCache {
     store: Arc<crate::source_store::SourceStore>,
     parent: Option<Arc<crate::source_store::SourceStore>>,
     file: thumbnails::FileKey,
     key: Option<crate::source_store::SourceKey>,
 }
+
 impl LoadCache {
     fn new(
         path: &std::path::Path,
@@ -189,6 +196,7 @@ impl LoadCache {
         }
     }
 }
+
 struct ExportIdentity {
     source: u64,
     request: u64,
@@ -241,15 +249,18 @@ enum Command {
         Overwrite,
     ),
 }
+
 #[derive(Clone, Copy)]
 enum OutputFormat {
     Tiff(OutputTarget),
     Exr(ExrPrecision),
 }
+
 enum Measurement {
     Reference(DVec3),
     Balance(Balance),
 }
+
 enum Message {
     DocumentProgress(u64, usize, usize),
     AnalysisSupport(u64, u64, Result<Option<Rect>, String>),
@@ -282,6 +293,7 @@ fn prepare_source(
         renderers, device, queue, path, wb, expected, correction, basis, None,
     )
 }
+
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn prepare_source_cached(
@@ -309,6 +321,7 @@ fn prepare_source_cached(
         &|| false,
     )
 }
+
 #[allow(clippy::too_many_arguments)]
 fn prepare_source_scheduled(
     renderers: &crate::renderer::RendererCache,
@@ -449,6 +462,7 @@ fn prepare_source_scheduled(
     };
     Ok((ready, scan))
 }
+
 #[allow(clippy::too_many_arguments)]
 fn prepare_document_scheduled(
     renderers: &crate::renderer::RendererCache,
@@ -1034,6 +1048,7 @@ pub struct Editor {
     developments: Option<development::Scheduler>,
     source_epoch: Arc<std::sync::atomic::AtomicU64>,
 }
+
 impl Editor {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, initial: Option<PathBuf>) -> Self {
         let (commands, receiver) = mpsc::channel();
@@ -1098,6 +1113,7 @@ impl Editor {
         }
         editor
     }
+
     fn state(
         commands: mpsc::Sender<Command>,
         messages: mpsc::Receiver<Message>,
@@ -1182,6 +1198,7 @@ impl Editor {
             flat_edit: None,
         }
     }
+
     pub fn restore_ui_preferences(&mut self) {
         match preferences::Store::open_default() {
             Ok((store, preferences)) => {
@@ -1197,6 +1214,7 @@ impl Editor {
             Err(error) => eprintln!("UI preferences not loaded (file left unchanged): {error}"),
         }
     }
+
     fn apply_preferences(&mut self, mut preferences: preferences::Preferences) {
         let limits = *preferences
             .cache_limits
@@ -1206,6 +1224,7 @@ impl Editor {
         self.scopes.height_ratio = preferences.scope_height_ratio;
         self.preferences = preferences;
     }
+
     fn persist_preferences(&mut self) {
         if let Some(store) = &mut self.preference_store
             && let Err(error) = store.save(&self.preferences)
@@ -1214,6 +1233,7 @@ impl Editor {
             eprintln!("{}", self.status);
         }
     }
+
     fn cache_preferences(&mut self, ui: &mut egui::Ui) {
         use cache_limits::{MAX_MIB, MIB};
         ui.set_min_width(330.);
@@ -1265,6 +1285,7 @@ impl Editor {
             self.persist_preferences();
         }
     }
+
     fn calibration(&self) -> Option<Calibration> {
         Calibration {
             dmin: self.dmin?,
@@ -1274,6 +1295,7 @@ impl Editor {
         .validate()
         .ok()
     }
+
     fn seed_thumbnail(&mut self) {
         self.thumbnails.bind_sources(self.document.cache().clone());
         let Some(ready) = &mut self.ready else {
@@ -1299,6 +1321,7 @@ impl Editor {
                 .seed_at(source, &ready.development, &ready.path, file, proxy);
         }
     }
+
     fn sync_document(&mut self) {
         let project = &mut self.document.project;
         project.roll = self.roll;
@@ -1322,10 +1345,12 @@ impl Editor {
             source.crop = self.crop;
         }
     }
+
     fn request_id(&mut self) -> u64 {
         self.next_request += 1;
         self.next_request
     }
+
     fn start_document(&mut self, work: DocumentWork) {
         self.finish_auto_crop(false);
         self.finish_dust_cleanup();
@@ -1383,6 +1408,7 @@ impl Editor {
             }
         }
     }
+
     fn add_raws(&mut self, paths: Vec<PathBuf>) {
         self.sync_document();
         let reuse = self
@@ -1392,9 +1418,11 @@ impl Editor {
             .map(|source| (self.id, source));
         self.start_document(DocumentWork::Import(self.document.clone(), paths, reuse));
     }
+
     fn load(&mut self, path: PathBuf) {
         self.load_source(path, true);
     }
+
     fn load_source(&mut self, path: PathBuf, persistent: bool) {
         self.sync_document();
         if let Err(error) = self.validate_document_candidate(&self.document) {
@@ -1517,6 +1545,7 @@ impl Editor {
             }
         }
     }
+
     fn receive(&mut self) {
         while let Ok(message) = self.messages.try_recv() {
             match message {
@@ -1783,7 +1812,14 @@ impl Editor {
                                 self.viewport = context.viewport;
                                 self.source = context.source;
                             }
-                            self.status = if self.document.project.flat_field.is_some() || prepared.preserve_view {"Project ready. Flat-field changes keep Dmin/Dmax RGB; re-pick calibration for this setup."} else {"Project ready"}.into();
+                            self.status = if self.document.project.flat_field.is_some()
+                                || prepared.preserve_view
+                            {
+                                "Project ready. Flat-field changes keep Dmin/Dmax RGB; re-pick calibration for this setup."
+                            } else {
+                                "Project ready"
+                            }
+                            .into();
                             if let Some(kind) = failure_kind {
                                 self.resolve_failure(kind);
                             }
@@ -1807,7 +1843,12 @@ impl Editor {
                             self.region = self.region.or(preview.region.map(Coverage::rectangle));
                             self.ready = Some(preview.ready);
                             self.resolve_failure(FailureKind::FlatReference);
-                            self.status=if self.region.is_some(){"Proposed illuminated rectangle: adjust edges, then Apply."}else{"Illuminated area is ambiguous; draw a rectangle around the usable light."}.into();
+                            self.status = if self.region.is_some() {
+                                "Proposed illuminated rectangle: adjust edges, then Apply."
+                            } else {
+                                "Illuminated area is ambiguous; draw a rectangle around the usable light."
+                            }
+                            .into();
                         }
                         Err(error) => {
                             self.status = error.clone();
@@ -1866,6 +1907,7 @@ impl Editor {
             }
         }
     }
+
     fn finish_pick(&mut self) {
         if self.analysis_review.is_some() {
             self.status = "Analysis review cancelled; areas and grade unchanged".into();
@@ -1911,6 +1953,7 @@ impl Editor {
         }
         self.source = self.calibration().is_none() || source;
     }
+
     fn begin_pick(&mut self, kind: Pick) {
         self.finish_dust_cleanup();
         if self.pick.is_some() {
@@ -1975,6 +2018,7 @@ impl Editor {
             }
         }
     }
+
     fn pick_roll_source(&mut self, id: SourceId) {
         let Some(index) = self
             .document
@@ -1999,6 +2043,7 @@ impl Editor {
         self.region = None;
         self.source = true;
     }
+
     fn apply_pick(&mut self) {
         if self.analysis_review.is_some() {
             self.confirm_analysis_review();
@@ -2036,6 +2081,7 @@ impl Editor {
             }
         }
     }
+
     fn export(&mut self, path: PathBuf, format: OutputFormat, overwrite: Overwrite) {
         if self.auto_crop_edit.is_some() {
             self.status = "Apply or cancel auto-crop before exporting".into();
@@ -2106,15 +2152,18 @@ impl Editor {
             }
         }
     }
+
     fn controls(&mut self, ui: &mut egui::Ui) -> (Option<ScopeSlot>, bool) {
-        let reviewing = self.analysis_review.is_some();
         use controls::{ColorControl, Parameter};
         use presentation::SectionHeader;
+
+        let reviewing = self.analysis_review.is_some();
         let previous_orientation = (self.roll_orientation, self.photo_orientation);
         presentation::restore_expansion(ui.ctx(), self.preferences.sections.clone());
         let mut analyze = false;
         let scope_slot = self.scope_panel(ui);
         ui.add_space(8.);
+
         let mut next_tab = self.tab;
         presentation::stage_tabs(ui, &mut next_tab);
         if next_tab != self.tab {
@@ -2125,11 +2174,13 @@ impl Editor {
             });
             ui.ctx().request_repaint();
         }
+
         if self.tab == 0 {
             analyze = self.roll_tool_shelf(ui);
         } else if self.tab == 1 {
             ui.add_enabled_ui(!reviewing, |ui| self.photo_tool_shelf(ui));
         }
+
         let editable = !self.busy
             && !reviewing
             && self.auto_crop_edit.is_none()
@@ -2151,73 +2202,124 @@ impl Editor {
                 self.adjustment_target_label(ui)
             });
         }
-        egui::ScrollArea::vertical().id_salt(("inspector", self.tab)).show(ui, |ui| {
-            self.auto_crop_controls(ui);
-            if self.tab == 0 {
-                ui.push_id("roll", |ui| {
-                    ui.add_enabled_ui(!reviewing, |ui| self.flat_controls(ui));
-                    self.analysis_controls(ui);
-                    let calibration_summary = match (self.dmin.is_some(), self.dmax.is_some()) {
-                        (true, true) => "Dmin + Dmax measured",
-                        (false, false) => "Dmin + Dmax not measured",
-                        (false, true) => "Dmin not measured",
-                        (true, false) => "Dmax not measured",
-                    };
-                    presentation::section(ui, "roll-calibration", "Calibration", SectionHeader { summary: calibration_summary, changed: false, reset: None, default_open: Some(true) }, |ui| {
-                        if controls::calibration(
-                            ui, "dmin", "Dmin (film base)", self.dmin, can_pick,
-                            "Measure an unexposed area of film base.",
-                        ) {
-                            start_pick = Some(Pick::Dmin);
-                        }
-                        if controls::calibration(
-                            ui, "dmax", "Dmax", self.dmax, can_pick,
-                            "Measure the densest film reference.",
-                        ) {
-                            start_pick = Some(Pick::Dmax);
-                        }
-                    });
-                    ui.add_enabled_ui(editable, |ui| {
-                        let inversion_changed = self.roll.gamma != crate::processing::DEFAULT_GAMMA
-                            || self.roll.balance != Balance::default();
-                        let (_, reset) = presentation::section(
-                            ui, "roll-gamma-balance", "Gamma & balance",
+        egui::ScrollArea::vertical()
+            .id_salt(("inspector", self.tab))
+            .show(ui, |ui| {
+                self.auto_crop_controls(ui);
+                if self.tab == 0 {
+                    ui.push_id("roll", |ui| {
+                        ui.add_enabled_ui(!reviewing, |ui| self.flat_controls(ui));
+                        self.analysis_controls(ui);
+                        let calibration_summary = match (self.dmin.is_some(), self.dmax.is_some()) {
+                            (true, true) => "Dmin + Dmax measured",
+                            (false, false) => "Dmin + Dmax not measured",
+                            (false, true) => "Dmin not measured",
+                            (true, false) => "Dmax not measured",
+                        };
+                        presentation::section(
+                            ui,
+                            "roll-calibration",
+                            "Calibration",
                             SectionHeader {
-                                summary: &format!("Gamma {:.2} · Balance {}", self.roll.gamma, if self.roll.balance == Balance::default() { "neutral" } else { "adjusted" }),
-                                changed: inversion_changed, reset: Some(inversion_changed), default_open: Some(true),
+                                summary: calibration_summary,
+                                changed: false,
+                                reset: None,
+                                default_open: Some(true),
                             },
                             |ui| {
-                                controls::parameter(ui, Parameter::Gamma, &mut self.roll.gamma);
-                                if controls::color(
-                                    ui, ColorControl::GammaBalance, &mut self.roll.balance, can_pick,
+                                if controls::calibration(
+                                    ui,
+                                    "dmin",
+                                    "Dmin (film base)",
+                                    self.dmin,
+                                    can_pick,
+                                    "Measure an unexposed area of film base.",
                                 ) {
-                                    start_pick = Some(Pick::Gamma);
+                                    start_pick = Some(Pick::Dmin);
+                                }
+                                if controls::calibration(
+                                    ui,
+                                    "dmax",
+                                    "Dmax",
+                                    self.dmax,
+                                    can_pick,
+                                    "Measure the densest film reference.",
+                                ) {
+                                    start_pick = Some(Pick::Dmax);
                                 }
                             },
                         );
-                        if reset {
-                            self.roll.gamma = crate::processing::DEFAULT_GAMMA;
-                            self.roll.balance = Balance::default();
-                        }
-                        let response_summary = match self.roll.response {
-                            crate::processing::Response::Original => "Classic curve".into(),
-                            crate::processing::Response::Film { toe, shoulder } => format!("Toe {toe:.2} · Shoulder {shoulder:.4}"),
-                        };
-                        let (_, reset) = presentation::section(
-                            ui, "roll-response", "Toe & shoulder", SectionHeader {
-                                summary: &response_summary,
-                                changed: self.roll.response != crate::processing::Response::film(),
-                                reset: Some(!self.roll.response.is_original() && self.roll.response != crate::processing::Response::film()),
-                                default_open: Some(false),
-                            },
-                            |ui| {
-                                match &mut self.roll.response {
+                        ui.add_enabled_ui(editable, |ui| {
+                            let inversion_changed = self.roll.gamma
+                                != crate::processing::DEFAULT_GAMMA
+                                || self.roll.balance != Balance::default();
+                            let (_, reset) = presentation::section(
+                                ui,
+                                "roll-gamma-balance",
+                                "Gamma & balance",
+                                SectionHeader {
+                                    summary: &format!(
+                                        "Gamma {:.2} · Balance {}",
+                                        self.roll.gamma,
+                                        if self.roll.balance == Balance::default() {
+                                            "neutral"
+                                        } else {
+                                            "adjusted"
+                                        }
+                                    ),
+                                    changed: inversion_changed,
+                                    reset: Some(inversion_changed),
+                                    default_open: Some(true),
+                                },
+                                |ui| {
+                                    controls::parameter(ui, Parameter::Gamma, &mut self.roll.gamma);
+                                    if controls::color(
+                                        ui,
+                                        ColorControl::GammaBalance,
+                                        &mut self.roll.balance,
+                                        can_pick,
+                                    ) {
+                                        start_pick = Some(Pick::Gamma);
+                                    }
+                                },
+                            );
+                            if reset {
+                                self.roll.gamma = crate::processing::DEFAULT_GAMMA;
+                                self.roll.balance = Balance::default();
+                            }
+                            let response_summary = match self.roll.response {
+                                crate::processing::Response::Original => "Classic curve".into(),
+                                crate::processing::Response::Film { toe, shoulder } => {
+                                    format!("Toe {toe:.2} · Shoulder {shoulder:.4}")
+                                }
+                            };
+                            let (_, reset) = presentation::section(
+                                ui,
+                                "roll-response",
+                                "Toe & shoulder",
+                                SectionHeader {
+                                    summary: &response_summary,
+                                    changed: self.roll.response
+                                        != crate::processing::Response::film(),
+                                    reset: Some(
+                                        !self.roll.response.is_original()
+                                            && self.roll.response
+                                                != crate::processing::Response::film(),
+                                    ),
+                                    default_open: Some(false),
+                                },
+                                |ui| match &mut self.roll.response {
                                     crate::processing::Response::Original => {
                                         ui.label("Classic curve · camera model 4");
-                                        if presentation::TextAction::new("Use adjustable response").help(
-                                            "Start with toe 2.5 and shoulder off; keep other adjustments.",
-                                        ).show(ui).clicked() {
-                                            self.roll.response = crate::processing::Response::film();
+                                        if presentation::TextAction::new("Use adjustable response")
+                                            .help(
+                                                "Start with toe 2.5 and shoulder off; keep other adjustments.",
+                                            )
+                                            .show(ui)
+                                            .clicked()
+                                        {
+                                            self.roll.response =
+                                                crate::processing::Response::film();
                                         }
                                     }
                                     crate::processing::Response::Film { toe, shoulder } => {
@@ -2225,57 +2327,111 @@ impl Editor {
                                         controls::parameter(ui, Parameter::Shoulder, shoulder);
                                         ui.label("Shoulder: 0 = off");
                                     }
-                                }
-                            },
-                        );
-                        if reset { self.roll.response = crate::processing::Response::film(); }
-                        if controls::white_balance(ui, "roll-white-balance", &mut self.roll.wb, can_pick) {
-                            start_pick = Some(Pick::RollWb);
-                        }
-                        let (_, reset) = presentation::section(
-                            ui, "roll-exposure", "Exposure", SectionHeader { summary: &format!("{:+.2} EV", self.roll.exposure), changed: self.roll.exposure != 0., reset: Some(self.roll.exposure != 0.), default_open: Some(false) },
-                            |ui| {
-                                controls::parameter(ui, Parameter::Exposure, &mut self.roll.exposure);
-                            },
-                        );
-                        if reset {
-                            self.roll.exposure = 0.;
-                        }
-                    });
-                });
-            } else if self.tab == 1 {
-                ui.add_enabled_ui(!reviewing, |ui| {
-                    self.crop_controls(ui);
-                    self.dust_controls(ui);
-                });
-                if self.adjustment_controls(ui, editable, can_pick) {
-                    start_pick = Some(Pick::Wb);
-                }
-            } else {
-                ui.add_enabled_ui(!reviewing && self.crop_edit.is_none() && self.auto_crop_edit.is_none() && self.flat_edit.is_none() && self.mask_edit.is_none(), |ui| {
-                    let changed = self.target != OutputTarget::DisplayP3;
-                    let (_, reset) = presentation::section(ui, "rendering-target", "Target", SectionHeader {
-                        summary: if self.target == OutputTarget::DisplayP3 { "Display P3 · 100 nit" } else { "sRGB · 100 nit" },
-                        changed, reset: Some(changed), default_open: Some(true),
-                    }, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label("Target");
-                            egui::ComboBox::from_id_salt("rendering-target")
-                                .width(150.)
-                                .selected_text(if self.target == OutputTarget::DisplayP3 { "Display P3" } else { "sRGB" })
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.target, OutputTarget::DisplayP3, "Display P3");
-                                    ui.selectable_value(&mut self.target, OutputTarget::Srgb, "sRGB");
-                                });
+                                },
+                            );
+                            if reset {
+                                self.roll.response = crate::processing::Response::film();
+                            }
+                            if controls::white_balance(
+                                ui,
+                                "roll-white-balance",
+                                &mut self.roll.wb,
+                                can_pick,
+                            ) {
+                                start_pick = Some(Pick::RollWb);
+                            }
+                            let (_, reset) = presentation::section(
+                                ui,
+                                "roll-exposure",
+                                "Exposure",
+                                SectionHeader {
+                                    summary: &format!("{:+.2} EV", self.roll.exposure),
+                                    changed: self.roll.exposure != 0.,
+                                    reset: Some(self.roll.exposure != 0.),
+                                    default_open: Some(false),
+                                },
+                                |ui| {
+                                    controls::parameter(
+                                        ui,
+                                        Parameter::Exposure,
+                                        &mut self.roll.exposure,
+                                    );
+                                },
+                            );
+                            if reset {
+                                self.roll.exposure = 0.;
+                            }
                         });
-                        ui.small("Preview + TIFF · 100 nit").on_hover_text(
-                            "Choose the output colour space, not the monitor profile. EXR is unaffected.",
-                        );
                     });
-                    if reset { self.target = OutputTarget::DisplayP3; }
-                });
-            }
-        });
+                } else if self.tab == 1 {
+                    ui.add_enabled_ui(!reviewing, |ui| {
+                        self.crop_controls(ui);
+                        self.dust_controls(ui);
+                    });
+                    if self.adjustment_controls(ui, editable, can_pick) {
+                        start_pick = Some(Pick::Wb);
+                    }
+                } else {
+                    ui.add_enabled_ui(
+                        !reviewing
+                            && self.crop_edit.is_none()
+                            && self.auto_crop_edit.is_none()
+                            && self.flat_edit.is_none()
+                            && self.mask_edit.is_none(),
+                        |ui| {
+                            let changed = self.target != OutputTarget::DisplayP3;
+                            let (_, reset) = presentation::section(
+                                ui,
+                                "rendering-target",
+                                "Target",
+                                SectionHeader {
+                                    summary: if self.target == OutputTarget::DisplayP3 {
+                                        "Display P3 · 100 nit"
+                                    } else {
+                                        "sRGB · 100 nit"
+                                    },
+                                    changed,
+                                    reset: Some(changed),
+                                    default_open: Some(true),
+                                },
+                                |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Target");
+                                        egui::ComboBox::from_id_salt("rendering-target")
+                                            .width(150.)
+                                            .selected_text(
+                                                if self.target == OutputTarget::DisplayP3 {
+                                                    "Display P3"
+                                                } else {
+                                                    "sRGB"
+                                                },
+                                            )
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(
+                                                    &mut self.target,
+                                                    OutputTarget::DisplayP3,
+                                                    "Display P3",
+                                                );
+                                                ui.selectable_value(
+                                                    &mut self.target,
+                                                    OutputTarget::Srgb,
+                                                    "sRGB",
+                                                );
+                                            });
+                                    });
+                                    ui.small("Preview + TIFF · 100 nit").on_hover_text(
+                                        "Choose the output colour space, not the monitor profile. EXR is unaffected.",
+                                    );
+                                },
+                            );
+                            if reset {
+                                self.target = OutputTarget::DisplayP3;
+                            }
+                        },
+                    );
+                }
+            });
+
         self.preferences.sections = presentation::collect_expansion(ui.ctx());
         if !reviewing {
             self.preferences.scopes_visible = self.scopes.visible;
@@ -2287,10 +2443,12 @@ impl Editor {
         if let Some(kind) = start_pick {
             self.begin_pick(kind);
         }
+
         // Render outgoing numeric controls once to commit focus loss before switching stages.
         self.tab = next_tab;
         (scope_slot, analyze)
     }
+
     fn export_dialog(&mut self, format: OutputFormat) {
         let Some(ready) = &self.ready else {
             return;
@@ -2323,9 +2481,11 @@ impl host::App for Editor {
     fn photo_fullscreen(&self) -> bool {
         self.fullscreen_requested()
     }
+
     fn photo_fullscreen_changed(&mut self, active: bool) {
         self.fullscreen_changed(active);
     }
+
     fn submission_gate(&self) -> &crate::platform::SubmissionGate {
         &self.submissions
     }
@@ -2352,6 +2512,7 @@ impl host::App for Editor {
             eprintln!("UI preferences not saved: {error}");
         }
     }
+
     fn ui(&mut self, ui: &mut egui::Ui) {
         if !self.started {
             self.started = true;
@@ -3126,7 +3287,14 @@ impl host::App for Editor {
                 "Replace this exported file?",
                 "A file already exists at this location. Exporting will overwrite it. The project and RAW files are not changed.",
                 "Replace file",
-            ).warning().detail(&detail).show(ui.ctx(), egui::Id::new("Replace existing output?"), dialog_escape_available);
+            )
+            .warning()
+            .detail(&detail)
+            .show(
+                ui.ctx(),
+                egui::Id::new("Replace existing output?"),
+                dialog_escape_available,
+            );
             match choice {
                 Some(presentation::DialogChoice::Cancel) => self.overwrite = None,
                 Some(presentation::DialogChoice::Confirm) => {

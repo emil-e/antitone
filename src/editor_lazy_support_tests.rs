@@ -1,15 +1,18 @@
 use super::*;
+
 fn state() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
     let (mut editor, send, commands) = crate::editor::tests::fixture();
     crate::editor::tests::add_ready_fixture(&mut editor);
     (editor, send, commands)
 }
+
 fn request(commands: &mpsc::Receiver<Command>) -> (u64, u64) {
     match commands.try_recv().unwrap() {
         Command::AnalysisSupport(request, loaded) => (request, loaded),
         _ => panic!("expected lazy support request"),
     }
 }
+
 #[test]
 fn picture_suggestion_is_worker_demand_and_is_transient_until_applied() {
     let (mut editor, send, commands) = state();
@@ -39,6 +42,7 @@ fn picture_suggestion_is_worker_demand_and_is_transient_until_applied() {
     );
     assert_eq!(editor.document.project, before);
 }
+
 #[test]
 fn delayed_suggestion_cannot_overwrite_drawing_cancelled_picker_or_reopened_picker() {
     for action in ["draw", "cancel", "reopen", "source", "document"] {
@@ -86,6 +90,7 @@ fn delayed_suggestion_cannot_overwrite_drawing_cancelled_picker_or_reopened_pick
         }
     }
 }
+
 #[test]
 fn accepted_geometry_and_known_missing_support_require_no_lazy_work_and_reset_keeps_roll_order() {
     for known in [
@@ -120,6 +125,7 @@ fn accepted_geometry_and_known_missing_support_require_no_lazy_work_and_reset_ke
         }))
     );
 }
+
 #[test]
 fn support_failure_does_not_change_processing_or_poison_later_demand() {
     let (mut editor, send, commands) = state();

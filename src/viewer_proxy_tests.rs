@@ -1,10 +1,12 @@
 use super::*;
+
 fn shared_source(image: &GpuImage) -> &Arc<ProcessingSource> {
     let ImageSource::Shared(source) = &image.processing.as_ref().unwrap().source else {
         panic!("shared proxy")
     };
     source
 }
+
 #[test]
 fn selected_proxy_has_one_immutable_source_and_lazy_active_target_output() {
     pollster::block_on(async {

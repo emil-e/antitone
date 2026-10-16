@@ -10,7 +10,9 @@ from stage_study import density_heal
 class Study(unittest.TestCase):
     def test_log_heal_ignores_unknowns_and_preserves_known_camera(self):
         camera = np.full((96, 96, 3), 0.02, np.float32)
-        mask = e.mask_from_shapes(camera.shape, [{'kind': 'circle', 'center': [48, 48], 'radius': 6}])
+        mask = e.mask_from_shapes(
+            camera.shape, [{"kind": "circle", "center": [48, 48], "radius": 6}]
+        )
         other = camera.copy()
         other[mask] = -100
         a, _ = density_heal(camera, mask, donor_offset=[-32, 0])
@@ -23,7 +25,9 @@ class Study(unittest.TestCase):
     def test_log_heal_rejects_nonpositive_known_transmission(self):
         camera = np.full((96, 96, 3), 0.02, np.float32)
         camera[0, 0] = 0
-        mask = e.mask_from_shapes(camera.shape, [{'kind': 'circle', 'center': [48, 48], 'radius': 6}])
+        mask = e.mask_from_shapes(
+            camera.shape, [{"kind": "circle", "center": [48, 48], "radius": 6}]
+        )
         with self.assertRaises(ValueError):
             density_heal(camera, mask)
 
@@ -35,7 +39,7 @@ class Study(unittest.TestCase):
         shape, features = context_filter(camera, mask)
         context, _ = context_filter(camera, mask, coherence_limit=0.8)
         np.testing.assert_array_equal(shape, mask)
-        self.assertGreater(features[0]['context_coherence'], 0.99)
+        self.assertGreater(features[0]["context_coherence"], 0.99)
         self.assertFalse(context.any())
 
     def test_shape_filter_rejects_long_component_without_mutating_input(self):
@@ -45,9 +49,9 @@ class Study(unittest.TestCase):
         original = mask.copy()
         filtered, features = context_filter(camera, mask)
         self.assertFalse(filtered.any())
-        self.assertGreater(features[0]['aspect'], 4)
+        self.assertGreater(features[0]["aspect"], 4)
         np.testing.assert_array_equal(mask, original)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

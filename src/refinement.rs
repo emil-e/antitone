@@ -132,6 +132,7 @@ pub fn refine(
     );
     Ok(Some(Arc::new(output)))
 }
+
 fn wait_for(device: &wgpu::Device, submission: wgpu::SubmissionIndex) -> Result<(), Error> {
     device
         .poll(wgpu::PollType::Wait {

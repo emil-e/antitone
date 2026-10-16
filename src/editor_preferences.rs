@@ -14,6 +14,7 @@ pub(super) struct Preferences {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) cache_limits: Option<super::cache_limits::CacheLimits>,
 }
+
 impl Default for Preferences {
     fn default() -> Self {
         Self {
@@ -26,6 +27,7 @@ impl Default for Preferences {
         }
     }
 }
+
 impl Preferences {
     fn validate(&self) -> Result<()> {
         if self.version != 1 {
@@ -49,6 +51,7 @@ pub(super) struct Store {
     path: PathBuf,
     saved: Option<Preferences>,
 }
+
 impl Store {
     pub(super) fn open_default() -> Result<(Self, Preferences)> {
         let home = std::env::var_os("HOME").ok_or("HOME is unavailable for UI preferences")?;
@@ -61,6 +64,7 @@ impl Store {
             .join("antitone");
         Self::open(directory.join("ui-preferences.json"))
     }
+
     pub(super) fn open(path: PathBuf) -> Result<(Self, Preferences)> {
         let saved = match std::fs::read(&path) {
             Ok(bytes) => {
@@ -74,6 +78,7 @@ impl Store {
         let preferences = saved.clone().unwrap_or_default();
         Ok((Self { path, saved }, preferences))
     }
+
     pub(super) fn save(&mut self, preferences: &Preferences) -> Result<()> {
         preferences.validate()?;
         if self.saved.as_ref() == Some(preferences) {

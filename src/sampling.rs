@@ -38,6 +38,7 @@ pub fn mean(pixels: &[DVec3]) -> Result<DVec3, Error> {
 pub fn weighted_mean(pixels: &[(DVec3, f64)]) -> Result<DVec3, Error> {
     weighted_mean_iter(pixels.iter().copied().map(Ok))
 }
+
 pub fn weighted_mean_iter(
     pixels: impl IntoIterator<Item = Result<(DVec3, f64), Error>>,
 ) -> Result<DVec3, Error> {
@@ -161,6 +162,7 @@ pub fn roll_neutral_weighted(
 ) -> Result<Balance, Error> {
     fit_roll_neutral(calibration, roll, scan_patch.iter().copied(), camera_to_ap1)
 }
+
 fn fit_roll_neutral(
     calibration: Calibration,
     roll: RollSettings,

@@ -108,6 +108,7 @@ pub(in crate::editor) async fn fixture() -> (
     editor.sync_document();
     (editor, send, receiver, device, queue)
 }
+
 fn local(exposure: f64) -> LocalAdjustment {
     LocalAdjustment {
         mask: GradientMask::Linear {
@@ -123,11 +124,13 @@ fn local(exposure: f64) -> LocalAdjustment {
         strength: 0.8,
     }
 }
+
 fn positive(editor: &Editor) -> ProcessingInput {
     editor
         .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
         .unwrap()
 }
+
 fn frame(editor: &mut Editor, context: &egui::Context) {
     let mut output = context.run_ui(
         egui::RawInput {
@@ -479,6 +482,7 @@ fn tracked_grade(editor: &Editor, id: SourceId) -> (std::sync::Weak<GpuPhotoGrad
     let grade = &entries.iter().find(|entry| entry.id == id).unwrap().grade;
     (Arc::downgrade(grade), grade.byte_len())
 }
+
 fn live_grade_buffers(grades: &[(std::sync::Weak<GpuPhotoGrade>, u64)]) -> (usize, u64) {
     grades
         .iter()

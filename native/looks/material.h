@@ -33,6 +33,7 @@ struct Material {
         calibrate(.18);
         calibrate(paperGray());
     }
+
     V attenuate(V h) const {
 #ifdef LOOK_NEUTRAL_DENSITY
         double x = std::clamp(h[0], log_exposure[0], log_exposure[255]);
@@ -60,6 +61,7 @@ struct Material {
         return rgb;
 #endif
     }
+
     void calibrate(double gray) {
 #ifdef LOOK_NEUTRAL_DENSITY
         double lo = log_exposure[0], hi = log_exposure[255];
@@ -96,6 +98,7 @@ struct Material {
         if (maxabs(attenuate(exposure0) - V{gray, gray, gray}) > 1e-9)
             throw std::runtime_error("gray calibration failed");
     }
+
     V operator()(V input) const {
         for (double c : input)
             if (!std::isfinite(c))

@@ -53,6 +53,7 @@ fn reply(
         .collect();
     (id, analysis_review::Approved { entries, files })
 }
+
 pub(super) fn prepared(editor: &mut Editor, receiver: &mpsc::Receiver<Command>) {
     let (id, approved) = reply(editor, receiver);
     editor.analysis_areas_result(id, Ok(Some(approved)));
@@ -118,6 +119,7 @@ fn both_sampling_frames_select_directly_and_resize_without_changing_accepted_are
         "labels disambiguate coincident frames"
     );
 }
+
 #[test]
 fn drawing_missing_opening_does_not_invent_picture_support_and_last_picture_edit_enables_analyze() {
     let (mut editor, _send, receiver) = ready_state();
@@ -160,6 +162,7 @@ fn drawing_missing_opening_does_not_invent_picture_support_and_last_picture_edit
             .any(|c| matches!(c, Command::Analyze(..)))
     );
 }
+
 #[test]
 fn opening_exception_updates_automatic_picture_coverage_but_not_authored_picture_or_peer() {
     let (mut editor, _send, receiver) = ready_state();
@@ -199,6 +202,7 @@ fn opening_exception_updates_automatic_picture_coverage_but_not_authored_picture
     );
     assert_eq!(editor.document.project, before);
 }
+
 #[test]
 fn all_ordered_photo_fields_control_the_warning_in_one_review_not_a_second_dialog() {
     for field in 0..7 {
@@ -235,6 +239,7 @@ fn all_ordered_photo_fields_control_the_warning_in_one_review_not_a_second_dialo
         assert!(receiver.try_recv().is_err());
     }
 }
+
 #[test]
 fn failed_analysis_dispatch_tears_down_review_and_restores_working_photo() {
     let (mut editor, _send, receiver) = ready_state();
@@ -277,6 +282,7 @@ fn failed_analysis_dispatch_tears_down_review_and_restores_working_photo() {
     );
     assert_eq!(editor.document.project, before);
 }
+
 #[test]
 fn default_photos_still_require_area_review_but_retired_grades_do_not_trigger_reset_warning() {
     let (mut editor, _send, receiver) = ready_state();
@@ -308,6 +314,7 @@ fn default_photos_still_require_area_review_but_retired_grades_do_not_trigger_re
         1.3
     );
 }
+
 fn change(editor: &mut Editor, kind: usize) {
     match kind {
         0 => editor.id += 1,
@@ -324,6 +331,7 @@ fn change(editor: &mut Editor, kind: usize) {
     }
     editor.sync_document();
 }
+
 #[test]
 fn stale_preparation_cannot_open_review_or_change_accepted_state() {
     for changed in 0..9 {
@@ -341,6 +349,7 @@ fn stale_preparation_cannot_open_review_or_change_accepted_state() {
         assert!(receiver.try_recv().is_err());
     }
 }
+
 #[test]
 fn stale_review_cannot_authorize_analyze() {
     for changed in 0..9 {
@@ -359,6 +368,7 @@ fn stale_review_cannot_authorize_analyze() {
         );
     }
 }
+
 #[test]
 fn preparation_cancellation_and_late_or_failed_replies_preserve_grade_and_areas() {
     for fail in [false, true] {
@@ -381,6 +391,7 @@ fn preparation_cancellation_and_late_or_failed_replies_preserve_grade_and_areas(
         assert!(!editor.busy);
     }
 }
+
 #[test]
 fn per_photo_edits_are_drafts_until_analysis_success_and_do_not_copy_to_peers() {
     let (mut editor, _send, receiver) = ready_state();
@@ -413,6 +424,7 @@ fn per_photo_edits_are_drafts_until_analysis_success_and_do_not_copy_to_peers() 
     assert_eq!(editor.document.project, before);
     assert!(editor.analysis_review.is_none() && editor.pick.is_none());
 }
+
 #[test]
 fn changed_file_while_a_completed_native_reply_waits_cannot_promote_its_candidate() {
     let (mut editor, _send, receiver) = ready_state();
@@ -432,6 +444,7 @@ fn changed_file_while_a_completed_native_reply_waits_cannot_promote_its_candidat
     assert!(editor.analysis_review.is_none());
     assert!(editor.status.contains("source changed"));
 }
+
 #[test]
 fn missing_or_revised_sources_cannot_start_analyze_even_after_area_confirmation() {
     let (mut editor, _send, receiver) = ready_state();
@@ -455,9 +468,9 @@ fn missing_or_revised_sources_cannot_start_analyze_even_after_area_confirmation(
     assert!(editor.analysis_pending.is_none() && receiver.try_recv().is_err());
     assert!(editor.status.contains("source changed"));
 }
+
 #[test]
-fn review_reveals_roll_controls_without_persisting_temporary_scope_visibility_and_restores_context()
-{
+fn roll_review_controls_restore_scope_visibility_and_context() {
     for scopes_visible in [false, true] {
         for exit in 0..5 {
             let (mut editor, _send, receiver) = ready_state();
@@ -497,6 +510,7 @@ fn review_reveals_roll_controls_without_persisting_temporary_scope_visibility_an
         }
     }
 }
+
 #[test]
 fn valid_sampling_exceptions_have_no_inspect_badge_or_extra_photo_warning() {
     let (mut editor, _send, receiver) = ready_state();
@@ -516,6 +530,7 @@ fn valid_sampling_exceptions_have_no_inspect_badge_or_extra_photo_warning() {
             .any(|(label, _)| label == "Inspect" || label == "Need area")
     );
 }
+
 #[test]
 fn composed_review_shows_reset_consequence_and_has_one_analyze_or_cancel_action() {
     for accept in [false, true] {
@@ -567,6 +582,7 @@ fn composed_review_shows_reset_consequence_and_has_one_analyze_or_cancel_action(
         }
     }
 }
+
 #[test]
 fn review_browsing_and_cancel_restore_working_photo_without_changing_multi_selection() {
     let (mut editor, _send, receiver) = ready_state();

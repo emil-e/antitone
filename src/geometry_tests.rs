@@ -80,6 +80,7 @@ const AREA: SourceRegion = SourceRegion {
     width: 5,
     height: 3,
 };
+
 fn flips() -> [Flips; 4] {
     [
         Flips::default(),
@@ -97,6 +98,7 @@ fn flips() -> [Flips; 4] {
         },
     ]
 }
+
 fn rolls() -> impl Iterator<Item = RollOrientation> {
     [
         QuarterTurns::Zero,
@@ -112,9 +114,11 @@ fn rolls() -> impl Iterator<Item = RollOrientation> {
         })
     })
 }
+
 fn fixture(roll: RollOrientation, photo: PhotoOrientation) -> Vec<Vec<[u32; 2]>> {
     fixture_region(AREA, roll, photo)
 }
+
 fn fixture_region(
     area: SourceRegion,
     roll: RollOrientation,
@@ -158,6 +162,7 @@ fn fixture_region(
     }
     image
 }
+
 #[test]
 fn every_discrete_composition_matches_independent_pixel_permutation_and_roundtrips() {
     for roll in rolls() {
@@ -200,6 +205,7 @@ fn every_discrete_composition_matches_independent_pixel_permutation_and_roundtri
         }
     }
 }
+
 #[test]
 fn displayed_turn_actions_rotate_flipped_photos_and_are_reversible() {
     for roll in rolls() {
@@ -224,6 +230,7 @@ fn displayed_turn_actions_rotate_flipped_photos_and_are_reversible() {
         }
     }
 }
+
 #[test]
 fn roll_turn_actions_rotate_the_scan_baseline_and_are_reversible() {
     for roll in rolls() {
@@ -246,6 +253,7 @@ fn roll_turn_actions_rotate_the_scan_baseline_and_are_reversible() {
         assert_eq!(turned, roll);
     }
 }
+
 #[test]
 fn texture_mapping_uses_the_same_source_coordinates_as_export() {
     for roll in rolls() {
@@ -290,6 +298,7 @@ fn texture_mapping_uses_the_same_source_coordinates_as_export() {
         }
     }
 }
+
 #[test]
 fn source_raster_matches_nearest_centres_for_sparse_and_full_pixel_grids() {
     for size in [[5, 3], [2, 1], [9, 7]] {
@@ -323,6 +332,7 @@ fn source_raster_matches_nearest_centres_for_sparse_and_full_pixel_grids() {
     );
     assert!(raster.source_pixel([u32::MAX, 0]).is_err());
 }
+
 #[test]
 fn crops_preserve_selected_content_through_every_orientation_and_texture_adapter() {
     let region = SourceRegion {
@@ -400,6 +410,7 @@ fn crops_preserve_selected_content_through_every_orientation_and_texture_adapter
         }
     }
 }
+
 #[test]
 fn invalid_regions_and_empty_rasters_are_rejected() {
     assert!(SourceRaster::new(AREA, [0, 1]).is_err());

@@ -1,16 +1,19 @@
 use super::material::Selection;
 use super::*;
 use crate::region_timing::timed;
+
 #[derive(Clone)]
 struct Run {
     points: Vec<([f64; 2], bool)>,
     angle: f64,
     rays: usize,
 }
+
 pub(super) fn project([x, y]: [f64; 2], angle: f64) -> [f64; 2] {
     let (s, c) = angle.to_radians().sin_cos();
     [c * x + s * y, -s * x + c * y]
 }
+
 pub(super) fn bounds(size: [u32; 2], angle: f64, inset: f64) -> [f64; 4] {
     let [w, h] = size.map(f64::from);
     let [x, y] = project([w / 2., h / 2.], angle);
@@ -21,10 +24,12 @@ pub(super) fn bounds(size: [u32; 2], angle: f64, inset: f64) -> [f64; 4] {
         y + h / 2. - inset,
     ]
 }
+
 pub(super) fn polygon(b: [f64; 4], angle: f64) -> Option<Quad> {
     let [l, r, t, bot] = b;
     (l < r && t < bot).then(|| [[l, t], [r, t], [r, bot], [l, bot]].map(|p| project(p, -angle)))
 }
+
 impl PictureGeometry {
     /// Complete independent frame in source pixels, without opening or coverage limits.
     /// Side presence alone does not establish strength; consumers must check provenance.
@@ -48,6 +53,7 @@ impl PictureGeometry {
             })
         })
     }
+
     pub(super) fn fit(&self, active: SourceRegion, opening: Quad) -> Option<Quad> {
         let scale = (f64::from(self.size[0]) / 768.).max(f64::from(self.size[1]) / 512.);
         let mut b = bounds(self.size, self.angle, 2. * scale);
@@ -96,6 +102,7 @@ impl PictureGeometry {
         })
     }
 }
+
 fn runs(
     selection: &Selection,
     size: [u32; 2],
@@ -190,6 +197,7 @@ fn runs(
         })
     })
 }
+
 fn opening_side(
     side: usize,
     run: Option<&Run>,
@@ -223,6 +231,7 @@ fn opening_side(
         (coverage.min(lo - scale), true)
     }
 }
+
 fn weak_border(
     side: usize,
     b: [f64; 4],
@@ -334,6 +343,7 @@ fn weak_border(
         Some(best.0)
     }
 }
+
 impl RollModel {
     /// Measurements are unchanged equal/finer camera codes from this same native development.
     pub fn areas(
@@ -367,6 +377,7 @@ impl RollModel {
             )
         )
     }
+
     #[cfg(all(test, feature = "raw"))]
     pub(super) fn local_areas(
         &self,
@@ -381,6 +392,7 @@ impl RollModel {
         fit(c, selection, measurement_size, measurement)
     }
 }
+
 #[cfg(test)]
 pub(super) fn fit(
     c: &Capture,
@@ -390,6 +402,7 @@ pub(super) fn fit(
 ) -> Result<Areas, Error> {
     fit_with_opening(c, selection, measurement_size, measurement, None)
 }
+
 fn fit_with_opening(
     c: &Capture,
     selection: Selection,

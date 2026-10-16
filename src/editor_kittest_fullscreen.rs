@@ -8,6 +8,7 @@ fn native(harness: &mut Harness<'_, Editor>, fullscreen: bool) {
         .unwrap()
         .fullscreen = Some(fullscreen);
 }
+
 fn window_size(harness: &mut Harness<'_, Editor>, size: egui::Vec2) {
     harness.set_size(size);
     harness
@@ -17,6 +18,7 @@ fn window_size(harness: &mut Harness<'_, Editor>, size: egui::Vec2) {
         .unwrap()
         .inner_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size));
 }
+
 fn reveal(harness: &mut Harness<'_, Editor>) {
     let canvas = harness.ctx.content_rect();
     harness.event(egui::Event::PointerMoved(egui::pos2(
@@ -25,6 +27,7 @@ fn reveal(harness: &mut Harness<'_, Editor>) {
     )));
     harness.step();
 }
+
 fn elapse(harness: &mut Harness<'_, Editor>, seconds: f64) {
     harness.input_mut().time = Some(harness.ctx.input(|input| input.time) + seconds);
     harness.step();
@@ -33,6 +36,7 @@ fn elapse(harness: &mut Harness<'_, Editor>, seconds: f64) {
         harness.step();
     }
 }
+
 fn key(harness: &mut Harness<'_, Editor>, key: egui::Key) {
     harness.event(egui::Event::Key {
         key,

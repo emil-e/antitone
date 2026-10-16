@@ -45,6 +45,7 @@ pub(super) struct StagePrefixKey {
     upstream: PrefixKey,
     preceding: Vec<LocalAdjustment>,
 }
+
 impl StagePrefixKey {
     pub(super) fn new(
         stamp: [u64; 2],

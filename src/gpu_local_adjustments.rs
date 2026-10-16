@@ -21,6 +21,7 @@ struct LocalParameters {
     tail: [Vec4; 5],
     flags: [u32; 4],
 }
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct LocalContext {
@@ -41,12 +42,14 @@ pub struct GpuPhotoGrade {
     area: SourceRegion,
     active: u32,
 }
+
 struct Prepared {
     parameters: ProcessingParameters,
     packed: Vec<LocalParameters>,
     area: SourceRegion,
     active: u32,
 }
+
 impl GpuPhotoGrade {
     /// Check the complete candidate and adapter limits without allocating GPU resources.
     pub fn validate(
@@ -185,6 +188,7 @@ impl GpuPhotoGrade {
             active,
         })
     }
+
     pub fn snapshot(&self) -> &PhotoGradeSnapshot {
         &self.snapshot
     }
@@ -236,9 +240,11 @@ fn supported(bound: f64) -> Result<(), Error> {
         Ok(())
     }
 }
+
 fn absolute_product(matrix: DMat3, bound: DVec3) -> DVec3 {
     matrix.x_axis.abs() * bound.x + matrix.y_axis.abs() * bound.y + matrix.z_axis.abs() * bound.z
 }
+
 fn require_normal_precision(sensitivities: &[f64]) -> Result<(), Error> {
     // Reserve part of the existing absolute tolerance for unsupported tiny
     // signals. Every potentially observable value must retain all 53 bits in
@@ -254,6 +260,7 @@ fn require_normal_precision(sensitivities: &[f64]) -> Result<(), Error> {
     }
     Ok(())
 }
+
 fn stage_bounds(adjustment: LocalAdjustment, input: f64) -> Result<(f64, f64, f64), Error> {
     let mut sensitivity = (adjustment.photo.exposure * adjustment.strength)
         .max(0.)
@@ -292,6 +299,7 @@ fn stage_bounds(adjustment: LocalAdjustment, input: f64) -> Result<(f64, f64, f6
         sensitivity * creative_sensitivity,
     ))
 }
+
 impl LocalParameters {
     fn new(adjustment: LocalAdjustment, area: SourceRegion) -> Result<Self, Error> {
         let (kind, origin, x_axis, y_axis, radii, feather) = match adjustment.mask {
@@ -353,8 +361,13 @@ impl LocalParameters {
         ];
         let mut result = Self::zeroed();
         for (i, row) in rows.into_iter().enumerate() {
-            let split = split_constants(DVec3::new(row[0], row[1], row[2]), row[3])
-                .map_err(|_| Error::Gpu("local controls or mask geometry cannot be represented precisely on the GPU".into()))?;
+            let split =
+                split_constants(DVec3::new(row[0], row[1], row[2]), row[3]).map_err(|_| {
+                    Error::Gpu(
+                        "local controls or mask geometry cannot be represented precisely on the GPU"
+                        .into(),
+                    )
+                })?;
             result.high[i] = split[0];
             result.low[i] = split[1];
             result.tail[i] = split[2];
@@ -368,6 +381,7 @@ impl LocalParameters {
         Ok(result)
     }
 }
+
 pub(super) fn empty_buffer(device: &wgpu::Device) -> wgpu::Buffer {
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("empty local grade"),
@@ -375,6 +389,7 @@ pub(super) fn empty_buffer(device: &wgpu::Device) -> wgpu::Buffer {
         usage: wgpu::BufferUsages::STORAGE,
     })
 }
+
 pub(super) fn context_buffer(
     device: &wgpu::Device,
     count: u32,

@@ -12,6 +12,7 @@ use tiff::{
     decoder::{Decoder, DecodingResult},
     tags::Tag,
 };
+
 #[test]
 fn film_exports_reopen_with_actual_response_and_unchanged_target_and_ap0_pixels() {
     let directory = tempfile::tempdir().unwrap();
@@ -126,6 +127,7 @@ fn film_exports_reopen_with_actual_response_and_unchanged_target_and_ap0_pixels(
         }
     }
 }
+
 #[test]
 fn invalid_response_metadata_cannot_create_an_export() {
     let directory = tempfile::tempdir().unwrap();

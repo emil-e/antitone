@@ -21,6 +21,7 @@ pub(super) enum FileAction {
     SaveAs,
     Close,
 }
+
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Transition {
     New,
@@ -39,6 +40,7 @@ impl Editor {
             }
         }
     }
+
     pub(super) fn guard_transition(&mut self, transition: Transition, context: &egui::Context) {
         self.sync_document();
         if self.document.dirty() {
@@ -47,6 +49,7 @@ impl Editor {
             self.perform_transition(transition, context);
         }
     }
+
     pub(super) fn queue_save(
         &mut self,
         path: PathBuf,
@@ -60,6 +63,7 @@ impl Editor {
             self.transition = self.after_save.take();
         }
     }
+
     fn save_dialog(&mut self, save_as: bool, after: Option<Transition>) {
         if !save_as && let Some(path) = self.document.path.clone() {
             self.queue_save(path, crate::project::Save::Replace, after);
@@ -92,6 +96,7 @@ impl Editor {
             }
         }
     }
+
     pub(super) fn file_action(&mut self, action: FileAction, context: &egui::Context) {
         if self.crop_edit.is_some() || self.auto_crop_edit.is_some() {
             self.status =
@@ -123,6 +128,7 @@ impl Editor {
             FileAction::SaveAs => self.save_dialog(true, None),
         }
     }
+
     pub(super) fn document_dialogs(&mut self, context: &egui::Context, escape_available: bool) {
         if let Some(transition) = self.transition.clone() {
             let explanation = match &transition {
@@ -166,7 +172,14 @@ impl Editor {
                 "Replace this project file?",
                 "A project already exists at this location. Replacing it overwrites the saved project, not its RAW files.",
                 "Replace project",
-            ).warning().detail(&detail).show(context, egui::Id::new("Replace existing project?"), escape_available);
+            )
+            .warning()
+            .detail(&detail)
+            .show(
+                context,
+                egui::Id::new("Replace existing project?"),
+                escape_available,
+            );
             match choice {
                 Some(DialogChoice::Cancel) => self.project_overwrite = None,
                 Some(DialogChoice::Confirm) => {

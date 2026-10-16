@@ -6,6 +6,7 @@ use antitone::{
 };
 use glam::{DMat3, DVec3};
 use std::sync::Arc;
+
 fn fixture() -> Project {
     let mut project = Project {
         development: Some(Development::new("test-backend".into(), [2., 1., 1.7, 1.])),
@@ -51,6 +52,7 @@ fn fixture() -> Project {
     ));
     project
 }
+
 #[test]
 fn map_roundtrip_is_exact_and_does_not_require_reference_file_or_resample_rgb() {
     let mut project = fixture();
@@ -95,6 +97,7 @@ fn map_roundtrip_is_exact_and_does_not_require_reference_file_or_resample_rgb() 
     assert!(!json.contains("flat_field"));
     assert_eq!(serde_json::from_str::<Project>(&json).unwrap(), plain);
 }
+
 #[test]
 fn contract_identity_geometry_and_incompatible_sources_reject() {
     let project = fixture();
@@ -126,6 +129,7 @@ fn contract_identity_geometry_and_incompatible_sources_reject() {
     json["flat_field"]["map"]["size"] = serde_json::json!([0, 2]);
     assert!(serde_json::from_value::<Project>(json).is_err());
 }
+
 #[test]
 fn reference_kept_visible_and_removing_it_from_order_does_not_remove_map() {
     let mut project = fixture();

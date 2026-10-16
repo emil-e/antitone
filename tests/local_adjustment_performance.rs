@@ -62,10 +62,12 @@ fn locals(count: usize, photographic: bool) -> Vec<LocalAdjustment> {
         })
         .collect()
 }
+
 fn median(mut values: Vec<f64>) -> f64 {
     values.sort_by(f64::total_cmp);
     values[values.len() / 2]
 }
+
 fn completion(
     device: &wgpu::Device,
     queue: &wgpu::Queue,

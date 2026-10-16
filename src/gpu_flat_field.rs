@@ -11,6 +11,7 @@ pub struct SourceGeometry {
     raster: SourceRaster,
     second: Option<SourceRaster>,
 }
+
 impl SourceGeometry {
     pub fn new(area: [u32; 4], size: [u32; 2]) -> Result<Self, Error> {
         for axis in 0..2 {
@@ -33,6 +34,7 @@ impl SourceGeometry {
             second: None,
         })
     }
+
     /// Two real original rectangles, concatenated vertically without resampling.
     #[cfg(all(feature = "raw", feature = "export"))]
     pub(crate) fn original_pair(origins: [[u32; 2]; 2], size: [u32; 2]) -> Result<Self, Error> {
@@ -45,14 +47,17 @@ impl SourceGeometry {
             Some(Self::new([origins[1][0], origins[1][1], size[0], size[1]], size)?.raster);
         Ok(first)
     }
+
     pub(super) fn regions(self) -> impl Iterator<Item = crate::geometry::SourceRegion> {
         [Some(self.raster.region()), self.second.map(|r| r.region())]
             .into_iter()
             .flatten()
     }
+
     pub(super) fn is_pair(self) -> bool {
         self.second.is_some()
     }
+
     pub fn pixel(&self, index: u32) -> Result<[u32; 2], Error> {
         let size = self.raster.size();
         if index >= self.pixels() {
@@ -66,13 +71,16 @@ impl SourceGeometry {
         };
         raster.source_pixel([index % size[0], index / size[0]])
     }
+
     pub fn region(&self) -> crate::geometry::SourceRegion {
         self.raster.region()
     }
+
     pub(crate) fn size(&self) -> [u32; 2] {
         let [width, height] = self.raster.size();
         [width, height * if self.is_pair() { 2 } else { 1 }]
     }
+
     pub(super) fn pixels(&self) -> u32 {
         let size = self.size();
         size[0] * size[1]
@@ -85,6 +93,7 @@ pub struct GpuFlatField {
     pub(super) field: Arc<FlatField>,
     bounds: (DVec3, DVec3),
 }
+
 impl GpuFlatField {
     pub fn new(device: &wgpu::Device, field: Arc<FlatField>) -> Result<Self, Error> {
         let a = field.area();
@@ -110,12 +119,15 @@ impl GpuFlatField {
             field,
         })
     }
+
     pub fn byte_len(&self) -> u64 {
         self.nodes.size()
     }
+
     pub fn field(&self) -> &Arc<FlatField> {
         &self.field
     }
+
     pub(super) fn validate_matrix(&self, matrix: DMat3) -> Result<(), Error> {
         let (min, max) = self.bounds;
         if min.min_element() / 65535. < f32::MIN_POSITIVE as f64 {
@@ -141,6 +153,7 @@ impl GpuFlatField {
         Ok(())
     }
 }
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(super) struct FieldGeometry {
@@ -150,6 +163,7 @@ pub(super) struct FieldGeometry {
     dimensions: [u32; 4],
     packed_origins: [u32; 4],
 }
+
 impl FieldGeometry {
     pub(super) fn uncorrected(source: Option<SourceGeometry>) -> Self {
         let Some(source) = source else {

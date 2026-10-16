@@ -21,17 +21,20 @@ fn axes(angle: f64) -> [DVec2; 2] {
     let (sin, cos) = angle.sin_cos();
     [DVec2::new(cos, sin), DVec2::new(-sin, cos)]
 }
+
 fn position(center: SourcePoint, radii: [f64; 2], angle: f64, unit: DVec2) -> SourcePoint {
     let [x, y] = axes(angle);
     SourcePoint(
         (DVec2::from_array(center.0) + x * radii[0] * unit.x + y * radii[1] * unit.y).to_array(),
     )
 }
+
 fn normalized_radius(point: SourcePoint, center: SourcePoint, radii: [f64; 2], angle: f64) -> f64 {
     let delta = DVec2::from_array(point.0) - DVec2::from_array(center.0);
     let [x, y] = axes(angle);
     (delta.dot(x) / radii[0]).hypot(delta.dot(y) / radii[1])
 }
+
 fn handles(mask: GradientMask, layout: CanvasLayout) -> Vec<(egui::Pos2, Handle)> {
     let GradientMask::Radial {
         center,
@@ -75,9 +78,11 @@ fn handles(mask: GradientMask, layout: CanvasLayout) -> Vec<(egui::Pos2, Handle)
     }
     result
 }
+
 pub(super) fn hit(mask: GradientMask, layout: CanvasLayout, point: egui::Pos2) -> bool {
     handle_at(Some(mask), layout, point) != Handle::New
 }
+
 fn handle_at(mask: Option<GradientMask>, layout: CanvasLayout, point: egui::Pos2) -> Handle {
     let Some(
         mask @ GradientMask::Radial {
@@ -109,6 +114,7 @@ fn handle_at(mask: Option<GradientMask>, layout: CanvasLayout, point: egui::Pos2
         Handle::New
     }
 }
+
 impl RadialDrag {
     pub(super) fn begin(
         mask: Option<GradientMask>,
@@ -124,6 +130,7 @@ impl RadialDrag {
             feather,
         }
     }
+
     pub(super) fn update(&self, point: egui::Pos2) -> GradientMask {
         let next = source_point(self.layout, point);
         if next == self.point

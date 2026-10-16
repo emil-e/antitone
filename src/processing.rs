@@ -31,18 +31,22 @@ impl Response {
     pub const fn original() -> Self {
         Self::Original
     }
+
     pub const fn film() -> Self {
         Self::Film {
             toe: DEFAULT_TOE,
             shoulder: 0.0,
         }
     }
+
     pub fn is_original(&self) -> bool {
         matches!(self, Self::Original)
     }
+
     pub fn processing_model(self) -> u32 {
         crate::PROCESSING_MODEL_VERSION
     }
+
     pub fn shape(self) -> Result<(f64, f64), Error> {
         let Self::Film { toe, shoulder } = self else {
             return Ok((1.0, 0.0));
@@ -168,15 +172,19 @@ pub struct PhotoSettings {
     #[cfg_attr(feature = "project", serde(default = "default_colour_mix"))]
     pub saturation_density: f64,
 }
+
 fn identity_amount() -> f64 {
     1.
 }
+
 fn default_pivot() -> f64 {
     DEFAULT_PIVOT
 }
+
 fn default_colour_mix() -> f64 {
     DEFAULT_COLOUR_MIX
 }
+
 impl Default for PhotoSettings {
     fn default() -> Self {
         Self {
@@ -190,6 +198,7 @@ impl Default for PhotoSettings {
         }
     }
 }
+
 impl PhotoSettings {
     pub fn validate(self) -> Result<Self, Error> {
         exposure_multiplier(self.exposure)?;
@@ -197,6 +206,7 @@ impl PhotoSettings {
         crate::photographic::Grade::new(self)?;
         Ok(self)
     }
+
     /// Measurement is before Photo WB and creative grading, retaining exposure.
     pub fn before_white_balance(self) -> Self {
         Self {

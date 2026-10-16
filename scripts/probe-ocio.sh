@@ -4,6 +4,8 @@
 # Writes .cache/probes artifacts; --camera regenerates authored RAW inputs for the optional extension.
 # Numerical failures propagate; this does not establish photographic or display acceptance.
 set -eu
+
 cd "$(dirname "$0")/.."
+
 ./scripts/generate-ocio-reference.sh "$@"
 cargo run --locked --features gpu --bin antitone-gpu-probe -- "$@"

@@ -35,6 +35,7 @@ pub(super) fn measured_areas() -> Areas {
         ..Default::default()
     }
 }
+
 fn default_crop(active: Rect, areas: &Areas) -> Crop {
     framing::inward_margin(
         framing::propose(active, areas).unwrap(),
@@ -43,6 +44,7 @@ fn default_crop(active: Rect, areas: &Areas) -> Crop {
     )
     .unwrap()
 }
+
 pub(super) fn fixture() -> (Editor, tempfile::TempDir, mpsc::Receiver<Command>) {
     let (mut editor, _messages, commands) = crate::editor::tests::fixture();
     crate::editor::tests::add_ready_fixture(&mut editor);
@@ -76,6 +78,7 @@ pub(super) fn fixture() -> (Editor, tempfile::TempDir, mpsc::Receiver<Command>) 
     editor.sync_document();
     (editor, directory, commands)
 }
+
 fn small() -> Crop {
     Crop::from_region(Rect {
         x: 200,
@@ -84,9 +87,11 @@ fn small() -> Crop {
         height: 90,
     })
 }
+
 fn preview(editor: &Editor, id: SourceId) -> Option<Crop> {
     editor.auto_crop_preview(id).expect("fixed proposal member")
 }
+
 fn browse(editor: &mut Editor, index: usize) {
     // Exercise production selection/load state, then deliver compatible metadata without RAW decoding.
     let mut ready = editor.ready.take().unwrap();
@@ -101,6 +106,7 @@ fn browse(editor: &mut Editor, index: usize) {
     editor.ready = Some(ready);
     editor.busy = false;
 }
+
 #[test]
 fn batch_crop_closes_local_editing_and_preserves_masks_on_apply_and_cancel() {
     for apply in [false, true] {
@@ -211,6 +217,7 @@ fn partial_proposals_keep_source_reasons_without_warning_about_uncaptured_photos
     assert!(ids.iter().all(|&id| e.source_tool_warning(id).is_none()));
     assert_eq!(e.document.project, before);
 }
+
 #[test]
 fn all_failed_attempts_stay_selected_with_reasons_but_cannot_apply_or_edit_crops() {
     let (mut e, _directory, commands) = fixture();
@@ -239,6 +246,7 @@ fn all_failed_attempts_stay_selected_with_reasons_but_cannot_apply_or_edit_crops
     assert!(e.auto_crop_edit.is_none());
     assert_eq!(e.document.project, before);
 }
+
 #[test]
 fn scopes_capture_drafts_and_apply_only_their_fixed_successful_sources() {
     let (mut e, _directory, commands) = fixture();
@@ -292,6 +300,7 @@ fn scopes_capture_drafts_and_apply_only_their_fixed_successful_sources() {
         "no hidden Analyze, RAW reload or grading work"
     );
 }
+
 #[test]
 fn abstentions_preserve_previous_crops_without_preventing_other_proposals() {
     let (mut e, directory, _commands) = fixture();
@@ -321,6 +330,7 @@ fn abstentions_preserve_previous_crops_without_preventing_other_proposals() {
     assert_eq!(e.document.project, expected);
     assert!(e.auto_crop_edit.is_none(), "{}", e.status);
 }
+
 #[test]
 fn loaded_file_freshness_survives_thumbnail_seed_consumption() {
     let (mut e, directory, _commands) = fixture();
@@ -347,6 +357,7 @@ fn loaded_file_freshness_survives_thumbnail_seed_consumption() {
     e.finish_crop(false);
     assert_eq!(e.document.project, before);
 }
+
 #[test]
 fn margin_uses_originals_and_target_identity_across_browsing_and_reselection() {
     let (mut e, _directory, _commands) = fixture();
@@ -407,6 +418,7 @@ fn margin_uses_originals_and_target_identity_across_browsing_and_reselection() {
         "transient preference is reused, not persisted crop data"
     );
 }
+
 #[test]
 fn cancel_restores_entry_view_and_never_installs_preview_crops() {
     let (mut e, _directory, _commands) = fixture();
@@ -442,6 +454,7 @@ fn cancel_restores_entry_view_and_never_installs_preview_crops() {
     assert_eq!(e.viewport, viewport);
     assert!(e.auto_crop_edit.is_none() && !e.auto_crop_context());
 }
+
 #[test]
 fn apply_is_atomic_when_any_source_file_changes_after_the_draft() {
     let (mut e, directory, _commands) = fixture();
@@ -465,6 +478,7 @@ fn apply_is_atomic_when_any_source_file_changes_after_the_draft() {
     e.finish_auto_crop(false);
     assert_eq!(e.document.project, before);
 }
+
 #[test]
 fn stale_metadata_evidence_authored_crops_order_and_document_cannot_be_promoted() {
     for case in 0..8 {
@@ -521,6 +535,7 @@ fn stale_metadata_evidence_authored_crops_order_and_document_cannot_be_promoted(
         assert_eq!(e.document.project, before);
     }
 }
+
 #[test]
 fn development_change_and_invalid_margins_do_not_mutate_the_draft_or_document() {
     let (mut e, _directory, _commands) = fixture();
@@ -543,6 +558,7 @@ fn development_change_and_invalid_margins_do_not_mutate_the_draft_or_document() 
     e.finish_auto_crop(false);
     assert_eq!(e.document.project, changed);
 }
+
 #[test]
 fn a_whole_source_proposal_is_an_explicit_draft_reset_not_an_absent_override() {
     let (mut e, _directory, _commands) = fixture();
@@ -568,6 +584,7 @@ fn a_whole_source_proposal_is_an_explicit_draft_reset_not_an_absent_override() {
     assert_eq!(e.crop, None);
     assert_eq!(e.document.project.source(id).unwrap().crop, None);
 }
+
 #[test]
 fn draft_tool_blocks_competing_tools_document_commands_export_and_removal() {
     let (mut e, directory, commands) = fixture();
@@ -607,6 +624,7 @@ fn draft_tool_blocks_competing_tools_document_commands_export_and_removal() {
     assert_eq!(e.document.project, before);
     assert!(matches!(commands.try_recv(), Ok(Command::Document(..))));
 }
+
 #[test]
 fn photo_initialization_stays_in_manual_crop_and_keeps_its_cancel_baseline() {
     let (mut e, _directory, commands) = fixture();
@@ -636,6 +654,7 @@ fn photo_initialization_stays_in_manual_crop_and_keeps_its_cancel_baseline() {
     assert_eq!(e.document.project, accepted);
     assert!(commands.try_recv().is_err());
 }
+
 #[test]
 fn unavailable_photo_proposal_does_not_replace_a_manual_draft() {
     let (mut e, directory, _commands) = fixture();
@@ -665,6 +684,7 @@ fn unavailable_photo_proposal_does_not_replace_a_manual_draft() {
     e.finish_crop(false);
     assert!(e.source_tool_warning(e.current_source.unwrap()).is_none());
 }
+
 #[test]
 fn entry_respects_other_active_tools_and_foreground_work() {
     for case in 0..6 {

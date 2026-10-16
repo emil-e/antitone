@@ -12,6 +12,7 @@ const PATCH: Rect = Rect {
     width: 60,
     height: 40,
 };
+
 #[test]
 fn outside_drag_straightens_about_crop_centre_through_reflections_and_turns() {
     for turns in [
@@ -51,6 +52,7 @@ fn outside_drag_straightens_about_crop_centre_through_reflections_and_turns() {
         }
     }
 }
+
 #[test]
 fn rotated_resize_stays_frame_aligned_and_move_keeps_coverage_inside_source() {
     let mut h = Harness::new(
@@ -140,6 +142,7 @@ fn full_source_is_visible_and_resize_release_does_not_zoom_or_move_the_image() {
         assert!(finished.image.max.distance(end) < before.scale * 1.01);
     }
 }
+
 #[test]
 fn angle_control_reframing_keeps_magnification_and_screen_pivot() {
     let mut h = Harness::new(
@@ -209,7 +212,16 @@ fn crop_brackets_and_thirds_follow_the_frame_without_changing_geometry() {
             |s| !matches!(&s.shape,egui::Shape::Rect(rect) if rect.fill==egui::Color32::WHITE)
         )
     );
-    let brackets=h.shapes.iter().filter(|s|matches!(&s.shape,egui::Shape::LineSegment { stroke,.. } if stroke.width==2.5 && stroke.color==egui::Color32::WHITE)).count();
+    let brackets = h
+        .shapes
+        .iter()
+        .filter(|shape| match &shape.shape {
+            egui::Shape::LineSegment { stroke, .. } => {
+                stroke.width == 2.5 && stroke.color == egui::Color32::WHITE
+            }
+            _ => false,
+        })
+        .count();
     assert_eq!(brackets, 12);
     h.press(layout.image.max, true);
     let resized = h.frame(vec![egui::Event::PointerMoved(
@@ -246,7 +258,12 @@ fn crop_brackets_and_thirds_follow_the_frame_without_changing_geometry() {
     let no_guides = h.frame(vec![]);
     assert_eq!(no_guides.composition, resized.composition);
     assert_eq!(h.editor.crop_edit.as_ref().unwrap().draft, draft);
-    assert!(!h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::LineSegment { stroke,.. } if stroke.width==0.5 && stroke.color==egui::Color32::WHITE)));
+    assert!(!h.shapes.iter().any(|shape| match &shape.shape {
+        egui::Shape::LineSegment { stroke, .. } => {
+            stroke.width == 0.5 && stroke.color == egui::Color32::WHITE
+        }
+        _ => false,
+    }));
 }
 
 fn assert_rotation_cursor(h: &Harness, point: egui::Pos2, pivot: egui::Pos2) {
@@ -477,6 +494,7 @@ struct Harness {
     shapes: Vec<egui::epaint::ClippedShape>,
     _receiver: mpsc::Receiver<Command>,
 }
+
 impl Harness {
     fn new(
         turns: crate::geometry::QuarterTurns,
@@ -518,6 +536,7 @@ impl Harness {
             _receiver: receiver,
         }
     }
+
     fn frame(&mut self, events: Vec<egui::Event>) -> CanvasLayout {
         let mut result = None;
         let mut output = self.context.run_ui(
@@ -573,6 +592,7 @@ impl Harness {
         output.textures_delta.clear();
         result.unwrap()
     }
+
     fn press(&mut self, point: egui::Pos2, pressed: bool) -> CanvasLayout {
         self.frame(vec![
             egui::Event::PointerMoved(point),
@@ -585,6 +605,7 @@ impl Harness {
         ])
     }
 }
+
 #[test]
 fn dragging_image_moves_content_not_the_frame_through_exact_orientations() {
     for turns in [
@@ -629,6 +650,7 @@ fn dragging_image_moves_content_not_the_frame_through_exact_orientations() {
         }
     }
 }
+
 #[test]
 fn every_edge_and_corner_resizes_without_moving_its_opposite_anchor() {
     for turns in [
@@ -694,6 +716,7 @@ fn every_edge_and_corner_resizes_without_moving_its_opposite_anchor() {
         }
     }
 }
+
 #[test]
 fn aspect_locked_edges_preserve_proportions_to_integer_pixel_precision() {
     for index in 0..8 {

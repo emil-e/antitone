@@ -40,18 +40,23 @@ mod recording {
         pub seconds: f64,
         pub exclusive_seconds: f64,
     }
+
     pub(crate) struct Timings {
         pub samples: Vec<Sample>,
         origin: Instant,
         children: Vec<Duration>,
     }
-    thread_local! { static ACTIVE: RefCell<Option<Timings>> = const { RefCell::new(None) }; }
+
+    thread_local! {
+        static ACTIVE: RefCell<Option<Timings>> = const { RefCell::new(None) };
+    }
 
     struct Scope {
         stage: &'static str,
         source: Option<u64>,
         start: Instant,
     }
+
     impl Drop for Scope {
         fn drop(&mut self) {
             let elapsed = self.start.elapsed();
@@ -72,9 +77,11 @@ mod recording {
             });
         }
     }
+
     pub(crate) fn measure<T>(stage: &'static str, run: impl FnOnce() -> T) -> T {
         measure_for(stage, None, run)
     }
+
     pub(crate) fn measure_for<T>(
         stage: &'static str,
         source: Option<u64>,
@@ -95,6 +102,7 @@ mod recording {
         drop(scope);
         result
     }
+
     pub(crate) fn record<T>(run: impl FnOnce() -> T) -> (T, Timings) {
         ACTIVE.with(|active| {
             let mut active = active.borrow_mut();
@@ -108,7 +116,9 @@ mod recording {
                 children: vec![],
             });
         });
+
         struct Reset;
+
         impl Drop for Reset {
             fn drop(&mut self) {
                 ACTIVE.with(|active| {

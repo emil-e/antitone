@@ -4,6 +4,7 @@ use crate::{
     coverage::Coverage,
     geometry::{Composition, FramePoint, SourcePoint, SourceRegion},
 };
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FrameRaster {
     pub composition: Composition,
@@ -11,6 +12,7 @@ pub struct FrameRaster {
     pub max: FramePoint,
     pub output: [u32; 2],
 }
+
 impl FrameRaster {
     pub fn new(
         composition: Composition,
@@ -39,6 +41,7 @@ impl FrameRaster {
         raster.bounds()?;
         Ok(raster)
     }
+
     pub fn full(composition: Composition) -> Result<Self, Error> {
         Self::new(
             composition,
@@ -47,6 +50,7 @@ impl FrameRaster {
             composition.size(),
         )
     }
+
     pub fn source_point(self, point: [f64; 2]) -> SourcePoint {
         self.composition
             .frame_to_source(FramePoint(std::array::from_fn(|i| {
@@ -54,6 +58,7 @@ impl FrameRaster {
                     + point[i] * (self.max.0[i] - self.min.0[i]) / f64::from(self.output[i])
             })))
     }
+
     pub fn footprint(self, pixel: [u32; 2]) -> Result<Coverage, Error> {
         if (0..2).any(|i| pixel[i] >= self.output[i]) {
             return Err(Error::InvalidParameter("pixel outside frame raster"));
@@ -63,11 +68,13 @@ impl FrameRaster {
             [[x, y], [x + 1., y], [x + 1., y + 1.], [x, y + 1.]].map(|p| self.source_point(p)),
         )
     }
+
     pub fn bounds(self) -> Result<SourceRegion, Error> {
         self.composition
             .coverage(self.min, self.max)?
             .bounds(self.composition.area())
     }
+
     /// Source coordinates relative to the iteration bounds, per destination pixel edge.
     pub fn affine(self) -> Result<[[f32; 2]; 3], Error> {
         let bounds = self.bounds()?;

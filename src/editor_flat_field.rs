@@ -12,6 +12,7 @@ pub(super) struct Correction {
     pub gpu: Arc<GpuFlatField>,
     corrected_floor: f64,
 }
+
 impl Correction {
     pub fn prepare(
         device: &wgpu::Device,
@@ -50,12 +51,14 @@ impl Correction {
         })))
     }
 }
+
 pub(super) struct FlatEdit {
     pub id: u64,
     pub ready: Option<Ready>,
     pub viewport: Viewport,
     pub source: bool,
 }
+
 pub(super) struct FlatPreview {
     pub ready: Ready,
     pub region: Option<Rect>,
@@ -159,10 +162,13 @@ impl Editor {
                         }
                     },
                 );
-                ui.small("Bare light source, same lens/focus/aperture/light. Set this before calibration. Existing Dmin/Dmax stay unchanged; re-pick them after changing correction.");
+                ui.small(
+                    "Bare light source, same lens/focus/aperture/light. Set this before calibration. Existing Dmin/Dmax stay unchanged; re-pick them after changing correction.",
+                );
             },
         );
     }
+
     pub(super) fn begin_flat_edit(&mut self, path: PathBuf, region: Option<Rect>) {
         if self.busy
             || self.pick.is_some()
@@ -226,6 +232,7 @@ impl Editor {
             self.report_failure(FailureKind::FlatReference, self.status.clone());
         }
     }
+
     pub(super) fn finish_flat_edit(&mut self) {
         let Some(context) = self.flat_edit.take() else {
             return;
@@ -244,6 +251,7 @@ impl Editor {
         self.last_layout = None;
         self.original.invalidate();
     }
+
     pub(super) fn apply_flat_edit(&mut self) {
         let Some(coverage) = self.region else {
             return;
@@ -281,6 +289,7 @@ impl Editor {
             self.report_failure(FailureKind::FlatCorrection, self.status.clone());
         }
     }
+
     pub(super) fn positive_parameters(
         &self,
         calibration: Calibration,
@@ -296,6 +305,7 @@ impl Editor {
         let matrix = glam::DMat3::from_cols_array_2d(&basis.camera_to_ap1);
         self.positive_parameters_for_matrix(calibration, roll, photo, matrix)
     }
+
     pub(super) fn positive_parameters_for_matrix(
         &self,
         calibration: Calibration,
@@ -310,6 +320,7 @@ impl Editor {
             camera_to_ap1,
         )
     }
+
     pub(super) fn processing_calibration(
         &self,
         calibration: Calibration,

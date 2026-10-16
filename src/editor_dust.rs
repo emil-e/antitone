@@ -17,6 +17,7 @@ mod lifecycle_tests;
 const MAX_MASK_WORK_PIXELS: u64 =
     (512 + 2 * (CONTEXT_PADDING as u64 + AUTOMATIC_PADDING as u64)).pow(2);
 const MAX_MASK_PIXELS: usize = 65_536;
+
 fn mask_within_budget(size: [u32; 2], marked: usize) -> bool {
     let padding = 2 * (u64::from(CONTEXT_PADDING) + u64::from(AUTOMATIC_PADDING));
     marked <= MAX_MASK_PIXELS
@@ -284,7 +285,7 @@ impl State {
         self.repairs.entry(source).or_default()
     }
 
-    fn changed(&mut self, source: SourceId, repair: RepairId) {
+    fn repair_changed(&mut self, source: SourceId, repair: RepairId) {
         self.failed.remove(&(source, repair));
         if let Some(preview) = self.preview_cached.remove(&(source, repair))
             && self
@@ -833,9 +834,8 @@ impl Editor {
             },
             |ui, reset| {
                 ui.horizontal(|ui| {
-                    ui.label("Brush size").on_hover_text(
-                        "Diameter in source pixels.",
-                    );
+                    ui.label("Brush size")
+                        .on_hover_text("Diameter in source pixels.");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.weak(format!("{} px", self.dust.brush_size));
                     });
@@ -849,8 +849,9 @@ impl Editor {
                     );
                 });
                 ui.small("Preview only · repairs are not saved or exported.");
-                if let Some(error)=&self.dust.render_error {
-                    ui.small("A repair is outside the current grade's GPU range.").on_hover_text(error);
+                if let Some(error) = &self.dust.render_error {
+                    ui.small("A repair is outside the current grade's GPU range.")
+                        .on_hover_text(error);
                 }
                 ui.checkbox(&mut self.dust.show_masks, "Show repair outlines")
                     .on_hover_text("Hold H for a momentary unobstructed preview.");
@@ -1141,7 +1142,7 @@ impl Editor {
         });
         match result {
             Ok(id) => {
-                self.dust.changed(source, id);
+                self.dust.repair_changed(source, id);
                 self.status = "Dust repair queued for full-resolution evaluation".into();
                 self.invalidate_settled();
                 self.cancel_dust_mask();
@@ -1571,7 +1572,7 @@ impl Editor {
             });
         match result {
             Ok(()) => {
-                self.dust.changed(source, draft.repair);
+                self.dust.repair_changed(source, draft.repair);
                 self.status = "Dust source updated".into();
             }
             Err(error) => {
