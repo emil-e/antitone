@@ -649,6 +649,42 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
     });
 }
 
+#[test]
+fn startup_defers_worker_results_until_the_font_initialization_pass_finishes() {
+    let (mut editor, send, _commands) = fixture();
+    let context = egui::Context::default();
+    context.options_mut(|options| options.max_passes = std::num::NonZeroUsize::new(1).unwrap());
+    editor.busy = true;
+    editor.status = "Loading source".into();
+    send.send(Message::Ready(editor.id, Err("Source unavailable".into())))
+        .unwrap();
+
+    for initializing in [true, false] {
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+            host::App::ui(&mut editor, ui);
+        });
+        output.textures_delta.clear();
+        assert!(editor.started);
+        assert_eq!(editor.busy, initializing);
+        assert_eq!(
+            editor.status,
+            if initializing {
+                "Loading source"
+            } else {
+                "Source unavailable"
+            }
+        );
+        if initializing {
+            assert!(
+                output.viewport_output[&egui::ViewportId::ROOT]
+                    .commands
+                    .iter()
+                    .any(|command| matches!(command, egui::ViewportCommand::InnerSize(_)))
+            );
+        }
+    }
+}
+
 pub(super) fn app_frame(
     editor: &mut Editor,
     context: &egui::Context,
