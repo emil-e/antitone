@@ -1,8 +1,8 @@
 // Three-part temporaries retain f64 constants and rounding through response and AP1 cancellation.
 const LN2_PRECISE: Triple = Triple(0.6931471824645996, -1.9046542121259336e-9, -1.1102230246251565e-16);
 const LN10_PRECISE: Triple = Triple(2.3025851249694824, -3.1975435632602967e-8, -8.881784197001252e-16);
-// Rounded-f64 coefficients, split into three words. Horner evaluation keeps
-// the existing series degrees without a compensated division in every term.
+// Rounded-f64 coefficients shared by ordinary and full-series EXR math.
+// Horner evaluation avoids a compensated division in every term.
 const LOG_ODD: array<Triple, 15> = array<Triple, 15>(
     Triple(1.0, 0.0, 0.0),
     Triple(0.3333333432674408, -9.934107758624577e-9, 2.7755575615628914e-16),
@@ -52,15 +52,6 @@ fn precise_div(a: Triple, b: Triple) -> Triple {
     let tail = add(rem, precise_neg(multiply(number(l), b)));
     return round53(add(number(h), add(number(l), number(tail.h / b.h))));
 }
-fn precise_log1p(z: Triple) -> Triple {
-    let r = precise_div(z, precise_add(number(2.0), z));
-    let r2 = precise_mul(r, r);
-    var sum = LOG_ODD[14];
-    for (var i = 14u; i > 0u; i--) {
-        sum = precise_add(LOG_ODD[i - 1u], precise_mul(r2, sum));
-    }
-    return precise_mul(number(2.0), precise_mul(r, sum));
-}
 fn precise_log(x: Triple) -> Triple {
     let bits = bitcast<u32>(x.h);
     let exponent = (bits >> 23u) & 255u;
@@ -75,25 +66,6 @@ fn precise_log_ratio(base: Triple, sample: Triple) -> Triple {
     let z = precise_div(delta, sample);
     if abs(z.h) < 0.5 { return precise_log1p(z); }
     return precise_sub(precise_log(base), precise_log(sample));
-}
-fn precise_exp(x: Triple) -> Triple {
-    let n = round(x.h / LN2_PRECISE.h);
-    let r = precise_sub(x, precise_mul(number(n), LN2_PRECISE));
-    var sum = EXP_FACTORIAL[17];
-    for (var i = 17u; i > 0u; i--) {
-        sum = precise_add(EXP_FACTORIAL[i - 1u], precise_mul(r, sum));
-    }
-    return precise_mul(sum, number(exp2(n)));
-}
-fn precise_expm1(x: Triple) -> Triple {
-    if abs(x.h) < 0.5 {
-        var sum = EXP_FACTORIAL[17];
-        for (var i = 17u; i > 1u; i--) {
-            sum = precise_add(EXP_FACTORIAL[i - 1u], precise_mul(x, sum));
-        }
-        return precise_mul(x, sum);
-    }
-    return precise_sub(precise_exp(x), number(1.0));
 }
 fn precise_log_abs_expm1(x: Triple) -> Triple {
     if x.h > 50.0 { return x; }

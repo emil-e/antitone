@@ -96,6 +96,12 @@ The scalar spatial pipeline and GPU grades consume immutable snapshots. Full-sta
 
 Library processing, persistence and export paths are connected, but the normal editor still rejects nonempty local collections, including inactive records. [Admission, controls, tools and remaining acceptance](plans/local-adjustments.md) are unfinished; scalar feather endpoints are not approved UI defaults.
 
+### Preserve information, reduce mathematical work
+
+GPU source processing retains compensated constants and temporaries, not blanket ordinary-f32 arithmetic. Near film base, losing a small sample/reference difference can become visible after exposure; camera-matrix cancellation and later grades can likewise expose errors. Ordinary-output processing instead reduces transcendental arguments before using shorter compensated polynomials, then recombines them with stable identities. This preserves the existing numerical gates rather than selecting a looser precision contract. The primitive checks cover the reduction joins and dense arguments; truncation bounds alone do not establish whole-pipeline or photographic accuracy.
+
+This shared math benefits continuous corrected-original processing and some precise grading, including source/view acquisition. Lookup-backed uncorrected inversion avoids much of that work, and cached physical-view slider grading already has its separate stable-f32 implementation. Analyze's statistical estimator is CPU-owned. Compensated EXR uses its unchanged full-series functions; no camera/AP1 storage, geometry, reconstruction or output-quantization precision is reduced.
+
 ### Compact storage can reuse expensive computation
 
 The retained source preserves the developed RGB16 codes. For uncorrected positive processing, the GPU evaluates all integer codes exactly into a bounded response table, then looks up channel values before unchanged matrix/photographic processing. There is no interpolation or code quantization. Its key covers native response constants and combined Roll/Photo exposure; WB, camera matrix, local stages, source geometry and output target remain downstream. A continuous flat-field-corrected sample still uses precise direct inversion, and inspection bypasses the table and photographic grades.

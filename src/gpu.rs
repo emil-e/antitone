@@ -448,10 +448,15 @@ impl ProcessingKernel {
     }
 
     fn shader(lookup: bool) -> String {
+        Self::shader_with_math(lookup, include_str!("shaders/processing_math.wgsl"))
+    }
+
+    fn shader_with_math(lookup: bool, math: &str) -> String {
         let common = [
             include_str!("shaders/camera_conversion.wgsl"),
             include_str!("shaders/flat_field.wgsl"),
             include_str!("shaders/film_response.wgsl"),
+            math,
             include_str!("shaders/photographic.wgsl"),
             include_str!("shaders/local_adjustments.wgsl"),
         ]
@@ -473,6 +478,19 @@ impl ProcessingKernel {
         }
     }
 
+    fn pipeline_shader(lookup: bool, precise_output: bool) -> String {
+        // Compensated AP1 export retains its full-series math before f64 reconstruction.
+        let mut shader = if precise_output {
+            Self::shader_with_math(lookup, include_str!("shaders/export_math.wgsl"))
+        } else {
+            Self::shader(lookup)
+        };
+        if precise_output {
+            shader.push_str(include_str!("shaders/export.wgsl"));
+        }
+        shader
+    }
+
     async fn new_pipeline(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -489,10 +507,7 @@ impl ProcessingKernel {
             ));
         }
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let mut shader = Self::shader(lookup);
-        if precise_output {
-            shader.push_str(include_str!("shaders/export.wgsl"));
-        }
+        let shader = Self::pipeline_shader(lookup, precise_output);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("camera RGB16 to AP1 photographic processing"),
             source: wgpu::ShaderSource::Wgsl(shader.into()),

@@ -217,6 +217,7 @@ fn metal_creative_primitives_cover_zero_y_continuations_and_signed_hdr_planes() 
                     include_str!("../src/shaders/camera_conversion.wgsl"),
                     include_str!("../src/shaders/flat_field.wgsl"),
                     include_str!("../src/shaders/film_response.wgsl"),
+                    include_str!("../src/shaders/processing_math.wgsl"),
                     include_str!("../src/shaders/photographic.wgsl"),
                     include_str!("../src/shaders/local_adjustments.wgsl"),
                     include_str!("../src/shaders/response_table.wgsl"),

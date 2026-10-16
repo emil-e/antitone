@@ -97,6 +97,28 @@ fn compensated_arithmetic_and_polynomials_retain_precision() {
                 }
             }
         }
+        // Include reduction joins and dense polynomial inputs, not only ordinary source values.
+        for _ in 0..16384 {
+            let x = -48. + (next() >> 11) as f64 / (1u64 << 53) as f64 * 128.;
+            let z = -0.5 + (next() >> 11) as f64 / (1u64 << 53) as f64;
+            pairs.push((x, z, true));
+        }
+        for boundary in [-0.5f64, -0.25, 0.25, 0.5] {
+            for shift in -4i64..=4 {
+                let z = f64::from_bits((boundary.to_bits() as i64 + shift) as u64);
+                if (-0.5..=0.5).contains(&z) {
+                    pairs.push((z, z, true));
+                }
+            }
+        }
+        for n in -68..=115 {
+            for sign in [-1., 1.] {
+                let x = f64::from(n) * std::f64::consts::LN_2 + sign * std::f64::consts::LN_2 / 2.;
+                for delta in [-1e-14, 0., 1e-14] {
+                    pairs.push((x + delta, 0.125, true));
+                }
+            }
+        }
         let split = |v: f64| {
             let h = v as f32;
             let l = (v - f64::from(h)) as f32;
@@ -243,8 +265,9 @@ fn arithmetic_test(@builtin(global_invocation_id) id: vec3u) {
                 if !polynomial {
                     assert_eq!(actual, expected, "operation={j}: {a}, {b}");
                 } else {
-                    // Range reduction uses rounded-f64 LN2; its product error
-                    // scales with the exponent. Log1p has no such reduction.
+                    // The stored LN2 is rounded-f64; exponent-scaled range reduction
+                    // and compensated evaluation still need a larger allowance than log1p.
+                    // Keep n*LN2's residual until subtraction, including at large exponents.
                     let epsilon_units = if j == 2 { 8. } else { 32. };
                     assert!(
                         (actual - expected).abs() <= epsilon_units * f64::EPSILON * expected.abs(),

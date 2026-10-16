@@ -1,6 +1,28 @@
 use super::*;
 
 #[test]
+fn ordinary_and_compensated_export_select_distinct_math_without_changing_bindings() {
+    let ordinary = include_str!("shaders/processing_math.wgsl");
+    let export = include_str!("shaders/export_math.wgsl");
+    for lookup in [false, true] {
+        let general = ProcessingKernel::shader(lookup);
+        assert_eq!(ProcessingKernel::pipeline_shader(lookup, false), general);
+        assert!(general.contains(ordinary));
+        assert!(!general.contains(export));
+        let precise = ProcessingKernel::pipeline_shader(lookup, true);
+        assert!(precise.contains(export));
+        assert!(!precise.contains(ordinary));
+        assert!(precise.ends_with(include_str!("shaders/export.wgsl")));
+        for shader in [&general, &precise] {
+            for name in ["precise_log1p", "precise_exp", "precise_expm1"] {
+                assert_eq!(shader.matches(&format!("fn {name}(")).count(), 1);
+            }
+            assert_eq!(shader.contains("fn build_response_codes("), lookup);
+        }
+    }
+}
+
+#[test]
 fn source_inspection_is_zero_default_and_changes_only_the_source_post_matrix() {
     let base = ProcessingParameters::source();
     assert_eq!(
