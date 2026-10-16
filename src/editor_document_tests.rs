@@ -4,6 +4,40 @@ use crate::{color::Balance, processing::PhotoSettings};
 mod admission;
 
 #[test]
+fn antitone_and_legacy_json_projects_open_and_save_in_place() {
+    for name in [
+        "grade.antitone",
+        "grade.ANTITONE",
+        "grade.json",
+        "grade.antitone.json",
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(name);
+        let mut document = Document::default().save(&path, Save::New).unwrap();
+        assert_eq!(document.path.as_deref(), Some(path.as_path()));
+        assert!(!document.dirty());
+        document.project.roll.exposure = 0.25;
+        assert!(document.dirty());
+        let saved = document.save(&path, Save::Replace).unwrap();
+        let opened = Document::open(&path).unwrap();
+        assert_eq!(opened.project, saved.project);
+        assert_eq!(opened.path.as_deref(), Some(path.as_path()));
+        assert!(!opened.dirty());
+    }
+}
+
+#[test]
+fn unsupported_project_suffixes_do_not_overwrite_the_destination() {
+    let directory = tempfile::tempdir().unwrap();
+    for name in ["grade", "photo.ARW", "photo.tiff"] {
+        let path = directory.path().join(name);
+        std::fs::write(&path, b"existing file").unwrap();
+        assert!(Document::default().save(&path, Save::Replace).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"existing file");
+    }
+}
+
+#[test]
 fn uncalibrated_local_documents_are_durable_but_rejected_before_source_loading() {
     use crate::{
         geometry::SourcePoint,
@@ -95,7 +129,7 @@ fn authored_dng_import_selects_as_shot_wb_and_open_preserves_saved_gains() {
     let custom = [2., 1., 1.5, 0.75];
     document.project.development.as_mut().unwrap().fixed_wb = custom;
     let directory = tempfile::tempdir().unwrap();
-    let project_path = directory.path().join("grade.antitone.json");
+    let project_path = directory.path().join("grade.antitone");
     let saved = document.save(&project_path, Save::New).unwrap();
     let mut reopened = Document::open(&project_path).unwrap();
     assert_eq!(reopened.project, saved.project);
@@ -192,12 +226,12 @@ fn saved_snapshot_and_save_as_preserve_exact_settings_and_relative_locators() {
     let one = document.project.order[0];
     document.project.source_mut(one).unwrap().photo.exposure = 7.123456789012345;
     assert!(document.dirty());
-    let first = directory.path().join("first.antitone.json");
+    let first = directory.path().join("first.antitone");
     let mut saved = document.save(&first, Save::New).unwrap();
     assert!(!saved.dirty());
     saved.project.source_mut(one).unwrap().path = "one.ARW".into();
     std::fs::create_dir(directory.path().join("other")).unwrap();
-    let second = directory.path().join("other/second.antitone.json");
+    let second = directory.path().join("other/second.antitone");
     let second_saved = saved.save(&second, Save::New).unwrap();
     assert_eq!(
         second_saved
@@ -234,11 +268,11 @@ fn saved_snapshot_and_save_as_preserve_exact_settings_and_relative_locators() {
 }
 
 #[test]
-fn input_source_collision_guard_rejects_even_a_json_named_raw() {
+fn input_source_collision_guard_rejects_even_an_antitone_named_raw() {
     let directory = tempfile::tempdir().unwrap();
     let mut document = fixture(directory.path());
     let id = document.project.order[0];
-    let path = directory.path().join("source.antitone.json");
+    let path = directory.path().join("source.antitone");
     std::fs::rename(directory.path().join("one.ARW"), &path).unwrap();
     document.project.source_mut(id).unwrap().path = path.clone();
     let before = std::fs::read(&path).unwrap();

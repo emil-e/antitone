@@ -9,7 +9,7 @@ An editor for camera-scanned film negatives. Analyze a roll to establish shared 
 
 Antitone works from linear camera measurements rather than inverting a displayed JPEG. Calibration and response are shared across a roll; Photo adjustments provide individual grading. [How processing works](docs/processing.md) and [how Analyze chooses a starting grade](docs/roll-analysis.md) explain those two separate jobs.
 
-The current photo input is ARW RAW, with Sony ILCE-1M2 lossless-compressed ARW as the supported camera baseline. Saved grades use JSON projects. Developed JPEG/TIFF/EXR import, catalogs and HDR display output are not implemented; this checkout is not a distribution-ready app. The [provisional Dust workflow](docs/editor.md#provisional-dust-cleanup) supports transient manual repairs; Save and export omit them.
+The current photo input is ARW RAW, with Sony ILCE-1M2 lossless-compressed ARW as the supported camera baseline. Saved grades use `.antitone` project files (JSON). Developed JPEG/TIFF/EXR import, catalogs and HDR display output are not implemented; this checkout is not a distribution-ready app. The [provisional Dust workflow](docs/editor.md#provisional-dust-cleanup) supports transient manual repairs; Save and export omit them.
 
 ## Prerequisites
 
@@ -38,7 +38,7 @@ cargo build-app
 # Build and launch the editor, optionally opening a RAW or saved project.
 cargo app
 cargo app -- /path/to/photo.ARW
-cargo app -- /path/to/grade.antitone.json
+cargo app -- /path/to/grade.antitone
 ```
 
 The native setup needs network access and writes ignored `.cache/native-deps/` (LibRaw/OpenMP) and `.cache/deps/` (OCIO). Cargo downloads Rust dependencies into its normal cache and writes build products to `target/`. Subsequent builds do not need to rerun native setup unless those dependencies are removed or changed.

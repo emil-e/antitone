@@ -29,6 +29,26 @@ pub(super) enum Transition {
     Close,
 }
 
+fn project_save_name(path: Option<&std::path::Path>) -> String {
+    let mut name = path
+        .and_then(|path| path.file_name())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("Untitled"));
+    if name
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+    {
+        name.set_extension("");
+    }
+    if !name
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("antitone"))
+    {
+        name.as_mut_os_string().push(".antitone");
+    }
+    name.to_string_lossy().into_owned()
+}
+
 impl Editor {
     pub(super) fn perform_transition(&mut self, transition: Transition, context: &egui::Context) {
         match transition {
@@ -69,17 +89,11 @@ impl Editor {
             self.queue_save(path, crate::project::Save::Replace, after);
             return;
         }
-        let name = self
-            .document
-            .path
-            .as_ref()
-            .and_then(|path| path.file_name())
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Untitled.antitone.json".into());
+        let name = project_save_name(self.document.path.as_deref());
         let mut dialog = rfd::FileDialog::new()
             .set_title("Save Antitone project")
             .set_file_name(name)
-            .add_filter("Antitone project", &["json"]);
+            .add_filter("Antitone project", &["antitone"]);
         if let Some(parent) = self.document.path.as_ref().and_then(|path| path.parent()) {
             dialog = dialog.set_directory(parent);
         }
@@ -109,7 +123,7 @@ impl Editor {
             FileAction::Open => {
                 if let Some(path) = rfd::FileDialog::new()
                     .set_title("Open Antitone project")
-                    .add_filter("Antitone project", &["json"])
+                    .add_filter("Antitone project", &["antitone", "json"])
                     .pick_file()
                 {
                     self.guard_transition(Transition::Open(path), context);

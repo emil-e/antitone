@@ -117,7 +117,7 @@ fn project_widgets_save_precision_order_wb_and_reject_open_atomically() {
         e.document.project.order.swap(0, 1);
         e.selected = 0;
         e.sync_document();
-        let path = directory.path().join("film.antitone.json");
+        let path = directory.path().join("film.antitone");
         e.document = e.document.save(&path, crate::project::Save::New).unwrap();
     }
     assert_eq!(
@@ -159,12 +159,12 @@ fn project_widgets_save_precision_order_wb_and_reject_open_atomically() {
     );
     assert_ne!(as_shot, custom);
     let before_open = harness.state().document.project.clone();
-    open_project(&mut harness, directory.path().join("film.antitone.json"));
+    open_project(&mut harness, directory.path().join("film.antitone"));
     assert!(harness.state().transition.is_some());
     harness.get_by_label("Cancel").click();
     harness.step();
     assert_eq!(harness.state().document.project, before_open);
-    open_project(&mut harness, directory.path().join("film.antitone.json"));
+    open_project(&mut harness, directory.path().join("film.antitone"));
     harness.get_by_label("Discard changes").click();
     harness.step();
     wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());

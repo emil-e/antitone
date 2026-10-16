@@ -12,7 +12,7 @@ Build and open a saved project for real-use inspection:
 
 ```sh
 cargo build-app --offline
-target/release/antitone /path/to/grade.antitone.json
+target/release/antitone /path/to/grade.antitone
 ```
 
 Calibration, grade/source controls, physical-pixel viewing, picker-source return and normal/narrow layouts use authored [framework UI tests](development.md#framework-ui-regressions). Project tests cover Save/New, transition decisions, restored settings/pixels and failed-Save/Open preservation with real workers and temporary files. Native dialogs and photographic Save/Open inspection remain real-use checks.

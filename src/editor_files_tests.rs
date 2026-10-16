@@ -1,6 +1,24 @@
 use super::*;
 
 #[test]
+fn project_save_names_use_antitone_without_duplicating_legacy_suffixes() {
+    assert_eq!(project_save_name(None), "Untitled.antitone");
+    for (path, expected) in [
+        ("/projects/grade.antitone", "grade.antitone"),
+        ("/projects/grade.ANTITONE", "grade.ANTITONE"),
+        ("/projects/grade.json", "grade.antitone"),
+        ("/projects/grade.antitone.json", "grade.antitone"),
+        ("/projects/grade.ANTITONE.JSON", "grade.ANTITONE"),
+        ("/projects/照片.v2.json", "照片.v2.antitone"),
+    ] {
+        assert_eq!(
+            project_save_name(Some(std::path::Path::new(path))),
+            expected
+        );
+    }
+}
+
+#[test]
 fn raw_picker_offers_common_camera_formats_not_only_arw() {
     for extension in [
         "arw", "cr2", "cr3", "dng", "nef", "orf", "pef", "raf", "rw2", "srw",
@@ -149,7 +167,7 @@ fn command_save_commits_pending_numeric_text_before_snapshot() {
     editor.document = editor
         .document
         .save(
-            &directory.path().join("numeric.antitone.json"),
+            &directory.path().join("numeric.antitone"),
             crate::project::Save::New,
         )
         .unwrap();
@@ -322,7 +340,7 @@ fn document_and_export_decisions_ignore_outside_clicks_and_cancel_without_dispat
 fn save_decision_queues_the_snapshot_with_its_original_continuation() {
     let (mut editor, _send, receiver) = fixture();
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("project.antitone.json");
+    let path = directory.path().join("project.antitone");
     editor.document = editor
         .document
         .save(&path, crate::project::Save::New)

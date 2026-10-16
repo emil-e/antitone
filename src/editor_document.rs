@@ -260,11 +260,13 @@ impl Document {
         device: Option<&wgpu::Device>,
     ) -> Result<Self> {
         let path = absolute(path)?;
-        if !path
-            .extension()
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
-        {
-            return Err(failure("project destination must use a .json extension"));
+        // Keep Save-in-place available for existing JSON-named projects.
+        if !path.extension().is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("antitone") || extension.eq_ignore_ascii_case("json")
+        }) {
+            return Err(failure(
+                "project destination must use an .antitone extension",
+            ));
         }
         let mut candidate = self.clone();
         for source in &mut candidate.project.sources {

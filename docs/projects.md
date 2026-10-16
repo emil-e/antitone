@@ -2,6 +2,8 @@
 
 A project is a saved description of an accepted grade, not a copy of the RAW photographs or a cache of rendered pixels. Reopening it should restore the same processing choices without quietly estimating them again.
 
+New projects and Save As use the `.antitone` extension; the document contents are JSON. Existing `.json` and `.antitone.json` projects remain openable and Save updates them in place. Save As suggests the `.antitone` name without changing the format or processing schema.
+
 ## Separate sources from the filmstrip
 
 Each registered source has a stable ID and owns its Photo settings and composition. Filmstrip order is a separate list of those IDs. Removing a photo from that list does not erase its record or invalidate a stored calibration value. Even an empty roll retains its camera basis, calibration, correction and Roll settings. Adding a previously removed compatible RAW restores its existing source record and Photo settings; [selection/removal](editor.md#select-and-remove-roll-photos) is controlled by the editor.
