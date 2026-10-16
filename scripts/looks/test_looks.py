@@ -316,7 +316,11 @@ class NativeTests(unittest.TestCase):
             checked = subprocess.run([sys.executable, str(cli), "check", "--all"], capture_output=True, text=True)
             self.assertEqual(checked.returncode, 0, checked.stderr)
             self.assertEqual(json.loads(checked.stdout)["status"], "passed")
-            baked = subprocess.run([sys.executable, str(cli), "bake", PORTRA, "--size", "65"], capture_output=True, text=True)
+            env = os.environ.copy()
+            # The source-only copy deliberately has no dependency installation.
+            # Reuse the parent's normal prefix, including its default location.
+            env["OCIO_PREFIX"] = str(Path(env.get("OCIO_PREFIX", catalog.ROOT / ".cache/deps/ocio-install")).resolve())
+            baked = subprocess.run([sys.executable, str(cli), "bake", PORTRA, "--size", "65"], capture_output=True, text=True, env=env)
             self.assertEqual(baked.returncode, 0, baked.stderr)
             self.assertEqual(json.loads(baked.stdout)["status"], "passed")
             self.assertFalse((root / "native/rendering_transform.h").exists())
