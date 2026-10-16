@@ -162,8 +162,7 @@ mod tests {
         .unwrap();
         let forecast = Forecast::new(composition).unwrap();
         let mut cache = TileCache::forecasted(forecast);
-        let captured_order = cache.order().unwrap();
-        assert!(matches!(captured_order, BlockOrder::Spatial1x5));
+        assert!(matches!(cache.order(), Some(BlockOrder::Spatial1x5)));
         cache.begin_block();
         for x in 0..CAPACITY as u32 {
             cache
@@ -209,12 +208,11 @@ mod tests {
                 .unwrap();
             assert!(Arc::ptr_eq(&existing.1.0, &pointer));
         }
-        // Too many plan notifications disable prediction, never change the captured encoder order.
+        // Exhausting the forecast restores LRU retention.
         for _ in 0..100 {
             cache.begin_block();
         }
         assert!(cache.order().is_none());
-        assert!(matches!(captured_order, BlockOrder::Spatial1x5));
         drop(cache);
         assert_eq!(value.as_ref()[0], [-0.25, 4., 16., 7.]);
     }

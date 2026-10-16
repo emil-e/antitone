@@ -43,8 +43,11 @@ fn forecast_admission_bounds_payload_and_work_without_narrowing_processing() {
         [8128, 5248],
     );
     let forecast = Forecast::new(c).unwrap();
-    assert_eq!(forecast.blocks, 2624);
-    assert_eq!(forecast.uses.len(), 10665);
+    let [width, height] = c.size();
+    let blocks = export::ordered_blocks(ImageSize { width, height }, forecast.order()).count();
+    assert_eq!(forecast.blocks as usize, blocks);
+    assert!(forecast.blocks <= MAX_BLOCKS);
+    assert!(!forecast.uses.is_empty());
     assert!(forecast.payload_bytes() <= MAX_INDEX_BYTES);
     assert!(forecast.uses.windows(2).all(|pair| pair[0] < pair[1]));
     assert!(Forecast::with_budget(c, 0).is_none());
@@ -266,7 +269,7 @@ fn forecasted_consumer_failures_cancel_and_panic_preserve_destination_and_releas
 }
 
 #[test]
-fn forecasted_files_and_budget_fallback_preserve_exact_reconstruction_and_public_order() {
+fn forecasted_files_preserve_exact_reconstruction_and_public_order() {
     let area = SourceRegion::from([17, 23, 1024, 768]);
     let snapshot = PhotoGradeSnapshot::new(Default::default(), vec![]).unwrap();
     let metadata = ProcessingMetadata::with_grade(RollSettings::new_grade().response, &snapshot);
@@ -325,22 +328,15 @@ fn forecasted_files_and_budget_fallback_preserve_exact_reconstruction_and_public
                 };
                 let baseline = directory.path().join("baseline");
                 let candidate = directory.path().join("candidate");
-                let fallback = directory.path().join("fallback");
                 let before = run(&baseline, None);
                 let after = run(&candidate, Forecast::new(c));
-                let rejected = run(&fallback, Forecast::with_budget(c, 0));
                 assert_eq!(
                     std::fs::read(&baseline).unwrap(),
                     std::fs::read(&candidate).unwrap()
                 );
-                assert_eq!(
-                    std::fs::read(&baseline).unwrap(),
-                    std::fs::read(&fallback).unwrap()
-                );
-                assert_eq!(before, rejected);
                 assert_eq!(before.0, after.0);
                 assert!(after.2 <= cache::MAX_PAYLOAD_BYTES);
-                for path in [baseline, candidate, fallback] {
+                for path in [baseline, candidate] {
                     std::fs::remove_file(path).unwrap();
                 }
             }

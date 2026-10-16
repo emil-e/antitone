@@ -38,7 +38,7 @@ impl Forecast {
         let budget = budget.min(MAX_INDEX_BYTES);
         let mut count = 0usize;
 
-        // Count with fixed stack hints first: one fallible allocation, no tree or shrink copy.
+        // Count with stack hints before allocating the bounded flat index once.
         for (origin, extent) in export::ordered_blocks(size, ORDER) {
             count = count.checked_add(hints(raster, origin, extent)?.len)?;
             if count.checked_mul(std::mem::size_of::<Use>())? > budget {
