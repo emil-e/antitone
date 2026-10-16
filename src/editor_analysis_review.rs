@@ -1,9 +1,14 @@
 use super::*;
+use crate::region_timing::timed;
 use crate::{
     project::SourceAnalysis,
     scan_regions::{Areas, Capture, Evidence, RollModel},
 };
 use std::sync::atomic::{AtomicU64, Ordering};
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "editor_region_performance.rs"]
+mod performance;
 
 #[derive(Clone)]
 pub(super) struct Approved {
@@ -127,13 +132,16 @@ pub(super) fn prepare(
         if need_model {
             let expected = project.source(*id)?;
             let path = request.document.source_path(*id)?;
-            let Some(scan) = analysis::develop_scan(
-                developments,
-                &request.document,
-                expected,
-                &path,
-                wb,
-                cancelled,
+            let Some(scan) = timed!(
+                "coarse_acquire",
+                analysis::develop_scan(
+                    developments,
+                    &request.document,
+                    expected,
+                    &path,
+                    wb,
+                    cancelled,
+                )
             )?
             else {
                 return Ok(None);
@@ -142,10 +150,16 @@ pub(super) fn prepare(
             document::verify_source(expected, &actual)?;
             document::verify_scan(&actual, &scan)?;
             project.require_camera_basis(&actual.development)?;
-            let (w, h, rgb) = scan.preview_source(768)?;
-            let rgb: Vec<_> = rgb.into_iter().map(|p| [p[0], p[1], p[2]]).collect();
-            let evidence = Evidence::observe([w, h], &rgb)?;
-            captures.push(Capture::new(scan.area, [w, h], rgb, evidence)?);
+            let (w, h, rgb) = timed!("coarse_preview", scan.preview_source(768))?;
+            let rgb: Vec<_> = timed!(
+                "coarse_pack",
+                rgb.into_iter().map(|p| [p[0], p[1], p[2]]).collect()
+            );
+            let evidence = timed!("native_lines", Evidence::observe([w, h], &rgb))?;
+            captures.push(timed!(
+                "candidate_grouping",
+                Capture::new(scan.area, [w, h], rgb, evidence)
+            )?);
         }
         if thumbnails::FileKey::new(&request.document.source_path(*id)?) != files[index] {
             return Err(Error::UnusableSample(
@@ -154,30 +168,33 @@ pub(super) fn prepare(
         }
     }
     // Fit appearance in stable locator order; browsing and filmstrip order cannot select geometry.
-    let mut groups: Vec<Vec<usize>> = vec![];
-    for (i, c) in captures.iter().enumerate() {
-        if let Some(group) = groups
-            .iter_mut()
-            .find(|g| captures[g[0]].area == c.area && captures[g[0]].size == c.size)
-        {
-            group.push(i);
-        } else {
-            groups.push(vec![i]);
+    let groups = timed!("source_grouping", {
+        let mut groups: Vec<Vec<usize>> = vec![];
+        for (i, c) in captures.iter().enumerate() {
+            if let Some(group) = groups
+                .iter_mut()
+                .find(|g| captures[g[0]].area == c.area && captures[g[0]].size == c.size)
+            {
+                group.push(i);
+            } else {
+                groups.push(vec![i]);
+            }
         }
-    }
-    let mut models = vec![];
-    for group in &mut groups {
-        group.sort_by_key(|&i| {
-            request
-                .document
-                .source_path(project.order[i])
-                .expect("verified locator")
-        });
-    }
+        for group in &mut groups {
+            group.sort_by_key(|&i| {
+                request
+                    .document
+                    .source_path(project.order[i])
+                    .expect("verified locator")
+            });
+        }
+        groups
+    });
     // Captures are bounded RGB16 rasters, never leases for an entire roll of full RAWs.
+    let mut models = vec![];
     for group in &groups {
         let refs: Vec<_> = group.iter().map(|&i| &captures[i]).collect();
-        models.push(RollModel::fit_refs(&refs)?);
+        models.push(timed!("roll_fit", RollModel::fit_refs(&refs))?);
     }
     for (index, id) in project.order.iter().enumerate() {
         if cancelled() {
@@ -194,13 +211,16 @@ pub(super) fn prepare(
             let within = groups[group].iter().position(|&i| i == index).unwrap();
             let expected = project.source(*id)?;
             let path = request.document.source_path(*id)?;
-            let Some(scan) = analysis::develop_scan(
-                developments,
-                &request.document,
-                expected,
-                &path,
-                wb,
-                cancelled,
+            let Some(scan) = timed!(
+                "fine_acquire",
+                analysis::develop_scan(
+                    developments,
+                    &request.document,
+                    expected,
+                    &path,
+                    wb,
+                    cancelled,
+                )
             )?
             else {
                 return Ok(None);
@@ -208,10 +228,16 @@ pub(super) fn prepare(
             let actual = document::source_metadata(&path, &scan.source().metadata())?;
             document::verify_source(expected, &actual)?;
             document::verify_scan(&actual, &scan)?;
-            let (w, h, rgb) = scan.preview_source(3072)?;
-            let rgb: Vec<_> = rgb.into_iter().map(|p| [p[0], p[1], p[2]]).collect();
+            let (w, h, rgb) = timed!("fine_preview", scan.preview_source(3072))?;
+            let rgb: Vec<_> = timed!(
+                "fine_pack",
+                rgb.into_iter().map(|p| [p[0], p[1], p[2]]).collect()
+            );
             let previous = &entries[index].areas;
-            let mut suggested = models[group].areas(within, &captures[index], [w, h], &rgb)?;
+            let mut suggested = timed!(
+                "fine_areas",
+                models[group].areas(within, &captures[index], [w, h], &rgb)
+            )?;
             if previous.opening_edited
                 && let Some(q) = previous.opening
             {
@@ -254,7 +280,7 @@ pub(super) fn prepare(
     if need_model {
         for (group, model) in groups.iter().zip(&models) {
             let mut areas: Vec<_> = group.iter().map(|&i| entries[i].areas.clone()).collect();
-            model.refine_areas(&mut areas)?;
+            timed!("shared_refine", model.refine_areas(&mut areas))?;
             for (&index, areas) in group.iter().zip(areas) {
                 entries[index].areas = areas;
             }

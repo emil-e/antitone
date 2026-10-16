@@ -30,6 +30,8 @@ pub mod project;
 pub mod raw;
 #[cfg(feature = "editor")]
 mod refinement;
+#[cfg(feature = "project")]
+mod region_timing;
 #[cfg(feature = "render")]
 pub mod rendering;
 #[cfg(feature = "raw")]

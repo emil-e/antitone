@@ -83,6 +83,31 @@ ANTITONE_RAW_ROOT=/absolute/read-only-samples ANTITONE_REGION_ROLL=roll-name \
 
 These inputs remain private and unshipped. Neither software parity nor a successful numerical proposal establishes photographic quality, boundary accuracy or physical reference compatibility.
 
+### Bounded area-preparation profiling
+
+The ignored `profile_complete_roll_area_preparation` diagnostic calls the production preparation provider directly, without creating an Editor, developing thumbnails, installing areas/grades or launching a window. It uses the existing headless resource monitor (an idle Metal device supplies allocation telemetry), requires Normal pressure and 2 GiB non-speculative free memory, and retains the existing swap/footprint/stale-telemetry stops. Each invocation is bounded to one complete 2–40-source roll and 240 seconds at cooperative checkpoints; native calls cannot be interrupted mid-call. Do not truncate a larger roll or relax stops to obtain a result.
+
+Run the two arms as separate processes, with fresh output directories under this checkout's `.cache/`. The cold arm means an empty application source store, **not** an uncached filesystem. The warm arm seeds only the last ordered source under a 600 MiB optional budget before timing preparation; it is a partially warm document, not a fully resident roll. Analysis still requests no additional native retention. Source revisions, ordered entries and retained evidence must match the cold report exactly.
+
+```sh
+export ANTITONE_REGION_EVIDENCE=/absolute/retained-evidence
+export ANTITONE_RAW_ROOT=/absolute/read-only-samples
+export ANTITONE_REGION_ROLL=roll-name
+ANTITONE_REGION_PERF_ARM=cold ANTITONE_REGION_OUTPUT="$PWD/.cache/region-cold" \
+  cargo test --locked --offline --release --features editor --lib \
+  profile_complete_roll_area_preparation -- --ignored --nocapture --test-threads=1
+ANTITONE_REGION_PERF_ARM=warm ANTITONE_REGION_OUTPUT="$PWD/.cache/region-warm" \
+ANTITONE_REGION_PERF_COMPARE="$PWD/.cache/region-cold/report.json" \
+  cargo test --locked --offline --release --features editor --lib \
+  profile_complete_roll_area_preparation -- --ignored --nocapture --test-threads=1
+```
+
+Capture stdout under `.cache/` to retain sampled process-memory summaries as well as each private JSON report. Reports contain individual stage samples, aggregate nearest-rank p50/p95/max, actual per-source native development counts and nested open/unpack/develop timings. These distributions are across sources/stage invocations in one run, not repeated whole-roll latency percentiles. Native times are included in acquisition; nested material/holder timings are included in their parents. Sum **exclusive** stage times and inspect residual wall time, not the overlapping inclusive totals. Normal builds compile markers to their original expressions with no clocks/storage; tests take clocks only during an explicit recording.
+
+A successful run preserves source file revisions and accepted document state. It measures preparation, not import, the seed development, numerical Analyze, physical UI latency or photographic border accuracy. Do not infer a cache policy or broad hardware/pressure guarantee from one roll.
+
+A bounded baseline on one complete twelve-source Sony roll at `42f8aa4` measured 18.05 s with an empty source store: 24 native developments consumed 17.16 s of acquisition (95% of preparation), including 11.22 s unpacking and 5.93 s development/validation. Native line observation took 0.49 s total; fine preview extraction 0.16 s; fine area inference 0.15 s. With one 511 MiB source retained, preparation measured 16.57 s and 22 developments, with identical ordered areas and frame evidence. Sampled peak process footprint was approximately 666 MiB cold and 1179 MiB partially warm; pressure remained Normal and reported swap counters did not change. These are single-run observations, not latency gates or a fully warm-roll comparison. They prioritize avoiding repeat development over line-search micro-optimization for this workload. Re-measure after relevant changes.
+
 ### Private all-roll contacts
 
 The native helper creates ImageIO source previews and contact sheets:

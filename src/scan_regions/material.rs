@@ -1,5 +1,6 @@
 use super::lines::{Family, Line};
 use super::*;
+use crate::region_timing::timed;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 #[derive(Clone)]
 struct Base {
@@ -200,7 +201,7 @@ impl RollModel {
                     .collect()
             })
             .collect();
-        let base = fit_base(&grids);
+        let base = timed!("base_fit", fit_base(&grids));
         let central: Vec<_> = grids
             .iter()
             .flat_map(|g| {
@@ -288,7 +289,10 @@ impl RollModel {
                 })
             })
             .collect();
-        let opening = super::opening::Shared::fit(captures, upper);
+        let opening = timed!(
+            "shared_holder_fit",
+            super::opening::Shared::fit(captures, upper)
+        );
         Ok(Self {
             area: first.area,
             size,
@@ -497,7 +501,7 @@ impl RollModel {
         4. * (appearance.ln() + layout.ln())
     }
     pub(super) fn select(&self, index: usize, capture: &Capture) -> Option<Selection> {
-        let material = self.partition(index)?;
+        let material = timed!("material_partition", self.partition(index))?;
         let upper = self.upper;
         let mut rows = vec![];
         for family in &capture.group.families {
