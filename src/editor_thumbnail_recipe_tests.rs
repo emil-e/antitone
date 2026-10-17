@@ -1,6 +1,10 @@
 use super::*;
 use crate::dust_repair::{DonorChoice, RepairOrigin, SupportMask};
 
+#[cfg(feature = "ocio-reference")]
+#[path = "editor_thumbnail_pixel_tests.rs"]
+mod pixel_tests;
+
 fn gpu() -> (wgpu::Device, wgpu::Queue) {
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
