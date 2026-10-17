@@ -35,6 +35,18 @@ impl SourceGeometry {
         })
     }
 
+    /// Integer original coordinates do not need the nearest-centre f32 coordinate restriction.
+    #[cfg(all(feature = "raw", feature = "export"))]
+    pub(crate) fn original_tile(area: [u32; 4], size: [u32; 2]) -> Result<Self, Error> {
+        if area[2..] != size || u64::from(size[0]) * u64::from(size[1]) > u32::MAX as u64 {
+            return Err(Error::Gpu("invalid original tile geometry".into()));
+        }
+        Ok(Self {
+            raster: SourceRaster::new(area.into(), size)?,
+            second: None,
+        })
+    }
+
     /// Two real original rectangles, concatenated vertically without resampling.
     #[cfg(all(feature = "raw", feature = "export"))]
     pub(crate) fn original_pair(origins: [[u32; 2]; 2], size: [u32; 2]) -> Result<Self, Error> {
@@ -181,6 +193,9 @@ impl FieldGeometry {
             let second = second.region();
             result.dimensions[2..].copy_from_slice(&shape);
             result.packed_origins = [area.x, area.y, second.x, second.y];
+        } else if [area.width, area.height] == size {
+            result.dimensions[2..].copy_from_slice(&size);
+            result.packed_origins = [area.x, area.y, 0, 0];
         }
         result
     }

@@ -8,6 +8,15 @@ use crate::{
 
 #[test]
 fn cached_jobs_preserve_reopened_pixels_through_correction_locals_and_rotated_reconstruction() {
+    compare_files(false);
+}
+
+#[test]
+fn repaired_cached_forecasted_and_paired_exports_preserve_complete_reopened_files() {
+    compare_files(true);
+}
+
+fn compare_files(repaired: bool) {
     let (device, queue, renderer) = super::tests::context();
     let gate = SubmissionGate::default();
     let mut scan = Scan::open(
@@ -62,6 +71,27 @@ fn cached_jobs_preserve_reopened_pixels_through_correction_locals_and_rotated_re
         });
         scan.set_flat_field(field.clone()).unwrap();
         let field = field.map(|f| Arc::new(GpuFlatField::new(&device, f).unwrap()));
+        let repairs = if repaired {
+            use crate::dust_repair::{DonorChoice, Repair, RepairId, RepairOrigin, SupportMask};
+            let repair = Repair {
+                id: RepairId(1),
+                enabled: true,
+                origin: RepairOrigin::Manual,
+                support: SupportMask::new([126, 62], [5, 5], vec![true; 25]).unwrap(),
+                donor: DonorChoice::Offset([-64, 0]),
+            };
+            vec![Arc::new(
+                crate::repair_source::evaluate(
+                    &scan,
+                    scan.processing_calibration(calibration).unwrap(),
+                    roll,
+                    &repair,
+                )
+                .unwrap(),
+            )]
+        } else {
+            vec![]
+        };
         for angle in [0., 0.13] {
             let crop = if angle == 0. {
                 None
@@ -95,6 +125,7 @@ fn cached_jobs_preserve_reopened_pixels_through_correction_locals_and_rotated_re
                     calibration,
                     roll,
                     grade: grade.clone(),
+                    repairs: &repairs,
                     composition,
                     format,
                 };

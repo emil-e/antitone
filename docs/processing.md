@@ -9,7 +9,7 @@ developed camera RGB
   → optional scan-illumination correction
   → per-channel negative inversion
   → camera-to-AP1 colour conversion
-  → ungraded working positive (optional preview-only dust repair here)
+  → ungraded working positive (optional source-owned dust repair here)
   → exposure and photographic white balance
   → Photo contrast and saturation
   → ordered source-anchored local grades, when present
@@ -76,7 +76,15 @@ The provisional Dust tool heals here. Fixed RAW-development WB and gamma balance
 
 GPU donor screening reduces matching work without replacing the healer's f64 score, competitive margin or tie breaks. Integer lower bounds may exclude only candidates proved outside that margin; every possible winner retains exact CPU scoring and reconstruction. Quantized screening coordinates and floored weights are evidence for rejection, not quantization or clipping of AP1 samples, repaired pixels or final scores. [The research guide](research/dust-removal.md#large-mask-acceleration) explains the conservative construction and its measured limits.
 
-Healing and nonlinear grading do not commute, and pre-grade donor matching can differ from matching graded input. The solver remains frozen; [research evidence](research/dust-removal.md) is not all-grade photographic acceptance. Full-resolution repair composition precedes view filtering or original-sample output reconstruction; it is not painting into an already downsampled proxy. Saved repairs identify this stage through an explicit [project repair contract](projects.md#source-owned-dust-repairs). Production TIFF/EXR and thumbnails do not yet consume repairs; [the editor guide](editor.md#provisional-dust-cleanup) owns those user-visible limits.
+Healing and nonlinear grading do not commute, and pre-grade donor matching can differ from matching graded input. The solver remains frozen; [research evidence](research/dust-removal.md) is not all-grade photographic acceptance. Full-resolution repair composition precedes view filtering or original-sample output reconstruction; it is not painting into an already downsampled proxy. Saved repairs identify this stage through an explicit [project repair contract](projects.md#source-owned-dust-repairs). Viewer/reference/scopes, TIFF/AP0 EXR and proper positive thumbnails consume these repairs. Camera navigation placeholders and measurement inputs have separate purposes; they are not completed repaired positives.
+
+### One accepted image recipe
+
+[Image recipes](../src/image_recipe.rs) capture accepted source/development, correction, calibration/inversion, committed enabled repairs, Global/ordered-local grades and composition. Output target and format are consumer choices, not alternate grades. Explicit viewer drafts reuse the same construction without changing accepted records; export and proper cards never capture a gesture draft. Metadata-only repair IDs/provenance and disabled instructions do not change photographic identity, while source freshness remains the acquisition owner's responsibility.
+
+[Source-aware resolution](../src/repair_source.rs) shares the frozen scalar neutral sampling boundary across interactive and offscreen work. A cold consumer recomputes without requiring the active viewer cache; cancellation is not a failed heal. Export checks exact composition coverage before excluding an irrelevant support. Evaluated sparse content can remain CPU-owned while each bounded original unit uploads only its contributing pixels. Reconstruction never substitutes an unrepaired success because a GPU patch is absent.
+
+Dmin/Dmax, gamma/WB fitting, Analyze statistics and source inspection retain their existing unrepaired numerical contracts. Positive picker/reference presentation includes repairs; its measurement input is deliberately separate. Thumbnail and physical-view filtering before nonlinear grading remains the explicit approximation below, not a second photographic definition.
 
 ### Photo contrast and saturation
 

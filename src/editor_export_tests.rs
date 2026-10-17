@@ -1,6 +1,9 @@
 use super::*;
 use tiff::decoder::{Decoder, DecodingResult};
 
+#[path = "editor_export_repair_tests.rs"]
+mod repairs;
+
 fn wait(editor: &mut Editor) {
     let start = std::time::Instant::now();
     while editor.busy {

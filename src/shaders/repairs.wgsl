@@ -4,8 +4,12 @@ struct RepairPixel {
 }
 @group(0) @binding(12)
 var<storage, read> repair_pixels: array<RepairPixel>;
+struct RepairTile {
+    area: vec4u,
+    offset: vec4u,
+}
 @group(0) @binding(13)
-var<uniform> repair_tile: vec4u;
+var<uniform> repair_tile: RepairTile;
 
 struct RepairView {
     bounds_output: vec4u,
@@ -21,25 +25,35 @@ var<uniform> repair_view: RepairView;
 @group(0) @binding(15)
 var<storage, read> reconstructed: array<vec4f>;
 
+fn repair_index(point: vec2u) -> u32 {
+    if any(point < repair_tile.area.xy) || any(point >= repair_tile.area.xy + repair_tile.area.zw) {
+        return 0xffffffffu;
+    }
+    let xy = point - repair_tile.area.xy;
+    return repair_tile.offset.x + xy.x + xy.y * repair_tile.area.z;
+}
+
+fn repaired_positive(value: vec3f, index: u32) -> array<Triple, 3> {
+    let gain =
+        precise_exp(Triple(parameters.anchor.w, parameters.anchor_low.w, parameters.anchor_tail.w));
+    var rgb: array<Triple, 3>;
+    for(var c = 0u; c < 3u; c++) {
+        rgb[c] = precise_mul(number(value[c]), gain);
+    }
+    return local_grade(photographic_post(rgb), index);
+}
+
 @compute @workgroup_size(64)
 fn repair_original(@builtin(global_invocation_id) id: vec3u) {
     if id.x >= arrayLength(&repair_pixels) {
         return;
     }
     let pixel = repair_pixels[id.x];
-    if any(pixel.position.xy < repair_tile.xy)
-        || any(pixel.position.xy >= repair_tile.xy + repair_tile.zw) {
+    let index = repair_index(pixel.position.xy);
+    if index == 0xffffffffu {
         return;
     }
-    let xy = pixel.position.xy - repair_tile.xy;
-    let index = xy.x + xy.y * repair_tile.z;
-    let gain =
-        precise_exp(Triple(parameters.anchor.w, parameters.anchor_low.w, parameters.anchor_tail.w));
-    var rgb: array<Triple, 3>;
-    for(var c = 0u; c < 3u; c++) {
-        rgb[c] = precise_mul(number(pixel.value[c]), gain);
-    }
-    let graded = local_grade(photographic_post(rgb), index);
+    let graded = repaired_positive(pixel.value.xyz, index);
     let result = finish_pixel(ProcessedPixel(graded, u32(positives[index].w)));
     positives[index] = result;
 }
@@ -50,12 +64,10 @@ fn repair_neutral(@builtin(global_invocation_id) id: vec3u) {
         return;
     }
     let sample = repair_pixels[id.x];
-    let point = sample.position.xy;
-    if any(point < repair_tile.xy) || any(point >= repair_tile.xy + repair_tile.zw) {
+    let at = repair_index(sample.position.xy);
+    if at == 0xffffffffu {
         return;
     }
-    let relative = point - repair_tile.xy;
-    let at = relative.x + relative.y * repair_tile.z;
     positives[at] = vec4f(sample.value.xyz, positives[at].w);
 }
 

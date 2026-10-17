@@ -431,7 +431,6 @@ impl Editor {
                             ui.small(
                                 "Drag the source outline to move it · release commits changes · H hides outlines.",
                             );
-                            ui.small("TIFF/EXR and thumbnails do not include repairs.");
                         } else if !fullscreen && self.analysis_review.is_some() {
                             ui.separator();
                             ui.small(
@@ -477,17 +476,9 @@ impl Editor {
                                 .truncate(),
                         );
                     } else {
-                        let help = if has_repairs {
-                            format!(
-                                "{state}\nTIFF/EXR and thumbnails do not include repairs."
-                            )
-                        } else {
-                            state.clone()
-                        };
                         ui.add(
                             egui::Label::new(egui::RichText::new(state).small().weak()).truncate(),
-                        )
-                        .on_hover_text(help);
+                        );
                     }
                 });
             });

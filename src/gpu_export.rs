@@ -41,6 +41,9 @@ mod edge_tests;
 mod pair_tests;
 #[path = "gpu_export_pipeline.rs"]
 mod pipeline;
+#[cfg(all(test, target_os = "macos"))]
+#[path = "gpu_export_repair_tests.rs"]
+mod repair_tests;
 #[cfg(all(test, feature = "editor", target_os = "macos"))]
 #[path = "gpu_export_resource_tests.rs"]
 mod resource_tests;
@@ -68,6 +71,7 @@ pub struct Request<'a> {
     pub calibration: Calibration,
     pub roll: RollSettings,
     pub grade: PhotoGradeSnapshot,
+    pub repairs: &'a [Arc<crate::dust_repair::EvaluatedRepair>],
     pub composition: Composition,
     pub format: Format,
     pub look: Option<Arc<crate::looks::LookAsset>>,
@@ -178,6 +182,7 @@ fn write_job_with_policy(
         calibration,
         roll,
         grade,
+        repairs,
         composition,
         format,
         look,
@@ -211,6 +216,19 @@ fn write_job_with_policy(
             None
         },
     );
+    let repairs = crate::gpu::repairs::Snapshot::logical(repairs.to_vec())?;
+    repairs.require_area(scan.area)?;
+    if !repairs.0.is_empty() {
+        GpuPhotoGrade::validate_repaired(
+            device,
+            scan.processing_calibration(calibration)?,
+            roll,
+            &grade,
+            scan.camera_to_ap1,
+            scan.area,
+            repairs.bound(),
+        )?;
+    }
     let batch_field = field.clone();
     let mut tiles = timed!(Setup, {
         let grade = GpuPhotoGrade::new(
@@ -231,6 +249,7 @@ fn write_job_with_policy(
             look.as_ref(),
         )
     })?;
+    tiles.set_repairs(device, repairs.clone())?;
     let tile_size = tiles.size;
     // Paired source coordinates must be exact f32 integers. Uncorrected serial sources
     // can remain valid outside that coordinate range.
@@ -261,7 +280,7 @@ fn write_job_with_policy(
         } else {
             let geometry = SourceGeometry::original_pair([origins[0], origins[1]], tile_size)?;
             if pair.is_none() {
-                pair = Some(OriginalTiles::new_geometry(
+                let mut processor = OriginalTiles::new_geometry(
                     renderer,
                     (device, queue, submissions),
                     (scan.camera_to_ap1, geometry.size()),
@@ -269,7 +288,9 @@ fn write_job_with_policy(
                     tiles.grade.clone(),
                     (format, look.as_ref()),
                     Some(geometry),
-                )?);
+                )?;
+                processor.set_repairs(device, repairs.clone())?;
+                pair = Some(processor);
             }
             pair.as_mut().unwrap().read_geometry(
                 renderer,
@@ -599,6 +620,8 @@ struct OriginalTiles {
     grade: Arc<GpuPhotoGrade>,
     working: wgpu::Buffer,
     precise: Option<ProcessingKernel>,
+    repairs: crate::gpu::repairs::Snapshot,
+    repair_precise: Option<crate::gpu::repairs::ExportKernel>,
     rendered: Option<(
         wgpu::Texture,
         crate::renderer::RenderBinding,
@@ -728,9 +751,25 @@ impl OriginalTiles {
             grade,
             working,
             precise,
+            repairs: Default::default(),
+            repair_precise: None,
             rendered,
             readback,
         })
+    }
+
+    fn set_repairs(
+        &mut self,
+        device: &wgpu::Device,
+        repairs: crate::gpu::repairs::Snapshot,
+    ) -> Result<(), Error> {
+        if self.precise.is_some() && !repairs.0.is_empty() {
+            self.repair_precise = Some(pollster::block_on(
+                crate::gpu::repairs::ExportKernel::new(device),
+            )?);
+        }
+        self.repairs = repairs;
+        Ok(())
     }
 
     fn read(
@@ -742,8 +781,8 @@ impl OriginalTiles {
         origin: [u32; 2],
         pixels: &[[u16; 4]],
     ) -> Result<Vec<[f64; 4]>, Error> {
-        let geometry = if self.geometry {
-            Some(SourceGeometry::new(
+        let geometry = if self.geometry || !self.repairs.0.is_empty() {
+            Some(SourceGeometry::original_tile(
                 [origin[0], origin[1], self.size[0], self.size[1]],
                 self.size,
             )?)
@@ -777,6 +816,32 @@ impl OriginalTiles {
                 &self.working,
                 &self.grade,
             )?;
+        if !self.repairs.0.is_empty() {
+            let geometry = geometry
+                .ok_or_else(|| Error::Gpu("repairs require original source coordinates".into()))?;
+            let mut input = crate::gpu::ProcessingInput::from(self.grade.clone());
+            input.repairs = self.repairs.clone();
+            let kernel = self.precise.as_ref().unwrap_or(&renderer.kernel);
+            if let Some(repair_kernel) = &self.repair_precise {
+                repair_kernel.encode(
+                    device,
+                    &mut encoder,
+                    kernel,
+                    &self.working,
+                    &input,
+                    geometry,
+                )?;
+            } else {
+                renderer.repairs.original(
+                    device,
+                    &mut encoder,
+                    kernel,
+                    &self.working,
+                    &input,
+                    geometry,
+                )?;
+            }
+        }
         if let Some((texture, group, pipeline)) = &self.rendered {
             // Per-original markers survive ACES; reconstruction validates only used samples.
             let _ = group.encode_look(renderer, device, &mut encoder)?;

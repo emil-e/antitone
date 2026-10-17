@@ -22,6 +22,7 @@ pub(super) fn write_single(
         calibration,
         roll,
         grade,
+        repairs,
         composition,
         format,
         look,
@@ -38,6 +39,7 @@ pub(super) fn write_single(
             None
         },
     );
+    let repairs = crate::gpu::repairs::Snapshot::logical(repairs.to_vec())?;
     let mut tiles = timed!(
         Setup,
         OriginalTiles::new_with_look(
@@ -57,6 +59,7 @@ pub(super) fn write_single(
             look.as_ref()
         )
     )?;
+    tiles.set_repairs(device, repairs)?;
     let size = tiles.size;
     let mut reads = 0;
     let load = |origin: [u32; 2]| {

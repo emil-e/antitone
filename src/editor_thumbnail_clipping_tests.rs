@@ -212,10 +212,10 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
                     editor.preferences.filmstrip_height = height;
                     let before = editor.document.project.clone();
                     for id in editor.document.project.order.clone() {
-                        editor
-                            .thumbnails
-                            .cache
-                            .insert(super::tests::key(&editor.document, id), Ok(image.clone()));
+                        editor.thumbnails.cache.insert(
+                            super::tests::key(&editor.document, id),
+                            Ok(Product::camera(image.clone())),
+                        );
                     }
                     let context = egui::Context::default();
                     context.set_pixels_per_point(scale);

@@ -1,5 +1,5 @@
 use super::*;
-use crate::geometry::QuarterTurns;
+use crate::{geometry::QuarterTurns, processing::Pipeline};
 
 #[path = "editor_dust_persistence_tests.rs"]
 mod persistence;

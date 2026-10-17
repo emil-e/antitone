@@ -249,6 +249,23 @@ impl LookAsset {
         Ok(Self { name, origin, lut })
     }
 
+    /// Explicit asset payload, conservatively charging shared LUT samples without deduplication.
+    pub fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self.name.capacity()
+            + std::mem::size_of::<Lut3D>()
+            + self.lut.byte_len()
+            + match &self.origin {
+                LookOrigin::Imported => 0,
+                LookOrigin::Builtin {
+                    id,
+                    generator,
+                    definition,
+                    ..
+                } => id.capacity() + generator.capacity() + definition.capacity(),
+            }
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }

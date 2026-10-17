@@ -203,6 +203,12 @@ impl PhotoGradeSnapshot {
         })
     }
 
+    /// Explicit owned snapshot payload, excluding allocator bookkeeping.
+    pub fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self.locals.adjustments.capacity() * std::mem::size_of::<LocalAdjustment>()
+    }
+
     pub fn global(&self) -> PhotoSettings {
         self.global
     }
@@ -230,6 +236,18 @@ impl SpatialPipeline {
             global: Pipeline::new(calibration, roll, grade.global, camera_to_ap1)?,
             locals: grade.locals,
         })
+    }
+
+    /// Grade absolute neutral AP1 at an original source pixel, retaining floor provenance.
+    pub fn grade_neutral(
+        &self,
+        pixel: InvertedPixel,
+        source_pixel: [u32; 2],
+    ) -> Result<InvertedPixel, Error> {
+        self.locals.apply(
+            self.global.grade_neutral(pixel)?,
+            SourcePoint(source_pixel.map(|v| f64::from(v) + 0.5)),
+        )
     }
 
     pub fn apply(&self, scan: DVec3, source_pixel: [u32; 2]) -> Result<InvertedPixel, Error> {

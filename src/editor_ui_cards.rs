@@ -138,7 +138,8 @@ impl ContactSheetCard {
         );
     }
 
-    pub fn warning(&self, ui: &Ui, reason: &str) -> Response {
+    pub fn status(&self, ui: &Ui, status: &super::ContextualStatus) -> Response {
+        let reason = &status.reason;
         let side = 20_f32
             .min(self.image_rect.width())
             .min(self.image_rect.height());
@@ -150,10 +151,15 @@ impl ContactSheetCard {
             .rect_filled(rect, 2., Color32::from_black_alpha(210));
         let response = ui.interact(
             rect.shrink(2.),
-            self.response.id.with("warning"),
+            self.response.id.with("status"),
             egui::Sense::hover(),
         );
-        let response = super::feedback::warning_icon(ui, response, "Photo warning", reason);
+        let name = match status.level {
+            super::StatusLevel::Activity => "Photo updating",
+            super::StatusLevel::Warning => "Photo warning",
+            super::StatusLevel::Error => "Photo error",
+        };
+        let response = super::feedback::status_icon(ui, response, name, status.level, reason);
         ui.ctx().accesskit_node_builder(self.response.id, |node| {
             node.set_description(if self.active {
                 format!("Active photo. {reason}")

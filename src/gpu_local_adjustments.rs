@@ -94,7 +94,7 @@ impl GpuPhotoGrade {
         })
     }
 
-    #[cfg(feature = "editor")]
+    #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
     pub(crate) fn validate_repaired(
         device: &wgpu::Device,
         calibration: Calibration,
@@ -194,6 +194,18 @@ impl GpuPhotoGrade {
     }
 
     /// Retained local constants and context; excludes per-dispatch uniforms and driver overhead.
+    #[cfg(feature = "editor")]
+    pub(crate) fn byte_len_for(snapshot: &PhotoGradeSnapshot) -> u64 {
+        let active = snapshot
+            .locals()
+            .iter()
+            .filter(|local| local.is_active())
+            .count()
+            .max(1);
+        (active * std::mem::size_of::<LocalParameters>() + std::mem::size_of::<LocalContext>())
+            as u64
+    }
+
     pub fn byte_len(&self) -> u64 {
         self.buffer.size() + self.context.size()
     }

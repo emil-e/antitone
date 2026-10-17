@@ -46,7 +46,7 @@ The explicit repair contract freezes both the healer and its ungraded-AP1 input 
 
 Released accepted edits participate in ordinary dirty comparison and Save/Discard/Cancel protection. Selection, cancelled drafts and evaluation do not. Successful Save/Save As baselines only the written snapshot, preserving later edits and compatible evaluations. Failed Open preserves the live document and display; accepted replacement retires old work. Existing whole-document development and local-grade admission remains authoritative, not a requirement to render every saved repair.
 
-**TIFF/EXR and thumbnails still do not include repairs.** Persistence does not imply repaired output or undo; [remaining output work](plans/dust-repair.md) is separate.
+Completed TIFF/AP0 EXR and proper positive thumbnails consume the accepted source recipe, including repairs, independently of viewing history. Export prepares applicable repairs asynchronously and fails safely if they cannot be applied; pending/failed thumbnail work is explicitly provisional/unavailable. Save/Open still preserve instructions without forcing offscreen healing, and rendering readiness never changes dirty state. Undo and [broader photographic/resource acceptance](plans/dust-repair.md) remain separate.
 
 ## Compatibility is about the processing basis
 

@@ -1394,10 +1394,10 @@ fn cropped_export_snapshot_survives_later_crop_and_orientation_edits() {
         OutputFormat::Tiff(OutputTarget::Srgb),
         Overwrite::Refuse,
     );
-    let Command::Export(_, _, _, _, roll, photo, composition, ..) = receiver.try_recv().unwrap()
-    else {
+    let Command::Export(_, _, _, recipe, _) = receiver.try_recv().unwrap() else {
         panic!()
     };
+    let (roll, photo, composition) = (recipe.roll, recipe.grade, recipe.composition);
     assert_eq!(composition.size(), [79, 127]);
     assert_eq!(composition.source_pixel([0, 0]).unwrap(), [326, 218]);
     assert_eq!((roll, photo.global()), (editor.roll, editor.photo));
@@ -1466,9 +1466,10 @@ fn export_owns_the_accepted_photo_snapshot_and_rejects_unpreviewable_locals() {
         OutputFormat::Tiff(OutputTarget::Srgb),
         Overwrite::Refuse,
     );
-    let Command::Export(_, _, _, _, _, grade, ..) = receiver.try_recv().unwrap() else {
+    let Command::Export(_, _, _, recipe, _) = receiver.try_recv().unwrap() else {
         panic!()
     };
+    let grade = recipe.grade;
     editor.photo.exposure = 7.;
     editor.sync_document();
     assert_eq!(grade.global().exposure, 1.25);
@@ -1518,10 +1519,10 @@ fn export_holds_the_accepted_orientation_snapshot() {
         OutputFormat::Tiff(OutputTarget::Srgb),
         Overwrite::Refuse,
     );
-    let Command::Export(_, _, _, _, roll, photo, composition, ..) = receiver.try_recv().unwrap()
-    else {
+    let Command::Export(_, _, _, recipe, _) = receiver.try_recv().unwrap() else {
         panic!()
     };
+    let (roll, photo, composition) = (recipe.roll, recipe.grade, recipe.composition);
     assert_eq!(composition.size(), [576, 864]);
     assert_eq!(composition.source_pixel([0, 0]).unwrap(), [875, 582]);
     assert_eq!((roll, photo.global()), (editor.roll, editor.photo));
@@ -1854,9 +1855,10 @@ fn shared_roll_turns_apply_to_new_photos_and_export_snapshots() {
         OutputFormat::Tiff(OutputTarget::Srgb),
         Overwrite::Refuse,
     );
-    let Command::Export(_, _, _, _, _, _, composition, ..) = receiver.try_recv().unwrap() else {
+    let Command::Export(_, _, _, recipe, _) = receiver.try_recv().unwrap() else {
         panic!()
     };
+    let composition = recipe.composition;
     assert_eq!(composition.size(), [576, 864]);
     assert_eq!(composition.source_pixel([0, 0]).unwrap(), [12, 582]);
     editor.roll_orientation.turn_counterclockwise();

@@ -39,6 +39,11 @@ impl FlatField {
         Ok(field)
     }
 
+    /// Explicit immutable map payload, excluding allocator bookkeeping.
+    pub fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>() + self.gains.capacity() * std::mem::size_of::<DVec3>()
+    }
+
     pub fn validate(&self) -> Result<(), Error> {
         let Self { area, size, gains } = self;
         check_area(*area)?;

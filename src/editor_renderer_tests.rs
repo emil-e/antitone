@@ -226,6 +226,8 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
         let (file, proxy) = ready.thumbnail.clone().unwrap();
         seeded.seed(source, &ready.development, file.clone(), proxy);
         let key = ImageKey {
+            projection: None,
+            recipe: Ok(None),
             source: SourceKey::new(source, &ready.development, file),
             target: OutputTarget::DisplayP3,
             field: None,
@@ -359,6 +361,8 @@ fn authored_project_relative_locator_develops_a_cold_thumbnail() {
             Some(disk::DiskCache::at(directory.path().join("cache"))),
         );
         let key = ImageKey {
+            projection: None,
+            recipe: Ok(None),
             source: SourceKey::new(
                 &source,
                 document.project.development.as_ref().unwrap(),

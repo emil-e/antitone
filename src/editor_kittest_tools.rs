@@ -1,7 +1,11 @@
 use super::*;
 
 pub(super) fn calibrated_harness() -> Harness<'static, Editor> {
-    let (mut harness, _) = editor_harness();
+    calibrated_harness_with_thumbnails(false)
+}
+
+pub(super) fn calibrated_harness_with_thumbnails(thumbnails: bool) -> Harness<'static, Editor> {
+    let (mut harness, _) = editor_harness_with_thumbnails(thumbnails);
     harness.state_mut().add_raws(vec![fixture("patches.dng")]);
     wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
     assert!(

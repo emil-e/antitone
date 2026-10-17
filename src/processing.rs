@@ -308,6 +308,7 @@ impl Inversion {
 pub struct Pipeline {
     inversion: Inversion,
     post_inversion_matrix: DMat3,
+    post_neutral_matrix: DMat3,
     grade: crate::photographic::Grade,
 }
 
@@ -344,8 +345,15 @@ impl Pipeline {
         Ok(Self {
             inversion: Inversion::new(calibration, roll)?,
             post_inversion_matrix,
+            post_neutral_matrix: wb_matrix(photo.wb)? * wb_matrix(roll.wb)? * gain,
             grade: crate::photographic::Grade::new(photo)?,
         })
+    }
+
+    /// Grade an absolute ungraded AP1 replacement without repeating correction or inversion.
+    pub fn grade_neutral(&self, mut pixel: InvertedPixel) -> Result<InvertedPixel, Error> {
+        pixel.rgb = self.grade.apply(self.post_neutral_matrix * pixel.rgb)?;
+        Ok(pixel)
     }
 
     /// Returns unclipped AP1 working RGB; scene-linear AP0 export converts at its boundary.

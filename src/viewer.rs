@@ -411,7 +411,7 @@ impl GpuImage {
                     &processing.working,
                     input,
                     geometry,
-                );
+                )?;
             }
         }
         let mut binding = processing.aces_group.lock().unwrap();

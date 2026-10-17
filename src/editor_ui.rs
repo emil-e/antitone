@@ -11,7 +11,7 @@ pub(super) use dialogs::{DecisionDialog, DialogChoice};
 
 #[path = "editor_ui_feedback.rs"]
 mod feedback;
-pub(super) use feedback::{FeedbackDialog, Severity};
+pub(super) use feedback::{ContextualStatus, FeedbackDialog, Severity, StatusLevel};
 
 #[path = "editor_ui_progress.rs"]
 mod progress;

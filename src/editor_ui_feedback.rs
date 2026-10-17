@@ -15,20 +15,79 @@ pub enum Severity {
     Error,
 }
 
-pub(super) fn warning_icon(
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum StatusLevel {
+    Activity,
+    Warning,
+    Error,
+}
+
+/// Supplied contextual conditions; controllers own their scope and retirement.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContextualStatus {
+    pub level: StatusLevel,
+    pub reason: String,
+}
+
+impl ContextualStatus {
+    pub fn new(level: StatusLevel, reason: impl Into<String>) -> Self {
+        Self {
+            level,
+            reason: reason.into(),
+        }
+    }
+
+    pub fn combine(self, other: Self) -> Self {
+        let level = self.level.max(other.level);
+        let reason = if self.reason == other.reason {
+            self.reason
+        } else if other.level > self.level {
+            format!("{}\n{}", other.reason, self.reason)
+        } else {
+            format!("{}\n{}", self.reason, other.reason)
+        };
+        Self { level, reason }
+    }
+}
+
+pub(super) fn status_icon(
     ui: &Ui,
     response: egui::Response,
     name: &str,
+    level: StatusLevel,
     reason: &str,
 ) -> egui::Response {
     let rect = response.rect;
-    Icon::Warning.paint(ui, rect, egui::Stroke::new(1.5, ui.visuals().warn_fg_color));
+    match level {
+        StatusLevel::Activity => Icon::Pending.paint(
+            ui,
+            rect,
+            egui::Stroke::new(1.5, ui.visuals().weak_text_color()),
+        ),
+        StatusLevel::Warning => {
+            Icon::Warning.paint(ui, rect, egui::Stroke::new(1.5, ui.visuals().warn_fg_color))
+        }
+        StatusLevel::Error => Icon::Error.paint(
+            ui,
+            rect,
+            egui::Stroke::new(1.5, ui.visuals().error_fg_color),
+        ),
+    }
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Image, response.enabled(), name)
     });
     ui.ctx()
         .accesskit_node_builder(response.id, |node| node.set_description(reason));
     response.on_hover_text(reason)
+}
+
+pub(super) fn warning_icon(
+    ui: &Ui,
+    response: egui::Response,
+    name: &str,
+    reason: &str,
+) -> egui::Response {
+    status_icon(ui, response, name, StatusLevel::Warning, reason)
 }
 
 pub(in crate::editor) fn notice_heading(ui: &mut Ui, severity: Severity, title: &str) {

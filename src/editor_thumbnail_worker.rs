@@ -5,6 +5,7 @@ enum Input {
     Proxy(Arc<Proxy>),
     Source(Arc<DevelopedSource>),
     Native(development::Ticket),
+    Positive,
     Retired,
 }
 
@@ -24,6 +25,7 @@ struct Worker {
     disk: Option<disk::DiskCache>,
     repaint: Arc<std::sync::OnceLock<egui::Context>>,
     developments: development::Scheduler,
+    kernels: std::sync::OnceLock<Result<Arc<crate::gpu::view::ViewKernels>, Error>>,
 }
 
 impl Worker {
@@ -42,25 +44,43 @@ impl Worker {
             if !self.active(&job) || FileKey::new(&job.path) != job.key.source.file {
                 return Ok(Input::Retired);
             }
-            let cached = cached.or_else(|| {
-                let disk = self.disk.as_ref()?;
-                let tick = std::time::Instant::now();
-                let result = disk.load(&job.key.source);
-                metrics.disk_seconds = tick.elapsed().as_secs_f64();
-                match result {
-                    Ok(proxy) => {
-                        metrics.disk_hit = proxy.is_some();
-                        proxy
-                    }
-                    Err(error) => {
-                        eprintln!(
-                            "thumbnail disk_cache_miss source_id={} reason={error}",
-                            job.source.id.0
-                        );
-                        None
-                    }
+            let positive = job.render && matches!(&job.key.recipe, Ok(Some(_)));
+            if job.render {
+                if let Err(reason) = &job.key.recipe {
+                    return Err(Error::Gpu(reason.clone()));
                 }
-            });
+                if positive
+                    && job
+                        .previous
+                        .as_ref()
+                        .is_some_and(|product| product.positive.is_some())
+                {
+                    return Ok(Input::Positive);
+                }
+            }
+            let cached = if positive {
+                None
+            } else {
+                cached.or_else(|| {
+                    let disk = self.disk.as_ref()?;
+                    let tick = std::time::Instant::now();
+                    let result = disk.load(&job.key.source);
+                    metrics.disk_seconds = tick.elapsed().as_secs_f64();
+                    match result {
+                        Ok(proxy) => {
+                            metrics.disk_hit = proxy.is_some();
+                            proxy
+                        }
+                        Err(error) => {
+                            eprintln!(
+                                "thumbnail disk_cache_miss source_id={} reason={error}",
+                                job.source.id.0
+                            );
+                            None
+                        }
+                    }
+                })
+            };
             if let Some(proxy) = cached {
                 return Ok(Input::Proxy(proxy));
             }
@@ -97,11 +117,186 @@ impl Worker {
         }
     }
 
+    fn positive(
+        &self,
+        job: &Job,
+        scan: Option<Scan>,
+        metrics: &mut ThumbnailMetrics,
+    ) -> Result<Option<Arc<Product>>, Error> {
+        use crate::gpu::view::{RenderedView, ViewKernels, ViewSource, ViewSourceSpec};
+        let Some(recipe) = job
+            .key
+            .recipe
+            .as_ref()
+            .map_err(|error| Error::Gpu(error.clone()))?
+            .as_ref()
+        else {
+            return Err(Error::Gpu("positive thumbnail requires a recipe".into()));
+        };
+        if !self.active(job) {
+            return Ok(None);
+        }
+        let tick = std::time::Instant::now();
+        let renderer = self.renderers.get(&self.device, &self.queue)?;
+        metrics.renderer_seconds = tick.elapsed().as_secs_f64();
+        let submissions = self.renderers.submissions();
+        let previous = job
+            .previous
+            .as_ref()
+            .and_then(|product| product.positive.as_ref());
+        let source = if let Some((source, _)) = previous {
+            metrics.neutral_hit = true;
+            source.clone()
+        } else {
+            let mut scan =
+                scan.ok_or_else(|| Error::Raw("positive thumbnail requires originals".into()))?;
+            scan.set_flat_field(recipe.neutral.correction.clone())?;
+            let mut screening =
+                crate::gpu::dust_screening::Screening::new(&self.device, &self.queue, submissions);
+            let tick = std::time::Instant::now();
+            let evaluated = crate::repair_source::resolve_with(
+                &scan,
+                recipe,
+                &mut crate::dust_repair::Execution {
+                    screener: Some(&mut screening),
+                    cancelled: &|| !self.active(job),
+                },
+            )?;
+            let Some(evaluated) = evaluated else {
+                return Ok(None);
+            };
+            let repairs = crate::gpu::repairs::Snapshot::logical(evaluated)?;
+            metrics.repair_seconds = tick.elapsed().as_secs_f64();
+            crate::gpu::GpuPhotoGrade::validate_repaired(
+                &self.device,
+                recipe.neutral.processing_calibration()?,
+                recipe.roll,
+                &recipe.grade,
+                scan.camera_to_ap1,
+                scan.area,
+                repairs.bound(),
+            )?;
+            let tick = std::time::Instant::now();
+            let composition = Composition::new(scan.area, Default::default(), Default::default())?;
+            let mut frame = crate::frame_raster::FrameRaster::full(composition)?;
+            let scale =
+                (f64::from(frame.output[0].max(frame.output[1])) / f64::from(SOURCE_SIZE)).max(1.);
+            frame.output = frame
+                .output
+                .map(|size| (f64::from(size) / scale).ceil() as u32);
+            let spec = ViewSourceSpec::new(
+                job.source.id.0,
+                frame,
+                recipe.neutral.processing_calibration()?,
+                recipe.roll,
+                scan.camera_to_ap1,
+                recipe.neutral.correction.clone(),
+            )?
+            .with_repairs(repairs);
+            let kernels = self
+                .kernels
+                .get_or_init(|| pollster::block_on(ViewKernels::new(&self.device)))
+                .clone()?;
+            let Some(mut sources) = ViewSource::acquire_many(
+                &self.device,
+                &self.queue,
+                submissions,
+                renderer,
+                kernels,
+                &scan,
+                job.correction
+                    .as_ref()
+                    .map(|correction| correction.gpu.clone()),
+                vec![spec],
+                || !self.active(job),
+            )?
+            else {
+                return Ok(None);
+            };
+            metrics.neutral_seconds = tick.elapsed().as_secs_f64();
+            sources.remove(0)
+        };
+        let tick = std::time::Instant::now();
+        let grade = Arc::new(crate::gpu::GpuPhotoGrade::new(
+            &self.device,
+            recipe.neutral.processing_calibration()?,
+            recipe.roll,
+            recipe.grade.clone(),
+            glam::DMat3::from_cols_array_2d(&recipe.neutral.source_development.camera_to_ap1),
+            recipe.neutral.source_development.active_area.into(),
+        )?);
+        let mut input = crate::gpu::ProcessingInput::from(grade).with_look(recipe.look.clone());
+        input.repairs = source.spec.repairs.clone();
+        let view = RenderedView::new(
+            &self.device,
+            source.clone(),
+            recipe.neutral.processing_calibration()?,
+            recipe.roll,
+            recipe.grade.clone(),
+            &input,
+            job.key.target,
+            previous.map(|(_, view)| view),
+        )?;
+        view.ensure_submitted(
+            &self.device,
+            &self.queue,
+            submissions,
+            self.repaint.get().unwrap_or(&egui::Context::default()),
+        );
+        if recipe.look.is_some() {
+            // Cards retain a full-source raster; admit only their declared composed footprint.
+            let composition = job.key.projection.unwrap_or(recipe.composition);
+            let mapping = composition.texture_mapping(
+                crate::geometry::FramePoint([0.; 2]),
+                crate::geometry::FramePoint(composition.size().map(f64::from)),
+                source.spec.frame.composition.area(),
+            );
+            let mut encoder = self.device.create_command_encoder(&Default::default());
+            let check = source.renderer.check_look_projection(
+                &self.device,
+                &mut encoder,
+                &view.image.linear,
+                mapping,
+            )?;
+            view.image.set_look_check(Some(check));
+            submissions.submit(&self.queue, [encoder.finish()]);
+            let repaint = self.repaint.clone();
+            view.image.begin_look_check_tracked(submissions, move || {
+                if let Some(context) = repaint.get() {
+                    context.request_repaint();
+                }
+            });
+        }
+        while view.in_flight() {
+            self.device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .map_err(|error| Error::Gpu(error.to_string()))?;
+            if !self.active(job) {
+                return Ok(None);
+            }
+        }
+        view.image
+            .look_result()
+            .expect("completed thumbnail look check")?;
+        metrics.image_seconds = tick.elapsed().as_secs_f64();
+        Ok(self.active(job).then(|| {
+            Arc::new(Product {
+                image: view.image.clone(),
+                positive: Some((source, view)),
+            })
+        }))
+    }
+
     fn finish(&self, mut work: Work) -> Outcome {
         let mut proper = false;
         let job = &work.job;
         let image = (|| {
+            let mut original = None;
             let mut proxy = match work.input? {
+                Input::Positive => {
+                    proper = true;
+                    return self.positive(job, None, &mut work.metrics);
+                }
                 Input::Retired => return Ok(None),
                 Input::Proxy(proxy) => proxy,
                 Input::Source(source) => {
@@ -119,8 +314,17 @@ impl Worker {
                         scan = Scan::from_source(canonical);
                     }
                     let tick = std::time::Instant::now();
-                    let proxy = Arc::new(Proxy::from_scan(&scan)?);
+                    let proxy = match job
+                        .key
+                        .source
+                        .store_key_at(&job.path)
+                        .and_then(|key| job.store.get_proxy(&key))
+                    {
+                        Some(proxy) => proxy,
+                        None => Arc::new(Proxy::from_scan(&scan)?),
+                    };
                     work.metrics.proxy_seconds = tick.elapsed().as_secs_f64();
+                    original = Some(scan);
                     proxy
                 }
                 Input::Native(_) => unreachable!("native completion precedes proxy work"),
@@ -145,6 +349,9 @@ impl Worker {
             proper = true;
             if !job.render || !self.active(job) {
                 return Ok(None);
+            }
+            if matches!(&job.key.recipe, Ok(Some(_))) {
+                return self.positive(job, original, &mut work.metrics);
             }
             make_image(
                 &self.device,
@@ -198,6 +405,7 @@ pub(super) fn worker(
         disk,
         repaint,
         developments,
+        kernels: Default::default(),
     };
     let mut pending: Vec<Work> = Vec::new();
     let mut connected = true;

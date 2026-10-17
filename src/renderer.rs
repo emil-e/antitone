@@ -54,6 +54,11 @@ impl RendererCache {
             let _ = cache.get(&device, &queue);
         });
     }
+
+    pub(crate) fn submissions(&self) -> &crate::gpu::SubmissionGate {
+        &self.submissions
+    }
+
     pub(crate) fn get(
         &self,
         device: &wgpu::Device,
@@ -119,7 +124,7 @@ pub(crate) struct TargetResources {
 pub struct GpuRenderer {
     pub(crate) kernel: ProcessingKernel,
     pub(crate) submissions: crate::gpu::SubmissionGate,
-    #[cfg(feature = "editor")]
+    #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
     pub(crate) repairs: crate::gpu::repairs::Kernels,
     #[cfg(feature = "ui")]
     pub(crate) display: wgpu::RenderPipeline,
@@ -146,7 +151,7 @@ impl GpuRenderer {
             ProcessingKernel::new_with_submissions(device, queue, submissions.clone()).await?;
         #[cfg(feature = "ui")]
         let average = Arc::new(AveragePipelines::new(device).await?);
-        #[cfg(feature = "editor")]
+        #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
         let repairs = crate::gpu::repairs::Kernels::new(device).await?;
         let look_kernel = crate::gpu::look::Kernel::new(device).await?;
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
@@ -166,7 +171,7 @@ impl GpuRenderer {
         Ok(Arc::new(Self {
             kernel,
             submissions,
-            #[cfg(feature = "editor")]
+            #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
             repairs,
             #[cfg(feature = "ui")]
             display,

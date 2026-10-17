@@ -552,7 +552,7 @@ impl ViewSource {
                                 [region.x, region.y, region.width, region.height],
                                 size,
                             )?,
-                        );
+                        )?;
                         kernels.copy(device, &mut encoder, &working, &texture);
                     }
                     // Share a submission when both filters fit the existing destination-work
@@ -632,6 +632,23 @@ pub(crate) struct RenderedView {
 }
 
 impl RenderedView {
+    /// Conservative thumbnail cache charge beyond the target image; shared parents are not deduplicated.
+    pub(crate) fn photographic_bytes(&self) -> u64 {
+        self.group
+            .as_ref()
+            .map_or(0, |binding| binding.look_bytes())
+            + self.graded.as_ref().map_or(0, |graded| {
+                graded.source.pixels.size()
+                    + graded.pixels.size()
+                    + graded.source.spec.repairs.byte_len()
+                    + (self.spec.repairs.0.capacity() + graded.source.spec.repairs.0.len()) as u64
+                        * std::mem::size_of::<Arc<super::repairs::Patch>>() as u64
+                    + graded.grade.as_ref().map_or(0, |grade| {
+                        2 * (grade.byte_len() + grade.snapshot().retained_bytes() as u64)
+                    })
+            })
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         device: &wgpu::Device,

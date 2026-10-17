@@ -610,7 +610,7 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
     editor
         .thumbnails
         .cache
-        .insert(image_key.clone(), Ok(Arc::new(proper)));
+        .insert(image_key.clone(), Ok(Product::camera(Arc::new(proper))));
     assert!(
         !frame(&mut editor)
             .iter()

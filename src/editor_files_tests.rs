@@ -513,17 +513,8 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
             .center();
         click(&mut editor, &context, point);
         assert!(editor.overwrite.is_none());
-        let Command::Export(
-            id,
-            destination,
-            dispatched,
-            calibration,
-            roll,
-            photo,
-            composition,
-            policy,
-            _,
-        ) = receiver.try_recv().unwrap()
+        let Command::Export(id, destination, dispatched, recipe, policy) =
+            receiver.try_recv().unwrap()
         else {
             panic!()
         };
@@ -536,10 +527,10 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
             | (OutputFormat::Exr(ExrPrecision::Full), OutputFormat::Exr(ExrPrecision::Full)) => {}
             _ => panic!("staged export format changed"),
         }
-        assert_eq!(calibration, editor.calibration().unwrap());
-        assert_eq!(roll, editor.roll);
-        assert_eq!(photo.global(), editor.photo);
-        assert_eq!(composition.crop(), editor.crop.unwrap());
+        assert_eq!(recipe.neutral.calibration, editor.calibration().unwrap());
+        assert_eq!(recipe.roll, editor.roll);
+        assert_eq!(recipe.grade.global(), editor.photo);
+        assert_eq!(recipe.composition.crop(), editor.crop.unwrap());
         assert!(matches!(policy, Overwrite::Confirmed));
         assert_eq!(editor.document.project, before);
         assert!(receiver.try_recv().is_err());

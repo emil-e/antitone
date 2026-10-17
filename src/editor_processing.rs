@@ -138,14 +138,23 @@ impl Editor {
         source: &Source,
         photo: PhotoSettings,
     ) -> Result<ProcessingInput, Error> {
-        let snapshot = snapshot(source, photo)?;
-        let matrix = glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1);
-        let calibration = self.processing_calibration(calibration)?;
+        let mut recipe =
+            self.document
+                .project
+                .image_recipe_for_source(source, calibration, roll, photo)?;
+        recipe.neutral.correction = self
+            .correction
+            .as_ref()
+            .map(|correction| correction.settings.map.clone());
+        let snapshot = recipe.grade;
+        let look = recipe.look;
+        let matrix =
+            glam::DMat3::from_cols_array_2d(&recipe.neutral.source_development.camera_to_ap1);
+        let calibration = recipe.neutral.processing_calibration()?;
         if snapshot.locals().is_empty() {
             let parameters = ProcessingParameters::positive(calibration, roll, photo, matrix)?;
             self.grades.remove(source.id);
-            return Ok(ProcessingInput::from(parameters)
-                .with_look(self.document.project.output.look.clone()));
+            return Ok(ProcessingInput::from(parameters).with_look(look));
         }
         self.grades
             .prepare(
@@ -158,7 +167,7 @@ impl Editor {
                 },
                 snapshot,
             )
-            .map(|input| input.with_look(self.document.project.output.look.clone()))
+            .map(|input| input.with_look(look))
     }
 
     pub(super) fn positive_processing(

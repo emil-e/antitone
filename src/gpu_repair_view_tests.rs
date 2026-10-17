@@ -119,17 +119,21 @@ fn filter_authored_repairs(
     });
     let mut encoder = device.create_command_encoder(&Default::default());
     encoder.copy_buffer_to_buffer(&source.pixels, 0, &working, 0, working.size());
-    source.renderer.repairs.neutral(
-        device,
-        &mut encoder,
-        &working,
-        repairs,
-        SourceGeometry::new(
-            [area.x, area.y, area.width, area.height],
-            [area.width, area.height],
+    source
+        .renderer
+        .repairs
+        .neutral(
+            device,
+            &mut encoder,
+            &working,
+            repairs,
+            SourceGeometry::new(
+                [area.x, area.y, area.width, area.height],
+                [area.width, area.height],
+            )
+            .unwrap(),
         )
-        .unwrap(),
-    );
+        .unwrap();
     source
         .kernels
         .copy(device, &mut encoder, &working, &texture);

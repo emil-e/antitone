@@ -4,12 +4,12 @@ pub(super) struct Cache<K, V> {
     pub entries: VecDeque<(K, V)>,
     budget: usize,
     bytes: usize,
-    weight: fn(&V) -> usize,
+    weight: fn(&K, &V) -> usize,
     protected: Vec<K>,
 }
 
 impl<K: PartialEq, V> Cache<K, V> {
-    pub fn new(budget: usize, weight: fn(&V) -> usize) -> Self {
+    pub fn new(budget: usize, weight: fn(&K, &V) -> usize) -> Self {
         Self {
             entries: VecDeque::new(),
             budget,
@@ -67,8 +67,8 @@ impl<K: PartialEq, V> Cache<K, V> {
     }
 
     fn measured_bytes(&self) -> usize {
-        self.entries.iter().fold(0usize, |total, (_, value)| {
-            total.saturating_add((self.weight)(value))
+        self.entries.iter().fold(0usize, |total, (key, value)| {
+            total.saturating_add((self.weight)(key, value))
         })
     }
 
@@ -83,8 +83,8 @@ impl<K: PartialEq, V> Cache<K, V> {
             else {
                 break;
             };
-            let (_, value) = self.entries.remove(index).unwrap();
-            self.bytes -= (self.weight)(&value);
+            let (key, value) = self.entries.remove(index).unwrap();
+            self.bytes -= (self.weight)(&key, &value);
         }
     }
 }
@@ -97,7 +97,7 @@ mod tests {
         use std::{cell::Cell, rc::Rc};
         let first = Rc::new(Cell::new(3usize));
         let second = Rc::new(Cell::new(3usize));
-        let mut cache = Cache::new(10, |value: &Rc<Cell<usize>>| value.get());
+        let mut cache = Cache::new(10, |_, value: &Rc<Cell<usize>>| value.get());
         cache.insert(0, first.clone());
         cache.insert(1, second.clone());
         first.set(9);
@@ -115,7 +115,7 @@ mod tests {
     }
     #[test]
     fn visible_working_set_never_thrashes_even_when_larger_than_optional_budget() {
-        let mut cache = Cache::new(16, |_| 1);
+        let mut cache = Cache::new(16, |_, _| 1);
         cache.protect((0..17).collect());
         for i in 0..17 {
             cache.insert(i, i);
@@ -133,7 +133,7 @@ mod tests {
 
     #[test]
     fn discarding_inactive_generations_updates_the_byte_accounting() {
-        let mut cache = Cache::new(5, |value: &usize| *value);
+        let mut cache = Cache::new(5, |_, value: &usize| *value);
         cache.protect(vec![0]);
         cache.insert(0, 3);
         cache.insert(1, 2);
@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn idle_prefetch_admission_does_not_evict_or_refresh_retained_work() {
-        let mut cache = Cache::new(8, |v: &usize| *v);
+        let mut cache = Cache::new(8, |_, v: &usize| *v);
         cache.insert(0, 4);
         cache.insert(1, 4);
         assert!(!cache.can_retain(1));
@@ -159,7 +159,7 @@ mod tests {
 
     #[test]
     fn byte_accounting_replacement_lru_and_pressure_eviction() {
-        let mut cache = Cache::new(8, |v: &Vec<u8>| v.len());
+        let mut cache = Cache::new(8, |_, v: &Vec<u8>| v.len());
         cache.insert(0, vec![0; 4]);
         cache.insert(1, vec![0; 4]);
         cache.get(&0);

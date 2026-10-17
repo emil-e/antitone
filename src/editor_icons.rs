@@ -14,6 +14,7 @@ pub(super) enum Icon {
     Inspection,
     Help,
     Warning,
+    Pending,
     Information,
     Error,
     TurnLeft,
@@ -47,6 +48,10 @@ impl Icon {
             ));
         };
         match self {
+            Self::Pending => {
+                ui.painter().circle_stroke(point(8., 8.), 6., stroke);
+                line(&[[8., 4.], [8., 8.], [11., 10.]]);
+            }
             Self::Eye => {
                 let upper = (0..=24).map(|i| {
                     let t = i as f32 / 24.;

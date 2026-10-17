@@ -449,7 +449,7 @@ fn authoritative_ready_replaces_pending_and_active_proxy_survives_optional_press
 }
 
 #[test]
-fn local_snapshots_reach_pending_previews_and_cached_thumbnails_without_rebuilding_sources() {
+fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
     use crate::{
         geometry::SourcePoint,
         local_adjustments::{GradientMask, LocalAdjustment},
@@ -519,35 +519,13 @@ fn local_snapshots_reach_pending_previews_and_cached_thumbnails_without_rebuildi
         );
         for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
             editor.target = target;
-            let source = editor.document.project.source(id).unwrap();
-            let thumbnail = retained
-                .image(
-                    &renderers.get(&device, &queue).unwrap(),
-                    &device,
-                    target,
-                    &source.development,
-                    None,
-                )
-                .await
-                .unwrap();
-            let key = ImageKey {
-                source: source_key.clone(),
-                target,
-                field: None,
-            };
-            editor
-                .thumbnails
-                .cache
-                .insert(key.clone(), Ok(thumbnail.clone()));
             let selected = editor
                 .selected_view()
                 .unwrap()
                 .1
                 .image(editor.target)
                 .unwrap();
-            assert!(!Arc::ptr_eq(&selected, &thumbnail));
             let source_revision = selected.source_revision();
-            let thumbnail_revision = thumbnail.source_revision();
 
             for source_mode in [false, true] {
                 editor.source = source_mode;
@@ -574,12 +552,6 @@ fn local_snapshots_reach_pending_previews_and_cached_thumbnails_without_rebuildi
                         .prepare_processing(&device, &mut encoder, &expected)
                         .unwrap(),
                     "selected callback must use the full current input"
-                );
-                assert!(
-                    !thumbnail
-                        .prepare_processing(&device, &mut encoder, &positive)
-                        .unwrap(),
-                    "filmstrip callback must apply locals independently of source inspection"
                 );
                 queue.submit([encoder.finish()]);
                 assert!(
@@ -617,18 +589,8 @@ fn local_snapshots_reach_pending_previews_and_cached_thumbnails_without_rebuildi
                     .prepare_processing(&device, &mut encoder, &edited)
                     .unwrap()
             );
-            assert!(
-                !thumbnail
-                    .prepare_processing(&device, &mut encoder, &edited)
-                    .unwrap()
-            );
             queue.submit([encoder.finish()]);
             assert_eq!(selected.source_revision(), source_revision);
-            assert_eq!(thumbnail.source_revision(), thumbnail_revision);
-            assert!(Arc::ptr_eq(
-                editor.thumbnails.cache.get(&key).unwrap().as_ref().unwrap(),
-                &thumbnail
-            ));
             assert!(Arc::ptr_eq(
                 &editor
                     .thumbnails

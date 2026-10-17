@@ -96,7 +96,13 @@ fn selected_outline(output: &FullOutput, point: Pos2, active: bool) {
                 })
         })
         .expect("selected photo");
-    assert_eq!(selected.1.description() == Some("Active photo"), active);
+    assert_eq!(
+        selected
+            .1
+            .description()
+            .is_some_and(|description| description.contains("Active photo")),
+        active
+    );
     let bounds = selected.1.bounds().unwrap();
     let card = output
         .shapes
@@ -477,12 +483,9 @@ fn modifier_clicks_expose_selection_separately_from_the_active_photo() {
             })
         );
         assert_eq!(
-            node.description(),
-            if index == 0 {
-                Some("Active photo")
-            } else {
-                None
-            }
+            node.description()
+                .is_some_and(|description| description.contains("Active photo")),
+            index == 0
         );
     }
     click(&mut editor, 0, Modifiers::COMMAND);

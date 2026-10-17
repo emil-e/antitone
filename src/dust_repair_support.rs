@@ -95,6 +95,15 @@ impl SupportMask {
         self.size
     }
 
+    /// Explicit owned payload, excluding allocator bookkeeping.
+    pub fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>() + self.runs.capacity() * std::mem::size_of::<[u32; 2]>()
+    }
+
+    pub fn marked_pixels(&self) -> usize {
+        self.runs.iter().map(|run| run[1] as usize).sum()
+    }
+
     pub fn bits(&self) -> Vec<bool> {
         let mut bits = vec![false; (self.size[0] * self.size[1]) as usize];
         for &[start, length] in &self.runs {
@@ -157,7 +166,7 @@ impl SupportMask {
         run > 0 && index < self.runs[run - 1][0] + self.runs[run - 1][1]
     }
 
-    pub(super) fn intersects(&self, other: &Self) -> bool {
+    pub(crate) fn intersects(&self, other: &Self) -> bool {
         if self.origin[0] >= other.origin[0] + other.size[0]
             || other.origin[0] >= self.origin[0] + self.size[0]
             || self.origin[1] >= other.origin[1] + other.size[1]

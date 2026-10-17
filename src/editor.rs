@@ -251,12 +251,8 @@ enum Command {
         ExportIdentity,
         PathBuf,
         OutputFormat,
-        Calibration,
-        RollSettings,
-        PhotoGradeSnapshot,
-        Composition,
+        Box<crate::image_recipe::ImageRecipe>,
         Overwrite,
-        Option<Arc<crate::looks::LookAsset>>,
     ),
 }
 
@@ -962,17 +958,7 @@ fn backend(
                     break;
                 }
             }
-            Command::Export(
-                id,
-                path,
-                format,
-                calibration,
-                roll,
-                grade,
-                composition,
-                overwrite,
-                look,
-            ) => {
+            Command::Export(id, path, format, recipe, overwrite) => {
                 let result = (|| -> Result<PathBuf, Error> {
                     let (loaded, scan) = source
                         .as_ref()
@@ -980,6 +966,15 @@ fn backend(
                     if id.source != *loaded {
                         return Err(Error::UnusableSample("source changed before export"));
                     }
+                    let repairs = crate::repair_source::resolve_output_with(
+                        scan,
+                        &recipe,
+                        &mut crate::dust_repair::Execution {
+                            screener: Some(&mut dust_screening),
+                            cancelled: &|| false,
+                        },
+                    )?
+                    .ok_or_else(|| Error::Export("repair preparation cancelled".into()))?;
                     let renderer = renderers.get(&device, &queue)?;
                     crate::gpu_export::write(
                         &renderer,
@@ -988,11 +983,12 @@ fn backend(
                         crate::gpu_export::Request {
                             scan,
                             field: correction.as_ref().map(|c| c.gpu.clone()),
-                            look,
-                            calibration,
-                            roll,
-                            grade,
-                            composition,
+                            look: recipe.look,
+                            calibration: recipe.neutral.calibration,
+                            roll: recipe.roll,
+                            grade: recipe.grade,
+                            repairs: &repairs,
+                            composition: recipe.composition,
                             format: match format {
                                 OutputFormat::Tiff(target) => {
                                     crate::gpu_export::Format::Tiff(target)
@@ -2154,29 +2150,22 @@ impl Editor {
             return;
         }
         self.sync_document();
-        if let (Some(calibration), Some(ready)) = (self.calibration(), &self.ready) {
-            let grade = (|| -> Result<PhotoGradeSnapshot, Error> {
+        if let (Some(_), Some(ready)) = (self.calibration(), &self.ready) {
+            let recipe = (|| -> Result<crate::image_recipe::ImageRecipe, Error> {
                 self.validate_document_candidate(&self.document)?;
                 let id = self
                     .current_source
                     .ok_or_else(|| Error::Project("no accepted source for export".into()))?;
-                let source = self.document.project.source(id)?;
-                source.grade_snapshot()
+                self.document.project.image_recipe(id)
             })();
-            let grade = match grade {
-                Ok(grade) => grade,
+            let recipe = match recipe {
+                Ok(recipe) => recipe,
                 Err(error) => {
                     self.status = error.to_string();
                     return;
                 }
             };
-            let composition = Composition::with_crop(
-                ready.area,
-                self.roll_orientation,
-                self.photo_orientation,
-                self.crop,
-            )
-            .expect("accepted crop belongs to the loaded source");
+            debug_assert_eq!(recipe.composition.area(), ready.area);
             let request = self.request_id();
             self.export_pending = Some(request);
             self.thumbnails.cancel();
@@ -2192,12 +2181,8 @@ impl Editor {
                     },
                     path,
                     format,
-                    calibration,
-                    self.roll,
-                    grade,
-                    composition,
+                    Box::new(recipe),
                     overwrite,
-                    self.document.project.output.look.clone(),
                 ))
                 .is_err()
             {

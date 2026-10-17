@@ -17,6 +17,8 @@ pub mod geometry;
 pub mod gpu;
 #[cfg(all(feature = "gpu", feature = "export", feature = "raw"))]
 pub mod gpu_export;
+#[cfg(feature = "project")]
+pub mod image_recipe;
 pub mod local_adjustments;
 #[cfg(any(feature = "project", feature = "gpu"))]
 pub mod looks;
@@ -36,6 +38,8 @@ mod refinement;
 mod region_timing;
 #[cfg(feature = "render")]
 pub mod rendering;
+#[cfg(feature = "raw")]
+pub mod repair_source;
 #[cfg(feature = "raw")]
 mod resources;
 pub mod roll_analysis;

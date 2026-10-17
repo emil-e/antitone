@@ -55,7 +55,125 @@ struct ImageKey {
     source: SourceKey,
     target: OutputTarget,
     field: Option<FieldKey>,
+    recipe: Result<Option<Arc<crate::image_recipe::ImageRecipe>>, String>,
+    projection: Option<Composition>,
 }
+
+struct Product {
+    image: Arc<GpuImage>,
+    positive: Option<(
+        Arc<crate::gpu::view::ViewSource>,
+        Arc<crate::gpu::view::RenderedView>,
+    )>,
+}
+
+impl std::ops::Deref for Product {
+    type Target = GpuImage;
+
+    fn deref(&self) -> &Self::Target {
+        &self.image
+    }
+}
+
+impl Product {
+    fn camera(image: Arc<GpuImage>) -> Arc<Self> {
+        Arc::new(Self {
+            image,
+            positive: None,
+        })
+    }
+
+    fn overhead(positive: bool) -> usize {
+        std::mem::size_of::<Self>()
+            + std::mem::size_of::<GpuImage>()
+            + 1024
+            + if positive {
+                std::mem::size_of::<crate::gpu::view::ViewSource>()
+                    + std::mem::size_of::<crate::gpu::view::RenderedView>()
+                    + 2 * std::mem::size_of::<crate::gpu::GpuPhotoGrade>()
+            } else {
+                0
+            }
+    }
+
+    fn byte_len(&self) -> usize {
+        let (source, working) = self.image.processing_byte_len();
+        let image =
+            u64::from(self.image.linear.width()) * u64::from(self.image.linear.height()) * 16;
+        let positive = self
+            .positive
+            .as_ref()
+            .map_or(0, |(_, view)| view.photographic_bytes());
+        (source + working + image + positive) as usize + Self::overhead(self.positive.is_some())
+    }
+}
+
+impl ImageKey {
+    fn retained_bytes(&self) -> usize {
+        let development = &self.source.development;
+        std::mem::size_of::<Self>()
+            + self.source.file.path.capacity()
+            + self.source.source.camera_model.capacity()
+            + development.backend_version.capacity()
+            + development.contract.capacity()
+            + development.inversion_space.capacity()
+            + development.working_space.capacity()
+            + self
+                .field
+                .as_ref()
+                .map_or(0, |field| field.0.retained_bytes())
+            + match &self.recipe {
+                Ok(Some(recipe)) => recipe.retained_bytes(),
+                Err(reason) => reason.capacity(),
+                Ok(None) => 0,
+            }
+    }
+
+    fn same_neutral(&self, other: &Self) -> bool {
+        self.source == other.source
+            && match (&self.recipe, &other.recipe) {
+                (Ok(Some(a)), Ok(Some(b))) => a.same_neutral_content(b),
+                _ => false,
+            }
+    }
+
+    fn estimated_product_bytes(&self) -> Option<usize> {
+        let positive = matches!(&self.recipe, Ok(Some(_)));
+        let mut bytes =
+            256_u64 * 256 * if positive { 48 } else { 40 } + Product::overhead(positive) as u64;
+        if let Ok(Some(recipe)) = &self.recipe {
+            if let Some(look) = &recipe.look {
+                bytes = bytes.checked_add(256 * 256 * 16)?.checked_add(
+                    (look.lut().nodes().len() * std::mem::size_of::<[f32; 4]>()) as u64,
+                )?;
+            }
+            bytes = bytes
+                .checked_add(crate::gpu::repairs::Snapshot::estimate(recipe.repairs())?)?
+                .checked_add(
+                    2 * (crate::gpu::GpuPhotoGrade::byte_len_for(&recipe.grade)
+                        + recipe.grade.retained_bytes() as u64),
+                )?;
+        }
+        usize::try_from(bytes)
+            .ok()?
+            .checked_add(self.retained_bytes())
+    }
+
+    fn current_recipe(&self, document: &Document) -> bool {
+        match &self.recipe {
+            Ok(None) => true,
+            Ok(Some(recipe)) => document
+                .project
+                .image_recipe(self.source.id)
+                .is_ok_and(|current| current == **recipe),
+            Err(reason) => document
+                .project
+                .image_recipe(self.source.id)
+                .is_err_and(|error| error.to_string() == *reason),
+        }
+    }
+}
+
 pub(super) use crate::scan::CameraProxy as Proxy;
 
 impl Proxy {
@@ -132,17 +250,18 @@ struct Job {
     store: Arc<SourceStore>,
     render: bool,
     priority: development::Priority,
+    previous: Option<Arc<Product>>,
 }
 
 struct Outcome {
     ticket: u64,
     key: ImageKey,
-    image: Result<Option<Arc<GpuImage>>, String>,
+    image: Result<Option<Arc<Product>>, String>,
     proper: bool,
 }
 
 pub(super) struct Thumbnails {
-    cache: Cache<ImageKey, Result<Arc<GpuImage>, String>>,
+    cache: Cache<ImageKey, Result<Arc<Product>, String>>,
     pub(super) sources: Arc<SourceStore>,
     selected_key: Option<NativeKey>,
     visible_keys: Vec<NativeKey>,
@@ -177,15 +296,12 @@ impl Default for Thumbnails {
         let pressure = memory::Pressure::Normal;
         let budgets = memory::CacheBudgets::new(limits, pressure);
         Self {
-            cache: Cache::new(budgets.images, |value| {
-                value.as_ref().map_or(1024, |image| {
-                    let (source, working) = image.processing_byte_len();
-                    (source
-                        + working
-                        + u64::from(image.linear.width()) * u64::from(image.linear.height()) * 16)
-                        as usize
-                        + 1024
-                })
+            cache: Cache::new(budgets.images, |key: &ImageKey, value| {
+                key.retained_bytes()
+                    + match value {
+                        Ok(product) => product.byte_len(),
+                        Err(reason) => 1024 + reason.capacity(),
+                    }
             }),
             sources: Arc::new(SourceStore::new(budgets.sources as u64)),
             selected_key: None,
@@ -382,6 +498,29 @@ impl Thumbnails {
         self.sources.set_budget(self.budgets.sources as u64);
     }
 
+    fn protect_images(&mut self, mut wanted: Vec<ImageKey>) {
+        let previous = wanted
+            .iter()
+            .filter(|key| {
+                !self
+                    .cache
+                    .entries
+                    .iter()
+                    .any(|(old, product)| old == *key && product.is_ok())
+            })
+            .filter_map(|key| {
+                self.cache
+                    .entries
+                    .iter()
+                    .rev()
+                    .find(|(old, product)| product.is_ok() && key.same_neutral(old))
+                    .map(|(old, _)| old.clone())
+            })
+            .collect::<Vec<_>>();
+        wanted.extend(previous);
+        self.cache.protect(wanted);
+    }
+
     fn cancel_offscreen(&mut self, wanted: &[ImageKey]) {
         if let Some((ticket, key)) = &self.pending
             && self.generation.load(std::sync::atomic::Ordering::Relaxed) == *ticket
@@ -477,6 +616,11 @@ impl Thumbnails {
             .filter(|(key, value)| {
                 value.is_ok()
                     && key.target == target
+                    && key.projection.is_none()
+                    && key.current_recipe(document)
+                    && key.recipe.as_ref().is_ok_and(|recipe| {
+                        recipe.is_some() == document.project.calibration().ok().flatten().is_some()
+                    })
                     && key.field.as_ref().map(|f| &f.0)
                         == document.project.active_flat_field().map(|f| &f.map)
                     && document
@@ -539,6 +683,7 @@ impl Thumbnails {
                                 &document.source_path(source.id).expect("thumbnail locator"),
                             ),
                         ) == outcome.key.source
+                            && outcome.key.current_recipe(document)
                             && outcome.key.field.as_ref().map(|f| &f.0)
                                 == document.project.active_flat_field().map(|f| &f.map)
                     });
@@ -607,12 +752,29 @@ impl Thumbnails {
             return;
         }
         let Some(commands) = &self.commands else {
+            if self.gpu.is_some() {
+                self.cache
+                    .insert(key, Err("Thumbnail worker stopped".into()));
+            }
             return;
         };
         let ticket = self
             .generation
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             + 1;
+        let previous = render
+            .then(|| {
+                self.cache
+                    .entries
+                    .iter()
+                    .rev()
+                    .find_map(|(old_key, product)| {
+                        key.same_neutral(old_key)
+                            .then(|| product.as_ref().ok().cloned())
+                            .flatten()
+                    })
+            })
+            .flatten();
         if commands
             .send(Job {
                 ticket,
@@ -623,6 +785,7 @@ impl Thumbnails {
                 store: self.sources.clone(),
                 render,
                 priority,
+                previous,
             })
             .is_ok()
         {
@@ -642,6 +805,9 @@ use production_worker::worker;
 struct ThumbnailMetrics {
     disk_hit: bool,
     native_hit: bool,
+    neutral_hit: bool,
+    repair_seconds: f64,
+    neutral_seconds: f64,
     disk_seconds: f64,
     development_seconds: f64,
     verification_seconds: f64,
@@ -658,7 +824,7 @@ fn make_image(
     proxy: &Proxy,
     active: &impl Fn() -> bool,
     metrics: &mut ThumbnailMetrics,
-) -> Result<Option<Arc<GpuImage>>, Error> {
+) -> Result<Option<Arc<Product>>, Error> {
     if !active() {
         return Ok(None);
     }
@@ -674,10 +840,62 @@ fn make_image(
         job.correction.as_ref(),
     ))?;
     metrics.image_seconds = tick.elapsed().as_secs_f64();
-    Ok(active().then_some(image))
+    Ok(active().then(|| Product::camera(image)))
 }
 
 impl Editor {
+    fn thumbnail_composition(&self, source: &Source) -> Composition {
+        let photo_orientation = if self.current_source == Some(source.id) {
+            self.photo_orientation
+        } else {
+            source.orientation
+        };
+        let crop = self.auto_crop_preview(source.id).unwrap_or_else(|| {
+            if self.current_source == Some(source.id) {
+                self.crop
+            } else {
+                source.crop
+            }
+        });
+        if self.analysis_review.is_some() {
+            Composition::new(
+                source.development.active_area.into(),
+                RollOrientation::default(),
+                PhotoOrientation::default(),
+            )
+        } else {
+            Composition::with_crop(
+                source.development.active_area.into(),
+                self.roll_orientation,
+                photo_orientation,
+                crop,
+            )
+        }
+        .expect("document source has a valid active area")
+    }
+
+    fn thumbnail_recipe(
+        &self,
+        id: SourceId,
+    ) -> Result<Option<Arc<crate::image_recipe::ImageRecipe>>, String> {
+        if self.analysis_review.is_some()
+            || self
+                .document
+                .project
+                .calibration()
+                .map_err(|error| error.to_string())?
+                .is_none()
+        {
+            Ok(None)
+        } else {
+            self.document
+                .project
+                .image_recipe(id)
+                .map(|recipe| Some(Arc::new(recipe)))
+                .map_err(|error| error.to_string())
+        }
+    }
+
     fn thumbnail_parameters(&self, source: &Source) -> Result<ProcessingInput, Error> {
         if self.analysis_review.is_some() {
             return self.source_parameters(0.).map(Into::into);
@@ -720,6 +938,8 @@ impl Editor {
                 let source = self.document.project.source(*id).expect("roll source");
                 let path = self.document.source_path(*id).expect("roll locator");
                 let key = ImageKey {
+                    projection: None,
+                    recipe: self.thumbnail_recipe(source.id),
                     source: SourceKey::new(source, development, FileKey::new(&path)),
                     target: self.target,
                     field: self
@@ -856,13 +1076,26 @@ impl Editor {
                         .project
                         .development
                         .as_ref()
-                        .map(|development| ImageKey {
-                            source: SourceKey::new(source, development, FileKey::new(&path)),
-                            target: self.target,
-                            field: self
-                                .correction
+                        .map(|development| {
+                            let recipe = self.thumbnail_recipe(source.id);
+                            let composition = self.thumbnail_composition(source);
+                            let projection = recipe
                                 .as_ref()
-                                .map(|c| FieldKey(c.settings.map.clone())),
+                                .ok()
+                                .and_then(Option::as_ref)
+                                .and_then(|recipe| {
+                                    (recipe.composition != composition).then_some(composition)
+                                });
+                            ImageKey {
+                                source: SourceKey::new(source, development, FileKey::new(&path)),
+                                recipe,
+                                projection,
+                                target: self.target,
+                                field: self
+                                    .correction
+                                    .as_ref()
+                                    .map(|c| FieldKey(c.settings.map.clone())),
+                            }
                         });
                     if let Some(key) = &key {
                         protected.push(key.clone());
@@ -871,37 +1104,20 @@ impl Editor {
                         .as_ref()
                         .and_then(|key| self.thumbnails.cache.get(key))
                         .cloned();
-                    let parameters = self.thumbnail_parameters(source);
+                    let pending = entry.is_none() && key.is_some();
+                    let parameters = if entry
+                        .as_ref()
+                        .and_then(|entry| entry.as_ref().ok())
+                        .is_some_and(|product| product.positive.is_none())
+                    {
+                        self.thumbnail_parameters(source).map(Some)
+                    } else {
+                        Ok(None)
+                    };
                     let mut error = None;
                     match (entry, parameters) {
                         (Some(Ok(image)), Ok(parameters)) => {
-                            let photo_orientation = if self.current_source == Some(source.id) {
-                                self.photo_orientation
-                            } else {
-                                source.orientation
-                            };
-                            let crop = self.auto_crop_preview(source.id).unwrap_or_else(|| {
-                                if self.current_source == Some(source.id) {
-                                    self.crop
-                                } else {
-                                    source.crop
-                                }
-                            });
-                            let composition = if self.analysis_review.is_some() {
-                                Composition::new(
-                                    source.development.active_area.into(),
-                                    RollOrientation::default(),
-                                    PhotoOrientation::default(),
-                                )
-                            } else {
-                                Composition::with_crop(
-                                    source.development.active_area.into(),
-                                    self.roll_orientation,
-                                    photo_orientation,
-                                    crop,
-                                )
-                            }
-                            .expect("document source has a valid active area");
+                            let composition = self.thumbnail_composition(source);
                             let dimensions = composition.size();
                             let aspect = dimensions[0] as f32 / dimensions[1] as f32;
                             let size = egui::vec2(
@@ -929,15 +1145,18 @@ impl Editor {
                                     frame_point(draw_max),
                                     composition.area(),
                                 );
-                                if let Some(failure) = parameters
-                                    .look()
-                                    .and_then(|look| image.look_failure(look.lut().id()))
-                                {
+                                let failure = match parameters.as_ref() {
+                                    Some(input) => input
+                                        .look()
+                                        .and_then(|look| image.look_failure(look.lut().id())),
+                                    None => image.look_result().and_then(Result::err),
+                                };
+                                if let Some(failure) = failure {
                                     error = Some(failure.to_string());
                                 }
                                 match processing::image_paint(
-                                    image,
-                                    Some(parameters),
+                                    image.image.clone(),
+                                    parameters,
                                     mapping,
                                     ui.ctx(),
                                 ) {
@@ -1031,8 +1250,27 @@ impl Editor {
                     }
                     let name = path.file_name().unwrap_or_default().to_string_lossy();
                     card.caption(ui, &name);
+                    use presentation::{ContextualStatus, StatusLevel};
+                    let mut status = if let Some(error) = &error {
+                        Some(ContextualStatus::new(
+                            StatusLevel::Error,
+                            format!("Thumbnail unavailable: {error}"),
+                        ))
+                    } else if pending {
+                        Some(ContextualStatus::new(
+                            StatusLevel::Activity,
+                            "Preparing thumbnail; navigation preview may differ.",
+                        ))
+                    } else {
+                        None
+                    };
                     if let Some(reason) = self.source_tool_warning(id) {
-                        card.warning(ui, reason);
+                        let warning = ContextualStatus::new(StatusLevel::Warning, reason);
+                        status =
+                            Some(status.map_or(warning.clone(), |status| status.combine(warning)));
+                    }
+                    if let Some(status) = status {
+                        card.status(ui, &status);
                     }
                     if card.response.clicked() && selection_enabled {
                         select = Some((index, ui.input(|input| input.modifiers)));
@@ -1104,7 +1342,6 @@ impl Editor {
         // needs spare space and no foreground refinement demand; CPU/disk work does not.
         let eager_allowed =
             visible_allowed && self.thumbnails.budgets.pressure == memory::Pressure::Normal;
-        let render_offscreen = idle && self.thumbnails.cache.can_retain(256 * 256 * 40 + 1024);
         if eager_allowed
             && let Some(development) = &self.document.project.development
             && let (Some(first), Some(last)) = (visible.first().copied(), visible.last().copied())
@@ -1121,6 +1358,8 @@ impl Editor {
                     .source_path(source.id)
                     .expect("prefetch locator");
                 let key = ImageKey {
+                    projection: None,
+                    recipe: self.thumbnail_recipe(source.id),
                     source: SourceKey::new(source, development, FileKey::new(&path)),
                     target: self.target,
                     field: self
@@ -1151,7 +1390,7 @@ impl Editor {
             .filter_map(|key| key.source.store_key())
             .collect();
         self.thumbnails.protect_cpu();
-        self.thumbnails.cache.protect(protected);
+        self.thumbnails.protect_images(protected);
         self.thumbnails.embedded.request_visible(
             &camera_wanted,
             visible_allowed && select.is_none() && !remove,
@@ -1178,6 +1417,10 @@ impl Editor {
                 )
             });
             if let Some((index, key, path, source)) = wanted.into_iter().next() {
+                let render_offscreen = idle
+                    && key
+                        .estimated_product_bytes()
+                        .is_some_and(|bytes| self.thumbnails.cache.can_retain(bytes));
                 self.thumbnails.request_prioritized(
                     key,
                     path,
@@ -1203,6 +1446,9 @@ impl Editor {
 mod clipping_tests;
 #[cfg(all(test, target_os = "macos"))]
 use crate::cache_observation as observation;
+#[cfg(test)]
+#[path = "editor_thumbnail_recipe_tests.rs"]
+mod recipe_tests;
 #[cfg(test)]
 #[path = "editor_renderer_tests.rs"]
 mod renderer_tests;

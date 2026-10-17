@@ -286,6 +286,7 @@ fn exercise(
                         calibration,
                         roll,
                         grade: snapshot.clone(),
+                        repairs: &[],
                         composition,
                         format,
                     };
@@ -591,6 +592,7 @@ fn reference_benchmark_counts_samples_and_preserves_bounded_stop_checks() {
         calibration,
         roll: RollSettings::new_grade(),
         grade: PhotoGradeSnapshot::new(PhotoSettings::default(), vec![]).unwrap(),
+        repairs: &[],
         composition,
         format: Format::Tiff(OutputTarget::Srgb),
     };
@@ -628,6 +630,7 @@ fn write_reference(
         calibration,
         roll,
         grade,
+        repairs,
         composition,
         format,
         look,
@@ -647,7 +650,22 @@ fn write_reference(
             check()?;
         }
         samples += 1;
-        let value = pipeline.apply(scan.pixel(x, y)?, [x, y])?.rgb;
+        let sample = scan.pixel(x, y)?;
+        let value = if let Some(repair) = repairs
+            .iter()
+            .find(|repair| repair.support().contains([x, y]))
+        {
+            let mut pixel = crate::processing::Pipeline::ungraded(
+                scan.processing_calibration(calibration)?,
+                roll,
+                scan.camera_to_ap1,
+            )?
+            .apply(sample)?;
+            pixel.rgb = glam::DVec3::from_array(repair.pixel([x, y], [0.; 3]).map(f64::from));
+            pipeline.grade_neutral(pixel, [x, y])?.rgb
+        } else {
+            pipeline.apply(sample, [x, y])?.rgb
+        };
         if matches!(format, Format::Tiff(_)) {
             look.as_ref()
                 .map_or(Ok(value), |asset| asset.lut().apply(value))

@@ -11,7 +11,7 @@ pub struct ProcessingInput {
     parameters: ProcessingParameters,
     grade: Option<Arc<GpuPhotoGrade>>,
     look: Option<Arc<crate::looks::LookAsset>>,
-    #[cfg(feature = "editor")]
+    #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
     pub(crate) repairs: super::repairs::Snapshot,
 }
 
@@ -21,7 +21,7 @@ impl From<ProcessingParameters> for ProcessingInput {
             parameters,
             grade: None,
             look: None,
-            #[cfg(feature = "editor")]
+            #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
             repairs: super::repairs::Snapshot::default(),
         }
     }
@@ -33,7 +33,7 @@ impl From<Arc<GpuPhotoGrade>> for ProcessingInput {
             parameters: grade.parameters,
             grade: Some(grade),
             look: None,
-            #[cfg(feature = "editor")]
+            #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
             repairs: super::repairs::Snapshot::default(),
         }
     }
@@ -49,15 +49,17 @@ impl ProcessingInput {
         };
         self
     }
+
     pub fn look(&self) -> Option<&Arc<crate::looks::LookAsset>> {
         self.look.as_ref()
     }
+
     pub fn signature(&self) -> ProcessingSignature {
         ProcessingSignature {
             parameters: bytemuck::bytes_of(&self.parameters).try_into().unwrap(),
             grade: self.grade.clone(),
             look: self.look.as_ref().map(|look| look.lut().id()),
-            #[cfg(feature = "editor")]
+            #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
             repairs: self.repairs.clone(),
         }
     }
@@ -71,11 +73,16 @@ impl ProcessingInput {
         }
         Ok(())
     }
+}
 
+#[cfg(any(
+    all(feature = "ui", feature = "render"),
+    all(feature = "raw", feature = "export")
+))]
+impl ProcessingInput {
     pub(crate) fn parameters(&self) -> ProcessingParameters {
         self.parameters
     }
-
     pub(crate) fn grade(&self) -> Option<&GpuPhotoGrade> {
         self.grade.as_deref()
     }
@@ -87,7 +94,7 @@ pub struct ProcessingSignature {
     parameters: [u8; ProcessingParameters::BYTE_LEN],
     grade: Option<Arc<GpuPhotoGrade>>,
     look: Option<crate::looks::LookId>,
-    #[cfg(feature = "editor")]
+    #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
     repairs: super::repairs::Snapshot,
 }
 
@@ -98,7 +105,7 @@ impl ProcessingSignature {
 
     /// Look changes rerender, but may reuse an immutable graded AP1 prefix.
     pub(crate) fn same_photographic(&self, other: &Self) -> bool {
-        #[cfg(feature = "editor")]
+        #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
         if self.repairs != other.repairs {
             return false;
         }

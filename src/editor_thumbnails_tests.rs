@@ -35,6 +35,16 @@ pub(super) fn fixture() -> Document {
 
 pub(super) fn key(document: &Document, id: SourceId) -> ImageKey {
     ImageKey {
+        projection: None,
+        recipe: if document.project.calibration().unwrap().is_some() {
+            document
+                .project
+                .image_recipe(id)
+                .map(|recipe| Some(Arc::new(recipe)))
+                .map_err(|error| error.to_string())
+        } else {
+            Ok(None)
+        },
         source: SourceKey::new(
             document.project.source(id).unwrap(),
             document.project.development.as_ref().unwrap(),
@@ -155,7 +165,7 @@ fn queued_thumbnail_results_do_not_install_after_file_stats_change() {
 #[test]
 fn cache_is_bounded_lru_and_replacement_does_not_grow_it() {
     const CAPACITY: usize = 16;
-    let mut cache = Cache::new(CAPACITY, |_| 1);
+    let mut cache = Cache::new(CAPACITY, |_, _| 1);
     for index in 0..CAPACITY {
         cache.insert(index, index);
     }
@@ -205,6 +215,42 @@ fn source_cache_key_excludes_grading_but_includes_locator_revision_matrix_wb_and
     candidate = original.clone();
     candidate.target = OutputTarget::Srgb;
     assert_ne!(candidate, original);
+}
+
+#[test]
+fn failed_thumbnail_entries_charge_recipe_owned_masks_to_the_optional_cache() {
+    let mut document = fixture();
+    document.project.dmin = Some([0.8; 3]);
+    document.project.dmax = Some([0.02; 3]);
+    document.project.input_floor = Some(crate::processing::CAMERA_INPUT_FLOOR);
+    let id = document.project.order[0];
+    document
+        .project
+        .source_mut(id)
+        .unwrap()
+        .repairs
+        .insert(
+            crate::dust_repair::SupportMask::new(
+                [60, 60],
+                [256, 192],
+                (0..256 * 192).map(|index| index % 2 == 0).collect(),
+            )
+            .unwrap(),
+            crate::dust_repair::RepairOrigin::Manual,
+            crate::dust_repair::DonorChoice::Automatic,
+        )
+        .unwrap();
+    let key = key(&document, id);
+    assert!(key.retained_bytes() > 8192);
+    let mut thumbnails = Thumbnails::default();
+    thumbnails.cache.set_budget(8192);
+    thumbnails
+        .cache
+        .insert(key, Err("Repair unavailable".into()));
+    assert!(
+        thumbnails.cache.entries.is_empty(),
+        "failure entries must not retain large uncharged recipe snapshots"
+    );
 }
 
 #[test]
@@ -937,6 +983,39 @@ fn filmstrip_frame(editor: &mut Editor, context: &egui::Context, budgets: memory
 }
 
 #[test]
+fn offscreen_positive_demand_stays_cpu_only_without_space_for_its_neutral_and_graded_product() {
+    let (mut editor, jobs, _) = idle_prefetch_fixture();
+    editor.document.project.dmin = Some([0.8; 3]);
+    editor.document.project.dmax = Some([0.02; 3]);
+    editor.document.project.input_floor = Some(crate::processing::CAMERA_INPUT_FLOOR);
+    editor.thumbnails.cache.retain(|_, _| false);
+    let last = *editor.document.project.order.last().unwrap();
+    for &id in &editor.document.project.order {
+        if id != last {
+            editor
+                .thumbnails
+                .cache
+                .insert(key(&editor.document, id), Err("already visited".into()));
+        }
+    }
+    let budgets = memory::CacheBudgets::new(
+        cache_limits::CacheLimits {
+            cpu_bytes: 0,
+            gpu_bytes: 3 << 20,
+        },
+        memory::Pressure::Normal,
+    );
+    filmstrip_frame(&mut editor, &egui::Context::default(), budgets);
+    let job = jobs.try_recv().unwrap();
+    assert_eq!(job.key.source.id, last);
+    assert!(matches!(job.key.recipe, Ok(Some(_))));
+    assert!(
+        !job.render,
+        "positive products need more than the old camera-proxy admission estimate"
+    );
+}
+
+#[test]
 fn idle_roll_prefetch_reaches_unshown_photos_after_visible_work() {
     let (mut editor, jobs, completed) = idle_prefetch_fixture();
     let last = *editor.document.project.order.last().unwrap();
@@ -1192,7 +1271,7 @@ fn warm_normal_roll_survives_rapid_forward_and_reverse_scrolling() {
             editor
                 .thumbnails
                 .cache
-                .insert(key(&editor.document, id), Ok(image));
+                .insert(key(&editor.document, id), Ok(Product::camera(image)));
         }
         let context = egui::Context::default();
         let mut names = std::collections::HashSet::new();

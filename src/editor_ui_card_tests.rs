@@ -64,6 +64,49 @@ fn render(
 }
 
 #[test]
+fn contextual_status_combines_activity_and_failure_without_hiding_reasons() {
+    use crate::editor::presentation::{ContextualStatus, StatusLevel};
+    let activity = ContextualStatus::new(StatusLevel::Activity, "Preparing thumbnail");
+    let warning = ContextualStatus::new(StatusLevel::Warning, "No crop proposal");
+    let combined = activity.clone().combine(warning);
+    assert_eq!(combined.level, StatusLevel::Warning);
+    assert!(
+        combined.reason.contains("Preparing thumbnail")
+            && combined.reason.contains("No crop proposal")
+    );
+    assert_eq!(activity.clone().combine(activity.clone()), activity);
+    for (status, label) in [
+        (activity, "Photo updating"),
+        (combined, "Photo warning"),
+        (
+            ContextualStatus::new(StatusLevel::Error, "Repair has no donor"),
+            "Photo error",
+        ),
+    ] {
+        let context = Context::default();
+        context.enable_accesskit();
+        let ((image, response), output) = frame(&context, 315., true, vec![], |ui| {
+            let card = ContactSheetLayout::new(32., true).begin(
+                ui,
+                egui::pos2(20., 10.),
+                ui.id().with("status-photo"),
+                false,
+                false,
+                true,
+            );
+            card.caption(ui, "01.ARW");
+            (card.image_rect, card.status(ui, &status))
+        });
+        assert!(image.contains_rect(response.rect));
+        let nodes = output.platform_output.accesskit_update.unwrap().nodes;
+        assert!(nodes.iter().any(|(_, node)| node.label() == Some(label)
+            && node.description() == Some(status.reason.as_str())));
+        assert!(nodes.iter().any(|(_, node)| node.label() == Some("01.ARW")
+            && node.description() == Some(status.reason.as_str())));
+    }
+}
+
+#[test]
 fn warning_cues_fit_compact_cards_explain_the_photo_and_do_not_steal_selection() {
     for height in [32., 64., 140.] {
         let context = Context::default();
@@ -80,7 +123,13 @@ fn warning_cues_fit_compact_cards_explain_the_photo_and_do_not_steal_selection()
                     true,
                 );
                 card.caption(ui, "01.ARW");
-                let warning = card.warning(ui, reason);
+                let warning = card.status(
+                    ui,
+                    &crate::editor::presentation::ContextualStatus::new(
+                        crate::editor::presentation::StatusLevel::Warning,
+                        reason,
+                    ),
+                );
                 (card.response, card.image_rect, warning)
             })
         };

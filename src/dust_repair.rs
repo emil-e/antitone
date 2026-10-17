@@ -216,6 +216,14 @@ pub struct EvaluatedRepair {
 }
 
 impl EvaluatedRepair {
+    /// Explicit immutable result payload, excluding allocator bookkeeping and shared ownership.
+    pub fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>() + self.support.retained_bytes()
+            - std::mem::size_of::<SupportMask>()
+            + self.values.capacity() * std::mem::size_of::<Ap1>()
+            + self.donors.capacity() * std::mem::size_of::<DonorMatch>()
+    }
+
     pub fn support(&self) -> &SupportMask {
         &self.support
     }

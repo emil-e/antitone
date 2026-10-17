@@ -9,7 +9,6 @@ use crate::{
         donor_target, mask_within_budget, validate_donor as validate_dust_donor,
     },
     geometry::SourceRegion,
-    processing::Pipeline,
 };
 use std::collections::{BTreeSet, HashMap};
 
@@ -407,29 +406,11 @@ pub(super) fn evaluate_with<'a>(
     if cancelled() {
         return Ok(None);
     }
-    let pipeline = Pipeline::ungraded(
+    let Some(evaluated) = crate::repair_source::evaluate_with(
+        scan,
         scan.processing_calibration(request.calibration)?,
         request.roll,
-        scan.camera_to_ap1,
-    )?;
-    let active = SourceRegion {
-        x: scan.area.x,
-        y: scan.area.y,
-        width: scan.area.width,
-        height: scan.area.height,
-    };
-    let Some(evaluated) = crate::dust_repair::evaluate_with(
         &request.repair,
-        active,
-        |[x, y]| {
-            let rgb = pipeline.apply(scan.pixel(x, y)?)?.rgb;
-            let value = rgb.as_vec3().to_array();
-            if value.iter().all(|channel| channel.is_finite()) {
-                Ok(value)
-            } else {
-                Err(Error::NumericalOverflow)
-            }
-        },
         &mut crate::dust_repair::Execution {
             screener,
             cancelled,
@@ -873,7 +854,6 @@ impl Editor {
                             .step_by(1.),
                     );
                 });
-                ui.small("TIFF/EXR and thumbnails do not include repairs.");
                 if let Some(error) = &self.dust.render_error {
                     ui.small("A repair is outside the current grade's GPU range.")
                         .on_hover_text(error);

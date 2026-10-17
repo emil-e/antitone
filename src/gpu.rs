@@ -325,7 +325,7 @@ impl CameraMatrix {
     }
 }
 
-#[cfg(feature = "editor")]
+#[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
 #[path = "gpu_repairs.rs"]
 pub(crate) mod repairs;
 

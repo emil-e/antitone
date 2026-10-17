@@ -8,8 +8,109 @@ fn exact_values(repair: &crate::dust_repair::EvaluatedRepair) -> Vec<([u32; 2], 
 }
 
 #[test]
+fn proper_thumbnail_pending_and_failed_repairs_use_local_status_and_clear_after_disable() {
+    let mut h = tools::calibrated_harness_with_thumbnails(true);
+    wait_for(&mut h, |editor| {
+        editor
+            .thumbnails
+            .ready_count(&editor.document, editor.target)
+            == 1
+    });
+    let source = h.state().current_source.unwrap();
+    let area = h.state().ready.as_ref().unwrap().area;
+    // Valid exterior support, but no source-sized donor: exercise healing failure, not mask rejection.
+    let repair = h
+        .state_mut()
+        .document
+        .project
+        .source_mut(source)
+        .unwrap()
+        .repairs
+        .insert(
+            crate::dust_repair::SupportMask::new(
+                [area.x, area.y],
+                [area.width, area.height],
+                (0..area.width * area.height)
+                    .map(|index| {
+                        let x = index % area.width;
+                        let y = index / area.width;
+                        x >= 8
+                            && y >= 8
+                            && x + 8 < area.width
+                            && y + 8 < area.height
+                            && (x == 8 || y == 8 || x + 9 == area.width || y + 9 == area.height)
+                    })
+                    .collect(),
+            )
+            .unwrap(),
+            crate::dust_repair::RepairOrigin::Manual,
+            DonorChoice::Automatic,
+        )
+        .unwrap();
+    h.step();
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::Image, "Photo updating")
+            .is_some()
+    );
+    let started = Instant::now();
+    while h
+        .query_by_role_and_label(egui::accesskit::Role::Image, "Photo error")
+        .is_none()
+    {
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "proper thumbnail did not report its failed repair"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+        h.step();
+    }
+    for size in [egui::vec2(1100., 800.), egui::vec2(800., 600.)] {
+        h.set_size(size);
+        h.step();
+        let marker = h.get_by_role_and_label(egui::accesskit::Role::Image, "Photo error");
+        assert!(h.ctx.content_rect().contains_rect(marker.rect()));
+        let description = marker.accesskit_node().description().unwrap().to_owned();
+        assert!(description.contains("repair 1") && description.contains("donor"));
+        assert!(
+            h.state().failure.is_none(),
+            "background card failure must not seize global focus"
+        );
+        save_capture(
+            &h.render().unwrap(),
+            &format!(
+                "repair-thumbnail-failed-{}x{}",
+                size.x as u32, size.y as u32
+            ),
+        );
+    }
+    h.state_mut()
+        .document
+        .project
+        .source_mut(source)
+        .unwrap()
+        .repairs
+        .set_enabled(repair, false)
+        .unwrap();
+    h.step();
+    wait_for(&mut h, |editor| {
+        editor
+            .thumbnails
+            .ready_count(&editor.document, editor.target)
+            == 1
+    });
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::Image, "Photo error")
+            .is_none()
+    );
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::Image, "Photo updating")
+            .is_none()
+    );
+}
+
+#[test]
 fn authored_dust_save_new_open_restores_intent_exact_results_and_shared_view_scopes() {
-    let mut h = tools::calibrated_harness();
+    let mut h = tools::calibrated_harness_with_thumbnails(true);
     stage(&mut h, "Photo");
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("dust.antitone");
@@ -85,6 +186,9 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_shared_view_sco
     assert!(!h.state().document.dirty());
     assert_eq!(h.state().selected_dust_repair(), None);
     ready(&mut h, 2);
+    wait_for(&mut h, |e| {
+        e.thumbnails.ready_count(&e.document, e.target) == 1
+    });
     let restored = h.state().dust_evaluations(signature);
     for (before, after) in evaluated.iter().zip(&restored) {
         assert!(!Arc::ptr_eq(before, after));
@@ -181,13 +285,10 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_shared_view_sco
         ("narrow", egui::vec2(800., 600.)),
     ] {
         h.set_size(size);
-        h.get_by_label("TIFF/EXR and thumbnails do not include repairs.")
-            .scroll_to_me();
+        h.get_by_label("Brush size").scroll_to_me();
         h.try_run_realtime().unwrap();
-        let warning = h
-            .get_by_label("TIFF/EXR and thumbnails do not include repairs.")
-            .rect();
-        assert!(h.ctx.content_rect().contains_rect(warning));
+        let brush = h.get_by_label("Brush size").rect();
+        assert!(h.ctx.content_rect().contains_rect(brush));
         save_capture(
             &h.render().unwrap(),
             &format!("dust-persistence-{name}-offscreen"),
