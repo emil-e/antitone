@@ -97,3 +97,36 @@ fn recipe_capture_uses_the_requested_source_even_when_it_is_not_in_the_filmstrip
     assert_eq!(a.grade.global().exposure, 0.);
     assert_eq!(b.grade.global().exposure, 2.);
 }
+
+#[test]
+fn accepted_look_identity_is_numeric_immutable_and_downstream_of_neutral_repairs() {
+    use antitone::looks::{LookAsset, LookOrigin, Lut3D};
+    use std::sync::Arc;
+    let (mut project, id) = project();
+    project
+        .source_mut(id)
+        .unwrap()
+        .repairs
+        .insert(
+            SupportMask::new([120, 100], [1, 1], vec![true]).unwrap(),
+            RepairOrigin::Manual,
+            DonorChoice::Automatic,
+        )
+        .unwrap();
+    let none = project.image_recipe(id).unwrap();
+    let lut = Arc::new(Lut3D::new(2, [0.; 3], [1.; 3], vec![[0.4, 0.3, 0.2]; 8]).unwrap());
+    project.output.look = Some(Arc::new(
+        LookAsset::new("First".into(), LookOrigin::Imported, lut.clone()).unwrap(),
+    ));
+    let looked = project.image_recipe(id).unwrap();
+    assert_ne!(none, looked);
+    assert!(none.same_neutral_content(&looked));
+    assert!(looked.retained_bytes() >= none.retained_bytes() + lut.byte_len());
+    project.output.look = Some(Arc::new(
+        LookAsset::new("Renamed".into(), LookOrigin::Imported, lut.clone()).unwrap(),
+    ));
+    assert_eq!(looked, project.image_recipe(id).unwrap());
+    project.output.look = None;
+    assert_eq!(none, project.image_recipe(id).unwrap());
+    assert_eq!(looked.look.as_ref().unwrap().lut().id(), lut.id());
+}

@@ -462,6 +462,57 @@ fn whole_roll_entry_ignores_selection_and_keeps_abstentions_unchanged() {
 }
 
 #[test]
+fn selected_look_cards_validate_auto_crop_preview_framing_without_mutating_the_accepted_recipe() {
+    let (mut h, _directory) = setup();
+    h.state_mut().document.project.output.look = Some(Arc::new(
+        crate::looks::LookAsset::new(
+            "Preview look".into(),
+            crate::looks::LookOrigin::Imported,
+            Arc::new(
+                crate::looks::Lut3D::new(2, [0.; 3], [1.; 3], vec![[0.4, 0.3, 0.2]; 8]).unwrap(),
+            ),
+        )
+        .unwrap(),
+    ));
+    h.step();
+    save_existing_project(&mut h);
+    let before = h.state().document.project.clone();
+    let source = h.state().current_source.unwrap();
+    stage(&mut h, "Roll");
+    click_action(&mut h, "Auto-crop roll");
+    overlay::wait_context(&mut h);
+    let record = before.source(source).unwrap();
+    let projection = Composition::with_crop(
+        record.development.active_area.into(),
+        before.orientation,
+        record.orientation,
+        h.state().auto_crop_preview(source).unwrap(),
+    )
+    .unwrap();
+    assert_ne!(projection, before.image_recipe(source).unwrap().composition);
+    wait_for(&mut h, |editor| {
+        editor
+            .thumbnails
+            .projection_ready(&editor.document, source, editor.target, projection)
+    });
+    assert_eq!(h.state().document.project, before);
+    assert!(!h.state().document.dirty());
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::Image, "Photo error")
+            .is_none()
+    );
+    click_action(&mut h, "Cancel");
+    assert!(h.state().auto_crop_edit.is_none());
+    wait_for(&mut h, |editor| {
+        editor
+            .thumbnails
+            .ready_count(&editor.document, editor.target)
+            == 3
+    });
+    assert_eq!(h.state().document.project, before);
+}
+
+#[test]
 fn fullscreen_pauses_auto_crop_and_escape_returns_to_the_tool_before_cancelling_it() {
     let (mut h, _directory) = setup();
     stage(&mut h, "Photo");

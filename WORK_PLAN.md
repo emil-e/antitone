@@ -2,60 +2,45 @@
 
 ## Agreement and workspace
 
-Implementation and proportionate verification are authorized for shared accepted recipes, repaired original-sample TIFF/AP0 EXR, proper positive thumbnails and composed pending/failure behavior, including the bounded shared contextual status-indicator pattern. Checkpoint commits, rebase onto current main and look/repair reconciliation are now authorized. Advancing main, final delivery and push remain unauthorized.
+Implementation, proportionate verification, checkpoint commits, rebase onto current main and creative-look reconciliation are authorized. Advancing main, final delivery and push remain unauthorized.
 
 - Branch: `feat/repair-pipeline`
 - Worktree: `.worktrees/repair-pipeline`
-- Base: main `5a6c6df`
-- Preserve main's unrelated work, every other worktree and private samples.
+- Base: main `b4ae51a`; implementation checkpoint rebased as `2232021`.
+- Preserve main's unrelated contributor/setup edits, other worktrees and private samples.
 
-The owning contracts are now in Processing, Colour/output, Projects and Editor. [The Dust plan](docs/plans/dust-repair.md) owns broader unfinished acceptance; this file is task-local handoff bookkeeping.
+The owning contracts are in Processing, Colour/output, Projects and Editor. [The Dust plan](docs/plans/dust-repair.md) owns durable unfinished acceptance.
 
-## Delivered implementation
+## Implemented acceptance
 
-- Source-owned immutable image-recipe capture and semantic neutral/repair identity, including explicit viewer/candidate overlays. Shared RAW evaluation is usable without Editor; the frozen f64-to-f32 neutral sampler, solver, schema 6 and model 4 are unchanged.
-- Cold asynchronous export resolves captured applicable repairs on its own worker. Exclusion requires zero exact composition coverage. Failures block successful output and retain destination safety; no viewer-admitted subset or unrepaired fallback is used.
-- Shared ordinary/compensated repair grading preserves original floor flags, untouched words, independent paired-member coordinates and EXR high/low/tail precision. Offscreen logical snapshots upload contributing pixels per bounded original unit rather than retaining every patch on the GPU.
-- Proper calibrated cards use original-derived neutral AP1 with and without repairs; source inspection keeps camera-proxy semantics. RGB16 CPU/disk products stay source-owned and unrepaired. Recipe invalidation, stale replies, native scheduling and source leases remain with their existing owners; no new persistent cache or RAW worker was added.
-- Compatible visible neutral products survive grade/target changes and zero-budget replacement/failure handoff. Cache charges include recipe-key masks, error entries, neutral/graded products and sparse evaluations; offscreen GPU admission accounts for positive products rather than the old camera proxy.
-- Shared contextual activity/warning/error presentation, combined priority reasons, tooltip/accessibility descriptions and controller-owned retirement. Pending uses a static clock to avoid animation-driven hot loops for queued/suspended work. Completed cards have no permanent repair badge; Auto-crop/Analyze warnings are not hidden by activity. Contributor rules/examples are in `docs/editor.md`.
-- Obsolete output-omission copy is removed, and owning guides/roadmap describe the implemented consumers.
+- Immutable source-owned accepted recipes capture upstream interpretation, enabled repairs, photographic/local grades, composition and the accepted numeric look. Neutral healing excludes downstream grade/look/target changes; the frozen solver/input contract and schema 6/model 4 are unchanged.
+- Viewer/reference/scopes, TIFF/AP0 EXR and proper positive cards share accepted repair semantics. Cold export resolves applicable repairs independently of viewer warmth; exclusion requires zero exact output coverage. Applicable failures preserve destinations rather than producing unrepaired success.
+- Ordinary/compensated repair grading preserves signed/HDR data, untouched words/flags and independent paired coordinates. TIFF applies the captured look after repair/grading; EXR bypasses it in pixels and metadata. Logical sparse results upload only demanded original-unit pixels.
+- Proper cards use original-derived neutral AP1 with and without repairs, retaining existing source leases/native scheduling. Compatible neutral/graded prefixes survive look changes and visible zero-budget handoffs. CPU LUTs, GPU look allocations, recipe keys, failures and retained products participate in accounting/admission.
+- Card look validation uses the displayed footprint. Explicit tool-preview framing participates in the consumer key without changing the accepted recipe. Embedded-look persistence and main's renderer/frame/canvas ownership are retained.
+- Shared contextual activity/warning/error components preserve concurrent reasons and accessibility; completed cards have no permanent repair badge. Camera/JPEG/RGB16 navigation products do not silently become authoritative repaired positives.
 
-Undo, detection/proposals, solver changes, general pipeline graphs, batch/general export-cancellation UI, recovery/relinking, RAW hashing/identity and broad photographic/device/resource acceptance remain outside scope.
+No new persistent image cache, general pipeline framework, undo, detection/proposals, solver changes, batch/general cancellation UI, recovery/relinking, RAW hashing or broad photographic/device acceptance was added.
 
-## Verification and review
+## Verification on `b4ae51a`
 
 Passed:
 
-- Default/core tests and project/camera/film/flat-field/Dust/recipe suites.
-- Production worker cold Save/New/Open/export checks, TIFF/half/full AP0 EXR reopening and failed preparation destination preservation.
-- Original-sample reference export suite: 28 passed, one diagnostic ignored; includes repaired serial/cached/forecasted/paired complete files, corrected sources, signed/HDR compensation, untouched words/flags, tile boundaries and large integer origins.
-- Dust/controller/GPU/composed debug slice: 58 passed, one diagnostic ignored. Updated composed Save/New/Open/viewer/reference/scopes/proper-card case and pending/failure/disable status case pass; release Dust composed slice passes all four cases.
-- Auto-crop compact warning and Analyze missing-area composed debug cases pass.
-- Final thumbnail suite: 80 passed, three explicit diagnostics ignored; presentation suite: 56 passed. Authored checks cover retained neutral reuse through local/target changes and a failed-grade handoff at zero optional retention, key/error payload accounting, and offscreen positive admission.
-- External export/encoder/geometry/local integration suites: 12 passed. Cold export also proves that a genuine no-donor repair outside exact cropped coverage does not block that output, while an applicable one preserves an existing destination on failure.
-- Debug and release composed pending/no-donor/disable feedback pass at normal/narrow widths. Generated authored captures were visually inspected; they are in `.cache/ui-captures/`.
-- Final production editor release build, strict UI/reference-feature Clippy, complete authored source-format checks, local Markdown link targets and diff whitespace checks pass. Production linkage was inspected and does not include OCIO.
+- Default numerical/core suites; project Dust/recipe/look suites.
+- Original-export reference suite: 30 passed, two explicit diagnostics ignored. Includes repaired-plus-look serial/cached/forecasted/paired complete files, correction/locals, signed/HDR precision and independent coordinates.
+- External look/export tests: five passed, including repaired TIFF against scalar/OCIO and exact half/full EXR look bypass. Three production export-worker tests pass without OCIO, including cold Save/New/Open, captured look retirement during dispatch, exact repair exclusion and destination preservation.
+- Thumbnail suite: 82 passed, three diagnostics ignored. Added repaired look/None neutral and graded-prefix reuse, transient framing and zero-budget payload/admission coverage.
+- Composed look suite: six passed; Auto Crop: nine passed; Dust: four passed. Release Dust: four passed; release constant-scene repaired viewer/card/scope oracle: one passed. Normal/narrow authored looked-Dust captures were visually inspected.
+- Shared presentation suite: 56 passed. Native look/sampling/storage components and idle projected-admission checks pass.
+- Strict `ui-tests` all-target Clippy and production library/binary Clippy pass. Production release build passes; linkage contains no OCIO. Headless `raw,gpu,export` compilation passes.
+- Complete authored source formatting, local Markdown file targets and diff whitespace checks pass.
 
-One independent fresh-context review found three cache issues: recipe-key accounting, visible zero-budget neutral handoff, and offscreen positive-product admission. Each is addressed with targeted regression coverage. No repeat review is planned. Initial broad production editor run had 664 passes and nine thumbnail failures; their causes were investigated (an unintended filmstrip state sync, obsolete camera-proxy repaint expectations, and exact accessibility descriptions). The sync was removed, the obsolete test contract was replaced with proper-neutral reuse coverage, and descriptions now assert active identity while permitting contextual detail. Focused reruns cover the affected boundaries; the full 23-minute library run is not being repeated by default.
+Baseline received one independent review; its key accounting, zero-budget handoff and offscreen admission findings have regression coverage. No repeat review was performed. Current-main look interactions were verified with targeted component/composed tests, not a full editor-library rerun. The earlier full pre-rebase run was not wholly green; affected failures were fixed and rerun in focused suites, not hidden by claiming a full-suite pass.
 
-All artifacts stay in checkout-local ignored `.cache/` and `target/`. Shared native setup uses the documented `.cache/native-deps` link and absolute `LIBRAW_SOURCE`/`OCIO_PREFIX` overrides. No setup/download, private-sample study, native application automation or system installation was performed.
+Artifacts are ignored and worktree-local under `.cache/` and `target/`; reconciliation logs use `.cache/reconcile-*`, captures `.cache/ui-captures/reconciled-looks/`. Native setup uses the documented shared dependencies with absolute `LIBRAW_SOURCE`/`OCIO_PREFIX` overrides. No setup/download, private-sample study, native application automation or system installation was performed.
 
-## Remaining steps
+## Remaining limits and next action
 
-The planned baseline is implemented and verified on `5a6c6df`, uncommitted in this worktree. It is not yet verified or ready for current main.
-
-Final refresh found main at `b4ae51a` (project-wide creative looks), after `aa3f29e` (editor frame/canvas extraction) and read-only crop diagnostics. The look commit changes the same processing input, working-view/rendering, export, thumbnail and LRU boundaries. This is a semantic integration requirement, not just a textual rebase:
-
-1. Capture the accepted immutable look in the shared recipe/rendering intent. Look/target changes remain downstream of neutral healing; source inspection/measurements and EXR preserve main's bypasses.
-2. Place repaired originals before main's look/ACES `RenderBinding`, retaining look failure markers/used-footprint checks and TIFF-only look metadata. Adapt both serial/paired exports and captured worker dispatch.
-3. Adapt proper-thumbnail `RenderedView`/paint APIs, include look content in derived keys and account for look-result buffers/retained products in cache/admission without rehealing.
-4. Preserve main's embedded-look persistence, current contributor docs, frame/canvas ownership and unrelated changes. Verify repaired-plus-look viewer/reference/scopes/TIFF/cards, look-free EXR/repair inputs and both None/selected-look routes.
-
-User authorized checkpoint commits, rebase onto current main and reconciliation/verification. Start by checkpointing this verified baseline, then resolve the rebase and implement the semantic interactions above. Main fast-forward, final delivery and push remain separately unauthorized. Do not use destructive resets or overwrite main's uncommitted contributor/setup changes to bypass this checkpoint boundary.
-
-## Limits
-
-Authored fixtures establish actual native reuse, source/recipe fencing and bounded scheduling, not representative full-resolution thumbnail startup/whole-roll throughput. A cold calibrated positive needs original samples even if a disk RGB16 proxy exists. Larger acquisition/cache tradeoffs require evidence and an explicit decision; no second appearance definition or persistent cache was substituted.
-
-Broader photographic correspondence, aggregate/in-flight memory, physical input, VoiceOver, native-shell/monitor and additional device acceptance remain in the owning topic plans. Look/repair reconciliation and verification on current main are in progress. Current main's newly accepted creative look is not yet represented in this worktree's recipe.
+- Production **all-target** Clippy still rejects main's pre-existing test-only `ScopeInput::frame` helper: it is gated on `test`, but all callers are `ui-tests`-only. `src/editor_scopes.rs` is unchanged from main. Production code linting and reference/UI all-target linting pass; the narrower configuration issue was not silently fixed or suppressed. Headless compilation also retains existing unused configuration-specific helper warnings.
+- Full-resolution thumbnail startup/whole-roll throughput, aggregate/in-flight memory, photographic correspondence, physical input, VoiceOver and native-shell/monitor/device acceptance remain in the owning plans. Authored fixtures and declared payload bounds are not broader acceptance.
+- Agreed implementation/reconciliation is ready at the task branch checkpoint. Await explicit integration/wrap-up authorization before advancing main or removing this worktree; push requires separate permission. Preserve this plan until final delivery, then transfer any lasting remaining scope and remove it according to repository guidance.

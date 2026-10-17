@@ -83,6 +83,7 @@ impl ProcessingInput {
     pub(crate) fn parameters(&self) -> ProcessingParameters {
         self.parameters
     }
+
     pub(crate) fn grade(&self) -> Option<&GpuPhotoGrade> {
         self.grade.as_deref()
     }

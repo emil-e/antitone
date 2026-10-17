@@ -8,15 +8,20 @@ use crate::{
 
 #[test]
 fn cached_jobs_preserve_reopened_pixels_through_correction_locals_and_rotated_reconstruction() {
-    compare_files(false);
+    compare_files(false, false);
 }
 
 #[test]
 fn repaired_cached_forecasted_and_paired_exports_preserve_complete_reopened_files() {
-    compare_files(true);
+    compare_files(true, false);
 }
 
-fn compare_files(repaired: bool) {
+#[test]
+fn repaired_scene_look_exports_preserve_serial_cached_forecasted_and_paired_files() {
+    compare_files(true, true);
+}
+
+fn compare_files(repaired: bool, selected_look: bool) {
     let (device, queue, renderer) = super::tests::context();
     let gate = SubmissionGate::default();
     let mut scan = Scan::open(
@@ -52,6 +57,26 @@ fn compare_files(repaired: bool) {
         }],
     )
     .unwrap();
+    let look = selected_look.then(|| {
+        use crate::looks::{LookAsset, LookOrigin, Lut3D};
+        let nodes = (0..8)
+            .map(|i| {
+                [
+                    0.05 + 0.8 * (i % 2) as f32,
+                    0.03 + 0.9 * ((i / 2) % 2) as f32,
+                    0.02 + 0.7 * (i / 4) as f32,
+                ]
+            })
+            .collect();
+        Arc::new(
+            LookAsset::new(
+                "Original scene look".into(),
+                LookOrigin::Imported,
+                Arc::new(Lut3D::new(2, [0.; 3], [1.; 3], nodes).unwrap()),
+            )
+            .unwrap(),
+        )
+    });
     let directory = tempfile::tempdir().unwrap();
     for corrected in [false, true] {
         let field = corrected.then(|| {
@@ -119,7 +144,7 @@ fn compare_files(repaired: bool) {
                 Format::Exr(ExrPrecision::Full),
             ] {
                 let request = || Request {
-                    look: None,
+                    look: look.clone(),
                     scan: &scan,
                     field: field.clone(),
                     calibration,

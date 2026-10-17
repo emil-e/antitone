@@ -21,9 +21,16 @@ fn paint_until(harness: &mut Harness<'_, Editor>, done: impl Fn(&Editor) -> bool
 fn positive_ready(editor: &Editor) -> bool {
     !editor.busy
         && editor.working.displayed.as_ref().is_some_and(|view| {
-            let expected = editor
+            let mut expected = editor
                 .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
                 .unwrap();
+            expected.repairs = crate::gpu::repairs::Snapshot::logical(
+                editor
+                    .dust_signature()
+                    .map(|signature| editor.dust_evaluations(signature))
+                    .unwrap_or_default(),
+            )
+            .unwrap();
             view.processing == expected.signature()
                 && view.target == editor.target
                 && !view.in_flight()
@@ -401,6 +408,22 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
     }
 
     let (mut harness, capture, device, queue) = fixture_editor_gpu();
+    let source = harness.state().current_source.unwrap();
+    let area = harness.state().ready.as_ref().unwrap().area;
+    let repair = harness
+        .state_mut()
+        .document
+        .project
+        .source_mut(source)
+        .unwrap()
+        .repairs
+        .insert(
+            crate::dust_repair::SupportMask::new([area.x + 64, area.y + 64], [3, 3], vec![true; 9])
+                .unwrap(),
+            crate::dust_repair::RepairOrigin::Manual,
+            crate::dust_repair::DonorChoice::Offset([-32, 0]),
+        )
+        .unwrap();
     harness.state_mut().target = OutputTarget::Srgb;
     harness.state_mut().scopes.vector = true;
     harness.state_mut().scopes.amplification = 1;
@@ -411,6 +434,7 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
     };
     let ready = |editor: &Editor| {
         positive_ready(editor)
+            && editor.dust.has_evaluation(source, repair)
             && editor
                 .thumbnails
                 .ready_count(&editor.document, editor.target)
@@ -425,6 +449,9 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
     };
     paint_until(&mut harness, ready);
     let before = pixels(&harness, &capture);
+    let neutral_signature = harness.state().dust_signature().unwrap();
+    let evaluated = harness.state().dust_evaluations(neutral_signature)[0].clone();
+    let graded = harness.state().working.displayed.as_ref().unwrap().clone();
     let scene = DVec3::new(0.18, 0.035, 0.008);
     let encoded = scene.map(|value| {
         if value <= 0.0078125 {
@@ -449,6 +476,11 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
         .state_mut()
         .begin_look(look_ui::Source::Imported(file));
     paint_until(&mut harness, ready);
+    assert!(Arc::ptr_eq(
+        &evaluated,
+        &harness.state().dust_evaluations(neutral_signature)[0]
+    ));
+    assert!(graded.same_grade_as(harness.state().working.displayed.as_ref().unwrap()));
 
     // A constant scene colour has a known result regardless of the upstream photograph.
     // OCIO is independent of the production GPU lookup and selected-output shaders.

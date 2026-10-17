@@ -608,6 +608,25 @@ impl Thumbnails {
         state
     }
 
+    #[cfg(all(test, feature = "ui-tests"))]
+    pub(super) fn projection_ready(
+        &self,
+        document: &Document,
+        source: SourceId,
+        target: OutputTarget,
+        projection: Composition,
+    ) -> bool {
+        self.cache.entries.iter().any(|(key, value)| {
+            key.source.id == source
+                && key.target == target
+                && key.projection == Some(projection)
+                && key.current_recipe(document)
+                && value.as_ref().is_ok_and(|product| {
+                    product.positive.is_some() && matches!(product.look_result(), Some(Ok(())))
+                })
+        })
+    }
+
     #[cfg(test)]
     pub(super) fn ready_count(&self, document: &Document, target: OutputTarget) -> usize {
         self.cache

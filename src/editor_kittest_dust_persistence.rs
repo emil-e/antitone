@@ -109,8 +109,27 @@ fn proper_thumbnail_pending_and_failed_repairs_use_local_status_and_clear_after_
 }
 
 #[test]
-fn authored_dust_save_new_open_restores_intent_exact_results_and_shared_view_scopes() {
+fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_reference_scopes() {
     let mut h = tools::calibrated_harness_with_thumbnails(true);
+    let nodes = (0..8)
+        .map(|i| {
+            [
+                0.02 + 0.9 * (i % 2) as f32,
+                0.03 + 0.8 * ((i / 2) % 2) as f32,
+                0.01 + 0.95 * (i / 4) as f32,
+            ]
+        })
+        .collect();
+    let look = Arc::new(
+        crate::looks::LookAsset::new(
+            "Persisted Dust look".into(),
+            crate::looks::LookOrigin::Imported,
+            Arc::new(crate::looks::Lut3D::new(2, [0.; 3], [1.; 3], nodes).unwrap()),
+        )
+        .unwrap(),
+    );
+    h.state_mut().document.project.output.look = Some(look.clone());
+    h.step();
     stage(&mut h, "Photo");
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("dust.antitone");
@@ -197,6 +216,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_shared_view_sco
     }
 
     let view = h.state().working.displayed.as_ref().unwrap().clone();
+    assert_eq!(view.processing.look_id(), Some(look.lut().id()));
     let scopes::ScopeInput::Rendered(scope, _) = h.state().scope_request().unwrap() else {
         panic!("scopes did not follow restored repairs")
     };
@@ -214,6 +234,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_shared_view_sco
     });
     h.render().unwrap();
     let reference = h.state().working.displayed.as_ref().unwrap();
+    assert_eq!(reference.processing.look_id(), Some(look.lut().id()));
     assert!(Arc::ptr_eq(
         &reference.image,
         &h.state().original.settled.as_ref().unwrap().2

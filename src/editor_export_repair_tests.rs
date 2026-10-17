@@ -36,6 +36,24 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
         editor.dmin = Some(DVec3::splat(0.8));
         editor.dmax = Some(DVec3::splat(0.02));
         editor.sync_document();
+        let nodes = (0..8)
+            .map(|i| {
+                [
+                    -1.98 + 4. * (i % 2) as f32,
+                    -1.98 + 4. * ((i / 2) % 2) as f32,
+                    -1.98 + 4. * (i / 4) as f32,
+                ]
+            })
+            .collect();
+        let look = Arc::new(
+            crate::looks::LookAsset::new(
+                "Captured export look".into(),
+                crate::looks::LookOrigin::Imported,
+                Arc::new(crate::looks::Lut3D::new(2, [-2.; 3], [2.; 3], nodes).unwrap()),
+            )
+            .unwrap(),
+        );
+        editor.document.project.output.look = Some(look.clone());
         let id = editor.current_source.unwrap();
         editor
             .document
@@ -75,11 +93,23 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             );
             let path = directory.path().join(name);
             editor.export(path.clone(), format, Overwrite::Refuse);
+            editor.document.project.output.look = None;
             wait(&mut editor);
+            editor.document.project.output.look = Some(look.clone());
             assert!(editor.failure.is_none(), "{}", editor.status);
             assert!(path.exists());
             match format {
-                OutputFormat::Tiff(_) => assert!(!tiff_pixels(&path).is_empty()),
+                OutputFormat::Tiff(_) => {
+                    assert!(!tiff_pixels(&path).is_empty());
+                    let mut decoder =
+                        tiff::decoder::Decoder::new(std::fs::File::open(&path).unwrap()).unwrap();
+                    assert!(
+                        decoder
+                            .get_tag_ascii_string(tiff::tags::Tag::ImageDescription)
+                            .unwrap()
+                            .contains(&format!("creative-look-blake3={}", look.lut().id()))
+                    );
+                }
                 OutputFormat::Exr(_) => {
                     exr::prelude::read_first_flat_layer_from_file(&path).unwrap();
                 }

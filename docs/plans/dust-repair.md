@@ -22,12 +22,6 @@ Proper calibrated cards use original-derived neutral AP1 with and without repair
 
 The frozen `ap1-boundary-ranked-score10-grow4-v1` solver and input domain are unchanged. [Research](../research/dust-removal.md) supplies experimental evidence, not a production-quality guarantee.
 
-## Remaining integration: accepted creative looks
-
-The repair-consumer baseline is verified on the pre-look processing boundary. Current main's project-wide creative-look stage must be reconciled before this integration is complete there. Carry the accepted immutable look through recipe/rendering intent, dispatch and derived identities without making it an upstream repair input. Viewer/reference/scopes, proper cards and TIFF retain the selected look; source inspection/measurement and EXR retain their declared bypasses.
-
-Repaired originals must enter the shared look/ACES rendering path before output, with independent paired coordinates, truthful TIFF-only look metadata and look-failure checks scoped to contributing samples. Proper-card keys and optional-product/admission accounting must include the new rendering resources while neutral support survives look changes without rehealing. Preserve embedded-look persistence and current renderer/frame/canvas ownership rather than replacing those changes with the pre-look implementation. Check repaired-plus-look and None routes together, including look-free EXR and neutral evaluations; mechanical conflict resolution is not sufficient evidence.
-
 ## Remaining acceptance
 
 1. Exercise pre-grade placement on representative photographs, including corrected scans, signed/HDR regions, strong Roll/Photo/local grades, fine texture and seams. Compare working detail, coarse navigation coverage, original reference, reopened TIFF/half/full AP0 EXR and proper cards. Working/thumbnails grade filtered support as an explicit approximation; scalar/GPU agreement alone is not photographic correspondence.
@@ -35,7 +29,7 @@ Repaired originals must enter the shared look/ACES rendering path before output,
 3. Measure concurrent CPU/GPU ownership during high-volume cleanup, navigation, target changes and source retirement. Sparse results, neutral bases, repaired physical rasters, bounded original/region reconstruction and encoded/in-flight older versions add mandatory work. Declared bytes, Arc tests and bounded project fixtures are not aggregate memory or device acceptance.
 4. Characterize proper-positive thumbnail startup and visible/scrolling demand at representative original resolutions and normal/zero optional budgets. Authored checks establish retained-native reuse, shared scheduling, camera-proxy insufficiency and neutral grade/target reuse, not full-resolution whole-roll throughput. Make a material acquisition/cache tradeoff explicit before changing the appearance baseline or introducing persistent storage.
 5. Broaden physical pointer/trackpad, normal/narrow inspector/card status, fullscreen suspension/restoration, modifier/cursor and accessibility acceptance. Headless input does not establish native interaction, VoiceOver or monitor correctness.
-6. Preserve regression coverage for source/grade/repair invalidation, cancellation versus genuine failure, reset/delete/disable, source removal/re-add, Save/Open, exact output coverage, pending/no-donor destination safety, serial/cached/forecasted/paired exports, compact concurrent status reasons, and viewer/scope identity. Submitted consumers may retain older immutable content until completion; obsolete replies must never publish it as current.
+6. Preserve regression coverage for source/grade/repair invalidation, cancellation versus genuine failure, reset/delete/disable, source removal/re-add, Save/Open, exact output coverage, pending/no-donor destination safety, serial/cached/forecasted/paired exports, compact concurrent status reasons, and viewer/scope identity. Exercise repaired-plus-look and None routes together, including TIFF-only look metadata, look-free EXR/neutral inputs, displayed-footprint failure checks and neutral/grade reuse through look changes. Submitted consumers may retain older immutable content until completion; obsolete replies must never publish it as current.
 
 ## Deliberately deferred
 

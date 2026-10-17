@@ -180,6 +180,89 @@ fn authored_positive_thumbnails_require_originals_reuse_neutral_repairs_and_reje
 }
 
 #[test]
+fn repaired_thumbnails_capture_looks_reuse_neutral_and_grade_and_charge_retained_look_payloads() {
+    use crate::looks::{LookAsset, LookOrigin, Lut3D};
+    let (device, queue) = gpu();
+    let mut thumbnails = Thumbnails::with_disk(
+        device,
+        queue,
+        Arc::new(crate::renderer::RendererCache::default()),
+        None,
+    );
+    let mut document = document();
+    let id = document.project.order[0];
+    document
+        .project
+        .source_mut(id)
+        .unwrap()
+        .repairs
+        .insert(
+            SupportMask::new([120, 60], [3, 3], vec![true; 9]).unwrap(),
+            RepairOrigin::Manual,
+            DonorChoice::Offset([-64, 0]),
+        )
+        .unwrap();
+    let plain = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
+    let neutral = plain.positive.as_ref().unwrap().0.clone();
+    assert_eq!(neutral.spec.repairs.0.len(), 1);
+    thumbnails.set_limits(cache_limits::CacheLimits {
+        cpu_bytes: 0,
+        gpu_bytes: 0,
+    });
+    let lut = Arc::new(Lut3D::new(2, [-0.5; 3], [1.1; 3], vec![[0.4, 0.3, 0.2]; 8]).unwrap());
+    document.project.output.look = Some(Arc::new(
+        LookAsset::new("Card look".into(), LookOrigin::Imported, lut.clone()).unwrap(),
+    ));
+    let key = tests::key(&document, id);
+    let looked = complete(&mut thumbnails, &document, key.clone()).unwrap();
+    let view = &looked.positive.as_ref().unwrap().1;
+    assert_eq!(view.processing.look_id(), Some(lut.id()));
+    assert!(matches!(looked.look_result(), Some(Ok(()))));
+    assert!(Arc::ptr_eq(&neutral, &looked.positive.as_ref().unwrap().0));
+    #[cfg(feature = "ui-tests")]
+    assert!(view.same_grade_as(&plain.positive.as_ref().unwrap().1));
+    assert!(looked.byte_len() > plain.byte_len());
+    assert!(key.estimated_product_bytes().unwrap() >= key.retained_bytes() + looked.byte_len());
+    let mut draft = key.clone();
+    draft.projection = Some(
+        Composition::with_crop(
+            document
+                .project
+                .source(id)
+                .unwrap()
+                .development
+                .active_area
+                .into(),
+            document.project.orientation,
+            document.project.source(id).unwrap().orientation,
+            Some(crate::crop::Crop {
+                center: [64., 64.],
+                size: [64, 64],
+                angle: 0.2,
+            }),
+        )
+        .unwrap(),
+    );
+    assert_ne!(draft, key);
+    let framed = complete(&mut thumbnails, &document, draft).unwrap();
+    assert!(Arc::ptr_eq(&neutral, &framed.positive.as_ref().unwrap().0));
+    #[cfg(feature = "ui-tests")]
+    assert!(view.same_grade_as(&framed.positive.as_ref().unwrap().1));
+    assert!(matches!(framed.look_result(), Some(Ok(()))));
+    document.project.output.look = None;
+    assert!(!key.current_recipe(&document));
+    let restored = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
+    assert!(Arc::ptr_eq(
+        &neutral,
+        &restored.positive.as_ref().unwrap().0
+    ));
+    assert_eq!(
+        restored.positive.as_ref().unwrap().1.processing.look_id(),
+        None
+    );
+}
+
+#[test]
 fn authored_failed_thumbnail_repairs_publish_only_a_failure_under_the_current_recipe() {
     let (device, queue) = gpu();
     let mut thumbnails = Thumbnails::with_disk(

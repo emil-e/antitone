@@ -83,6 +83,30 @@ fn look(minimum: [f32; 3], maximum: [f32; 3]) -> Arc<LookAsset> {
         .unwrap(),
     )
 }
+fn repairs(
+    scan: &Scan,
+    calibration: Calibration,
+    roll: RollSettings,
+) -> Vec<Arc<antitone::dust_repair::EvaluatedRepair>> {
+    use antitone::dust_repair::{DonorChoice, Repair, RepairId, RepairOrigin, SupportMask};
+    let repair = Repair {
+        id: RepairId(1),
+        enabled: true,
+        origin: RepairOrigin::Manual,
+        support: SupportMask::new([126, 62], [5, 5], vec![true; 25]).unwrap(),
+        donor: DonorChoice::Offset([-64, 0]),
+    };
+    vec![Arc::new(
+        antitone::repair_source::evaluate(
+            scan,
+            scan.processing_calibration(calibration).unwrap(),
+            roll,
+            &repair,
+        )
+        .unwrap(),
+    )]
+}
+
 fn rgb16(path: &Path) -> Vec<u16> {
     let mut decoder = tiff::decoder::Decoder::new(std::fs::File::open(path).unwrap()).unwrap();
     let tiff::decoder::DecodingResult::U16(values) = decoder.read_image().unwrap() else {
@@ -92,8 +116,22 @@ fn rgb16(path: &Path) -> Vec<u16> {
 }
 #[test]
 fn tiff_applies_one_scene_look_before_each_selected_output_and_records_identity() {
+    compare_tiff(false);
+}
+
+#[test]
+fn repaired_tiff_applies_the_scene_look_after_neutral_replacement_and_matches_scalar_ocio() {
+    compare_tiff(true);
+}
+
+fn compare_tiff(repaired: bool) {
     let (device, queue, renderer) = context();
     let (scan, calibration, roll, grade, composition) = fixture();
+    let repairs = if repaired {
+        repairs(&scan, calibration, roll)
+    } else {
+        vec![]
+    };
     let asset = look([-2.; 3], [2.; 3]);
     let pipeline = SpatialPipeline::new(
         scan.processing_calibration(calibration).unwrap(),
@@ -121,7 +159,7 @@ fn tiff_applies_one_scene_look_before_each_selected_output_and_records_identity(
                     grade: grade.clone(),
                     composition,
                     format: Format::Tiff(target),
-                    repairs: &[],
+                    repairs: &repairs,
                     look: selected,
                 },
                 path,
@@ -136,9 +174,25 @@ fn tiff_applies_one_scene_look_before_each_selected_output_and_records_identity(
             Overwrite::Confirmed,
             ProcessingMetadata::with_grade(roll.response, &grade),
             |x, y| {
-                asset
-                    .lut()
-                    .apply(pipeline.apply(scan.pixel(x, y)?, [x, y])?.rgb)
+                let value = if let Some(repair) = repairs
+                    .iter()
+                    .find(|repair| repair.support().contains([x, y]))
+                {
+                    pipeline
+                        .grade_neutral(
+                            antitone::processing::InvertedPixel {
+                                rgb: DVec3::from_array(
+                                    repair.pixel([x, y], [0.; 3]).map(f64::from),
+                                ),
+                                floored: [false; 3],
+                            },
+                            [x, y],
+                        )?
+                        .rgb
+                } else {
+                    pipeline.apply(scan.pixel(x, y)?, [x, y])?.rgb
+                };
+                asset.lut().apply(value)
             },
         )
         .unwrap();
@@ -162,8 +216,22 @@ fn tiff_applies_one_scene_look_before_each_selected_output_and_records_identity(
 }
 #[test]
 fn exr_is_identical_with_a_selected_look_even_when_rendered_inputs_would_be_clipped() {
+    compare_exr(false);
+}
+
+#[test]
+fn repaired_half_and_full_exr_bypass_the_look_in_pixels_and_metadata() {
+    compare_exr(true);
+}
+
+fn compare_exr(repaired: bool) {
     let (device, queue, renderer) = context();
     let (scan, calibration, roll, grade, composition) = fixture();
+    let repairs = if repaired {
+        repairs(&scan, calibration, roll)
+    } else {
+        vec![]
+    };
     let narrow = look([0.99; 3], [1.; 3]);
     let directory = tempfile::tempdir().unwrap();
     let gate = SubmissionGate::default();
@@ -183,7 +251,7 @@ fn exr_is_identical_with_a_selected_look_even_when_rendered_inputs_would_be_clip
                     grade: grade.clone(),
                     composition,
                     format: Format::Exr(precision),
-                    repairs: &[],
+                    repairs: &repairs,
                     look,
                 },
                 path,
