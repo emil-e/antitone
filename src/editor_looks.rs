@@ -374,10 +374,12 @@ impl Editor {
             self.clear_look();
         }
         if import
-            && let Some(path) = rfd::FileDialog::new()
-                .set_title("Load scene-referred ACEScct / AP1 LUT")
-                .add_filter("3D look LUT", &["cube"])
-                .pick_file()
+            && let Some(path) = crate::platform::menu::with_native_dialog(|| {
+                rfd::FileDialog::new()
+                    .set_title("Load scene-referred ACEScct / AP1 LUT")
+                    .add_filter("3D look LUT", &["cube"])
+                    .pick_file()
+            })
         {
             choice = Some(Source::Imported(path));
         }

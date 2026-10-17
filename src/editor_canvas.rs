@@ -381,7 +381,7 @@ impl Editor {
                     if self.busy {
                         "Working…"
                     } else {
-                        "Add a RAW to begin"
+                        "Add scans to begin"
                     },
                     egui::FontId::proportional(14.),
                     ui.visuals().text_color(),

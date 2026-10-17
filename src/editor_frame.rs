@@ -1,4 +1,13 @@
 use super::*;
+use crate::platform::menu::{Action as MenuAction, State as MenuState};
+
+pub(super) struct Actions {
+    pub(super) menu: Option<MenuAction>,
+    pub(super) file: Option<FileAction>,
+    pub(super) export: Option<OutputFormat>,
+    text_input_pending: bool,
+    state: MenuState,
+}
 
 impl Editor {
     pub(super) fn initialize_ui(&mut self, ui: &mut egui::Ui) -> bool {
@@ -26,68 +35,62 @@ impl Editor {
         self.validate_pending_preview();
     }
 
-    pub(super) fn file_actions_available(&self) -> bool {
-        !self.busy
-            && self.failure.is_none()
-            && self.pick.is_none()
-            && self.auto_crop_edit.is_none()
-            && self.crop_edit.is_none()
-            && self.mask_edit.is_none()
-            && self.overwrite.is_none()
-            && self.transition.is_none()
-            && self.project_overwrite.is_none()
-            && self.resume_transition.is_none()
-            && self.removal_pending.is_none()
-            && !self.adjustments.confirming()
-    }
-
-    pub(super) fn file_shortcuts(
-        &mut self,
-        ui: &mut egui::Ui,
-        available: bool,
-    ) -> Option<FileAction> {
-        let mut file_action = None;
+    pub(super) fn application_actions(&mut self, ui: &mut egui::Ui) -> Actions {
+        let state = self.application_menu_state();
+        let text_input_pending = self.menus.text_focused
+            && ui.input(|input| {
+                input.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Text(_)
+                            | egui::Event::Paste(_)
+                            | egui::Event::Copy
+                            | egui::Event::Cut
+                            | egui::Event::Key { pressed: true, .. }
+                    )
+                })
+            });
+        let mut menu = self
+            .menus
+            .pending
+            .pop_front()
+            .or_else(|| self.menu_shortcut(ui))
+            .filter(|&action| state.enabled(action));
         if !self.allow_close && ui.input(|input| input.viewport().close_requested()) {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            if available {
-                file_action = Some(FileAction::Close);
+            if state.enabled(MenuAction::Close) {
+                menu = Some(MenuAction::Close);
             } else if self.transition.is_none() && self.project_overwrite.is_none() {
                 self.status =
                     "Finish the current operation or cancel the pick before closing".into();
             }
         }
+        // Text input must reach its focused control before a later menu command
+        // surrenders focus to commit it. This also orders Paste → Save/Enter.
+        if text_input_pending && let Some(action) = menu.take() {
+            self.menus.pending.push_front(action);
+        }
+        if !self.menus.pending.is_empty() {
+            ui.ctx().request_repaint();
+        }
         if self.busy || self.analysis_area_pending.is_some() {
             ui.ctx().request_repaint_after(Duration::from_millis(50));
         }
-        if available {
-            file_action = file_action.or_else(|| {
-                ui.input_mut(|input| {
-                    [
-                        (
-                            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                            egui::Key::S,
-                            FileAction::SaveAs,
-                        ),
-                        (egui::Modifiers::COMMAND, egui::Key::S, FileAction::Save),
-                        (egui::Modifiers::COMMAND, egui::Key::O, FileAction::Open),
-                        (egui::Modifiers::COMMAND, egui::Key::N, FileAction::New),
-                    ]
-                    .into_iter()
-                    .find_map(|(modifiers, key, action)| {
-                        input.consume_key(modifiers, key).then_some(action)
-                    })
-                })
-            });
-        }
-        if file_action.is_some() {
+        if menu.is_some_and(|action| !action.text_edit()) {
             ui.ctx().memory_mut(|memory| {
                 if let Some(id) = memory.focused() {
                     memory.surrender_focus(id);
                 }
             });
         }
-        file_action
+        Actions {
+            file: menu.and_then(|action| self.menu_file_action(action)),
+            export: menu.and_then(|action| self.menu_export(action)),
+            menu,
+            text_input_pending,
+            state,
+        }
     }
 
     pub(super) fn frame_shortcuts(
@@ -157,6 +160,7 @@ impl Editor {
         text_was_focused: bool,
     ) {
         if !self.busy
+            && self.menus.panel.is_none()
             && self.fullscreen.is_none()
             && !fullscreen_was_active
             && self.failure.is_none()
@@ -279,7 +283,8 @@ impl Editor {
     }
 
     pub(super) fn disable_blocked_workspace(&self, ui: &mut egui::Ui) {
-        if self.failure.is_some()
+        if self.menus.panel.is_some()
+            || self.failure.is_some()
             || self.overwrite.is_some()
             || self.document_pending.is_some()
             || self.transition.is_some()
@@ -295,74 +300,31 @@ impl Editor {
     pub(super) fn workspace_chrome(
         &mut self,
         ui: &mut egui::Ui,
-        available: bool,
-        file_action: &mut Option<FileAction>,
-    ) -> Option<OutputFormat> {
-        let mut export_action = None;
+        actions: &mut Actions,
+    ) -> Option<presentation::MenuFocus> {
+        let mut focus = None;
         if self.fullscreen.is_none() {
             presentation::app_header(ui, |ui| {
-                ui.add_enabled_ui(available, |ui| {
-                    ui.menu_button("File", |ui| {
-                        for (label, action) in [
-                            ("New", FileAction::New),
-                            ("Open…", FileAction::Open),
-                            ("Add RAWs…", FileAction::Add),
-                            ("Save", FileAction::Save),
-                            ("Save As…", FileAction::SaveAs),
-                        ] {
-                            if ui.button(label).clicked() {
-                                *file_action = Some(action);
-                                ui.close();
-                            }
-                        }
+                if self.menus.native {
+                    self.project_identity(ui);
+                } else {
+                    let response = presentation::application_menus(ui, &actions.state, |ui| {
+                        self.project_identity(ui)
                     });
-                });
-                ui.add_enabled_ui(
-                    available && self.calibration().is_some() && self.ready.is_some(),
-                    |ui| {
-                        ui.menu_button("Export", |ui| {
-                            for (label, format) in [
-                                ("TIFF…", OutputFormat::Tiff(self.target)),
-                                ("EXR half…", OutputFormat::Exr(ExrPrecision::Half)),
-                                ("EXR full…", OutputFormat::Exr(ExrPrecision::Full)),
-                            ] {
-                                if ui.button(label).clicked() {
-                                    export_action = Some(format);
-                                    ui.close();
-                                }
-                            }
-                        });
-                    },
-                );
-                ui.menu_button("Preferences", |ui| self.cache_preferences(ui));
-                ui.separator();
-                let name = self
-                    .document
-                    .path
-                    .as_ref()
-                    .and_then(|path| path.file_name())
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "Untitled".into());
-                ui.add(
-                    egui::Label::new(format!(
-                        "{name}{}",
-                        if self.document.dirty() {
-                            " • Modified"
+                    focus = response.focus;
+                    if let Some(action) = response.action {
+                        if actions.text_input_pending {
+                            self.menus.pending.push_back(action);
+                            ui.ctx().request_repaint();
                         } else {
-                            ""
+                            actions.menu = Some(action);
+                            actions.file = self.menu_file_action(action);
+                            actions.export = self.menu_export(action);
                         }
-                    ))
-                    .truncate(),
-                )
-                .on_hover_text(
-                    self.document
-                        .path
-                        .as_ref()
-                        .map(|path| path.display().to_string())
-                        .unwrap_or_else(|| "Save to create a project document".into()),
-                );
+                    }
+                }
             });
-            if file_action.is_some() {
+            if actions.file.is_some() || actions.menu.is_some_and(|action| !action.text_edit()) {
                 ui.ctx().memory_mut(|memory| {
                     if let Some(id) = memory.focused() {
                         memory.surrender_focus(id);
@@ -386,7 +348,34 @@ impl Editor {
                 ui.disable();
             }
         }
-        export_action
+        focus
+    }
+
+    fn project_identity(&self, ui: &mut egui::Ui) {
+        ui.separator();
+        let name = self
+            .document
+            .path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Untitled".into());
+        let label = format!(
+            "{name}{}",
+            if self.document.dirty() {
+                " • Modified"
+            } else {
+                ""
+            }
+        );
+        let detail = self
+            .document
+            .path
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "Save to create a project document".into());
+        ui.add(egui::Label::new(label).truncate())
+            .on_hover_text(detail);
     }
 
     pub(super) fn workspace_controls(&mut self, ui: &mut egui::Ui) -> (Option<ScopeSlot>, bool) {
@@ -428,24 +417,31 @@ impl Editor {
     pub(super) fn dispatch_frame_actions(
         &mut self,
         ui: &mut egui::Ui,
-        file_action: Option<FileAction>,
-        export_action: Option<OutputFormat>,
+        actions: Actions,
         analyze: bool,
     ) {
         let auto_crop = self.auto_crop_requested.take();
         if let Some(transition) = self.resume_transition.take() {
             self.perform_transition(transition, ui.ctx());
-        } else if let Some(action) = file_action {
+        } else if let Some(action) = actions.file {
             if self.mask_edit.is_none() {
                 self.file_action(action, ui.ctx());
             } else {
                 self.status = "Apply or cancel the mask before a file action".into();
             }
-        } else if let Some(format) = export_action {
+        } else if let Some(format) = actions.export {
             if self.mask_edit.is_none() {
                 self.export_dialog(format);
             } else {
                 self.status = "Apply or cancel the mask before exporting".into();
+            }
+        } else if let Some(action) = actions.menu {
+            if action.text_edit() {
+                // Fallback menu clicks arrive after text widgets have rendered.
+                self.menus.pending.push_front(action);
+                ui.ctx().request_repaint();
+            } else {
+                self.apply_menu_action(action, ui.ctx());
             }
         } else if analyze {
             // Inspect the validated, focus-committed Photo state before confirming a reset.

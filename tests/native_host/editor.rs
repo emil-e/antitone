@@ -50,6 +50,34 @@ pub(super) struct EditorApp {
 }
 
 impl host::App for EditorApp {
+    fn menu_state(&self) -> Option<antitone::platform::menu::State> {
+        self.editor.menu_state()
+    }
+
+    fn menu_action(&mut self, action: antitone::platform::menu::Action) {
+        self.editor.menu_action(action);
+    }
+
+    fn menu_paste_requested(&self) -> bool {
+        self.editor.menu_paste_requested()
+    }
+
+    fn menu_input(&mut self, clipboard: Option<String>) -> Vec<egui::Event> {
+        host::App::menu_input(&mut self.editor, clipboard)
+    }
+
+    fn native_menu_installed(&mut self) {
+        self.editor.native_menu_installed();
+    }
+
+    fn quit_state(&self) -> Option<host::QuitState> {
+        self.editor.quit_state()
+    }
+
+    fn request_quit(&mut self) {
+        self.editor.request_quit();
+    }
+
     fn submission_gate(&self) -> &SubmissionGate {
         self.editor.submission_gate()
     }

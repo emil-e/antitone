@@ -3,17 +3,46 @@ use std::time::{Duration, Instant};
 
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::window::{Window, WindowId};
 
-use super::{SubmissionGate, fullscreen::PhotoFullscreen, latency::Trace, macos};
+use super::{
+    SubmissionGate, fullscreen::PhotoFullscreen, latency::Trace, macos, menu, termination,
+};
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuitState {
+    /// No accepted close continuation; a native request must be declined.
+    Running,
+    /// The queued close, user decision or its save continuation is still live.
+    Pending,
+    /// Accepted state may be closed. A clean document alone does not grant this.
+    Approved,
+}
 
 pub trait App {
     /// The same gate used by every background submitter on this host's queue.
     fn submission_gate(&self) -> &SubmissionGate;
     fn ui(&mut self, ui: &mut egui::Ui);
+    fn menu_state(&self) -> Option<menu::State> {
+        None
+    }
+    fn menu_action(&mut self, _action: menu::Action) {}
+    fn menu_paste_requested(&self) -> bool {
+        false
+    }
+    /// Leading text actions become input before this frame's focus-changing commands.
+    fn menu_input(&mut self, _clipboard: Option<String>) -> Vec<egui::Event> {
+        Vec::new()
+    }
+    fn native_menu_installed(&mut self) {}
+    /// Opt in to native termination negotiation; approval must include dirty protection.
+    fn quit_state(&self) -> Option<QuitState> {
+        None
+    }
+    fn request_quit(&mut self) {}
     /// Requested source and processing/view generations, not accepted GPU output.
     /// Queried only by opt-in latency tracing.
     fn processing_revision(&self) -> Option<(u64, u64)> {
@@ -32,30 +61,35 @@ pub fn run<A: App + 'static>(
     title: &str,
     create: impl FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<A> + 'static,
 ) -> Result<u64> {
-    let event_loop = EventLoop::<Repaint>::with_user_event().build()?;
+    let event_loop = EventLoop::<HostEvent>::with_user_event().build()?;
     let context = egui::Context::default();
     context.set_embed_viewports(true);
     let proxy = event_loop.create_proxy();
+    let menu_proxy = proxy.clone();
+    let quit_proxy = proxy.clone();
+    muda::MenuEvent::set_event_handler(Some(move |event: muda::MenuEvent| {
+        let _ = menu_proxy.send_event(HostEvent::Menu(event.id));
+    }));
     context.set_request_repaint_callback(move |request| {
         if request.viewport_id == egui::ViewportId::ROOT
             && let Some(when) = Instant::now().checked_add(request.delay)
         {
-            let _ = proxy.send_event(Repaint(when));
+            let _ = proxy.send_event(HostEvent::Repaint(when));
         }
     });
     let mut host = Host {
         title: title.to_owned(),
         create: Some(create),
         context,
+        proxy: quit_proxy,
         state: None,
+        finishing: None,
         next_repaint: None,
         error: None,
     };
     let outcome = event_loop.run_app(&mut host);
     let trace_outcome = if let Some(state) = &mut host.state {
-        state.fullscreen.update(&state.gpu.window, false)?;
-        state.app.on_exit();
-        state.gpu.drain_trace()
+        state.cleanup()
     } else {
         Ok(())
     };
@@ -64,32 +98,84 @@ pub fn run<A: App + 'static>(
         return Err(error);
     }
     trace_outcome?;
-    Ok(host.state.as_ref().map_or(0, |state| state.gpu.presented))
+    let presented = host.state.as_ref().map_or(0, |state| state.gpu.presented);
+    let approved = host.finishing.is_some()
+        || host
+            .state
+            .as_ref()
+            .is_some_and(|state| state.app.quit_state() == Some(QuitState::Approved));
+    let termination = host
+        .state
+        .as_mut()
+        .and_then(|state| state.termination.take())
+        .or_else(|| host.finishing.take());
+    // An affirmative AppKit reply can exit the process without returning.
+    // Release the application/window/GPU owners before completing that request.
+    drop(host);
+    if let Some(termination) = termination {
+        termination.reply(approved);
+    }
+    Ok(presented)
 }
 
-struct Repaint(Instant);
+enum HostEvent {
+    Repaint(Instant),
+    Menu(muda::MenuId),
+    Quit,
+}
 
 struct Host<A, F> {
     title: String,
     create: Option<F>,
     context: egui::Context,
+    proxy: EventLoopProxy<HostEvent>,
     state: Option<State<A>>,
+    finishing: Option<termination::Guard>,
     next_repaint: Option<Instant>,
     error: Option<Box<dyn std::error::Error>>,
 }
 
 impl<A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<A>> Host<A, F> {
     fn fail(&mut self, event_loop: &ActiveEventLoop, error: Box<dyn std::error::Error>) {
+        if let Some(guard) = self
+            .state
+            .as_ref()
+            .and_then(|state| state.termination.as_ref())
+            .or(self.finishing.as_ref())
+        {
+            guard.reply(false);
+        }
         self.error = Some(error);
         event_loop.exit();
     }
+
+    fn complete_native_quit(&mut self, event_loop: &ActiveEventLoop) {
+        let mut state = self.state.take().expect("approved native host state");
+        let termination = state
+            .termination
+            .take()
+            .expect("active native termination guard");
+        let outcome = state.cleanup();
+        drop(state);
+        match outcome {
+            Ok(()) => {
+                termination.approve_after_cleanup();
+                self.finishing = Some(termination);
+            }
+            Err(error) => {
+                termination.reply(false);
+                self.fail(event_loop, error);
+            }
+        }
+    }
 }
 
-impl<A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<A>> ApplicationHandler<Repaint>
+impl<A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<A>> ApplicationHandler<HostEvent>
     for Host<A, F>
 {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.state.is_some() {
+        let _native_unwind = termination::cancel_on_unwind();
+        if self.state.is_some() || self.finishing.is_some() {
             return;
         }
         let mut initialize = || -> Result<State<A>> {
@@ -101,7 +187,22 @@ impl<A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<A>> ApplicationHan
                 )?,
             );
             let gpu = pollster::block_on(Gpu::new(window.clone()))?;
-            let app = self.create.take().expect("initialize once")(&gpu.device, &gpu.queue)?;
+            let mut app = self.create.take().expect("initialize once")(&gpu.device, &gpu.queue)?;
+            let termination = if app.quit_state().is_some() {
+                let proxy = self.proxy.clone();
+                Some(termination::Guard::install(move || {
+                    proxy.send_event(HostEvent::Quit).is_ok()
+                })?)
+            } else {
+                None
+            };
+            let menus = app
+                .menu_state()
+                .map(|state| menu::native::NativeMenu::new(&state))
+                .transpose()?;
+            if menus.is_some() {
+                app.native_menu_installed();
+            }
             let input = egui_winit::State::new(
                 self.context.clone(),
                 egui::ViewportId::ROOT,
@@ -119,6 +220,8 @@ impl<A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<A>> ApplicationHan
                 input,
                 viewport,
                 fullscreen: PhotoFullscreen::default(),
+                menus,
+                termination,
             })
         };
         match initialize() {
@@ -127,11 +230,36 @@ impl<A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<A>> ApplicationHan
         }
     }
 
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, Repaint(when): Repaint) {
-        self.next_repaint = Some(self.next_repaint.map_or(when, |old| old.min(when)));
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: HostEvent) {
+        let _native_unwind = termination::cancel_on_unwind();
+        match event {
+            HostEvent::Repaint(when) => {
+                self.next_repaint = Some(self.next_repaint.map_or(when, |old| old.min(when)));
+            }
+            HostEvent::Menu(id) => {
+                if let Some(state) = &mut self.state
+                    && let Some(action) = state.menus.as_ref().and_then(|menus| menus.action(&id))
+                {
+                    state.reveal();
+                    state.app.menu_action(action);
+                }
+            }
+            HostEvent::Quit => {
+                if let Some(state) = &mut self.state
+                    && state
+                        .termination
+                        .as_ref()
+                        .is_some_and(|guard| guard.delivered())
+                {
+                    state.reveal();
+                    state.app.request_quit();
+                }
+            }
+        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        let _native_unwind = termination::cancel_on_unwind();
         let Some(state) = &mut self.state else {
             return;
         };
@@ -189,10 +317,13 @@ impl<A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<A>> ApplicationHan
         }
         if let Err(error) = outcome {
             self.fail(event_loop, error);
+        } else if self.state.as_ref().is_some_and(State::native_quit_approved) {
+            self.complete_native_quit(event_loop);
         }
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let _native_unwind = termination::cancel_on_unwind();
         let mut wake = self.next_repaint;
         if wake.is_some_and(|when| when <= Instant::now()) {
             if let Some(state) = &self.state {
@@ -230,9 +361,35 @@ struct State<A> {
     input: egui_winit::State,
     viewport: egui::ViewportInfo,
     fullscreen: PhotoFullscreen,
+    menus: Option<menu::native::NativeMenu>,
+    termination: Option<termination::Guard>,
 }
 
 impl<A: App> State<A> {
+    fn native_quit_approved(&self) -> bool {
+        self.termination
+            .as_ref()
+            .is_some_and(|guard| guard.awaiting_decision())
+            && self.app.quit_state() == Some(QuitState::Approved)
+    }
+
+    fn cleanup(&mut self) -> Result<()> {
+        let restoration = self.fullscreen.update(&self.gpu.window, false);
+        self.app.on_exit();
+        restoration?;
+        self.gpu.drain_trace()
+    }
+
+    fn reveal(&self) {
+        // Menus and Dock Quit remain usable with the sole window minimized;
+        // decisions and application panels must not open invisibly.
+        if self.gpu.window.is_minimized() == Some(true) {
+            self.gpu.window.set_minimized(false);
+        }
+        self.gpu.window.focus_window();
+        self.gpu.window.request_redraw();
+    }
+
     fn draw(&mut self, context: &egui::Context, event_loop: &ActiveEventLoop) -> Result<()> {
         let mut timing = self.gpu.trace.as_mut().map(Trace::begin);
         let size = self.gpu.window.inner_size();
@@ -290,13 +447,23 @@ impl<A: App> State<A> {
         };
         // Input and close/cancel commands still run when a drawable is unavailable.
         egui_winit::update_viewport_info(&mut self.viewport, context, &self.gpu.window, false);
+        let clipboard = self
+            .app
+            .menu_paste_requested()
+            .then(|| self.input.clipboard_text())
+            .flatten();
+        let menu_input = self.app.menu_input(clipboard);
         let mut raw = self.input.take_egui_input(&self.gpu.window);
+        raw.events.splice(0..0, menu_input);
         raw.viewports
             .insert(egui::ViewportId::ROOT, self.viewport.clone());
         if let Some(timing) = &mut timing {
             timing.ui_start = Some(Instant::now());
         }
         let mut output = context.run_ui(raw, |ui| self.app.ui(ui));
+        if let (Some(menus), Some(state)) = (&self.menus, self.app.menu_state()) {
+            menus.update(&state);
+        }
         if let Some(timing) = &mut timing {
             timing.ui_end = Some(Instant::now());
         }
@@ -411,7 +578,18 @@ impl<A: App> State<A> {
         {
             self.app.photo_fullscreen_changed(active);
         }
-        if self.viewport.close_requested() {
+        if let Some(termination) = &self.termination
+            && termination.awaiting_decision()
+        {
+            match self.app.quit_state() {
+                Some(QuitState::Pending | QuitState::Approved) => {}
+                Some(QuitState::Running) | None => termination.reply(false),
+            }
+        }
+        if self.viewport.close_requested() && !self.native_quit_approved() {
+            if let Some(guard) = &self.termination {
+                guard.reply(false);
+            }
             event_loop.exit();
         }
         self.viewport.events.clear();

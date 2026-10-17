@@ -14,7 +14,8 @@ pub(super) struct FullscreenView {
 
 impl Editor {
     fn fullscreen_blocked(&self) -> bool {
-        self.failure.is_some()
+        self.menus.panel.is_some()
+            || self.failure.is_some()
             || self.document_pending.is_some()
             || self.transition.is_some()
             || self.project_overwrite.is_some()

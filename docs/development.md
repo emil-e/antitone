@@ -281,7 +281,12 @@ cargo test --locked --features ui --test native_host -- --run lifecycle
 cargo test --locked --release --features ui --test native_host -- --run lifecycle
 # Current-Space full-display entry/paint/return/paint; requires an unlocked desktop.
 cargo test --locked --features ui --test native_host -- --run fullscreen
-# Actual Editor composition and selected-image surface passes; authored inputs only.
+# Native menu installation/state/accelerators/event wakeup and file-panel Edit restoration.
+cargo test --locked --features ui --test native_menus -- --run
+# Isolated child apps: native termination negotiation and cleanup; no real logout/shutdown.
+cargo test --locked --features ui --test native_termination -- --run
+cargo test --locked --release --features ui --test native_termination -- --run
+# Actual Editor composition, native menus and selected-image surface passes; authored inputs only.
 cargo test --locked --features editor --test native_host -- --run editor
 cargo test --locked --release --features editor --test native_host -- --run editor
 # Negative cases: all must exit nonzero with the corresponding failure.
@@ -291,6 +296,24 @@ cargo test --locked --features ui --test native_host -- --run process-timeout
 ```
 
 Lifecycle success requires actual surface paints and explicit completion; premature closure and UI/process watchdog expiry fail. Hardware errors are failures after a requested launch. The authored Editor case additionally requires selected-image callbacks and paint acknowledgments at each requested size, establishing basic Editor/host composition rather than per-tool or physical-input acceptance.
+
+The native-menu executable also requires explicit `--run`; its ordinary invocation opens no window. It activates real AppKit menu items/accelerators and verifies event-loop wakeup, minimized-window restoration, editor-owned Quit dispatch and temporary native-responder Edit routing without opening a file chooser or changing the clipboard. Editor controller/composed checks separately cover unsaved-change protection, numeric commits, Settings persistence/dismissal and focused-text selection:
+
+```sh
+cargo test --locked --features ui-tests --lib editor::menu::tests -- --test-threads=1
+cargo test --locked --features ui-tests --lib editor::kittest_tests::menus -- --test-threads=1
+cargo test --locked --release --features ui-tests --lib editor::kittest_tests::menus -- --test-threads=1
+```
+
+The native-termination executable also launches only with explicit `--run`. Its isolated children send real AppKit termination requests and check deferred painting, repeated-request coalescing, rejection/retry, fullscreen restoration and cleanup-before-exit. Negative cases cover an interrupted host, panic while a reply is pending and an incompatible pre-existing delegate method; host return must restore the scoped entry gate. Each child has a process deadline. No child initiates logout/shutdown or changes personal projects/preferences. Editor controller tests separately exercise dirty/clean requests, blocking tools/work, cancelled decisions/replacement, stale/failed/successful saves and leading clipboard input:
+
+```sh
+cargo test --locked --features ui-tests --lib editor::menu::quit_tests -- --test-threads=1
+cargo test --locked --release --features ui-tests --lib editor::menu::quit_tests -- --test-threads=1
+cargo test --locked --features ui-tests --lib system_quit_preserves_leading_paste -- --test-threads=1
+```
+
+These checks require an unlocked desktop for focus and native paints; headless or locked-session timeouts are not passes. They do not establish physical shortcut/VoiceOver behavior, actual file-panel interaction or real logout/shutdown acceptance.
 
 Fullscreen checks current-Space borderless display coverage, system menu/Dock access, actual painting and restoration of window bounds/presentation options. This is distinct from native fullscreen Spaces and requires an unlocked desktop. Do not substitute kittest viewport metadata for that round trip. [Presentation references/stress checks](diagnostics.md#macos-presentation) and [remaining native lifecycle/input/display acceptance](plans/inspection-and-interaction.md#layout-and-controls) address separate boundaries.
 

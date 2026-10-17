@@ -521,7 +521,10 @@ impl Editor {
     }
 
     pub(super) fn canvas_input_allowed(&self, ui: &egui::Ui, canvas: egui::Rect) -> bool {
-        if self.adjustments.confirming() || egui::Popup::is_any_open(ui.ctx()) {
+        if self.menus.panel.is_some()
+            || self.adjustments.confirming()
+            || egui::Popup::is_any_open(ui.ctx())
+        {
             return false;
         }
         let positions = ui.ctx().input(|input| {

@@ -24,6 +24,10 @@ pub(super) use hierarchy::{
     section_disclosure, stage_tabs,
 };
 
+#[path = "editor_ui_application.rs"]
+mod application;
+pub(super) use application::{AppPanel, MenuFocus, app_panel, application_menus};
+
 pub(super) const CONTROL_HEIGHT: f32 = 28.;
 pub(super) const VIEWER_BAR_HEIGHT: f32 = 40.;
 pub(super) const VIEWER_ITEM_GAP: f32 = 4.;

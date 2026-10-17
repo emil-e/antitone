@@ -22,7 +22,7 @@ For the photographic model, start with [processing](processing.md). This page is
 | Scopes | [measurement](../src/scopes.rs), [GPU reduction](../src/gpu_scopes.rs) | Approximate visible-image output statistics |
 | Editor | [editor](../src/editor.rs) and its feature modules | Live state, controls, transactions and worker dispatch |
 | Persistence | [project](../src/project.rs), [document](../src/editor_document.rs) | Accepted state and compatibility |
-| Host | [host](../src/platform/host.rs), [macOS](../src/platform/macos.rs), [full-display inspection](../src/platform/fullscreen.rs) | Event loop, surface, managed SDR presentation, native icon and reversible current-Space window coverage |
+| Host | [host](../src/platform/host.rs), [macOS](../src/platform/macos.rs), [full-display inspection](../src/platform/fullscreen.rs) | Event loop, surface, managed SDR presentation, native menus/icon and reversible current-Space window coverage |
 | Branding | [assets](../assets/branding/README.md), [generator](../native/branding_assets.swift), [macOS packaging](../scripts/package-macos.py) | Portable artwork and checkout-local application bundle |
 
 ## Ownership and execution
@@ -54,6 +54,8 @@ Creative-look resolution is downstream of source/photographic state. Built-in mo
 Worker results are proposals. Request IDs, generations and source/settings snapshots determine whether they still belong to the current operation. Prepare and validate before replacing accepted state; discard stale results. Cancellation is cooperative, not a promise to interrupt LibRaw or already-submitted GPU work immediately.
 
 ## Editor workspace
+
+[Application menus](editor.md#application-menus-and-settings) share a portable action/grouping model between AppKit and egui presentation. The editor owns availability, focused-text routing and guarded dispatch; the host owns native lifetime and event-loop wakeup. File actions render outgoing controls after surrendering focus before snapshotting accepted state. Settings/About/Help panels block workspace input without acquiring document or processing ownership. [Native termination](editor.md#native-quit-negotiation) negotiates the editor's live close/save continuation with AppKit, preserving winit's delegate and completing cleanup before an affirmative reply can exit the process. The native menu backend uses `muda`; native file panels temporarily restore responder-based Edit commands for their own text controls.
 
 [Shared presentation](editor.md#build-ui-from-shared-presentation) lays out supplied state and returns responses, and owns the editor's [colour](editor.md#colour-roles) and [typography](editor.md#typography-roles) roles. Photographic adapters own value semantics; feature controllers own state, availability and dispatch. This keeps a presentation change from acquiring processing or persistence responsibility. [Decision dialogs](../src/editor_ui_dialogs.rs) own framing, button focus and dismissal; document and export controllers retain the decision payloads and transaction dispatch. Analyze retains its reset consequence within the sampling-area review, using shared warning presentation rather than another decision dialog. [Feedback presentation](../src/editor_ui_feedback.rs) shares that shell and supplies severity/details; [operation feedback](../src/editor_feedback.rs) owns failure copy, acknowledgement and resolution without acquiring worker or persistence responsibility.
 

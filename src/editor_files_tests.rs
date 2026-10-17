@@ -85,18 +85,10 @@ fn click(editor: &mut Editor, context: &egui::Context, point: egui::Pos2) {
 }
 
 #[test]
-fn menu_row_and_cancel_discard_dialog_dispatch_use_the_existing_header() {
+fn cancel_preserves_the_document_and_discard_dispatches_the_guarded_transition() {
     let (mut editor, _send, receiver) = fixture();
     let context = egui::Context::default();
-    let initial = ui_frame(&mut editor, &context, vec![]);
-    for menu in ["File", "Export"] {
-        assert!(initial.iter().any(|(label, _)| label == menu));
-    }
-    assert!(
-        !initial
-            .iter()
-            .any(|(label, _)| label == "Add RAWs…" || label == "Export TIFF…")
-    );
+    ui_frame(&mut editor, &context, vec![]);
     editor.guard_transition(Transition::New, &context);
     ui_frame(&mut editor, &context, vec![]);
     let modal = ui_frame(&mut editor, &context, vec![]);
@@ -162,7 +154,37 @@ fn save_transition_prompts_are_neutral_and_make_edit_loss_conditional_on_not_sav
 
 #[test]
 fn command_save_commits_pending_numeric_text_before_snapshot() {
+    numeric_save(SaveInput::Shortcut);
+}
+
+#[test]
+fn native_menu_save_commits_pending_numeric_text_before_snapshot() {
+    numeric_save(SaveInput::NativeMenu);
+}
+
+#[test]
+fn native_paste_precedes_a_queued_save_before_focus_is_committed() {
+    numeric_save(SaveInput::PasteThenSave);
+}
+
+#[test]
+fn system_quit_preserves_leading_paste_before_the_save_decision() {
+    numeric_save(SaveInput::PasteThenSystemQuit);
+}
+
+#[derive(Clone, Copy)]
+enum SaveInput {
+    Shortcut,
+    NativeMenu,
+    PasteThenSave,
+    PasteThenSystemQuit,
+}
+
+fn numeric_save(route: SaveInput) {
     let (mut editor, _send, receiver) = fixture();
+    if !matches!(route, SaveInput::Shortcut) {
+        host::App::native_menu_installed(&mut editor);
+    }
     let directory = tempfile::tempdir().unwrap();
     editor.document = editor
         .document
@@ -201,20 +223,70 @@ fn command_save_commits_pending_numeric_text_before_snapshot() {
     ui_frame(
         &mut editor,
         &context,
-        vec![egui::Event::Text("7.123456789".into())],
+        vec![egui::Event::Text(
+            if matches!(
+                route,
+                SaveInput::PasteThenSave | SaveInput::PasteThenSystemQuit
+            ) {
+                "1.25"
+            } else {
+                "7.123456789"
+            }
+            .into(),
+        )],
     );
     assert_eq!(editor.photo.exposure, 0.);
-    ui_frame(
-        &mut editor,
-        &context,
-        vec![egui::Event::Key {
+    use crate::platform::menu::Action;
+    let events = match route {
+        SaveInput::NativeMenu => {
+            host::App::menu_action(&mut editor, Action::Save);
+            vec![]
+        }
+        SaveInput::PasteThenSave => {
+            for action in [Action::SelectAll, Action::Paste, Action::Save] {
+                host::App::menu_action(&mut editor, action);
+            }
+            host::App::menu_input(&mut editor, Some("7.123456789".into()))
+        }
+        SaveInput::PasteThenSystemQuit => {
+            for action in [Action::SelectAll, Action::Paste, Action::Settings] {
+                host::App::menu_action(&mut editor, action);
+            }
+            host::App::request_quit(&mut editor);
+            host::App::menu_input(&mut editor, Some("7.123456789".into()))
+        }
+        SaveInput::Shortcut => vec![egui::Event::Key {
             key: egui::Key::S,
             physical_key: None,
             pressed: true,
             repeat: false,
             modifiers: egui::Modifiers::COMMAND,
         }],
-    );
+    };
+    ui_frame(&mut editor, &context, events);
+    if !matches!(route, SaveInput::NativeMenu) {
+        assert!(
+            receiver.try_recv().is_err(),
+            "input must be processed before committing focus"
+        );
+        ui_frame(&mut editor, &context, vec![]);
+    }
+    if matches!(route, SaveInput::PasteThenSystemQuit) {
+        assert_eq!(editor.transition, Some(Transition::Close));
+        assert_eq!(
+            host::App::quit_state(&editor),
+            Some(host::QuitState::Pending)
+        );
+        assert!(!editor.allow_close);
+        let shapes = ui_frame(&mut editor, &context, vec![]);
+        let save = shapes
+            .iter()
+            .find(|(label, _)| label == "Save changes")
+            .unwrap()
+            .1
+            .center();
+        click(&mut editor, &context, save);
+    }
     let Command::Document(_, work) = receiver.try_recv().unwrap() else {
         panic!()
     };

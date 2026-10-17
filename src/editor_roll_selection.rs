@@ -214,7 +214,7 @@ impl Editor {
             self.photo = PhotoSettings::default();
             self.photo_orientation = PhotoOrientation::default();
             self.crop = None;
-            self.status = "No photos in this roll. Add RAWs to continue.".into();
+            self.status = "No photos in this roll. Add scans to continue.".into();
             if self.commands.send(Command::Unload).is_err() {
                 self.status = "RAW worker stopped".into();
             }

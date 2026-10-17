@@ -33,6 +33,8 @@ mod development;
 mod document;
 #[path = "editor_icons.rs"]
 mod icons;
+#[path = "editor_menu.rs"]
+mod menu;
 #[path = "editor_preferences.rs"]
 mod preferences;
 #[path = "editor_ui.rs"]
@@ -1019,6 +1021,7 @@ fn backend(
 
 pub struct Editor {
     started: bool,
+    menus: menu::Menus,
     submissions: crate::platform::SubmissionGate,
     analysis_generation: Arc<std::sync::atomic::AtomicU64>,
     analysis_pending: Option<analysis::Pending>,
@@ -1187,6 +1190,7 @@ impl Editor {
             viewport: Viewport::default(),
             fullscreen: None,
             started: false,
+            menus: menu::Menus::default(),
             commands,
             messages,
             id: 0,
@@ -1196,7 +1200,7 @@ impl Editor {
             busy: false,
             look_pending: None,
             loaded_looks: Vec::new(),
-            status: "Add a RAW to begin".into(),
+            status: "Add scans to begin".into(),
             tasks: TaskActivity::default(),
             failure: None,
             document_failure: None,
@@ -1312,7 +1316,8 @@ impl Editor {
                 info.label = Some(label.into());
                 info
             });
-            if response.changed() && response.enabled() && *bytes != mib * MIB {
+            let cancelled = controls::numeric_cancelled(ui, &response);
+            if response.changed() && response.enabled() && !cancelled && *bytes != mib * MIB {
                 *bytes = mib * MIB;
                 changed = true;
             }
@@ -2516,11 +2521,13 @@ impl Editor {
             ready.path.file_stem().unwrap_or_default().to_string_lossy(),
             extension
         );
-        if let Some(path) = rfd::FileDialog::new()
-            .set_file_name(filename)
-            .add_filter("Output", &[extension])
-            .save_file()
-        {
+        if let Some(path) = crate::platform::menu::with_native_dialog(|| {
+            rfd::FileDialog::new()
+                .set_title("Export Photo")
+                .set_file_name(filename)
+                .add_filter("Output", &[extension])
+                .save_file()
+        }) {
             if path.exists() {
                 self.overwrite = Some((path, format));
             } else {
@@ -2531,6 +2538,41 @@ impl Editor {
 }
 
 impl host::App for Editor {
+    fn menu_state(&self) -> Option<crate::platform::menu::State> {
+        Some(self.application_menu_state())
+    }
+
+    fn menu_action(&mut self, action: crate::platform::menu::Action) {
+        self.menus.pending.push_back(action);
+    }
+
+    fn menu_paste_requested(&self) -> bool {
+        self.application_menu_state()
+            .enabled(crate::platform::menu::Action::Paste)
+            && self
+                .menus
+                .pending
+                .iter()
+                .take_while(|action| action.text_edit())
+                .any(|action| *action == crate::platform::menu::Action::Paste)
+    }
+
+    fn menu_input(&mut self, clipboard: Option<String>) -> Vec<egui::Event> {
+        Editor::menu_input(self, clipboard)
+    }
+
+    fn native_menu_installed(&mut self) {
+        self.menus.native = true;
+    }
+
+    fn quit_state(&self) -> Option<host::QuitState> {
+        Some(self.application_quit_state())
+    }
+
+    fn request_quit(&mut self) {
+        self.request_application_quit();
+    }
+
     fn photo_fullscreen(&self) -> bool {
         self.fullscreen_requested()
     }
@@ -2571,31 +2613,39 @@ impl host::App for Editor {
             return;
         }
         // egui popups close on Escape without consuming it; preserve their input ownership.
-        let dialog_escape_available = !egui::Popup::is_any_open(ui.ctx());
+        let popup_was_open = egui::Popup::is_any_open(ui.ctx());
+        let panel_escape_available = !popup_was_open
+            && !(self.menus.text_focused && ui.input(|input| input.key_pressed(egui::Key::Escape)));
+        let tool_escape_available = !popup_was_open && self.menus.panel.is_none();
         self.receive_frame();
         let fullscreen_was_active = self.fullscreen.is_some();
         self.update_fullscreen(ui.ctx());
-        let available = self.file_actions_available();
-        let mut file_action = self.file_shortcuts(ui, available);
+        let mut actions = self.application_actions(ui);
         self.frame_shortcuts(
             ui,
-            &mut file_action,
+            &mut actions.file,
             fullscreen_was_active,
-            dialog_escape_available,
+            tool_escape_available,
         );
 
         let previous_roll = self.roll;
         let previous_photo = self.photo;
         let was_dirty = self.document.dirty();
         self.disable_blocked_workspace(ui);
-        let export_action = self.workspace_chrome(ui, available, &mut file_action);
+        let _menu_focus = self.workspace_chrome(ui, &mut actions);
         let (scope_slot, analyze) = self.workspace_controls(ui);
         self.validate_frame_edits(previous_roll, previous_photo);
         if self.analysis_review.is_some() && self.analysis_pending.is_none() {
             self.stash_review_region();
         }
 
-        let zoom_action = self.viewer_bar(ui);
+        let menu_zoom = match actions.menu {
+            Some(crate::platform::menu::Action::ActualSize) => Some(1.),
+            Some(crate::platform::menu::Action::ZoomIn) => Some(-1.25),
+            Some(crate::platform::menu::Action::ZoomOut) => Some(-1. / 1.25),
+            _ => None,
+        };
+        let zoom_action = self.viewer_bar(ui).or(menu_zoom);
         let fullscreen = self.fullscreen.is_some();
         presentation::viewer_surface(ui, fullscreen, |ui| {
             self.viewer_canvas(ui, zoom_action, fullscreen);
@@ -2610,7 +2660,9 @@ impl host::App for Editor {
         }
 
         // Deferred actions must see validated edits and committed numeric focus loss.
-        self.dispatch_frame_actions(ui, file_action, export_action, analyze);
-        self.frame_dialogs(ui, dialog_escape_available);
+        self.application_panel(ui.ctx(), panel_escape_available);
+        self.dispatch_frame_actions(ui, actions, analyze);
+        self.frame_dialogs(ui, !popup_was_open);
+        self.menus.text_focused = ui.ctx().text_edit_focused();
     }
 }

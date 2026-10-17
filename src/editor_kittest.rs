@@ -23,6 +23,8 @@ mod fullscreen;
 mod looks;
 #[path = "editor_kittest_masks.rs"]
 mod masks;
+#[path = "editor_kittest_menus.rs"]
+mod menus;
 #[path = "editor_kittest_project.rs"]
 mod project;
 #[path = "editor_kittest_roll_selection.rs"]
@@ -645,7 +647,17 @@ fn editor_harness_with_gpu(
         .with_max_steps(240)
         .with_step_dt(1. / 60.)
         .renderer(renderer)
-        .build_ui_state(|ui, editor| host::App::ui(editor, ui), editor);
+        .build_ui_state(
+            |ui, editor| {
+                // Match the host's pre-frame text delivery without reading the system clipboard.
+                let input = host::App::menu_input(editor, None);
+                ui.input_mut(|state| {
+                    state.events.splice(0..0, input);
+                });
+                host::App::ui(editor, ui);
+            },
+            editor,
+        );
     (harness, capture, device, queue)
 }
 

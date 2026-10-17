@@ -97,7 +97,7 @@ impl Editor {
         if let Some(parent) = self.document.path.as_ref().and_then(|path| path.parent()) {
             dialog = dialog.set_directory(parent);
         }
-        if let Some(path) = dialog.save_file() {
+        if let Some(path) = crate::platform::menu::with_native_dialog(|| dialog.save_file()) {
             if path.exists() && self.document.path.as_ref() != Some(&path) {
                 self.project_overwrite = Some((path, after));
             } else {
@@ -121,19 +121,22 @@ impl Editor {
             FileAction::New => self.guard_transition(Transition::New, context),
             FileAction::Close => self.guard_transition(Transition::Close, context),
             FileAction::Open => {
-                if let Some(path) = rfd::FileDialog::new()
-                    .set_title("Open Antitone project")
-                    .add_filter("Antitone project", &["antitone", "json"])
-                    .pick_file()
-                {
+                if let Some(path) = crate::platform::menu::with_native_dialog(|| {
+                    rfd::FileDialog::new()
+                        .set_title("Open Antitone Project")
+                        .add_filter("Antitone project", &["antitone", "json"])
+                        .pick_file()
+                }) {
                     self.guard_transition(Transition::Open(path), context);
                 }
             }
             FileAction::Add => {
-                if let Some(paths) = rfd::FileDialog::new()
-                    .add_filter("Camera RAW", RAW_EXTENSIONS)
-                    .pick_files()
-                {
+                if let Some(paths) = crate::platform::menu::with_native_dialog(|| {
+                    rfd::FileDialog::new()
+                        .set_title("Add Scans")
+                        .add_filter("Camera RAW files", RAW_EXTENSIONS)
+                        .pick_files()
+                }) {
                     self.add_raws(paths);
                 }
             }

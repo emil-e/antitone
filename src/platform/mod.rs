@@ -6,6 +6,10 @@ pub mod host;
 mod latency;
 #[cfg(target_os = "macos")]
 pub mod macos;
+#[cfg(target_os = "macos")]
+mod termination;
+
+pub mod menu;
 
 pub use crate::gpu::SubmissionGate;
 

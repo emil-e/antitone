@@ -31,9 +31,10 @@ flate2 = { version = "=1.1.10", optional = true, default-features = false, featu
 image = { version = "=0.25.10", optional = true, default-features = false, features = ["jpeg", "png"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+muda = { version = "=0.21.2", optional = true, default-features = false }
 objc2 = { version = "=0.6.5", optional = true }
-objc2-app-kit = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder", "NSWindow", "NSScreen"] }
-objc2-foundation = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "NSData"] }
+objc2-app-kit = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder", "NSWindow", "NSScreen", "NSMenu", "NSMenuItem", "NSEvent", "NSGraphicsContext"] }
+objc2-foundation = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "NSData", "NSArray", "NSDate", "NSObject", "NSObjCRuntime", "NSString", "NSRunLoop"] }
 objc2-metal = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "MTLDevice"] }
 objc2-core-foundation = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "CFString"] }
 objc2-core-graphics = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "CGColorSpace"] }
@@ -41,9 +42,9 @@ objc2-quartz-core = { version = "=0.3.2", optional = true, default-features = fa
 
 [features]
 ui-tests = ["editor", "ocio-reference", "dep:egui_kittest", "image/png"]
-editor = ["ui", "raw", "export", "project", "dep:rfd", "dep:blake3", "dep:image", "dep:objc2-foundation"]
+editor = ["ui", "raw", "export", "project", "dep:rfd", "dep:blake3", "dep:image"]
 project = ["dep:serde", "dep:serde_json", "dep:tempfile", "dep:blake3", "dep:base64", "dep:flate2", "glam/serde"]
-ui = ["gpu", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:winit", "dep:half", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-core-foundation", "dep:objc2-core-graphics", "dep:objc2-quartz-core"]
+ui = ["gpu", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:winit", "dep:half", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-core-foundation", "dep:objc2-core-graphics", "dep:objc2-quartz-core", "dep:objc2-foundation", "dep:muda"]
 raw = ["dep:cc", "dep:libc"]
 render = ["dep:lcms2"]
 ocio-reference = ["render", "dep:cc"]
@@ -94,6 +95,18 @@ required-features = ["ui"]
 [[test]]
 name = "native_host"
 path = "tests/native_host.rs"
+harness = false
+required-features = ["ui"]
+
+[[test]]
+name = "native_menus"
+path = "tests/native_menus.rs"
+harness = false
+required-features = ["ui"]
+
+[[test]]
+name = "native_termination"
+path = "tests/native_termination.rs"
 harness = false
 required-features = ["ui"]
 
