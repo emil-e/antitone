@@ -1,4 +1,4 @@
-//! Source-owned dust-repair instructions and frozen AP1 donor healer.
+//! Source-owned dust-repair instructions and versioned AP1 donor healer.
 //!
 //! Repair support is binary and source-coordinate owned. Manual and detected
 //! supports differ only in UI provenance; both enter [`heal_ranked`] identically.
@@ -436,7 +436,7 @@ fn padded(region: SourceRegion, active: SourceRegion, amount: u32) -> SourceRegi
     }
 }
 
-/// Frozen boundary-ranked donor healing in signed/HDR AP1.
+/// Boundary-ranked donor healing for the current repair contract in signed/HDR AP1.
 ///
 /// The returned image preserves every input bit outside `mask`. Masked input
 /// values are erased before matching or reconstruction and cannot affect output.

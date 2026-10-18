@@ -14,7 +14,7 @@ A separate entry-point gap remains: `Editor::new` recognizes only ARW as an init
 
 Investigate X-Trans, suitable non-CFA/linear camera sources, decoded floating-point inputs and spatial black-level metadata. Assess Foveon and four-colour cameras separately: decoding them does not establish that their channel basis fits native-camera inversion.
 
-Preserve pinned LibRaw, fixed roll WB, immutable original-capture diagnostics, camera model/matrix compatibility, signed/HDR AP1, AP0 EXR, RGB16 retained sources and numerical gates. Use established LibRaw algorithms, not a custom demosaicer, camera-specific repair, extra pedestal/clamp or CPU interactive fallback. No promise of universal LibRaw compatibility or photographic acceptance is selected.
+Preserve original-capture diagnostics, compatible calibration and signed/HDR working values. The proposed expansion starts from pinned LibRaw, fixed roll WB, the current camera model/matrix compatibility checks, AP1 grading, AP0 EXR and RGB16 retained sources. These implementation choices explain the present checks, rather than requiring every future source representation to use the same mechanisms. A changed development basis needs corresponding calibration, diagnostic and precision validation; silently adding a pedestal or clamp would not demonstrate source compatibility. Custom RAW development remains outside this proposal's scope. Universal LibRaw compatibility and photographic acceptance are not established.
 
 ## Open questions
 
@@ -31,4 +31,4 @@ For each supported class, use authored fixtures where feasible and explicitly su
 
 ## Next action
 
-Inventory the pinned LibRaw output/settings for these classes and map the assumptions in `native/raw_bridge.cpp` and `src/raw.rs`. Start with a deterministic scalar-equivalent 1×1 black-level case; establish correct diagnostics before relaxing its rejection. Then scope one additional sensor class at a time with its own fixture and acceptance limits.
+Inventory the pinned LibRaw output/settings for these classes and map the assumptions in `native/raw_bridge.cpp` and `src/raw.rs`. A deterministic scalar-equivalent 1×1 black-level case is a small initial candidate. Each additional class raises its own diagnostic, fixture and acceptance questions.

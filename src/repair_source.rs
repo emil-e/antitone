@@ -7,7 +7,7 @@ use crate::{
 };
 
 /// Calibration is already normalized for this scan's correction context.
-/// Every repair reads immutable unrepaired camera samples through the frozen f64-to-f32 boundary.
+/// Every repair reads immutable unrepaired camera samples, evaluated in f64 then stored as f32.
 pub fn evaluate(
     scan: &Scan,
     calibration: Calibration,

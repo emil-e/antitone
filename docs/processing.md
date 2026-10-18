@@ -26,7 +26,7 @@ LibRaw recognizes more RAW formats than Antitone's developer accepts. This path 
 
 The first scan selects its as-shot WB for the roll; later loads keep that choice. LibRaw can leave the second green site's gain unspecified on a three-colour Bayer source. Automatic selection shares the green gain in that case without changing raw metadata or repairing other invalid gains. Explicit WB, including a saved roll's WB, is used as supplied and must pass validation.
 
-Inversion must happen before the camera-to-working-space matrix. A matrix mixes channels; inversion applies a different nonlinear response to each channel. Mixing first and inverting afterward would produce a different model. This is the reason for the [native-camera boundary](decisions/native-camera-inversion.md), not simply an implementation preference.
+This model inverts before the camera-to-working-space matrix. A matrix mixes channels; inversion applies a different nonlinear response to each channel. Mixing first and inverting afterward would produce a different model, not an equivalent reordering of this one. This explains the current [native-camera boundary](decisions/native-camera-inversion.md).
 
 An optional [flat-field map](flat-field.md) corrects scan illumination in these same camera coordinates before inversion.
 
@@ -76,13 +76,13 @@ The provisional Dust tool heals here. Fixed RAW-development WB and gamma balance
 
 GPU donor screening reduces matching work without replacing the healer's f64 score, competitive margin or tie breaks. Integer lower bounds may exclude only candidates proved outside that margin; every possible winner retains exact CPU scoring and reconstruction. Quantized screening coordinates and floored weights are evidence for rejection, not quantization or clipping of AP1 samples, repaired pixels or final scores. [The research guide](research/dust-removal.md#large-mask-acceleration) explains the conservative construction and its measured limits.
 
-Healing and nonlinear grading do not commute, and pre-grade donor matching can differ from matching graded input. The solver remains frozen; [research evidence](research/dust-removal.md) is not all-grade photographic acceptance. Full-resolution repair composition precedes view filtering or original-sample output reconstruction; it is not painting into an already downsampled proxy. Saved repairs identify this stage through an explicit [project repair contract](projects.md#source-owned-dust-repairs). Viewer/reference/scopes, TIFF/AP0 EXR and proper positive thumbnails consume these repairs. Camera navigation placeholders and measurement inputs have separate purposes; they are not completed repaired positives.
+Healing and nonlinear grading do not commute, and pre-grade donor matching can differ from matching graded input. The current solver is identified by the saved repair contract; changing it can change reconstructed repairs. [Research evidence](research/dust-removal.md) is not all-grade photographic acceptance. Full-resolution repair composition precedes view filtering or original-sample output reconstruction; it is not painting into an already downsampled proxy. Saved repairs identify this stage through an explicit [project repair contract](projects.md#source-owned-dust-repairs). Viewer/reference/scopes, TIFF/AP0 EXR and proper positive thumbnails consume these repairs. Camera navigation placeholders and measurement inputs have separate purposes; they are not completed repaired positives.
 
 ### One accepted image recipe
 
 [Image recipes](../src/image_recipe.rs) capture accepted source/development, correction, calibration/inversion, committed enabled repairs, Global/ordered-local grades, composition and the immutable creative-look asset. Numeric look identity affects rendering, not neutral healing or graded-AP1 reuse. Output target and format are consumer choices, including EXR's explicit look bypass. Explicit viewer drafts reuse the same construction without changing accepted records; export and proper cards capture accepted photographic choices. Tool-specific card framing is a separate consumer projection, not temporary project mutation. Metadata-only repair IDs/provenance, look labels and disabled instructions do not change photographic identity, while source freshness remains the acquisition owner's responsibility.
 
-[Source-aware resolution](../src/repair_source.rs) shares the frozen scalar neutral sampling boundary across interactive and offscreen work. A cold consumer recomputes without requiring the active viewer cache; cancellation is not a failed heal. Export checks exact composition coverage before excluding an irrelevant support. Evaluated sparse content can remain CPU-owned while each bounded original unit uploads only its contributing pixels. Reconstruction never substitutes an unrepaired success because a GPU patch is absent.
+[Source-aware resolution](../src/repair_source.rs) shares the current scalar neutral sampling boundary across interactive and offscreen work. A cold consumer recomputes without requiring the active viewer cache; cancellation is not a failed heal. Export checks exact composition coverage before excluding an irrelevant support. Evaluated sparse content can remain CPU-owned while each bounded original unit uploads only its contributing pixels. Reconstruction never substitutes an unrepaired success because a GPU patch is absent.
 
 Dmin/Dmax, gamma/WB fitting, Analyze statistics and source inspection retain their existing unrepaired numerical contracts. Positive picker/reference presentation includes repairs; its measurement input is deliberately separate. Thumbnail and physical-view filtering before nonlinear grading remains the explicit approximation below, not a second photographic definition.
 
@@ -134,7 +134,7 @@ Stable f32 colour uses black-relative/linear-toe formulas, analytic divided diff
 
 The current model is **4**. Calibration must be finite and satisfy `Dmin > Dmax >= input_floor > 0` per camera channel. A roll retains its camera model and matrix; incompatible native-camera bases cannot share its calibration.
 
-Unsupported domains fail validation rather than being repaired with an extra clamp, pedestal or CPU interactive fallback. Display-rendering limits belong at the [output boundary](colour-and-output.md), not in the working positive. Scalar/GPU agreement checks numerical implementation, not physical colour accuracy.
+The current GPU path rejects unsupported domains; it does not add a clamp or pedestal or switch to a CPU interactive renderer. Display-rendering limits belong at the [output boundary](colour-and-output.md), not in the working positive. Scalar/GPU agreement checks numerical implementation, not physical colour accuracy.
 
 ## Working on this area
 

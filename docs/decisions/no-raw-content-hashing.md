@@ -1,6 +1,6 @@
 # Cache freshness is not photograph identity
 
-A RAW can be intentionally edited without becoming a different photograph. Full-file hashing would add I/O and enforce byte immutability even though the project has no such requirement.
+A RAW can be intentionally edited without becoming a different photograph. Using full-file hashes to reject changed sources would add I/O and enforce byte immutability, rather than the development-compatibility check used here.
 
 We use stable IDs for settings ownership, paths for loading and camera/development compatibility for deciding whether a grade can be processed. None proves capture identity. Source relinking or stronger identity policy needs its own workflow requirement.
 

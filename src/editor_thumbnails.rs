@@ -461,7 +461,7 @@ impl Thumbnails {
     }
 
     // Optional reference retention/building shares the existing image-cache allowance.
-    // Selected working pixels remain mandatory, like selected/visible source leases.
+    // Selected working pixels and active source leases are outside this optional allowance.
     pub(super) fn reserve_view(&mut self, bytes: usize) -> bool {
         let admitted = bytes <= self.budgets.images;
         self.view_reservation = if admitted { bytes } else { 0 };

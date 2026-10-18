@@ -14,7 +14,7 @@ These are unfinished fixes and design questions. [The roadmap](../../PLAN.md) ow
 ### Focused fixes
 
 - **Busy tool identity:** investigate Apply/Cancel auto-ID changes when the tool icon becomes a spinner. Verify focus and in-progress input ownership across the transition before choosing a correction.
-- **Decision-dialog acceptance:** exercise the shared Save/Discard, project/output replacement and Analyze prompts, plus acknowledged flat-field/save/export failures and working modal/inline/activity feedback, with native keyboard/pointer input, VoiceOver and display scaling. Component/event/float-capture checks establish layout and transaction boundaries, not physical appearance or native chooser ownership. [Current policy](../editor.md#decisions-are-not-operation-failures).
+- **Decision-dialog acceptance:** exercise the shared Save/Discard, project/output replacement and Analyze prompts, plus acknowledged flat-field/save/export failures and working modal/inline/activity feedback, with native keyboard/pointer input, VoiceOver and display scaling. Component/event/float-capture checks establish layout and transaction boundaries, not physical appearance or native chooser ownership. [Current behavior](../editor.md#decisions-are-not-operation-failures).
 - **Wheel accessibility:** settle a named pointer-only surface with adjacent keyboard-editable numeric controls versus a dedicated wheel keyboard interface. Preserve the numerical mapping; do not introduce an inert focus stop. Physical/VoiceOver acceptance remains separate from card/title semantic and input checks.
 
 ### Roll workflow

@@ -8,17 +8,17 @@ Use [the README](../README.md) to build and run. If you are new to an area, read
 
 Follow the neighboring code. Separate declarations and logical phases with blank lines, name values by role outside conventional mathematics, and expand dense control flow and macros even when the formatter accepts them. Inspect complete touched functions; formatting success alone does not establish readability.
 
-Preserve the owning guides' processing, output and project-compatibility contracts. Code and tests own exact defaults, formats and numerical gates. Distinguish established requirements from implementation choices and experimental hypotheses. Keep source storage compact; judge additional caching by measured benefit, memory cost and lifetime.
+Understand the current processing, output and project-compatibility behavior before changing it. Code, tests and topic guides describe the present defaults, formats, numerical checks and dependencies; their existence does not make each choice a product requirement. Explain a design change in terms of its benefits, drawbacks and affected callers or saved data, rather than treating the current implementation as authority against alternatives. Product intent and values need separate consideration from the mechanisms used to achieve them. Judge storage and caching choices by measured benefit, memory cost and lifetime.
 
 ### Comments and documentation
 
-Explain current contracts, rationale and non-obvious constraints, including ownership, lifecycle, numerical assumptions, platform quirks, compatibility and security. Public documentation should describe supported behavior at the reader's level rather than enumerate private helpers or call paths.
+Explain current behavior, rationale and non-obvious constraints, including ownership, lifecycle, numerical assumptions, platform quirks, compatibility and security. Distinguish an implementation dependency from product intent, and give requirements their source rather than inferring them from code or tests. Public documentation should describe supported behavior at the reader's level rather than enumerate private helpers or call paths.
 
 Remove obvious restatements, patch narration, completed TODOs and temporary investigation/review notes. Replace “previously X, now Y” with the reason Y matters, if still useful. Keep history where it serves the reader: decision rationale, migration guidance and changelogs. Negative statements earn their place when they prevent a plausible, consequential misunderstanding: “Edits are not persisted until Save” explains a boundary; “the old toolbar is no longer rendered” usually records only a completed change.
 
 Write for prospective contributors: explain the problem, mental model and guarantees. Keep one explanation per topic in its owning guide, with links rather than parallel implementation inventories. Keep build/run prerequisites in the top-level README and contributor workflow in this guide. Update affected guides and links when behavior changes; update the roadmap when priorities, status or blockers change.
 
-Plans describe unfinished scope, acceptance and next actions, not execution history. Transfer useful knowledge into the owning guide before removing completed steps or finished plans. Delete obsolete tools and superseded material rather than creating archives. Rewrite awkward prose when it contains useful knowledge instead of deleting that knowledge with it.
+Plans describe unfinished scope, proposed evaluation and next actions, not execution history. Label undecided designs and suggested experiments accordingly; a plan's list of checks is not automatically a delivery gate. Transfer useful knowledge into the owning guide before removing completed steps or finished plans. Delete obsolete tools and superseded material rather than creating archives. Rewrite awkward prose when it contains useful knowledge instead of deleting that knowledge with it.
 
 ### Meaningful tests
 

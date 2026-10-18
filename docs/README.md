@@ -18,7 +18,7 @@ Start with [build and run](../README.md), then choose the part of the project yo
 | What is saved, and what makes a source compatible? | [Projects](projects.md) |
 | What do the waveform and vectorscope actually measure? | [Scopes](scopes.md) |
 
-Each guide explains the idea, the important boundaries and where to find its implementation. Types, comments and tests own the exact mechanics; the guides are not parallel API specifications.
+Each guide explains the idea, the important boundaries and where to find its implementation. Types, comments and tests show the current mechanics; the guides are not parallel API specifications or a reason to freeze implementation choices.
 
 ## Make a change
 

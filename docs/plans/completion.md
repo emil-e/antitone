@@ -1,6 +1,6 @@
 # Remaining acceptance and release work
 
-[The roadmap](../../PLAN.md) orders this work. These are open requirements and questions, not selected implementation designs. Focused packages own their detailed scope; this page keeps the other acceptance and release needs visible.
+[The roadmap](../../PLAN.md) orders this work. These are proposed follow-ups, open questions and remaining evaluation, not a list of independently established requirements or selected implementation designs. Focused packages own their detailed scope; this page keeps the other acceptance and release needs visible.
 
 ## Geometry
 
@@ -36,7 +36,7 @@ B&W scope is unresolved: monochrome film captured by an RGB camera, colour-negat
 
 ## Operation feedback
 
-Shared decisions, acknowledged flat-field/save/export failures and usability-based working feedback are implemented; the [editor guide](../editor.md#working-feedback-follows-what-remains-usable) owns the current policy. Native keyboard/pointer, VoiceOver, display scaling and real-operation appearance/latency acceptance remain open. Component/controller checks and composed working-state captures do not establish these.
+Shared decisions, acknowledged flat-field/save/export failures and usability-based working feedback are implemented; the [editor guide](../editor.md#working-feedback-follows-what-remains-usable) describes the current feedback design. Native keyboard/pointer, VoiceOver, display scaling and real-operation appearance/latency acceptance remain open. Component/controller checks and composed working-state captures do not establish these.
 
 Loading/import/picker/Analyze failures still use passive status. Broader acknowledged-failure coverage, additional native/export progress and additional cancellation remain unselected; do not infer capabilities from activity animation. Import/Open report completed-file work, not whole-job percentages.
 

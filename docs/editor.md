@@ -82,7 +82,7 @@ The Edit menu and Cmd–Z / Shift–Cmd–Z traverse one chronological history f
 
 A slider, numeric drag or colour-wheel gesture is one action; numeric text commits, resets and other commands are separate actions. Crop and batch Auto-crop record Apply, local masks record accepted release, and Dust records each accepted stroke/mask edit, donor drag, deletion or reset. Explicit drafts, foreground operations, held controls and open popups block document history; text editing retains its own undo handling. Dust cleanup remains usable between strokes. Cancelled, rejected and unchanged edits do not add entries. New accepted edits discard redo.
 
-History keeps up to 100 actions in memory as cloned accepted project descriptions, not RAW pixels, rendered images or caches. Idle inspector passes compare lightweight control values rather than copying the project; accepted record changes retain their before-state lazily. Undo/redo prepares and validates its target before replacing the live document; failure preserves the current project and history position, and obsolete asynchronous results cannot reinstall undone state. Redo restores accepted choices rather than rerunning estimation. Save/Save As preserve history and the written dirty baseline; successful New/Open starts fresh history. History is not stored in the project file or restored on relaunch.
+The current history implementation retains up to 100 actions in memory as cloned accepted project descriptions, not RAW pixels, rendered images or caches. Idle inspector passes compare lightweight control values rather than copying the project; accepted record changes retain their before-state lazily. Undo/redo prepares and validates its target before replacing the live document; failure preserves the current project and history position, and obsolete asynchronous results cannot reinstall undone state. Redo restores accepted choices rather than rerunning estimation. Save/Save As preserve history and the written dirty baseline; successful New/Open starts fresh history. History is not stored in the project file or restored on relaunch.
 
 ## Numeric edits own their input
 
@@ -135,7 +135,7 @@ self.tasks.finish(TaskRequest::Document(id));
 
 Request keys scope IDs by operation: a photo-load result cannot finish an export that happens to use the same number. Stale reports and finishes are ignored; completed counts return to indeterminate without finishing the task. Beginning new activity replaces only its presentation, so the controller must supersede the old execution first. Cancellation similarly has two responsibilities: the controller signals the real worker, then marks the matching task `cancelling`. That state removes measured progress and Cancel, ignores late counts and stays visible until matching completion. It does not infer cancellation from status text or processing generations.
 
-The task slot and mutable progress state are private. Analyze uses this same lifecycle; its separate pending request retains only execution identity and validation snapshots. Controllers still own availability, worker dispatch, generation checks and atomic promotion. [Working presentation](../src/editor_ui_progress.rs) renders supplied task views across modal/inline/compact surfaces and the centred viewer spinner, returning a request-bound cancellation action for the controller to validate. New foreground work should extend this path, not add its own activity fields or progress window. Optional background work remains local; there is no task executor, registry or parallel event system.
+The task slot and mutable progress state are private. Analyze uses this same lifecycle; its separate pending request retains only execution identity and validation snapshots. Controllers still own availability, worker dispatch, generation checks and atomic promotion. [Working presentation](../src/editor_ui_progress.rs) renders supplied task views across modal/inline/compact surfaces and the centred viewer spinner, returning a request-bound cancellation action for the controller to validate. This path shares request matching, progress and cancellation presentation across foreground operations. A separate activity implementation would need to handle those same lifecycle cases. Optional background work remains local; the current task slot is not an executor, registry or parallel event system.
 
 ## Source inspection is a view
 
@@ -241,7 +241,7 @@ Proper-card look admission checks only the displayed source footprint, not unuse
 
 ### Retention settings and pressure
 
-Settings controls CPU/GPU optional retention in whole MiB, including zero, independently of project/grade state. Limits are saved when first resolved or edited; relaunching on different hardware preserves them. Reset selects defaults from installed RAM and confirmed GPU topology/capacity, with explicit fallbacks when those facts are unavailable. [Default policy and units](../src/editor_cache_limits.rs) describe retention choices, not safe-allocation predictions.
+Settings controls CPU/GPU optional retention in whole MiB, including zero, independently of project/grade state. Limits are saved when first resolved or edited; relaunching on different hardware preserves them. Reset selects defaults from installed RAM and confirmed GPU topology/capacity, with explicit fallbacks when those facts are unavailable. [Current defaults and units](../src/editor_cache_limits.rs) describe retention choices, not safe-allocation predictions.
 
 Pressure warnings drop unprotected optional native/proxy/thumbnail ownership and suspend offscreen work without rewriting chosen limits. Selected/visible essentials and active resources may exceed the optional limits. Native temporaries, allocator/driver backing and other mandatory work are not covered; lower cache limits do not establish supported minimum hardware or guarantee instant reclamation, no swapping or recoverable allocation failure. The CPU limit governs one document-scoped native/proxy LRU; foreground loads reuse compatible full developments with independent correction contexts. Candidate documents keep separate zero-budget optional ownership until acceptance. [Broader real-use/resource acceptance](plans/visual-feedback.md) remains separate; [native scheduling and bounded switching diagnostics](native-development.md#editor-scheduling) describe the cold-selection tradeoff and retained-hit measurements. Different-source foreground misses may wait behind an unrelated non-preemptible native call; software queue tests do not establish better roll throughput or latency. File revisions are cache freshness checks, [not photographic identity](projects.md#compatibility-is-about-the-processing-basis).
 
@@ -256,7 +256,7 @@ Use the existing component families rather than copying their painting or intera
 - [Hierarchy](../src/editor_ui_hierarchy.rs): sections, disclosure/reset, stage tabs and icon-labelled selectable rows.
 - [Decisions](../src/editor_ui_dialogs.rs): shared modal framing, actions and dismissal.
 - [Feedback](../src/editor_ui_feedback.rs): explicit severity, acknowledged messages and technical details.
-- [Tasks](../src/editor_activity.rs): typed foreground begin/report/cancelling/finish lifecycle and coherent feedback policy.
+- [Tasks](../src/editor_activity.rs): typed foreground begin/report/cancelling/finish lifecycle and shared feedback presentation.
 - [Working](../src/editor_ui_progress.rs): supplied task-view progress/activity and optional cancellation, using the surface appropriate to retained usability.
 - [Cards](../src/editor_ui_cards.rs): contact-sheet geometry, captions and supplied-state artwork.
 - [Icons](../src/editor_icons.rs): semantic actions and artwork.
@@ -277,7 +277,7 @@ Use the named [contextual status pattern](../src/editor_ui_feedback.rs) for a lo
 
 Combine concurrent reasons into one indicator per surface. Error takes precedence over warning, then activity; retain all relevant reasons in deterministic priority order. For example, Auto-crop abstention remains a warning while thumbnail activity appears in its detail, rather than replacing the warning with an activity glyph. Pending status uses a static clock, so queued/suspended work does not force a continuous animation loop; controllers and worker completion own wakeups. Retire each condition when its owning work completes or tool ends; finishing Auto-crop must not clear an unrelated thumbnail failure.
 
-Give icon-only status a meaningful accessible name and the same specific description available in its tooltip; preserve the card's active-photo identity. The visible glyph signals the condition without colour or hover alone. A tooltip supplements the marker, never substitutes for a visible failure. Verify the shared component and its composed feature, including compact cards, simultaneous conditions, disabled selection and retirement. Extend this concrete pattern when an actual consumer needs it; do not create a general notification framework or migrate unrelated surfaces speculatively.
+Give icon-only status a meaningful accessible name and the same specific description available in its tooltip; preserve the card's active-photo identity. The visible glyph signals the condition without colour or hover alone. A tooltip supplements the marker, never substitutes for a visible failure. Verify the shared component and its composed feature, including compact cards, simultaneous conditions, disabled selection and retirement. This concrete pattern covers the current consumers without a general notification framework; other surfaces may have different presentation needs.
 
 ### Tooltips and contextual help
 
@@ -299,7 +299,7 @@ The content policy follows [Apple's help guidance](https://developer.apple.com/d
 
 Reading text should be quiet; short instrument markings give the workspace its camera-body character. The editor embeds [IBM Plex Sans](../assets/fonts/README.md): Text for ordinary controls, explanations, filenames and numeric entry; Medium for stage tabs, active viewer-tool names and compact zoom/source-EV readouts. The Arimo wordmark remains separate artwork. Default glyph fallbacks and monospace text are retained.
 
-[Presentation](../src/editor_ui.rs) installs the fonts during editor startup and owns `instrument_label`, `instrument_readout` and `TextAction::readout`. Use these roles rather than naming fonts or overriding feature-local styles. Instrument labels are uppercase with restrained spacing; readouts retain their supplied formatting without extra tracking. Do not apply the instrument role to every heading, button or number. Ordinary `strong` text changes semantic emphasis, not font weight.
+[Presentation](../src/editor_ui.rs) installs the fonts during editor startup and owns `instrument_label`, `instrument_readout` and `TextAction::readout`. Using these shared roles keeps typography consistent when fonts or styling change. Instrument labels are uppercase with restrained spacing; readouts retain their supplied formatting without extra tracking. Do not apply the instrument role to every heading, button or number. Ordinary `strong` text changes semantic emphasis, not font weight.
 
 Stage tabs share equal breathing room around their labels rather than equal widths, so Rendering has room beside its chevron at the narrow inspector size. Their full bar remains fixed-width and fixed-height; accessible names, stage order and keyboard activation do not depend on uppercase lettering.
 
@@ -309,7 +309,7 @@ Colour expresses interaction state, not feature ownership. Presentation installs
 
 Custom interaction painting reads the applicable inherited role from `ui.visuals()` or `ui.style().interact(&response)`, rather than copying brand RGB values. Contact-sheet fills and image wells deliberately stay neutral; photographic wheels and scope plots retain colours that represent image data. These treatments belong to their shared component or visualization owner. Add a genuinely needed role or variant there, not as a feature-local palette.
 
-Crop grids and native menus remain specialized. Extend a shared family for a real variant; do not create a parallel widget/state framework to accommodate a hypothetical one.
+Crop grids and native menus remain specialized. The shared families provide extension points for additional variants; a separate widget/state framework would duplicate their styling and input handling.
 
 ## Working on this area
 

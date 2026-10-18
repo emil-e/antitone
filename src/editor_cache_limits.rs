@@ -33,7 +33,7 @@ pub(super) struct Hardware {
 }
 
 impl Hardware {
-    /// Policy fractions select defaults only; none of these facts estimates live headroom.
+    /// Hardware fractions select starting retention defaults, not live allocation headroom.
     pub fn defaults(self) -> CacheLimits {
         let ram = self.ram_bytes.filter(|&bytes| bytes != 0);
         let cpu = ram.map_or(1024 * MIB, |bytes| bytes / 4);

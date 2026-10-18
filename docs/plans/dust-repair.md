@@ -7,15 +7,15 @@ The provisional manual workflow, source-owned persistence and shared positive-co
 Use the owning guides above for delivered behavior. In further acceptance work:
 
 - Preserve saved editable intent and the shared accepted recipe; cache readiness and viewing history must not change the photograph or saved instructions.
-- Compare repairs applied to original neutral samples before filtering and grading. Keep existing numerical/preflight checks, compensated EXR, source-coordinate independence and failure-safe destinations.
-- Assess the current direct-canvas workflow and bounded asynchronous implementation before proposing different interaction, storage or execution models. Released edits participate in [project-wide undo](../editor.md#undo-and-redo); automatic proposals remain deferred below.
+- Compare repairs applied to original neutral samples before filtering and grading. Current checks cover numerical/preflight admission, source-coordinate independence and failure-safe destinations; EXR uses compensated values through reconstruction.
+- Assess the direct-canvas workflow and bounded asynchronous implementation, including the interaction, storage and execution tradeoffs that alternatives would change. Released edits participate in [project-wide undo](../editor.md#undo-and-redo); automatic proposals remain deferred below.
 
 [Research](../research/dust-removal.md) records the solver, four-million-processing-pixel evaluation bound and experimental evidence; it is not a production-quality guarantee.
 
 ## Remaining acceptance
 
 1. Exercise pre-grade placement on representative photographs, including corrected scans, signed/HDR regions, strong Roll/Photo/local grades, fine texture and seams. Compare working detail, coarse navigation coverage, original reference, reopened TIFF/half/full AP0 EXR and proper cards. Working/thumbnails grade filtered support as an explicit approximation; scalar/GPU agreement alone is not photographic correspondence.
-2. Broaden normal-use residuals, donor failures, support rejections and complete click/stroke/donor-to-display latency beyond the initial accepted native exercise. Do not retune the retained corpus or change solver constants without a concrete new failure. Inversion changes are uncommon and may reevaluate asynchronously; failure feedback must remain visible.
+2. Broaden normal-use residuals, donor failures, support rejections and complete click/stroke/donor-to-display latency beyond the initial accepted native exercise. The retained corpus has already influenced solver tuning; results on it would not independently validate new constants. Inversion changes are uncommon and may reevaluate asynchronously; failure feedback must remain visible.
 3. Measure concurrent CPU/GPU ownership during high-volume cleanup, navigation, target changes and source retirement. Sparse results, neutral bases, repaired physical rasters, bounded original/region reconstruction and encoded/in-flight older versions add mandatory work. Declared bytes, Arc tests and bounded project fixtures are not aggregate memory or device acceptance.
 4. Characterize proper-positive thumbnail startup and visible/scrolling demand at representative original resolutions and normal/zero optional budgets. Authored checks establish retained-native reuse, shared scheduling, camera-proxy insufficiency and neutral grade/target reuse, not full-resolution whole-roll throughput. Make a material acquisition/cache tradeoff explicit before changing the appearance baseline or introducing persistent storage.
 5. Broaden physical pointer/trackpad, normal/narrow inspector/card status, fullscreen suspension/restoration, modifier/cursor and accessibility acceptance. Headless input does not establish native interaction, VoiceOver or monitor correctness.
@@ -24,7 +24,7 @@ Use the owning guides above for delivered behavior. In further acceptance work:
 ## Deliberately deferred
 
 - **Automatic proposals:** present editable masks independently from healing; detector scores/provenance must not change reconstruction. Precision/recall needs independently sampled exhaustive labels.
-- **Algorithm questions:** clean-truth accuracy, real dust crossing fine in-focus wires, diagnostic calibration, grain fidelity and broader cameras/materials remain unestablished. No further Lightroom comparison or neural downloads.
+- **Algorithm questions:** clean-truth accuracy, real dust crossing fine in-focus wires, diagnostic calibration, grain fidelity and broader cameras/materials remain unestablished. The existing Lightroom pilot provides limited competitive context; neural methods have not been evaluated here.
 - General pipeline graphs, batch/general export-cancellation UI, recovery/relinking, new RAW hashing/identity and a broad UI migration are separate work.
 
 ## Checks and next action

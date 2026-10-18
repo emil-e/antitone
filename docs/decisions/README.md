@@ -11,4 +11,4 @@ The [topic guides](../README.md#understand-the-system) explain how Antitone work
 - [Matching SDR outputs and managed presentation](sdr-output-and-presentation.md)
 - [Output-native scopes](output-native-scopes.md)
 
-A decision is not a second API specification or a feature proposal. Keep its rationale and tradeoffs; link to code for mechanics and to [plans](../plans/README.md) for unfinished designs.
+A decision records a choice and its rationale, not an immutable requirement or a second API specification. Revisit it when its assumptions or tradeoffs change. Product intent is distinct from the implementation chosen to serve it. Link to code for mechanics and to [plans](../plans/README.md) for unfinished designs.

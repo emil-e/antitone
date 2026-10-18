@@ -99,7 +99,7 @@ struct Icon {
         try rasterPNG(width: pixels, height: pixels, units: CGSize(width: size, height: size)) {
             context in
             if macOS {
-                // A platform canvas inset keeps the approved tile aligned with neighbouring Dock icons.
+                // A platform canvas inset aligns the tile with neighbouring Dock icons.
                 let inset = size * 0.08
                 context.translateBy(x: inset, y: inset)
                 context.scaleBy(x: 0.84, y: 0.84)

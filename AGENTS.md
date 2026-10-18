@@ -6,6 +6,16 @@ Read [PLAN.md](PLAN.md) for current priorities and blockers. Use [docs/README.md
 
 Consult [architecture](docs/architecture.md) and [decision rationale](docs/decisions/README.md) when changing unfamiliar boundaries or consequential choices. Investigate disagreements between documentation and implementation.
 
+## Requirements and design choices
+
+Only an explicit requirement from the user establishes a requirement. Suggestions, illustrative examples, passing agreement, existing code, tests, documentation and previous agent decisions do not establish one. Do not describe a choice as user-required without that provenance.
+
+Distinguish product intent, current implementation and technical constraints. A product goal does not by itself require a particular algorithm, precision, library or architecture. Explain constraints in terms of the design they depend on, not as user mandates. A documented or tested implementation is not frozen: reconsider it when its drawbacks warrant, within the delegated scope, and explain the tradeoffs rather than invoking “policy” as a veto.
+
+Ask before removing or weakening a product-, value- or philosophy-level commitment, including one whose user provenance is uncertain. Preserve it pending clarification; uncertainty is not permission to delete it. This does not make implementation prescriptions such as a numeric representation or fixed algorithm into product requirements.
+
+When writing docs and comments, describe current choices and their rationale as such. Do not turn proposals, experimental settings or task-local restrictions into standing requirements. Tests and decision records are evidence about the current design, not independent authority for it.
+
 ## Work independently, within scope
 
 Follow the global collaboration instructions. Roadmaps and plans provide context, not additional authorization.
@@ -22,9 +32,9 @@ Tie experiments to the requested outcome. Prefer a simple useful baseline, and a
 
 ## Follow contributor guidance
 
-Follow the [development guide](docs/development.md) for engineering standards, documentation conventions and proportionate checks before handoff. Use the relevant [processing](docs/processing.md), [colour/output](docs/colour-and-output.md), [project compatibility](docs/projects.md) and decision guides for the boundaries being changed.
+Follow the [development guide](docs/development.md) for engineering standards, documentation conventions and proportionate checks before handoff. Use the relevant [processing](docs/processing.md), [colour/output](docs/colour-and-output.md), [project compatibility](docs/projects.md) and decision guides to understand the boundaries being changed, not to treat their implementation choices as immutable requirements.
 
-For editor work, follow [shared presentation](docs/editor.md#build-ui-from-shared-presentation) and the [tooltip/contextual-help policy](docs/editor.md#tooltips-and-contextual-help). Verify the component and its composed feature.
+For editor work, follow [shared presentation](docs/editor.md#build-ui-from-shared-presentation) and the [tooltip/contextual-help guidance](docs/editor.md#tooltips-and-contextual-help). Verify the component and its composed feature.
 
 Write `docs/` for human contributors. Keep agent-only execution instructions here or in skills.
 

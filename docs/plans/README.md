@@ -1,6 +1,6 @@
 # Unfinished work
 
-[PLAN.md](../../PLAN.md) owns priorities. These packages describe open scope, questions and acceptance—not implemented behavior:
+[PLAN.md](../../PLAN.md) records current priorities. These packages track unfinished work, open design questions and proposed evaluation. They may summarize the implemented baseline; the topic guides explain current behavior. A listed approach or check is not, by itself, a user requirement or a delivery gate:
 
 - [Dust repair: remaining acceptance](dust-repair.md)
 - [Physical-view Global prototype acceptance](view-working-set.md)
@@ -13,4 +13,4 @@
 - [Other photographic acceptance and release needs](completion.md)
 - [Recovery, source changes and undo](durable-projects.md)
 
-Use the [topic guides](../README.md#understand-the-system) for the current system. Select a focused slice and settle its design before implementing it.
+Use the [topic guides](../README.md#understand-the-system) for the current system. Proposed implementations remain open to revision as their tradeoffs become clearer.
