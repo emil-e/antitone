@@ -36,14 +36,6 @@ Use `.cache/` for disposable experiments, dependencies and generated outputs. Ma
 
 Samples are private, read-only, ignored and never committed. System installations and automation of other applications require explicit authorization; respect environment approval requirements for setup and downloads.
 
-Before integrating substantial changes, consider an independent, fresh-context agent review against the contributor standards and relevant topic guides, proportionate to the change's breadth and risk. Review supplements verification; assess findings with evidence rather than treating the review as an approval gate.
+An independent, fresh-context agent review against the [development guide](docs/development.md) and relevant topic guides is required before integrating substantial changes. Keep its depth proportionate to the change's breadth and risk. Review supplements verification; assess findings with evidence rather than treating the review as an approval gate.
 
-An explicit wrap-up request authorizes local delivery of agreed work:
-
-1. Checkpoint-commit as needed and rebase onto current main, preserving unrelated work.
-2. Inspect semantic interactions, update affected documentation and verify the integrated result proportionally. Transfer lasting knowledge and any remaining scope from `WORK_PLAN.md` into the owning guides or topic plans, then remove `WORK_PLAN.md` before final delivery.
-3. Commit the agreed result and fast-forward main. If already on main, commit there; do not rewrite unrelated history.
-4. Remove the task's worktree once its work is integrated and it is no longer needed, including disposable checkout-local caches and generated outputs. Before removal, verify integration and check tracked, untracked and ignored files for unique work or retained artifacts. Preserve active worktrees and other agents' work; ask before discarding anything not integrated or explicitly abandoned. Do not force removal merely because the branch is merged.
-5. Report the main commit, checks, worktree cleanup and remaining limits.
-
-Push only when separately requested.
+An explicit wrap-up/integration request authorizes local delivery of agreed work. Push only when separately requested.
