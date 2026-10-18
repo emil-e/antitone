@@ -1,9 +1,14 @@
 use super::*;
+use std::sync::Arc;
 
 // The padded 512-square work limit admits thin supports without increasing worst-case work.
 pub(crate) const MAX_MASK_WORK_PIXELS: u64 =
     (512 + 2 * (CONTEXT_PADDING as u64 + AUTOMATIC_PADDING as u64)).pow(2);
 pub(crate) const MAX_MASK_PIXELS: usize = 65_536;
+
+#[cfg(test)]
+#[path = "dust_repair_support_tests.rs"]
+mod tests;
 
 pub fn mask_within_budget(size: [u32; 2], marked: usize) -> bool {
     let padding = 2 * (u64::from(CONTEXT_PADDING) + u64::from(AUTOMATIC_PADDING));
@@ -14,14 +19,15 @@ pub fn mask_within_budget(size: [u32; 2], marked: usize) -> bool {
 }
 
 /// Exact binary support, retained as maximal row-major `[start, length]` runs.
-/// Decoding is reserved for bounded solver/grouping work, not project ownership.
+/// Immutable runs are shared by recipes and history; decoding is reserved for
+/// bounded solver/grouping work, not project ownership.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "project", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "project", serde(deny_unknown_fields))]
 pub struct SupportMask {
     pub(super) origin: [u32; 2],
     pub(super) size: [u32; 2],
-    runs: Vec<[u32; 2]>,
+    runs: Arc<[[u32; 2]]>,
 }
 
 impl SupportMask {
@@ -45,7 +51,11 @@ impl SupportMask {
             runs.push([start as u32, (index - start) as u32]);
         }
 
-        let support = Self { origin, size, runs };
+        let support = Self {
+            origin,
+            size,
+            runs: runs.into(),
+        };
         support.validate()?;
         Ok(support)
     }
@@ -68,7 +78,7 @@ impl SupportMask {
 
         let mut previous_end = None;
         let mut marked = 0usize;
-        for &[start, length] in &self.runs {
+        for &[start, length] in self.runs.iter() {
             let end = start.checked_add(length).filter(|end| *end <= count);
             if length == 0 || end.is_none() || previous_end.is_some_and(|end| start <= end) {
                 return Err(Error::InvalidParameter("invalid repair support runs"));
@@ -95,9 +105,9 @@ impl SupportMask {
         self.size
     }
 
-    /// Explicit owned payload, excluding allocator bookkeeping.
+    /// Logical retained payload, conservatively charging shared runs to each owner.
     pub fn retained_bytes(&self) -> usize {
-        std::mem::size_of::<Self>() + self.runs.capacity() * std::mem::size_of::<[u32; 2]>()
+        std::mem::size_of::<Self>() + std::mem::size_of_val(self.runs.as_ref())
     }
 
     pub fn marked_pixels(&self) -> usize {
@@ -106,7 +116,7 @@ impl SupportMask {
 
     pub fn bits(&self) -> Vec<bool> {
         let mut bits = vec![false; (self.size[0] * self.size[1]) as usize];
-        for &[start, length] in &self.runs {
+        for &[start, length] in self.runs.iter() {
             bits[start as usize..(start + length) as usize].fill(true);
         }
         bits

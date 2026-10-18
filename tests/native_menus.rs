@@ -29,10 +29,27 @@ fn submenu(title: &str) -> objc2::rc::Retained<NSMenu> {
 }
 
 fn shortcut(character: &str) {
-    let character = NSString::from_str(character);
+    shortcut_with_modifiers(character, NSEventModifierFlags::Command);
+}
+
+fn shortcut_with_modifiers(character: &str, modifiers: NSEventModifierFlags) {
+    let key_code = match character {
+        "," => 43,
+        "q" => 12,
+        "z" => 6,
+        _ => panic!("undeclared native test key"),
+    };
+    // AppKit's charactersIgnoringModifiers retains Shift, so a real Cmd-Shift-Z
+    // carries uppercase Z in both character fields, not lowercase z plus a flag.
+    let character = if modifiers.contains(NSEventModifierFlags::Shift) {
+        character.to_uppercase()
+    } else {
+        character.to_owned()
+    };
+    let character = NSString::from_str(&character);
     let event = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
-        NSEventType::KeyDown, NSPoint::new(0., 0.), NSEventModifierFlags::Command,
-        0., 0, None, &character, &character, false, 0,
+        NSEventType::KeyDown, NSPoint::new(0., 0.), modifiers,
+        0., 0, None, &character, &character, false, key_code,
     ).unwrap();
     assert!(
         main_menu().performKeyEquivalent(&event),
@@ -63,6 +80,7 @@ impl host::App for MenuApp {
         self.installed = true;
     }
     fn menu_action(&mut self, action: Action) {
+        println!("native_menu_check stage={} action={action:?}", self.stage);
         assert!(self.waiting);
         assert!(
             self.dispatched.elapsed() < Duration::from_millis(500),
@@ -70,13 +88,34 @@ impl host::App for MenuApp {
         );
         assert_eq!(
             action,
-            [Action::Settings, Action::Save, Action::Quit][self.stage]
+            [
+                Action::Settings,
+                Action::Save,
+                Action::Undo,
+                Action::Redo,
+                Action::Quit
+            ][self.stage]
         );
         self.stage += 1;
         self.waiting = false;
         self.settled = false;
         self.state.enabled.insert(Action::Save);
         self.state.scopes_visible = true;
+        match action {
+            Action::Settings | Action::Redo => {
+                self.state.enabled.insert(Action::Undo);
+                self.state.enabled.remove(&Action::Redo);
+                self.state.undo_label = Some("Undo Exposure".into());
+                self.state.redo_label = None;
+            }
+            Action::Undo => {
+                self.state.enabled.remove(&Action::Undo);
+                self.state.enabled.insert(Action::Redo);
+                self.state.undo_label = None;
+                self.state.redo_label = Some("Redo Exposure".into());
+            }
+            _ => {}
+        }
     }
     fn ui(&mut self, ui: &mut egui::Ui) {
         ui.heading("Native menu integration check");
@@ -84,7 +123,8 @@ impl host::App for MenuApp {
         if self.waiting {
             assert!(
                 self.dispatched.elapsed() < Duration::from_secs(2),
-                "native menu activation was lost"
+                "native menu activation was lost at stage {}",
+                self.stage
             );
             ui.ctx().request_repaint_after(Duration::from_secs(2));
             return;
@@ -140,6 +180,27 @@ impl host::App for MenuApp {
                     let copy = native.itemWithTitle(ns_string!("Copy")).unwrap();
                     assert_eq!(copy.action(), Some(sel!(copy:)));
                     assert!(copy.target().is_none());
+                    for (title, selector, modifiers) in [
+                        (
+                            ns_string!("Undo"),
+                            sel!(undo:),
+                            NSEventModifierFlags::Command,
+                        ),
+                        (
+                            ns_string!("Redo"),
+                            sel!(redo:),
+                            NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
+                        ),
+                    ] {
+                        let command = native.itemWithTitle(title).unwrap();
+                        assert_eq!(command.action(), Some(selector));
+                        assert_eq!(command.keyEquivalentModifierMask(), modifiers);
+                        assert_eq!(
+                            command.keyEquivalent().to_string(),
+                            if selector == sel!(redo:) { "Z" } else { "z" }
+                        );
+                        assert!(command.target().is_none());
+                    }
                 });
                 assert_eq!(
                     submenu("Edit"),
@@ -178,11 +239,47 @@ impl host::App for MenuApp {
                 file.performActionForItemAtIndex(file.indexOfItemWithTitle(ns_string!("Save")));
             }
             2 => {
+                let edit = submenu("Edit");
+                assert!(
+                    edit.itemWithTitle(ns_string!("Undo Exposure"))
+                        .unwrap()
+                        .isEnabled()
+                );
+                assert!(!edit.itemWithTitle(ns_string!("Redo")).unwrap().isEnabled());
+                self.waiting = true;
+                self.dispatched = Instant::now();
+                shortcut("z");
+            }
+            3 => {
+                let edit = submenu("Edit");
+                assert!(!edit.itemWithTitle(ns_string!("Undo")).unwrap().isEnabled());
+                let redo = edit.itemWithTitle(ns_string!("Redo Exposure")).unwrap();
+                assert!(redo.isEnabled());
+                assert_eq!(redo.keyEquivalent().to_string(), "Z");
+                assert_eq!(
+                    redo.keyEquivalentModifierMask(),
+                    NSEventModifierFlags::Command | NSEventModifierFlags::Shift
+                );
+                self.waiting = true;
+                self.dispatched = Instant::now();
+                shortcut_with_modifiers(
+                    "z",
+                    NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
+                );
+            }
+            4 => {
+                let edit = submenu("Edit");
+                assert!(
+                    edit.itemWithTitle(ns_string!("Undo Exposure"))
+                        .unwrap()
+                        .isEnabled()
+                );
+                assert!(!edit.itemWithTitle(ns_string!("Redo")).unwrap().isEnabled());
                 self.waiting = true;
                 self.dispatched = Instant::now();
                 shortcut("q");
             }
-            3 => {
+            5 => {
                 // Native Quit emits an application action rather than terminating AppKit.
                 self.completed.store(true, Ordering::SeqCst);
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
@@ -231,7 +328,7 @@ fn main() -> host::Result<()> {
     assert!(completed.load(Ordering::SeqCst) && presented > 0);
     finished.store(true, Ordering::SeqCst);
     println!(
-        "Native menus: installation, state updates, shortcuts, activation wakeup, minimized-window restoration, guarded Quit bridge and native-panel Edit restoration passed."
+        "Native menus: installation, dynamic Undo/Redo labels and shortcuts, state updates, activation wakeup, minimized-window restoration, guarded Quit bridge and native-panel Edit restoration passed."
     );
     Ok(())
 }

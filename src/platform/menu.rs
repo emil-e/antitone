@@ -15,6 +15,8 @@ pub enum Action {
     ExportTiff,
     ExportExrHalf,
     ExportExrFull,
+    Undo,
+    Redo,
     Cut,
     Copy,
     Paste,
@@ -45,6 +47,8 @@ impl Action {
             Self::ExportTiff => "TIFF…",
             Self::ExportExrHalf => "EXR Half Float…",
             Self::ExportExrFull => "EXR Full Float…",
+            Self::Undo => "Undo",
+            Self::Redo => "Redo",
             Self::Cut => "Cut",
             Self::Copy => "Copy",
             Self::Paste => "Paste",
@@ -72,6 +76,8 @@ impl Action {
             Self::Close => (Modifiers::COMMAND, Key::W),
             Self::Save => (Modifiers::COMMAND, Key::S),
             Self::SaveAs => (Modifiers::COMMAND | Modifiers::SHIFT, Key::S),
+            Self::Undo => (Modifiers::COMMAND, Key::Z),
+            Self::Redo => (Modifiers::COMMAND | Modifiers::SHIFT, Key::Z),
             Self::Cut => (Modifiers::COMMAND, Key::X),
             Self::Copy => (Modifiers::COMMAND, Key::C),
             Self::Paste => (Modifiers::COMMAND, Key::V),
@@ -123,7 +129,16 @@ pub const MENUS: &[(&str, &[Entry])] = &[
     ),
     (
         "Edit",
-        &[Item(Cut), Item(Copy), Item(Paste), Sep, Item(SelectAll)],
+        &[
+            Item(Undo),
+            Item(Redo),
+            Sep,
+            Item(Cut),
+            Item(Copy),
+            Item(Paste),
+            Sep,
+            Item(SelectAll),
+        ],
     ),
     (
         "View",
@@ -145,11 +160,22 @@ pub const MENUS: &[(&str, &[Entry])] = &[
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct State {
     pub enabled: BTreeSet<Action>,
+    pub undo_label: Option<String>,
+    pub redo_label: Option<String>,
     pub scopes_visible: bool,
     pub photo_inspection: bool,
 }
 
 impl State {
+    pub fn label(&self, action: Action) -> &str {
+        match action {
+            Undo => self.undo_label.as_deref(),
+            Redo => self.redo_label.as_deref(),
+            _ => None,
+        }
+        .unwrap_or_else(|| action.label())
+    }
+
     pub fn enabled(&self, action: Action) -> bool {
         self.enabled.contains(&action)
     }

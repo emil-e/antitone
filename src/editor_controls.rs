@@ -61,6 +61,37 @@ pub enum Parameter {
     Feather,
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum Reset {
+    Parameter(Parameter, ColorControl),
+    Exposure,
+    Contrast,
+    Saturation,
+    Balance(ColorControl),
+    GammaAndBalance,
+    Response,
+    Target,
+}
+
+// The composed editor collects reset intent until numeric focus loss has been
+// admitted. Standalone controls and tool-draft values retain immediate resets.
+pub(super) fn defer_reset(ui: &Ui, reset: Reset) -> bool {
+    if matches!(reset, Reset::Parameter(Parameter::CropMargin, _)) {
+        return false;
+    }
+    let active = ui.ctx().data(|data| {
+        data.get_temp::<bool>(egui::Id::new("defer-control-resets"))
+            .unwrap_or(false)
+    });
+    if active {
+        ui.ctx().data_mut(|data| {
+            data.get_temp_mut_or_default::<Vec<Reset>>(egui::Id::new("control-resets"))
+                .push(reset)
+        });
+    }
+    active
+}
+
 impl Parameter {
     fn label(self) -> &'static str {
         match self {
@@ -104,7 +135,7 @@ impl Parameter {
         }
     }
 
-    fn default(self) -> f64 {
+    pub(super) fn default(self) -> f64 {
         match self {
             Self::Gamma => DEFAULT_GAMMA,
             Self::Toe => DEFAULT_TOE,
@@ -142,6 +173,16 @@ pub(super) fn numeric_cancelled(ui: &Ui, response: &Response) -> bool {
     cancelled || cancelling
 }
 
+fn history_gesture(ui: &Ui, response: &Response) {
+    if response.enabled()
+        && (response.is_pointer_button_down_on() || response.dragged() || response.drag_stopped())
+    {
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(egui::Id::new("project-control-gesture"), response.id);
+        });
+    }
+}
+
 pub fn parameter(ui: &mut Ui, kind: Parameter, value: &mut f64) -> (Response, Response, Response) {
     // DragValue can commit on focus loss while disabled; render a read-only snapshot.
     let mut disabled_value = *value;
@@ -175,7 +216,15 @@ pub fn parameter(ui: &mut Ui, kind: Parameter, value: &mut f64) -> (Response, Re
             |ui, label| {
                 let reset = reset_button(ui, *value != kind.default(), kind.label());
                 if reset.clicked() {
-                    *value = kind.default();
+                    let balance = ui
+                        .ctx()
+                        .data(|data| {
+                            data.get_temp::<ColorControl>(egui::Id::new("reset-balance-scope"))
+                        })
+                        .unwrap_or(ColorControl::WhiteBalance);
+                    if !defer_reset(ui, Reset::Parameter(kind, balance)) {
+                        *value = kind.default();
+                    }
                 }
 
                 match kind {
@@ -240,6 +289,8 @@ pub fn parameter(ui: &mut Ui, kind: Parameter, value: &mut f64) -> (Response, Re
             })
             .inner
             .labelled_by(label);
+        history_gesture(ui, &slider);
+        history_gesture(ui, &numeric);
         ui.add_space(6.);
         (slider, numeric, reset)
     })
@@ -261,7 +312,7 @@ pub(super) fn photographic_exposure(ui: &mut Ui, photo: &mut crate::processing::
             parameter(ui, Parameter::Exposure, &mut photo.exposure);
         },
     );
-    if reset {
+    if reset && !defer_reset(ui, Reset::Exposure) {
         photo.exposure = 0.;
     }
 }
@@ -296,7 +347,7 @@ pub(super) fn photographic_colour(
             parameter(ui, Parameter::ColourMix, &mut photo.contrast_colour_mix);
         },
     );
-    if reset {
+    if reset && !defer_reset(ui, Reset::Contrast) {
         photo.contrast = defaults.contrast;
         photo.pivot = defaults.pivot;
         photo.contrast_colour_mix = defaults.contrast_colour_mix;
@@ -322,7 +373,7 @@ pub(super) fn photographic_colour(
             parameter(ui, Parameter::Density, &mut photo.saturation_density);
         },
     );
-    if reset {
+    if reset && !defer_reset(ui, Reset::Saturation) {
         photo.saturation = defaults.saturation;
         photo.saturation_density = defaults.saturation_density;
     }
@@ -433,7 +484,7 @@ pub fn color(ui: &mut Ui, kind: ColorControl, value: &mut Balance, can_pick: boo
         }
     };
 
-    if reset {
+    if reset && !defer_reset(ui, Reset::Balance(kind)) {
         *value = Balance::default();
     }
 
@@ -455,7 +506,7 @@ pub fn white_balance(ui: &mut Ui, id: &str, value: &mut Balance, can_pick: bool)
         |ui| color_inputs(ui, ColorControl::WhiteBalance, value, can_pick),
     );
 
-    if reset {
+    if reset && !defer_reset(ui, Reset::Balance(ColorControl::WhiteBalance)) {
         *value = Balance::default();
     }
 
@@ -468,8 +519,12 @@ fn color_inputs(ui: &mut Ui, kind: ColorControl, value: &mut Balance, can_pick: 
         wheel(ui, kind, value);
     });
 
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(egui::Id::new("reset-balance-scope"), kind));
     parameter(ui, Parameter::Warmth, &mut value.warmth);
     parameter(ui, Parameter::Tint, &mut value.tint);
+    ui.ctx()
+        .data_mut(|data| data.remove::<ColorControl>(egui::Id::new("reset-balance-scope")));
 
     icons::row(ui, |ui| {
         ui.label("Neutral reference");
@@ -612,6 +667,7 @@ fn wheel(ui: &mut Ui, kind: ColorControl, value: &mut Balance) -> Response {
         4.,
         ui.visuals().text_color(),
     );
+    history_gesture(ui, &response);
     response.on_hover_text("Shift-drag for finer adjustment.")
 }
 

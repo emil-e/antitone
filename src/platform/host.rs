@@ -461,7 +461,7 @@ impl<A: App> State<A> {
             timing.ui_start = Some(Instant::now());
         }
         let mut output = context.run_ui(raw, |ui| self.app.ui(ui));
-        if let (Some(menus), Some(state)) = (&self.menus, self.app.menu_state()) {
+        if let (Some(menus), Some(state)) = (&mut self.menus, self.app.menu_state()) {
             menus.update(&state);
         }
         if let Some(timing) = &mut timing {

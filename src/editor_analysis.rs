@@ -12,6 +12,15 @@ mod lazy_support_tests;
 #[path = "editor_analysis_tests.rs"]
 mod tests;
 
+#[derive(Clone, Copy)]
+pub(super) enum Orientation {
+    Left,
+    Right,
+    Horizontal,
+    Vertical,
+    Reset,
+}
+
 #[derive(Clone)]
 pub(super) struct Request {
     pub loaded: u64,
@@ -426,6 +435,19 @@ impl Editor {
         }
     }
 
+    pub(super) fn apply_roll_orientation(&mut self, action: Orientation) {
+        let before = self.history_snapshot();
+        match action {
+            Orientation::Left => self.roll_orientation.turn_counterclockwise(),
+            Orientation::Right => self.roll_orientation.turn_clockwise(),
+            Orientation::Horizontal => self.roll_orientation.horizontal ^= true,
+            Orientation::Vertical => self.roll_orientation.vertical ^= true,
+            Orientation::Reset => self.roll_orientation = RollOrientation::default(),
+        }
+        self.viewport.fit();
+        self.record_edit(before, "Roll orientation", None);
+    }
+
     pub(super) fn roll_tool_shelf(&mut self, ui: &mut egui::Ui) -> bool {
         use icons::Icon;
         use presentation::{ToolButton, ToolShelf};
@@ -442,14 +464,6 @@ impl Editor {
             && self.removal_pending.is_none();
         let mut analyze = false;
 
-        #[derive(Clone, Copy)]
-        enum Orientation {
-            Left,
-            Right,
-            Horizontal,
-            Vertical,
-            Reset,
-        }
         ToolShelf::show(ui, |ui| {
             for (icon, name, help, action) in [
                 (
@@ -492,13 +506,7 @@ impl Editor {
                     .show(ui)
                     .clicked()
                 {
-                    match action {
-                        Orientation::Left => self.roll_orientation.turn_counterclockwise(),
-                        Orientation::Right => self.roll_orientation.turn_clockwise(),
-                        Orientation::Horizontal => self.roll_orientation.horizontal ^= true,
-                        Orientation::Vertical => self.roll_orientation.vertical ^= true,
-                        Orientation::Reset => self.roll_orientation = RollOrientation::default(),
-                    }
+                    self.control_command(editing::Command::Roll(action));
                 }
             }
             ui.separator();
@@ -583,13 +591,14 @@ impl Editor {
                         .show(ui)
                         .clicked()
                 {
-                    self.reset_analysis_area();
+                    self.control_command(editing::Command::ResetSampling);
                 }
             },
         );
     }
 
     pub(super) fn reset_analysis_area(&mut self) {
+        let before = self.history_snapshot();
         self.document.project.analysis_area = None;
         let order = &self.document.project.order;
         self.document
@@ -600,6 +609,7 @@ impl Editor {
         if let Some(ready) = &mut self.ready {
             ready.analysis_support = Some(None);
         }
+        self.record_edit(before, "Reset sampling areas", None);
         self.status = "Picture area reset; next Analyze searches the roll. Grade unchanged.".into();
     }
 
@@ -745,6 +755,7 @@ impl Editor {
                 {
                     ready.analysis_support = Some(Some(outcome.support));
                 }
+                let before = self.history_snapshot();
                 self.document = outcome.document;
                 self.adjustments = Adjustments::default();
                 self.grades.clear();
@@ -756,6 +767,7 @@ impl Editor {
                 self.source = false;
                 self.working.clear();
                 self.original.invalidate();
+                self.record_edit(before, "Analyze roll", None);
                 self.status = format!(
                     "Analyzed {} frames. Adjust normally; re-pick Dmin if needed.",
                     outcome.frames
@@ -784,7 +796,9 @@ impl Editor {
         candidate.project.analysis_area = Some(array(area));
         match self.validate_document_candidate(&candidate) {
             Ok(()) => {
+                let before = self.history_snapshot();
                 self.document = candidate;
+                self.record_edit(before, "Picture statistics area", None);
                 self.status = "Picture statistics area updated; processing unchanged".into();
                 self.finish_pick();
             }

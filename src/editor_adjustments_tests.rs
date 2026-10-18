@@ -86,6 +86,45 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
 }
 
 #[test]
+fn deferred_drag_captures_locals_after_an_outgoing_rename_commits() {
+    pollster::block_on(async {
+        let (mut editor, _, _, _, _) = processing::tests::fixture().await;
+        editor.open_adjustments();
+        let order = ids(&editor);
+        let key = OrderKey {
+            loaded: editor.id,
+            source: editor.current_source.unwrap(),
+            id: order[0],
+        };
+        editor.begin_control_history("Photo settings");
+        editor.control_command(editing::Command::Adjustment(Action::Rename(
+            order[0],
+            "Renamed".into(),
+        )));
+        editor.control_command(editing::Command::OrderInput {
+            start: Some(order[0]),
+            drop: Some((key, 2)),
+            finish: true,
+        });
+        editor.history_controls = None;
+        for command in std::mem::take(&mut editor.control_commands) {
+            editor.apply_control_command(command);
+        }
+        assert_eq!(ids(&editor), vec![order[1], order[0]]);
+        let locals = editor
+            .document
+            .project
+            .source(key.source)
+            .unwrap()
+            .local_adjustments
+            .as_ref()
+            .unwrap();
+        assert_eq!(locals.adjustments[1].name, "Renamed");
+        assert!(!editor.adjustments.dragging());
+    });
+}
+
+#[test]
 fn drop_positions_insert_without_swapping_neighbours_or_consuming_ids() {
     pollster::block_on(async {
         let (mut editor, _, _, _, _) = processing::tests::fixture().await;

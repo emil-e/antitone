@@ -110,9 +110,9 @@ fn menu_entries(
             }
             Entry::Action(action) => {
                 let mut button = if let Some(checked) = state.checked(*action) {
-                    egui::Button::selectable(checked, action.label())
+                    egui::Button::selectable(checked, state.label(*action))
                 } else {
-                    egui::Button::new(action.label())
+                    egui::Button::new(state.label(*action))
                 };
                 if let Some(shortcut) = action.shortcut() {
                     button = button.shortcut_text(ui.ctx().format_shortcut(&shortcut));
@@ -122,7 +122,7 @@ fn menu_entries(
                     let mut info = egui::WidgetInfo::labeled(
                         egui::WidgetType::Button,
                         response.enabled(),
-                        action.label(),
+                        state.label(*action),
                     );
                     info.selected = state.checked(*action);
                     info

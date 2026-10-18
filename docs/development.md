@@ -217,6 +217,16 @@ cargo test --locked --features ui-tests --lib editor::kittest_tests::masks -- --
 
 Processing admission, source-owned transactions and downstream consumers need separate checks. Exercise correction, ordered local grades and source/target changes where relevant; one supported fixture does not establish admission for every response or control combination. Keep numerical gates intact and use [performance/RAW diagnostics](diagnostics.md#local-processing-and-reuse) for opt-in resource observations.
 
+## Undo/redo
+
+```sh
+cargo test --locked --features editor --lib editor::history:: -- --test-threads=1
+cargo test --locked --features ui-tests --lib editor::kittest_tests::history:: -- --test-threads=1
+cargo test --locked --release --features ui-tests --lib editor::kittest_tests::history:: -- --test-threads=1
+```
+
+Exercise accepted-state hooks separately from snapshot storage: zero idle history snapshots on repair-bearing projects, gesture grouping, Photo activation, drafts/text ownership, exact values outside slider spans, redo branching, Save As locators/dirty baseline, failed restoration and stale worker replies. Authored RAW checks prepare restored state through the production worker; supplied controller replies test promotion/failure without pretending to validate RAW preparation. These checks do not establish physical-input feel or long-session memory/latency acceptance.
+
 ## Dust persistence
 
 ```sh
@@ -302,7 +312,7 @@ cargo test --locked --features ui --test native_host -- --run process-timeout
 
 Lifecycle success requires actual surface paints and explicit completion; premature closure and UI/process watchdog expiry fail. Hardware errors are failures after a requested launch. The authored Editor case additionally requires selected-image callbacks and paint acknowledgments at each requested size, establishing basic Editor/host composition rather than per-tool or physical-input acceptance.
 
-The native-menu executable also requires explicit `--run`; its ordinary invocation opens no window. It activates real AppKit menu items/accelerators and verifies event-loop wakeup, minimized-window restoration, editor-owned Quit dispatch and temporary native-responder Edit routing without opening a file chooser or changing the clipboard. Editor controller/composed checks separately cover unsaved-change protection, numeric commits, Settings persistence/dismissal and focused-text selection:
+The native-menu executable also requires explicit `--run`; its ordinary invocation opens no window. It activates real AppKit menu items/accelerators, verifies dynamic Undo/Redo labels and Cmd–Z / Shift–Cmd–Z, and checks event-loop wakeup, minimized-window restoration, editor-owned Quit dispatch and temporary native-responder Edit routing without opening a file chooser or changing the clipboard. Editor controller/composed checks separately cover unsaved-change protection, numeric commits, Settings persistence/dismissal and focused-text selection:
 
 ```sh
 cargo test --locked --features ui-tests --lib editor::menu::tests -- --test-threads=1

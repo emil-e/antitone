@@ -31,6 +31,10 @@ mod controls;
 mod development;
 #[path = "editor_document.rs"]
 mod document;
+#[path = "editor_editing.rs"]
+mod editing;
+#[path = "editor_history.rs"]
+mod history;
 #[path = "editor_icons.rs"]
 mod icons;
 #[path = "editor_menu.rs"]
@@ -162,6 +166,7 @@ enum DocumentWork {
     New,
     Save(Document, PathBuf, crate::project::Save),
     Correction(Document, Option<SourceId>),
+    History(Document, Option<SourceId>, history::Direction),
 }
 
 struct Prepared {
@@ -483,9 +488,14 @@ fn prepare_document_scheduled(
     cancelled: &dyn Fn() -> bool,
     progress: impl FnMut(usize, usize),
 ) -> Result<Prepared, Error> {
-    let preserve_view = matches!(work, DocumentWork::Correction(..));
+    let preserve_view = matches!(
+        work,
+        DocumentWork::Correction(..) | DocumentWork::History(..)
+    );
     let selected_override = match &work {
-        DocumentWork::Correction(_, selected) => Some(*selected),
+        DocumentWork::Correction(_, selected) | DocumentWork::History(_, selected, _) => {
+            Some(*selected)
+        }
         _ => None,
     };
     let (document, reuse) = match work {
@@ -501,6 +511,15 @@ fn prepare_document_scheduled(
         DocumentWork::New => (Document::default(), None),
         DocumentWork::Correction(mut document, _) => {
             document.fork_cache();
+            (document, None)
+        }
+        DocumentWork::History(mut document, _, _) => {
+            document.fork_cache();
+            document.validate_for_device(device)?;
+            for id in &document.project.order {
+                let (actual, _) = document::read_source(&document.source_path(*id)?)?;
+                document::verify_source(document.project.source(*id)?, &actual)?;
+            }
             (document, None)
         }
         DocumentWork::Save(..) => unreachable!("save does not prepare a RAW"),
@@ -1075,6 +1094,12 @@ pub struct Editor {
     preference_store: Option<preferences::Store>,
     new_project_pending: bool,
     document: Document,
+    history: history::History,
+    history_pending: Option<history::Pending>,
+    history_controls: Option<history::Controls>,
+    #[cfg(test)]
+    history_snapshot_clones: usize,
+    control_commands: Vec<editing::Command>,
     current_source: Option<SourceId>,
     next_request: u64,
     document_pending: Option<u64>,
@@ -1228,6 +1253,12 @@ impl Editor {
             preferences: preferences::Preferences::default(),
             preference_store: None,
             new_project_pending: false,
+            history: history::History::default(),
+            history_pending: None,
+            history_controls: None,
+            #[cfg(test)]
+            history_snapshot_clones: 0,
+            control_commands: Vec::new(),
             document,
             current_source: None,
             next_request: 0,
@@ -1401,6 +1432,26 @@ impl Editor {
     }
 
     fn start_document(&mut self, work: DocumentWork) {
+        self.history.finish_group();
+        self.history_pending = match &work {
+            DocumentWork::New | DocumentWork::Open(_) => Some(history::Pending::Reset),
+            DocumentWork::Import(..) | DocumentWork::Correction(..) => {
+                Some(history::Pending::Edit {
+                    before: Box::new(self.document.project.clone()),
+                    label: if matches!(&work, DocumentWork::Import(..)) {
+                        "Import photos"
+                    } else {
+                        "Correction"
+                    },
+                    photo: None,
+                })
+            }
+            DocumentWork::History(_, _, direction) => Some(history::Pending::Restore {
+                direction: *direction,
+                cleanup: self.dust.cleanup.then_some(self.dust.show_masks),
+            }),
+            DocumentWork::Save(..) => None,
+        };
         self.retire_look();
         self.finish_auto_crop(false);
         self.finish_dust_cleanup();
@@ -1434,6 +1485,7 @@ impl Editor {
             DocumentWork::New => Task::New(id),
             DocumentWork::Save(..) => Task::Save(id),
             DocumentWork::Correction(..) => Task::Correction(id),
+            DocumentWork::History(..) => Task::History(id),
         });
         self.document_failure = match &work {
             DocumentWork::Save(..) => Some(FailureKind::Save),
@@ -1449,6 +1501,8 @@ impl Editor {
             .is_err()
         {
             self.document_pending = None;
+            let pending_history = self.history_pending.take();
+            self.history_failed(pending_history);
             self.new_project_pending = false;
             self.tasks.finish(TaskRequest::Document(id));
             self.busy = false;
@@ -1702,6 +1756,8 @@ impl Editor {
                 {
                     self.tasks.finish(TaskRequest::Measurement(id, kind));
                     self.busy = false;
+                    let before = self.history_snapshot();
+                    let photo = (kind == Pick::Wb).then_some(self.current_source).flatten();
                     match result {
                         Ok(Measurement::Reference(value)) => {
                             let other = if kind == Pick::Dmin {
@@ -1761,12 +1817,14 @@ impl Editor {
                         }
                         Err(error) => self.status = error,
                     }
+                    self.record_edit(before, "Calibration pick", photo);
                     self.finish_pick();
                 }
                 Message::Prepared(id, result) if self.document_pending == Some(id) => {
                     self.tasks.finish(TaskRequest::Document(id));
                     let new_project = std::mem::take(&mut self.new_project_pending);
                     let failure_kind = self.document_failure.take();
+                    let pending_history = self.history_pending.take();
                     self.document_pending = None;
                     self.busy = false;
                     match result {
@@ -1872,11 +1930,13 @@ impl Editor {
                                 "Project ready"
                             }
                             .into();
+                            self.history_prepared(pending_history);
                             if let Some(kind) = failure_kind {
                                 self.resolve_failure(kind);
                             }
                         }
                         Err(error) => {
+                            self.history_failed(pending_history);
                             self.status = format!("Project: {error}");
                             self.finish_flat_edit();
                             self.source_epoch
@@ -1919,6 +1979,8 @@ impl Editor {
                     self.busy = false;
                     match result {
                         Ok(document) => {
+                            self.history
+                                .rebase(self.document.path.as_deref(), document.path.as_deref());
                             self.document.accept_save(*document);
                             self.status = "Project saved".into();
                             self.resolve_failure(FailureKind::Save);
@@ -2325,7 +2387,7 @@ impl Editor {
                                     }
                                 },
                             );
-                            if reset {
+                            if reset && !controls::defer_reset(ui, controls::Reset::GammaAndBalance) {
                                 self.roll.gamma = crate::processing::DEFAULT_GAMMA;
                                 self.roll.balance = Balance::default();
                             }
@@ -2360,8 +2422,10 @@ impl Editor {
                                             .show(ui)
                                             .clicked()
                                         {
-                                            self.roll.response =
-                                                crate::processing::Response::film();
+                                            self.control_command(editing::Command::Reset(
+                                                editing::Scope::Roll,
+                                                controls::Reset::Response,
+                                            ));
                                         }
                                     }
                                     crate::processing::Response::Film { toe, shoulder } => {
@@ -2371,7 +2435,7 @@ impl Editor {
                                     }
                                 },
                             );
-                            if reset {
+                            if reset && !controls::defer_reset(ui, controls::Reset::Response) {
                                 self.roll.response = crate::processing::Response::film();
                             }
                             if controls::white_balance(
@@ -2400,7 +2464,7 @@ impl Editor {
                                     );
                                 },
                             );
-                            if reset {
+                            if reset && !controls::defer_reset(ui, controls::Reset::Exposure) {
                                 self.roll.exposure = 0.;
                             }
                         });
@@ -2467,7 +2531,7 @@ impl Editor {
                                     );
                                 },
                             );
-                            if reset {
+                            if reset && !controls::defer_reset(ui, controls::Reset::Target) {
                                 self.target = OutputTarget::DisplayP3;
                             }
                         },
@@ -2484,7 +2548,7 @@ impl Editor {
             self.viewport.fit();
         }
         if let Some(kind) = start_pick {
-            self.begin_pick(kind);
+            self.control_command(editing::Command::Pick(kind));
         }
 
         // Render outgoing numeric controls once to commit focus loss before switching stages.
@@ -2538,7 +2602,7 @@ impl host::App for Editor {
                 .menus
                 .pending
                 .iter()
-                .take_while(|action| action.text_edit())
+                .take_while(|action| self.menu_targets_text(**action))
                 .any(|action| *action == crate::platform::menu::Action::Paste)
     }
 
@@ -2618,8 +2682,7 @@ impl host::App for Editor {
         let was_dirty = self.document.dirty();
         self.disable_blocked_workspace(ui);
         let _menu_focus = self.workspace_chrome(ui, &mut actions);
-        let (scope_slot, analyze) = self.workspace_controls(ui);
-        self.validate_frame_edits(previous_roll, previous_photo);
+        let (scope_slot, analyze) = self.edit_frame_controls(ui, previous_roll, previous_photo);
         if self.analysis_review.is_some() && self.analysis_pending.is_none() {
             self.stash_review_region();
         }
@@ -2649,5 +2712,7 @@ impl host::App for Editor {
         self.dispatch_frame_actions(ui, actions, analyze);
         self.frame_dialogs(ui, !popup_was_open);
         self.menus.text_focused = ui.ctx().text_edit_focused();
+        self.menus.history_input_blocked =
+            egui::Popup::is_any_open(ui.ctx()) || ui.input(|input| input.pointer.any_down());
     }
 }

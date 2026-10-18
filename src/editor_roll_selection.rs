@@ -177,13 +177,14 @@ impl Editor {
             return;
         };
         let index = self.selected;
-        self.sync_document();
+        let before = self.history_snapshot();
         for id in ids {
             self.document
                 .project
                 .remove_from_filmstrip(id)
                 .expect("confirmed ordered source");
         }
+        self.record_edit(before, "Remove photos", None);
         self.thumbnails.cancel();
         self.roll_selection = RollSelection::default();
         if !self.document.project.order.is_empty() {
@@ -232,7 +233,7 @@ impl Editor {
         };
         let choice = presentation::DecisionDialog::new(
             &title,
-            "The photos will be removed from this roll. Your RAW files are not changed. This cannot be undone.",
+            "The photos will be removed from this roll. Your RAW files are not changed.",
             "Remove photos",
         )
         .warning()

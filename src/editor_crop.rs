@@ -97,6 +97,15 @@ fn reframe_crop(
     viewport.reframe(layout, next, pixels_per_point);
 }
 
+pub(super) enum ToolAction {
+    TurnLeft,
+    TurnRight,
+    FlipHorizontal,
+    FlipVertical,
+    Crop,
+    Dust,
+}
+
 impl Editor {
     pub(super) fn begin_crop(&mut self) {
         self.finish_dust_cleanup();
@@ -146,6 +155,7 @@ impl Editor {
             return;
         };
         if apply {
+            let before = self.history_snapshot();
             let active = self.ready.as_ref().expect("crop retains its source").area;
             edit.draft
                 .region(active)
@@ -153,6 +163,7 @@ impl Editor {
             self.crop = (edit.draft != Crop::from_region(active)).then_some(edit.draft);
             self.viewport.fit();
             self.status = "Crop applied".into();
+            self.record_edit(before, "Crop", self.current_source);
         } else {
             self.viewport = edit.viewport;
             self.status = "Crop cancelled; composition unchanged".into();
@@ -189,14 +200,7 @@ impl Editor {
             .is_some_and(|set| !set.repairs().is_empty());
         let mut action = None;
 
-        enum Action {
-            TurnLeft,
-            TurnRight,
-            FlipHorizontal,
-            FlipVertical,
-            Crop,
-            Dust,
-        }
+        use ToolAction as Action;
 
         ToolShelf::show(ui, |ui| {
             for (candidate, button) in [
@@ -278,29 +282,40 @@ impl Editor {
             );
         });
 
+        if let Some(action) = action {
+            self.control_command(editing::Command::Photo(action));
+        }
+    }
+
+    pub(super) fn apply_photo_tool_action(&mut self, action: ToolAction) {
+        let before = self.history_snapshot();
+        let orientation = self.photo_orientation;
         match action {
-            Some(Action::TurnLeft) => self.photo_orientation.turn_counterclockwise(),
-            Some(Action::TurnRight) => self.photo_orientation.turn_clockwise(),
-            Some(Action::FlipHorizontal) => self.photo_orientation.flips.horizontal ^= true,
-            Some(Action::FlipVertical) => self.photo_orientation.flips.vertical ^= true,
-            Some(Action::Crop) => {
-                if auto_cropping {
+            ToolAction::TurnLeft => self.photo_orientation.turn_counterclockwise(),
+            ToolAction::TurnRight => self.photo_orientation.turn_clockwise(),
+            ToolAction::FlipHorizontal => self.photo_orientation.flips.horizontal ^= true,
+            ToolAction::FlipVertical => self.photo_orientation.flips.vertical ^= true,
+            ToolAction::Crop => {
+                if self.auto_crop_edit.is_some() {
                     self.finish_auto_crop(false);
-                } else if cropping {
+                } else if self.crop_edit.is_some() {
                     self.finish_crop(false);
                 } else {
                     self.begin_crop();
                 }
             }
-            Some(Action::Dust) => {
-                if dusting {
+            ToolAction::Dust => {
+                if self.dust.cleanup {
                     self.finish_dust_cleanup();
                 } else {
                     self.begin_dust_cleanup();
                 }
             }
-            None => {}
         }
+        if orientation != self.photo_orientation {
+            self.viewport.fit();
+        }
+        self.record_edit(before, "Photo orientation", self.current_source);
     }
 
     pub(super) fn crop_controls(&mut self, ui: &mut egui::Ui) {

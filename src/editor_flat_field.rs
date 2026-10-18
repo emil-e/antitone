@@ -114,7 +114,7 @@ impl Editor {
                                     .pick_file()
                             })
                         {
-                            self.begin_flat_edit(path, None);
+                            self.control_command(editing::Command::FlatEdit(path, None));
                         }
                         if let Some(settings) = self.document.project.flat_field.clone() {
                             let path = self.document.source_path(settings.reference).ok();
@@ -126,13 +126,7 @@ impl Editor {
                             );
                             let mut enabled = settings.enabled;
                             if ui.checkbox(&mut enabled, "Enabled").changed() {
-                                self.sync_document();
-                                let mut candidate = self.document.clone();
-                                candidate.project.flat_field.as_mut().unwrap().enabled = enabled;
-                                self.start_document(DocumentWork::Correction(
-                                    candidate,
-                                    self.current_source,
-                                ));
+                                self.control_command(editing::Command::Correction(Some(enabled)));
                             }
                             ui.horizontal(|ui| {
                                 if presentation::TextAction::new("Edit area…")
@@ -141,7 +135,7 @@ impl Editor {
                                     && let Some(path) = path
                                 {
                                     let [x, y, width, height] = settings.map.area();
-                                    self.begin_flat_edit(
+                                    self.control_command(editing::Command::FlatEdit(
                                         path,
                                         Some(Rect {
                                             x,
@@ -149,16 +143,10 @@ impl Editor {
                                             width,
                                             height,
                                         }),
-                                    );
+                                    ));
                                 }
                                 if presentation::TextAction::new("Clear").show(ui).clicked() {
-                                    self.sync_document();
-                                    let mut candidate = self.document.clone();
-                                    candidate.project.flat_field = None;
-                                    self.start_document(DocumentWork::Correction(
-                                        candidate,
-                                        self.current_source,
-                                    ));
+                                    self.control_command(editing::Command::Correction(None));
                                 }
                             });
                         }
@@ -266,7 +254,11 @@ impl Editor {
             self.report_failure(FailureKind::FlatSupport, self.status.clone());
             return;
         };
-        self.sync_document();
+        self.history_pending = Some(history::Pending::Edit {
+            before: Box::new(self.history_snapshot()),
+            label: "Correction",
+            photo: None,
+        });
         self.busy = true;
         self.document_pending = Some(self.id);
         self.document_failure = Some(FailureKind::FlatCorrection);
@@ -283,6 +275,7 @@ impl Editor {
             .is_err()
         {
             self.document_pending = None;
+            self.history_pending = None;
             self.document_failure = None;
             self.tasks.finish(TaskRequest::Document(self.id));
             self.busy = false;

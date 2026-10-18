@@ -14,6 +14,7 @@ pub(super) enum Task {
     New(u64),
     Save(u64),
     Correction(u64),
+    History(u64),
     Photo(u64),
     Reference(u64),
     Measurement(u64, Pick),
@@ -48,7 +49,8 @@ impl Task {
             | Self::Open(id)
             | Self::New(id)
             | Self::Save(id)
-            | Self::Correction(id) => TaskRequest::Document(id),
+            | Self::Correction(id)
+            | Self::History(id) => TaskRequest::Document(id),
             Self::Photo(id) => TaskRequest::Photo(id),
             Self::Reference(id) => TaskRequest::Reference(id),
             Self::Measurement(id, pick) => TaskRequest::Measurement(id, pick),
@@ -90,6 +92,7 @@ impl Task {
             Self::New(_) => "Creating project…".into(),
             Self::Save(_) => "Saving project…".into(),
             Self::Correction(_) => "Applying correction…".into(),
+            Self::History(_) => "Restoring edit…".into(),
             Self::Photo(_) => "Loading photo…".into(),
             Self::Reference(_) => "Preparing reference…".into(),
             Self::Analyze(_) => "Analyzing roll…".into(),

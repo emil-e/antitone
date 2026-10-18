@@ -481,6 +481,7 @@ impl Editor {
             match candidate {
                 Ok(candidate) => {
                     let count = edit.entries.len();
+                    let before = self.history_snapshot();
                     self.document.project = candidate;
                     if let Some(id) = self.current_source {
                         self.crop = self
@@ -490,6 +491,7 @@ impl Editor {
                             .expect("active source")
                             .crop;
                     }
+                    self.record_edit(before, "Auto-crop", None);
                     self.status = format!("Auto-crop applied to {count} photos");
                 }
                 Err(error) => {

@@ -14,9 +14,26 @@ pub(super) struct Menus {
     pub(super) pending: std::collections::VecDeque<Action>,
     pub(super) panel: Option<presentation::AppPanel>,
     pub(super) text_focused: bool,
+    pub(super) history_input_blocked: bool,
 }
 
 impl Editor {
+    pub(super) fn menu_targets_text(&self, action: Action) -> bool {
+        action.text_edit()
+            || self.menus.text_focused && matches!(action, Action::Undo | Action::Redo)
+    }
+
+    pub(super) fn history_menu_input_available(
+        &self,
+        action: Action,
+        context: &egui::Context,
+    ) -> bool {
+        !matches!(action, Action::Undo | Action::Redo)
+            || self.menu_targets_text(action)
+            || !egui::Popup::is_any_open(context)
+                && !context.input(|input| input.pointer.any_down())
+    }
+
     pub(super) fn application_quit_state(&self) -> host::QuitState {
         if self.allow_close {
             return host::QuitState::Approved;
@@ -52,7 +69,7 @@ impl Editor {
                 .menus
                 .pending
                 .iter()
-                .take_while(|action| action.text_edit())
+                .take_while(|action| self.menu_targets_text(**action))
                 .count();
             self.menus.pending.insert(text, Action::Quit);
         } else {
@@ -90,7 +107,17 @@ impl Editor {
         };
         state.enabled.extend([Minimize, ZoomWindow]);
         if self.menus.text_focused {
-            state.enabled.extend([Cut, Copy, Paste, SelectAll]);
+            state
+                .enabled
+                .extend([Undo, Redo, Cut, Copy, Paste, SelectAll]);
+        }
+        if !self.menus.text_focused {
+            state.undo_label = self
+                .history_label(history::Direction::Undo)
+                .map(|label| format!("Undo {label}"));
+            state.redo_label = self
+                .history_label(history::Direction::Redo)
+                .map(|label| format!("Redo {label}"));
         }
         if self.application_modal() {
             return state;
@@ -101,6 +128,17 @@ impl Editor {
         if self.menus.panel.is_some() {
             state.enabled.insert(Close);
             return state;
+        }
+        if !self.menus.text_focused
+            && self.history_available()
+            && !(self.menus.native && self.menus.history_input_blocked)
+        {
+            if self.history_label(history::Direction::Undo).is_some() {
+                state.enabled.insert(Undo);
+            }
+            if self.history_label(history::Direction::Redo).is_some() {
+                state.enabled.insert(Redo);
+            }
         }
         if !self.busy || self.export_pending.is_some() {
             state.enabled.extend([About, Settings, Help]);
@@ -137,6 +175,8 @@ impl Editor {
         let state = self.application_menu_state();
         // Shifted shortcuts must precede their unshifted alternatives.
         [
+            Action::Redo,
+            Action::Undo,
             Action::SaveAs,
             Action::AddScans,
             Action::Save,
@@ -151,6 +191,9 @@ impl Editor {
         .into_iter()
         .find(|&action| {
             state.enabled(action)
+                && !(self.menu_targets_text(action)
+                    && matches!(action, Action::Undo | Action::Redo))
+                && self.history_menu_input_available(action, ui.ctx())
                 && ui.input_mut(|input| input.consume_shortcut(&action.shortcut().unwrap()))
         })
     }
@@ -184,7 +227,7 @@ impl Editor {
             .pending
             .front()
             .copied()
-            .filter(|action| action.text_edit())
+            .filter(|action| self.menu_targets_text(*action))
         {
             self.menus.pending.pop_front();
             if !state.enabled(action) {
@@ -199,6 +242,17 @@ impl Editor {
                     };
                     egui::Event::Paste(text.clone())
                 }
+                Action::Undo | Action::Redo => egui::Event::Key {
+                    key: egui::Key::Z,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: if action == Action::Redo {
+                        egui::Modifiers::COMMAND | egui::Modifiers::SHIFT
+                    } else {
+                        egui::Modifiers::COMMAND
+                    },
+                },
                 Action::SelectAll => egui::Event::Key {
                     key: egui::Key::A,
                     physical_key: None,
@@ -215,7 +269,12 @@ impl Editor {
 
     pub(super) fn apply_menu_action(&mut self, action: Action, context: &egui::Context) {
         use Action::*;
+        if !self.history_menu_input_available(action, context) {
+            return;
+        }
         match action {
+            Undo => self.restore_history(history::Direction::Undo),
+            Redo => self.restore_history(history::Direction::Redo),
             About => self.menus.panel = Some(presentation::AppPanel::About),
             Settings => self.menus.panel = Some(presentation::AppPanel::Settings),
             Help => self.menus.panel = Some(presentation::AppPanel::Help),

@@ -55,7 +55,9 @@ impl Editor {
             .pending
             .pop_front()
             .or_else(|| self.menu_shortcut(ui))
-            .filter(|&action| state.enabled(action));
+            .filter(|&action| {
+                state.enabled(action) && self.history_menu_input_available(action, ui.ctx())
+            });
         if !self.allow_close && ui.input(|input| input.viewport().close_requested()) {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -77,7 +79,7 @@ impl Editor {
         if self.busy || self.analysis_area_pending.is_some() {
             ui.ctx().request_repaint_after(Duration::from_millis(50));
         }
-        if menu.is_some_and(|action| !action.text_edit()) {
+        if menu.is_some_and(|action| !self.menu_targets_text(action)) {
             ui.ctx().memory_mut(|memory| {
                 if let Some(id) = memory.focused() {
                     memory.surrender_focus(id);
@@ -324,7 +326,11 @@ impl Editor {
                     }
                 }
             });
-            if actions.file.is_some() || actions.menu.is_some_and(|action| !action.text_edit()) {
+            if actions.file.is_some()
+                || actions
+                    .menu
+                    .is_some_and(|action| !self.menu_targets_text(action))
+            {
                 ui.ctx().memory_mut(|memory| {
                     if let Some(id) = memory.focused() {
                         memory.surrender_focus(id);
@@ -378,7 +384,46 @@ impl Editor {
             .on_hover_text(detail);
     }
 
-    pub(super) fn workspace_controls(&mut self, ui: &mut egui::Ui) -> (Option<ScopeSlot>, bool) {
+    pub(super) fn edit_frame_controls(
+        &mut self,
+        ui: &mut egui::Ui,
+        previous_roll: RollSettings,
+        previous_photo: PhotoSettings,
+    ) -> (Option<ScopeSlot>, bool) {
+        self.begin_control_history(match self.tab {
+            0 => "Roll settings",
+            1 => "Photo settings",
+            _ => "Rendering target",
+        });
+        let reset_scope = match (self.tab, self.current_source) {
+            (0, _) => editing::Scope::Roll,
+            (1, Some(source)) => editing::Scope::Photo(source, self.adjustment_target()),
+            _ => editing::Scope::Rendering,
+        };
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(egui::Id::new("defer-control-resets"), true));
+        let controls_photo = (self.tab == 1).then_some(self.current_source).flatten();
+        let controls = self.workspace_controls(ui);
+        self.validate_frame_edits(previous_roll, previous_photo);
+        self.record_controls(controls_photo, ui);
+        let resets = ui.ctx().data_mut(|data| {
+            data.remove::<bool>(egui::Id::new("defer-control-resets"));
+            data.remove_temp::<Vec<controls::Reset>>(egui::Id::new("control-resets"))
+                .unwrap_or_default()
+        });
+        self.control_commands.extend(
+            resets
+                .into_iter()
+                .map(|reset| editing::Command::Reset(reset_scope, reset)),
+        );
+        for command in std::mem::take(&mut self.control_commands) {
+            self.apply_control_command(command);
+            ui.ctx().request_repaint();
+        }
+        controls
+    }
+
+    fn workspace_controls(&mut self, ui: &mut egui::Ui) -> (Option<ScopeSlot>, bool) {
         if self.fullscreen.is_none() {
             egui::Panel::right("controls")
                 .default_size(315.)
@@ -436,7 +481,7 @@ impl Editor {
                 self.status = "Apply or cancel the mask before exporting".into();
             }
         } else if let Some(action) = actions.menu {
-            if action.text_edit() {
+            if self.menu_targets_text(action) {
                 // Fallback menu clicks arrive after text widgets have rendered.
                 self.menus.pending.push_front(action);
                 ui.ctx().request_repaint();

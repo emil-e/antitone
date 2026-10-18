@@ -50,7 +50,6 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
         let description = warning.accesskit_node().description().unwrap();
         assert!(description.contains("Photo adjustments"));
         assert!(description.contains("local adjustments and masks"));
-        assert!(description.contains("cannot be undone"));
     }
 }
 

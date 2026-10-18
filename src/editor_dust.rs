@@ -205,6 +205,10 @@ impl Drop for State {
 }
 
 impl State {
+    pub(super) fn history_draft(&self) -> bool {
+        self.mask_draft.is_some() || self.donor_draft.is_some()
+    }
+
     #[cfg(test)]
     pub(super) fn pending_request(&self) -> Option<u64> {
         self.pending.as_ref().map(|pending| pending.request)
@@ -796,9 +800,11 @@ impl Editor {
         self.dust.repair_changed(source, id, accepted);
     }
 
-    fn reset_dust_repairs(&mut self, source: SourceId) {
+    pub(super) fn reset_dust_repairs(&mut self, source: SourceId) {
+        let before = self.history_snapshot();
         self.dust_repairs_mut(source).clear();
         self.dust.clear_repairs(source);
+        self.record_edit(before, "Reset Dust repairs", Some(source));
     }
 
     pub(super) fn dust_controls(&mut self, ui: &mut egui::Ui) {
@@ -885,7 +891,7 @@ impl Editor {
             },
         );
         if reset_repairs {
-            self.reset_dust_repairs(source);
+            self.control_command(editing::Command::ResetRepairs(source));
             self.status = "Dust repairs reset".into();
             self.invalidate_settled();
         }
@@ -1133,6 +1139,7 @@ impl Editor {
             return;
         }
 
+        let before = self.history_snapshot();
         let result = support.and_then(|support| {
             if let Some(choice) = effective_donor {
                 let active = self
@@ -1160,6 +1167,7 @@ impl Editor {
             Ok(id) => {
                 self.dust.selected.insert(source, id);
                 self.dust_repair_changed(source, id);
+                self.record_edit(before, "Dust mask", Some(source));
                 self.status = "Dust repair queued for full-resolution evaluation".into();
                 self.invalidate_settled();
                 self.cancel_dust_mask();
@@ -1329,7 +1337,9 @@ impl Editor {
             return;
         };
         self.cancel_dust_mask();
+        let before = self.history_snapshot();
         if self.dust_repairs_mut(source).remove(id).is_ok() {
+            self.record_edit(before, "Delete Dust repair", Some(source));
             self.dust.removed(source, id);
             self.status = "Dust repair deleted".into();
             self.invalidate_settled();
@@ -1578,6 +1588,7 @@ impl Editor {
         if draft.choice == accepted_donor {
             return;
         }
+        let before = self.history_snapshot();
         let result = self
             .ready
             .as_ref()
@@ -1591,6 +1602,7 @@ impl Editor {
         match result {
             Ok(()) => {
                 self.dust_repair_changed(source, draft.repair);
+                self.record_edit(before, "Dust donor", Some(source));
                 self.status = "Dust source updated".into();
             }
             Err(error) => {

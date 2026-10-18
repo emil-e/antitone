@@ -1,9 +1,11 @@
 use super::{Action, Entry, MENUS, State};
+use muda::accelerator::{Key, KeyAccelerator, Modifiers};
 use muda::{CheckMenuItem, Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 
 pub(crate) struct NativeMenu {
     root: Menu,
     items: Vec<(Action, muda::MenuItemKind)>,
+    state: State,
 }
 
 impl NativeMenu {
@@ -11,6 +13,7 @@ impl NativeMenu {
         let mut native = Self {
             root: Menu::new(),
             items: Vec::new(),
+            state: state.clone(),
         };
         let mut windows = None;
         let mut help = None;
@@ -68,32 +71,38 @@ impl NativeMenu {
                             egui::Key::Comma => ",",
                             key => key.name(),
                         };
-                        let shift = if shortcut.modifiers.shift {
-                            "Shift+"
+                        // AppKit matches shifted letters against uppercase character
+                        // equivalents. Physical accelerators leave them lowercase.
+                        let (key, modifiers) = if shortcut.modifiers.shift {
+                            (key.to_uppercase(), Modifiers::META | Modifiers::SHIFT)
                         } else {
-                            ""
+                            (key.to_lowercase(), Modifiers::META)
                         };
-                        format!("CmdOrCtrl+{shift}{key}")
-                            .parse()
-                            .expect("valid menu accelerator")
+                        KeyAccelerator::new(modifiers, Key::Character(key))
                     });
                     let item = if let Some(checked) = state.checked(*action) {
                         muda::MenuItemKind::Check(CheckMenuItem::new(
-                            action.label(),
+                            state.label(*action),
                             state.enabled(*action),
                             checked,
-                            shortcut,
+                            None,
                         ))
                     } else {
                         muda::MenuItemKind::MenuItem(MenuItem::new(
-                            action.label(),
+                            state.label(*action),
                             state.enabled(*action),
-                            shortcut,
+                            None,
                         ))
                     };
                     match &item {
-                        muda::MenuItemKind::MenuItem(item) => menu.append(item)?,
-                        muda::MenuItemKind::Check(item) => menu.append(item)?,
+                        muda::MenuItemKind::MenuItem(item) => {
+                            item.set_key_accelerator(shortcut)?;
+                            menu.append(item)?;
+                        }
+                        muda::MenuItemKind::Check(item) => {
+                            item.set_key_accelerator(shortcut)?;
+                            menu.append(item)?;
+                        }
                         _ => unreachable!(),
                     }
                     self.items.push((*action, item));
@@ -109,10 +118,18 @@ impl NativeMenu {
             .find_map(|(action, item)| (item.id() == id).then_some(*action))
     }
 
-    pub(crate) fn update(&self, state: &State) {
+    pub(crate) fn update(&mut self, state: &State) {
+        if self.state == *state {
+            return;
+        }
         for &(action, ref item) in &self.items {
             match item {
-                muda::MenuItemKind::MenuItem(item) => item.set_enabled(state.enabled(action)),
+                muda::MenuItemKind::MenuItem(item) => {
+                    item.set_enabled(state.enabled(action));
+                    if self.state.label(action) != state.label(action) {
+                        item.set_text(state.label(action));
+                    }
+                }
                 muda::MenuItemKind::Check(item) => {
                     item.set_enabled(state.enabled(action));
                     item.set_checked(state.checked(action).unwrap());
@@ -120,6 +137,7 @@ impl NativeMenu {
                 _ => unreachable!(),
             }
         }
+        self.state = state.clone();
     }
 }
 
@@ -139,7 +157,7 @@ pub(crate) struct NativeDialogEditing {
 impl NativeDialogEditing {
     pub(crate) fn new() -> Option<Self> {
         use objc2::{MainThreadMarker, MainThreadOnly, sel};
-        use objc2_app_kit::{NSApplication, NSMenu, NSMenuItem};
+        use objc2_app_kit::{NSApplication, NSEventModifierFlags, NSMenu, NSMenuItem};
         use objc2_foundation::ns_string;
 
         let main = MainThreadMarker::new()?;
@@ -148,6 +166,8 @@ impl NativeDialogEditing {
         let previous = item.submenu()?;
         let edit = NSMenu::new(main);
         for (title, action, key) in [
+            (ns_string!("Undo"), sel!(undo:), ns_string!("z")),
+            (ns_string!("Redo"), sel!(redo:), ns_string!("Z")),
             (ns_string!("Cut"), sel!(cut:), ns_string!("x")),
             (ns_string!("Copy"), sel!(copy:), ns_string!("c")),
             (ns_string!("Paste"), sel!(paste:), ns_string!("v")),
@@ -163,6 +183,12 @@ impl NativeDialogEditing {
                     key,
                 )
             };
+            let modifiers = if action == sel!(redo:) {
+                NSEventModifierFlags::Command | NSEventModifierFlags::Shift
+            } else {
+                NSEventModifierFlags::Command
+            };
+            command.setKeyEquivalentModifierMask(modifiers);
             edit.addItem(&command);
         }
         item.setSubmenu(Some(&edit));

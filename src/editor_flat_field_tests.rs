@@ -361,6 +361,17 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
         );
         let directory = tempfile::tempdir().unwrap();
         let accepted = editor.document.project.clone();
+        editor.restore_history(history::Direction::Undo);
+        wait_with_limit(&mut editor, Duration::from_secs(60));
+        assert_eq!(editor.document.project, original, "{}", editor.status);
+        assert!(editor.correction.is_none());
+        editor.restore_history(history::Direction::Redo);
+        wait_with_limit(&mut editor, Duration::from_secs(60));
+        assert_eq!(editor.document.project, accepted, "{}", editor.status);
+        assert_eq!(
+            editor.correction.as_ref().unwrap().settings.map,
+            settings.map
+        );
         editor.begin_flat_edit(directory.path().join("missing.dng"), None);
         assert!(editor.busy);
         assert!(editor.flat_edit.is_some());

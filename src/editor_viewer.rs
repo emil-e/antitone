@@ -71,7 +71,7 @@ impl Editor {
                 ));
             }
             if review.replaces_photos {
-                let consequence = "Analyze will replace Photo adjustments and remove any local adjustments and masks.\nThis cannot be undone.";
+                let consequence = "Analyze will replace Photo adjustments and remove any local adjustments and masks.";
                 if let Some(warning) = &mut warning {
                     warning.push_str(&format!("\n{consequence}"));
                 } else {

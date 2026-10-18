@@ -19,6 +19,8 @@ mod correction;
 mod dust;
 #[path = "editor_kittest_fullscreen.rs"]
 mod fullscreen;
+#[path = "editor_kittest_history.rs"]
+mod history;
 #[path = "editor_kittest_looks.rs"]
 mod looks;
 #[path = "editor_kittest_masks.rs"]

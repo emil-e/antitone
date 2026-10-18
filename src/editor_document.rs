@@ -97,27 +97,11 @@ impl Document {
 
     /// Accept the written snapshot as a baseline, without replacing edits made since dispatch.
     pub fn accept_save(&mut self, saved: Self) {
-        let old_parent = self
-            .path
-            .as_deref()
-            .and_then(Path::parent)
-            .unwrap_or(Path::new("."));
-        let new_parent = saved
-            .path
-            .as_deref()
-            .and_then(Path::parent)
-            .unwrap_or(Path::new("."));
-
-        if self.path != saved.path {
-            for source in &mut self.project.sources {
-                if source.path.is_relative() {
-                    // Rebase directories, not source files: unavailable non-filmstrip RAWs are valid.
-                    // If a directory became inaccessible during the write, retain its original locator.
-                    source.path = rebase_relative(&source.path, old_parent, new_parent)
-                        .unwrap_or_else(|_| old_parent.join(&source.path));
-                }
-            }
-        }
+        rebase_project(
+            &mut self.project,
+            self.path.as_deref(),
+            saved.path.as_deref(),
+        );
 
         self.path = saved.path;
         self.saved = saved.saved;
@@ -347,6 +331,21 @@ pub(super) fn same_path(a: &Path, b: &Path) -> bool {
     }
     // Missing source records are valid; canonical paths only supplement locator equality.
     matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b)
+}
+
+pub(super) fn rebase_project(project: &mut Project, old: Option<&Path>, new: Option<&Path>) {
+    if old == new {
+        return;
+    }
+    let old_parent = old.and_then(Path::parent).unwrap_or(Path::new("."));
+    let new_parent = new.and_then(Path::parent).unwrap_or(Path::new("."));
+    for source in &mut project.sources {
+        if source.path.is_relative() {
+            // Rebase directories, not RAWs: unavailable non-filmstrip records remain valid.
+            source.path = rebase_relative(&source.path, old_parent, new_parent)
+                .unwrap_or_else(|_| old_parent.join(&source.path));
+        }
+    }
 }
 
 fn rebase_relative(path: &Path, old_parent: &Path, new_parent: &Path) -> Result<PathBuf> {

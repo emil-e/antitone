@@ -229,8 +229,11 @@ impl Editor {
 
     pub(super) fn clear_look(&mut self) {
         self.retire_look();
-        if self.document.project.output.look.take().is_some() {
+        if self.document.project.output.look.is_some() {
+            let before = self.history_snapshot();
+            self.document.project.output.look = None;
             self.original.invalidate();
+            self.record_edit(before, "Creative look", None);
         }
         self.resolve_failure(FailureKind::Look);
         self.resolve_failure(FailureKind::LookRendering);
@@ -249,9 +252,11 @@ impl Editor {
         }
         match result {
             Ok(Some(asset)) => {
+                let before = self.history_snapshot();
                 self.document.project.output.look = Some(asset);
                 self.remember_current_look();
                 self.original.invalidate();
+                self.record_edit(before, "Creative look", None);
                 self.resolve_failure(FailureKind::Look);
                 self.resolve_failure(FailureKind::LookRendering);
             }

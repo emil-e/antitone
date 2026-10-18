@@ -9,13 +9,13 @@ pub(super) enum Target {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct OrderKey {
+pub(super) struct OrderKey {
     loaded: u64,
     source: SourceId,
     id: AdjustmentId,
 }
 
-struct OrderDrag {
+pub(super) struct OrderDrag {
     key: OrderKey,
     locals: LocalAdjustments,
 }
@@ -56,7 +56,7 @@ impl Adjustments {
     }
 }
 
-enum Action {
+pub(super) enum Action {
     Select(Target),
     Overlay(bool),
     Enable(AdjustmentId, bool),
@@ -161,6 +161,7 @@ impl Editor {
         &mut self,
         edit: impl FnOnce(&mut LocalAdjustments) -> Result<(), Error>,
     ) -> Result<(), Error> {
+        let project_before = self.history_snapshot();
         let id = self
             .current_source
             .ok_or(Error::InvalidParameter("no selected source"))?;
@@ -179,7 +180,34 @@ impl Editor {
         if before != after {
             self.original.invalidate();
         }
+        self.record_edit(project_before, "Local adjustment", Some(id));
         Ok(())
+    }
+
+    pub(super) fn adjustment_order_input(
+        &mut self,
+        start: Option<AdjustmentId>,
+        drop: Option<(OrderKey, usize)>,
+        finish: bool,
+    ) {
+        if let Some(id) = start {
+            match self.order_drag(id) {
+                Ok(drag) => self.adjustments.order_drag = Some(drag),
+                Err(error) => self.status = format!("Adjustment drag rejected: {error}"),
+            }
+        }
+        if let Some((key, slot)) = drop
+            && let Some(drag) = self
+                .adjustments
+                .order_drag
+                .take()
+                .filter(|drag| drag.key == key)
+        {
+            self.apply_adjustment_action(Action::Reorder(drag, slot));
+        }
+        if finish {
+            self.adjustments.order_drag = None;
+        }
     }
 
     fn order_drag(&self, id: AdjustmentId) -> Result<OrderDrag, Error> {
@@ -233,7 +261,7 @@ impl Editor {
         })
     }
 
-    fn apply_adjustment_action(&mut self, action: Action) {
+    pub(super) fn apply_adjustment_action(&mut self, action: Action) {
         if !self.adjustment_actions_available() || !self.adjustments.open {
             return;
         }
@@ -407,6 +435,7 @@ impl Editor {
             self.adjustment_actions_available() && !self.dust.cleanup && ui.is_enabled();
         let mut action = None;
         let mut rename_finish = None;
+        let mut invert_action = None;
         let mut target_visible = false;
         let mut start_drag = None;
         let mut drop = None;
@@ -594,7 +623,12 @@ impl Editor {
                         if let Some(adjustment) = &mut adjustment {
                             ui.add_space(6.);
                             ui.push_id(("mask-input", self.current_source, target), |ui| {
-                                ui.checkbox(&mut adjustment.invert, "Invert mask");
+                                let mut invert = adjustment.invert;
+                                if ui.checkbox(&mut invert, "Invert mask").changed()
+                                    && let Target::Local(id) = target
+                                {
+                                    invert_action = Some(editing::Command::InvertLocal(id, invert));
+                                }
                                 controls::parameter(
                                     ui,
                                     controls::Parameter::Strength,
@@ -672,49 +706,33 @@ impl Editor {
                 }
             }
         }
+        if let Some(command) = invert_action {
+            self.control_command(command);
+        }
         if let Some(rename) = rename_finish {
-            self.apply_adjustment_action(rename);
+            self.control_command(editing::Command::Adjustment(rename));
         }
         if let Some(action) = action {
-            self.apply_adjustment_action(action);
+            self.control_command(editing::Command::Adjustment(action));
             ui.ctx().request_repaint();
         }
-        if let Some(id) = start_drag {
-            match self.order_drag(id) {
-                Ok(drag) => self.adjustments.order_drag = Some(drag),
-                Err(error) => self.status = format!("Adjustment drag rejected: {error}"),
-            }
-        }
-        if let Some((key, slot)) = drop.filter(|_| !self.adjustments.toggle) {
-            if let Some(drag) = self
-                .adjustments
-                .order_drag
-                .take()
-                .filter(|drag| drag.key == key)
-            {
-                self.apply_adjustment_action(Action::Reorder(drag, slot));
-            }
+        let drop = drop.filter(|_| !self.adjustments.toggle);
+        let finish = ui.input(|input| input.pointer.any_released())
+            || !egui::DragAndDrop::has_payload_of_type::<OrderKey>(ui.ctx());
+        if start_drag.is_some() || drop.is_some() || finish && self.adjustments.dragging() {
+            self.control_command(editing::Command::OrderInput {
+                start: start_drag,
+                drop,
+                finish,
+            });
             ui.ctx().request_repaint();
-        }
-        if ui.input(|input| input.pointer.any_released())
-            || !egui::DragAndDrop::has_payload_of_type::<OrderKey>(ui.ctx())
-        {
-            self.adjustments.order_drag = None;
         }
         if std::mem::take(&mut self.adjustments.toggle) {
-            if self.adjustments.open {
-                self.close_adjustments();
-            } else {
-                self.open_adjustments();
-            }
+            self.control_command(editing::Command::ToggleAdjustments);
             ui.ctx().request_repaint();
         }
         if let Some(radial) = self.adjustments.creation.take() {
-            if radial {
-                self.begin_radial_mask(None);
-            } else {
-                self.begin_linear_mask(None);
-            }
+            self.control_command(editing::Command::CreateMask(radial));
             ui.ctx().request_repaint();
         }
         pick
@@ -735,7 +753,7 @@ impl Editor {
         let title = format!("Delete {}?", record.name);
         let choice = presentation::DecisionDialog::new(
             &title,
-            "This removes the adjustment and its mask. It cannot be undone. Other adjustments and the RAW file are unchanged.",
+            "This removes the adjustment and its mask. Other adjustments and the RAW file are unchanged.",
             "Delete adjustment",
         )
         .warning()

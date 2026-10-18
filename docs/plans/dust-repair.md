@@ -23,7 +23,6 @@ Use the owning guides above for delivered behavior. In further acceptance work:
 
 ## Deliberately deferred
 
-- **Undo:** settle gesture coalescing and shared/Photo scope with the existing undo plan, rather than introducing a repair-only stack.
 - **Automatic proposals:** present editable masks independently from healing; detector scores/provenance must not change reconstruction. Precision/recall needs independently sampled exhaustive labels.
 - **Algorithm questions:** clean-truth accuracy, real dust crossing fine in-focus wires, diagnostic calibration, grain fidelity and broader cameras/materials remain unestablished. No further Lightroom comparison or neural downloads.
 - General pipeline graphs, batch/general export-cancellation UI, recovery/relinking, new RAW hashing/identity and a broad UI migration are separate work.
