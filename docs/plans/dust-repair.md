@@ -8,7 +8,7 @@ Use the owning guides above for delivered behavior. In further acceptance work:
 
 - Preserve saved editable intent and the shared accepted recipe; cache readiness and viewing history must not change the photograph or saved instructions.
 - Compare repairs applied to original neutral samples before filtering and grading. Keep existing numerical/preflight checks, compensated EXR, source-coordinate independence and failure-safe destinations.
-- Assess the current direct-canvas workflow and bounded asynchronous implementation before proposing different interaction, storage or execution models. Undo and automatic proposals remain separate below.
+- Assess the current direct-canvas workflow and bounded asynchronous implementation before proposing different interaction, storage or execution models. Released edits participate in [project-wide undo](../editor.md#undo-and-redo); automatic proposals remain deferred below.
 
 [Research](../research/dust-removal.md) records the solver, four-million-processing-pixel evaluation bound and experimental evidence; it is not a production-quality guarantee.
 

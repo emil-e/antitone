@@ -6,7 +6,7 @@
 
 1. **Missing sources/relink:** define matching candidates and explicit acceptance from workflow needs. Do not assume byte immutability or invent capture identity. Retain source IDs and Photo settings; source changes/removal never resample calibration.
 2. **Recovery/autosave:** use separate recovery state with explicit document identity and stale/corrupt handling. Preserve the last explicit save; exercise interrupted/failed writes before making durability claims.
-3. **Undo acceptance:** exercise physical pointer/keyboard and long mixed Roll/Photo sessions, including high-volume Dust history, source unavailability and corrected Save As. The snapshot baseline deliberately favors simple code over minimal memory; measure real retention/latency before adding deltas or structural sharing.
+3. **Undo acceptance:** exercise physical pointer/keyboard and long mixed Roll/Photo sessions, including high-volume Dust history, source unavailability and corrected Save As. The snapshot baseline deliberately favors simple code over minimal memory; measure real retention/latency before adding deltas or broader structural sharing.
 
 No catalog, automatic schema migration, derived images in project JSON or silently overwritten explicit saves are implied.
 
