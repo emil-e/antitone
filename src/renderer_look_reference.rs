@@ -77,7 +77,20 @@ impl ReferenceTransforms {
             // The pinned tables have one mip level. Explicit LOD is resource
             // glue for compute, where implicit fragment derivatives do not exist.
             let source = format!(
-                "#version 450\nlayout(local_size_x=64) in;\nlayout(set=0,binding=3) uniform sampler aces_sampler;\n#define texture(s,uv) textureLod(s,uv,0.0)\n{body}\nlayout(set=0,binding=0,std430) readonly buffer Inputs {{ vec4 inputs[]; }};\nlayout(set=0,binding=4,std430) buffer Outputs {{ vec4 outputs[]; }};\nvoid main() {{ uint i=gl_GlobalInvocationID.x; if (i<uint(inputs.length())) outputs[i]=look_reference(inputs[i]); }}"
+                r#"#version 450
+layout(local_size_x=64) in;
+layout(set=0,binding=3) uniform sampler aces_sampler;
+#define texture(s,uv) textureLod(s,uv,0.0)
+{body}
+layout(set=0,binding=0,std430) readonly buffer Inputs {{ vec4 inputs[]; }};
+layout(set=0,binding=4,std430) buffer Outputs {{ vec4 outputs[]; }};
+
+void main() {{
+    uint i = gl_GlobalInvocationID.x;
+    if (i < uint(inputs.length())) {{
+        outputs[i] = look_reference(inputs[i]);
+    }}
+}}"#
             );
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some(name),

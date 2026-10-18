@@ -159,7 +159,7 @@ The port preserves the frozen weighted score rather than using OpenCV's approxim
 
 The [editor workflow](../editor.md#provisional-dust-cleanup) owns gestures and working-view integration; [Projects](../projects.md#source-owned-dust-repairs) owns saved repair intent. It evaluates ungraded AP1 after correction, inversion and camera conversion, before photographic Roll/Photo controls. The full-grade sources used by the experiments above are a different input domain: healing and nonlinear grading do not commute, and donor matching can change. Those experiments therefore do not establish appearance under every downstream grade.
 
-Repairs enter original neutral samples before view filtering and grading; subtracting a correction from an already rounded proxy cannot recover detail lost beneath an extreme HDR value. Viewer/scopes share the repaired result, while provisional camera proxies, thumbnails and TIFF/EXR remain unrepaired. [Remaining acceptance](../plans/dust-repair.md) includes pre-grade photographic correspondence and complete interaction/resource evidence.
+Repairs enter original neutral samples before view filtering and grading; subtracting a correction from an already rounded proxy cannot recover detail lost beneath an extreme HDR value. [Completed positive consumers](../editor.md#provisional-dust-cleanup), including viewer/scopes, proper thumbnails and TIFF/AP0 EXR, share accepted repairs. Camera-proxy/JPEG navigation placeholders remain unrepaired. [Remaining acceptance](../plans/dust-repair.md) includes pre-grade photographic correspondence and complete interaction/resource evidence.
 
 ## Large-mask acceleration
 

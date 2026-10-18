@@ -128,14 +128,18 @@ fn retained_evidence_does_not_make_a_removed_or_reference_source_a_photo_proposa
     let path = fixture(directory.path());
     let (mut cases, margins) = load(&path, &mut Inputs::default()).unwrap();
     let id = cases[0].spec.source;
+    let ordinary = cases[0].project.clone();
+    assert!(proposal(&cases[0]).is_ok());
     cases[0].project.remove_from_filmstrip(id).unwrap();
     cases[0].project.validate().unwrap();
     assert_eq!(
         report(&cases, &margins).unwrap()["cases"][0]["proposals"][0]["status"],
         "abstain"
     );
+    cases[0].project = ordinary;
     cases[0].project.source_mut(id).unwrap().reference_only = true;
     cases[0].project.validate().unwrap();
+    assert!(cases[0].project.order.contains(&id));
     assert!(proposal(&cases[0]).is_err());
 }
 

@@ -19,7 +19,7 @@ Initial live Global appearance and responsiveness have been positively assessed.
 - Measure complete acquisition/edit/scopes/presentation latency and residual ordered-local cost with representative corrected/uncorrected 1080p/4K photographs. Do not substitute isolated-shader timings or UI readback cost for interactive completion.
 - Establish peak concurrent ownership/admission for mandatory current/building/completed support, temporary originals, rendered replacements, optional references and encoded/in-flight/native-retired versions. Zero optional retention and pressure must preserve mandatory selected detail without recycling waits or hidden allocations. Logical entry counts, declared buffer bytes and Arc tests are not aggregate native-memory evidence; RSS and native allocation measurements overlap and must not be added.
 - Quantify matching-view preview/reference/export correspondence with ramps, fine texture, grain-like noise, shadow colour, strong Global edits and soft/hard boundaries. Separate arithmetic, sampling and stale-grade/coverage defects. Preserve the positive live appearance/feel evidence without treating it as all-case acceptance. Normal idle must neither build an unrequested original reference nor replace working detail; explicit reference completion must remain a same-position comparison.
-- Broaden device/camera evidence and complete unoccluded physical input/presentation checks. The current automated desktop is occluded; offscreen GPU completion establishes neither scanout nor physical responsiveness.
+- Broaden device/camera evidence and complete unoccluded physical input/presentation checks. Offscreen GPU completion establishes neither scanout nor physical responsiveness.
 
 ## Next checkpoint
 

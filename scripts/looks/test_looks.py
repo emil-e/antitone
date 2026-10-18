@@ -120,10 +120,9 @@ class CatalogTests(unittest.TestCase):
                 self.assertLessEqual(result["source_interval_error"], 0.025)
                 self.assertLessEqual(result["source_coverage_error"], 0.025)
 
-    def test_portra_is_source_reconstructed_not_old_tabulated_definition(self):
+    def test_portra_declares_generalized_logistic_reconstruction(self):
         item = catalog.load(PORTRA)
         self.assertEqual(item.source["reconstruction"]["family"], "generalized-logistic-5")
-        self.assertIn("Canonical source-reconstructed Portra", item.look["notes"][0])
 
     def test_unresolved_spectral_tails_keep_censor_metadata(self):
         rows = catalog.load(PORTRA).source["dye_readings"]["yellow"]

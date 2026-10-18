@@ -1,6 +1,37 @@
 use super::*;
 use crate::dust_repair::{DonorChoice, RepairOrigin, SupportMask};
 
+fn exr_pixels(path: &std::path::Path, precision: ExrPrecision) -> Vec<[f64; 3]> {
+    use exr::prelude::{FlatSamples, read_first_flat_layer_from_file};
+    let image = read_first_flat_layer_from_file(path).unwrap();
+    let mut pixels = vec![[0.; 3]; image.layer_data.size.0 * image.layer_data.size.1];
+    assert_eq!(image.layer_data.channel_data.list.len(), 3);
+    for channel in &image.layer_data.channel_data.list {
+        let c = match channel.name.to_string().as_str() {
+            "R" => 0,
+            "G" => 1,
+            "B" => 2,
+            _ => panic!("unexpected EXR channel"),
+        };
+        match (&channel.sample_data, precision) {
+            (FlatSamples::F16(values), ExrPrecision::Half) => {
+                assert_eq!(values.len(), pixels.len());
+                for (pixel, value) in pixels.iter_mut().zip(values) {
+                    pixel[c] = value.to_f64();
+                }
+            }
+            (FlatSamples::F32(values), ExrPrecision::Full) => {
+                assert_eq!(values.len(), pixels.len());
+                for (pixel, value) in pixels.iter_mut().zip(values) {
+                    pixel[c] = f64::from(*value);
+                }
+            }
+            _ => panic!("wrong EXR precision"),
+        }
+    }
+    pixels
+}
+
 fn donorless_border(area: Rect) -> SupportMask {
     // The inset admits the biharmonic exterior, while donor padding still spans the source.
     let bits = (0..area.width * area.height)
@@ -80,6 +111,44 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
         wait(&mut editor);
         let id = editor.current_source.unwrap();
         let dirty = editor.document.dirty();
+        let recipe = editor.document.project.image_recipe(id).unwrap();
+        let scan = Scan::open(
+            &editor.document.source_path(id).unwrap(),
+            Some(recipe.neutral.development.fixed_wb),
+        )
+        .unwrap();
+        let pipeline = crate::local_adjustments::SpatialPipeline::new(
+            recipe.neutral.processing_calibration().unwrap(),
+            recipe.roll,
+            recipe.grade.clone(),
+            scan.camera_to_ap1,
+        )
+        .unwrap();
+        let repairs = crate::repair_source::resolve_output(&scan, &recipe).unwrap();
+        assert_eq!(repairs.len(), 1);
+        let expected_exr: Vec<_> = repairs[0]
+            .pixels()
+            .map(|(point, neutral)| {
+                let graded = pipeline
+                    .grade_neutral(
+                        crate::processing::InvertedPixel {
+                            rgb: DVec3::from_array(neutral.map(f64::from)),
+                            floored: [false; 3],
+                        },
+                        point,
+                    )
+                    .unwrap();
+                let frame = recipe
+                    .composition
+                    .source_to_frame(crate::geometry::SourcePoint(
+                        point.map(|v| f64::from(v) + 0.5),
+                    ));
+                let index = frame.0[1].floor() as usize * recipe.composition.size()[0] as usize
+                    + frame.0[0].floor() as usize;
+                (index, crate::color::ap1_to_ap0() * graded.rgb)
+            })
+            .collect();
+        assert_eq!(expected_exr.len(), 25);
         for (name, format) in [
             ("repaired.tif", OutputFormat::Tiff(OutputTarget::Srgb)),
             ("repaired-half.exr", OutputFormat::Exr(ExrPrecision::Half)),
@@ -110,8 +179,28 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
                             .contains(&format!("creative-look-blake3={}", look.lut().id()))
                     );
                 }
-                OutputFormat::Exr(_) => {
-                    exr::prelude::read_first_flat_layer_from_file(&path).unwrap();
+                OutputFormat::Exr(precision) => {
+                    let pixels = exr_pixels(&path, precision);
+                    let size = recipe.composition.size();
+                    assert_eq!(pixels.len(), size[0] as usize * size[1] as usize);
+                    for (index, expected) in &expected_exr {
+                        for c in 0..3 {
+                            let expected = expected[c];
+                            // Match the compensated EXR gate plus one serialized-sample ULP.
+                            let quantization = match precision {
+                                ExrPrecision::Half => {
+                                    0.0009765625 * expected.abs() + 5.960464477539063e-8
+                                }
+                                ExrPrecision::Full => f64::from(f32::EPSILON) * expected.abs(),
+                            };
+                            assert!(
+                                (pixels[*index][c] - expected).abs()
+                                    <= 2e-12 + 2e-11 * expected.abs() + quantization,
+                                "{precision:?} repair pixel {index}, channel {c}: {} vs {expected}",
+                                pixels[*index][c]
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -191,6 +280,27 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             tiff_pixels(&directory.path().join("repaired.tif")),
             "cold export must actually apply the captured repair"
         );
+        for (name, precision) in [("half", ExrPrecision::Half), ("full", ExrPrecision::Full)] {
+            let plain = directory.path().join(format!("plain-{name}.exr"));
+            editor.export(
+                plain.clone(),
+                OutputFormat::Exr(precision),
+                Overwrite::Refuse,
+            );
+            wait(&mut editor);
+            assert!(editor.failure.is_none(), "{}", editor.status);
+            let repaired = exr_pixels(
+                &directory.path().join(format!("repaired-{name}.exr")),
+                precision,
+            );
+            let plain = exr_pixels(&plain, precision);
+            assert!(
+                expected_exr
+                    .iter()
+                    .any(|(index, _)| repaired[*index] != plain[*index]),
+                "{precision:?} fixture must distinguish repaired from unrepaired EXR"
+            );
+        }
         let before = directory.path().join("repaired.tif");
         let bytes = std::fs::read(&before).unwrap();
         let area = editor.ready.as_ref().unwrap().area;

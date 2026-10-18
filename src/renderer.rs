@@ -11,26 +11,48 @@ mod aces;
 mod look_reference;
 
 pub(crate) const VERTEX: &str = r#"
-struct Vertex { @builtin(position) position: vec4f, @location(0) uv: vec2f }
-@vertex fn main(@builtin(vertex_index) i:u32) -> Vertex {
- let p=array<vec2f,3>(vec2f(-1.,-1.),vec2f(3.,-1.),vec2f(-1.,3.))[i];
- return Vertex(vec4f(p,0.,1.),vec2f(p.x*.5+.5,.5-p.y*.5));
+struct Vertex {
+    @builtin(position) position: vec4f,
+    @location(0) uv: vec2f
+}
+
+@vertex
+fn main(@builtin(vertex_index) i: u32) -> Vertex {
+    let p = array<vec2f, 3>(vec2f(-1., -1.), vec2f(3., -1.), vec2f(-1., 3.))[i];
+    return Vertex(vec4f(p, 0., 1.), vec2f(p.x * .5 + .5, .5 - p.y * .5));
 }"#;
 #[cfg(feature = "ui")]
 const DISPLAY: &str = r#"
-@group(0) @binding(0) var image:texture_2d<f32>;
-struct Parameters { c0:vec4f, c1:vec4f, c2:vec4f, size:vec4u, uv_x:vec4f, uv_y:vec4f }
-@group(0) @binding(1) var<uniform> p:Parameters;
-@fragment fn main(@location(0) uv:vec2f) -> @location(0) vec4f {
- let mapped=p.uv_x.xy+uv.x*p.uv_x.zw+uv.y*p.uv_y.xy;
- if any(mapped<vec2f(0.)) || any(mapped>vec2f(1.)) { discard; }
- let xy=min(vec2u(max(mapped,vec2f(0.))*vec2f(p.size.xy)),p.size.xy-vec2u(1));
- let pixel=textureLoad(image,vec2i(xy),0);
- if pixel.a<=0. { discard; }
- let linear=mat3x3f(p.c0.xyz,p.c1.xyz,p.c2.xyz)*pixel.rgb;
- let a=abs(linear);
- let encoded=select(1.055*pow(a,vec3f(1./2.4))-.055,12.92*a,a<=vec3f(.0031308));
- return vec4f(sign(linear)*encoded,1.);
+@group(0) @binding(0) var image: texture_2d<f32>;
+
+struct Parameters {
+    c0: vec4f,
+    c1: vec4f,
+    c2: vec4f,
+    size: vec4u,
+    uv_x: vec4f,
+    uv_y: vec4f
+}
+
+@group(0) @binding(1) var<uniform> p: Parameters;
+
+@fragment
+fn main(@location(0) uv: vec2f) -> @location(0) vec4f {
+    let mapped = p.uv_x.xy + uv.x * p.uv_x.zw + uv.y * p.uv_y.xy;
+    if any(mapped < vec2f(0.)) || any(mapped > vec2f(1.)) {
+        discard;
+    }
+
+    let xy = min(vec2u(max(mapped, vec2f(0.)) * vec2f(p.size.xy)), p.size.xy - vec2u(1));
+    let pixel = textureLoad(image, vec2i(xy), 0);
+    if pixel.a <= 0. {
+        discard;
+    }
+
+    let linear = mat3x3f(p.c0.xyz, p.c1.xyz, p.c2.xyz) * pixel.rgb;
+    let a = abs(linear);
+    let encoded = select(1.055 * pow(a, vec3f(1. / 2.4)) - .055, 12.92 * a, a <= vec3f(.0031308));
+    return vec4f(sign(linear) * encoded, 1.);
 }"#;
 
 #[cfg(feature = "editor")]
@@ -53,6 +75,11 @@ impl RendererCache {
         std::thread::spawn(move || {
             let _ = cache.get(&device, &queue);
         });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_initialized(&self) -> bool {
+        self.renderer.get().is_some()
     }
 
     pub(crate) fn submissions(&self) -> &crate::gpu::SubmissionGate {
@@ -390,7 +417,27 @@ fn target_resources(
         usage: wgpu::BufferUsages::STORAGE,
     });
     let code = format!(
-        "#version 450\nlayout(set=0,binding=3) uniform sampler aces_sampler;\n{generated}\nlayout(set=0,binding=0,std430) readonly buffer Inputs {{ vec4 pixels[]; }};\nlayout(set=0,binding=4,std140) uniform Dimensions {{ uvec4 size; }};\nlayout(location=0) in vec2 uv;\nlayout(location=0) out vec4 result;\nvoid main() {{ uvec2 xy=min(uvec2(max(uv,vec2(0.0))*vec2(size.xy)),size.xy-uvec2(1)); vec4 pixel=pixels[xy.x+xy.y*size.x]; if (pixel.a<0.0) {{ result=pixel; return; }} if (size.z!=0u && (uint(pixel.a)&8u)==0u) {{ result=vec4(0.0); return; }} result=antitone_render(vec4(pixel.rgb,1.0)); }}"
+        r#"#version 450
+layout(set=0,binding=3) uniform sampler aces_sampler;
+{generated}
+layout(set=0,binding=0,std430) readonly buffer Inputs {{ vec4 pixels[]; }};
+layout(set=0,binding=4,std140) uniform Dimensions {{ uvec4 size; }};
+layout(location=0) in vec2 uv;
+layout(location=0) out vec4 result;
+
+void main() {{
+    uvec2 xy = min(uvec2(max(uv, vec2(0.0)) * vec2(size.xy)), size.xy - uvec2(1));
+    vec4 pixel = pixels[xy.x + xy.y * size.x];
+    if (pixel.a < 0.0) {{
+        result = pixel;
+        return;
+    }}
+    if (size.z != 0u && (uint(pixel.a) & 8u) == 0u) {{
+        result = vec4(0.0);
+        return;
+    }}
+    result = antitone_render(vec4(pixel.rgb, 1.0));
+}}"#
     );
     let fragment = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("pinned OCIO GLSL, resource-layout adaptation only"),

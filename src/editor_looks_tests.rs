@@ -222,6 +222,7 @@ fn successful_resolution_is_reused_without_requiring_a_prepared_generator() {
         let renderers = crate::renderer::RendererCache::new(gate.clone());
         let start = Instant::now();
         renderers.get(&device, &queue).unwrap();
+        assert!(renderers.is_initialized());
         let renderer_setup = start.elapsed();
         let directory = tempfile::tempdir().unwrap();
         let cache = Cache::at(directory.path().into());
@@ -240,6 +241,7 @@ fn successful_resolution_is_reused_without_requiring_a_prepared_generator() {
         .unwrap();
         let cold = start.elapsed();
         let fresh = crate::renderer::RendererCache::new(gate.clone());
+        assert!(!fresh.is_initialized());
         let start = Instant::now();
         let second = resolve(
             Source::Builtin(Builtin::Kodak2383),
@@ -253,6 +255,10 @@ fn successful_resolution_is_reused_without_requiring_a_prepared_generator() {
         .unwrap()
         .unwrap();
         let warm = start.elapsed();
+        assert!(
+            !fresh.is_initialized(),
+            "a cache hit must not initialize the generator"
+        );
         let loaded = asset();
         let restored = resolve(
             Source::Loaded(loaded.clone()),
@@ -267,6 +273,7 @@ fn successful_resolution_is_reused_without_requiring_a_prepared_generator() {
         .unwrap();
         assert_eq!(restored, loaded);
         assert!(Arc::ptr_eq(restored.lut(), loaded.lut()));
+        assert!(!fresh.is_initialized(), "loaded assets need no generator");
         assert_eq!(first, second);
         assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
         println!(

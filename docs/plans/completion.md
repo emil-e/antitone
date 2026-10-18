@@ -49,4 +49,4 @@ Next: exercise document work, export inspection and Analyze cancellation in the 
 - Bundle native libraries and license notices with bundle-relative loading; sign/notarize and exercise clean-machine execution. Checkout-local runtime paths are not distributable packaging.
 - Reopen outputs in Lightroom/Resolve without application automation; interoperability remains unverified.
 
-Windows, HDR display output, custom RAW development, dust removal and catalog features remain outside current scope.
+Windows, HDR display output, custom RAW development and catalog features remain outside current scope. The provisional manual Dust workflow is implemented; [remaining Dust acceptance](dust-repair.md) and automatic proposals are separate.

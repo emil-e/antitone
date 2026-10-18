@@ -550,7 +550,7 @@ fn mask_sampling_uses_full_source_pixel_centres_for_proxies_and_tiles() {
 }
 
 #[test]
-fn composition_changes_do_not_reanchor_source_masks() {
+fn composition_coordinate_roundtrips_preserve_source_mask_coverage() {
     let area = SourceRegion {
         x: 100,
         y: 200,

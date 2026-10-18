@@ -28,7 +28,7 @@ Keep these separate from completion of the accepted review; no implementation ha
 ## Concrete limits
 
 - Opening and picture rectangles are statistical hypotheses. Missing sides may use source/opening coverage constraints; coarse material evidence and finer terminal runs do not establish original-pixel segmentation, physical aperture accuracy or crop correctness.
-- Inspect/Need area badges direct attention, not certify unflagged suggestions. Confirming areas does not certify material identity or pixel eligibility. Numerically valid contamination and damaged dense film can still influence independent Dmax tails.
+- [Missing-area warning indicators](../roll-analysis.md#1-choose-what-to-sample) direct attention; their absence does not certify the suggestions. Confirming areas does not certify material identity or pixel eligibility. Numerically valid contamination and damaged dense film can still influence independent Dmax tails.
 - Tonal-drift fitting can be biased by systematic scene/material/illumination correlations. Shared WB and exposure remain statistical priors; Photo WB is manual rather than individual gray-world fitting.
 - Native/GPU phases may delay cancellation acknowledgement. Numerical and headless checks do not establish physical or photographic acceptance or physical flat-field-reference compatibility.
 

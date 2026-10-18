@@ -371,7 +371,7 @@ impl Model {
                 }
             }
         };
-        // Retain the reviewed two-solve sequence; no new chromatic or image fitting.
+        // Validate the 18% gray solve before calibrating to the paper's neutral operating point.
         material.calibrate(0.18)?;
         let offset = material.calibrate(paper_gray())?;
         let p = REFERENCE;

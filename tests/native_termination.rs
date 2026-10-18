@@ -178,6 +178,8 @@ struct NativeApp {
     requested_at: Instant,
     paints: Arc<AtomicUsize>,
     before_request: usize,
+    fullscreen_requested: bool,
+    fullscreen_painted_after: Option<usize>,
     presentation: objc2_app_kit::NSApplicationPresentationOptions,
 }
 
@@ -209,9 +211,19 @@ impl host::App for NativeApp {
         };
     }
     fn photo_fullscreen(&self) -> bool {
-        self.mode == Mode::FullscreenApprove && self.state != QuitState::Running
+        self.fullscreen_requested
     }
     fn on_exit(&mut self) {
+        if self.mode == Mode::FullscreenApprove {
+            assert!(
+                self.fullscreen_painted_after.is_some(),
+                "fullscreen entry was never observed"
+            );
+            assert!(
+                self.started,
+                "fullscreen must paint before termination starts"
+            );
+        }
         assert_eq!(
             application().presentationOptions(),
             self.presentation,
@@ -235,13 +247,51 @@ impl host::App for NativeApp {
             PaintAck(self.paints.clone()),
         ));
         if !self.started {
+            ui.ctx().request_repaint_after(Duration::from_millis(16));
             if self.paints.load(Ordering::SeqCst) == 0 || application().keyWindow().is_none() {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
                 ui.ctx().request_repaint_after(Duration::from_millis(16));
                 return;
             }
+            if self.mode == Mode::FullscreenApprove {
+                if !self.fullscreen_requested {
+                    self.fullscreen_requested = true;
+                    return;
+                }
+                let app = application();
+                let covers_display = app.keyWindow().is_some_and(|window| {
+                    window.screen().is_some_and(|screen| {
+                        let frame = window.frame();
+                        let target = screen.frame();
+                        (frame.origin.x - target.origin.x).abs() <= 1.
+                            && (frame.origin.y - target.origin.y).abs() <= 1.
+                            && (frame.size.width - target.size.width).abs() <= 1.
+                            && (frame.size.height - target.size.height).abs() <= 1.
+                            && window.isOnActiveSpace()
+                            && !window
+                                .styleMask()
+                                .contains(objc2_app_kit::NSWindowStyleMask::FullScreen)
+                    })
+                });
+                let presentation = objc2_app_kit::NSApplicationPresentationOptions::AutoHideDock
+                    | objc2_app_kit::NSApplicationPresentationOptions::AutoHideMenuBar;
+                if !covers_display || app.presentationOptions() != presentation {
+                    return;
+                }
+                let paints = self.paints.load(Ordering::SeqCst);
+                let Some(before) = self.fullscreen_painted_after else {
+                    self.fullscreen_painted_after = Some(paints);
+                    return;
+                };
+                if paints <= before {
+                    return;
+                }
+            }
             self.started = true;
             record(&self.marker, "ready");
+            if self.mode == Mode::FullscreenApprove {
+                record(&self.marker, "fullscreen");
+            }
             if self.mode == Mode::NativeModal {
                 antitone::platform::menu::with_native_dialog(|| application().terminate(None));
                 assert_eq!(
@@ -310,6 +360,8 @@ fn child(mode: Mode, marker: PathBuf) -> host::Result<()> {
             requested_at: Instant::now(),
             paints: Arc::new(AtomicUsize::new(0)),
             before_request: 0,
+            fullscreen_requested: false,
+            fullscreen_painted_after: None,
             presentation: application().presentationOptions(),
         })
     });
@@ -404,7 +456,8 @@ fn run() -> host::Result<()> {
         }
         let events = std::fs::read_to_string(marker)?;
         let expected = match mode {
-            Mode::Approve | Mode::FullscreenApprove => "ready\nrequest:1\napprove\ncleanup\ndrop\n",
+            Mode::Approve => "ready\nrequest:1\napprove\ncleanup\ndrop\n",
+            Mode::FullscreenApprove => "ready\nfullscreen\nrequest:1\napprove\ncleanup\ndrop\n",
             Mode::CancelRetry => "ready\nrequest:1\ncancel\nrequest:2\napprove\ncleanup\ndrop\n",
             Mode::BlockedRetry => "ready\nrequest:1\nblocked\nrequest:2\napprove\ncleanup\ndrop\n",
             Mode::Interrupted => "ready\nrequest:1\ninterrupted\ncleanup\ndrop\nreturned\n",

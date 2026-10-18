@@ -2,25 +2,15 @@
 
 The provisional manual workflow, source-owned persistence and shared positive-consumer integration are implemented. [Projects](../projects.md#source-owned-dust-repairs) owns saved instructions and compatibility; [processing](../processing.md#one-accepted-image-recipe) owns accepted recipes and stage placement; [colour/output](../colour-and-output.md#tiff-and-exr-serve-different-purposes) owns original-sample export; [editor](../editor.md#provisional-dust-cleanup) owns gestures, readiness and caches. [PLAN.md](../../PLAN.md) owns priority. Software checks do not establish photographic, physical-input or broad device acceptance.
 
-## Preserve
+## Acceptance boundaries
 
-- Corrected camera samples are inverted and converted to signed/HDR ungraded AP1 before healing. Photographic Roll/Photo exposure/WB and all creative/local grades remain downstream. Fixed development WB, gamma balance and inversion response remain upstream.
-- Every independent repair reads immutable unrepaired input. Manual masks bypass detector thresholds, separate supports cannot overlap, and known f32 values are preserved without clamping signed/HDR data.
-- Full-resolution evaluation stays asynchronous and bounded to four million processing pixels. Source/interpretation/repair identities govern acceptance, not viewport generations; cancellation is not an unchanged healing failure. Downstream range rejection retains valid neutral evaluations for readmission under a safe grade, rather than memoizing a solver failure.
-- Retain physical-view detail/underlay, shared viewer/scope output, explicit original reference, source leases, submission gate and numerical/preflight checks. Ordinary grading reuses neutral repairs and working detail; original reconstruction is explicitly requested.
-- Apply absolute repairs to original neutral samples before footprint filtering; do not subtract corrections from an already rounded proxy. Cache sparse immutable repair content and bounded consumer products, not a full-resolution repaired photograph. Keep compensated EXR and independent paired-member source coordinates; do not disable export optimizations or relax numerical/destination guards to accommodate repairs.
-- Keep direct canvas selection, release-to-commit creation/edits, Shift-add, Option-remove, donor dragging, Delete and contextual reset/Done. No per-repair Apply/Cancel mode, list, numeric donor panel or local-only undo.
-- Preserve editable intent, automatic donor policy, schema 6/model 4 and `.antitone` saving. Cached pixels, resolved donors and rendering failures are not project metadata.
+Use the owning guides above for delivered behavior. In further acceptance work:
 
-## Shared consumer integration
+- Preserve saved editable intent and the shared accepted recipe; cache readiness and viewing history must not change the photograph or saved instructions.
+- Compare repairs applied to original neutral samples before filtering and grading. Keep existing numerical/preflight checks, compensated EXR, source-coordinate independence and failure-safe destinations.
+- Assess the current direct-canvas workflow and bounded asynchronous implementation before proposing different interaction, storage or execution models. Undo and automatic proposals remain separate below.
 
-One accepted source recipe defines viewer detail/underlay, original positive reference, scopes, TIFF/AP0 EXR and proper positive thumbnails. Consumers specialize resolution, precision and scheduling, not photographic choices. Camera JPEGs, pending RGB16 proxies, source inspection and measurement inputs retain their distinct declared purposes. Source-aware neutral evaluation is available without Editor or viewer warmth, with shared downstream grading for absolute replacements.
-
-Export prepares applicable repairs on its owning worker; exact output coverage, never viewport/cache availability, determines whether a support can be excluded. A failed applicable repair blocks successful output and preserves the destination. Save/Open remain independent of readiness and do not force offscreen healing.
-
-Proper calibrated cards use original-derived neutral AP1 with and without repairs. The source-owned CPU/disk RGB16 proxy remains unrepaired and cannot alone finish a proper positive. Compatible neutral products survive downstream changes and visible zero-budget handoffs; keys, sparse results and retained products participate in optional accounting. Lazy pending/failed presentation uses the [shared contextual status pattern](../editor.md#contextual-status-indicators), not a permanent repair badge or unrepaired success. No additional persistent derived cache is selected.
-
-The frozen `ap1-boundary-ranked-score10-grow4-v1` solver and input domain are unchanged. [Research](../research/dust-removal.md) supplies experimental evidence, not a production-quality guarantee.
+[Research](../research/dust-removal.md) records the solver, four-million-processing-pixel evaluation bound and experimental evidence; it is not a production-quality guarantee.
 
 ## Remaining acceptance
 
