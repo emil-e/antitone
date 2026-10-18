@@ -17,7 +17,7 @@ The long-term goal is a cross-platform application. The implemented desktop appl
 
 Install these tools using your normal developer setup:
 
-- [Rust through rustup](https://rustup.rs/). The checked-in `rust-toolchain.toml` selects Rust 1.99.0, rustfmt and Clippy without changing your global default. First use downloads missing components into your usual rustup installation. `Cargo.toml` separately declares an MSRV of 1.95.
+- [Rust through rustup](https://rustup.rs/). The checked-in `rust-toolchain.toml` selects Rust 1.99.0, rustfmt, Clippy, rust-analyzer and Rust sources without changing your global default. First use downloads missing components into your usual rustup installation. `Cargo.toml` separately declares an MSRV of 1.95.
 - Apple's Xcode command-line tools (`xcode-select --install`), or Xcode with its developer directory selected.
 - CMake and Ninja. If you use Homebrew: `brew install cmake ninja`.
 
