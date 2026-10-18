@@ -8,7 +8,9 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-pub const DEFAULT_GRID: u32 = 65;
+/// Grid for newly resolved built-ins; embedded and imported assets keep their own size.
+/// Use 32k + 1 nodes per axis to retain the frozen gray anchor at 19/32 of the domain.
+pub const DEFAULT_GRID: u32 = 129;
 pub const GENERATOR: &str = "p3rec50-native-gpu-v1";
 pub const REFERENCE: [f64; 9] = [
     100., 0.694, 0.306, 0.2175, 0.7435, 0.1405, 0.053, 0.3127, 0.3290,
@@ -466,6 +468,13 @@ impl Model {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_grid_keeps_the_frozen_gray_anchor_on_a_node() {
+        assert!((2..=super::super::MAX_GRID_SIZE).contains(&DEFAULT_GRID));
+        assert_eq!((DEFAULT_GRID - 1) % 32, 0);
+    }
+
     #[test]
     fn builtin_names_and_attribution_come_from_the_catalog() {
         for (builtin, name, source) in [

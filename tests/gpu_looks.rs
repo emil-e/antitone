@@ -11,8 +11,113 @@ use antitone::{
 };
 use glam::DVec3;
 use std::sync::atomic::AtomicBool;
+
+fn decode(value: f64) -> f64 {
+    if value <= 0.155251141552511 {
+        (value - 0.0729055341958355) / 10.5402377416545
+    } else {
+        (17.52 * value - 9.72).exp2()
+    }
+}
+
+fn grid_input(index: usize, size: u32) -> DVec3 {
+    let size = size as usize;
+    DVec3::from_array(
+        [index % size, (index / size) % size, index / (size * size)].map(|coordinate| {
+            decode(DOMAIN_MIN + (domain_max() - DOMAIN_MIN) * coordinate as f64 / (size - 1) as f64)
+        }),
+    )
+}
+
 #[test]
-fn native_generation_keeps_all_selected_materials_inside_existing_reference_and_gray_gates() {
+fn default_grid_generation_keeps_reference_gray_device_and_project_admission() {
+    pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let gate = SubmissionGate::default();
+        let renderer = GpuRenderer::new_with_submissions(&device, &queue, gate.clone())
+            .await
+            .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+
+        for builtin in Builtin::ALL {
+            let asset = std::sync::Arc::new(
+                renderer
+                    .bake_builtin(
+                        &device,
+                        &queue,
+                        &gate,
+                        builtin,
+                        DEFAULT_GRID,
+                        &AtomicBool::new(false),
+                    )
+                    .unwrap(),
+            );
+            assert_eq!(asset.lut().size(), DEFAULT_GRID);
+            assert!(
+                (asset.lut().apply(DVec3::splat(0.18)).unwrap() - DVec3::splat(0.18))
+                    .abs()
+                    .max_element()
+                    < 2e-5
+            );
+            let resource = antitone::gpu::look::Lut::new(&device, asset.lut()).unwrap();
+            assert_eq!(resource.byte_len(), (DEFAULT_GRID as u64).pow(3) * 16);
+
+            let project = antitone::project::Project {
+                output: antitone::project::Output {
+                    look: Some(asset.clone()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let path = directory.path().join(format!("{}.antitone", builtin.id()));
+            project.save(&path, antitone::project::Save::New).unwrap();
+            let reopened = antitone::project::Project::load(&path).unwrap();
+            assert_eq!(reopened.output.look, Some(asset.clone()));
+
+            #[cfg(feature = "ocio-reference")]
+            {
+                let model = Model::new(builtin).unwrap();
+                let cpu = antitone::rendering::CpuRenderer::new_reference(
+                    antitone::looks::builtin::REFERENCE,
+                )
+                .unwrap();
+                let scene = asset
+                    .lut()
+                    .nodes()
+                    .iter()
+                    .map(|node| DVec3::from_array(node.map(|value| decode(value as f64))))
+                    .collect::<Vec<_>>();
+                let actual = cpu.render(&scene).unwrap();
+                let mut maximum = 0f64;
+                for (index, actual) in actual.iter().enumerate() {
+                    maximum = maximum.max(
+                        (actual.as_dvec3()
+                            - model.mapped(grid_input(index, DEFAULT_GRID)).unwrap())
+                        .abs()
+                        .max_element(),
+                    );
+                }
+                println!(
+                    "{} default {DEFAULT_GRID}³ all-node independent fixed-reference error={maximum}",
+                    builtin.id()
+                );
+                assert!(
+                    maximum <= 2e-4,
+                    "{} default reference admission failed: {maximum}",
+                    builtin.id()
+                );
+            }
+        }
+    });
+}
+
+#[test]
+fn native_generation_matches_the_frozen_65_grid_material_reference() {
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,
@@ -28,31 +133,12 @@ fn native_generation_keeps_all_selected_materials_inside_existing_reference_and_
             serde_json::from_str(include_str!("fixtures/looks/native-65.json")).unwrap();
         assert_eq!(reference["schema"], 1);
         assert_eq!(reference["size"], 65);
-        let decode = |x: f64| {
-            if x <= 0.155251141552511 {
-                (x - 0.0729055341958355) / 10.5402377416545
-            } else {
-                (17.52 * x - 9.72).exp2()
-            }
-        };
-        let input_at = |index: usize| {
-            DVec3::from_array([index % 65, (index / 65) % 65, index / (65 * 65)].map(
-                |coordinate| {
-                    decode(DOMAIN_MIN + (domain_max() - DOMAIN_MIN) * coordinate as f64 / 64.)
-                },
-            ))
-        };
+        // This independent fixture stays at its authored grid, not the application default.
+        let input_at = |index| grid_input(index, 65);
         let mut ids = Vec::new();
         for builtin in Builtin::ALL {
             let asset = renderer
-                .bake_builtin(
-                    &device,
-                    &queue,
-                    &gate,
-                    builtin,
-                    DEFAULT_GRID,
-                    &AtomicBool::new(false),
-                )
+                .bake_builtin(&device, &queue, &gate, builtin, 65, &AtomicBool::new(false))
                 .unwrap();
             assert_eq!(asset.lut().size(), 65);
             assert_eq!(asset.lut().nodes().len(), 65usize.pow(3));

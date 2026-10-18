@@ -1,5 +1,5 @@
 use super::*;
-use crate::looks::builtin::Builtin;
+use crate::looks::builtin::{Builtin, DEFAULT_GRID};
 fn paint_until(harness: &mut Harness<'_, Editor>, done: impl Fn(&Editor) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(45);
     loop {
@@ -180,7 +180,7 @@ fn rendering_widgets_share_builtin_looks_with_views_scopes_and_other_photos_with
                 .as_deref(),
             Some(builtin.name())
         );
-        assert_eq!(asset.lut().size(), 65);
+        assert_eq!(asset.lut().size(), DEFAULT_GRID);
         if builtin == Builtin::Kodak2383 {
             let project = harness.state().document.project.clone();
             let time = harness.ctx.input(|input| input.time);

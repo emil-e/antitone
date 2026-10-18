@@ -226,6 +226,23 @@ fn successful_resolution_is_reused_without_requiring_a_prepared_generator() {
         let renderer_setup = start.elapsed();
         let directory = tempfile::tempdir().unwrap();
         let cache = Cache::at(directory.path().into());
+        // A valid cached asset at another grid must not satisfy the requested bake spec.
+        let other_grid = if DEFAULT_GRID == 65 { 97 } else { 65 };
+        let other = LookAsset::new(
+            Builtin::Kodak2383.name().into(),
+            Builtin::Kodak2383.origin(),
+            Arc::new(
+                Lut3D::new(
+                    other_grid,
+                    [crate::looks::builtin::DOMAIN_MIN as f32; 3],
+                    [crate::looks::builtin::domain_max() as f32; 3],
+                    vec![[0.4; 3]; (other_grid as usize).pow(3)],
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+        cache.store(Builtin::Kodak2383, &other).unwrap();
         let cancel = AtomicBool::new(false);
         let start = Instant::now();
         let first = resolve(
@@ -274,10 +291,15 @@ fn successful_resolution_is_reused_without_requiring_a_prepared_generator() {
         assert_eq!(restored, loaded);
         assert!(Arc::ptr_eq(restored.lut(), loaded.lut()));
         assert!(!fresh.is_initialized(), "loaded assets need no generator");
+        assert_eq!(first.lut().size(), DEFAULT_GRID);
         assert_eq!(first, second);
-        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+        assert_eq!(
+            cache.load(Builtin::Kodak2383, other_grid).unwrap(),
+            Some(other)
+        );
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
         println!(
-            "look resolver Kodak2383/65³ renderer-setup={renderer_setup:?} cold-generate+validate+persist={cold:?} warm-load+validate={warm:?}; excludes presentation/upload"
+            "look resolver Kodak2383/{DEFAULT_GRID}³ renderer-setup={renderer_setup:?} cold-generate+validate+persist={cold:?} warm-load+validate={warm:?}; excludes presentation/upload"
         );
     });
 }

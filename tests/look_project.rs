@@ -50,6 +50,37 @@ fn old_projects_default_to_no_look_and_embedded_samples_survive_save_as() {
         project.output.look
     );
 }
+
+#[test]
+fn historic_builtin_keeps_its_embedded_grid_without_a_current_generator() {
+    let legacy = Arc::new(
+        LookAsset::new(
+            "Historic built-in bake".into(),
+            LookOrigin::Builtin {
+                id: "kodak-2383".into(),
+                version: 1,
+                generator: "retired-generator".into(),
+                definition: "0".repeat(64),
+            },
+            Arc::new(Lut3D::new(65, [-0.5; 3], [1.; 3], vec![[0.4; 3]; 65usize.pow(3)]).unwrap()),
+        )
+        .unwrap(),
+    );
+    let project = Project {
+        output: antitone::project::Output {
+            look: Some(legacy.clone()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("historic.antitone");
+    project.save(&path, Save::New).unwrap();
+
+    let reopened = Project::load(&path).unwrap().output.look.unwrap();
+    assert_eq!(reopened, legacy);
+}
+
 #[test]
 fn unknown_or_corrupt_embedded_lut_contract_is_not_silently_dropped() {
     let mut project = Project::default();

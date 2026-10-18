@@ -35,7 +35,7 @@ Import explicitly declares this scene-referred contract. A `.cube` cannot prove 
 
 Selection prepares on the worker and retains the accepted asset until a current successful reply. Pending/cancelled/stale work is not a project edit. The [project embeds that accepted numeric LUT](projects.md#embed-the-accepted-look-not-a-catalog-reference), for built-ins as well as imports. Saved appearance does not depend on the original path, catalog, derived cache or old generator. Export captures the accepted asset, not a later UI selection.
 
-The four selected/accepted [independent models](../assets/looks/README.md) currently generate 65³ float32 LUTs provisionally. Model derivation, pinned fixed-reference generation and independent numerical checks belong to that guide. These are creative looks, not calibrated physical printing/projection. Content acceptance, approximation quality, cross-device behavior and release clearance remain separate questions.
+The four selected/accepted [independent models](../assets/looks/README.md) generate 129³ float32 LUTs for new built-in resolutions; existing embedded assets and imports retain their own dimensions. Model derivation, pinned fixed-reference generation and independent numerical checks belong to that guide. These are creative looks, not calibrated physical printing/projection. Content acceptance, approximation quality, cross-device behavior and release clearance remain separate questions.
 
 ## Source inspection has its own exposure convention
 
