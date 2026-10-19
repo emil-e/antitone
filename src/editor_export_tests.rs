@@ -72,6 +72,92 @@ fn tiff_pixels(path: &std::path::Path) -> Vec<u16> {
 }
 
 #[test]
+#[ignore = "supplied read-only M9; set ANTITONE_M9_SAMPLE, full decode with bounded exports"]
+fn supplied_m9_editor_import_save_open_and_bounded_exports() {
+    let path =
+        PathBuf::from(std::env::var_os("ANTITONE_M9_SAMPLE").expect("set ANTITONE_M9_SAMPLE"));
+    pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let mut editor = Editor::new(&device, &queue, None);
+        editor.thumbnails = Thumbnails::default();
+        editor.add_raws(vec![path]);
+        wait(&mut editor);
+        assert!(editor.ready.is_some(), "{}", editor.status);
+        assert_eq!(
+            editor
+                .document
+                .project
+                .development
+                .as_ref()
+                .unwrap()
+                .contract,
+            crate::project::DNG_DEVELOPMENT_CONTRACT
+        );
+        assert!(
+            editor.document.project.sources[0]
+                .development
+                .dng_development
+                .is_some()
+        );
+        editor.dmin = Some(DVec3::splat(0.75));
+        editor.dmax = Some(DVec3::splat(0.01));
+        editor.roll = RollSettings::new_grade();
+        // Exercise the real full-resolution source while keeping generated files tiny.
+        // These declared anchors are plumbing inputs, not a grade of this camera photograph.
+        editor.crop = Some(crate::crop::Crop {
+            center: [1024., 1024.],
+            size: [32, 32],
+            angle: 0.,
+        });
+        editor.sync_document();
+        let directory = tempfile::tempdir().unwrap();
+        let project_path = directory.path().join("m9.antitone");
+        let saved = editor
+            .document
+            .save(&project_path, crate::project::Save::New)
+            .unwrap();
+        editor.start_document(DocumentWork::Open(project_path));
+        wait(&mut editor);
+        assert!(
+            editor.ready.is_some() && editor.failure.is_none(),
+            "{}",
+            editor.status
+        );
+        assert_eq!(editor.document.project, saved.project);
+        for (name, format) in [
+            ("m9.tif", OutputFormat::Tiff(OutputTarget::Srgb)),
+            ("m9.exr", OutputFormat::Exr(ExrPrecision::Full)),
+        ] {
+            let output = directory.path().join(name);
+            editor.export(output.clone(), format, Overwrite::Refuse);
+            wait(&mut editor);
+            assert!(editor.failure.is_none(), "{}", editor.status);
+            match format {
+                OutputFormat::Tiff(_) => {
+                    let mut decoder = Decoder::new(std::fs::File::open(output).unwrap()).unwrap();
+                    assert_eq!(decoder.dimensions().unwrap(), (32, 32));
+                    let DecodingResult::U16(values) = decoder.read_image().unwrap() else {
+                        panic!("expected RGB16")
+                    };
+                    assert_eq!(values.len(), 32 * 32 * 3);
+                }
+                OutputFormat::Exr(_) => {
+                    let image = exr::prelude::read_first_flat_layer_from_file(output).unwrap();
+                    assert_eq!((image.layer_data.size.0, image.layer_data.size.1), (32, 32));
+                    assert_eq!(image.layer_data.channel_data.list.len(), 3);
+                    assert!(image.attributes.chromaticities.is_some());
+                }
+            }
+        }
+    });
+}
+
+#[test]
 fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_without_ocio() {
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {

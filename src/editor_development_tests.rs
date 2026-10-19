@@ -3,13 +3,13 @@ use crate::raw::fixture;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 
 fn request(path: &std::path::Path, store: Arc<SourceStore>) -> Request {
-    let (expected, _) = document::open_source(path).unwrap();
+    let (expected, _) = document::open_source(path, Some([1.; 4])).unwrap();
     let file = thumbnails::FileKey::new(path);
     let key = SourceKey::from_revision(
         path,
         file.clone(),
         &expected.development,
-        &Development::new(crate::raw::version(), [1.; 4]),
+        &Development::for_source(&expected.development, [1.; 4]),
     );
     Request {
         path: path.to_owned(),
@@ -181,7 +181,10 @@ fn actual_single_worker_development_preserves_frozen_pixels_and_native_charge() 
     let b = result.camera_image().unwrap();
     for y in 0..a.height {
         for x in 0..a.width {
-            assert_eq!(a.pixel_codes(x, y).unwrap(), b.pixel_codes(x, y).unwrap());
+            assert_eq!(
+                a.pixel_samples(x, y).unwrap(),
+                b.pixel_samples(x, y).unwrap()
+            );
         }
     }
     assert_eq!(

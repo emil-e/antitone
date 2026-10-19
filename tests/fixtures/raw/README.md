@@ -18,7 +18,7 @@ The grid has four columns and three rows of 64×64 tiles. Values below are camer
 | 1 | (1200,2400,600) | (600,1200,2400) | (3200,3200,3200), above base | (600,1000,1800) |
 | 2 | (256,256,256) | (512,512,512) | (1024,1024,1024) | (2048,2048,2048) |
 
-Tile joins use 32-pixel integer-rounded bilinear ramps; centres remain uniform. Smooth joins avoid artificial AHD undershoot from abrupt colour steps. The Dmin/Dmax test rectangles are (16,16,32,32) and (80,16,32,32). Uniform developed values are expected from `(sensor-black)/(white-black)`, with a two-RGB16-code allowance; they are not outputs recorded from a reference run. The above-base patch and Dmax neighbourhood retain signed/HDR model-4 working values.
+Tile joins use 32-pixel integer-rounded bilinear ramps; centres remain uniform. Smooth joins avoid artificial AHD undershoot from abrupt colour steps. The 16×16 cores at (24,24) and (88,24) leave interpolation support inside the Dmin/Dmax plateaus. Framework picker tests select those cores explicitly: larger 32×32 supports at (16,16) and (80,16) reach the ramp neighbours under SDK bilinear demosaicing, even where LibRaw AHD preserves the plateau. Uniform-core values are expected from `(sensor-black)/(white-black)`, with a two-RGB16-code allowance; they are not outputs recorded from a reference run. The above-base patch and Dmax neighbourhood retain signed/HDR model-4 working values.
 
 ## Matching correction pair
 

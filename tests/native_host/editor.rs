@@ -1,7 +1,7 @@
 use super::*;
 use antitone::{
     editor::Editor,
-    project::{Development, Project, Save, Source, SourceDevelopment, SourceId},
+    project::{Project, Save, Source, SourceDevelopment, SourceId},
 };
 use std::path::{Path, PathBuf};
 
@@ -10,10 +10,7 @@ pub(super) fn fixture_project(directory: &Path) -> host::Result<PathBuf> {
     let metadata = antitone::raw::RawFile::open(&path)?.metadata;
     let area = metadata.image_area()?;
     let mut project = Project {
-        development: Some(Development::new(
-            antitone::raw::version(),
-            metadata.as_shot_wb(),
-        )),
+        development: Some(metadata.development(metadata.as_shot_wb())),
         input_floor: Some(antitone::processing::CAMERA_INPUT_FLOOR),
         dmin: Some([3000. / 4031.; 3]),
         dmax: Some([128. / 4031.; 3]),
@@ -24,11 +21,12 @@ pub(super) fn fixture_project(directory: &Path) -> host::Result<PathBuf> {
         path,
         development: SourceDevelopment {
             lens_correction: None,
+            dng_development: metadata.dng_identity(),
             dimensions: [metadata.width, metadata.height],
             active_area: [area.x, area.y, area.width, area.height],
             camera_model: metadata.camera_model(),
             camera_to_ap1: metadata.camera_to_ap1()?.to_cols_array_2d(),
-            input_floor: antitone::processing::CAMERA_INPUT_FLOOR,
+            input_floor: metadata.input_floor()?,
         },
         reference_only: false,
         photo: Default::default(),

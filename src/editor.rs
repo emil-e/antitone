@@ -198,7 +198,7 @@ impl LoadCache {
                 path,
                 file.clone(),
                 &source.development,
-                &Development::new(crate::raw::version(), wb),
+                &Development::for_source(&source.development, wb),
             )
         });
         Self {
@@ -412,7 +412,7 @@ fn prepare_source_scheduled(
         &path,
         thumbnail_file.clone(),
         &record.development,
-        &Development::new(crate::raw::version(), scan.fixed_wb),
+        &scan.source().metadata().development(scan.fixed_wb),
     );
     if let Some(cache) = cache
         && let Some(key) = &native_key
@@ -470,7 +470,7 @@ fn prepare_source_scheduled(
         floor: scan.input_floor,
         proxy,
         record,
-        development: Development::new(crate::raw::version(), scan.fixed_wb),
+        development: scan.source().metadata().development(scan.fixed_wb),
     };
     Ok((ready, scan))
 }
@@ -517,7 +517,10 @@ fn prepare_document_scheduled(
             document.fork_cache();
             document.validate_for_device(device)?;
             for id in &document.project.order {
-                let (actual, _) = document::read_source(&document.source_path(*id)?)?;
+                let (actual, _) = document::read_source(
+                    &document.source_path(*id)?,
+                    document.project.development.as_ref().map(|d| d.fixed_wb),
+                )?;
                 document::verify_source(document.project.source(*id)?, &actual)?;
             }
             (document, None)
@@ -848,7 +851,7 @@ fn backend(
                     let map = Arc::new(scan.estimate_flat_field(region)?);
                     let reference = document.register_reference(
                         record.clone(),
-                        Development::new(crate::raw::version(), scan.fixed_wb),
+                        scan.source().metadata().development(scan.fixed_wb),
                     )?;
                     let enabled = document
                         .project

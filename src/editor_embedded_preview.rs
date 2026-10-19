@@ -199,7 +199,9 @@ fn load(request: &Request, active: &impl Fn() -> bool) -> Result<Option<egui::Co
     if !active() || FileKey::new(&request.path) != request.key.file {
         return Ok(None);
     }
-    let (actual, mut raw) = document::open_source(&request.path).map_err(|e| e.to_string())?;
+    let (actual, mut raw) =
+        document::open_source(&request.path, Some(request.key.development.fixed_wb))
+            .map_err(|e| e.to_string())?;
     document::verify_source(&request.source, &actual).map_err(|e| e.to_string())?;
     let Some(thumbnail) = raw.embedded_thumbnail().map_err(|e| e.to_string())? else {
         return Ok(None);

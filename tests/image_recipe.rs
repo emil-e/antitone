@@ -20,6 +20,7 @@ fn project() -> (Project, SourceId) {
             reference_only: false,
             development: SourceDevelopment {
                 lens_correction: None,
+                dng_development: None,
                 dimensions: [900, 600],
                 active_area: [12, 12, 864, 576],
                 camera_model: "test".into(),

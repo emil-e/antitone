@@ -138,8 +138,11 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
     );
     assert_eq!(map.gain([8.5, 8.5]).unwrap(), DVec3::ONE);
     assert_eq!(scan.pixel(8, 8).unwrap(), plain.pixel(8, 8).unwrap());
-    assert_eq!(scan.effective_floor(), map.precision_floor().unwrap());
-    assert!(scan.effective_floor() > scan.input_floor);
+    assert_eq!(
+        scan.effective_floor(),
+        scan.source().input_floor() * map.bounds().1.max_element()
+    );
+    assert!(scan.effective_floor() > scan.source().input_floor());
     let invalid =
         Arc::new(FlatField::from_nodes([380, 0, 16, 16], [2, 2], vec![DVec3::ONE; 4]).unwrap());
     let before = scan.pixel(32, 32).unwrap();
@@ -156,12 +159,10 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
     {
         use antitone::{
             processing::PhotoSettings,
-            project::{
-                Development, FlatFieldSettings, Project, Save, Source, SourceDevelopment, SourceId,
-            },
+            project::{FlatFieldSettings, Project, Save, Source, SourceDevelopment, SourceId},
         };
         let mut project = Project {
-            development: Some(Development::new(antitone::raw::version(), scan.fixed_wb)),
+            development: Some(scan.source().metadata().development(scan.fixed_wb)),
             input_floor: Some(scan.input_floor),
             dmin: Some(anchors.dmin.to_array()),
             dmax: Some(anchors.dmax.to_array()),
@@ -176,11 +177,12 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
                     path: fixture(name),
                     development: SourceDevelopment {
                         lens_correction: None,
+                        dng_development: scan.source().metadata().dng_identity(),
                         dimensions: [384, 320],
                         active_area: [8, 8, 368, 304],
                         camera_model: scan.camera_model.clone(),
                         camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
-                        input_floor: scan.input_floor,
+                        input_floor: scan.source().input_floor(),
                     },
                     reference_only,
                     photo: PhotoSettings::default(),
@@ -224,7 +226,7 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
         }
         scan.set_flat_field(None).unwrap();
         assert_eq!(scan.pixel(32, 32).unwrap(), plain.pixel(32, 32).unwrap());
-        assert_eq!(scan.effective_floor(), scan.input_floor);
+        assert_eq!(scan.effective_floor(), scan.source().input_floor());
     }
     for (path, original) in originals {
         assert_eq!(fs::read(path).unwrap(), original);

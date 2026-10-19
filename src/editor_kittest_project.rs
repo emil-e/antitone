@@ -50,9 +50,9 @@ fn project_widgets_save_precision_order_wb_and_reject_open_atomically() {
         })
         .into();
     let (mut harness, _) = editor_harness_with_thumbnails(true);
-    let custom = [2., 1., 1.5, 0.75];
-    harness.state_mut().document.project.development =
-        Some(Development::new(crate::raw::version(), custom));
+    let custom = [2., 1., 1.5, 1.];
+    let raw = crate::raw::RawFile::open_with_wb(&paths[0], Some(custom)).unwrap();
+    harness.state_mut().document.project.development = Some(raw.metadata.development(custom));
     harness.state_mut().add_raws(paths.clone());
     wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
     assert!(

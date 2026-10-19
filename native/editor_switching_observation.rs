@@ -152,7 +152,7 @@ fn workload(
     for name in ["DSC04378.ARW", "DSC04393.ARW"] {
         monitor.check()?;
         let (source, raw) =
-            document::open_source(&samples.join(name)).map_err(|e| e.to_string())?;
+            document::open_source(&samples.join(name), None).map_err(|e| e.to_string())?;
         calibration::source_bound(&raw.metadata)?;
         drop(raw);
         document

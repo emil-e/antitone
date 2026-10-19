@@ -3,6 +3,8 @@ pub mod auto_crop;
 pub mod color;
 pub mod coverage;
 pub mod crop;
+#[cfg(feature = "dng-sdk")]
+pub mod dng;
 pub mod dust_repair;
 #[cfg(feature = "editor")]
 pub mod editor;

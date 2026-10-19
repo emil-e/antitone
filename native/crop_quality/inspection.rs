@@ -37,6 +37,7 @@ fn verify_development(expected: &SourceDevelopment, scan: &Scan) -> Result<()> {
     let area = scan.area;
     let actual = SourceDevelopment {
         lens_correction: scan.source().metadata().lens_identity()?,
+        dng_development: scan.source().metadata().dng_identity(),
         dimensions: [width, height],
         active_area: [area.x, area.y, area.width, area.height],
         camera_model: scan.camera_model.clone(),

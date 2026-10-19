@@ -359,6 +359,10 @@ extern "C" int antitone_raw_thumbnail(void *handle, AntitoneRawThumbnail *out, c
     return -1;
 }
 
+extern "C" int antitone_raw_is_dng(const void *handle) {
+    return static_cast<const LibRaw *>(handle)->imgdata.idata.dng_version != 0;
+}
+
 extern "C" int antitone_raw_unpack(void *handle, int threads, char *error, size_t size) {
     if (check_threads(threads, error, size))
         return -1;

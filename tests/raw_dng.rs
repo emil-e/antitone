@@ -43,10 +43,10 @@ fn expected_diagnostics() -> SensorDiagnostics {
 }
 
 #[test]
-fn authored_dng_metadata_sensor_values_and_complete_rgb16_survive_development() {
+fn authored_dng_libraw_metadata_sensor_values_and_complete_rgb16_survive_development() {
     let path = fixture();
     let original = fs::read(&path).unwrap();
-    let mut raw = RawFile::open(&path).unwrap();
+    let mut raw = RawFile::open_uncorrected(&path).unwrap();
     let metadata = raw.metadata;
     assert_eq!(metadata.make(), "Antitone");
     assert_eq!(metadata.model(), "Authored Bayer patches");
@@ -101,7 +101,7 @@ fn authored_dng_metadata_sensor_values_and_complete_rgb16_survive_development() 
         );
     }
     // Reopen with the background policy rather than reusing the cached camera image.
-    let mut background = RawFile::open(&path).unwrap();
+    let mut background = RawFile::open_uncorrected(&path).unwrap();
     background.set_development_priority(DevelopmentPriority::Background);
     let repeated = background.develop_camera(WB).unwrap();
     for y in 0..192 {
@@ -141,7 +141,11 @@ fn authored_dng_automatic_wb_matches_explicit_development_without_changing_metad
         automatic.preview_source(1024).unwrap(),
         explicit.preview_source(1024).unwrap()
     );
-    let custom = [2., 1., 1.5, 0.75];
+    let custom = if raw.metadata.dng_identity().is_some() {
+        [2., 1., 1.5, 1.]
+    } else {
+        [2., 1., 1.5, 0.75]
+    };
     let custom_scan = Scan::open(&path, Some(custom)).unwrap();
     assert_eq!(custom_scan.fixed_wb, custom);
     let mut direct = RawFile::open(&path).unwrap();
@@ -156,14 +160,18 @@ fn authored_dng_automatic_wb_matches_explicit_development_without_changing_metad
             automatic.pixel(x, y).unwrap()
         );
     }
-    let before = raw.develop_camera(WB).unwrap().pixel_codes(32, 32).unwrap();
+    let before = raw
+        .develop_camera(WB)
+        .unwrap()
+        .pixel_samples(32, 32)
+        .unwrap();
     for channel in 0..4 {
         for value in [0., -1., f64::NAN, f64::INFINITY, f64::MAX] {
             let mut invalid = WB;
             invalid[channel] = value;
             assert!(raw.develop_camera(invalid).is_err());
             assert_eq!(
-                raw.camera_image().unwrap().pixel_codes(32, 32).unwrap(),
+                raw.camera_image().unwrap().pixel_samples(32, 32).unwrap(),
                 before
             );
         }
@@ -272,7 +280,7 @@ fn authored_raw_keeps_the_measured_anchor_flooring_and_libraw_matrix_gates() {
                 <= 2e-12
         );
     }
-    let mut raw = RawFile::open(&fixture()).unwrap();
+    let mut raw = RawFile::open_uncorrected(&fixture()).unwrap();
     let matrix = raw.metadata.camera_to_srgb();
     let area = raw.metadata.image_area().unwrap();
     let image = raw.develop_camera(WB).unwrap();
@@ -339,12 +347,10 @@ fn authored_raw_rejects_sensor_white_and_black_references_without_mutating_sourc
         fs::write(&path, &bytes).unwrap();
         let mut scan = Scan::open(&path, None).unwrap();
         let before = scan.preview_source(60).unwrap();
+        let capture = scan.source().capture_eligibility(patch).unwrap();
         assert_eq!(
-            scan.source().capture_eligibility(patch).unwrap(),
-            antitone::raw::CaptureFlags {
-                at_white: code == 4095,
-                below_black: code == 64,
-            }
+            (capture.at_white, capture.below_black),
+            (code == 4095, code == 64)
         );
         assert!(matches!(
             scan.reference(patch),

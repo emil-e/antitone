@@ -1,6 +1,6 @@
 # Embedded lens correction at RAW development
 
-Status: automatic Sony shading and distortion/lateral-CA correction are implemented at the RAW boundary. [Processing](../processing.md#embedded-sony-lens-correction), [flat-field](../flat-field.md), [source storage rationale](../decisions/rgb16-gpu-source.md) and [projects](../projects.md#compatibility-is-about-the-processing-basis) own the current choices. DNG SDK evaluation and broader photographic/resource acceptance remain unfinished. [The roadmap](../../PLAN.md) owns priority.
+Status: automatic Sony shading and distortion/lateral-CA correction are implemented at the RAW boundary. [Processing](../processing.md#embedded-sony-lens-correction), [flat-field](../flat-field.md), [source storage rationale](../decisions/rgb16-gpu-source.md) and [projects](../projects.md#compatibility-is-about-the-processing-basis) own the current choices. The bounded [DNG SDK evaluation and opt-in native prototype](../research/dng-sdk.md) are complete; application DNG integration and broader photographic/resource acceptance remain unfinished. [The roadmap](../../PLAN.md) owns priority.
 
 ## Direction and support
 
@@ -12,7 +12,7 @@ RAW conversion supplies one immutable linear camera-RGB raster after supported e
 | Sony absent/unavailable/all-zero coefficients | Native integer development and coordinates retained |
 | Malformed available Sony profile | Reject development; metadata diagnostics can still inspect it |
 | Converted DNG carrying Sony coefficients | Ignore inherited Sony profile |
-| DNG opcode correction | Not implemented or claimed compliant |
+| DNG opcode correction | Direct SDK backend in shared editor sources; bounded gain/repair/warp admission and supplied M9/Q2/GR III/IIIx checks, separate photographic/resource/release acceptance |
 | Sony embedded vignetting/shading | Source-site gain before geometric reconstruction; measured flat field corrects residual illumination |
 
 The supplied profile-bearing set is one camera/lens combination: Sony ILCE-1M2 / FE 24–70mm F2.8 GM II. Metadata checks cover 112 captures spanning 24–70 mm and f/2.8–f/8; distortion is marked Off, not unavailable, and CA Auto. The inspected adapted-lens scans report unavailable distortion/CA and identity shading. Authored TIFFs exercise parser isolation, byte order, channels, geometry, reconstruction, capture clipping, precision, persistence and export without private-image dependencies. This is not universal Sony or photographic acceptance.
@@ -30,17 +30,17 @@ The current Sony baseline uses active-image geometry, positive bilinear reconstr
 
 Saved calibration, crops, local masks, donors and sampling evidence must not silently move onto another development. The implemented contract explicitly rejects older developments; it is not a migration or a retained legacy path. Any recovery/migration workflow needs a separate decision.
 
-## Evaluate Adobe's DNG SDK
+## DNG backend follow-up
 
-Sony ARW discovery uses a bounded LibRaw tag callback; Adobe's DNG SDK does not replace the Sony decoder. DNG is a separate slice. Evaluate the SDK before choosing a custom opcode engine.
+Sony ARW discovery retains the bounded LibRaw callback; Adobe's SDK is a separate DNG backend. The [current support/basis and supplied-camera evidence](../research/dng-sdk.md#maintained-direct-sdk-adapter) describe shared immutable ownership, conservative original capture flags, source precision and explicit saved compatibility. M9/Q2 and Ricoh GR III/IIIx decode and cold-roundtrip through shared projects; authored editor/export checks are separate from photographic acceptance.
 
-Pinned LibRaw 0.22 retains opcode bytes and has optional SDK integration calling `BuildStage2Image` / `BuildStage3Image`, including float RGB handoff paths. That is a credible reusable route, not proof the present integer-Bayer bridge can consume corrected SDK camera RGB. Determine whether direct SDK integration or LibRaw+SDK exposes the required pre-render basis most cleanly.
+Remaining acceptance:
 
-1. Establish the selected SDK release's licensing/build requirements and instruction semantics, including required shading instructions. Missing or unsupported required instructions cannot be ignored while claiming compliant development.
-2. Use small authored DNGs for identity/common/per-channel warps, off-centre/tangential geometry, active/default crops, orientation and a required pre-demosaic gain instruction. Test required/optional failures and sequence semantics instead of assuming all operations can be fused.
-3. Establish actual colour basis, WB placement, normalization/range, precision, dimensions and original-CFA access at each stage. Do not demosaic or execute an instruction twice. The present bounded nonnegative Sony shading/reconstruction domain does not settle SDK overshoot or signed-camera handling; clipping or a hidden pedestal is not a substitute for deciding those domains.
-4. Retain original capture authority for eligibility under corrected footprints. If the chosen stage cannot provide it, resolve the limitation explicitly. Check SDK-created threading and cancellation/publication boundaries as well as LibRaw OpenMP.
-5. Choose a precise support table and carry the result through immutable ownership, flat references, source/recipe identities, proxies, thumbnails, measurements, GPU inversion, repairs and TIFF/AP0 EXR. Preserve DNG stage order and saved interpretation.
+1. Assess actual negative scans and vendor/reference correspondence for the chosen post-opcode WB, bilinear demosaicing, bad-pixel repair and cubic warp. Successful camera-photo decode does not establish negative-inversion or lens-edge quality.
+2. Exercise real default crops/orientations, physical frame validity, measured residual references and complete interactive pick/Analyze/repair/export workflows. Maintain original capture authority; neither cropped RGB thresholds nor numerical agreement alone establish photographic eligibility.
+3. Extend initial full-resolution timings/peak-RSS observations to real-camera interruption latency, in-flight overlap, mixed-roll aggregate memory pressure and broader hardware/firmware. Current cache charges do not bound SDK scratch or a running native call.
+4. Resolve production dependency selection, reproducible clean-machine builds and SDK/bundled-library release terms/notices. Local validator-derived builds are not a reviewed distribution.
+5. Expand sensor/opcode support only for concrete unsupported inputs, with matching authored range/capture coverage and explicit saved interpretation. Signed/linear/non-Bayer sources, nonuniform black/linearization and broader instructions remain separate work rather than hidden adaptation or fallback.
 
 Use the normal [native setup/build workflow](../../README.md#build-and-run), including [existing dependency reuse](../native-development.md#reusing-native-builds). Disposable evaluation builds belong under `.cache/`; do not acquire or install a new SDK implicitly. A complete custom instruction engine is separate scope, not the automatic fallback. Lensfun/LCP management, manual calibration, other vendor parsers, a custom demosaicer, general positive-image import and universal DNG support are not part of this slice.
 
@@ -52,7 +52,7 @@ A finished DNG slice needs a documented backend/support table, single execution 
 
 ## Next action
 
-Continue the remaining photographic/reference and resource acceptance against the Sony baseline. For the next correction backend, evaluate actual pre-render DNG SDK output and original capture access before choosing shared abstractions; another broad library survey is not the next useful DNG evidence.
+Continue the remaining photographic/reference and resource acceptance against the Sony baseline. For DNG, assess actual negative scans in the shared editor workflow and compare photographic/edge behaviour against independent references before broadening the [bounded SDK backend](../research/dng-sdk.md#maintained-direct-sdk-adapter).
 
 ## Sources
 

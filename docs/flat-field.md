@@ -30,6 +30,8 @@ The retained camera source is unchanged by illumination gains. Measurements, ana
 
 For Sony lens-corrected sources, both reference and scans receive the same embedded shading and geometric development first. The measured map then estimates residual setup illumination, rather than applying the embedded correction a second time. This preserves the reference workflow while making embedded shading useful without a flat reference. Accepted maps require identical lens-development identity as well as dimensions, camera basis and WB; different per-capture lens maps reject even if their output dimensions match. This baseline estimates a smooth illumination ratio in corrected space. It is not mathematically identical to multiplying gains before reconstruction, and software compatibility cannot establish physical reference suitability. A prewarp illumination hook is separate possible follow-up work.
 
+DNG references likewise retain SDK opcode development before residual illumination correction. Matching geometry, WB and precision alone is insufficient: the source's DNG metadata/opcode interpretation must match the accepted reference exactly. Neither reference preparation nor later processing executes those opcodes a second time.
+
 ## Correction also changes the precision bound
 
 Amplifying a camera channel amplifies its quantization step. Antitone therefore derives a conservative effective input floor from the largest map gain, including the identity region.

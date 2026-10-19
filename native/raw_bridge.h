@@ -43,6 +43,7 @@ void *antitone_raw_open(const char *path, AntitoneRawMetadata *metadata, char *e
                         size_t error_size);
 int antitone_raw_thumbnail(void *handle, AntitoneRawThumbnail *thumbnail, char *error,
                            size_t error_size);
+int antitone_raw_is_dng(const void *handle);
 int antitone_raw_unpack(void *handle, int threads, char *error, size_t error_size);
 // Read already-unpacked capture data only; output buffers belong to the caller.
 int antitone_raw_sensor_diagnostics(const void *handle, AntitoneRawDiagnostics *diagnostics,

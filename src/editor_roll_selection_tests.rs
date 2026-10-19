@@ -11,6 +11,7 @@ fn fixture(index: usize) -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Comma
                     path: format!("photo-{index}.ARW").into(),
                     development: crate::project::SourceDevelopment {
                         lens_correction: None,
+                        dng_development: None,
                         dimensions: [900, 600],
                         active_area: [0, 0, 900, 600],
                         camera_model: "test-camera".into(),

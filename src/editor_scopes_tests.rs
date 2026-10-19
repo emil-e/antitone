@@ -510,6 +510,7 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
                 path,
                 development: crate::project::SourceDevelopment {
                     lens_correction: None,
+                    dng_development: None,
                     dimensions: [7040, 3072],
                     active_area: [12, 34, 7000, 3000],
                     camera_model: "test-camera".into(),

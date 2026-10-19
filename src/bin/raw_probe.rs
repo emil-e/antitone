@@ -1,4 +1,4 @@
-//! Read-only LibRaw diagnostic for supplied RAWs; metadata-only mode skips development.
+//! Read-only RAW diagnostic; metadata-only mode uses the explicit LibRaw baseline.
 //! Full mode gates flooring rates, sampled repeatability and eligible in-sRGB matrix comparisons.
 //! Zero eligible comparisons does not fail; inspect the reported comparison count.
 //! Optional `.cache/probes` PPMs are clipped unmanaged views, not grades or photographic acceptance.
@@ -192,76 +192,85 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for &(x, y, _, camera) in &points {
             repeat_error = repeat_error.max((repeated.pixel(x, y)? - camera).abs().max_element());
         }
-        // Channel-dependent CA cannot be applied to an already mixed/clipped sRGB reference.
-        // Check LibRaw's camera matrix on the native raster independently of the corrected grid.
-        let mut reference_raw = if metadata.lens_identity()?.is_some() {
-            drop(raw);
-            RawFile::open_uncorrected(&path)?
-        } else {
-            raw
-        };
-        let matrix_points = if metadata.lens_identity()?.is_some() {
-            let native_area = reference_raw.metadata.image_area()?;
-            let native = reference_raw.develop_camera(wb)?;
-            if diagnostic_ppm {
-                save_diagnostic_ppm(
-                    &path,
-                    &native,
-                    native_area,
-                    metadata.camera_to_srgb(),
-                    "native",
-                    ppm_gain,
-                )?;
+        if metadata.dng_identity().is_some() {
+            println!(
+                "repeat_camera_max_error={repeat_error:.12e} SDK_basis=true LibRaw_srgb_reference=not_applicable"
+            );
+            if repeat_error != 0.0 {
+                return Err("SDK camera repeatability gate failed".into());
             }
-            let mut squared = DVec3::ZERO;
-            let mut largest = DVec3::ZERO;
-            let trim = [
-                (native_area.width - area.width) / 2,
-                (native_area.height - area.height) / 2,
-            ];
-            for &(x, y, _, corrected) in &points {
-                let delta = (native
-                    .pixel(native_area.x + trim[0] + x, native_area.y + trim[1] + y)?
-                    - corrected)
-                    * 65535.;
-                squared += delta * delta;
-                largest = largest.max(delta.abs());
+        } else {
+            // Channel-dependent CA cannot be applied to an already mixed/clipped sRGB reference.
+            // Check LibRaw's camera matrix on the native raster independently of the corrected grid.
+            let mut reference_raw = if metadata.lens_identity()?.is_some() {
+                drop(raw);
+                RawFile::open_uncorrected(&path)?
+            } else {
+                raw
+            };
+            let matrix_points = if metadata.lens_identity()?.is_some() {
+                let native_area = reference_raw.metadata.image_area()?;
+                let native = reference_raw.develop_camera(wb)?;
+                if diagnostic_ppm {
+                    save_diagnostic_ppm(
+                        &path,
+                        &native,
+                        native_area,
+                        metadata.camera_to_srgb(),
+                        "native",
+                        ppm_gain,
+                    )?;
+                }
+                let mut squared = DVec3::ZERO;
+                let mut largest = DVec3::ZERO;
+                let trim = [
+                    (native_area.width - area.width) / 2,
+                    (native_area.height - area.height) / 2,
+                ];
+                for &(x, y, _, corrected) in &points {
+                    let delta = (native
+                        .pixel(native_area.x + trim[0] + x, native_area.y + trim[1] + y)?
+                        - corrected)
+                        * 65535.;
+                    squared += delta * delta;
+                    largest = largest.max(delta.abs());
+                }
+                println!(
+                    "lens_vs_native_unwarped_code_rms={:?} max={largest:?} (effect size, not a quality oracle)",
+                    (squared / points.len() as f64).sqrt()
+                );
+                let mut native_points = Vec::new();
+                for y in (native_area.y..native_area.y + native_area.height).step_by(32) {
+                    for x in (native_area.x..native_area.x + native_area.width).step_by(32) {
+                        native_points.push((x, y, metadata.camera_to_srgb() * native.pixel(x, y)?));
+                    }
+                }
+                native_points
+            } else {
+                points
+                    .iter()
+                    .map(|&(x, y, expected, _)| (x, y, expected))
+                    .collect()
+            };
+            let reference = reference_raw.develop_srgb_reference(wb)?;
+            let mut matrix_error = 0.0_f64;
+            let mut compared = 0usize;
+            let mut outside_srgb = 0usize;
+            for &(x, y, expected) in &matrix_points {
+                if expected.min_element() < 0.0 || expected.max_element() > 1.0 {
+                    outside_srgb += 1;
+                    continue;
+                }
+                matrix_error =
+                    matrix_error.max((reference.pixel(x, y)? - expected).abs().max_element());
+                compared += 1;
             }
             println!(
-                "lens_vs_native_unwarped_code_rms={:?} max={largest:?} (effect size, not a quality oracle)",
-                (squared / points.len() as f64).sqrt()
+                "repeat_camera_max_error={repeat_error:.12e} compared_grid={compared} outside_srgb_grid={outside_srgb} LibRaw_srgb_matrix_max_error={matrix_error:.12e}"
             );
-            let mut native_points = Vec::new();
-            for y in (native_area.y..native_area.y + native_area.height).step_by(32) {
-                for x in (native_area.x..native_area.x + native_area.width).step_by(32) {
-                    native_points.push((x, y, metadata.camera_to_srgb() * native.pixel(x, y)?));
-                }
+            if repeat_error != 0.0 || matrix_error > 2.0 / 65535.0 {
+                return Err("RAW repeatability or camera-matrix reference gate failed".into());
             }
-            native_points
-        } else {
-            points
-                .iter()
-                .map(|&(x, y, expected, _)| (x, y, expected))
-                .collect()
-        };
-        let reference = reference_raw.develop_srgb_reference(wb)?;
-        let mut matrix_error = 0.0_f64;
-        let mut compared = 0usize;
-        let mut outside_srgb = 0usize;
-        for &(x, y, expected) in &matrix_points {
-            if expected.min_element() < 0.0 || expected.max_element() > 1.0 {
-                outside_srgb += 1;
-                continue;
-            }
-            matrix_error =
-                matrix_error.max((reference.pixel(x, y)? - expected).abs().max_element());
-            compared += 1;
-        }
-        println!(
-            "repeat_camera_max_error={repeat_error:.12e} compared_grid={compared} outside_srgb_grid={outside_srgb} LibRaw_srgb_matrix_max_error={matrix_error:.12e}"
-        );
-        if repeat_error != 0.0 || matrix_error > 2.0 / 65535.0 {
-            return Err("RAW repeatability or camera-matrix reference gate failed".into());
         }
         let center_scan: Vec<_> = points
             .iter()

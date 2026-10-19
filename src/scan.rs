@@ -76,10 +76,12 @@ pub struct DevelopedSource {
 impl DevelopedSource {
     fn from_raw(mut raw: RawFile, fixed_wb: Option<[f64; 4]>) -> Result<Self> {
         let wb = fixed_wb.unwrap_or_else(|| raw.metadata.as_shot_wb());
+        raw.prepare_basis(wb)?;
         let matrix = raw.metadata.camera_to_ap1()?;
         let camera_model = raw.metadata.camera_model();
         let area = raw.metadata.image_area()?;
         raw.develop_camera(wb)?;
+        let wb = raw.fixed_wb(wb);
         let input_floor = raw.metadata.input_floor()?;
         Ok(Self {
             raw: raw.freeze()?,
@@ -197,7 +199,7 @@ impl Scan {
         fixed_wb: Option<[f64; 4]>,
         priority: crate::raw::DevelopmentPriority,
     ) -> Result<Self> {
-        let mut raw = RawFile::open(path)?;
+        let mut raw = RawFile::open_with_wb(path, fixed_wb)?;
         raw.set_development_priority(priority);
         Self::from_raw(raw, fixed_wb)
     }
@@ -396,6 +398,11 @@ impl Scan {
                 "patch contains sensor values at/below black",
             ));
         }
+        if diagnostics.repeated_border || diagnostics.processing_limit {
+            return Err(Error::UnusableSample(
+                "patch depends on repeated borders or intermediate development clipping",
+            ));
+        }
         Ok(diagnostics)
     }
 
@@ -460,7 +467,7 @@ impl Scan {
                 }
                 result.attempted += 1;
                 let diagnostic = self.source.capture_eligibility(footprint)?;
-                if diagnostic.at_white || diagnostic.below_black {
+                if !diagnostic.eligible() {
                     result.rejected_capture += 1;
                     continue;
                 }

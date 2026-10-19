@@ -189,6 +189,7 @@ mod tests {
             },
             source: SourceDevelopment {
                 lens_correction: Some("00".repeat(32)),
+                dng_development: None,
                 dimensions: [2, 1],
                 active_area: [0, 0, 2, 1],
                 camera_model: "test".into(),

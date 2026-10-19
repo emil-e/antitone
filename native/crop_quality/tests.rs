@@ -17,6 +17,7 @@ fn fixture(directory: &Path) -> PathBuf {
             reference_only: false,
             development: SourceDevelopment {
                 lens_correction: None,
+                dng_development: None,
                 dimensions: [256, 160],
                 active_area: [12, 20, 200, 120],
                 camera_model: "authored".into(),

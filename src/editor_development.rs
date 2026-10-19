@@ -263,7 +263,7 @@ impl Scheduler {
 
     fn start_native(#[cfg(test)] observe: NativeObserver) -> Self {
         Self::start(move |shared| {
-            // Paused unpacked handles remain worker-local across queue arbitration.
+            // LibRaw decoded handles and SDK inspected headers remain worker-local across arbitration.
             let mut unpacked: HashMap<u64, (Source, crate::raw::RawFile)> = HashMap::new();
 
             run(shared, |task| {
@@ -307,7 +307,8 @@ impl Scheduler {
                     #[cfg(test)]
                     observe(&task.request.path, NativePhase::Open, None)?;
                     let (record, mut raw) =
-                        document::open_source(&task.request.path).map_err(|e| e.to_string())?;
+                        document::open_source(&task.request.path, task.request.wb)
+                            .map_err(|e| e.to_string())?;
                     if let Some(basis) = &task.request.basis {
                         basis
                             .require_source(&record.development)
@@ -528,7 +529,7 @@ fn run(
                             &task.request.path,
                             task.request.file.clone(),
                             &record.development,
-                            &Development::new(crate::raw::version(), source.fixed_wb()),
+                            &source.metadata().development(source.fixed_wb()),
                         ) && let Some(canonical) = store
                             .publish_source(key, source.clone())
                             .map_err(|e| e.to_string())?

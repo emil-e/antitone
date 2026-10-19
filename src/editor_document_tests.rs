@@ -100,6 +100,7 @@ fn fixture(directory: &Path) -> Document {
                     path,
                     development: SourceDevelopment {
                         lens_correction: None,
+                        dng_development: None,
                         dimensions: [900, 600],
                         active_area: [0, 0, 900, 600],
                         camera_model: "test-camera".into(),
@@ -130,8 +131,14 @@ fn authored_dng_import_selects_as_shot_wb_and_open_preserves_saved_gains() {
         document.project.development.as_ref().unwrap().fixed_wb,
         [1.; 4]
     );
-    let custom = [2., 1., 1.5, 0.75];
+    let custom = [2., 1., 1.5, 1.];
     document.project.development.as_mut().unwrap().fixed_wb = custom;
+    // A saved SDK WB has a matching matrix/precision/program identity. Construct
+    // that accepted basis rather than silently reinterpreting an older source record.
+    let raw = RawFile::open_with_wb(&raw_path, Some(custom)).unwrap();
+    let actual = source_metadata(&raw_path, &raw.metadata).unwrap();
+    document.project.camera_basis = Some(actual.development.camera_basis());
+    document.project.sources[0].development = actual.development;
     let directory = tempfile::tempdir().unwrap();
     let project_path = directory.path().join("grade.antitone");
     let saved = document.save(&project_path, Save::New).unwrap();

@@ -32,7 +32,7 @@ const SRGB_TO_XYZ: DMat3 = DMat3::from_cols(
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct Metadata {
+pub struct NativeMetadata {
     make: [c_char; 64],
     model: [c_char; 64],
     decoder: [c_char; 128],
@@ -62,7 +62,57 @@ pub struct Metadata {
     lens_disabled: u32,
 }
 
+/// Shared source descriptor. LibRaw supplies the header/container fields; SDK DNG
+/// development supplies its own geometry, camera basis, precision and interpretation.
+#[derive(Debug, Clone, Copy)]
+pub struct Metadata {
+    native: NativeMetadata,
+    #[cfg(feature = "dng-sdk")]
+    sdk: Option<crate::dng::Header>,
+}
+
+impl std::ops::Deref for Metadata {
+    type Target = NativeMetadata;
+    fn deref(&self) -> &Self::Target {
+        &self.native
+    }
+}
+impl std::ops::DerefMut for Metadata {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.native
+    }
+}
+
 impl Metadata {
+    fn from_native(native: NativeMetadata) -> Self {
+        Self {
+            native,
+            #[cfg(feature = "dng-sdk")]
+            sdk: None,
+        }
+    }
+
+    pub fn dng_identity(&self) -> Option<String> {
+        #[cfg(feature = "dng-sdk")]
+        if let Some(header) = self.sdk {
+            return Some(
+                blake3::Hash::from_bytes(header.interpretation_id)
+                    .to_hex()
+                    .to_string(),
+            );
+        }
+        None
+    }
+
+    #[cfg(feature = "project")]
+    pub fn development(&self, wb: [f64; 4]) -> crate::project::Development {
+        #[cfg(feature = "dng-sdk")]
+        if self.sdk.is_some() {
+            return crate::project::Development::dng(wb);
+        }
+        crate::project::Development::new(version(), wb)
+    }
+
     pub fn make(&self) -> String {
         ffi_string(&self.make)
     }
@@ -72,10 +122,23 @@ impl Metadata {
     }
 
     pub fn decoder(&self) -> String {
+        #[cfg(feature = "dng-sdk")]
+        if self.sdk.is_some() {
+            return crate::dng::INTERPRETATION.into();
+        }
         ffi_string(&self.decoder)
     }
 
     pub fn camera_to_srgb(&self) -> DMat3 {
+        #[cfg(feature = "dng-sdk")]
+        if let Some(header) = self.sdk {
+            let source = DVec3::new(0.3457 / 0.3585, 1., (1. - 0.3457 - 0.3585) / 0.3585);
+            let target = DVec3::new(0.95047, 1., 1.08883);
+            let adaptation = BRADFORD.inverse()
+                * DMat3::from_diagonal((BRADFORD * target) / (BRADFORD * source))
+                * BRADFORD;
+            return SRGB_TO_XYZ.inverse() * adaptation * header.camera_to_xyz_d50;
+        }
         DMat3::from_cols_array(&self.rgb_cam)
     }
 
@@ -86,6 +149,11 @@ impl Metadata {
     /// Selects as-shot gains, sharing green with an unspecified second green on three-color sources.
     /// Raw metadata and explicitly supplied development gains remain unchanged.
     pub fn as_shot_wb(&self) -> [f64; 4] {
+        #[cfg(feature = "dng-sdk")]
+        if let Some(header) = self.sdk {
+            let [r, g, b] = header.as_shot_wb;
+            return [r, g, b, g];
+        }
         let mut wb = self.cam_mul;
         if self.colors == 3 && wb[3] == 0. {
             wb[3] = wb[1];
@@ -94,6 +162,18 @@ impl Metadata {
     }
 
     pub fn camera_to_ap1(&self) -> Result<DMat3, Error> {
+        #[cfg(feature = "dng-sdk")]
+        if let Some(header) = self.sdk {
+            // The DNG SDK PCS uses this exact D50 chromaticity.
+            let white = DVec3::new(0.3457 / 0.3585, 1., (1. - 0.3457 - 0.3585) / 0.3585);
+            let target = AP1_TO_XYZ * DVec3::ONE;
+            let adaptation = BRADFORD.inverse()
+                * DMat3::from_diagonal((BRADFORD * target) / (BRADFORD * white))
+                * BRADFORD;
+            let matrix = AP1_TO_XYZ.inverse() * adaptation * header.camera_to_xyz_d50;
+            crate::processing::validate_camera_matrix(matrix)?;
+            return Ok(matrix);
+        }
         let camera_to_srgb = self.camera_to_srgb();
         if !camera_to_srgb.is_finite() || camera_to_srgb.determinant().abs() < 1e-8 {
             return Err(Error::Raw("invalid camera-to-sRGB matrix".into()));
@@ -107,7 +187,7 @@ impl Metadata {
     }
 
     pub fn lens_geometry(&self) -> Result<Option<crate::lens::SonyLensGeometry>, Error> {
-        if self.lens_disabled != 0 {
+        if self.dng_identity().is_some() || self.lens_disabled != 0 {
             return Ok(None);
         }
         let Some(profile) = self.sony_lens.profile()? else {
@@ -119,8 +199,12 @@ impl Metadata {
         crate::lens::SonyLensGeometry::new(profile, self.native_image_area()?).map(Some)
     }
 
-    /// Native code quantum amplified conservatively by embedded shading; never a clipping limit.
+    /// Original-code precision amplified conservatively by development; never a clipping limit.
     pub fn input_floor(&self) -> Result<f64, Error> {
+        #[cfg(feature = "dng-sdk")]
+        if let Some(header) = self.sdk {
+            return Ok(header.input_floor);
+        }
         Ok(crate::processing::CAMERA_INPUT_FLOOR
             * self.lens_geometry()?.map_or(1., |g| g.maximum_gain()))
     }
@@ -198,6 +282,14 @@ pub struct CaptureFlags {
     /// Shading headroom above native white does not set this flag.
     pub at_white: bool,
     pub below_black: bool,
+    pub repeated_border: bool,
+    pub processing_limit: bool,
+}
+
+impl CaptureFlags {
+    pub fn eligible(self) -> bool {
+        !self.at_white && !self.below_black && !self.repeated_border && !self.processing_limit
+    }
 }
 
 impl From<SensorDiagnostics> for CaptureFlags {
@@ -205,6 +297,7 @@ impl From<SensorDiagnostics> for CaptureFlags {
         Self {
             at_white: value.at_white.iter().any(|&n| n != 0),
             below_black: value.below_black.iter().any(|&n| n != 0),
+            ..Self::default()
         }
     }
 }
@@ -243,7 +336,7 @@ unsafe extern "C" {
     fn antitone_raw_version() -> *const c_char;
     fn antitone_raw_open(
         path: *const c_char,
-        metadata: *mut Metadata,
+        metadata: *mut NativeMetadata,
         error: *mut c_char,
         size: usize,
     ) -> *mut c_void;
@@ -254,6 +347,8 @@ unsafe extern "C" {
         error: *mut c_char,
         size: usize,
     ) -> c_int;
+    #[cfg(feature = "dng-sdk")]
+    fn antitone_raw_is_dng(handle: *const c_void) -> c_int;
     fn antitone_raw_unpack(
         handle: *mut c_void,
         threads: c_int,
@@ -350,22 +445,34 @@ pub struct RawFile {
     camera_view: Option<NativeView>,
     correction: Option<crate::lens::SonyLensGeometry>,
     corrected: Option<lens_source::CorrectedImage>,
+    #[cfg(feature = "dng-sdk")]
+    path: std::path::PathBuf,
+    #[cfg(feature = "dng-sdk")]
+    dng_source: Option<crate::dng::Source>,
 }
 
 impl RawFile {
     pub fn open(path: &Path) -> Result<Self, Error> {
-        Self::open_mode(path, true)
+        Self::open_mode(path, true, None)
     }
 
     /// Diagnostic baseline only; ordinary source acquisition always uses automatic correction.
     pub fn open_uncorrected(path: &Path) -> Result<Self, Error> {
-        Self::open_mode(path, false)
+        Self::open_mode(path, false, None)
     }
 
-    fn open_mode(path: &Path, lens_correction: bool) -> Result<Self, Error> {
-        let path = CString::new(path.as_os_str().as_encoded_bytes())
+    pub(crate) fn open_with_wb(path: &Path, wb: Option<[f64; 4]>) -> Result<Self, Error> {
+        Self::open_mode(path, true, wb)
+    }
+
+    fn open_mode(
+        source_path: &Path,
+        lens_correction: bool,
+        fixed_wb: Option<[f64; 4]>,
+    ) -> Result<Self, Error> {
+        let path = CString::new(source_path.as_os_str().as_encoded_bytes())
             .map_err(|_| Error::Raw("source path contains NUL".into()))?;
-        let mut metadata = std::mem::MaybeUninit::<Metadata>::zeroed();
+        let mut metadata = std::mem::MaybeUninit::<NativeMetadata>::zeroed();
         let mut error = [0; 512];
         // Metadata contains only numeric fields and fixed char arrays. The bridge fills it on success.
         let handle = unsafe {
@@ -379,14 +486,30 @@ impl RawFile {
         let handle = NonNull::new(handle).ok_or_else(|| native_error("open", &error))?;
         let mut raw = Self {
             handle,
-            metadata: unsafe { metadata.assume_init() },
+            metadata: Metadata::from_native(unsafe { metadata.assume_init() }),
             unpacked: false,
             priority: DevelopmentPriority::default(),
             diagnostics: None,
             camera_view: None,
             correction: None,
             corrected: None,
+            #[cfg(feature = "dng-sdk")]
+            path: source_path.to_path_buf(),
+            #[cfg(feature = "dng-sdk")]
+            dng_source: None,
         };
+        #[cfg(feature = "dng-sdk")]
+        if lens_correction && unsafe { antitone_raw_is_dng(raw.handle.as_ptr()) } != 0 {
+            let header = crate::dng::Header::read(
+                source_path,
+                sdk_options(fixed_wb)?,
+                &crate::dng::Cancellation::default(),
+            )
+            .map_err(|e| Error::Raw(e.to_string()))?;
+            raw.set_dng_header(header);
+        }
+        #[cfg(not(feature = "dng-sdk"))]
+        let _ = fixed_wb;
         raw.metadata.lens_disabled = u32::from(!lens_correction);
         raw.correction = raw.metadata.lens_geometry()?;
         Ok(raw)
@@ -422,12 +545,84 @@ impl RawFile {
         }))
     }
 
+    #[cfg(feature = "dng-sdk")]
+    fn set_dng_header(&mut self, header: crate::dng::Header) {
+        let [width, height] = header.dimensions;
+        let [left, top] = header.active_origin;
+        let [x, y, cw, ch] = header.default_crop;
+        self.metadata.width = width;
+        self.metadata.height = height;
+        self.metadata.raw_width = header.original_dimensions[0];
+        self.metadata.raw_height = header.original_dimensions[1];
+        self.metadata.left_margin = left;
+        self.metadata.top_margin = top;
+        self.metadata.inset_left = left + x;
+        self.metadata.inset_top = top + y;
+        self.metadata.inset_width = cw;
+        self.metadata.inset_height = ch;
+        self.metadata.sdk = Some(header);
+    }
+
+    #[cfg(feature = "dng-sdk")]
+    fn ensure_dng_capture(&mut self) -> Result<(), Error> {
+        if let Some(header) = self.metadata.sdk
+            && self.dng_source.is_none()
+        {
+            let [r, g, b] = header.fixed_wb;
+            self.develop_camera([r, g, b, g])?;
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "dng-sdk")]
+    fn validate_dng_region(&self, area: Rect) -> Result<(), Error> {
+        if area.width == 0
+            || area.height == 0
+            || u64::from(area.x) + u64::from(area.width) > u64::from(self.metadata.width)
+            || u64::from(area.y) + u64::from(area.height) > u64::from(self.metadata.height)
+        {
+            return Err(Error::Raw("Invalid SDK capture rectangle".into()));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn prepare_basis(&mut self, requested: [f64; 4]) -> Result<(), Error> {
+        #[cfg(feature = "dng-sdk")]
+        if self.metadata.sdk.is_some() {
+            let header = crate::dng::Header::read(
+                &self.path,
+                sdk_options(Some(requested))?,
+                &crate::dng::Cancellation::default(),
+            )
+            .map_err(|e| Error::Raw(e.to_string()))?;
+            self.set_dng_header(header);
+        }
+        #[cfg(not(feature = "dng-sdk"))]
+        let _ = requested;
+        Ok(())
+    }
+
+    pub(crate) fn fixed_wb(&self, requested: [f64; 4]) -> [f64; 4] {
+        #[cfg(feature = "dng-sdk")]
+        if let Some(header) = self.metadata.sdk {
+            let [r, g, b] = header.fixed_wb;
+            return [r, g, b, g];
+        }
+        requested
+    }
+
     /// Changes resource scheduling only, never development settings or cached pixels.
     pub fn set_development_priority(&mut self, priority: DevelopmentPriority) {
         self.priority = priority;
     }
 
     pub(crate) fn ensure_unpacked(&mut self) -> Result<(), Error> {
+        #[cfg(feature = "dng-sdk")]
+        if self.metadata.sdk.is_some() {
+            // SDK decode/develop is one transaction in the development phase. Do not
+            // unpack through LibRaw first, or admit a fallback after an SDK failure.
+            return Ok(());
+        }
         if self.unpacked {
             return Ok(());
         }
@@ -454,12 +649,23 @@ impl RawFile {
             return Ok(diagnostics);
         }
         self.ensure_unpacked()?;
+        #[cfg(feature = "dng-sdk")]
+        self.ensure_dng_capture()?;
         let diagnostics = self.sensor_diagnostics()?;
         self.diagnostics = Some(diagnostics);
         Ok(diagnostics)
     }
 
     fn sensor_diagnostics(&self) -> Result<SensorDiagnostics, Error> {
+        #[cfg(feature = "dng-sdk")]
+        if self.metadata.sdk.is_some() {
+            return self.native_region_sensor_diagnostics(Rect::from([
+                0,
+                0,
+                self.metadata.width,
+                self.metadata.height,
+            ]));
+        }
         let mut diagnostics = SensorDiagnostics::default();
         let mut error = [0; 512];
         // No SDK calls or mutation: the bridge reads capture data into caller-owned buffers.
@@ -480,16 +686,35 @@ impl RawFile {
     /// Detailed diagnostics in original, unwarped native coordinates.
     pub fn region_sensor_diagnostics(&mut self, area: Rect) -> Result<SensorDiagnostics, Error> {
         self.ensure_unpacked()?;
+        #[cfg(feature = "dng-sdk")]
+        self.ensure_dng_capture()?;
         self.native_region_sensor_diagnostics(area)
     }
 
     /// Capture-limit eligibility in the developed source's coordinates.
     pub fn capture_eligibility(&mut self, area: Rect) -> Result<CaptureFlags, Error> {
         self.ensure_unpacked()?;
+        #[cfg(feature = "dng-sdk")]
+        self.ensure_dng_capture()?;
         self.unpacked_capture_eligibility(area)
     }
 
     fn unpacked_capture_eligibility(&self, area: Rect) -> Result<CaptureFlags, Error> {
+        #[cfg(feature = "dng-sdk")]
+        if let Some(source) = &self.dng_source {
+            self.validate_dng_region(area)?;
+            let mut flags = CaptureFlags::default();
+            for y in area.y..area.y + area.height {
+                for x in area.x..area.x + area.width {
+                    let state = source.capture_state(x, y).unwrap();
+                    flags.at_white |= state.original_white();
+                    flags.below_black |= state.original_black();
+                    flags.repeated_border |= state.repeated_border();
+                    flags.processing_limit |= state.processing_limit();
+                }
+            }
+            return Ok(flags);
+        }
         if let Some(image) = &self.corrected {
             return image.eligibility.flags(area);
         }
@@ -523,6 +748,33 @@ impl RawFile {
     }
 
     fn native_region_sensor_diagnostics(&self, area: Rect) -> Result<SensorDiagnostics, Error> {
+        #[cfg(feature = "dng-sdk")]
+        if let Some(source) = &self.dng_source {
+            self.validate_dng_region(area)?;
+            let header = source.header();
+            let [left, top] = header.active_origin;
+            let [raw_width, _] = header.original_dimensions;
+            let [black, white] = header.capture_limits;
+            let mut diagnostics = SensorDiagnostics::default();
+            for y in area.y..area.y + area.height {
+                for x in area.x..area.x + area.width {
+                    let (sx, sy) = (x + left, y + top);
+                    let color = (header.cfa_pattern >> (8 * ((sy % 2) * 2 + sx % 2))) & 255;
+                    let c = if color == 1 && sy % 2 == 1 {
+                        3
+                    } else {
+                        color as usize
+                    };
+                    let value =
+                        source.original_cfa()[(sy as usize * raw_width as usize) + sx as usize];
+                    diagnostics.sites[c] += 1;
+                    diagnostics.below_black[c] += u64::from(f64::from(value) <= black);
+                    diagnostics.at_white[c] += u64::from(f64::from(value) >= white);
+                    diagnostics.peak[c] = diagnostics.peak[c].max(u32::from(value));
+                }
+            }
+            return Ok(diagnostics);
+        }
         let mut diagnostics = SensorDiagnostics::default();
         let mut error = [0; 512];
         // The bridge reads the immutable RAW snapshot, including its original CFA and black/white levels.
@@ -553,6 +805,31 @@ impl RawFile {
     }
 
     fn develop(&mut self, fixed_wb: [f64; 4], output_color: c_int) -> Result<Developed<'_>, Error> {
+        #[cfg(feature = "dng-sdk")]
+        if self.metadata.sdk.is_some() {
+            if output_color != 0 {
+                return Err(Error::Raw(
+                    "SDK camera development is not a LibRaw sRGB reference".into(),
+                ));
+            }
+            let source = crate::dng::Source::develop_with_threads(
+                &self.path,
+                sdk_options(Some(fixed_wb))?,
+                &crate::dng::Cancellation::default(),
+                self.priority.current_threads() as u32,
+            )
+            .map_err(|e| Error::Raw(e.to_string()))?;
+            println!(
+                "dng_development size={:?} priority={:?} timings={:?}",
+                source.dimensions(),
+                self.priority,
+                source.timings()
+            );
+            self.set_dng_header(source.header());
+            self.dng_source = Some(source);
+            self.unpacked = true;
+            return self.camera_image();
+        }
         if fixed_wb
             .iter()
             .any(|v| !v.is_finite() || *v <= 0.0 || *v > f32::MAX as f64)
@@ -640,24 +917,47 @@ impl RawFile {
         }
         // Unique ownership still holds here; snapshot before immutable publication.
         let bytes = unsafe { antitone_raw_retained_bytes(self.handle.as_ptr()) };
-        let extra = self
+        let extra = (self
             .corrected
             .as_ref()
             .map_or(0, |image| image.retained_bytes())
             + self
                 .correction
                 .as_ref()
-                .map_or(0, |geometry| geometry.retained_bytes());
+                .map_or(0, |geometry| geometry.retained_bytes())) as u64;
+        #[cfg(feature = "dng-sdk")]
+        let extra = extra
+            .checked_add(
+                self.dng_source
+                    .as_ref()
+                    .map_or(0, crate::dng::Source::retained_bytes),
+            )
+            .ok_or(Error::NumericalOverflow)?;
         Ok(FrozenRaw {
             raw: self,
-            retained_bytes: (bytes != 0)
-                .then(|| bytes.checked_add(extra as u64))
-                .flatten(),
+            retained_bytes: (bytes != 0).then(|| bytes.checked_add(extra)).flatten(),
         })
     }
 
     /// Borrows the cached camera development without rerunning LibRaw.
     pub fn camera_image(&self) -> Result<Developed<'_>, Error> {
+        #[cfg(feature = "dng-sdk")]
+        if let Some(source) = &self.dng_source {
+            let [width, height] = source.dimensions();
+            let [r, g, b] = source.fixed_wb();
+            return Ok(Developed {
+                pixels: &[],
+                continuous: Some(source.camera_rgb()),
+                continuous_scale: 65535.,
+                width,
+                height,
+                maximum: 65535,
+                data_maximum: 65535,
+                warnings: 0,
+                pre_mul: [r, g, b, g],
+                _owner: PhantomData,
+            });
+        }
         if let Some(image) = &self.corrected {
             let view = self
                 .camera_view
@@ -665,6 +965,7 @@ impl RawFile {
             return Ok(Developed {
                 pixels: &[],
                 continuous: Some(&image.pixels),
+                continuous_scale: 1.,
                 width: image.size[0],
                 height: image.size[1],
                 maximum: view.maximum,
@@ -692,6 +993,7 @@ impl RawFile {
         Ok(Developed {
             pixels: unsafe { std::slice::from_raw_parts(view.pixels, count) },
             continuous: None,
+            continuous_scale: 1.,
             width: view.width,
             height: view.height,
             maximum: view.maximum,
@@ -758,6 +1060,7 @@ impl FrozenRaw {
 pub struct Developed<'a> {
     pixels: &'a [u16],
     continuous: Option<&'a [[f32; 3]]>,
+    continuous_scale: f32,
     pub width: u32,
     pub height: u32,
     pub maximum: u32,
@@ -812,14 +1115,19 @@ impl Developed<'_> {
         Ok(self.pixels[offset..offset + 4].try_into().unwrap())
     }
 
-    /// Camera values in original code units; integer sources convert exactly to f32.
+    /// Camera values on the shared 65535-unit scale; integer samples convert exactly to f32.
     pub fn pixel_samples(&self, x: u32, y: u32) -> Result<[f32; 4], Error> {
         if x >= self.width || y >= self.height {
             return Err(Error::Raw("pixel outside developed image".into()));
         }
         if let Some(pixels) = self.continuous {
             let [r, g, b] = pixels[y as usize * self.width as usize + x as usize];
-            return Ok([r, g, b, 0.]);
+            return Ok([
+                r * self.continuous_scale,
+                g * self.continuous_scale,
+                b * self.continuous_scale,
+                0.,
+            ]);
         }
         Ok(self.pixel_codes(x, y)?.map(f32::from))
     }
@@ -828,6 +1136,22 @@ impl Developed<'_> {
         let [r, g, b, _] = self.pixel_samples(x, y)?;
         Ok(DVec3::new(r as f64, g as f64, b as f64) / 65535.0)
     }
+}
+
+#[cfg(feature = "dng-sdk")]
+fn sdk_options(wb: Option<[f64; 4]>) -> Result<crate::dng::Options, Error> {
+    if let Some(wb) = wb
+        && (wb.iter().any(|v| !v.is_finite() || *v <= 0.) || wb[1] != wb[3])
+    {
+        return Err(Error::Raw(
+            "SDK development needs one positive gain per RGB channel; green gains must match"
+                .into(),
+        ));
+    }
+    Ok(crate::dng::Options {
+        max_pixels: u32::MAX,
+        fixed_wb: wb.map(|[r, g, b, _]| [r, g, b]),
+    })
 }
 
 fn ffi_string(bytes: &[c_char]) -> String {
@@ -847,7 +1171,7 @@ mod tests {
 
     fn metadata_fixture() -> Metadata {
         // All fields are numeric or char arrays, so zero is a valid fixture representation.
-        let mut m: Metadata = unsafe { std::mem::zeroed() };
+        let mut m = Metadata::from_native(unsafe { std::mem::zeroed() });
         m.width = 8704;
         m.height = 6144;
         m.inset_left = 12;
@@ -910,8 +1234,8 @@ mod tests {
         for y in 0..192 {
             for x in 0..256 {
                 assert_eq!(
-                    actual.pixel_codes(x, y).unwrap(),
-                    expected.pixel_codes(x, y).unwrap()
+                    actual.pixel_samples(x, y).unwrap(),
+                    expected.pixel_samples(x, y).unwrap()
                 );
             }
         }
@@ -933,7 +1257,7 @@ mod tests {
 
     #[test]
     fn bridge_layout_matches_native_static_assertions() {
-        assert_eq!(size_of::<Metadata>(), 664);
+        assert_eq!(size_of::<NativeMetadata>(), 664);
         assert_eq!(size_of::<SonyLensData>(), 160);
         assert_eq!(size_of::<SensorDiagnostics>(), 112);
         assert_eq!(size_of::<NativeView>(), 64);
@@ -958,7 +1282,7 @@ mod tests {
             bytes[start..start + 2].copy_from_slice(&value.to_le_bytes());
         }
         std::fs::write(file.path(), bytes).unwrap();
-        let mut raw = RawFile::open(file.path()).unwrap();
+        let mut raw = RawFile::open_uncorrected(file.path()).unwrap();
         raw.ensure_unpacked().unwrap();
         let before = raw.capture_mask().unwrap();
         for y in 0..fixture::SIDE {
@@ -1054,6 +1378,7 @@ mod tests {
         let developed = Developed {
             pixels: &pixels,
             continuous: None,
+            continuous_scale: 1.,
             width: 4,
             height: 4,
             maximum: 0,
@@ -1152,22 +1477,22 @@ mod tests {
 
     #[cfg(feature = "project")]
     #[test]
-    fn freeze_requires_valid_camera_development_and_keeps_the_original_allocation() {
+    fn libraw_freeze_requires_valid_camera_development_and_keeps_the_original_allocation() {
         let file = fixture::bayer_dng();
-        let raw = RawFile::open(file.path()).unwrap();
+        let raw = RawFile::open_uncorrected(file.path()).unwrap();
         assert_eq!(raw.metadata.width, fixture::SIDE);
         assert!(raw.freeze().is_err());
-        let mut raw = RawFile::open(file.path()).unwrap();
+        let mut raw = RawFile::open_uncorrected(file.path()).unwrap();
         raw.ensure_unpacked().unwrap();
         assert!(raw.freeze().is_err());
-        let mut raw = RawFile::open(file.path()).unwrap();
+        let mut raw = RawFile::open_uncorrected(file.path()).unwrap();
         raw.develop_srgb_reference([1.0; 4]).unwrap();
         assert!(raw.freeze().is_err());
-        let mut raw = RawFile::open(file.path()).unwrap();
+        let mut raw = RawFile::open_uncorrected(file.path()).unwrap();
         raw.develop_camera([1.0; 4]).unwrap();
         raw.metadata.width -= 1;
         assert!(raw.freeze().is_err());
-        let mut raw = RawFile::open(file.path()).unwrap();
+        let mut raw = RawFile::open_uncorrected(file.path()).unwrap();
         raw.develop_camera([1.0; 4]).unwrap();
         let pointer = raw.camera_image().unwrap().pixels.as_ptr();
         assert!(raw.diagnostics.is_none());

@@ -36,14 +36,15 @@ impl Input {
             orientation: Default::default(),
             development: SourceDevelopment {
                 lens_correction: None,
+                dng_development: metadata.dng_identity(),
                 dimensions: [metadata.width, metadata.height],
                 active_area: [area.x, area.y, area.width, area.height],
                 camera_model: metadata.camera_model(),
                 camera_to_ap1: metadata.camera_to_ap1().unwrap().to_cols_array_2d(),
-                input_floor: antitone::processing::CAMERA_INPUT_FLOOR,
+                input_floor: metadata.input_floor().unwrap(),
             },
         };
-        let development = Development::new(antitone::raw::version(), WB);
+        let development = metadata.development(WB);
         let key = SourceKey::capture(file.path(), &record.development, &development).unwrap();
         Self {
             file,
@@ -719,7 +720,7 @@ fn candidate_close_rejects_late_jobs_without_touching_accepted_store_or_leases()
         }
     );
     assert!(accepted.get(&input.key).is_some());
-    assert!(source.camera_image().unwrap().pixel_codes(8, 8).is_ok());
+    assert!(source.camera_image().unwrap().pixel_samples(8, 8).is_ok());
 }
 
 #[test]

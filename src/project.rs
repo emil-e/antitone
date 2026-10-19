@@ -21,6 +21,7 @@ pub const SCHEMA_VERSION: u32 = 6;
 // Bump when native/raw_bridge.cpp development or scan.rs matrix/normalization/floor contracts change.
 pub const DEVELOPMENT_CONTRACT: &str =
     "libraw-camera-ahd-sony-shading-active-bilinear-f32-inversion-ap1-floor-v4";
+pub const DNG_DEVELOPMENT_CONTRACT: &str = "adobe-dng-sdk-camera-post-op-wb-native-quantum-v2";
 pub const OUTPUT_CONTRACT: &str = "ocio-2.6.0-aces2-100nit-antitone-srgb-displayp3-v2";
 type Result<T> = std::result::Result<T, Error>;
 
@@ -61,6 +62,29 @@ impl Development {
         }
     }
 
+    #[cfg(feature = "dng-sdk")]
+    pub fn dng(fixed_wb: [f64; 4]) -> Self {
+        Self {
+            backend_version: crate::dng::INTERPRETATION.into(),
+            contract: DNG_DEVELOPMENT_CONTRACT.into(),
+            ..Self::new(String::new(), fixed_wb)
+        }
+    }
+
+    #[cfg(feature = "raw")]
+    pub fn for_source(source: &SourceDevelopment, wb: [f64; 4]) -> Self {
+        if source.dng_development.is_some() {
+            #[cfg(feature = "dng-sdk")]
+            return Self::dng(wb);
+            #[cfg(not(feature = "dng-sdk"))]
+            return Self {
+                contract: DNG_DEVELOPMENT_CONTRACT.into(),
+                ..Self::new("DNG SDK unavailable".into(), wb)
+            };
+        }
+        Self::new(crate::raw::version(), wb)
+    }
+
     fn validate(&self) -> Result<()> {
         require(
             !self.backend_version.is_empty()
@@ -69,7 +93,20 @@ impl Development {
                 && !self.working_space.is_empty()
                 && self.fixed_wb.iter().all(|v| v.is_finite() && *v > 0.),
             "invalid RAW development identity",
-        )
+        )?;
+        if self.contract == DNG_DEVELOPMENT_CONTRACT {
+            require(
+                self.fixed_wb[1] == self.fixed_wb[3]
+                    && self.fixed_wb[..3]
+                        .iter()
+                        .copied()
+                        .fold(f64::INFINITY, f64::min)
+                        == 1.
+                    && self.fixed_wb.iter().all(|v| *v <= 256.),
+                "SDK WB must use matching greens and the normalized supported camera basis",
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -102,6 +139,8 @@ impl CameraBasis {
 pub struct SourceDevelopment {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lens_correction: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dng_development: Option<String>,
     pub dimensions: [u32; 2],
     pub active_area: [u32; 4],
     pub camera_model: String,
@@ -141,6 +180,15 @@ impl SourceDevelopment {
             "invalid source lens correction identity",
         )?;
         require(
+            self.dng_development.as_ref().is_none_or(|identity| {
+                identity.len() == 64
+                    && identity
+                        .bytes()
+                        .all(|v| v.is_ascii_hexdigit() && !v.is_ascii_uppercase())
+            }) && !(self.dng_development.is_some() && self.lens_correction.is_some()),
+            "invalid or ambiguous DNG development identity",
+        )?;
+        require(
             self.dimensions.iter().all(|v| *v > 0)
                 && contains(
                     [0, 0, self.dimensions[0], self.dimensions[1]],
@@ -154,6 +202,7 @@ impl SourceDevelopment {
                     ..=crate::processing::CAMERA_INPUT_FLOOR * crate::processing::MAX_SOURCE_GAIN)
                     .contains(&self.input_floor)
                 && (self.lens_correction.is_some()
+                    || self.dng_development.is_some()
                     || self.input_floor == crate::processing::CAMERA_INPUT_FLOOR),
             "source floor must match the supported native or lens-developed domain",
         )
@@ -387,10 +436,14 @@ impl Project {
         self.flat_field.as_ref().filter(|field| field.enabled)
     }
 
+    /// Uses the active reference's source bound when available. Without a flat
+    /// reference this is only the base calibration; rendering uses a source recipe.
     pub fn processing_calibration(&self) -> Result<Option<Calibration>> {
         self.calibration()?
             .map(|calibration| match self.active_flat_field() {
-                Some(field) => field.map.processing_calibration(calibration),
+                Some(field) => field
+                    .development
+                    .processing_calibration(calibration, Some(&field.map)),
                 None => Ok(calibration),
             })
             .transpose()
@@ -431,6 +484,14 @@ impl Project {
                 "duplicate/invalid source ID allocator",
             )?;
             source.validate()?;
+            require(
+                source.development.dng_development.is_some()
+                    == self
+                        .development
+                        .as_ref()
+                        .is_some_and(|dev| dev.contract == DNG_DEVELOPMENT_CONTRACT),
+                "source backend differs from the roll development",
+            )?;
             self.require_camera_basis(&source.development)?;
         }
         let mut ordered = HashSet::new();
@@ -504,9 +565,14 @@ impl Project {
     pub fn require_runtime(&self, backend_version: &str) -> Result<()> {
         self.validate()?;
         if let Some(development) = &self.development {
+            let matching_backend = development.backend_version == backend_version
+                && development.contract == DEVELOPMENT_CONTRACT;
+            #[cfg(feature = "dng-sdk")]
+            let matching_backend = matching_backend
+                || (development.contract == DNG_DEVELOPMENT_CONTRACT
+                    && development.backend_version == crate::dng::INTERPRETATION);
             require(
-                development.backend_version == backend_version
-                    && development.contract == DEVELOPMENT_CONTRACT
+                matching_backend
                     && development.inversion_space == "native-camera-RGB"
                     && development.working_space == "AP1/D60",
                 "RAW development contract differs from this runtime",

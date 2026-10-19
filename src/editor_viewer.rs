@@ -11,6 +11,9 @@ impl Editor {
                 .project
                 .development
                 .as_ref()
+                // SDK camera-to-PCS already defines the balanced white scale; only
+                // LibRaw's max-gain normalization needs this preview compensation.
+                .filter(|d| d.contract != crate::project::DNG_DEVELOPMENT_CONTRACT)
                 .map(|d| d.fixed_wb),
             exposure,
         )

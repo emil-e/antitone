@@ -257,11 +257,11 @@ fn profile_complete_roll_area_preparation() {
         monitor.phase("region_headers", || {
             for path in &paths {
                 within_limit(start, monitor)?;
-                let (source, raw) = document::open_source(path).map_err(|e| e.to_string())?;
+                let (source, raw) = document::open_source(path, None).map_err(|e| e.to_string())?;
                 cache_observation::source_bound(&raw.metadata)?;
                 let wb = raw.metadata.as_shot_wb();
                 document
-                    .register(source, Development::new(crate::raw::version(), wb))
+                    .register(source, raw.metadata.development(wb))
                     .map_err(|e| e.to_string())?;
             }
             document.validate().map_err(|e| e.to_string())

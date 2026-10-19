@@ -151,7 +151,8 @@ mod tests {
                 .unwrap(),
             CaptureFlags {
                 at_white: region_flags & 1 != 0,
-                below_black: region_flags & 2 != 0
+                below_black: region_flags & 2 != 0,
+                ..CaptureFlags::default()
             }
         );
     }

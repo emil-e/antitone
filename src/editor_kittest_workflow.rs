@@ -71,16 +71,27 @@ pub(super) fn calibrated_workflow() -> (
         harness.get_by_label(action).click();
         harness.step();
         assert!(harness.get_by_label("Apply").accesskit_node().is_disabled());
-        let point = harness.state().last_layout.unwrap().0.screen_point(point);
-        harness.hover_at(point);
-        for pressed in [true, false] {
-            harness.event(egui::Event::PointerButton {
-                pos: point,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: egui::Modifiers::NONE,
-            });
-        }
+        // Keep the support inside the uniform swatch, including the demosaicer's
+        // neighbours: the authored 32-pixel ramps can influence selection edges.
+        let layout = harness.state().last_layout.unwrap().0;
+        let first = layout.screen_point(point - egui::vec2(8., 8.));
+        let last = layout.screen_point(point + egui::vec2(8., 8.));
+        harness.hover_at(first);
+        harness.event(egui::Event::PointerButton {
+            pos: first,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.step();
+        harness.hover_at(last);
+        harness.step();
+        harness.event(egui::Event::PointerButton {
+            pos: last,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
         harness.step();
         harness.get_by_label("Apply").click();
         harness.step();
@@ -96,7 +107,9 @@ pub(super) fn calibrated_workflow() -> (
             (measured - DVec3::splat(expected / 4031.))
                 .abs()
                 .max_element()
-                <= 2. / 65535.
+                <= 2. / 65535.,
+            "{name}: measured={measured:?} expected={}",
+            expected / 4031.
         );
     }
     assert!(harness.state().calibration().is_some());
@@ -177,8 +190,8 @@ fn uncalibrated_source_working_view_uses_saved_roll_wb_in_both_targets_without_i
     let directory = tempfile::tempdir().unwrap();
     let (mut harness, capture) = editor_harness_with_thumbnails(true);
     let wb = [2., 1., 1.5, 1.];
-    harness.state_mut().document.project.development =
-        Some(Development::new(crate::raw::version(), wb));
+    let raw = crate::raw::RawFile::open_with_wb(&fixture("patches.dng"), Some(wb)).unwrap();
+    harness.state_mut().document.project.development = Some(raw.metadata.development(wb));
     harness.state_mut().add_raws(vec![fixture("patches.dng")]);
     wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
     assert!(
@@ -227,8 +240,9 @@ fn uncalibrated_source_working_view_uses_saved_roll_wb_in_both_targets_without_i
                     let point = geometry.screen_point(egui::pos2(x as f32, y as f32));
                     let pixel = output.pixels[point.y.floor() as usize * output.size[0] as usize
                         + point.x.floor() as usize];
-                    // max(WB)/green = 2, plus one preview stop, then relative manual EV.
-                    let working = scan.camera_to_ap1 * scan.pixel(x, y).unwrap() * (4. * ev.exp2());
+                    // SDK's matching camera matrix already defines balanced white;
+                    // source inspection adds the shared one-stop display convention and EV.
+                    let working = scan.camera_to_ap1 * scan.pixel(x, y).unwrap() * (2. * ev.exp2());
                     let linear = target.linear_to_srgb()
                         * crate::rendering::CpuRenderer::new(target)
                             .unwrap()

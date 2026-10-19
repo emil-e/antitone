@@ -22,11 +22,11 @@ fn region() -> Rect {
     }
 }
 
-fn codes(source: &DevelopedSource) -> Vec<[u16; 4]> {
+fn codes(source: &DevelopedSource) -> Vec<[f32; 4]> {
     let image = source.camera_image().unwrap();
     (0..image.height)
         .flat_map(|y| (0..image.width).map(move |x| (x, y)))
-        .map(|(x, y)| image.pixel_codes(x, y).unwrap())
+        .map(|(x, y)| image.pixel_samples(x, y).unwrap())
         .collect()
 }
 
@@ -44,7 +44,7 @@ fn frozen_native_codes_metadata_and_capture_match_unique_development() {
     let image = raw.develop_camera(WB).unwrap();
     let expected: Vec<_> = (0..image.height)
         .flat_map(|y| (0..image.width).map(move |x| (x, y)))
-        .map(|(x, y)| image.pixel_codes(x, y).unwrap())
+        .map(|(x, y)| image.pixel_samples(x, y).unwrap())
         .collect();
     let view = (
         image.width,

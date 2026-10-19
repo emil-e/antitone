@@ -22,7 +22,8 @@ pub fn bayer_dng() -> tempfile::NamedTempFile {
         })
         .collect();
     let mut entries = vec![
-        (256u16, 4u16, long(SIDE)),
+        (254u16, 4u16, long(0)),
+        (256, 4, long(SIDE)),
         (257, 4, long(SIDE)),
         (258, 3, short(16)),
         (259, 3, short(1)),

@@ -127,6 +127,7 @@ impl crate::image_recipe::NeutralRecipe {
         let area = scan.area;
         let actual = crate::project::SourceDevelopment {
             lens_correction: scan.source().metadata().lens_identity()?,
+            dng_development: scan.source().metadata().dng_identity(),
             dimensions: [width, height],
             active_area: [area.x, area.y, area.width, area.height],
             camera_model: scan.camera_model.clone(),
@@ -134,8 +135,7 @@ impl crate::image_recipe::NeutralRecipe {
             input_floor: scan.source().input_floor(),
         };
         if self.source_development != actual
-            || self.development
-                != crate::project::Development::new(crate::raw::version(), scan.fixed_wb)
+            || self.development != scan.source().metadata().development(scan.fixed_wb)
             || self.correction.as_ref() != scan.flat_field()
         {
             return Err(Error::Raw(

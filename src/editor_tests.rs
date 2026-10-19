@@ -25,6 +25,24 @@ pub(super) fn fixture() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Comman
 }
 
 #[test]
+fn sdk_source_inspection_does_not_repeat_libraw_wb_headroom_compensation() {
+    let (mut editor, _, _) = fixture();
+    editor.document.project.development = Some(Development::dng([4., 1., 3., 1.]));
+    let sdk = editor.source_parameters(0.).unwrap();
+    let baseline = ProcessingParameters::source_preview(None, 0.).unwrap();
+    assert_eq!(bytemuck::bytes_of(&sdk), bytemuck::bytes_of(&baseline));
+    editor.document.project.development =
+        Some(Development::new(crate::raw::version(), [4., 1., 3., 1.]));
+    let native = editor.source_parameters(0.).unwrap();
+    let compensated = ProcessingParameters::source_preview(Some([4., 1., 3., 1.]), 0.).unwrap();
+    assert_eq!(
+        bytemuck::bytes_of(&native),
+        bytemuck::bytes_of(&compensated)
+    );
+    assert_ne!(bytemuck::bytes_of(&native), bytemuck::bytes_of(&sdk));
+}
+
+#[test]
 fn refinement_worker_uses_the_submission_gate_supplied_to_the_host() {
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -143,6 +161,7 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                         path,
                         development: crate::project::SourceDevelopment {
                             lens_correction: None,
+                            dng_development: None,
                             dimensions: [8704, 6144],
                             active_area: [12, 12, 8640, 5760],
                             camera_model: "test-camera".into(),
@@ -475,6 +494,7 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
             path: "test-camera.ARW".into(),
             development: crate::project::SourceDevelopment {
                 lens_correction: None,
+                dng_development: None,
                 dimensions: [900, 600],
                 active_area: [0, 0, 900, 600],
                 camera_model: "test-camera".into(),
@@ -619,6 +639,7 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
         path: "current.ARW".into(),
         development: crate::project::SourceDevelopment {
             lens_correction: None,
+            dng_development: None,
             dimensions: [900, 600],
             active_area: [12, 7, 864, 576],
             camera_model: "test-camera".into(),
@@ -1933,6 +1954,7 @@ fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
                     path: path.into(),
                     development: crate::project::SourceDevelopment {
                         lens_correction: None,
+                        dng_development: None,
                         dimensions: [900, 600],
                         active_area: [0, 0, 900, 600],
                         camera_model: "test-camera".into(),

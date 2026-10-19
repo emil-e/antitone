@@ -11,10 +11,9 @@ const BUDGET: u64 = 8 << 20;
 
 fn document(path: &std::path::Path) -> Document {
     let mut document = Document::default();
-    let (source, _) = document::open_source(path).unwrap();
-    document
-        .register(source, Development::new(crate::raw::version(), [1.; 4]))
-        .unwrap();
+    let (source, _) = document::open_source(path, Some([1.; 4])).unwrap();
+    let development = Development::for_source(&source.development, [1.; 4]);
+    document.register(source, development).unwrap();
     document.cache().set_budget(BUDGET);
     document
 }
@@ -27,11 +26,11 @@ fn wb(document: &Document) -> Option<[f64; 4]> {
         .map(|development| development.fixed_wb)
 }
 
-fn codes(scan: &Scan) -> Vec<[u16; 4]> {
+fn codes(scan: &Scan) -> Vec<[f32; 4]> {
     let image = scan.source().camera_image().unwrap();
     (0..image.height)
         .flat_map(|y| (0..image.width).map(move |x| (x, y)))
-        .map(|(x, y)| image.pixel_codes(x, y).unwrap())
+        .map(|(x, y)| image.pixel_samples(x, y).unwrap())
         .collect()
 }
 
@@ -459,10 +458,9 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
         let a = raw_fixture::bayer_dng();
         let b = raw_fixture::bayer_dng();
         let mut document = document(a.path());
-        let (record, _) = document::open_source(b.path()).unwrap();
-        document
-            .register(record, Development::new(crate::raw::version(), [1.; 4]))
-            .unwrap();
+        let (record, _) = document::open_source(b.path(), Some([1.; 4])).unwrap();
+        let development = Development::for_source(&record.development, [1.; 4]);
+        document.register(record, development).unwrap();
         document.cache().set_budget(0);
         let native_a = Scan::open(a.path(), wb(&document))
             .unwrap()

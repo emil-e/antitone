@@ -553,6 +553,7 @@ fn fixture() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
                 path: "fixture.ARW".into(),
                 development: crate::project::SourceDevelopment {
                     lens_correction: None,
+                    dng_development: None,
                     dimensions: [900, 600],
                     active_area: [0, 0, 900, 600],
                     camera_model: "test-camera".into(),

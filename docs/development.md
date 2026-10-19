@@ -75,15 +75,16 @@ Production and reference dependencies are separate:
 | --- | --- |
 | no default features | Numerical core; no native, GPU or UI dependency |
 | `raw` | CPU RAW development and measurements; LibRaw/OpenMP |
+| `dng-sdk` | Direct-SDK adapter and authored tests; combined with `raw` routes DNG shared sources; explicitly supplied Adobe SDK |
 | `gpu` | Precise photographic GPU processing; no OCIO or desktop |
 | `render` | Output targets, transfer and profiles; no OCIO |
 | `export` | Encoders, metadata and atomic file safety; no OCIO |
 | `raw,gpu,export` | Bounded original-sample GPU export; no desktop or OCIO |
-| `editor` | Production application, including GPU export; no OCIO |
+| `editor` | Application, including direct DNG SDK development and GPU export; no OCIO |
 | `ocio-reference` | Independent OCIO renderer and scalar composed export oracles |
 | `ui-tests` | Editor interaction checks, including independent OCIO assertions |
 
-Tests that explicitly use the CPU/OCIO oracle require `ocio-reference`; this is not a production fallback. `--all-features` includes those references. Verify the production configuration separately so reference-feature unification cannot hide a runtime dependency.
+Tests that explicitly use the CPU/OCIO oracle require `ocio-reference`; this is not a production fallback. Editor and `--all-features` builds need the [explicit SDK setup](../README.md#direct-dng-sdk-setup); SDK acquisition is never implicit. Verify the production configuration separately so reference-feature unification cannot hide a runtime dependency.
 
 Choose checks for the boundary you changed rather than running every native/sample-dependent exercise:
 
@@ -96,6 +97,18 @@ cargo test --locked --no-default-features \
 cargo test --locked --features project \
   --test camera_project --test project --test film_project --test flat_field_project \
   --test dust_project
+
+# Independent direct-SDK adapter; explicit SDK setup, no LibRaw/Metal/private photographs.
+cargo test --locked --features dng-sdk --lib dng::
+# Bounded native worker ownership, failure joins and tile-scratch policy; no SDK needed.
+mkdir -p .cache/checks
+/usr/bin/clang++ -std=c++17 -O3 -Wall -Wextra -Werror \
+  native/dng_execution_tests.cpp -o .cache/checks/dng-execution
+.cache/checks/dng-execution
+# Shared source, original precision/capture, saved SDK identity and flat-reference matching.
+cargo test --locked --features raw,dng-sdk,project --test dng_integration
+# Cold Save/Open and reopened TIFF/AP0 EXR against analytic camera/scalar expectations.
+cargo test --locked --features editor,ocio-reference --test dng_integration
 
 # Authored DNG plumbing; native libraries, no private photographs or desktop.
 cargo test --locked --features raw,export,project,ocio-reference --test raw_dng --test raw_flat_field --test raw_roll

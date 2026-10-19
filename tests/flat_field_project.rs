@@ -20,6 +20,7 @@ fn fixture() -> Project {
         path: "photo.ARW".into(),
         development: SourceDevelopment {
             lens_correction: None,
+            dng_development: None,
             dimensions: [824, 624],
             active_area: [12, 12, 800, 600],
             camera_model: "test-camera".into(),

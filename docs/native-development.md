@@ -10,6 +10,8 @@ The editor's [single native priority worker](../src/editor_development.rs) serve
 
 This trades some unrelated-cold-selection latency for simpler ownership and faster roll completion. Bounded comparisons observed about half a second additional cold-selection wait and about 20% shorter 36-source proper CPU/disk completion, with similar sampled memory peaks. These workload-specific snapshots do not establish a universal optimum or hardware minimum. Standalone APIs retain their explicit priority budgets.
 
+The editor's direct-DNG route uses that same budget inside one SDK transaction, not a second source queue. SDK warp tiles and capture-eligibility rows can execute in parallel; workers join before cleanup/publication. Other SDK stages remain serial, and SDK/XMP transactions remain serialized. [DNG execution and measurements](research/dng-sdk.md#maintained-direct-sdk-adapter) describe scratch limits, cancellation and budget-independent pixels/identity.
+
 ## Build and run
 
 Run from the repository root after [native setup](../README.md#build-and-run). The pinned LLVM OpenMP 22.1.8 and LibRaw 0.22.0 builds use private `.cache/native-deps`, arm64/macOS-14 targets and checkout-local runtime paths.

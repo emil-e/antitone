@@ -421,6 +421,7 @@ fn resampled_picks_still_reject_clipped_original_cfa_support() {
 fn development(scan: &antitone::scan::Scan) -> antitone::project::SourceDevelopment {
     antitone::project::SourceDevelopment {
         lens_correction: scan.source().metadata().lens_identity().unwrap(),
+        dng_development: scan.source().metadata().dng_identity(),
         dimensions: scan.source().metadata().source_dimensions().unwrap(),
         active_area: [scan.area.x, scan.area.y, scan.area.width, scan.area.height],
         camera_model: scan.camera_model.clone(),

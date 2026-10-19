@@ -29,6 +29,7 @@ fn add_source(editor: &mut Editor, path: PathBuf) -> SourceId {
                 path: path.clone(),
                 development: SourceDevelopment {
                     lens_correction: None,
+                    dng_development: None,
                     dimensions: [900, 600],
                     active_area: [12, 7, 864, 576],
                     camera_model: "test-camera".into(),

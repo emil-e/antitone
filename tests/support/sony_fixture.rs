@@ -92,6 +92,25 @@ pub(crate) fn source(
                     (50708, 2, b"SONY ILCE-1M2\0".to_vec()),
                     (50710, 1, vec![0, 1, 2]),
                     (50717, 4, order.long(65535)),
+                    // Converted DNG declares its own XYZ-camera basis and neutral;
+                    // it must not rely on LibRaw's built-in Sony camera profile.
+                    (
+                        50721,
+                        10,
+                        (0..9)
+                            .flat_map(|i| {
+                                [order.long(u32::from(i % 4 == 0)), order.long(1)].concat()
+                            })
+                            .collect(),
+                    ),
+                    (
+                        50728,
+                        5,
+                        (0..3)
+                            .flat_map(|_| [order.long(1), order.long(1)].concat())
+                            .collect(),
+                    ),
+                    (50778, 3, order.short(21)),
                 ]);
             }
         }
@@ -107,6 +126,7 @@ pub(crate) fn source(
             let size = match kind {
                 3 | 8 => 2,
                 4 => 4,
+                5 | 10 => 8,
                 _ => 1,
             };
             bytes[offset..offset + 2].copy_from_slice(&order.short(tag));

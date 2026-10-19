@@ -111,6 +111,7 @@ impl EligibilityMask {
         Ok(CaptureFlags {
             at_white: combined & 0x5555_5555_5555_5555 != 0,
             below_black: combined & 0xaaaa_aaaa_aaaa_aaaa != 0,
+            ..CaptureFlags::default()
         })
     }
 }
@@ -160,14 +161,16 @@ mod tests {
             mask.flags(Rect::from([31, 0, 1, 1])).unwrap(),
             CaptureFlags {
                 at_white: true,
-                below_black: false
+                below_black: false,
+                ..CaptureFlags::default()
             }
         );
         assert_eq!(
             mask.flags(Rect::from([31, 0, 2, 2])).unwrap(),
             CaptureFlags {
                 at_white: true,
-                below_black: true
+                below_black: true,
+                ..CaptureFlags::default()
             }
         );
         assert_eq!(

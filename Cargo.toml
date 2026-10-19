@@ -42,10 +42,12 @@ objc2-quartz-core = { version = "=0.3.2", optional = true, default-features = fa
 
 [features]
 ui-tests = ["editor", "ocio-reference", "dep:egui_kittest", "image/png"]
-editor = ["ui", "raw", "export", "project", "dep:rfd", "dep:blake3", "dep:image"]
+editor = ["ui", "raw", "dng-sdk", "export", "project", "dep:rfd", "dep:blake3", "dep:image"]
 project = ["dep:serde", "dep:serde_json", "dep:tempfile", "dep:blake3", "dep:base64", "dep:flate2", "glam/serde"]
 ui = ["gpu", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:winit", "dep:half", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-core-foundation", "dep:objc2-core-graphics", "dep:objc2-quartz-core", "dep:objc2-foundation", "dep:muda"]
 raw = ["dep:cc", "dep:libc", "dep:blake3"]
+# Direct SDK remains separately usable without LibRaw or the desktop stack.
+dng-sdk = ["dep:cc", "dep:blake3", "dep:tempfile"]
 render = ["dep:lcms2"]
 ocio-reference = ["render", "dep:cc"]
 export = ["render", "dep:tiff", "dep:exr", "dep:tempfile", "dep:libc", "dep:half"]
@@ -66,6 +68,11 @@ required-features = ["editor"]
 name = "antitone-raw-probe"
 path = "src/bin/raw_probe.rs"
 required-features = ["raw"]
+
+[[bin]]
+name = "antitone-dng-probe"
+path = "src/bin/dng_probe.rs"
+required-features = ["dng-sdk"]
 
 [[bin]]
 name = "antitone-camera-reference"

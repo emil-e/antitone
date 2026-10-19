@@ -26,6 +26,7 @@ pub(in crate::editor) async fn fixture() -> (
         path: "local-fixture.ARW".into(),
         development: SourceDevelopment {
             lens_correction: None,
+            dng_development: None,
             dimensions: [150, 100],
             active_area: [120, 73, 23, 19],
             camera_model: "test-camera".into(),

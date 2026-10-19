@@ -202,7 +202,10 @@ impl Document {
         progress(0, total);
         for (index, id) in document.project.order.iter().enumerate() {
             let path = document.source_path(*id)?;
-            let (actual, _) = read_source(&path)?;
+            let (actual, _) = read_source(
+                &path,
+                document.project.development.as_ref().map(|d| d.fixed_wb),
+            )?;
             verify_source(document.project.source(*id)?, &actual)?;
             progress(index + 1, total);
         }
@@ -223,7 +226,8 @@ impl Document {
         let started = std::time::Instant::now();
         progress(0, paths.len());
         for (index, path) in paths.iter().enumerate() {
-            let (source, as_shot_wb) = read_source(path)?;
+            let (source, as_shot_wb) =
+                read_source(path, self.project.development.as_ref().map(|d| d.fixed_wb))?;
             if let Some(id) = self.find_source(&source.path) {
                 verify_source(self.project.source(id)?, &source)?;
                 if !self.project.order.contains(&id) {
@@ -231,7 +235,8 @@ impl Document {
                 }
                 self.project.source_mut(id)?.reference_only = false;
             } else {
-                self.register(source, Development::new(crate::raw::version(), as_shot_wb))?;
+                let development = Development::for_source(&source.development, as_shot_wb);
+                self.register(source, development)?;
             }
             progress(index + 1, paths.len());
         }
@@ -246,7 +251,15 @@ impl Document {
     }
 
     pub fn register(&mut self, source: Source, development: Development) -> Result<SourceId> {
-        if self.project.development.is_none() {
+        if let Some(current) = &self.project.development {
+            if current.backend_version != development.backend_version
+                || current.contract != development.contract
+            {
+                return Err(failure(
+                    "RAW backend differs; use a separate roll/calibration",
+                ));
+            }
+        } else {
             self.project.development = Some(development);
         }
         if self.project.input_floor.is_none() {
@@ -386,6 +399,7 @@ fn metadata_development(metadata: &Metadata) -> Result<SourceDevelopment> {
     let area = metadata.image_area()?;
     Ok(SourceDevelopment {
         lens_correction: metadata.lens_identity()?,
+        dng_development: metadata.dng_identity(),
         dimensions: metadata.source_dimensions()?,
         active_area: [area.x, area.y, area.width, area.height],
         camera_model: metadata.camera_model(),
@@ -394,16 +408,19 @@ fn metadata_development(metadata: &Metadata) -> Result<SourceDevelopment> {
     })
 }
 
-pub(super) fn read_source(path: &Path) -> Result<(Source, [f64; 4])> {
-    let (source, raw) = open_source(path)?;
-    Ok((source, raw.metadata.as_shot_wb()))
+pub(super) fn read_source(path: &Path, wb: Option<[f64; 4]>) -> Result<(Source, [f64; 4])> {
+    let (source, raw) = open_source(path, wb)?;
+    Ok((
+        source,
+        raw.fixed_wb(wb.unwrap_or_else(|| raw.metadata.as_shot_wb())),
+    ))
 }
 
-pub(super) fn open_source(path: &Path) -> Result<(Source, RawFile)> {
+pub(super) fn open_source(path: &Path, wb: Option<[f64; 4]>) -> Result<(Source, RawFile)> {
     let path = absolute(path)?;
     let started = std::time::Instant::now();
-    let raw =
-        RawFile::open(&path).map_err(|error| failure(format!("{}: {error}", path.display())))?;
+    let raw = RawFile::open_with_wb(&path, wb)
+        .map_err(|error| failure(format!("{}: {error}", path.display())))?;
     println!(
         "source_registration header_seconds={:.6}",
         started.elapsed().as_secs_f64()
@@ -440,6 +457,7 @@ pub(super) fn verify_scan(source: &Source, scan: &Scan) -> Result<()> {
     let area = scan.area;
     let actual = SourceDevelopment {
         lens_correction: scan.source().metadata().lens_identity()?,
+        dng_development: scan.source().metadata().dng_identity(),
         dimensions: [width, height],
         active_area: [area.x, area.y, area.width, area.height],
         camera_model: scan.camera_model.clone(),

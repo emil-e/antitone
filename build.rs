@@ -67,6 +67,8 @@ fn main() {
         );
         println!("cargo:rustc-link-arg=-mmacosx-version-min=14.0");
     }
+    #[cfg(feature = "dng-sdk")]
+    build_dng();
     #[cfg(feature = "ocio-reference")]
     {
         println!("cargo:rerun-if-env-changed=OCIO_PREFIX");
@@ -99,4 +101,68 @@ fn main() {
             root.join("lib").display()
         );
     }
+}
+
+#[cfg(feature = "dng-sdk")]
+fn build_dng() {
+    use std::{fs, path::PathBuf};
+
+    assert_eq!(std::env::var("CARGO_CFG_TARGET_OS").unwrap(), "macos");
+    assert_eq!(std::env::var("CARGO_CFG_TARGET_ARCH").unwrap(), "aarch64");
+    println!("cargo:rerun-if-env-changed=DNG_SDK_PREFIX");
+    let prefix = std::env::var_os("DNG_SDK_PREFIX")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(".cache/dng-sdk"));
+    let source_file = prefix.join("source-path.txt");
+    let defines_file = prefix.join("defines.txt");
+    let source = PathBuf::from(
+        fs::read_to_string(&source_file)
+            .expect("Prepare the opt-in SDK with scripts/build-dng-sdk.py; see README.md")
+            .trim(),
+    );
+    let defines = fs::read_to_string(&defines_file).expect("Incomplete SDK build metadata");
+    for path in [
+        source_file,
+        defines_file,
+        prefix.join("lib/libantitone_dng_sdk.a"),
+    ] {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+    for path in [
+        "native/dng_bridge.cpp",
+        "native/dng_bridge.h",
+        "native/dng_execution.h",
+    ] {
+        println!("cargo:rerun-if-changed={path}");
+    }
+    let mut build = cc::Build::new();
+    build
+        .cpp(true)
+        .std("c++17")
+        .flag("-mmacosx-version-min=14.0");
+    for flag in defines.lines() {
+        let (name, value) = flag
+            .split_once('=')
+            .map_or((flag, None), |(n, v)| (n, Some(v)));
+        build.define(name, value);
+    }
+    for directory in [
+        "dng_sdk/source",
+        "libjpeg",
+        "libjxl/libjxl/lib/include",
+        "libjxl/client_projects/include",
+        "xmp/toolkit/public/include",
+    ] {
+        build.include(source.join(directory));
+    }
+    build
+        .file("native/dng_bridge.cpp")
+        .compile("antitone_dng_bridge");
+    println!(
+        "cargo:rustc-link-search=native={}",
+        prefix.join("lib").display()
+    );
+    println!("cargo:rustc-link-lib=static=antitone_dng_sdk");
+    println!("cargo:rustc-link-lib=framework=Carbon");
+    println!("cargo:rustc-link-arg=-mmacosx-version-min=14.0");
 }
