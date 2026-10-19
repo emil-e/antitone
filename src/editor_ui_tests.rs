@@ -292,7 +292,6 @@ fn text_actions_fit_their_labels_and_keep_ids_and_supplied_availability() {
                     TextAction::new("Save"),
                     TextAction::new("Replace"),
                     TextAction::new("Analyze roll").primary(),
-                    TextAction::new("Edit shared picture area…"),
                     TextAction::new("Cancel").toolbar(0.),
                     TextAction::new("Apply").primary().toolbar(0.),
                     TextAction::new("Apply")

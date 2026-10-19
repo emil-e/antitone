@@ -92,7 +92,7 @@ fn delayed_suggestion_cannot_overwrite_drawing_cancelled_picker_or_reopened_pick
 }
 
 #[test]
-fn accepted_geometry_and_known_missing_support_require_no_lazy_work_and_reset_keeps_roll_order() {
+fn accepted_geometry_and_known_missing_support_require_no_lazy_work() {
     for known in [
         Some(None),
         Some(Some(Rect {
@@ -107,7 +107,6 @@ fn accepted_geometry_and_known_missing_support_require_no_lazy_work_and_reset_ke
         editor.begin_pick(Pick::Analysis);
         assert!(commands.try_recv().is_err());
         editor.finish_pick();
-        editor.reset_analysis_area();
         assert!(!editor.analysis_request().unwrap().local_support);
     }
     let (mut editor, _, commands) = state();

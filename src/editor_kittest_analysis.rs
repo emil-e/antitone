@@ -95,23 +95,8 @@ fn confirm(harness: &mut Harness<'_, Editor>) {
 }
 
 fn draw_picture(harness: &mut Harness<'_, Editor>, area: Rect) {
-    harness.get_by_label("Sampling areas").scroll_to_me();
-    harness.try_run_realtime().unwrap();
-    if harness
-        .query_by_label("Edit shared picture area…")
-        .is_none()
-    {
-        harness.get_by_label("Sampling areas").click();
-        harness.try_run_realtime().unwrap();
-    }
-    harness
-        .get_by_label("Edit shared picture area…")
-        .scroll_to_me();
-    harness.try_run_realtime().unwrap();
-    harness.get_by_label("Edit shared picture area…").click();
-    harness.step();
-    assert_eq!(harness.state().pick, Some(Pick::Analysis));
-    wait_for(harness, |editor| editor.analysis_area_pending.is_none());
+    assert!(harness.state().analysis_review.is_some());
+    select_area(harness, true);
     harness.get_by_label("Fit").click();
     harness.step();
     let geometry = harness.state().last_layout.unwrap().0;
@@ -243,23 +228,10 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
     }
     harness.step();
     let selected = harness.state().current_source;
-    let original = harness.state().document.project.clone();
+    let before = harness.state().document.project.clone();
     let correction = harness.state().correction.clone();
-    draw_picture(harness, picture);
-    assert_eq!(harness.state().document.project, original);
-    harness.get_by_label("Cancel").click();
-    harness.step();
-    assert!(harness.state().pick.is_none());
-    assert_eq!(harness.state().document.project, original);
-    draw_picture(harness, picture);
-    harness.get_by_label("Apply").click();
-    harness.step();
-    assert!(harness.state().pick.is_none());
-    let mut before = original;
-    before.analysis_area = Some([picture.x, picture.y, picture.width, picture.height]);
-    assert_eq!(harness.state().document.project, before);
-
     show_confirmation(harness);
+    draw_picture(harness, picture);
     assert_eq!(harness.state().document.project, before);
     harness.get_by_label("Cancel").click();
     harness.step();
@@ -287,6 +259,20 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
     assert_eq!(harness.state().document.project, before);
 
     show_confirmation(harness);
+    for id in &before.order {
+        let label = before
+            .source(*id)
+            .unwrap()
+            .path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap();
+        harness.get_by_label(label).click();
+        harness.step();
+        wait_for(harness, |editor| !editor.busy && editor.ready.is_some());
+        draw_picture(harness, picture);
+    }
     confirm(harness);
     assert_eq!(harness.state().document.project, before);
     wait_for(harness, |editor| !editor.busy);
@@ -374,6 +360,9 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
             .unwrap();
     }
 
+    let failed = harness.state().document.project.clone();
+    // Default and adjusted Photos both review areas; only adjusted Photos show the reset warning.
+    show_confirmation(harness);
     draw_picture(
         harness,
         Rect {
@@ -382,11 +371,6 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
             ..picture
         },
     );
-    harness.get_by_label("Apply").click();
-    harness.step();
-    let failed = harness.state().document.project.clone();
-    // Default and adjusted Photos both review areas; only adjusted Photos show the reset warning.
-    show_confirmation(harness);
     confirm(harness);
     wait_for(harness, |editor| !editor.busy);
     assert!(

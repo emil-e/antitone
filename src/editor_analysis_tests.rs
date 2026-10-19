@@ -675,20 +675,6 @@ fn missing_local_support_never_becomes_whole_camera_picture_statistics() {
 }
 
 #[test]
-fn resetting_an_old_automatic_area_keeps_the_grade_and_requires_new_support() {
-    let (mut editor, _, _) = state();
-    editor.document.project.analysis_area = Some([52, 42, 720, 540]);
-    let grade = editor.document.project.clone();
-    editor.reset_analysis_area();
-    assert_eq!(editor.document.project.analysis_area, None);
-    assert_eq!(editor.roll, grade.roll);
-    assert_eq!(editor.document.project.dmin, grade.dmin);
-    assert_eq!(editor.document.project.dmax, grade.dmax);
-    assert_eq!(editor.document.project.sources, grade.sources);
-    assert_eq!(editor.analysis_picture(), None);
-}
-
-#[test]
 fn sparse_eligibility_is_rejected_before_any_grade_installation() {
     let (mut editor, send, _) = state();
     let before = editor.document.project.clone();

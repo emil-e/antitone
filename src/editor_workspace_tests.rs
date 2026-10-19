@@ -350,7 +350,6 @@ fn all_three_stage_controls_are_reachable_at_normal_and_narrow_inspector_sizes()
                     "Balance",
                     "Warmth",
                     "Tint",
-                    "Sampling areas",
                     "Analyze",
                     "White balance",
                     "Toe & shoulder",

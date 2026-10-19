@@ -2202,7 +2202,6 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
                     "Reset scan orientation",
                     "Analyze",
                     "Auto-crop roll",
-                    "Sampling areas",
                     "Calibration",
                     "Gamma & balance",
                     "Balance",
@@ -2248,7 +2247,6 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
             );
             let sections = if tab == 0 {
                 vec![
-                    "Sampling areas",
                     "Calibration",
                     "Gamma & balance",
                     "Toe & shoulder",

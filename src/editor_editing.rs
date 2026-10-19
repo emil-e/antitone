@@ -97,7 +97,6 @@ pub(super) enum Command {
     ToggleAdjustments,
     CreateMask(bool),
     Pick(Pick),
-    ResetSampling,
     ResetRepairs(SourceId),
     Correction(Option<bool>),
     FlatEdit(PathBuf, Option<Rect>),
@@ -220,7 +219,6 @@ impl Editor {
                 }
             }
             Command::Pick(kind) => self.begin_pick(kind),
-            Command::ResetSampling => self.reset_analysis_area(),
             Command::ResetRepairs(source) => self.reset_dust_repairs(source),
             Command::Correction(enabled) => {
                 let mut candidate = self.document.clone();

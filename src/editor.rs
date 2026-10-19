@@ -2313,7 +2313,6 @@ impl Editor {
                 if self.tab == 0 {
                     ui.push_id("roll", |ui| {
                         ui.add_enabled_ui(!reviewing, |ui| self.flat_controls(ui));
-                        self.analysis_controls(ui);
                         let calibration_summary = match (self.dmin.is_some(), self.dmax.is_some()) {
                             (true, true) => "Dmin + Dmax measured",
                             (false, false) => "Dmin + Dmax not measured",
