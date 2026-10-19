@@ -48,4 +48,6 @@ Samples are private, read-only, ignored and never committed. System installation
 
 An independent, fresh-context agent review against the [development guide](docs/development.md) and relevant topic guides is required before integrating substantial changes. Keep its depth proportionate to the change's breadth and risk. Review supplements verification; assess findings with evidence rather than treating the review as an approval gate.
 
+Explicitly include [test quality](docs/development.md#meaningful-tests) in the review request at both whole-case and individual-assertion level, including fixture/control-discovery assumptions. Ask reviewers to distinguish meaningful protection from incidental implementation or UX lock-in, not merely confirm passing tests or agreement with current code/docs. Review reports should identify the test scope examined, concrete findings and coverage limits.
+
 An explicit wrap-up/integration request authorizes local delivery of agreed work. Push only when separately requested.

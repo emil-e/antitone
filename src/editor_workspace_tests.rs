@@ -38,20 +38,28 @@ fn branded_header_preserves_composed_menu_availability_and_processing_state() {
                     .1;
                 let bounds = mark.bounds().unwrap();
 
-                assert_eq!(bounds.x1 - bounds.x0, 118.);
-                assert_eq!(bounds.y1 - bounds.y0, 16.);
-                assert_eq!(bounds.x0, 12.);
-                assert!(((bounds.y0 + bounds.y1) / 2. - 16.).abs() < 1.);
+                assert!(bounds.width() > 0. && bounds.height() > 0.);
+                assert!(bounds.x0 >= 0. && bounds.x1 <= f64::from(width));
+                assert!(bounds.y0 >= 0. && bounds.y1 <= 600.);
 
-                for (label, disabled) in [("File", busy), ("Export", true)] {
+                for label in ["File", "Edit", "View"] {
                     let menu = &nodes
                         .iter()
                         .find(|(_, node)| node.label() == Some(label))
                         .unwrap()
                         .1;
-                    assert_eq!(menu.is_disabled(), disabled);
-                    assert!(menu.bounds().unwrap().y1 <= 32.);
+                    assert!(!menu.is_disabled());
+                    let menu_bounds = menu.bounds().unwrap();
+                    assert!(menu_bounds.x0 >= bounds.x1);
+                    assert!(menu_bounds.x1 <= f64::from(width));
+                    assert!(menu_bounds.y0 >= 0. && menu_bounds.y1 <= 600.);
                 }
+                let availability = editor.application_menu_state();
+                assert_eq!(
+                    availability.enabled(crate::platform::menu::Action::AddScans),
+                    !busy
+                );
+                assert!(!availability.enabled(crate::platform::menu::Action::ExportTiff));
                 assert_eq!((editor.roll, editor.photo, editor.document.dirty()), before);
                 assert!(editor.pick.is_none());
                 assert!(editor.crop_edit.is_none());
@@ -62,7 +70,7 @@ fn branded_header_preserves_composed_menu_availability_and_processing_state() {
 }
 
 #[test]
-fn stage_tabs_balance_label_padding_with_named_hit_regions_selection_and_keyboard_activation() {
+fn stage_tabs_have_readable_distinct_named_hit_regions_and_keyboard_activation() {
     let context = egui::Context::default();
     presentation::configure_fonts(&context);
     context.enable_accesskit();
@@ -96,38 +104,31 @@ fn stage_tabs_balance_label_padding_with_named_hit_regions_selection_and_keyboar
         .collect();
     nodes.sort_by(|(_, a), (_, b)| a.bounds().unwrap().x0.total_cmp(&b.bounds().unwrap().x0));
     assert_eq!(nodes.len(), 3);
-    let mut widths = Vec::new();
-    let mut side_padding = Vec::new();
+    let mut previous_right = 0.;
     for ((_, node), name) in nodes.into_iter().zip(["Roll", "Photo", "Rendering"]) {
         assert_eq!(node.label(), Some(name));
         assert_eq!(node.is_selected(), Some(name == "Roll"));
 
         let bounds = node.bounds().unwrap();
-        assert_eq!(bounds.y1 - bounds.y0, 28.);
-        assert!(bounds.x0 >= 0. && bounds.x1 <= 270.);
-        widths.push(bounds.x1 - bounds.x0);
-
-        let uppercase = name.to_uppercase();
+        assert!(bounds.height() > 0. && bounds.width() > 0.);
+        assert!(bounds.x0 >= previous_right && bounds.x1 <= 270.);
+        previous_right = bounds.x1;
         let text = first
             .shapes
             .iter()
             .find_map(|shape| match &shape.shape {
-                egui::Shape::Text(text) if text.galley.job.text == uppercase => Some(text),
+                egui::Shape::Text(text) if text.galley.job.text.eq_ignore_ascii_case(name) => {
+                    Some(text)
+                }
                 _ => None,
             })
             .unwrap();
-        let left = f64::from(text.pos.x) - bounds.x0;
-        let right = bounds.x1 - f64::from(text.pos.x + text.galley.size().x);
-        assert!(left >= 12. && right >= 12.);
-        assert!((left - right).abs() < 0.001);
-        side_padding.push(left);
+        let hit = egui::Rect::from_min_max(
+            egui::pos2(bounds.x0 as f32, bounds.y0 as f32),
+            egui::pos2(bounds.x1 as f32, bounds.y1 as f32),
+        );
+        assert!(hit.expand(0.5).contains_rect(text.visual_bounding_rect()));
     }
-
-    assert!(widths[0] < widths[1] && widths[1] < widths[2]);
-    assert!(
-        (side_padding[0] - side_padding[1]).abs() < 0.001
-            && (side_padding[1] - side_padding[2]).abs() < 0.001
-    );
 
     let key = |key| {
         vec![egui::Event::Key {

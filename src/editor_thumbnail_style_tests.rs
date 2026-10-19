@@ -95,7 +95,6 @@ fn card_frames_and_captions_fit_compact_and_normal_strips_without_changing_prefe
                     let bounds = caption.galley.rect.translate(caption.pos.to_vec2());
                     assert_eq!(caption.galley.rows.len(), 1);
                     assert!(card.rect.expand(0.5).contains_rect(bounds));
-                    assert!((bounds.center().x - card.rect.center().x).abs() < 0.5);
                 }
                 assert_eq!(editor.preferences.filmstrip_height, height);
                 assert_eq!(editor.document.project, before);

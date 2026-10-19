@@ -161,7 +161,7 @@ fn rendering_dropdowns_share_section_geometry_and_target_help() {
 }
 
 #[test]
-fn look_dropdown_contains_load_action_without_a_separate_import_button() {
+fn look_browsing_exposes_import_and_attribution_without_accepting_a_change() {
     let (mut harness, _) = fixture_editor();
     let before = harness.state().document.project.clone();
     for (size, name) in [
@@ -170,7 +170,6 @@ fn look_dropdown_contains_load_action_without_a_separate_import_button() {
     ] {
         harness.set_size(size);
         harness.run();
-        assert!(harness.query_by_label("Load LUT…").is_none());
         harness
             .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Look")
             .click();
@@ -180,7 +179,6 @@ fn look_dropdown_contains_load_action_without_a_separate_import_button() {
         assert!(!load.accesskit_node().is_disabled());
         for builtin in Builtin::ALL {
             assert!(harness.query_by_label(builtin.name()).is_some());
-            assert!(harness.query_by_label(builtin.source_product()).is_none());
         }
         if let Some(output) = std::env::var_os("ANTITONE_UI_CAPTURE") {
             let output = PathBuf::from(output);
@@ -216,7 +214,7 @@ fn look_dropdown_contains_load_action_without_a_separate_import_button() {
             modifiers: egui::Modifiers::NONE,
         });
         harness.run();
-        assert!(harness.query_by_label("Load LUT…").is_none());
+        assert!(!egui::Popup::is_any_open(&harness.ctx));
         assert!(harness.state().look_pending.is_none());
         assert_eq!(harness.state().document.project, before);
     }

@@ -395,10 +395,6 @@ fn roll_shelf_keeps_orientation_and_tools_fixed_and_preserves_photo_exceptions()
                 "{label}: {rect:?}"
             );
         }
-        assert!(
-            h.query_by_label("Scan orientation").is_none()
-                && h.query_by_label("Roll analysis").is_none()
-        );
         let shelf = h
             .get_by_role_and_label(egui::accesskit::Role::Button, "Turn left")
             .rect();

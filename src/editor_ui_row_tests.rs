@@ -216,6 +216,51 @@ fn section_frame(
 }
 
 #[test]
+fn modified_sections_have_a_visible_cue_independent_of_value_and_reset_availability() {
+    for scale in [1., 2.] {
+        for width in [270., 315.] {
+            let context = Context::default();
+            context.set_pixels_per_point(scale);
+            let render = |changed| {
+                let (section, output) = frame(&context, width, true, vec![], |ui| {
+                    ui.vertical(|ui| {
+                        section(
+                            ui,
+                            "changed-cue",
+                            "Section",
+                            SectionHeader {
+                                summary: "Current setting",
+                                changed,
+                                reset: None,
+                                default_open: Some(false),
+                            },
+                            |_| (),
+                        );
+                    })
+                });
+                output
+                    .shapes
+                    .into_iter()
+                    .filter(|shape| {
+                        section
+                            .response
+                            .rect
+                            .intersects(shape.shape.visual_bounding_rect())
+                    })
+                    // Clip metadata and accessibility changes alone are not a visible cue.
+                    .map(|shape| shape.shape)
+                    .collect::<Vec<_>>()
+            };
+            render(false);
+            let ordinary = render(false);
+            assert!(!ordinary.is_empty());
+            assert_ne!(ordinary, render(true));
+            assert_eq!(ordinary, render(false));
+        }
+    }
+}
+
+#[test]
 fn sections_keep_pinned_expansion_and_independent_reset_without_domain_fixtures() {
     for scale in [1., 2.] {
         for width in [315., 270.] {

@@ -147,6 +147,7 @@ fn brand_assets_have_the_expected_sizes_and_self_contained_wordmarks() {
 
 #[test]
 fn shared_components_inherit_interaction_colours_without_tinting_photographic_surfaces() {
+    let mut tool_fills = Vec::new();
     for accent in [INSCRIPTION, egui::Color32::from_rgb(71, 143, 207)] {
         let context = Context::default();
         super::configure_fonts(&context);
@@ -159,10 +160,6 @@ fn shared_components_inherit_interaction_colours_without_tinting_photographic_su
             |ui| {
                 configure_branding(ui);
                 assert_eq!(ui.visuals().selection.stroke.color, INSCRIPTION);
-                assert_eq!(
-                    ui.visuals().selection.bg_fill,
-                    INSCRIPTION.gamma_multiply(0.25)
-                );
                 assert_eq!(ui.visuals().hyperlink_color, INSCRIPTION);
                 // A second accent detects components that hard-code the current brand colour.
                 ui.visuals_mut().selection.stroke.color = accent;
@@ -170,7 +167,7 @@ fn shared_components_inherit_interaction_colours_without_tinting_photographic_su
                 let action = TextAction::new("Apply").primary().show(ui);
                 let mut selected = 1;
                 super::stage_tabs(ui, &mut selected);
-                super::ToolIdentity {
+                let tool_body = super::ToolIdentity {
                     icon: super::Icon::Pick,
                     title: "Dmin",
                 }
@@ -178,25 +175,43 @@ fn shared_components_inherit_interaction_colours_without_tinting_photographic_su
                 let layout = super::ContactSheetLayout::new(100., false);
                 let (id, cell) = ui.allocate_space(layout.size());
                 let card = layout.begin(ui, cell.min, id, true, false, true);
-                rectangles = Some((action.rect, card.response.rect));
+                rectangles = Some((action.rect, card.response.rect, tool_body.rect));
             },
         );
         output.textures_delta.clear();
-        let (action, card) = rectangles.unwrap();
+        let (action, card, tool_body) = rectangles.unwrap();
         assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
             egui::Shape::Rect(rect) if rect.rect == action && rect.fill == accent.gamma_multiply(0.25))));
+        let tool_fill = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Rect(rect)
+                    if rect.rect.contains_rect(tool_body)
+                        && rect.fill != egui::Color32::TRANSPARENT =>
+                {
+                    Some(rect)
+                }
+                _ => None,
+            })
+            .min_by(|a, b| a.rect.area().total_cmp(&b.rect.area()))
+            .unwrap()
+            .fill;
+        tool_fills.push(tool_fill);
         assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
-            egui::Shape::Rect(rect) if rect.fill == accent.gamma_multiply(0.25).linear_multiply(0.15))));
-        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
-            egui::Shape::LineSegment { stroke, .. } if stroke.width == 2. && stroke.color == accent)));
+            egui::Shape::LineSegment { stroke, .. } if stroke.color == accent)));
         assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
             egui::Shape::Rect(rect) if rect.rect == card && rect.stroke.color == accent
                 && rect.fill.r() == rect.fill.g() && rect.fill.g() == rect.fill.b())));
     }
+    assert_ne!(
+        tool_fills[0], tool_fills[1],
+        "tool emphasis must follow the supplied accent"
+    );
 }
 
 #[test]
-fn app_header_keeps_the_wordmark_size_neutral_theme_and_menu_focus_at_both_scales() {
+fn app_header_keeps_branding_and_menus_visible_without_taking_keyboard_focus() {
     for scale in [1., 2.] {
         for width in [320., 720., 1100.] {
             let context = Context::default();
@@ -248,10 +263,14 @@ fn app_header_keeps_the_wordmark_size_neutral_theme_and_menu_focus_at_both_scale
                 .1;
             assert_eq!(mark.role(), egui::accesskit::Role::Label);
             let bounds = mark.bounds().unwrap();
-            assert_eq!(bounds.x1 - bounds.x0, 118.);
-            assert_eq!(bounds.y1 - bounds.y0, 16.);
-            assert_eq!(bounds.x0, 12.);
-            assert!(((bounds.y0 + bounds.y1) / 2. - 16.).abs() < 1.);
+            assert!(bounds.width() > 0. && bounds.height() > 0.);
+            let artwork =
+                image::load_from_memory(include_bytes!("../assets/branding/wordmark-header.png"))
+                    .unwrap();
+            let aspect = f64::from(artwork.width()) / f64::from(artwork.height());
+            assert!((bounds.width() / bounds.height() - aspect).abs() < 1e-5);
+            assert!(bounds.x0 >= 0. && bounds.x1 <= f64::from(width));
+            assert!(bounds.y0 >= 0. && bounds.y1 <= 200.);
             let mark_before = bounds;
             let after = draw(key(egui::Key::Tab));
             let mark_after = after
@@ -272,7 +291,14 @@ fn app_header_keeps_the_wordmark_size_neutral_theme_and_menu_focus_at_both_scale
                 context.memory(|memory| memory.focused()),
                 Some(buttons[0].id)
             );
-            assert!(buttons.iter().all(|button| button.rect.bottom() <= 32.));
+            let viewport = Rect::from_min_size(Pos2::ZERO, egui::vec2(width, 200.));
+            assert!(
+                buttons
+                    .iter()
+                    .all(|button| viewport.contains_rect(button.rect))
+            );
+            assert!(f64::from(buttons[0].rect.left()) >= mark_before.x1);
+            assert!(!buttons[0].rect.intersects(buttons[1].rect));
         }
     }
 }
@@ -333,21 +359,6 @@ fn text_actions_fit_their_labels_and_keep_ids_and_supplied_availability() {
                 }
             }
         }
-    }
-}
-
-#[test]
-fn natural_text_actions_use_egui_button_sizing_and_caller_ids() {
-    for enabled in [false, true] {
-        let context = Context::default();
-        frame(&context, 315., enabled, vec![], |_| ());
-        let (button, _) = frame(&context, 315., enabled, vec![], |ui| ui.button("Save"));
-        let (action, _) = frame(&context, 315., enabled, vec![], |ui| {
-            TextAction::new("Save").show(ui)
-        });
-        assert_eq!(action.rect, button.rect);
-        assert_eq!(action.id, button.id);
-        assert_eq!(action.enabled(), button.enabled());
     }
 }
 

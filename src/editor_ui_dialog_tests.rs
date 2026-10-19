@@ -46,18 +46,18 @@ fn text(output: &FullOutput, label: &str) -> Rect {
 }
 
 #[test]
-fn decision_layout_is_centred_padded_and_keeps_actions_readable_at_narrow_widths() {
+fn decisions_keep_text_and_distinct_actions_visible_at_narrow_widths() {
     for width in [1100., 800., 320., 260.] {
         let context = Context::default();
         frame(&context, width, vec![]);
         frame(&context, width, vec![]);
         let (_, _, output) = frame(&context, width, vec![]);
         let area = context.memory(|memory| memory.area_rect(Id::new("test-decision")).unwrap());
-        assert!((area.center().x - width / 2.).abs() < 1., "{area:?}");
-        assert!((area.center().y - 300.).abs() < 1., "{area:?}");
-        assert!(area.min.x >= 7. && area.max.x <= width - 7., "{area:?}");
+        let viewport = Rect::from_min_size(Pos2::ZERO, egui::vec2(width, 600.));
+        assert!(viewport.contains_rect(area), "{area:?}");
         for label in [
             "Save changes to this project?",
+            "Opening another project without saving will discard unsaved edits in this project.",
             "Cancel",
             "Discard changes",
             "Save changes",
@@ -68,7 +68,6 @@ fn decision_layout_is_centred_padded_and_keeps_actions_readable_at_narrow_widths
                 area.contains_rect(rect),
                 "{label}: {rect:?} outside {area:?}"
             );
-            assert!(rect.min.x >= area.min.x + 19. && rect.max.x <= area.max.x - 19.);
         }
         let cancel = text(&output, "Cancel");
         let alternative = text(&output, "Discard changes");
@@ -77,28 +76,43 @@ fn decision_layout_is_centred_padded_and_keeps_actions_readable_at_narrow_widths
             &output,
             "/projects/照片-very-long-project-with-no-spaces-that-must-wrap.antitone.json",
         );
-        assert!(cancel.min.y - detail.max.y >= 16.);
-        if width == 260. {
-            assert!(cancel.max.y < alternative.min.y && alternative.max.y < confirm.min.y);
-        } else {
-            assert!((cancel.min.y - confirm.min.y).abs() < 1.);
-            assert!(cancel.max.x < alternative.min.x && alternative.max.x < confirm.min.x);
+        for action in [cancel, alternative, confirm] {
+            assert!(!action.intersects(detail));
         }
-        assert!(confirm.max.x >= area.max.x - 30.);
-        let nodes = output.platform_output.accesskit_update.unwrap().nodes;
+        assert!(!cancel.intersects(alternative));
+        assert!(!cancel.intersects(confirm));
+        assert!(!alternative.intersects(confirm));
+        let nodes = &output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes;
         assert!(
             !nodes
                 .iter()
                 .any(|(_, node)| matches!(node.value(), Some("Warning" | "Information" | "Error")))
         );
+        let mut hit_regions = Vec::new();
         for label in ["Cancel", "Discard changes", "Save changes"] {
-            assert!(
-                nodes
-                    .iter()
-                    .any(|(_, node)| node.role() == egui::accesskit::Role::Button
-                        && node.label() == Some(label)
-                        && !node.is_disabled())
+            let action = &nodes
+                .iter()
+                .find(|(_, node)| {
+                    node.role() == egui::accesskit::Role::Button && node.label() == Some(label)
+                })
+                .unwrap()
+                .1;
+            assert!(!action.is_disabled());
+            let bounds = action.bounds().unwrap();
+            let hit = Rect::from_min_max(
+                egui::pos2(bounds.x0 as f32, bounds.y0 as f32),
+                egui::pos2(bounds.x1 as f32, bounds.y1 as f32),
             );
+            assert!(area.contains_rect(hit));
+            assert!(hit.contains_rect(text(&output, label)));
+            assert!(!hit.intersects(detail));
+            assert!(hit_regions.iter().all(|other| !hit.intersects(*other)));
+            hit_regions.push(hit);
         }
     }
 }

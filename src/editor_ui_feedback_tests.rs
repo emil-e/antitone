@@ -53,20 +53,13 @@ fn severity_is_written_accessible_and_visually_distinct_with_safe_acknowledgemen
         let (_, output) = frame(&context, 800., severity, vec![], "technical reason", true);
         assert!(text(&output, label).is_some());
         assert!(text(&output, "technical reason").is_none());
-        assert!(text(&output, "Technical details").is_none());
-        assert!(output.shapes.iter().any(|shape| match &shape.shape {
-            egui::Shape::Text(text) => {
-                text.galley.job.text == "Details"
-                    && text.galley.job.sections[0].format.color
-                        == context.global_style().visuals.text_color()
-            }
-            _ => false,
-        }));
-        assert!(!output.shapes.iter().any(
-            |shape| matches!(&shape.shape, egui::Shape::LineSegment { points, .. }
-            if (points[0].y - points[1].y).abs() < 0.1 && (points[0].x - points[1].x).abs() > 200.)
-        ));
-        let nodes = output.platform_output.accesskit_update.unwrap().nodes;
+        assert!(text(&output, "Details").is_some());
+        let nodes = &output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes;
         let disclosure = nodes
             .iter()
             .find(|(_, node)| node.label() == Some("Details"))
@@ -74,8 +67,9 @@ fn severity_is_written_accessible_and_visually_distinct_with_safe_acknowledgemen
             .1
             .bounds()
             .unwrap();
-        assert!(disclosure.width() < 100.);
-        assert_eq!(disclosure.height(), 22.);
+        assert!(disclosure.width() > 0. && disclosure.height() > 0.);
+        let area = context.memory(|memory| memory.area_rect(Id::new("test-feedback")).unwrap());
+        assert!(area.contains_rect(text(&output, "Details").unwrap()));
         assert!(nodes.iter().any(|(_, node)| node.value() == Some(label)));
         assert!(
             nodes

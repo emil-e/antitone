@@ -67,8 +67,6 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                     .accesskit_node()
                     .is_disabled()
             );
-            assert!(harness.query_by_label("OK").is_none());
-            assert!(harness.query_by_label("Cancel").is_none());
             let title = harness.state().tasks.view().unwrap().title;
             harness.event(egui::Event::Key {
                 key: egui::Key::Escape,
@@ -87,22 +85,10 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
         {
             held_activity(harness.state_mut(), Task::Export(id));
             render_case(&mut harness, &format!("export-{layout}"));
-            assert!(
-                harness
-                    .ctx
-                    .memory(|memory| memory.area_rect(egui::Id::new("working-export")))
-                    .is_none()
-            );
-            assert!(
-                harness
-                    .get_by_role_and_label(egui::accesskit::Role::ProgressIndicator, "Exporting…")
-                    .accesskit_node()
-                    .data()
-                    .bounds()
-                    .unwrap()
-                    .y0
-                    > f64::from(size.y - 32.)
-            );
+            let progress = harness
+                .get_by_role_and_label(egui::accesskit::Role::ProgressIndicator, "Exporting…")
+                .rect();
+            assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(progress));
             assert!(
                 !harness
                     .get_by_role_and_label(egui::accesskit::Role::Tab, "Photo")

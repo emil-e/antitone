@@ -55,30 +55,40 @@ fn typography_preserves_fallbacks_tabular_digits_and_separate_reading_and_instru
             ui.label(instrument_label("Gamma neutral", 12.));
             ui.label(instrument_readout("Source +0.00 EV", 10.));
             for enabled in [true, false] {
-                let action = TextAction::new("37%")
-                    .readout()
-                    .toolbar(50.)
-                    .enabled(enabled);
-                let measured = action.width(ui);
-                let response = action.show(ui);
-                assert_eq!(response.enabled(), enabled);
-                assert!((response.rect.width() - measured).abs() < 1e-5);
-                assert_eq!(response.rect.height(), CONTROL_HEIGHT);
+                for minimum in [0., 50.] {
+                    let action = TextAction::new("1234567890%")
+                        .readout()
+                        .toolbar(minimum)
+                        .enabled(enabled);
+                    let measured = action.width(ui);
+                    assert!(
+                        measured > minimum,
+                        "fixture must exercise font measurement, not only minimum sizing"
+                    );
+                    let response = action.show(ui);
+                    assert_eq!(response.enabled(), enabled);
+                    assert!((response.rect.width() - measured).abs() < 1e-5);
+                    assert_eq!(response.rect.height(), CONTROL_HEIGHT);
+                }
             }
         });
         output.textures_delta.clear();
-        for (text, instrument, spacing) in [
-            ("0.123456", false, 0.),
-            ("Reading heading", false, 0.),
-            ("GAMMA NEUTRAL", true, 12. * 0.045),
-            ("Source +0.00 EV", true, 0.),
-            ("37%", true, 0.),
+        for (text, instrument, tracked) in [
+            ("0.123456", false, false),
+            ("Reading heading", false, false),
+            ("Gamma neutral", true, true),
+            ("Source +0.00 EV", true, false),
+            ("1234567890%", true, false),
         ] {
             let shape = output
                 .shapes
                 .iter()
                 .find_map(|shape| match &shape.shape {
-                    egui::Shape::Text(shape) if shape.galley.job.text == text => Some(shape),
+                    egui::Shape::Text(shape)
+                        if shape.galley.job.text.eq_ignore_ascii_case(text) =>
+                    {
+                        Some(shape)
+                    }
                     _ => None,
                 })
                 .unwrap();
@@ -91,7 +101,11 @@ fn typography_preserves_fallbacks_tabular_digits_and_separate_reading_and_instru
                         egui::FontFamily::Proportional
                     }
                 );
-                assert_eq!(section.format.extra_letter_spacing, spacing);
+                if tracked {
+                    assert!(section.format.extra_letter_spacing > 0.);
+                } else {
+                    assert_eq!(section.format.extra_letter_spacing, 0.);
+                }
             }
         }
     }

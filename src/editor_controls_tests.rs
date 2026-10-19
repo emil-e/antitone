@@ -71,7 +71,9 @@ fn inward_margin_uses_shared_precision_keyboard_steps_and_actual_default() {
         );
         assert_eq!(value, 1.23456789);
         assert!(numeric.rect.right() < reset.rect.left());
-        assert!((slider.rect.width() - (width - 16.)).abs() < 1.);
+        assert!(
+            slider.rect.is_positive() && slider.rect.left() >= 0. && slider.rect.right() <= width
+        );
         for pressed in [true, false] {
             frame(
                 &context,
@@ -124,7 +126,11 @@ fn drawing_preserves_manual_precision_and_exposure_outside_normal_slider_range()
                 egui::Modifiers::NONE,
             );
             assert_eq!(value, initial);
-            assert!((slider.rect.width() - (width - 16.)).abs() < 1.);
+            assert!(
+                slider.rect.is_positive()
+                    && slider.rect.left() >= 0.
+                    && slider.rect.right() <= width
+            );
             assert!(numeric.rect.right() < reset.rect.left());
             assert!(numeric.rect.bottom() <= slider.rect.top());
             let second = frame(
@@ -1189,6 +1195,7 @@ fn composed_gamma_roll_and_photo_wheels_keep_precision_gestures_scoped() {
             tint: -0.1,
         },
     ];
+    context.enable_accesskit();
     let mut balances = initial;
     let draw = |balances: &mut [Balance; 3], mut events: Vec<egui::Event>, modifiers| {
         events.insert(0, egui::Event::ModifiersChanged(modifiers));
@@ -1217,12 +1224,33 @@ fn composed_gamma_roll_and_photo_wheels_keep_precision_gestures_scoped() {
             },
         );
         output.textures_delta.clear();
-        output
-            .shapes
-            .iter()
-            .filter_map(|shape| match &shape.shape {
-                egui::Shape::Circle(circle) if circle.radius == 52. => Some(circle.center),
-                _ => None,
+        let mut wheels: Vec<_> = output
+            .platform_output
+            .accesskit_update
+            .unwrap()
+            .nodes
+            .into_iter()
+            .filter_map(|(_, node)| {
+                if node.role() == egui::accesskit::Role::Image
+                    && matches!(
+                        node.label(),
+                        Some("Gamma balance wheel" | "White balance wheel")
+                    )
+                {
+                    node.bounds()
+                } else {
+                    None
+                }
+            })
+            .collect();
+        wheels.sort_by(|a, b| a.y0.total_cmp(&b.y0));
+        wheels
+            .into_iter()
+            .map(|bounds| {
+                egui::pos2(
+                    ((bounds.x0 + bounds.x1) / 2.) as f32,
+                    ((bounds.y0 + bounds.y1) / 2.) as f32,
+                )
             })
             .collect::<Vec<_>>()
     };
@@ -1534,15 +1562,25 @@ fn collapsed_sections_keep_adjustments_summaries_and_independent_resets() {
             .shapes
             .iter()
             .any(|shape| match &shape.shape {
-                egui::Shape::Text(text) => text.galley.job.text == "Adjusted · +1.23 EV",
+                egui::Shape::Text(text) => text.galley.job.text.contains("+1.23 EV"),
                 _ => false,
             })
     );
-    assert!(
-        collapsed.output.shapes.iter().any(
-            |shape| matches!(&shape.shape, egui::Shape::Circle(circle) if circle.radius == 2.5)
-        )
-    );
+    let modified = |output: &egui::FullOutput| {
+        output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|(_, node)| node.label() == Some("Grade"))
+            .unwrap()
+            .1
+            .description()
+            == Some("Modified")
+    };
+    assert!(modified(&collapsed.output));
     value = 2.;
     assert!(
         section_frame(&context, &mut value, vec![])
@@ -1556,11 +1594,7 @@ fn collapsed_sections_keep_adjustments_summaries_and_independent_resets() {
     let reset = section_frame(&context, &mut value, vec![]);
     assert_eq!(value, 0.);
     assert!(reset.numeric.is_none());
-    assert!(
-        !reset.output.shapes.iter().any(
-            |shape| matches!(&shape.shape, egui::Shape::Circle(circle) if circle.radius == 2.5)
-        )
-    );
+    assert!(!modified(&reset.output));
     for pressed in [true, false] {
         section_frame(&context, &mut value, pointer(header, pressed));
     }

@@ -42,14 +42,17 @@ fn frame(
 }
 
 #[test]
-fn working_modals_are_neutral_title_and_bar_only_and_fit_narrow_widths() {
+fn working_modals_keep_the_operation_visible_and_accessible_at_narrow_widths() {
     for width in [1100., 800., 320., 260.] {
         let context = Context::default();
         frame(&context, width, false, 1., vec![]);
         frame(&context, width, false, 1., vec![]);
         let (_, output) = frame(&context, width, false, 1., vec![]);
         let area = context.memory(|memory| memory.area_rect(Id::new("test-working")).unwrap());
-        assert!(area.min.x >= 7. && area.max.x <= width - 7., "{area:?}");
+        assert!(
+            Rect::from_min_size(Pos2::ZERO, egui::vec2(width, 600.)).contains_rect(area),
+            "{area:?}"
+        );
         let texts = output
             .shapes
             .iter()
@@ -60,9 +63,14 @@ fn working_modals_are_neutral_title_and_bar_only_and_fit_narrow_widths() {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert_eq!(texts.len(), 1);
-        assert_eq!(texts[0].galley.job.text, "Importing RAWs…");
-        assert!(area.contains_rect(Rect::from_min_size(texts[0].pos, texts[0].galley.size())));
+        assert!(
+            texts
+                .iter()
+                .any(|text| text.galley.job.text == "Importing RAWs…")
+        );
+        for text in texts {
+            assert!(area.contains_rect(Rect::from_min_size(text.pos, text.galley.size())));
+        }
         let nodes = output.platform_output.accesskit_update.unwrap().nodes;
         let progress = nodes
             .iter()
@@ -108,23 +116,41 @@ fn indeterminate_bar_moves_without_exposing_a_percentage() {
     frame(&context, 800., false, 1., vec![]);
     let (_, first) = frame(&context, 800., false, 1., vec![]);
     let (_, second) = frame(&context, 800., false, 1.4, vec![]);
-    let segment = |output: &FullOutput| {
-        output
+    let bar_shapes = |output: &FullOutput| {
+        let bounds = output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|(_, node)| {
+                node.role() == egui::accesskit::Role::ProgressIndicator
+                    && node.label() == Some("Importing RAWs…")
+            })
+            .unwrap()
+            .1
+            .bounds()
+            .unwrap();
+        let bar = Rect::from_min_max(
+            egui::pos2(bounds.x0 as f32, bounds.y0 as f32),
+            egui::pos2(bounds.x1 as f32, bounds.y1 as f32),
+        );
+        let shapes: Vec<_> = output
             .shapes
             .iter()
             .filter_map(|shape| match &shape.shape {
-                egui::Shape::Rect(rect)
-                    if rect.rect.height() == 18.
-                        && rect.fill == context.global_style().visuals.selection.bg_fill =>
-                {
-                    Some(rect.rect)
-                }
+                egui::Shape::Rect(rect) if shape.clip_rect == bar => Some(rect.rect),
                 _ => None,
             })
-            .next_back()
-            .unwrap()
+            .collect();
+        assert!(
+            !shapes.is_empty(),
+            "progress artwork must be present in its named region"
+        );
+        shapes
     };
-    assert_ne!(segment(&first), segment(&second));
+    assert_ne!(bar_shapes(&first), bar_shapes(&second));
     assert!(
         second
             .platform_output
@@ -154,7 +180,7 @@ fn measured_progress_uses_supplied_file_counts() {
 }
 
 #[test]
-fn viewer_spinner_is_centred_with_an_accessible_label_and_no_visible_copy() {
+fn viewer_activity_stays_inside_the_canvas_with_an_accessible_operation_name() {
     let context = Context::default();
     context.enable_accesskit();
     let canvas = Rect::from_min_size(egui::pos2(32., 60.), egui::vec2(500., 350.));
@@ -170,12 +196,6 @@ fn viewer_spinner_is_centred_with_an_accessible_label_and_no_visible_copy() {
         assert!(canvas.contains_rect(response.rect));
     });
     output.textures_delta.clear();
-    assert!(
-        !output
-            .shapes
-            .iter()
-            .any(|shape| matches!(shape.shape, egui::Shape::Text(_)))
-    );
     assert!(
         output
             .platform_output

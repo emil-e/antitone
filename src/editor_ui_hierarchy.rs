@@ -356,6 +356,9 @@ fn section_heading(
             2.5,
             ui.visuals().selection.stroke.color,
         );
+        ui.ctx().accesskit_node_builder(response.id, |node| {
+            node.set_description("Modified");
+        });
     }
     response
 }

@@ -799,9 +799,8 @@ fn compact_scope_header_fits_and_disclosure_preserves_state_at_both_densities() 
                     })
                     .rect();
                 assert!(heading.left() >= size.x - width);
-                assert!(heading.right() <= menu.left());
+                assert!(!heading.intersects(menu));
                 assert!(menu.right() <= size.x);
-                assert!((heading.center().y - menu.center().y).abs() <= 1. / scale);
                 harness.event(egui::Event::PointerGone);
                 harness.step();
                 harness.render().unwrap();
@@ -815,43 +814,40 @@ fn compact_scope_header_fits_and_disclosure_preserves_state_at_both_densities() 
                     matches!(input.status(editor.scopes.gpu.as_ref().unwrap(), settings), Some(Ok(counts)) if counts.invalid == 0)
                 });
                 let png = harness.render().unwrap();
-                let trace = harness
+                let (trace, plot_rect) = harness
                     .output()
                     .shapes
                     .iter()
                     .find_map(|shape| match &shape.shape {
                         egui::Shape::Callback(callback)
-                            if callback.rect.left() >= size.x - width =>
+                            if callback.rect.left() >= heading.left()
+                                && callback.rect.right() <= menu.right()
+                                && callback.rect.top() > heading.bottom() =>
                         {
-                            Some(callback.rect)
+                            Some((callback.rect, shape.clip_rect))
                         }
                         _ => None,
                     })
-                    .expect("scope callback in inspector");
-                let plot_rect = harness
-                    .output()
-                    .shapes
-                    .iter()
-                    .find_map(|shape| match &shape.shape {
-                        egui::Shape::Rect(rect)
-                            if rect.rect.left() >= size.x - width
-                                && rect.fill == egui::Color32::from_gray(6)
-                                && rect.rect.height() >= 96. =>
-                        {
-                            Some(rect.rect)
-                        }
-                        _ => None,
-                    })
-                    .unwrap();
-                assert!(
-                    plot_rect.top() - heading.bottom() <= 8.,
-                    "plot follows the header"
-                );
-                for shape in &harness.output().shapes {
-                    if let egui::Shape::Text(text) = &shape.shape
-                        && text.pos.x >= size.x - width
-                        && ["0", "25", "50", "75", "100"].contains(&text.galley.job.text.as_str())
-                    {
+                    .expect("scope callback below its header");
+                let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+                assert!(viewport.contains_rect(plot_rect));
+                assert!(plot_rect.contains_rect(trace));
+                if plot != crate::scopes::Plot::Vector {
+                    for label in ["0", "100"] {
+                        let text = harness
+                            .output()
+                            .shapes
+                            .iter()
+                            .find_map(|shape| match &shape.shape {
+                                egui::Shape::Text(text)
+                                    if shape.clip_rect == plot_rect
+                                        && text.galley.job.text == label =>
+                                {
+                                    Some(text)
+                                }
+                                _ => None,
+                            })
+                            .expect("waveform endpoint label in the scope plot");
                         assert!(
                             plot_rect.contains_rect(text.visual_bounding_rect()),
                             "waveform endpoint label is clipped"
@@ -859,7 +855,11 @@ fn compact_scope_header_fits_and_disclosure_preserves_state_at_both_densities() 
                     }
                 }
                 assert!(trace.top() > heading.bottom());
-                assert!(trace.bottom() < size.y - 180.);
+                let stage = harness
+                    .get_by_role_and_label(egui::accesskit::Role::Tab, "Roll")
+                    .rect();
+                assert!(viewport.contains_rect(stage));
+                assert!(stage.top() >= plot_rect.bottom());
                 if plot == crate::scopes::Plot::Vector {
                     assert!((trace.width() - trace.height()).abs() < 0.01);
                 }

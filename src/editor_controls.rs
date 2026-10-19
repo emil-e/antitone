@@ -549,6 +549,16 @@ struct WheelDrag {
 fn wheel(ui: &mut Ui, kind: ColorControl, value: &mut Balance) -> Response {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(140., 140.), egui::Sense::click_and_drag());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Image,
+            response.enabled(),
+            match kind {
+                ColorControl::GammaBalance => "Gamma balance wheel",
+                ColorControl::WhiteBalance => "White balance wheel",
+            },
+        )
+    });
     let center = rect.center();
     let radius = 52.;
 

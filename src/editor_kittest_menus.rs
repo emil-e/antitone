@@ -115,7 +115,7 @@ fn settings_escape_cancels_numeric_text_before_dismissing_the_panel() {
 }
 
 #[test]
-fn application_panels_fit_normal_and_narrow_windows_without_editing_the_document() {
+fn application_panels_can_be_closed_at_both_layouts_without_editing_the_document() {
     let (mut harness, _) = editor_harness();
     harness.try_run_realtime().unwrap();
     let before = harness.state().document.project.clone();
