@@ -19,6 +19,7 @@ pub mod gpu;
 pub mod gpu_export;
 #[cfg(feature = "project")]
 pub mod image_recipe;
+pub mod lens;
 pub mod local_adjustments;
 #[cfg(any(feature = "project", feature = "gpu"))]
 pub mod looks;

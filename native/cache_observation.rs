@@ -179,18 +179,66 @@ impl Monitor {
 }
 
 pub(super) fn source_bound(m: &crate::raw::Metadata) -> Result<u64> {
-    let bytes = u64::from(m.width)
-        .checked_mul(u64::from(m.height))
+    let correction = m.lens_geometry().map_err(|error| error.to_string())?;
+    raster_bound(
+        [m.width, m.height],
+        correction.map(|geometry| geometry.size()),
+        [m.raw_width, m.raw_height],
+    )
+}
+
+fn raster_bound(native: [u32; 2], corrected: Option<[u32; 2]>, cfa: [u32; 2]) -> Result<u64> {
+    let native_rgb = u64::from(native[0])
+        .checked_mul(u64::from(native[1]))
         .and_then(|n| n.checked_mul(8))
+        .ok_or("diagnostic native geometry overflow")?;
+    let mask_bytes = |size: [u32; 2]| {
+        u64::from(size[0].div_ceil(32))
+            .checked_mul(u64::from(size[1]))
+            .and_then(|n| n.checked_mul(8))
+    };
+    let peak = if let Some(size) = corrected {
+        let native_mask = mask_bytes(native).ok_or("diagnostic capture mask overflow")?;
+        let corrected_mask = mask_bytes(size).ok_or("diagnostic capture mask overflow")?;
+        let corrected_rgb = u64::from(size[0])
+            .checked_mul(u64::from(size[1]))
+            .and_then(|n| n.checked_mul(12))
+            .ok_or("diagnostic corrected geometry overflow")?;
+        let mask_build = native_mask
+            .checked_mul(3)
+            .and_then(|n| native_rgb.checked_add(n))
+            .ok_or("diagnostic mask construction overflow")?;
+        let reconstruction = native_rgb
+            .checked_add(corrected_rgb)
+            .and_then(|n| n.checked_add(native_mask))
+            .and_then(|n| n.checked_add(corrected_mask))
+            .ok_or("diagnostic reconstruction overflow")?;
+        mask_build.max(reconstruction)
+    } else {
+        native_rgb
+    };
+    let bytes = Some(peak)
         .and_then(|rgb| {
-            u64::from(m.raw_width)
-                .checked_mul(u64::from(m.raw_height))
+            u64::from(cfa[0])
+                .checked_mul(u64::from(cfa[1]))
                 .and_then(|n| n.checked_mul(2))
                 .and_then(|cfa| rgb.checked_add(cfa))
         })
         .filter(|n| *n > 0 && *n <= 600 << 20)
         .ok_or("source exceeds diagnostic geometry/600 MiB bound")?;
     Ok(bytes)
+}
+
+#[test]
+fn continuous_sources_do_not_understate_or_lower_the_diagnostic_memory_guard() {
+    assert_eq!(
+        raster_bound([8704, 6144], None, [8704, 6144]).unwrap(),
+        8704 * 6144 * 10
+    );
+    assert!(raster_bound([8704, 6144], Some([8640, 5760]), [8704, 6144]).is_err());
+    assert!(raster_bound([9000, 9000], Some([3000, 3000]), [9000, 9000]).is_err());
+    // Retained RGB/mask/CFA would fit, but simultaneous reconstruction ownership does not.
+    assert!(raster_bound([8000, 5000], Some([8000, 5000]), [8000, 5000]).is_err());
 }
 
 pub(super) fn wait(

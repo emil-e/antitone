@@ -45,11 +45,8 @@ impl PartialEq for ImageRecipe {
 
 impl NeutralRecipe {
     pub fn processing_calibration(&self) -> Result<Calibration, Error> {
-        self.correction
-            .as_ref()
-            .map_or(Ok(self.calibration), |field| {
-                field.processing_calibration(self.calibration)
-            })
+        self.source_development
+            .processing_calibration(self.calibration, self.correction.as_deref())
     }
 }
 
@@ -63,6 +60,12 @@ impl ImageRecipe {
             + development.inversion_space.capacity()
             + development.working_space.capacity()
             + self.neutral.source_development.camera_model.capacity()
+            + self
+                .neutral
+                .source_development
+                .lens_correction
+                .as_ref()
+                .map_or(0, String::capacity)
             + self
                 .neutral
                 .correction

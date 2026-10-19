@@ -25,6 +25,7 @@ pub(in crate::editor) async fn fixture() -> (
         id: SourceId(0),
         path: "local-fixture.ARW".into(),
         development: SourceDevelopment {
+            lens_correction: None,
             dimensions: [150, 100],
             active_area: [120, 73, 23, 19],
             camera_model: "test-camera".into(),
@@ -228,6 +229,98 @@ fn cached_grades_follow_processing_not_names_allocator_or_view_state() {
                 .unwrap()
                 .source_revision(),
             revision
+        );
+    });
+}
+
+#[test]
+fn developed_floors_are_source_specific_in_editor_preparation_and_offscreen_admission() {
+    pollster::block_on(async {
+        let (mut editor, _, _, device, _) = fixture().await;
+        let first = editor.current_source.unwrap();
+        editor
+            .document
+            .project
+            .source_mut(first)
+            .unwrap()
+            .local_adjustments = None;
+        let mut shaded = editor.document.project.source(first).unwrap().clone();
+        shaded.id = SourceId(0);
+        shaded.path = "shaded-fixture.ARW".into();
+        shaded.development.lens_correction = Some("ab".repeat(32));
+        shaded.development.input_floor *= 4.;
+        let second = editor.document.project.add_source(shaded).unwrap();
+        let base = editor.calibration().unwrap();
+        assert_eq!(
+            editor.processing_calibration(base).unwrap().input_floor,
+            base.input_floor
+        );
+        let source = editor.document.project.source(second).unwrap();
+        let input = editor
+            .positive_processing_for_source(base, editor.roll, source, source.photo)
+            .unwrap();
+        let expected = ProcessingParameters::positive(
+            Calibration {
+                input_floor: base.input_floor * 4.,
+                ..base
+            },
+            editor.roll,
+            source.photo,
+            glam::DMat3::IDENTITY,
+        )
+        .unwrap();
+        assert_eq!(
+            bytemuck::bytes_of(&input.parameters()),
+            bytemuck::bytes_of(&expected)
+        );
+        let near_floor = Calibration {
+            dmax: DVec3::splat(base.input_floor * 2.),
+            ..base
+        };
+        assert!(
+            editor
+                .positive_parameters(near_floor, editor.roll, editor.photo)
+                .is_ok()
+        );
+        assert!(
+            editor
+                .validate_processing(near_floor, editor.roll, editor.photo)
+                .is_err()
+        );
+        editor.dmax = Some(near_floor.dmax);
+        assert!(
+            editor
+                .validate_source_candidate(editor.document.project.source(second).unwrap())
+                .is_err()
+        );
+        editor.current_source = Some(second);
+        assert_eq!(
+            editor.processing_calibration(base).unwrap().input_floor,
+            base.input_floor * 4.
+        );
+        editor.dmax = Some(base.dmax);
+        editor.sync_document();
+        editor.document.project.order = vec![second];
+        let record = editor.document.project.source(second).unwrap();
+        // A nonbinary bound exposes precision-floor round trips through an already scaled floor.
+        let map = Arc::new(
+            crate::flat_field::FlatField::from_nodes(
+                record.development.active_area,
+                [2, 2],
+                vec![DVec3::splat(5.235436781787922); 4],
+            )
+            .unwrap(),
+        );
+        editor.document.project.flat_field = Some(crate::project::FlatFieldSettings::new(
+            record,
+            map,
+            editor.document.project.development.as_ref().unwrap(),
+        ));
+        editor.correction = Correction::prepare(&device, &editor.document, None).unwrap();
+        let recipe = editor.document.project.image_recipe(second).unwrap();
+        assert_eq!(
+            editor.processing_calibration(base).unwrap(),
+            recipe.neutral.processing_calibration().unwrap()
         );
     });
 }

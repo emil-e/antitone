@@ -126,11 +126,12 @@ impl crate::image_recipe::NeutralRecipe {
         let (width, height) = scan.dimensions()?;
         let area = scan.area;
         let actual = crate::project::SourceDevelopment {
+            lens_correction: scan.source().metadata().lens_identity()?,
             dimensions: [width, height],
             active_area: [area.x, area.y, area.width, area.height],
             camera_model: scan.camera_model.clone(),
             camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
-            input_floor: scan.input_floor,
+            input_floor: scan.source().input_floor(),
         };
         if self.source_development != actual
             || self.development

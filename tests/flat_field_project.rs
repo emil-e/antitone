@@ -19,6 +19,7 @@ fn fixture() -> Project {
         id: SourceId(0),
         path: "photo.ARW".into(),
         development: SourceDevelopment {
+            lens_correction: None,
             dimensions: [824, 624],
             active_area: [12, 12, 800, 600],
             camera_model: "test-camera".into(),
@@ -129,6 +130,81 @@ fn contract_identity_geometry_and_incompatible_sources_reject() {
     let mut json = serde_json::to_value(&project).unwrap();
     json["flat_field"]["map"]["size"] = serde_json::json!([0, 2]);
     assert!(serde_json::from_value::<Project>(json).is_err());
+}
+
+#[test]
+fn inversion_domain_uses_each_developed_floor_and_residual_gain_not_the_native_base() {
+    use antitone::processing::{CAMERA_INPUT_FLOOR, Calibration, Inversion, Response};
+
+    let directory = tempfile::tempdir().unwrap();
+    for (index, (source_gain, flat_gain)) in [
+        (2. * std::f64::consts::SQRT_2, 1.),
+        (1., 2. * std::f64::consts::SQRT_2),
+        (2. * std::f64::consts::SQRT_2, 1.1),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut project = fixture();
+        project.flat_field = None;
+        project.sources[0].development.input_floor = CAMERA_INPUT_FLOOR * source_gain;
+        project.sources[0].development.lens_correction = (source_gain > 1.).then(|| "1".repeat(64));
+        if flat_gain > 1. {
+            let map = Arc::new(
+                FlatField::from_nodes([30, 30, 760, 550], [2, 2], vec![DVec3::splat(flat_gain); 4])
+                    .unwrap(),
+            );
+            project.flat_field = Some(FlatFieldSettings::new(
+                &project.sources[0],
+                map,
+                project.development.as_ref().unwrap(),
+            ));
+        }
+
+        let floor = CAMERA_INPUT_FLOOR * source_gain * flat_gain;
+        project.dmin = Some([2.; 3]);
+        project.dmax = Some([floor * 1.01; 3]);
+        project.roll.gamma = 0.1;
+        project.roll.response = Response::Film {
+            toe: 1.,
+            shoulder: 0.02,
+        };
+        let native = project.calibration().unwrap().unwrap();
+        // The shoulder pole is below the usable developed domain, but above the native floor.
+        assert!(Inversion::new(native, project.roll).is_err());
+        Inversion::new(
+            Calibration {
+                input_floor: floor,
+                ..native
+            },
+            project.roll,
+        )
+        .unwrap();
+        project.validate().unwrap();
+
+        let path = directory.path().join(format!("floor-{index}.antitone"));
+        project.save(&path, Save::New).unwrap();
+        assert_eq!(Project::load(&path).unwrap(), project);
+
+        if flat_gain == 1. {
+            let mut native_source = project.sources[0].clone();
+            native_source.path = "native.ARW".into();
+            native_source.development.lens_correction = None;
+            native_source.development.input_floor = CAMERA_INPUT_FLOOR;
+            let mut mixed = project.clone();
+            mixed.add_source(native_source).unwrap();
+            assert!(
+                mixed.validate().is_err(),
+                "every source needs a valid inversion domain"
+            );
+            project.sources.clear();
+            project.order.clear();
+            assert!(
+                project.validate().is_err(),
+                "source-less calibration retains the base domain"
+            );
+        }
+    }
 }
 
 #[test]

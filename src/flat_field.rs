@@ -83,10 +83,14 @@ impl FlatField {
         if camera_means
             .iter()
             .chain(std::iter::once(&center_camera))
-            .any(|p| !p.is_finite() || p.min_element() <= 0. || p.max_element() > 1.)
+            .any(|p| {
+                !p.is_finite()
+                    || p.min_element() <= 0.
+                    || p.max_element() > crate::processing::MAX_SOURCE_GAIN
+            })
         {
             return Err(Error::UnusableSample(
-                "flat-field camera means must be finite and within 0..1",
+                "flat-field camera means exceed the positive developed-source domain",
             ));
         }
         if !camera_to_ap1.is_finite() || camera_to_ap1.determinant().abs() < 1e-8 {
@@ -156,7 +160,7 @@ impl FlatField {
     /// One camera RGB16 code amplified by the largest gain, including identity outside support.
     /// Bilinear gain extrema occur at nodes.
     pub fn precision_floor(&self) -> Result<f64, Error> {
-        let floor = self.bounds().1.max_element() / 65535.;
+        let floor = crate::processing::CAMERA_INPUT_FLOOR * self.bounds().1.max_element();
         if !floor.is_finite() || floor <= 0. {
             return Err(Error::NumericalOverflow);
         }
@@ -165,15 +169,12 @@ impl FlatField {
 
     pub fn processing_calibration(
         &self,
-        mut calibration: crate::processing::Calibration,
+        calibration: crate::processing::Calibration,
     ) -> Result<crate::processing::Calibration, Error> {
-        if calibration.input_floor != crate::processing::CAMERA_INPUT_FLOOR {
-            return Err(Error::InvalidParameter(
-                "flat-field calibration requires the native-code base floor",
-            ));
-        }
-        calibration.input_floor = self.precision_floor()?;
-        calibration.validate()
+        calibration.for_source(
+            crate::processing::CAMERA_INPUT_FLOOR,
+            self.bounds().1.max_element(),
+        )
     }
 
     pub fn gain(&self, point: [f64; 2]) -> Result<DVec3, Error> {

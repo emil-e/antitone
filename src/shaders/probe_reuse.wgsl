@@ -39,11 +39,12 @@ fn build_response_codes(
 
 fn probe_lookup_global(index: u32) -> ProcessedPixel {
     var global: ProcessedPixel;
-    if field.grid.z != 0u {
-        // Corrected samples are continuous, not members of the RGB16 code table.
+    let values = source_codes(scans[index], index);
+    if field.grid.z != 0u || any(values != floor(values)) || any(values > vec3f(65535.0)) {
+        // Fractional samples are not members of the RGB16 code table.
         global = process_film(convert_source(scans[index], index));
     } else {
-        let codes = vec3u(scans[index].x & 65535u, scans[index].x >> 16u, scans[index].y & 65535u);
+        let codes = vec3u(values);
         let q = array<Triple, 3>(
                 response_codes[codes.x].rgb[0],
                 response_codes[codes.y].rgb[1],
@@ -59,7 +60,7 @@ fn probe_lookup_global(index: u32) -> ProcessedPixel {
 @compute @workgroup_size(WORKGROUP_SIZE)
 fn lookup_main(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) groups: vec3u) {
     let index = probe_index(id, groups);
-    if index >= arrayLength(&scans) {
+    if index >= source_pixel_count() {
         return;
     }
     if parameters.gamma_mode.w <= 0.5 {
@@ -76,7 +77,7 @@ fn build_local_prefix_lookup(
     @builtin(num_workgroups) groups: vec3u,
 ) {
     let index = probe_index(id, groups);
-    if index >= arrayLength(&scans) {
+    if index >= source_pixel_count() {
         return;
     }
     let global = probe_lookup_global(index);
@@ -89,7 +90,7 @@ fn build_camera_prefix(
     @builtin(num_workgroups) groups: vec3u,
 ) {
     let index = probe_index(id, groups);
-    if index >= arrayLength(&scans) {
+    if index >= source_pixel_count() {
         return;
     }
     let native = probe_native_response(convert_source(scans[index], index));
@@ -102,7 +103,7 @@ fn camera_prefix_main(
     @builtin(num_workgroups) groups: vec3u,
 ) {
     let index = probe_index(id, groups);
-    if index >= arrayLength(&scans) {
+    if index >= source_pixel_count() {
         return;
     }
     if parameters.gamma_mode.w <= 0.5 {
@@ -120,7 +121,7 @@ fn build_global_prefix(
     @builtin(num_workgroups) groups: vec3u,
 ) {
     let index = probe_index(id, groups);
-    if index >= arrayLength(&scans) {
+    if index >= source_pixel_count() {
         return;
     }
     prefix_pixels[index] = process_film(convert_source(scans[index], index));
@@ -132,7 +133,7 @@ fn global_prefix_main(
     @builtin(num_workgroups) groups: vec3u,
 ) {
     let index = probe_index(id, groups);
-    if index >= arrayLength(&scans) {
+    if index >= source_pixel_count() {
         return;
     }
     if parameters.gamma_mode.w <= 0.5 {

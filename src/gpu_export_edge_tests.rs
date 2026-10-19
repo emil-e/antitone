@@ -58,7 +58,7 @@ fn small_edge_tiles_keep_precise_coordinates_unpadded_readback_and_bounded_stora
         )
         .unwrap();
         assert_eq!(processor.size, [17, 9]);
-        assert_eq!(processor.source.byte_len(), 17 * 9 * 8);
+        assert_eq!(processor.source.byte_len(), 17 * 9 * 16);
         let maximum = u64::from(TILE[0]) * u64::from(TILE[1]) * 48;
         assert!(processor.working.size() <= maximum);
         assert!(processor.readback.size() <= maximum);
@@ -70,6 +70,7 @@ fn small_edge_tiles_keep_precise_coordinates_unpadded_readback_and_bounded_stora
                     16000 - i as u16 * 30,
                     0,
                 ]
+                .map(f32::from)
             })
             .collect();
         let actual = processor

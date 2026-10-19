@@ -99,6 +99,7 @@ fn fixture(directory: &Path) -> Document {
                     id: SourceId(0),
                     path,
                     development: SourceDevelopment {
+                        lens_correction: None,
                         dimensions: [900, 600],
                         active_area: [0, 0, 900, 600],
                         camera_model: "test-camera".into(),

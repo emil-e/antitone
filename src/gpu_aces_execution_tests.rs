@@ -515,7 +515,8 @@ fn performance_input(
     if std::env::var_os("ANTITONE_SCREEN_RAW").is_some() {
         let (scan, calibration) = crate::raw_test_support::train_raw::load();
         let raster = InputRaster::raw(&scan, calibration, size);
-        let mut source = ProcessingSource::new(device, &raster.pixels, raster.matrix).unwrap();
+        let mut source =
+            ProcessingSource::new_continuous(device, &raster.pixels, raster.matrix).unwrap();
         let r = raster.region;
         source
             .set_geometry(SourceGeometry::new([r.x, r.y, r.width, r.height], size).unwrap())

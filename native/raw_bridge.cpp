@@ -10,7 +10,8 @@
 #endif
 #include <memory>
 
-static_assert(sizeof(AntitoneRawMetadata) == 496);
+static_assert(sizeof(AntitoneRawMetadata) == 664);
+static_assert(sizeof(AntitoneRawSonyLens) == 160);
 static_assert(sizeof(AntitoneRawDiagnostics) == 112);
 static_assert(sizeof(AntitoneRawView) == 64);
 static_assert(sizeof(AntitoneRawThumbnail) == 32);
@@ -49,6 +50,154 @@ int check_threads(int threads, char *error, size_t size) {
     return -1;
 }
 
+// Capture limits use the immutable RAW levels, before WB/scaling/demosaicing.
+uint8_t capture_flags(const libraw_colordata_t &color, unsigned channel, uint16_t value) {
+    const auto white = color.linear_max[channel] ? color.linear_max[channel] : color.maximum;
+    return uint8_t(value >= white) | (uint8_t(value <= color.black + color.cblack[channel]) << 1);
+}
+
+enum SonyLensField : uint32_t {
+    DistortionParameters = 1,
+    CaParameters = 2,
+    DistortionSetting = 4,
+    CaSetting = 8,
+    VignettingParameters = 16,
+};
+
+struct SonyLensPage {
+    AntitoneRawSonyLens lens{};
+    INT64 data_offset = -1;
+    uint32_t photometric = 0;
+};
+
+struct SonyLensCapture {
+    std::array<SonyLensPage, LIBRAW_IFD_MAXCOUNT> pages{};
+};
+
+bool read_words(LibRaw_abstract_datastream &stream, unsigned order, uint16_t *words, int count) {
+    std::array<uint8_t, 66> bytes{};
+    if (count < 1 || count > 33 || (order != 0x4949 && order != 0x4d4d))
+        return false;
+    const auto position = stream.tell();
+    const auto size = stream.size();
+    if (position < 0 || position > size || count * 2 > size - position)
+        return false;
+    const auto read = stream.read(bytes.data(), 1, count * 2);
+    const auto restored = stream.seek(position, SEEK_SET);
+    if (read != count * 2 || restored != 0)
+        return false;
+    for (int i = 0; i < count; ++i) {
+        const auto a = bytes[i * 2], b = bytes[i * 2 + 1];
+        words[i] = order == 0x4949 ? uint16_t(a | (b << 8)) : uint16_t((a << 8) | b);
+    }
+    return true;
+}
+
+bool read_unsigned(LibRaw_abstract_datastream &stream, int type, unsigned order, uint32_t &value) {
+    uint16_t words[2]{};
+    if ((type != 3 && type != 4) || !read_words(stream, order, words, type == 3 ? 1 : 2))
+        return false;
+    if (type == 3)
+        value = words[0];
+    else if (order == 0x4949)
+        value = uint32_t(words[0]) | (uint32_t(words[1]) << 16);
+    else
+        value = (uint32_t(words[0]) << 16) | words[1];
+    return true;
+}
+
+void sony_lens_tag(void *context, int encoded_tag, int type, int count, unsigned order, void *input,
+                   INT64 base) {
+    // Pinned LibRaw encodes TIFF IFD indexes above bit 20; EXIF/maker-note paths use other bits.
+    const auto tag = uint32_t(encoded_tag);
+    const auto ifd = tag >> 20;
+    if (!ifd || ifd > LIBRAW_IFD_MAXCOUNT || (tag & 0xf0000))
+        return;
+    auto &page = static_cast<SonyLensCapture *>(context)->pages[ifd - 1];
+    auto &stream = *static_cast<LibRaw_abstract_datastream *>(input);
+    const auto id = tag & 0xffff;
+    uint32_t value = 0;
+    if (id == 0x0106 && count == 1 && read_unsigned(stream, type, order, value))
+        page.photometric = value;
+    if (id == 0x0111 && count > 0 && read_unsigned(stream, type, order, value) && base >= 0 &&
+        base <= stream.size() && value <= uint64_t(stream.size() - base))
+        page.data_offset = base + value;
+    // LibRaw selects the tile-offset table itself for tiled Sony lossless-compressed RAWs.
+    if (id == 0x0144 && type == 4 && count > 0) {
+        if (count > 1)
+            page.data_offset = stream.tell();
+        else if (read_unsigned(stream, type, order, value))
+            page.data_offset = value;
+    }
+    uint32_t bit;
+    switch (id) {
+    case 0x7032:
+        bit = VignettingParameters;
+        break;
+    case 0x7037:
+        bit = DistortionParameters;
+        break;
+    case 0x7035:
+        bit = CaParameters;
+        break;
+    case 0x7036:
+        bit = DistortionSetting;
+        break;
+    case 0x7034:
+        bit = CaSetting;
+        break;
+    default:
+        return;
+    }
+    auto &lens = page.lens;
+    if (lens.present & bit)
+        lens.invalid |= bit;
+    lens.present |= bit;
+    if (bit == DistortionSetting || bit == CaSetting) {
+        if (count != 1 || type != 3 || !read_unsigned(stream, type, order, value))
+            lens.invalid |= bit;
+        else if (bit == DistortionSetting)
+            lens.distortion_setting = uint16_t(value);
+        else
+            lens.ca_setting = uint16_t(value);
+        return;
+    }
+    uint16_t words[33]{};
+    const auto capacity = bit == CaParameters ? 33 : 17;
+    if (type != 8 || count < 1 || count > capacity || !read_words(stream, order, words, count)) {
+        lens.invalid |= bit;
+        return;
+    }
+    auto *target = bit == DistortionParameters ? lens.distortion
+                   : bit == CaParameters       ? lens.ca
+                                               : lens.vignetting;
+    for (int i = 0; i < count; ++i)
+        target[i] = int16_t(words[i] <= 32767 ? int32_t(words[i]) : int32_t(words[i]) - 65536);
+    auto &length = bit == DistortionParameters ? lens.distortion_length
+                   : bit == CaParameters       ? lens.ca_length
+                                               : lens.vignetting_length;
+    length = uint32_t(count);
+}
+
+AntitoneRawSonyLens selected_sony_lens(LibRaw &raw, const SonyLensCapture &capture) {
+    if (raw.imgdata.idata.maker_index != LIBRAW_CAMERAMAKER_Sony || raw.imgdata.idata.dng_version)
+        return {};
+    const auto offset = raw.get_internal_data_pointer()->unpacker_data.data_offset;
+    const AntitoneRawSonyLens *selected = nullptr;
+    for (const auto &page : capture.pages) {
+        if (page.photometric != 32803 || page.data_offset != offset)
+            continue;
+        if (selected) {
+            AntitoneRawSonyLens ambiguous{};
+            ambiguous.invalid = DistortionParameters | CaParameters | DistortionSetting |
+                                CaSetting | VignettingParameters;
+            return ambiguous;
+        }
+        selected = &page.lens;
+    }
+    return selected ? *selected : AntitoneRawSonyLens{};
+}
+
 void metadata(LibRaw &raw, AntitoneRawMetadata &out) {
     const auto &d = raw.imgdata;
     const auto &s = d.sizes;
@@ -59,6 +208,7 @@ void metadata(LibRaw &raw, AntitoneRawMetadata &out) {
     std::snprintf(out.make, sizeof out.make, "%s", d.idata.make);
     std::snprintf(out.model, sizeof out.model, "%s", d.idata.model);
     std::snprintf(out.decoder, sizeof out.decoder, "%s", decoder.decoder_name);
+    out.lens_disabled = 0;
     out.width = s.width;
     out.height = s.height;
     out.raw_width = s.raw_width;
@@ -132,6 +282,10 @@ extern "C" uint64_t antitone_raw_retained_bytes(void *handle) {
 #endif
 }
 
+extern "C" void antitone_raw_free_image(void *handle) {
+    static_cast<LibRaw *>(handle)->free_image();
+}
+
 extern "C" const char *antitone_raw_version() {
     return LibRaw::version();
 }
@@ -140,7 +294,10 @@ extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out, c
                                    size_t size) try {
     auto raw = std::make_unique<LibRaw>();
     raw->imgdata.params.use_camera_matrix = 1;
+    SonyLensCapture lens;
+    raw->set_exifparser_handler(sony_lens_tag, &lens);
     int code = raw->open_file(path);
+    raw->set_exifparser_handler(nullptr, nullptr);
     if (check(code, error, size))
         return nullptr;
     if (raw->imgdata.idata.colors != 3 || !raw->imgdata.idata.filters ||
@@ -149,6 +306,7 @@ extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out, c
         return nullptr;
     }
     metadata(*raw, *out);
+    out->sony_lens = selected_sony_lens(*raw, lens);
     return raw.release();
 } catch (const std::bad_alloc &) {
 
@@ -242,11 +400,37 @@ extern "C" int antitone_raw_region_diagnostics(const void *handle, uint32_t x0, 
             // LibRaw's FC encoding, using the immutable RAW CFA rather than the processed green merge.
             const unsigned color = (d.iparams.filters >> ((((y << 1) & 14) + (x & 1)) << 1)) & 3;
             const auto value = d.raw_image[(y + s.top_margin) * pitch + x + s.left_margin];
-            const auto white = c.linear_max[color] ? c.linear_max[color] : c.maximum;
+            const auto flags = capture_flags(c, color, value);
             ++out->sites[color];
-            out->below_black[color] += value <= c.black + c.cblack[color];
-            out->at_white[color] += value >= white;
+            out->below_black[color] += (flags & 2) != 0;
+            out->at_white[color] += (flags & 1) != 0;
             out->peak[color] = std::max(out->peak[color], static_cast<uint32_t>(value));
+        }
+    }
+    return 0;
+}
+
+extern "C" int antitone_raw_capture_flags(const void *handle, uint64_t *words, size_t count,
+                                          char *error, size_t size) {
+    const auto &data = static_cast<const LibRaw *>(handle)->imgdata.rawdata;
+    const auto &s = data.sizes;
+    const size_t row_words = (size_t(s.width) + 31) / 32;
+    if (!data.raw_image || !s.width || !s.height || !words || count != row_words * s.height) {
+        std::snprintf(error, size, "Invalid capture mask dimensions");
+        return -1;
+    }
+    const auto pitch = s.raw_pitch / sizeof(uint16_t);
+    for (unsigned y = 0; y < s.height; ++y) {
+        for (size_t word = 0; word < row_words; ++word) {
+            uint64_t flags = 0;
+            for (unsigned x = unsigned(word * 32); x < std::min(size_t(s.width), (word + 1) * 32);
+                 ++x) {
+                const unsigned channel =
+                    (data.iparams.filters >> ((((y << 1) & 14) + (x & 1)) << 1)) & 3;
+                const auto value = data.raw_image[(y + s.top_margin) * pitch + x + s.left_margin];
+                flags |= uint64_t(capture_flags(data.color, channel, value)) << (2 * (x % 32));
+            }
+            words[y * row_words + word] = flags;
         }
     }
     return 0;

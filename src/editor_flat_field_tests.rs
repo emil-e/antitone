@@ -6,6 +6,7 @@ fn record(path: &str) -> Source {
         id: SourceId(0),
         path: path.into(),
         development: SourceDevelopment {
+            lens_correction: None,
             dimensions: [824, 624],
             active_area: [12, 12, 800, 600],
             camera_model: "test-camera".into(),

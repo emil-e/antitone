@@ -116,7 +116,10 @@ fn round53(a: Triple) -> Triple {
 }
 
 fn normalized(code: u32) -> Triple {
-    let value = f32(code);
+    return normalized_value(f32(code));
+}
+
+fn normalized_value(value: f32) -> Triple {
     let h = value / 65535.0;
     let rem = fma(-h, 65535.0, value);
     let l = rem / 65535.0;

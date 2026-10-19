@@ -85,8 +85,8 @@ pub(super) fn verify(request: &analysis::Request) -> Result<(), Error> {
     Ok(())
 }
 
-fn fine_measurement(scan: &Scan) -> Result<([u32; 2], Vec<[u16; 3]>), Error> {
-    let (w, h, rgb) = timed!("fine_preview", scan.preview_source(3072))?;
+fn fine_measurement(scan: &Scan, code_scale: f64) -> Result<([u32; 2], Vec<[u16; 3]>), Error> {
+    let (w, h, rgb) = timed!("fine_preview", scan.measurement_preview(3072, code_scale))?;
     let rgb = timed!(
         "fine_pack",
         rgb.into_iter().map(|p| [p[0], p[1], p[2]]).collect()
@@ -130,6 +130,12 @@ fn prepare_with_measurements(
         .as_ref()
         .ok_or(Error::UnusableSample("no roll development"))?
         .fixed_wb;
+    // One shared scale preserves cross-frame appearance while fitting shading headroom into evidence.
+    let code_scale = project.order.iter().try_fold(1f64, |scale, id| {
+        Ok::<_, Error>(scale.max(
+            project.source(*id)?.development.input_floor / crate::processing::CAMERA_INPUT_FLOOR,
+        ))
+    })?;
     let files = project
         .order
         .iter()
@@ -190,7 +196,7 @@ fn prepare_with_measurements(
             document::verify_source(expected, &actual)?;
             document::verify_scan(&actual, &scan)?;
             project.require_camera_basis(&actual.development)?;
-            let (w, h, rgb) = timed!("coarse_preview", scan.preview_source(768))?;
+            let (w, h, rgb) = timed!("coarse_preview", scan.measurement_preview(768, code_scale))?;
             let rgb: Vec<_> = timed!(
                 "coarse_pack",
                 rgb.into_iter().map(|p| [p[0], p[1], p[2]]).collect()
@@ -206,7 +212,7 @@ fn prepare_with_measurements(
             if !(entries[index].areas.opening_edited && entries[index].areas.picture_edited) {
                 let (w, h) = scan.preview_dimensions(3072)?;
                 if measurements.can_store([w, h]) {
-                    let (size, rgb) = fine_measurement(&scan)?;
+                    let (size, rgb) = fine_measurement(&scan, code_scale)?;
                     saved[index] = timed!("measurement_write", measurements.store(size, &rgb));
                 }
             }
@@ -293,7 +299,7 @@ fn prepare_with_measurements(
                 let actual = document::source_metadata(&path, &scan.source().metadata())?;
                 document::verify_source(expected, &actual)?;
                 document::verify_scan(&actual, &scan)?;
-                fine_measurement(&scan)?
+                fine_measurement(&scan, code_scale)?
             };
             let previous = &entries[index].areas;
             let mut suggested = timed!(

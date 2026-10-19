@@ -441,6 +441,94 @@ pub(super) fn exact(case: &str, candidate: &str, expected: &[u32], actual: &[u32
 }
 
 #[test]
+fn reuse_probe_preserves_both_source_formats_and_fractional_samples() {
+    pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let baseline = ProcessingKernel::new_fused(&device, &queue).await.unwrap();
+        // Extra output slots expose writes from incomplete-workgroup lanes past the source count.
+        let probe = Probe::new(&device, 128).await;
+        let codes: Vec<[u16; 4]> = (0..67u32)
+            .map(|i| [(i * 977) as u16, (i * 431) as u16, (i * 167) as u16, 0])
+            .collect();
+        let floats: Vec<_> = codes.iter().map(|p| p.map(f32::from)).collect();
+        let fractions: Vec<_> = floats
+            .iter()
+            .map(|p| [p[0] + 0.25, p[1] + 0.5, p[2] + 0.75, 0.])
+            .collect();
+        let grade = GpuPhotoGrade::new(
+            &device,
+            calibration(),
+            RollSettings::new_grade(),
+            snapshot(PhotoSettings::default(), 2, true),
+            camera_matrix(),
+            area(),
+        )
+        .unwrap();
+        let identity_suffix = GpuPhotoGrade::new(
+            &device,
+            calibration(),
+            RollSettings::new_grade(),
+            snapshot(PhotoSettings::default(), 0, false),
+            camera_matrix(),
+            area(),
+        )
+        .unwrap();
+        for (format, mut source) in [
+            (
+                "u16",
+                ProcessingSource::new(&device, &codes, camera_matrix()).unwrap(),
+            ),
+            (
+                "f32-integer",
+                ProcessingSource::new_continuous(&device, &floats, camera_matrix()).unwrap(),
+            ),
+            (
+                "f32-fractional",
+                ProcessingSource::new_continuous(&device, &fractions, camera_matrix()).unwrap(),
+            ),
+        ] {
+            let a = area();
+            source
+                .set_geometry(SourceGeometry::new([a.x, a.y, a.width, a.height], [67, 1]).unwrap())
+                .unwrap();
+            let mut encoder = device.create_command_encoder(&Default::default());
+            baseline
+                .encode_grade(&device, &mut encoder, &source, &probe.output, &grade)
+                .unwrap();
+            queue.submit([encoder.finish()]);
+            let expected = read_words(&device, &queue, &probe.output);
+            for steps in [&[0, 1][..], &[2, 3], &[4, 5]] {
+                let mut encoder = device.create_command_encoder(&Default::default());
+                probe.encode(&device, &mut encoder, &source, &grade, steps);
+                queue.submit([encoder.finish()]);
+                exact(
+                    format,
+                    &format!("reuse-{steps:?}"),
+                    &expected,
+                    &read_words(&device, &queue, &probe.output),
+                );
+            }
+            let mut encoder = device.create_command_encoder(&Default::default());
+            probe.encode(&device, &mut encoder, &source, &grade, &[0, 6]);
+            // This prefix already includes locals; finish it without applying the locals twice.
+            probe.encode(&device, &mut encoder, &source, &identity_suffix, &[5]);
+            queue.submit([encoder.finish()]);
+            exact(
+                format,
+                "local-prefix",
+                &expected,
+                &read_words(&device, &queue, &probe.output),
+            );
+        }
+    });
+}
+
+#[test]
 #[ignore = "exact RGB16 lookup and compensated prefix A/B experiment; no production cache or interaction acceptance"]
 fn exact_response_and_prefix_reuse() {
     pollster::block_on(async {

@@ -8,7 +8,7 @@ use std::{
     sync::Arc,
 };
 
-const MAGIC: &[u8; 8] = b"ANTTHM02";
+const MAGIC: &[u8; 8] = b"ANTTHM03";
 const LIMIT: u64 = 128 << 20;
 
 #[derive(Serialize, Deserialize)]
@@ -38,7 +38,7 @@ impl DiskCache {
 
     pub fn default_location() -> Option<Self> {
         std::env::var_os("HOME").map(|home| Self {
-            root: PathBuf::from(home).join(".cache/antitone/thumbnails-v2"),
+            root: PathBuf::from(home).join(".cache/antitone/thumbnails-v3"),
             budget: LIMIT,
         })
     }
@@ -49,10 +49,10 @@ impl DiskCache {
         }
         // File stats are disposable cache freshness, not persisted photograph identity.
         let identity =
-            serde_json::to_vec(&(2, SOURCE_SIZE, &key.file, &key.source, &key.development))?;
+            serde_json::to_vec(&(3, SOURCE_SIZE, &key.file, &key.source, &key.development))?;
         Ok(self
             .root
-            .join(format!("{}.rgb16", blake3::hash(&identity).to_hex())))
+            .join(format!("{}.camera32", blake3::hash(&identity).to_hex())))
     }
 
     pub fn load(&self, key: &SourceKey) -> io::Result<Option<Arc<Proxy>>> {
@@ -88,12 +88,17 @@ impl DiskCache {
         {
             return Err(invalid("thumbnail cache identity/dimensions"));
         }
-        let mut pixels = vec![[0u16; 4]; header.width as usize * header.height as usize];
+        let mut pixels = vec![[0f32; 4]; header.width as usize * header.height as usize];
         let bytes = bytemuck::cast_slice_mut(&mut pixels);
         file.read_exact(bytes)?;
         let mut tail = [0; 1];
         if file.read(&mut tail)? != 0 || blake3::hash(bytes).to_hex().as_str() != header.checksum {
             return Err(invalid("thumbnail cache pixel checksum/length"));
+        }
+        if pixels.iter().flatten().any(|v| {
+            !v.is_finite() || !(0. ..=crate::processing::MAX_CAMERA_SOURCE_CODE).contains(v)
+        }) {
+            return Err(invalid("thumbnail cache continuous sample range"));
         }
         // Disposable LRU access time; failure here doesn't invalidate verified cached pixels.
         let _ = file.set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::now()));
@@ -137,7 +142,7 @@ impl DiskCache {
         let mut total = 0;
         for entry in fs::read_dir(&self.root)? {
             let entry = entry?;
-            if entry.path().extension().is_some_and(|e| e == "rgb16") {
+            if entry.path().extension().is_some_and(|e| e == "camera32") {
                 let metadata = entry.metadata()?;
                 total += metadata.len();
                 entries.push((metadata.modified()?, metadata.len(), entry.path()));
@@ -183,6 +188,7 @@ mod tests {
                 }),
             },
             source: SourceDevelopment {
+                lens_correction: Some("00".repeat(32)),
                 dimensions: [2, 1],
                 active_area: [0, 0, 2, 1],
                 camera_model: "test".into(),
@@ -194,7 +200,15 @@ mod tests {
         let proxy = Proxy {
             width: 2,
             height: 1,
-            pixels: vec![[1, 2, 3, 0], [65535, 0, 12345, 0]],
+            pixels: vec![
+                [1.25, 2.5, 3.75, 0.],
+                [
+                    65536.,
+                    crate::processing::MAX_CAMERA_SOURCE_CODE,
+                    12345.125,
+                    0.,
+                ],
+            ],
             matrix: glam::DMat3::IDENTITY,
         };
         (key, proxy)
@@ -231,10 +245,29 @@ mod tests {
         changed = key.clone();
         changed.file.path = "/other-card/fixture.ARW".into();
         assert!(cache.load(&changed).unwrap().is_none());
+        changed = key.clone();
+        changed.source.lens_correction = Some("11".repeat(32));
+        assert!(cache.load(&changed).unwrap().is_none());
         changed.file.revision = None;
         assert!(cache.load(&changed).is_err());
         assert!(cache.store(&changed, &proxy).is_err());
         assert_eq!(cache.load(&key).unwrap().unwrap().pixels, proxy.pixels);
+    }
+
+    #[test]
+    fn valid_checksums_do_not_admit_nonfinite_negative_or_excessive_camera_values() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = DiskCache::at(directory.path().into());
+        for value in [
+            f32::NAN,
+            -1.,
+            crate::processing::MAX_CAMERA_SOURCE_CODE + 1.,
+        ] {
+            let (key, mut proxy) = fixture();
+            proxy.pixels[0][0] = value;
+            cache.store(&key, &proxy).unwrap();
+            assert!(cache.load(&key).is_err());
+        }
     }
 
     #[test]

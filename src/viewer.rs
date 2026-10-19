@@ -51,6 +51,13 @@ impl ImageSource {
         }
     }
 
+    fn write_continuous(&self, queue: &wgpu::Queue, pixels: &[[f32; 4]]) -> Result<(), Error> {
+        match self {
+            Self::Owned(source) => source.write_continuous(queue, pixels),
+            Self::Shared(_) => Err(Error::InvalidParameter("shared proxy source is immutable")),
+        }
+    }
+
     fn write(&self, queue: &wgpu::Queue, pixels: &[[u16; 4]]) -> Result<(), Error> {
         match self {
             Self::Owned(source) => source.write(queue, pixels),
@@ -130,6 +137,33 @@ impl GpuImage {
         )
         .await
     }
+    #[allow(clippy::too_many_arguments)]
+    pub async fn new_continuous_shared(
+        renderer: &Arc<GpuRenderer>,
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        pixels: &[[f32; 4]],
+        camera_to_ap1: DMat3,
+        target: OutputTarget,
+    ) -> Result<Self, Error> {
+        if width.checked_mul(height).map(u64::from) != Some(pixels.len() as u64) {
+            return Err(Error::Gpu(
+                "source dimensions do not match the GPU image".into(),
+            ));
+        }
+        let source = ProcessingSource::new_continuous(device, pixels, camera_to_ap1)?;
+        Self::create(
+            device,
+            width,
+            height,
+            Some((renderer.clone(), ImageSource::Owned(Box::new(source)))),
+            renderer.display.clone(),
+            target,
+        )
+        .await
+    }
+
     pub async fn new_rendered(
         device: &wgpu::Device,
         _queue: &wgpu::Queue,
@@ -295,6 +329,22 @@ impl GpuImage {
             .as_ref()
             .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
         processing.source.write(queue, pixels)?;
+        self.source_revision
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        *self.last_parameters.lock().unwrap() = None;
+        Ok(())
+    }
+
+    pub fn write_source_continuous(
+        &self,
+        queue: &wgpu::Queue,
+        pixels: &[[f32; 4]],
+    ) -> Result<(), Error> {
+        let processing = self
+            .processing
+            .as_ref()
+            .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
+        processing.source.write_continuous(queue, pixels)?;
         self.source_revision
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         *self.last_parameters.lock().unwrap() = None;

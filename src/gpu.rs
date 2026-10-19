@@ -336,25 +336,74 @@ pub struct ProcessingSource {
     camera_to_ap1: DMat3,
     geometry: Option<SourceGeometry>,
     flat_field: Option<Arc<GpuFlatField>>,
+    continuous: bool,
 }
 
 impl ProcessingSource {
     pub fn new(device: &wgpu::Device, pixels: &[[u16; 4]], matrix: DMat3) -> Result<Self, Error> {
-        let count = u32::try_from(pixels.len())
-            .map_err(|_| Error::Gpu("source exceeds GPU limits".into()))?;
+        Self::from_bytes(
+            device,
+            bytemuck::cast_slice(pixels),
+            pixels.len(),
+            matrix,
+            false,
+        )
+    }
+
+    /// Continuous camera RGB in native code units, not rounded or packed into RGB16.
+    pub fn new_continuous(
+        device: &wgpu::Device,
+        pixels: &[[f32; 4]],
+        matrix: DMat3,
+    ) -> Result<Self, Error> {
+        Self::validate_continuous(pixels)?;
+        Self::from_bytes(
+            device,
+            bytemuck::cast_slice(pixels),
+            pixels.len(),
+            matrix,
+            true,
+        )
+    }
+
+    fn validate_continuous(pixels: &[[f32; 4]]) -> Result<(), Error> {
+        if pixels.iter().flatten().any(|v| {
+            !v.is_finite() || !(0. ..=crate::processing::MAX_CAMERA_SOURCE_CODE).contains(v)
+        }) {
+            return Err(Error::Gpu(
+                "continuous camera samples exceed the supported code domain".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn from_bytes(
+        device: &wgpu::Device,
+        bytes: &[u8],
+        length: usize,
+        matrix: DMat3,
+        continuous: bool,
+    ) -> Result<Self, Error> {
+        let count =
+            u32::try_from(length).map_err(|_| Error::Gpu("source exceeds GPU limits".into()))?;
         if count == 0
-            || u64::from(count) * 8 > device.limits().max_storage_buffer_binding_size
+            || bytes.len() as u64 > device.limits().max_storage_buffer_binding_size
             || u64::from(count) * 16 > device.limits().max_storage_buffer_binding_size
         {
             return Err(Error::Gpu("source exceeds GPU limits".into()));
         }
         validate_camera_matrix(matrix)?;
         let camera_to_ap1 = matrix;
-        let matrix = CameraMatrix::new(matrix)?;
+        let mut matrix = CameraMatrix::new(matrix)?;
+        if continuous {
+            CameraMatrix::new(camera_to_ap1 * crate::processing::MAX_SOURCE_GAIN)?;
+        }
+        // xyz remain colour coefficients; w tags the storage format read by source_codes.
+        matrix.high[0].w = if continuous { 1. } else { 0. };
         Ok(Self {
             input: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("LibRaw camera RGB16"),
-                contents: bytemuck::cast_slice(pixels),
+                label: Some("camera source samples"),
+                contents: bytes,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             }),
             matrix: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -366,6 +415,7 @@ impl ProcessingSource {
             camera_to_ap1,
             geometry: None,
             flat_field: None,
+            continuous,
         })
     }
 
@@ -385,7 +435,14 @@ impl ProcessingSource {
         geometry: SourceGeometry,
     ) -> Result<(), Error> {
         if let Some(field) = &field {
-            field.validate_matrix(self.camera_to_ap1)?;
+            field.validate_matrix(
+                self.camera_to_ap1,
+                if self.continuous {
+                    crate::processing::MAX_SOURCE_GAIN
+                } else {
+                    1.
+                },
+            )?;
         }
         self.set_geometry(geometry)?;
         self.flat_field = field;
@@ -393,9 +450,22 @@ impl ProcessingSource {
     }
 
     pub fn write(&self, queue: &wgpu::Queue, pixels: &[[u16; 4]]) -> Result<(), Error> {
-        if pixels.len() != self.pixels as usize {
-            return Err(Error::Gpu("invalid replacement source tile".into()));
+        if self.continuous || pixels.len() != self.pixels as usize {
+            return Err(Error::Gpu(
+                "invalid replacement source tile or format".into(),
+            ));
         }
+        queue.write_buffer(&self.input, 0, bytemuck::cast_slice(pixels));
+        Ok(())
+    }
+
+    pub fn write_continuous(&self, queue: &wgpu::Queue, pixels: &[[f32; 4]]) -> Result<(), Error> {
+        if !self.continuous || pixels.len() != self.pixels as usize {
+            return Err(Error::Gpu(
+                "invalid replacement continuous source tile".into(),
+            ));
+        }
+        Self::validate_continuous(pixels)?;
         queue.write_buffer(&self.input, 0, bytemuck::cast_slice(pixels));
         Ok(())
     }

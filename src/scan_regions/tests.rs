@@ -1,5 +1,51 @@
 use super::*;
 
+#[cfg(all(feature = "editor", feature = "raw"))]
+#[test]
+fn above_native_white_evidence_preserves_internal_boundaries_instead_of_saturating() {
+    let size = [192, 128];
+    // The four boundaries span the detector's central observation band.
+    let rgb: Vec<_> = (0..size[1])
+        .flat_map(|y| {
+            (0..size[0]).map(move |x| {
+                let native = if (24..168).contains(&x) && (16..112).contains(&y) {
+                    60000.
+                } else {
+                    50000.
+                };
+                let shaded = native * std::f32::consts::SQRT_2;
+                assert!(shaded > 65535.);
+                let code =
+                    crate::scan::measurement_codes([shaded, shaded, shaded, 0.], 2.).unwrap();
+                assert!(code[..3].iter().all(|&v| v > 1 && v < 65535));
+                [code[0], code[1], code[2]]
+            })
+        })
+        .collect();
+    let evidence = Evidence::observe(size, &rgb).unwrap();
+    for (side, position) in [
+        ("left", 24.),
+        ("right", 168.),
+        ("top", 16.),
+        ("bottom", 112.),
+    ] {
+        assert!(
+            evidence
+                .lines
+                .get(side)
+                .is_some_and(|lines| lines
+                    .iter()
+                    .any(|line| (line.midpoint_pixel - position).abs() < 4.)),
+            "missing {side} boundary: {evidence:?}"
+        );
+    }
+    assert_eq!(
+        crate::scan::measurement_codes([0., 1., 23.75, 65535.], 1.).unwrap(),
+        [0, 1, 24, 65535]
+    );
+    assert!(crate::scan::measurement_codes([65536.; 4], 1.).is_err());
+}
+
 #[test]
 fn authored_opening_and_picture_keep_distinct_full_footprint_membership() {
     let active = SourceRegion {

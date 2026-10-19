@@ -92,6 +92,7 @@ fn persisted_locals_export_at_source_centres_before_rotated_reconstruction() {
             id: SourceId(0),
             path: "read-only-not-loaded.ARW".into(),
             development: SourceDevelopment {
+                lens_correction: None,
                 dimensions: [20, 30],
                 active_area: [10, 20, 6, 6],
                 camera_model: "test-camera".into(),
@@ -338,6 +339,7 @@ fn contract_metadata_tracks_snapshot_presence_including_inactive_records() {
             id: SourceId(1),
             path: "private-source.ARW".into(),
             development: SourceDevelopment {
+                lens_correction: None,
                 dimensions: [1, 1],
                 active_area: [0, 0, 1, 1],
                 camera_model: "test-camera".into(),

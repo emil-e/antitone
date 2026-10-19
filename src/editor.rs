@@ -447,7 +447,7 @@ fn prepare_source_scheduled(
     let renderer_seconds = tick.elapsed().as_secs_f64();
     let tick = std::time::Instant::now();
     let a = scan.area;
-    let proxy = crate::viewer::GpuProxy::new(
+    let proxy = crate::viewer::GpuProxy::new_continuous(
         renderer,
         device,
         [width, height],

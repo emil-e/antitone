@@ -10,6 +10,7 @@ fn source(model: &str, matrix: DMat3) -> Source {
         id: SourceId(0),
         path: "test.ARW".into(),
         development: SourceDevelopment {
+            lens_correction: None,
             dimensions: [900, 600],
             active_area: [0, 0, 900, 600],
             camera_model: model.into(),

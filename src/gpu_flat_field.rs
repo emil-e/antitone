@@ -140,14 +140,24 @@ impl GpuFlatField {
         &self.field
     }
 
-    pub(super) fn validate_matrix(&self, matrix: DMat3) -> Result<(), Error> {
+    pub(super) fn validate_matrix(&self, matrix: DMat3, source_gain: f64) -> Result<(), Error> {
         let (min, max) = self.bounds;
+        // Camera gains execute before the matrix, so small coefficients cannot rescue overflow.
+        if max.max_element() * source_gain > f32::MAX as f64 / 16. {
+            return Err(Error::Gpu(
+                "corrected camera values exceed the precise GPU domain before matrix conversion"
+                    .into(),
+            ));
+        }
         if min.min_element() / 65535. < f32::MIN_POSITIVE as f64 {
             return Err(Error::Gpu(
                 "corrected camera code can underflow before matrix conversion".into(),
             ));
         }
         CameraMatrix::new(matrix * DMat3::from_diagonal(max))?;
+        if source_gain > 1. {
+            CameraMatrix::new(matrix * source_gain * DMat3::from_diagonal(max))?;
+        }
         for (column, gain) in [matrix.x_axis, matrix.y_axis, matrix.z_axis]
             .into_iter()
             .zip(min.to_array())

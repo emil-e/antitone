@@ -681,8 +681,11 @@ impl OriginalTiles {
         (format, look): (Format, Option<&Arc<crate::looks::LookAsset>>),
         geometry: Option<SourceGeometry>,
     ) -> Result<Self, Error> {
-        let mut source =
-            ProcessingSource::new(device, &vec![[0; 4]; (size[0] * size[1]) as usize], matrix)?;
+        let mut source = ProcessingSource::new_continuous(
+            device,
+            &vec![[0.; 4]; (size[0] * size[1]) as usize],
+            matrix,
+        )?;
         if let Some(geometry) = geometry {
             source.set_flat_field(field, geometry)?;
         }
@@ -779,7 +782,7 @@ impl OriginalTiles {
         queue: &wgpu::Queue,
         submissions: &SubmissionGate,
         origin: [u32; 2],
-        pixels: &[[u16; 4]],
+        pixels: &[[f32; 4]],
     ) -> Result<Vec<[f64; 4]>, Error> {
         let geometry = if self.geometry || !self.repairs.0.is_empty() {
             Some(SourceGeometry::original_tile(
@@ -799,9 +802,9 @@ impl OriginalTiles {
         queue: &wgpu::Queue,
         submissions: &SubmissionGate,
         geometry: Option<SourceGeometry>,
-        pixels: &[[u16; 4]],
+        pixels: &[[f32; 4]],
     ) -> Result<Vec<[f64; 4]>, Error> {
-        self.source.write(queue, pixels)?;
+        self.source.write_continuous(queue, pixels)?;
         if let Some(geometry) = geometry {
             self.source.set_geometry(geometry)?;
         }

@@ -35,12 +35,13 @@ fn reference(
     if raw.metadata.camera_model() != basis || raw.metadata.camera_to_ap1()? != matrix {
         return Err("reference camera basis differs".into());
     }
-    let d = raw.region_sensor_diagnostics(area)?;
-    if d.at_white.iter().chain(&d.below_black).any(|&v| v != 0) {
+    raw.develop_camera(wb)?;
+    let d = raw.capture_eligibility(area)?;
+    if d.at_white || d.below_black {
         return Err("sensor-clipped calibration reference".into());
     }
     Ok(raw
-        .develop_camera(wb)?
+        .camera_image()?
         .sample_mean(area, glam::DMat3::IDENTITY)?)
 }
 

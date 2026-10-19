@@ -289,7 +289,7 @@ fn unusable_reference_inputs_do_not_produce_a_field() {
     let generate = |data: &[DVec3], matrix: DMat3, c: DVec3, point: [f64; 2]| {
         FlatField::estimate([0, 0, 700, 700], size, data, matrix, c, point)
     };
-    for bad in [0., -0.1, 1.1, f64::NAN] {
+    for bad in [0., -0.1, crate::processing::MAX_SOURCE_GAIN + 1., f64::NAN] {
         let mut data = means.clone();
         data[10].x = bad;
         assert!(generate(&data, DMat3::IDENTITY, center, [350., 350.]).is_err());

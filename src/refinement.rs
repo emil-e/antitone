@@ -44,8 +44,8 @@ pub fn refine(
     ))?;
     let tile_width = 512;
     let tile_height = 128;
-    let zeros = vec![[0; 4]; tile_width as usize * tile_height as usize];
-    let mut tile = pollster::block_on(GpuImage::new_shared(
+    let zeros = vec![[0.; 4]; tile_width as usize * tile_height as usize];
+    let mut tile = pollster::block_on(GpuImage::new_continuous_shared(
         renderer,
         device,
         tile_width,
@@ -88,7 +88,7 @@ pub fn refine(
             let pixels = scan.tile_region(view.area, x, y, tile_width, tile_height)?;
             sampling += tick.elapsed();
             let tick = std::time::Instant::now();
-            tile.write_source(queue, &pixels)?;
+            tile.write_source_continuous(queue, &pixels)?;
             tile.set_geometry(SourceGeometry::new(
                 [view.area.x + x, view.area.y + y, tile_width, tile_height],
                 [tile_width, tile_height],

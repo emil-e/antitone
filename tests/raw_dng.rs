@@ -327,7 +327,7 @@ fn authored_raw_rejects_sensor_white_and_black_references_without_mutating_sourc
         width: 32,
         height: 32,
     };
-    for (code, reason) in [(4095u16, "at/above white"), (64u16, "at/below black")] {
+    for code in [4095u16, 64u16] {
         let mut bytes = original.clone();
         for y in 16..48 {
             for x in 16..48 {
@@ -339,12 +339,17 @@ fn authored_raw_rejects_sensor_white_and_black_references_without_mutating_sourc
         fs::write(&path, &bytes).unwrap();
         let mut scan = Scan::open(&path, None).unwrap();
         let before = scan.preview_source(60).unwrap();
-        assert!(
-            scan.reference(patch)
-                .unwrap_err()
-                .to_string()
-                .contains(reason)
+        assert_eq!(
+            scan.source().capture_eligibility(patch).unwrap(),
+            antitone::raw::CaptureFlags {
+                at_white: code == 4095,
+                below_black: code == 64,
+            }
         );
+        assert!(matches!(
+            scan.reference(patch),
+            Err(antitone::Error::UnusableSample(_))
+        ));
         assert_eq!(scan.preview_source(60).unwrap(), before);
         assert_eq!(fs::read(path).unwrap(), bytes);
     }

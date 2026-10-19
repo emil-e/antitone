@@ -114,6 +114,12 @@ impl ImageKey {
         std::mem::size_of::<Self>()
             + self.source.file.path.capacity()
             + self.source.source.camera_model.capacity()
+            + self
+                .source
+                .source
+                .lens_correction
+                .as_ref()
+                .map_or(0, String::capacity)
             + development.backend_version.capacity()
             + development.contract.capacity()
             + development.inversion_space.capacity()
@@ -139,8 +145,7 @@ impl ImageKey {
 
     fn estimated_product_bytes(&self) -> Option<usize> {
         let positive = matches!(&self.recipe, Ok(Some(_)));
-        let mut bytes =
-            256_u64 * 256 * if positive { 48 } else { 40 } + Product::overhead(positive) as u64;
+        let mut bytes = 256_u64 * 256 * 48 + Product::overhead(positive) as u64;
         if let Ok(Some(recipe)) = &self.recipe {
             if let Some(look) = &recipe.look {
                 bytes = bytes.checked_add(256 * 256 * 16)?.checked_add(
@@ -185,7 +190,7 @@ impl Proxy {
         source: &SourceDevelopment,
         correction: Option<&Arc<Correction>>,
     ) -> Result<Arc<GpuImage>, Error> {
-        let mut image = GpuImage::new_shared(
+        let mut image = GpuImage::new_continuous_shared(
             renderer,
             device,
             self.width,
@@ -364,7 +369,7 @@ impl Thumbnails {
             request,
             key: key.clone(),
             field: correction.map(|c| FieldKey(c.settings.map.clone())),
-            proxy: crate::viewer::GpuProxy::new(
+            proxy: crate::viewer::GpuProxy::new_continuous(
                 renderer,
                 device,
                 [proxy.width, proxy.height],

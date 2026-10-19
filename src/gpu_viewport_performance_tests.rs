@@ -1,11 +1,11 @@
 use super::*;
 
 fn crop_pixels(
-    pixels: &[[u16; 4]],
+    pixels: &[[f32; 4]],
     size: [u32; 2],
     origin: [u32; 2],
     crop: [u32; 2],
-) -> Vec<[u16; 4]> {
+) -> Vec<[f32; 4]> {
     let mut result = Vec::with_capacity((crop[0] * crop[1]) as usize);
     for y in origin[1]..origin[1] + crop[1] {
         let start = (y * size[0] + origin[0]) as usize;
@@ -16,12 +16,12 @@ fn crop_pixels(
 
 #[allow(clippy::too_many_arguments)]
 async fn viewport_probe(
-    pixels: Vec<[u16; 4]>,
+    pixels: Vec<[f32; 4]>,
     size: [u32; 2],
     area: SourceRegion,
     calibration: Calibration,
     matrix: DMat3,
-    zoom_pixels: Vec<[u16; 4]>,
+    zoom_pixels: Vec<[f32; 4]>,
     zoom_region: SourceRegion,
     corrected: bool,
 ) {
@@ -78,9 +78,9 @@ async fn viewport_probe(
     let shader = ProcessingKernel::shader(true);
     assert_eq!(shader.matches(old).count(), 1);
     let crop_kernel = shader_kernel(&device, &queue, shader.replace(old, &replacement)).await;
-    let mut full_source = ProcessingSource::new(&device, &pixels, matrix).unwrap();
+    let mut full_source = ProcessingSource::new_continuous(&device, &pixels, matrix).unwrap();
     full_source.set_geometry(geometry).unwrap();
-    let mut crop_source = ProcessingSource::new(&device, &crop_pixels, matrix).unwrap();
+    let mut crop_source = ProcessingSource::new_continuous(&device, &crop_pixels, matrix).unwrap();
     crop_source.set_geometry(crop_geometry).unwrap();
     let zoom_geometry = SourceGeometry::new(
         [
@@ -92,7 +92,7 @@ async fn viewport_probe(
         size,
     )
     .unwrap();
-    let mut zoom_source = ProcessingSource::new(&device, &zoom_pixels, matrix).unwrap();
+    let mut zoom_source = ProcessingSource::new_continuous(&device, &zoom_pixels, matrix).unwrap();
     zoom_source.set_geometry(zoom_geometry).unwrap();
     let calibration = if corrected {
         let field = Arc::new(
@@ -221,7 +221,7 @@ async fn viewport_probe(
     );
 }
 
-fn synthetic_pixels(geometry: SourceGeometry, pixels: u32) -> Vec<[u16; 4]> {
+fn synthetic_pixels(geometry: SourceGeometry, pixels: u32) -> Vec<[f32; 4]> {
     (0..pixels)
         .map(|i| {
             let [x, y] = geometry.pixel(i).unwrap();
@@ -231,6 +231,7 @@ fn synthetic_pixels(geometry: SourceGeometry, pixels: u32) -> Vec<[u16; 4]> {
                 (x * 3413 + y * 137) as u16,
                 42,
             ]
+            .map(f32::from)
         })
         .collect()
 }
@@ -294,7 +295,7 @@ fn raw_visible_region_source_sampling() {
         }
     }
     println!(
-        "viewport_raw zoom_rgb16_sampling_ms={:.3} additional_raw_development=false size=[{width},{height}]",
+        "viewport_raw zoom_camera_sampling_ms={:.3} additional_raw_development=false size=[{width},{height}]",
         start.elapsed().as_secs_f64() * 1000.
     );
     pollster::block_on(viewport_probe(

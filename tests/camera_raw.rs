@@ -39,8 +39,9 @@ fn train_native_source_and_gpu_match_scalar_with_unchanged_numerical_gate() {
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let source = ProcessingSource::new(&device, &codes, train.camera_to_ap1).unwrap();
-        assert_eq!(source.byte_len(), codes.len() as u64 * 8);
+        let source =
+            ProcessingSource::new_continuous(&device, &codes, train.camera_to_ap1).unwrap();
+        assert_eq!(source.byte_len(), codes.len() as u64 * 16);
         let kernel = ProcessingKernel::new(&device, &queue).await.unwrap();
         let bytes = codes.len() as u64 * 16;
         let output = device.create_buffer(&wgpu::BufferDescriptor {

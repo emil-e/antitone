@@ -2,6 +2,55 @@ use super::*;
 use crate::project::SourceDevelopment;
 
 #[test]
+fn mixed_developed_floors_use_one_conservative_analysis_bound_and_recheck_sample_counts() {
+    let native = crate::processing::CAMERA_INPUT_FLOOR;
+    let frame = |floor| FrameMeasurements {
+        floor,
+        film: crate::scan::AnalysisSamples {
+            pixels: vec![DVec3::splat(0.8); 2048],
+            ..Default::default()
+        },
+        picture: crate::scan::AnalysisSamples {
+            pixels: (0..1024)
+                .map(|i| DVec3::splat(0.005 * 100f64.powf(i as f64 / 1023.)))
+                .collect(),
+            ..Default::default()
+        },
+    };
+    let mut owned = vec![frame(native), frame(native * 2.)];
+    owned[0]
+        .picture
+        .pixels
+        .extend([DVec3::splat(native * 1.5), DVec3::splat(native * 2.)]);
+    let floor = restrict_to_common_floor(&mut owned).unwrap();
+    assert_eq!(floor, native * 2.);
+    assert_eq!(owned[0].picture.pixels.len(), 1024);
+    assert_eq!(owned[0].picture.rejected_floor, 2);
+    assert_eq!(owned[1].picture.rejected_floor, 0);
+    let frames: Vec<_> = owned
+        .iter()
+        .map(|f| FrameSamples {
+            film: &f.film.pixels,
+            picture: &f.picture.pixels,
+        })
+        .collect();
+    let proposal = roll_analysis::estimate(
+        &frames,
+        floor,
+        glam::DMat3::IDENTITY,
+        RollSettings::new_grade(),
+        || false,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(proposal.photos.len(), 2);
+    require_statistics(4096, &proposal.frames).unwrap();
+    let mut sparse = vec![frame(native), frame(native * 2.)];
+    sparse[0].picture.pixels = vec![DVec3::splat(native * 1.5); 1024];
+    assert!(restrict_to_common_floor(&mut sparse).is_err());
+}
+
+#[test]
 fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_open_state() {
     pollster::block_on(async {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw");
@@ -147,6 +196,7 @@ fn state() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
                 id: SourceId(0),
                 path: "scene.ARW".into(),
                 development: SourceDevelopment {
+                    lens_correction: None,
                     dimensions: [824, 624],
                     active_area: [12, 12, 800, 600],
                     camera_model: "test-camera".into(),

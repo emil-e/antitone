@@ -142,6 +142,7 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                         id: SourceId(0),
                         path,
                         development: crate::project::SourceDevelopment {
+                            lens_correction: None,
                             dimensions: [8704, 6144],
                             active_area: [12, 12, 8640, 5760],
                             camera_model: "test-camera".into(),
@@ -473,6 +474,7 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
             id: SourceId(0),
             path: "test-camera.ARW".into(),
             development: crate::project::SourceDevelopment {
+                lens_correction: None,
                 dimensions: [900, 600],
                 active_area: [0, 0, 900, 600],
                 camera_model: "test-camera".into(),
@@ -616,6 +618,7 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
         id: SourceId(0),
         path: "current.ARW".into(),
         development: crate::project::SourceDevelopment {
+            lens_correction: None,
             dimensions: [900, 600],
             active_area: [12, 7, 864, 576],
             camera_model: "test-camera".into(),
@@ -1929,6 +1932,7 @@ fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
                     id: SourceId(0),
                     path: path.into(),
                     development: crate::project::SourceDevelopment {
+                        lens_correction: None,
                         dimensions: [900, 600],
                         active_area: [0, 0, 900, 600],
                         camera_model: "test-camera".into(),

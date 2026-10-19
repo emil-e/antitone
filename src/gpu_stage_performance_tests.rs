@@ -109,7 +109,7 @@ fn scalar_samples(
     source: &ProcessingSource,
     grade: &GpuPhotoGrade,
     calibration: Calibration,
-    pixels: &[[u16; 4]],
+    pixels: &[[f32; 4]],
 ) {
     let words = read_words(device, queue, &probe.output);
     let scalar = SpatialPipeline::new(
@@ -143,7 +143,7 @@ fn scalar_samples(
 }
 
 async fn investigate(
-    pixels: Vec<[u16; 4]>,
+    pixels: Vec<[f32; 4]>,
     size: [u32; 2],
     area: SourceRegion,
     calibration: Calibration,
@@ -163,7 +163,7 @@ async fn investigate(
     let kernel = ProcessingKernel::new(&device, &queue).await.unwrap();
     let probe = Probe::new(&device, pixels.len()).await;
     let geometry = SourceGeometry::new([area.x, area.y, area.width, area.height], size).unwrap();
-    let mut source = ProcessingSource::new(&device, &pixels, matrix).unwrap();
+    let mut source = ProcessingSource::new_continuous(&device, &pixels, matrix).unwrap();
     source.set_geometry(geometry).unwrap();
     let calibration = if corrected {
         let field = Arc::new(
@@ -401,8 +401,8 @@ async fn investigate(
     let suffix = make(PhotoGradeSnapshot::new(default, base.locals()[2..].to_vec()).unwrap());
     let old_key = StagePrefixKey::new([1, 0], &source, &full, 2);
     let mut changed_pixels = pixels.clone();
-    changed_pixels[0] = [65535, 0, 491, 0];
-    source.write(&queue, &changed_pixels).unwrap();
+    changed_pixels[0] = [65535., 0., 491., 0.];
+    source.write_continuous(&queue, &changed_pixels).unwrap();
     assert_ne!(old_key, StagePrefixKey::new([1, 1], &source, &full, 2));
     run(&full, None);
     let expected = read_words(&device, &queue, &probe.output);
@@ -456,6 +456,7 @@ fn operators_and_stage_suffix_reuse() {
                 i.wrapping_mul(3413) as u16,
                 42,
             ]
+            .map(f32::from)
         })
         .collect();
     pollster::block_on(investigate(
@@ -479,6 +480,7 @@ fn corrected_operators_and_stage_suffix_reuse() {
                 i.wrapping_mul(3413) as u16,
                 42,
             ]
+            .map(f32::from)
         })
         .collect();
     pollster::block_on(investigate(

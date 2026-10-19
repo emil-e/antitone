@@ -139,7 +139,7 @@ ANTITONE_CROP_OUTPUT="$PWD/.cache/crop-quality-FRESH" \
 
 For prediction-free native windows, use the same manifest and fresh output, add `ANTITONE_RAW_ROOT=/absolute/read-only-samples`, select `--features editor` and replace the test name with `capture_original_crop_windows`. Each case needs independently chosen windows. Capture is bounded to three explicit sources and twelve windows per source, each at most 256×256 pixels. It uses the existing Normal-pressure/2 GiB free-memory preflight, native geometry bound and swap/footprint/stale-telemetry stops; a cooperative deadline cannot interrupt a native call. Project runtime/development identity, input size/mtime snapshots and original RAW revisions are checked. Original manifest/project/source locators are rechecked for symlink retargeting; relative RAW paths use the normal project locator, not a relocated canonical base. Sources are developed sequentially without native-cache admission or whole-original Rust copies. Partial files without `capture.json` are not a completed observation.
 
-The lossless `.rgb16` files contain little-endian original camera RGB16 in source orientation. PNGs enlarge those pixels 4× with nearest-neighbour sampling and apply only the sRGB transfer to camera channels, at unity exposure—no colour matrix, inversion, correction, repairs, grade or detector overlays. They are viewing aids, not rendered photographs. Capture writes private artifacts only; it neither derives windows from predictions nor generates marks automatically. Ordinary geometry/project tests need no private inputs or native setup.
+The lossless `.rgb16` files contain little-endian original camera RGB16 in source orientation. This integer-only capture path rejects continuous lens-corrected sources rather than quantizing them. PNGs enlarge those pixels 4× with nearest-neighbour sampling and apply only the sRGB transfer to camera channels, at unity exposure—no colour matrix, inversion, correction, repairs, grade or detector overlays. They are viewing aids, not rendered photographs. Capture writes private artifacts only; it neither derives windows from predictions nor generates marks automatically. Ordinary geometry/project tests need no private inputs or native setup.
 
 A frozen exploratory six-case comparison motivates retaining validation rather than its candidate algorithm: the normal detector proposed all four pictured frames, while a strict all-four-side local refiner proposed none; both abstained on two censored controls. Required local support/quorum or straight-line residual gates failed before complete transition envelopes could be assessed. This is no evidence for admitting that refiner or for envelope quality, and no reason to loosen its experimental gates on those cases. The normal 0.5% margin excluded marked unwanted strips but removed some near-edge wanted strips; gross marked interiors remained included. That illustrates an explicit policy tradeoff, not a mandate to change the default. The assistant-reviewed original-pixel transition bands were not expert-certified boundaries, and the cases were untouched only by local-refinement tuning, not pristine project-wide holdouts. [Remaining physical acceptance](plans/region-detection.md#detector-accuracy-and-latency).
 
@@ -241,7 +241,7 @@ cargo test --locked --offline --release --features editor --lib \
 
 The [diagnostic](../src/gpu_working_view_local_resource_tests.rs) uses an authored RAW, a 1080p detail grid and the production whole-composition underlay, correction off/on, numeric/geometry edits and both targets. It samples same-process footprint/resident/Metal allocation and checkpoints current/building, deferred encoded consumers and retirement. The deferred texture copy is an encoded-lifetime stand-in, not a native presentation frame. Scopes and native host resources are excluded. Set `ANTITONE_SCREEN_RAW=1 ANTITONE_RAW_SAMPLES=/absolute/samples` for the supplied native-size source instead of the small authored fixture; headers must pass the existing 600-MiB diagnostic source bound. Both variants use the existing Normal-pressure, free-memory, swap, growth and sampler-freshness stops; a preflight stop establishes no workload/resource acceptance. Timings without a coordinated window are indicative, not isolated interaction latency.
 
-[Response-table tests](../src/gpu_response_table_tests.rs) check exact RGB16-code reuse, complete keys, signed/floor behavior and initialization/publication through the hosted submission gate. Continuous corrected input and inspection bypass the table. Independent original-processing operator/stage references remain numerical diagnostics; they are not alternate editor caches or scheduling policies. Existing numerical gates must not be relaxed for a faster candidate.
+[Response-table tests](../src/gpu_response_table_tests.rs) check exact RGB16-code reuse, complete keys, signed/floor behavior and initialization/publication through the hosted submission gate. Fractional corrected input and inspection bypass the table; exact integer values in continuous transport can reuse it. Independent original-processing operator/stage references remain numerical diagnostics; they are not alternate editor caches or scheduling policies. Existing numerical gates must not be relaxed for a faster candidate.
 
 ## Equivalent ACES execution
 
@@ -326,6 +326,25 @@ cargo run --locked --offline --release --features raw \
   --bin antitone-raw-probe -- /absolute/photo.ARW
 ```
 
+Metadata mode reports Sony embedded shading/distortion/CA availability, known camera settings, validated radial scales, shading amplification and automatic output dimensions without unpacking or correcting pixels. It can inspect malformed data even though normal development rejects it. Off is distinct from unavailable coefficients. Discovery reads the selected RAW IFD, not rendered previews, and ignores inherited Sony coefficients in DNG.
+
+Full mode develops the automatically corrected camera raster, checks repeated development and reports reconstruction time/storage separately from LibRaw time. The LibRaw sRGB matrix comparison deliberately uses a separate native raster: channel-dependent CA cannot be applied to already mixed/clipped sRGB. Optional PPMs include corrected/native pairs when applicable. `ANTITONE_RAW_PPM_EV` selects their shared diagnostic exposure (default +3 EV; 0 EV is useful for ordinary photographs). They are clipped unmanaged diagnostics, not colour or photographic acceptance. [Sony processing](processing.md#embedded-sony-lens-correction) owns coordinates, reconstruction and capture authority; [remaining acceptance](plans/raw-lens-correction.md) includes vendor/reference agreement and broader photographs/hardware.
+
+Per-component distortion/CA maps and independent shading checks run offline in the pure model tests; authored native cases separately exercise automatic development and its diagnostic bypass:
+
+```sh
+cargo test --locked --offline --no-default-features \
+  --test sony_lens --test sony_geometry --test sony_vignetting
+cargo test --locked --offline --features raw,project --test raw_sony_lens
+cargo test --locked --offline --features gpu --test gpu_continuous
+# Add the normal OCIO reference setup for reopened Sony TIFF/AP0 EXR correspondence.
+cargo test --locked --offline --features raw,gpu,export,project,ocio-reference --test raw_sony_lens
+```
+
+Bounded release-build checks on an Apple M5 Pro / 48 GiB cover ILCE-1M2 / 24–70mm GM II photographs at 24/70 mm and f/2.8/f/8. A distortion/CA-only two-source 24/70-mm timing run took 0.22–0.27 s per roughly 47–50-MP source for reconstruction plus eligibility-mask construction. Corrected RGB storage was 567–597 MB, capture masks 11.8–12.4 MB, and redundant native RGB was released. The serial CLI run, including repeat development and native sRGB references, peaked near 1.23 GB physical footprint. Sampled repeatability was exact, matrix gates passed and corrected/native previews were inspected for gross discontinuities. An adapted-lens scan kept the native path. These are spot-checks, not vendor calibration, fine-detail/CA approval, editor-switching latency or aggregate memory-pressure acceptance.
+
+With embedded shading enabled, a two-source 24/70-mm release probe on the same M5 Pro took 0.42–0.49 s per reconstruction, including eligibility construction, with about 1.23 GB peak footprint for the serial probe and unchanged retained-raster sizes. All 112 supplied profiles validated, with maximum shading gains from 1.108 to 1.907. The 24-mm example retained 3001 red samples above native white; sampled repeats were exact and native matrix comparisons passed. These remain bounded CLI observations, not editor or vendor-reference acceptance.
+
 Full mode checks repeatability, flooring and eligible in-sRGB LibRaw matrix comparisons. Inspect `compared_grid`: zero eligible comparisons cannot establish agreement. Optional PPMs are clipped source diagnostics, not photographic calibration or ACES/ICC output.
 
 [Authored RAW checks](development.md#feature-specific-checks) preserve Scan immutability, measured anchors (`2e-12`), flooring (at most 1%) and sampled LibRaw matrix agreement (`2/65535`). The authored matrix case requires a nonzero eligible grid.
@@ -349,6 +368,33 @@ cargo test --locked --offline --features editor,ocio-reference --lib \
 cargo test --locked --offline --release --features editor,ocio-reference --lib \
   corrected_affine_refinement_matches_scalar_coverage -- --ignored --nocapture
 ```
+
+### Sony source storage precision
+
+The opt-in [storage study](../tests/lens_precision.rs) holds development and capture eligibility fixed while comparing retained f32 camera codes with whole-code rounding and an eight-fractional-bit diagnostic alternative. Within the native range these correspond to RGB16 and Q16.8. For above-white shaded datasets, reports label the rounding models `whole-code`/`code-q8` and omit packed-u16 GPU timing: those values are not representable by plain RGB16. It does not change production storage.
+
+```sh
+ANTITONE_RAW_SAMPLES=/absolute/path/to/samples \
+  cargo test --locked --offline --release \
+  --features raw,gpu,export,project,ocio-reference --test lens_precision \
+  -- --ignored --nocapture --test-threads=1
+```
+
+Use the normal OCIO/native setup. Outputs stay under `.cache/lens-precision/`: CSV metrics, paired PPMs and explicitly amplified differences. Synthetic cases blend declared integer neighbours; supplied negatives use diagnostic calibration and borrowed Sony warps because their adapted lens has no usable profile. Those warps test resampling/rounding, not physical lens calibration. Real profile-bearing photographs use actual production correction and source inspection. Global samples and 384-square native-detail patches cover default adjustable response with exposure 0/+2/+4 EV and +8 EV stress. Constant-gain/anchor scaling is a scale-invariance and timing control; separate spatial ±20% illumination gains use fixed centre-unity anchors and independent CPU gain evaluation.
+
+Storage errors use the f64 scalar pipeline followed by independent pinned OCIO rendering to sRGB. The GPU timing arms are separately checked against their corresponding scalar inputs under the existing numerical gate. On one M5 Pro / 48-GiB distortion/CA-only run, before shading was enabled, maximum differences expressed in encoded 8-bit-level equivalents were:
+
+| Case | Largest RMS across tested settings | Largest channel difference |
+| --- | ---: | ---: |
+| Ordinary negative, global/detail, including spatial gains | 0.014 | 0.108 |
+| Dense reference negative, including spatial gains | 0.167 | 1.818 |
+| Sony photographs, source inspection | 0.030 | 0.272 |
+
+Within its representable range, RGB16 adds at most half a native code. Post-shading headroom loss is a different error and is not included in those historical rounding numbers. The dense reference's rare roughly two-level output changes show that this is not always negligible after inversion; they do not establish subjective visibility or recovered sensor detail. Q16.8 reduced those differences substantially (dense-case maximum below 0.008 encoded 8-bit levels), but needs custom packing and still requires continuous inversion.
+
+For one 147,456-pixel negative-detail buffer, warmed encode/submit/completion medians were about 6.65 ms for fractional f32 versus 0.62 ms for packed RGB16. Rounded integer values in a float upload also took about 0.56 ms, isolating exact-code lookup reuse from transport width. With spatial flat-field gains, all three took roughly 7.4–7.8 ms because they all used continuous inversion. These small-buffer timings exclude upload, readback and rendering; they are not full-resolution export or interaction timings.
+
+Within-range packed corrected RGB16 could halve retained RGB storage (6 rather than 12 bytes/pixel), but preserving shading headroom would also require a range/scale design; native uncorrected LibRaw storage remains four u16 slots. Current f32 preserves fractions using a standard representation, at real memory/processing cost. The study supports a tradeoff, not a universal source-format requirement. It does not cover all grades, anchor remeasurement, devices or actual profile-bearing film scans; no production format change follows automatically from the experiment.
 
 ## Rendering, gamut and ICC
 

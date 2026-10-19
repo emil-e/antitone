@@ -577,7 +577,7 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
             Arc::new(Proxy {
                 width: 8,
                 height: 4,
-                pixels: vec![[1000, 2000, 3000, 0]; 32],
+                pixels: vec![[1000., 2000., 3000., 0.]; 32],
                 matrix: glam::DMat3::IDENTITY,
             }),
         )

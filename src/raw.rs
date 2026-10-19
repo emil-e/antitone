@@ -9,9 +9,20 @@ use crate::Error;
 use crate::color::{AP1_TO_XYZ, BRADFORD};
 use crate::sampling::mean;
 
+#[path = "raw_sony.rs"]
+mod sony;
+pub use sony::{SonyLensData, SonyLensDataStatus};
+#[path = "raw_eligibility.rs"]
+mod eligibility;
+#[path = "raw_lens.rs"]
+mod lens_source;
+
 #[cfg(all(test, feature = "project"))]
 #[path = "../tests/support/raw_fixture.rs"]
 pub(crate) mod fixture;
+#[cfg(all(test, feature = "editor"))]
+#[path = "../tests/support/sony_fixture.rs"]
+pub(crate) mod sony_fixture;
 
 const SRGB_TO_XYZ: DMat3 = DMat3::from_cols(
     DVec3::new(0.4124564, 0.2126729, 0.0193339),
@@ -47,6 +58,8 @@ pub struct Metadata {
     pub cam_mul: [f64; 4],
     pub daylight_mul: [f64; 4],
     rgb_cam: [f64; 9],
+    pub sony_lens: SonyLensData,
+    lens_disabled: u32,
 }
 
 impl Metadata {
@@ -93,7 +106,49 @@ impl Metadata {
         Ok(AP1_TO_XYZ.inverse() * adaptation * SRGB_TO_XYZ * camera_to_srgb)
     }
 
+    pub fn lens_geometry(&self) -> Result<Option<crate::lens::SonyLensGeometry>, Error> {
+        if self.lens_disabled != 0 {
+            return Ok(None);
+        }
+        let Some(profile) = self.sony_lens.profile()? else {
+            return Ok(None);
+        };
+        if !profile.has_distortion() && !profile.has_ca() && !profile.has_vignetting() {
+            return Ok(None);
+        }
+        crate::lens::SonyLensGeometry::new(profile, self.native_image_area()?).map(Some)
+    }
+
+    /// Native code quantum amplified conservatively by embedded shading; never a clipping limit.
+    pub fn input_floor(&self) -> Result<f64, Error> {
+        Ok(crate::processing::CAMERA_INPUT_FLOOR
+            * self.lens_geometry()?.map_or(1., |g| g.maximum_gain()))
+    }
+
+    pub fn source_dimensions(&self) -> Result<[u32; 2], Error> {
+        Ok(self
+            .lens_geometry()?
+            .map_or([self.width, self.height], |g| g.size()))
+    }
+
+    pub fn lens_identity(&self) -> Result<Option<String>, Error> {
+        Ok(self.lens_geometry()?.map(|g| g.identity()))
+    }
+
     pub fn image_area(&self) -> Result<Rect, Error> {
+        if let Some(geometry) = self.lens_geometry()? {
+            let [width, height] = geometry.size();
+            return Ok(Rect {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            });
+        }
+        self.native_image_area()
+    }
+
+    pub fn native_image_area(&self) -> Result<Rect, Error> {
         if self.inset_width == 0 && self.inset_height == 0 {
             return Ok(Rect {
                 x: 0,
@@ -134,6 +189,24 @@ pub struct SensorDiagnostics {
     pub below_black: [u64; 4],
     pub at_white: [u64; 4],
     pub peak: [u32; 4],
+}
+
+/// Original sensor-limit warnings affecting a developed region, not corrected RGB saturation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CaptureFlags {
+    /// Original sensor white, or contributing native RGB clipping in a corrected source.
+    /// Shading headroom above native white does not set this flag.
+    pub at_white: bool,
+    pub below_black: bool,
+}
+
+impl From<SensorDiagnostics> for CaptureFlags {
+    fn from(value: SensorDiagnostics) -> Self {
+        Self {
+            at_white: value.at_white.iter().any(|&n| n != 0),
+            below_black: value.below_black.iter().any(|&n| n != 0),
+        }
+    }
 }
 
 #[repr(C)]
@@ -212,7 +285,15 @@ unsafe extern "C" {
         error: *mut c_char,
         size: usize,
     ) -> c_int;
+    fn antitone_raw_capture_flags(
+        handle: *const c_void,
+        words: *mut u64,
+        count: usize,
+        error: *mut c_char,
+        size: usize,
+    ) -> c_int;
     fn antitone_raw_retained_bytes(handle: *mut c_void) -> u64;
+    fn antitone_raw_free_image(handle: *mut c_void);
     fn antitone_raw_close(handle: *mut c_void);
 }
 
@@ -267,10 +348,21 @@ pub struct RawFile {
     priority: DevelopmentPriority,
     diagnostics: Option<SensorDiagnostics>,
     camera_view: Option<NativeView>,
+    correction: Option<crate::lens::SonyLensGeometry>,
+    corrected: Option<lens_source::CorrectedImage>,
 }
 
 impl RawFile {
     pub fn open(path: &Path) -> Result<Self, Error> {
+        Self::open_mode(path, true)
+    }
+
+    /// Diagnostic baseline only; ordinary source acquisition always uses automatic correction.
+    pub fn open_uncorrected(path: &Path) -> Result<Self, Error> {
+        Self::open_mode(path, false)
+    }
+
+    fn open_mode(path: &Path, lens_correction: bool) -> Result<Self, Error> {
         let path = CString::new(path.as_os_str().as_encoded_bytes())
             .map_err(|_| Error::Raw("source path contains NUL".into()))?;
         let mut metadata = std::mem::MaybeUninit::<Metadata>::zeroed();
@@ -285,14 +377,19 @@ impl RawFile {
             )
         };
         let handle = NonNull::new(handle).ok_or_else(|| native_error("open", &error))?;
-        Ok(Self {
+        let mut raw = Self {
             handle,
             metadata: unsafe { metadata.assume_init() },
             unpacked: false,
             priority: DevelopmentPriority::default(),
             diagnostics: None,
             camera_view: None,
-        })
+            correction: None,
+            corrected: None,
+        };
+        raw.metadata.lens_disabled = u32::from(!lens_correction);
+        raw.correction = raw.metadata.lens_geometry()?;
+        Ok(raw)
     }
 
     #[cfg(feature = "editor")]
@@ -380,12 +477,52 @@ impl RawFile {
         Ok(diagnostics)
     }
 
+    /// Detailed diagnostics in original, unwarped native coordinates.
     pub fn region_sensor_diagnostics(&mut self, area: Rect) -> Result<SensorDiagnostics, Error> {
         self.ensure_unpacked()?;
-        self.unpacked_region_sensor_diagnostics(area)
+        self.native_region_sensor_diagnostics(area)
     }
 
-    fn unpacked_region_sensor_diagnostics(&self, area: Rect) -> Result<SensorDiagnostics, Error> {
+    /// Capture-limit eligibility in the developed source's coordinates.
+    pub fn capture_eligibility(&mut self, area: Rect) -> Result<CaptureFlags, Error> {
+        self.ensure_unpacked()?;
+        self.unpacked_capture_eligibility(area)
+    }
+
+    fn unpacked_capture_eligibility(&self, area: Rect) -> Result<CaptureFlags, Error> {
+        if let Some(image) = &self.corrected {
+            return image.eligibility.flags(area);
+        }
+        if self.correction.is_some() {
+            return Err(Error::Raw(
+                "corrected capture eligibility needs camera development".into(),
+            ));
+        }
+        self.native_region_sensor_diagnostics(area).map(Into::into)
+    }
+
+    fn capture_mask(&self) -> Result<eligibility::EligibilityMask, Error> {
+        let mut mask =
+            eligibility::EligibilityMask::new([self.metadata.width, self.metadata.height])?;
+        let mut error = [0; 512];
+        let words = mask.words_mut();
+        // Const capture reads only; the caller owns all storage and the original levels remain intact.
+        let code = unsafe {
+            antitone_raw_capture_flags(
+                self.handle.as_ptr(),
+                words.as_mut_ptr(),
+                words.len(),
+                error.as_mut_ptr(),
+                error.len(),
+            )
+        };
+        if code != 0 {
+            return Err(native_error("capture mask", &error));
+        }
+        Ok(mask)
+    }
+
+    fn native_region_sensor_diagnostics(&self, area: Rect) -> Result<SensorDiagnostics, Error> {
         let mut diagnostics = SensorDiagnostics::default();
         let mut error = [0; 512];
         // The bridge reads the immutable RAW snapshot, including its original CFA and black/white levels.
@@ -430,6 +567,7 @@ impl RawFile {
         let unpack_seconds = started.elapsed().as_secs_f64();
         let tick = std::time::Instant::now();
         self.camera_view = None;
+        self.corrected = None;
         let mut view = std::mem::MaybeUninit::<NativeView>::zeroed();
         let mut error = [0; 512];
         // A successful bridge call lends its image until the next mutable call or handle destruction.
@@ -456,7 +594,36 @@ impl RawFile {
             tick.elapsed().as_secs_f64()
         );
         if output_color == 0 {
-            self.camera_view = Some(view);
+            if let Some(geometry) = &self.correction {
+                let started = std::time::Instant::now();
+                let support = self.capture_mask()?.ahd_support()?;
+                let original = self.borrow_view(view)?;
+                let corrected = lens_source::reconstruct(
+                    original.pixels,
+                    [view.width, view.height],
+                    geometry,
+                    &support,
+                    threads as usize,
+                )?;
+                // The immutable f32 raster replaces RGB16; keep original CFA, not a redundant RGB copy.
+                unsafe { antitone_raw_free_image(self.handle.as_ptr()) };
+                self.camera_view = Some(NativeView {
+                    pixels: std::ptr::null(),
+                    ..view
+                });
+                println!(
+                    "sony_lens_development width={} height={} reconstruction_seconds={:.6} corrected_bytes={} eligibility_bytes={} native_image_retained=false",
+                    corrected.size[0],
+                    corrected.size[1],
+                    started.elapsed().as_secs_f64(),
+                    corrected.pixels.capacity() * size_of::<[f32; 3]>(),
+                    corrected.eligibility.retained_bytes()
+                );
+                self.corrected = Some(corrected);
+            } else {
+                self.camera_view = Some(view);
+            }
+            return self.camera_image();
         }
         self.borrow_view(view)
     }
@@ -466,21 +633,47 @@ impl RawFile {
             return Err(Error::Raw("cannot freeze a source before unpacking".into()));
         }
         let image = self.camera_image()?;
-        if (image.width, image.height) != (self.metadata.width, self.metadata.height) {
+        if [image.width, image.height] != self.metadata.source_dimensions()? {
             return Err(Error::Raw(
                 "camera development dimensions disagree with metadata".into(),
             ));
         }
         // Unique ownership still holds here; snapshot before immutable publication.
         let bytes = unsafe { antitone_raw_retained_bytes(self.handle.as_ptr()) };
+        let extra = self
+            .corrected
+            .as_ref()
+            .map_or(0, |image| image.retained_bytes())
+            + self
+                .correction
+                .as_ref()
+                .map_or(0, |geometry| geometry.retained_bytes());
         Ok(FrozenRaw {
             raw: self,
-            retained_bytes: (bytes != 0).then_some(bytes),
+            retained_bytes: (bytes != 0)
+                .then(|| bytes.checked_add(extra as u64))
+                .flatten(),
         })
     }
 
     /// Borrows the cached camera development without rerunning LibRaw.
     pub fn camera_image(&self) -> Result<Developed<'_>, Error> {
+        if let Some(image) = &self.corrected {
+            let view = self
+                .camera_view
+                .ok_or_else(|| Error::Raw("camera development is not available".into()))?;
+            return Ok(Developed {
+                pixels: &[],
+                continuous: Some(&image.pixels),
+                width: image.size[0],
+                height: image.size[1],
+                maximum: view.maximum,
+                data_maximum: view.data_maximum,
+                warnings: view.warnings,
+                pre_mul: view.pre_mul,
+                _owner: PhantomData,
+            });
+        }
         self.borrow_view(
             self.camera_view
                 .ok_or_else(|| Error::Raw("camera development is not available".into()))?,
@@ -498,6 +691,7 @@ impl RawFile {
         }
         Ok(Developed {
             pixels: unsafe { std::slice::from_raw_parts(view.pixels, count) },
+            continuous: None,
             width: view.width,
             height: view.height,
             maximum: view.maximum,
@@ -553,12 +747,17 @@ impl FrozenRaw {
     }
 
     pub(crate) fn region_sensor_diagnostics(&self, area: Rect) -> Result<SensorDiagnostics, Error> {
-        self.raw.unpacked_region_sensor_diagnostics(area)
+        self.raw.native_region_sensor_diagnostics(area)
+    }
+
+    pub(crate) fn capture_eligibility(&self, area: Rect) -> Result<CaptureFlags, Error> {
+        self.raw.unpacked_capture_eligibility(area)
     }
 }
 
 pub struct Developed<'a> {
     pixels: &'a [u16],
+    continuous: Option<&'a [[f32; 3]]>,
     pub width: u32,
     pub height: u32,
     pub maximum: u32,
@@ -569,6 +768,10 @@ pub struct Developed<'a> {
 }
 
 impl Developed<'_> {
+    pub fn is_continuous(&self) -> bool {
+        self.continuous.is_some()
+    }
+
     pub fn sample_mean(&self, area: Rect, matrix: DMat3) -> Result<DVec3, Error> {
         if area.width == 0
             || area.height == 0
@@ -597,6 +800,11 @@ impl Developed<'_> {
     }
 
     pub fn pixel_codes(&self, x: u32, y: u32) -> Result<[u16; 4], Error> {
+        if self.continuous.is_some() {
+            return Err(Error::Raw(
+                "corrected camera samples are continuous, not RGB16 codes".into(),
+            ));
+        }
         if x >= self.width || y >= self.height {
             return Err(Error::Raw("pixel outside developed image".into()));
         }
@@ -604,8 +812,20 @@ impl Developed<'_> {
         Ok(self.pixels[offset..offset + 4].try_into().unwrap())
     }
 
+    /// Camera values in original code units; integer sources convert exactly to f32.
+    pub fn pixel_samples(&self, x: u32, y: u32) -> Result<[f32; 4], Error> {
+        if x >= self.width || y >= self.height {
+            return Err(Error::Raw("pixel outside developed image".into()));
+        }
+        if let Some(pixels) = self.continuous {
+            let [r, g, b] = pixels[y as usize * self.width as usize + x as usize];
+            return Ok([r, g, b, 0.]);
+        }
+        Ok(self.pixel_codes(x, y)?.map(f32::from))
+    }
+
     pub fn pixel(&self, x: u32, y: u32) -> Result<DVec3, Error> {
-        let [r, g, b, _] = self.pixel_codes(x, y)?;
+        let [r, g, b, _] = self.pixel_samples(x, y)?;
         Ok(DVec3::new(r as f64, g as f64, b as f64) / 65535.0)
     }
 }
@@ -713,11 +933,52 @@ mod tests {
 
     #[test]
     fn bridge_layout_matches_native_static_assertions() {
-        assert_eq!(size_of::<Metadata>(), 496);
+        assert_eq!(size_of::<Metadata>(), 664);
+        assert_eq!(size_of::<SonyLensData>(), 160);
         assert_eq!(size_of::<SensorDiagnostics>(), 112);
         assert_eq!(size_of::<NativeView>(), 64);
         #[cfg(feature = "editor")]
         assert_eq!(size_of::<NativeThumbnail>(), 32);
+    }
+
+    #[cfg(feature = "project")]
+    #[test]
+    fn native_capture_flags_match_thresholds_and_survive_development() {
+        let file = fixture::bayer_dng();
+        let mut bytes = std::fs::read(file.path()).unwrap();
+        let offset = bytes.len() - fixture::SIDE as usize * fixture::SIDE as usize * 2;
+        let sites = [
+            (0u32, 0u32, 0u16),
+            (31, 1, 65535),
+            (32, 0, 0),
+            (63, 63, 65535),
+        ];
+        for (x, y, value) in sites {
+            let start = offset + (y * fixture::SIDE + x) as usize * 2;
+            bytes[start..start + 2].copy_from_slice(&value.to_le_bytes());
+        }
+        std::fs::write(file.path(), bytes).unwrap();
+        let mut raw = RawFile::open(file.path()).unwrap();
+        raw.ensure_unpacked().unwrap();
+        let before = raw.capture_mask().unwrap();
+        for y in 0..fixture::SIDE {
+            for x in 0..fixture::SIDE {
+                let area = Rect::from([x, y, 1, 1]);
+                let expected = CaptureFlags::from(raw.region_sensor_diagnostics(area).unwrap());
+                assert_eq!(before.flags(area).unwrap(), expected);
+                let value = sites
+                    .iter()
+                    .find(|&&(sx, sy, _)| sx == x && sy == y)
+                    .map(|&(_, _, value)| value);
+                assert_eq!(expected.at_white, value == Some(65535));
+                assert_eq!(expected.below_black, value == Some(0));
+            }
+        }
+        raw.develop_camera([1.; 4]).unwrap();
+        let after = raw.capture_mask().unwrap();
+        for (x, y, _) in sites {
+            assert_eq!(before.at(x, y), after.at(x, y));
+        }
     }
 
     #[cfg(feature = "editor")]
@@ -792,6 +1053,7 @@ mod tests {
             .collect();
         let developed = Developed {
             pixels: &pixels,
+            continuous: None,
             width: 4,
             height: 4,
             maximum: 0,

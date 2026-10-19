@@ -4,6 +4,9 @@ use crate::Error;
 use crate::color::{Balance, wb_matrix};
 
 pub const CAMERA_INPUT_FLOOR: f64 = 1. / 65535.;
+/// Continuous-source admission envelope, covering the full signed Sony shading table (< 2^8).
+pub const MAX_SOURCE_GAIN: f64 = 256.;
+pub const MAX_CAMERA_SOURCE_CODE: f32 = 65535. * MAX_SOURCE_GAIN as f32;
 pub const DEFAULT_GAMMA: f64 = 0.60;
 pub const MIN_GAMMA: f64 = 0.1;
 pub const MAX_GAMMA: f64 = 3.0;
@@ -74,6 +77,26 @@ pub struct Calibration {
 }
 
 impl Calibration {
+    /// Derive a processing floor once, without changing the stored native-base calibration.
+    pub(crate) fn for_source(
+        mut self,
+        source_floor: f64,
+        residual_gain: f64,
+    ) -> Result<Self, Error> {
+        if self.input_floor != CAMERA_INPUT_FLOOR
+            || !source_floor.is_finite()
+            || source_floor < CAMERA_INPUT_FLOOR
+            || !residual_gain.is_finite()
+            || residual_gain < 1.
+        {
+            return Err(Error::InvalidParameter(
+                "source calibration requires the native base floor and conservative gain bounds",
+            ));
+        }
+        self.input_floor = source_floor * residual_gain;
+        self.validate()
+    }
+
     pub fn validate(self) -> Result<Self, Error> {
         if !self.input_floor.is_finite() || self.input_floor <= 0.0 {
             return Err(Error::InvalidParameter(

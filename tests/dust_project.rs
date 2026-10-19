@@ -16,6 +16,7 @@ fn fixture() -> (Project, SourceId) {
             id: SourceId(0),
             path: "negative.ARW".into(),
             development: SourceDevelopment {
+                lens_correction: None,
                 dimensions: [900, 600],
                 active_area: [12, 12, 864, 576],
                 camera_model: "test-camera".into(),

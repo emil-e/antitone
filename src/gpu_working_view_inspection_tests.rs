@@ -1,4 +1,95 @@
 use super::*;
+#[cfg(feature = "ocio-reference")]
+use crate::raw::sony_fixture as sony;
+
+#[cfg(feature = "ocio-reference")]
+#[test]
+fn sony_corrected_source_inspection_preserves_headroom_flat_field_and_rendered_pixels() {
+    pollster::block_on(async {
+        let order = sony::Order::Little;
+        let mut tags = sony::profile_tags(order);
+        tags.push((0x7032, 8, order.signed(&[2, 8192, 8192])));
+        let file = sony::source(order, tags, false, false);
+        let mut scan = Scan::open(file.path(), Some([1.; 4])).unwrap();
+        let codes = scan.tile_region(scan.area, 0, 0, 64, 64).unwrap();
+        assert!(codes.iter().any(|p| p[..3].iter().any(|v| *v > 65535.)));
+        let (device, queue, renderer, kernels) = context().await;
+        let gate = SubmissionGate::default();
+        let ctx = egui::Context::default();
+        let cpu = crate::rendering::CpuRenderer::new(OutputTarget::Srgb).unwrap();
+        let input = ProcessingInput::from(ProcessingParameters::source_inspection(0.).unwrap());
+        for corrected in [false, true] {
+            let field = corrected.then(|| {
+                Arc::new(
+                    crate::flat_field::FlatField::from_nodes(
+                        [0, 0, 64, 64],
+                        [2, 2],
+                        vec![
+                            DVec3::new(1.1, 0.9, 1.2),
+                            DVec3::new(0.8, 1.2, 1.),
+                            DVec3::new(1.05, 1., 1.1),
+                            DVec3::new(1.2, 0.85, 0.9),
+                        ],
+                    )
+                    .unwrap(),
+                )
+            });
+            scan.set_flat_field(field.clone()).unwrap();
+            let gpu_field = field
+                .as_ref()
+                .map(|f| Arc::new(GpuFlatField::new(&device, f.clone()).unwrap()));
+            let spec =
+                ViewSourceSpec::inspection(91, frame(&scan), scan.camera_to_ap1, field.clone())
+                    .unwrap();
+            let source = ViewSource::acquire(
+                &device,
+                &queue,
+                &gate,
+                renderer.clone(),
+                kernels.clone(),
+                &scan,
+                gpu_field,
+                spec,
+                || false,
+            )
+            .unwrap()
+            .unwrap();
+            let expected: Vec<_> = codes
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    let gain = field.as_ref().map_or(DVec3::ONE, |f| {
+                        f.gain([(i % 64) as f64 + 0.5, (i / 64) as f64 + 0.5])
+                            .unwrap()
+                    });
+                    scan.camera_to_ap1
+                        * (DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535. * gain)
+                })
+                .collect();
+            for (a, b) in read(&device, &queue, &source.pixels).iter().zip(&expected) {
+                for c in 0..3 {
+                    assert!(
+                        (a[c] as f64 - b[c]).abs() <= 1e-7 + 2. * f32::EPSILON as f64 * b[c].abs()
+                    );
+                }
+            }
+            let rendered =
+                RenderedView::inspection(&device, source, &input, OutputTarget::Srgb, None)
+                    .unwrap();
+            rendered.ensure_submitted(&device, &queue, &gate, &ctx);
+            let expected = cpu.render(&expected).unwrap();
+            for (a, b) in image(&device, &queue, &rendered.image).iter().zip(expected) {
+                for c in 0..3 {
+                    assert!(
+                        (a[c] - b[c]).abs() <= 2e-5,
+                        "flat_field={corrected} {a:?} {b:?}"
+                    );
+                }
+            }
+        }
+        assert_eq!(scan.tile_region(scan.area, 0, 0, 64, 64).unwrap(), codes);
+    });
+}
 
 #[test]
 fn physical_view_source_inspection_preserves_normalization_correction_and_reuses_linear_support() {

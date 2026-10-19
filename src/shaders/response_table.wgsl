@@ -13,11 +13,12 @@ fn build_response_codes(@builtin(global_invocation_id) id: vec3u) {
 }
 
 fn process_positive(code: vec2u, index: u32) -> ProcessedPixel {
-    if field.grid.z != 0u {
-        // Correction produces continuous values, not integer table indices.
+    let values = source_codes(code, index);
+    if field.grid.z != 0u || any(values != floor(values)) || any(values > vec3f(65535.0)) {
+        // Only exact in-range integer samples may address the RGB16 response table.
         return process_film(convert_source(code, index));
     }
-    let codes = vec3u(code.x & 65535u, code.x >> 16u, code.y & 65535u);
+    let codes = vec3u(values);
     let q = array<Triple, 3>(
             response_codes[codes.x].rgb[0],
             response_codes[codes.y].rgb[1],

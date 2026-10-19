@@ -120,7 +120,10 @@ impl Editor {
         ))?;
         validate_source(
             self.grades.device.as_ref(),
-            self.processing_calibration(calibration)?,
+            source.development.processing_calibration(
+                calibration,
+                self.correction.as_ref().map(|c| c.settings.map.as_ref()),
+            )?,
             self.roll,
             source,
             source.photo,
@@ -201,7 +204,6 @@ impl Editor {
     ) -> Result<(), Error> {
         self.positive_parameters(calibration, roll, photo)?;
         self.dust_validate_processing(calibration, roll, photo)?;
-        let calibration = self.processing_calibration(calibration)?;
         for source in &self.document.project.sources {
             let photo = if self.current_source == Some(source.id) {
                 photo
@@ -210,7 +212,10 @@ impl Editor {
             };
             validate_source(
                 self.grades.device.as_ref(),
-                calibration,
+                source.development.processing_calibration(
+                    calibration,
+                    self.correction.as_ref().map(|c| c.settings.map.as_ref()),
+                )?,
                 roll,
                 source,
                 photo,

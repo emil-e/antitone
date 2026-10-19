@@ -13,6 +13,7 @@ pub(super) fn fixture() -> Document {
                     id: SourceId(0),
                     path,
                     development: SourceDevelopment {
+                        lens_correction: None,
                         dimensions: [900, 600],
                         active_area: [0, 0, 900, 600],
                         camera_model: "test-camera".into(),
@@ -69,7 +70,7 @@ fn transient_reference_with_the_same_development_cannot_seed_the_working_photo()
         Arc::new(Proxy {
             width: 1,
             height: 1,
-            pixels: vec![[0; 4]],
+            pixels: vec![[0.; 4]],
             matrix: glam::DMat3::IDENTITY,
         }),
     ));
@@ -1234,6 +1235,39 @@ fn crop_draft_cancels_offscreen_prefetch_and_suspends_idle_admission() {
 }
 
 #[test]
+fn camera_product_forecast_bounds_a_square_continuous_source() {
+    pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let renderer = crate::renderer::GpuRenderer::new(&device, &queue)
+            .await
+            .unwrap();
+        let mut document = fixture();
+        let id = document.project.order[0];
+        let development = &mut document.project.source_mut(id).unwrap().development;
+        development.dimensions = [256, 256];
+        development.active_area = [0, 0, 256, 256];
+        let image = GpuImage::new_continuous_shared(
+            &renderer,
+            &device,
+            256,
+            256,
+            &vec![[1000.25, 2000.5, 3000.75, 0.]; 256 * 256],
+            glam::DMat3::IDENTITY,
+            OutputTarget::DisplayP3,
+        )
+        .await
+        .unwrap();
+        let product = Product::camera(Arc::new(image));
+        assert!(key(&document, id).estimated_product_bytes().unwrap() >= product.byte_len());
+    });
+}
+
+#[test]
 fn warm_normal_roll_survives_rapid_forward_and_reverse_scrolling() {
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -1329,7 +1363,7 @@ fn critical_pressure_releases_the_seed_when_the_working_source_is_gone() {
         Arc::new(Proxy {
             width: 1,
             height: 1,
-            pixels: vec![[0; 4]],
+            pixels: vec![[0.; 4]],
             matrix: glam::DMat3::IDENTITY,
         }),
     );
@@ -1351,7 +1385,7 @@ fn obsolete_scroll_work_is_cancelled_once_without_dropping_valid_source_seeds() 
     let proxy = Arc::new(Proxy {
         width: 1,
         height: 1,
-        pixels: vec![[1; 4]],
+        pixels: vec![[1.; 4]],
         matrix: glam::DMat3::IDENTITY,
     });
     thumbnails.seed(
@@ -1411,7 +1445,7 @@ fn disk_worker_reuses_checksummed_pixels_and_changed_stats_miss_instead_of_rejec
             &Proxy {
                 width: 2,
                 height: 1,
-                pixels: vec![[1, 2, 3, 0]; 2],
+                pixels: vec![[1., 2., 3., 0.]; 2],
                 matrix: glam::DMat3::IDENTITY,
             },
         )

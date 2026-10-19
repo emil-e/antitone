@@ -72,6 +72,25 @@ fn require_statistics(
     Ok(())
 }
 
+struct FrameMeasurements {
+    floor: f64,
+    film: crate::scan::AnalysisSamples,
+    picture: crate::scan::AnalysisSamples,
+}
+
+fn restrict_to_common_floor(frames: &mut [FrameMeasurements]) -> Result<f64, Error> {
+    let floor = frames.iter().map(|frame| frame.floor).fold(0., f64::max);
+    for frame in frames {
+        for samples in [&mut frame.film, &mut frame.picture] {
+            let count = samples.pixels.len();
+            samples.pixels.retain(|p| p.min_element() > floor);
+            samples.rejected_floor += count - samples.pixels.len();
+        }
+        require_picture(&frame.picture)?;
+    }
+    Ok(floor)
+}
+
 pub(super) struct Outcome {
     pub document: Document,
     pub frames: usize,
@@ -192,7 +211,6 @@ pub(super) fn run(
         )
     });
     let mut owned = Vec::with_capacity(project.order.len());
-    let mut floor = None;
     for (index, id) in project.order.iter().enumerate() {
         if cancelled() {
             return Ok(None);
@@ -219,12 +237,6 @@ pub(super) fn run(
             correction.settings.require_source(&actual.development)?;
             scan.set_flat_field(Some(correction.settings.map.clone()))?;
         }
-        if floor.is_some_and(|value| value != scan.effective_floor()) {
-            return Err(Error::UnusableSample(
-                "inconsistent analysis precision floor",
-            ));
-        }
-        floor = Some(scan.effective_floor());
         let active = scan.area;
         let frame_areas = request.areas.as_ref().map(|a| &a.entries[index].areas);
         let film_samples = match frame_areas {
@@ -256,21 +268,28 @@ pub(super) fn run(
             return Ok(None);
         };
         require_picture(&picture)?;
-        owned.push((film.pixels, picture.pixels));
+        owned.push(FrameMeasurements {
+            floor: scan.effective_floor(),
+            film,
+            picture,
+        });
         // Each temporary RAW is released here; only bounded statistics survive.
     }
     progress(project.order.len(), project.order.len());
+    let floor = restrict_to_common_floor(&mut owned)?;
     let frames: Vec<_> = owned
         .iter()
-        .map(|(film, picture)| FrameSamples { film, picture })
+        .map(|frame| FrameSamples {
+            film: &frame.film.pixels,
+            picture: &frame.picture.pixels,
+        })
         .collect();
-    let Some(proposal) =
-        roll_analysis::estimate(&frames, floor.unwrap(), matrix, project.roll, cancelled)?
+    let Some(proposal) = roll_analysis::estimate(&frames, floor, matrix, project.roll, cancelled)?
     else {
         return Ok(None);
     };
     require_statistics(
-        owned.iter().map(|(film, _)| film.len()).sum(),
+        owned.iter().map(|frame| frame.film.pixels.len()).sum(),
         &proposal.frames,
     )?;
     let mut candidate = proposed_document(&request.document, proposal, picture)?;
@@ -291,7 +310,11 @@ pub(super) fn run(
             return Ok(None);
         }
         let record = project.source(*id)?;
-        let mut input = crate::gpu::ProcessingSource::new(device, &[[0; 4]], matrix)?;
+        let mut input = if record.development.lens_correction.is_some() {
+            crate::gpu::ProcessingSource::new_continuous(device, &[[0.; 4]], matrix)?
+        } else {
+            crate::gpu::ProcessingSource::new(device, &[[0; 4]], matrix)?
+        };
         if let Some(correction) = correction {
             input.set_flat_field(
                 Some(correction.gpu.clone()),

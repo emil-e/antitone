@@ -16,6 +16,7 @@ struct ProxyState {
 }
 
 impl GpuProxy {
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         renderer: Arc<GpuRenderer>,
@@ -32,6 +33,32 @@ impl GpuProxy {
             ));
         }
         let mut source = ProcessingSource::new(device, pixels, matrix)?;
+        source.set_flat_field(field, geometry)?;
+        Ok(Self(Arc::new(ProxyState {
+            device: device.clone(),
+            renderer,
+            source: Arc::new(source),
+            size,
+            active: Default::default(),
+        })))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_continuous(
+        renderer: Arc<GpuRenderer>,
+        device: &wgpu::Device,
+        size: [u32; 2],
+        pixels: &[[f32; 4]],
+        matrix: DMat3,
+        field: Option<Arc<GpuFlatField>>,
+        geometry: SourceGeometry,
+    ) -> Result<Self, Error> {
+        if size[0].checked_mul(size[1]).map(u64::from) != Some(pixels.len() as u64) {
+            return Err(Error::InvalidParameter(
+                "source dimensions do not match the GPU image",
+            ));
+        }
+        let mut source = ProcessingSource::new_continuous(device, pixels, matrix)?;
         source.set_flat_field(field, geometry)?;
         Ok(Self(Arc::new(ProxyState {
             device: device.clone(),

@@ -230,9 +230,10 @@ fn real_raw_local_preview_tiles_and_refinement() {
             let geometry =
                 SourceGeometry::new([region.x, region.y, region.width, region.height], size)
                     .unwrap();
-            let mut source = ProcessingSource::new(&device, &pixels, scan.camera_to_ap1).unwrap();
+            let mut source =
+                ProcessingSource::new_continuous(&device, &pixels, scan.camera_to_ap1).unwrap();
             source.set_geometry(geometry).unwrap();
-            assert_eq!(source.byte_len(), pixels.len() as u64 * 8);
+            assert_eq!(source.byte_len(), pixels.len() as u64 * 16);
             for i in [0, pixels.len() / 2, pixels.len() - 1] {
                 let xy = raster
                     .source_pixel([i as u32 % size[0], i as u32 / size[0]])
@@ -365,7 +366,7 @@ fn real_raw_local_preview_tiles_and_refinement() {
                     grade.as_ref().map_or(0, |grade| grade.byte_len())
                 );
                 for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-                    let mut image = GpuImage::new_shared(
+                    let mut image = GpuImage::new_continuous_shared(
                         &renderer,
                         &device,
                         size[0],

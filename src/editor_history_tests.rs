@@ -222,6 +222,7 @@ fn controller() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
                     id: SourceId(0),
                     path: format!("photo-{index}.dng").into(),
                     development: crate::project::SourceDevelopment {
+                        lens_correction: None,
                         dimensions: [64, 64],
                         active_area: [0, 0, 64, 64],
                         camera_model: "test-camera".into(),

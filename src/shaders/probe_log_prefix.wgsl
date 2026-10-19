@@ -68,7 +68,7 @@ fn build_log_prefix(
     @builtin(num_workgroups) groups: vec3u,
 ) {
     let index = probe_index(id, groups);
-    if index >= arrayLength(&scans) {
+    if index >= source_pixel_count() {
         return;
     }
     prefix_pixels[index] = probe_anchored_response(convert_source(scans[index], index));
@@ -80,7 +80,7 @@ fn log_prefix_main(
     @builtin(num_workgroups) groups: vec3u,
 ) {
     let index = probe_index(id, groups);
-    if index >= arrayLength(&scans) {
+    if index >= source_pixel_count() {
         return;
     }
     if parameters.gamma_mode.w <= 0.5 {

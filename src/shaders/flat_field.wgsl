@@ -97,13 +97,34 @@ fn field_gains(index: u32) -> array<Triple, 3> {
     return gains;
 }
 
+fn continuous_source() -> bool {
+    return camera_matrix.high[0].w > 0.5;
+}
+
+fn source_pixel_count() -> u32 {
+    return arrayLength(&scans) / select(1u, 2u, continuous_source());
+}
+
+fn source_codes(code: vec2u, index: u32) -> vec3f {
+    if continuous_source() {
+        let first = scans[index * 2u];
+        let second = scans[index * 2u + 1u];
+        return vec3f(bitcast<f32>(first.x), bitcast<f32>(first.y), bitcast<f32>(second.x));
+    }
+    return vec3f(f32(code.x & 65535u), f32(code.x >> 16u), f32(code.y & 65535u));
+}
+
 fn convert_source(code: vec2u, index: u32) -> ConvertedScan {
+    let values = source_codes(code, index);
+    let nx = normalized_value(values.x);
+    let ny = normalized_value(values.y);
+    let nz = normalized_value(values.z);
     if field.grid.z == 0u {
-        return convert_camera(code);
+        return convert_components(nx, ny, nz);
     }
     let gains = field_gains(index);
-    let x = round53(multiply(normalized(code.x & 65535u), gains[0]));
-    let y = round53(multiply(normalized(code.x >> 16u), gains[1]));
-    let z = round53(multiply(normalized(code.y & 65535u), gains[2]));
+    let x = round53(multiply(nx, gains[0]));
+    let y = round53(multiply(ny, gains[1]));
+    let z = round53(multiply(nz, gains[2]));
     return convert_components(x, y, z);
 }

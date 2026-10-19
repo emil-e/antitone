@@ -10,7 +10,7 @@ struct InputRaster {
     size: [u32; 2],
     area: SourceRegion,
     region: SourceRegion,
-    pixels: Vec<[u16; 4]>,
+    pixels: Vec<[f32; 4]>,
     calibration: Calibration,
     matrix: DMat3,
     gather_ms: f64,
@@ -27,6 +27,7 @@ impl InputRaster {
                     i.wrapping_mul(3413) as u16,
                     42,
                 ]
+                .map(f32::from)
             })
             .collect();
         Self {
@@ -272,7 +273,8 @@ impl ScreenProbe {
         );
         let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
         let start = Instant::now();
-        let mut source = ProcessingSource::new(&device, &input.pixels, input.matrix).unwrap();
+        let mut source =
+            ProcessingSource::new_continuous(&device, &input.pixels, input.matrix).unwrap();
         let r = input.region;
         let geometry = SourceGeometry::new([r.x, r.y, r.width, r.height], input.size).unwrap();
         source.set_geometry(geometry).unwrap();

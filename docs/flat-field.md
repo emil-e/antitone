@@ -14,9 +14,9 @@ This is scan correction, not film-base calibration, dust removal or a colour gra
 
 ## Choose the illuminated support
 
-The reference workflow opens an uncorrected view, temporarily bypassing photo composition and orientation. An automatic rectangle is a suggestion; the user can edit it to exclude the holder and other unsuitable content. The support must contain the image-centre patch used to establish the target.
+The reference workflow bypasses the accepted illumination map, photo composition and orientation, but retains automatic embedded lens development. An automatic rectangle is a suggestion; the user can edit it to exclude the holder and other unsuitable content. The support must contain the image-centre patch used to establish the target.
 
-The estimator compares local full-resolution camera statistics with a centre-luminance, AP1-neutral target. It rejects clipped or unusable support and smooths the resulting field. Compatibility checks cannot establish that lighting, aperture, focus and positioning physically match the roll; the reference must actually represent its scanning setup.
+The estimator compares local full-resolution camera statistics with a centre-luminance, AP1-neutral target. It rejects clipped or unusable support and smooths the resulting field. Valid developed camera means may exceed native white after embedded shading; capture/development eligibility, not a post-gain value of 1, determines clipping. Compatibility checks cannot establish that lighting, aperture, focus and positioning physically match the roll; the reference must actually represent its scanning setup.
 
 Apply prepares the corrected candidate before accepting it. Cancel or failure restores the working photo and accepted state. Reference-only sources do not become filmstrip photographs. Rejected support changes leave the area and processing unchanged; reference/preparation failures retain an [acknowledged feedback message](editor.md#decisions-are-not-operation-failures), not a partially accepted map.
 
@@ -26,13 +26,15 @@ The map is evaluated at original developed-source pixel centres. It interpolates
 
 Correction belongs in camera RGB because it compensates the light measured by the scan. Inversion is nonlinear, so a gain applied afterward to the positive would mean something different. Crop, turn and straightening do not relocate the illumination pattern in source coordinates.
 
-The retained RGB16 source is unchanged. Measurements, analysis, GPU previews, thumbnails, settled reconstruction and exports evaluate the same accepted map as they process it.
+The retained camera source is unchanged by illumination gains. Measurements, analysis, GPU previews, thumbnails, settled reconstruction and exports evaluate the same accepted map as they process it.
+
+For Sony lens-corrected sources, both reference and scans receive the same embedded shading and geometric development first. The measured map then estimates residual setup illumination, rather than applying the embedded correction a second time. This preserves the reference workflow while making embedded shading useful without a flat reference. Accepted maps require identical lens-development identity as well as dimensions, camera basis and WB; different per-capture lens maps reject even if their output dimensions match. This baseline estimates a smooth illumination ratio in corrected space. It is not mathematically identical to multiplying gains before reconstruction, and software compatibility cannot establish physical reference suitability. A prewarp illumination hook is separate possible follow-up work.
 
 ## Correction also changes the precision bound
 
 Amplifying a camera channel amplifies its quantization step. Antitone therefore derives a conservative effective input floor from the largest map gain, including the identity region.
 
-The project still stores the native one-code floor. Processing substitutes the corrected bound into a runtime calibration copy exactly once; it does not save an already-amplified floor and amplify it again on Open. This is a precision constraint, not a noise measurement or a brightness pedestal.
+The project calibration still stores the native one-code floor; each source separately records its developed floor, including embedded shading. Processing multiplies that source bound by the residual map's largest gain in a runtime calibration copy exactly once. Open does not amplify an already-corrected calibration again. This is a precision constraint, not a noise measurement or a brightness pedestal.
 
 Enabling correction can make an existing calibration or curve unsupported. Such a proposal is rejected rather than silently repaired. Dmin/Dmax are never automatically resampled; after changing correction, re-picking them may be appropriate.
 
@@ -40,7 +42,7 @@ Enabling correction can make an existing calibration or curve unsupported. Such 
 
 Projects save the map and its development identity, not merely instructions to regenerate it. A missing nonordered reference does not prevent using the saved map. Editing its area does require reopening a compatible reference.
 
-Changing, enabling or clearing a map preserves the working composition and inspection mode. Removing correction restores the native floor. [Projects](projects.md) explains the compatibility boundary.
+Changing, enabling or clearing a map preserves the working composition and inspection mode. Removing the measured map restores the developed-source floor, which can still include embedded shading. [Projects](projects.md) explains the compatibility boundary.
 
 ## Working on this area
 

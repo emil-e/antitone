@@ -22,7 +22,8 @@ fn real_raw_response_and_prefix_reuse() {
         );
         let baseline = ProcessingKernel::new_fused(&device, &queue).await.unwrap();
         let probe = Probe::new(&device, pixels.len()).await;
-        let mut source = ProcessingSource::new(&device, &pixels, scan.camera_to_ap1).unwrap();
+        let mut source =
+            ProcessingSource::new_continuous(&device, &pixels, scan.camera_to_ap1).unwrap();
         source.set_geometry(geometry).unwrap();
         for count in [0, 2] {
             let snapshot = snapshot(PhotoSettings::default(), count, true);

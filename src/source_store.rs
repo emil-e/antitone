@@ -59,9 +59,13 @@ impl SourceKey {
             return false;
         };
         let area = source.area();
+        let Ok(lens_correction) = source.metadata().lens_identity() else {
+            return false;
+        };
         self.development == Development::new(crate::raw::version(), source.fixed_wb())
             && self.source
                 == SourceDevelopment {
+                    lens_correction,
                     dimensions: [image.width, image.height],
                     active_area: [area.x, area.y, area.width, area.height],
                     camera_model: source.camera_model().to_owned(),

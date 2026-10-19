@@ -35,6 +35,7 @@ impl Input {
             crop: None,
             orientation: Default::default(),
             development: SourceDevelopment {
+                lens_correction: None,
                 dimensions: [metadata.width, metadata.height],
                 active_area: [area.x, area.y, area.width, area.height],
                 camera_model: metadata.camera_model(),

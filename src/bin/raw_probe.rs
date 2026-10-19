@@ -26,7 +26,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect()
     };
     if paths.is_empty() {
-        return Err("Usage: antitone-raw-probe [--metadata] FILE.ARW ...".into());
+        return Err("Usage: antitone-raw-probe [--metadata|--diagnostic-ppm] FILE.ARW ...".into());
+    }
+    let ppm_ev = std::env::var("ANTITONE_RAW_PPM_EV")
+        .ok()
+        .map(|value| value.parse::<f64>())
+        .transpose()?
+        .unwrap_or(3.);
+    let ppm_gain = ppm_ev.exp2();
+    if !ppm_ev.is_finite() || !ppm_gain.is_finite() || ppm_gain <= 0. {
+        return Err("invalid diagnostic PPM exposure".into());
     }
     let roll = RollSettings::default();
     println!(
@@ -37,7 +46,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut fixed_wb = None;
     for path in paths {
         let start = Instant::now();
-        let mut raw = RawFile::open(&path)?;
+        let mut raw = if metadata_only {
+            RawFile::open_uncorrected(&path)?
+        } else {
+            RawFile::open(&path)?
+        };
         let metadata = raw.metadata;
         let wb = *fixed_wb.get_or_insert_with(|| metadata.as_shot_wb());
         let matrix = metadata.camera_to_ap1()?;
@@ -68,13 +81,56 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             metadata.camera_to_srgb().to_cols_array_2d()
         );
         println!("camera_to_ap1_columns={:?}", matrix.to_cols_array_2d());
+        println!(
+            "sony_lens_distortion={:?} sony_lens_ca={:?} sony_lens_vignetting={:?}",
+            metadata.sony_lens.distortion_status(),
+            metadata.sony_lens.ca_status(),
+            metadata.sony_lens.vignetting_status()
+        );
+        match metadata.sony_lens.profile() {
+            Ok(Some(profile)) => {
+                println!(
+                    "sony_lens_knots={} distortion={} ca={} inverse_scales_at_unit_radius={:?} vignetting={} maximum_gain={:.9}",
+                    profile.knot_count(),
+                    profile.has_distortion(),
+                    profile.has_ca(),
+                    profile.inverse_scales(1., antitone::lens::LensCorrections::ALL)?,
+                    profile.has_vignetting(),
+                    profile.maximum_gain()
+                );
+                if profile.has_distortion() || profile.has_ca() || profile.has_vignetting() {
+                    let geometry = antitone::lens::SonyLensGeometry::new(
+                        profile,
+                        metadata.native_image_area()?,
+                    )?;
+                    println!(
+                        "sony_lens_automatic_output={:?} pixel_development_requested={}",
+                        geometry.size(),
+                        !metadata_only
+                    );
+                }
+            }
+            Ok(None) => println!("sony_lens_profile=none"),
+            Err(error) => println!("sony_lens_profile=rejected: {error}"),
+        }
         if metadata_only {
             continue;
         }
         println!("sensor_full_frame={:?}", raw.unpack()?);
         let developed = raw.develop_camera(wb)?;
         if diagnostic_ppm {
-            save_diagnostic_ppm(&path, &developed, area, metadata.camera_to_srgb())?;
+            save_diagnostic_ppm(
+                &path,
+                &developed,
+                area,
+                metadata.camera_to_srgb(),
+                if metadata.lens_identity()?.is_some() {
+                    "lens-corrected"
+                } else {
+                    "native"
+                },
+                ppm_gain,
+            )?;
         }
         println!(
             "processed_maximum={} data_maximum={} normalized_pre_mul={:?} warnings={:#x}",
@@ -82,12 +138,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         let mut min = DVec3::splat(f64::INFINITY);
         let mut max = DVec3::splat(f64::NEG_INFINITY);
-        let floor = antitone::processing::CAMERA_INPUT_FLOOR;
+        let floor = metadata.input_floor()?;
         let mut nonpositive = [0u64; 3];
         let mut below_floor = [0u64; 3];
         let mut floored_pixels = 0u64;
         let mut zeros = [0u64; 3];
-        let mut saturated = [0u64; 3];
+        let mut at_native_white = [0u64; 3];
+        let mut above_native_white = [0u64; 3];
         let mut sum = DVec3::ZERO;
         let mut points = Vec::new();
         for y in area.y..area.y + area.height {
@@ -101,7 +158,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     nonpositive[c] += u64::from(camera[c] <= 0.0);
                     below_floor[c] += u64::from(camera[c] < floor);
                     zeros[c] += u64::from(camera[c] == 0.0);
-                    saturated[c] += u64::from(camera[c] == 1.0);
+                    at_native_white[c] += u64::from(camera[c] == 1.0);
+                    above_native_white[c] += u64::from(camera[c] > 1.0);
                 }
                 if (x - area.x) % 32 == 0 && (y - area.y) % 32 == 0 {
                     points.push((x, y, metadata.camera_to_srgb() * camera, camera));
@@ -114,13 +172,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             sum / count as f64
         );
         println!(
-            "camera_nonpositive={nonpositive:?} camera_zero={zeros:?} camera_u16_ceiling={saturated:?}"
+            "camera_nonpositive={nonpositive:?} camera_zero={zeros:?} camera_at_native_white={at_native_white:?} camera_above_native_white={above_native_white:?}"
         );
         println!(
             "camera_below_precision_floor={below_floor:?} affected_pixels={floored_pixels}/{count}"
         );
         println!(
-            "one_camera_code_floor={floor:.12e} (precision bound, not a measured noise estimate)"
+            "developed_camera_floor={floor:.12e} (amplified native quantum, not a measured noise estimate)"
         );
         if below_floor.into_iter().any(|v| v > count / 100) {
             return Err(
@@ -134,11 +192,63 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for &(x, y, _, camera) in &points {
             repeat_error = repeat_error.max((repeated.pixel(x, y)? - camera).abs().max_element());
         }
-        let reference = raw.develop_srgb_reference(wb)?;
+        // Channel-dependent CA cannot be applied to an already mixed/clipped sRGB reference.
+        // Check LibRaw's camera matrix on the native raster independently of the corrected grid.
+        let mut reference_raw = if metadata.lens_identity()?.is_some() {
+            drop(raw);
+            RawFile::open_uncorrected(&path)?
+        } else {
+            raw
+        };
+        let matrix_points = if metadata.lens_identity()?.is_some() {
+            let native_area = reference_raw.metadata.image_area()?;
+            let native = reference_raw.develop_camera(wb)?;
+            if diagnostic_ppm {
+                save_diagnostic_ppm(
+                    &path,
+                    &native,
+                    native_area,
+                    metadata.camera_to_srgb(),
+                    "native",
+                    ppm_gain,
+                )?;
+            }
+            let mut squared = DVec3::ZERO;
+            let mut largest = DVec3::ZERO;
+            let trim = [
+                (native_area.width - area.width) / 2,
+                (native_area.height - area.height) / 2,
+            ];
+            for &(x, y, _, corrected) in &points {
+                let delta = (native
+                    .pixel(native_area.x + trim[0] + x, native_area.y + trim[1] + y)?
+                    - corrected)
+                    * 65535.;
+                squared += delta * delta;
+                largest = largest.max(delta.abs());
+            }
+            println!(
+                "lens_vs_native_unwarped_code_rms={:?} max={largest:?} (effect size, not a quality oracle)",
+                (squared / points.len() as f64).sqrt()
+            );
+            let mut native_points = Vec::new();
+            for y in (native_area.y..native_area.y + native_area.height).step_by(32) {
+                for x in (native_area.x..native_area.x + native_area.width).step_by(32) {
+                    native_points.push((x, y, metadata.camera_to_srgb() * native.pixel(x, y)?));
+                }
+            }
+            native_points
+        } else {
+            points
+                .iter()
+                .map(|&(x, y, expected, _)| (x, y, expected))
+                .collect()
+        };
+        let reference = reference_raw.develop_srgb_reference(wb)?;
         let mut matrix_error = 0.0_f64;
         let mut compared = 0usize;
         let mut outside_srgb = 0usize;
-        for &(x, y, expected, _) in &points {
+        for &(x, y, expected) in &matrix_points {
             if expected.min_element() < 0.0 || expected.max_element() > 1.0 {
                 outside_srgb += 1;
                 continue;
@@ -188,17 +298,19 @@ fn save_diagnostic_ppm(
     developed: &Developed<'_>,
     area: Rect,
     camera_to_srgb: DMat3,
+    label: &str,
+    gain: f64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(".cache/probes")?;
     let mut output =
         PathBuf::from(".cache/probes").join(source.file_name().ok_or("missing filename")?);
-    output.set_extension("ppm");
+    output.set_extension(format!("{label}.ppm"));
     let width = area.width / 8;
     let height = area.height / 8;
     let mut bytes = Vec::with_capacity((width * height * 3) as usize);
     for y in 0..height {
         for x in 0..width {
-            let rgb = camera_to_srgb * developed.pixel(area.x + x * 8, area.y + y * 8)? * 8.0;
+            let rgb = camera_to_srgb * developed.pixel(area.x + x * 8, area.y + y * 8)? * gain;
             for value in rgb.to_array() {
                 let value = value.clamp(0.0, 1.0);
                 let encoded = if value <= 0.0031308 {
@@ -213,11 +325,11 @@ fn save_diagnostic_ppm(
     let mut file = std::fs::File::create(&output)?;
     write!(
         file,
-        "P6\n# Diagnostic source only: +3 EV, clipped sRGB, no ACES, no ICC\n{width} {height}\n255\n"
+        "P6\n# Diagnostic source only: gain={gain}, clipped sRGB, no ACES, no ICC\n{width} {height}\n255\n"
     )?;
     file.write_all(&bytes)?;
     println!(
-        "diagnostic_source_ppm={} (+3 EV, clipped sRGB, no ACES/ICC; not managed application output)",
+        "diagnostic_source_ppm={} (gain={gain}, clipped sRGB, no ACES/ICC; not managed application output)",
         output.display()
     );
     Ok(())

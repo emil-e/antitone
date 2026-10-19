@@ -506,7 +506,7 @@ impl ViewSource {
                     continue;
                 }
                 let originals = scan.tile_region(region, 0, 0, size[0], size[1])?;
-                let mut source = ProcessingSource::new(device, &originals, spec.matrix)?;
+                let mut source = ProcessingSource::new_continuous(device, &originals, spec.matrix)?;
                 source.set_flat_field(
                     field.clone(),
                     SourceGeometry::new([region.x, region.y, region.width, region.height], size)?,

@@ -10,7 +10,7 @@ use crate::{
 pub(super) struct Correction {
     pub settings: FlatFieldSettings,
     pub gpu: Arc<GpuFlatField>,
-    corrected_floor: f64,
+    maximum_gain: f64,
 }
 
 impl Correction {
@@ -32,22 +32,23 @@ impl Correction {
         for source in &document.project.sources {
             if document.project.order.contains(&source.id) {
                 settings.require_source(&source.development)?;
-                let mut input = crate::gpu::ProcessingSource::new(
-                    device,
-                    &[[0; 4]],
-                    glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1),
-                )?;
+                let matrix = glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1);
+                let mut input = if source.development.lens_correction.is_some() {
+                    crate::gpu::ProcessingSource::new_continuous(device, &[[0.; 4]], matrix)?
+                } else {
+                    crate::gpu::ProcessingSource::new(device, &[[0; 4]], matrix)?
+                };
                 input.set_flat_field(
                     Some(gpu.clone()),
                     SourceGeometry::new(source.development.active_area, [1, 1])?,
                 )?;
             }
         }
-        let corrected_floor = settings.map.precision_floor()?;
+        let maximum_gain = settings.map.bounds().1.max_element();
         Ok(Some(Arc::new(Self {
             settings: settings.clone(),
             gpu,
-            corrected_floor,
+            maximum_gain,
         })))
     }
 }
@@ -320,18 +321,17 @@ impl Editor {
         &self,
         calibration: Calibration,
     ) -> Result<Calibration, Error> {
-        if calibration.input_floor != crate::processing::CAMERA_INPUT_FLOOR {
-            return Err(Error::InvalidParameter(
-                "editor calibration requires the native-code base floor",
-            ));
-        }
-        match &self.correction {
-            Some(c) => Calibration {
-                input_floor: c.corrected_floor,
-                ..calibration
-            }
-            .validate(),
-            None => calibration.validate(),
-        }
+        let source_floor = self
+            .current_source
+            .map(|id| {
+                self.document
+                    .project
+                    .source(id)
+                    .map(|s| s.development.input_floor)
+            })
+            .transpose()?
+            .unwrap_or(crate::processing::CAMERA_INPUT_FLOOR);
+        let residual_gain = self.correction.as_ref().map_or(1., |c| c.maximum_gain);
+        calibration.for_source(source_floor, residual_gain)
     }
 }

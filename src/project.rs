@@ -20,7 +20,7 @@ mod json;
 pub const SCHEMA_VERSION: u32 = 6;
 // Bump when native/raw_bridge.cpp development or scan.rs matrix/normalization/floor contracts change.
 pub const DEVELOPMENT_CONTRACT: &str =
-    "libraw-camera-ahd-u16-linear-camera-inversion-ap1-bradford-code-floor-v2";
+    "libraw-camera-ahd-sony-shading-active-bilinear-f32-inversion-ap1-floor-v4";
 pub const OUTPUT_CONTRACT: &str = "ocio-2.6.0-aces2-100nit-antitone-srgb-displayp3-v2";
 type Result<T> = std::result::Result<T, Error>;
 
@@ -100,10 +100,13 @@ impl CameraBasis {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceDevelopment {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lens_correction: Option<String>,
     pub dimensions: [u32; 2],
     pub active_area: [u32; 4],
     pub camera_model: String,
     pub camera_to_ap1: [[f64; 3]; 3],
+    /// Developed-source precision, separate from project calibration's native base floor.
     pub input_floor: f64,
 }
 
@@ -115,8 +118,28 @@ impl SourceDevelopment {
         }
     }
 
+    pub(crate) fn processing_calibration(
+        &self,
+        calibration: Calibration,
+        correction: Option<&crate::flat_field::FlatField>,
+    ) -> Result<Calibration> {
+        calibration.for_source(
+            self.input_floor,
+            correction.map_or(1., |field| field.bounds().1.max_element()),
+        )
+    }
+
     fn validate(&self) -> Result<()> {
         self.camera_basis().validate()?;
+        require(
+            self.lens_correction.as_ref().is_none_or(|identity| {
+                identity.len() == 64
+                    && identity
+                        .bytes()
+                        .all(|v| v.is_ascii_hexdigit() && !v.is_ascii_uppercase())
+            }),
+            "invalid source lens correction identity",
+        )?;
         require(
             self.dimensions.iter().all(|v| *v > 0)
                 && contains(
@@ -126,8 +149,13 @@ impl SourceDevelopment {
             "invalid source dimensions/active area",
         )?;
         require(
-            self.input_floor == crate::processing::CAMERA_INPUT_FLOOR,
-            "source base floor must be one native RGB16 code",
+            self.input_floor.is_finite()
+                && (crate::processing::CAMERA_INPUT_FLOOR
+                    ..=crate::processing::CAMERA_INPUT_FLOOR * crate::processing::MAX_SOURCE_GAIN)
+                    .contains(&self.input_floor)
+                && (self.lens_correction.is_some()
+                    || self.input_floor == crate::processing::CAMERA_INPUT_FLOOR),
+            "source floor must match the supported native or lens-developed domain",
         )
     }
 }
@@ -455,8 +483,17 @@ impl Project {
                 "invalid stored reference RGB",
             )?;
         }
-        if let Some(calibration) = self.processing_calibration()? {
-            Inversion::new(calibration, self.roll)?;
+        if let Some(calibration) = self.calibration()? {
+            if self.sources.is_empty() {
+                Inversion::new(calibration, self.roll)?;
+            }
+            for source in &self.sources {
+                let calibration = source.development.processing_calibration(
+                    calibration,
+                    self.active_flat_field().map(|field| field.map.as_ref()),
+                )?;
+                Inversion::new(calibration, self.roll)?;
+            }
         }
         if let Some(field) = &self.flat_field {
             field.validate(self)?;

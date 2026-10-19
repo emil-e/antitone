@@ -10,7 +10,7 @@ var<storage, read_write> export_pixels: array<ExportPixel>;
 @compute @workgroup_size(WORKGROUP_SIZE)
 fn export_main(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) groups: vec3u) {
     let index = id.x + id.y * groups.x * WORKGROUP_SIZE;
-    if index >= arrayLength(&scans) {
+    if index >= source_pixel_count() {
         return;
     }
     let global = process_positive(scans[index], index);

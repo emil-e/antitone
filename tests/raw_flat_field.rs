@@ -175,6 +175,7 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
                     id: SourceId(0),
                     path: fixture(name),
                     development: SourceDevelopment {
+                        lens_correction: None,
                         dimensions: [384, 320],
                         active_area: [8, 8, 368, 304],
                         camera_model: scan.camera_model.clone(),

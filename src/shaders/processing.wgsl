@@ -29,7 +29,7 @@ override WORKGROUP_SIZE: u32 = 64u;
 @compute @workgroup_size(WORKGROUP_SIZE)
 fn main(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) groups: vec3u) {
     let index = id.x + id.y * groups.x * WORKGROUP_SIZE;
-    if index >= arrayLength(&scans) {
+    if index >= source_pixel_count() {
         return;
     }
     if parameters.gamma_mode.w > 0.5 {

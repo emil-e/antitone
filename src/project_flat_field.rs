@@ -59,7 +59,11 @@ impl FlatFieldSettings {
                 self.require_source(&project.source(*id)?.development)?;
             }
             if let Some(calibration) = project.calibration()? {
-                Inversion::new(self.map.processing_calibration(calibration)?, project.roll)?;
+                Inversion::new(
+                    self.development
+                        .processing_calibration(calibration, Some(&self.map))?,
+                    project.roll,
+                )?;
             }
         }
         Ok(())

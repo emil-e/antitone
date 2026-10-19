@@ -14,6 +14,8 @@ An image can be developed in one orientation, cropped in another, shown at a thi
 
 Source coordinates are developed RGB coordinates, not RAW Bayer coordinates. The metadata active area is a rectangle within the source; its origin need not be zero. Texture UVs are an adapter for drawing, not an additional authoritative composition space.
 
+Supported [embedded Sony correction](processing.md#embedded-sony-lens-correction) is already part of development: its valid corrected raster becomes Source. User crops, masks and picks do not add a second lens warp. Original-sensor coordinates remain separate diagnostic authority.
+
 A thumbnail and an export can represent the same frame at different raster resolutions. Zoom and pan move that frame on the canvas; they do not change composition.
 
 Coordinates use a top-left origin, x right and y down. Integer positions describe pixel edges; a pixel's centre is halfway between them. Integer regions are half-open, so their far edge is not another pixel index. Mapping a point does not silently clamp it: an outside-image click must not turn into a measurement of an unrelated edge pixel.

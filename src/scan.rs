@@ -13,6 +13,29 @@ use std::{path::Path, sync::Arc};
 
 type Result<T> = std::result::Result<T, Error>;
 
+/// Integer inference evidence only, using the same declared camera-code scale for the whole roll.
+#[cfg(feature = "editor")]
+pub(crate) fn measurement_codes(pixel: [f32; 4], code_scale: f64) -> Result<[u16; 4]> {
+    if !code_scale.is_finite() || code_scale < 1. {
+        return Err(Error::Raw("invalid region-evidence scale".into()));
+    }
+    let mut codes = [0; 4];
+    for c in 0..4 {
+        let value = pixel[c];
+        let rounded = (f64::from(value) / code_scale).round();
+        if !value.is_finite()
+            || !(0. ..=crate::processing::MAX_CAMERA_SOURCE_CODE).contains(&value)
+            || !(0. ..=65535.).contains(&rounded)
+        {
+            return Err(Error::Raw(
+                "unsupported camera range for region evidence".into(),
+            ));
+        }
+        codes[c] = rounded as u16;
+    }
+    Ok(codes)
+}
+
 #[derive(Debug, Default)]
 pub struct AnalysisSamples {
     pub pixels: Vec<DVec3>,
@@ -57,13 +80,14 @@ impl DevelopedSource {
         let camera_model = raw.metadata.camera_model();
         let area = raw.metadata.image_area()?;
         raw.develop_camera(wb)?;
+        let input_floor = raw.metadata.input_floor()?;
         Ok(Self {
             raw: raw.freeze()?,
             camera_to_ap1: matrix,
             camera_model,
             area,
             fixed_wb: wb,
-            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
+            input_floor,
         })
     }
 
@@ -97,6 +121,7 @@ impl DevelopedSource {
         self.fixed_wb
     }
 
+    /// Conservative developed-source quantum before an optional measured flat field.
     pub fn input_floor(&self) -> f64 {
         self.input_floor
     }
@@ -109,17 +134,22 @@ impl DevelopedSource {
         self.raw.sensor_diagnostics()
     }
 
+    /// Detailed original-sensor statistics; `area` is in unwarped native coordinates.
     pub fn region_sensor_diagnostics(&self, area: Rect) -> Result<SensorDiagnostics> {
         self.raw.region_sensor_diagnostics(area)
     }
+
+    pub fn capture_eligibility(&self, area: Rect) -> Result<crate::raw::CaptureFlags> {
+        self.raw.capture_eligibility(area)
+    }
 }
 
-/// Uncorrected camera-RGB thumbnail data; independent of native retention and rendering.
+/// Developed camera-RGB thumbnail data before measured illumination correction or rendering.
 /// The production proxy has a 256-pixel maximum edge, without upscaling.
 pub struct CameraProxy {
     pub(crate) width: u32,
     pub(crate) height: u32,
-    pub(crate) pixels: Vec<[u16; 4]>,
+    pub(crate) pixels: Vec<[f32; 4]>,
     pub(crate) matrix: DMat3,
 }
 
@@ -141,7 +171,7 @@ impl CameraProxy {
     }
 
     pub fn retained_bytes(&self) -> u64 {
-        (self.pixels.capacity() * size_of::<[u16; 4]>() + size_of::<Self>()) as u64
+        (self.pixels.capacity() * size_of::<[f32; 4]>() + size_of::<Self>()) as u64
     }
 }
 
@@ -151,6 +181,7 @@ pub struct Scan {
     pub camera_model: String,
     pub area: Rect,
     pub fixed_wb: [f64; 4],
+    /// Stored calibration's native base; `effective_floor` includes source and residual gains.
     pub input_floor: f64,
     flat_field: Option<Arc<FlatField>>,
     corrected_floor: f64,
@@ -177,14 +208,14 @@ impl Scan {
         )?)))
     }
 
-    /// Starts an independent, uncorrected consumer without developing or copying RGB.
+    /// Starts an independent consumer without a measured flat field or another RGB development.
     pub fn from_source(source: Arc<DevelopedSource>) -> Self {
         Self {
             camera_to_ap1: source.camera_to_ap1,
             camera_model: source.camera_model.clone(),
             area: source.area,
             fixed_wb: source.fixed_wb,
-            input_floor: source.input_floor,
+            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
             corrected_floor: source.input_floor,
             flat_field: None,
             source,
@@ -209,9 +240,9 @@ impl Scan {
                 width,
                 height,
             })?;
-            field.precision_floor()?
+            self.source.input_floor * field.bounds().1.max_element()
         } else {
-            self.input_floor
+            self.source.input_floor
         };
         self.flat_field = field;
         self.corrected_floor = floor;
@@ -226,14 +257,14 @@ impl Scan {
             a.height.div_ceil(side) as usize,
         ];
         let image = self.source.camera_image()?;
-        let mut sums = vec![[0u64; 3]; size[0] * size[1]];
+        let mut sums = vec![[0f64; 3]; size[0] * size[1]];
         let mut counts = vec![0u64; sums.len()];
         for y in 0..a.height {
             for x in 0..a.width {
                 let i = (y / side) as usize * size[0] + (x / side) as usize;
-                let p = image.pixel_codes(a.x + x, a.y + y)?;
+                let p = image.pixel_samples(a.x + x, a.y + y)?;
                 for c in 0..3 {
-                    sums[i][c] += p[c] as u64;
+                    sums[i][c] += f64::from(p[c]);
                 }
                 counts[i] += 1;
             }
@@ -243,9 +274,7 @@ impl Scan {
             .zip(counts)
             .map(|(p, n)| {
                 (crate::color::AP1_TO_XYZ
-                    * (self.camera_to_ap1
-                        * (DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64)
-                            / (n as f64 * 65535.))))
+                    * (self.camera_to_ap1 * (DVec3::new(p[0], p[1], p[2]) / (n as f64 * 65535.))))
                     .y
             })
             .collect();
@@ -308,7 +337,7 @@ impl Scan {
                     for x in left.floor() as u32..right.ceil() as u32 {
                         let weight = (right.min(x as f64 + 1.) - left.max(x as f64))
                             * (bottom.min(y as f64 + 1.) - top.max(y as f64));
-                        let p = image.pixel_codes(x, y)?;
+                        let p = image.pixel_samples(x, y)?;
                         sum += DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) * weight;
                     }
                 }
@@ -355,14 +384,14 @@ impl Scan {
         Ok(camera)
     }
 
-    fn checked_region(&mut self, region: Rect) -> Result<SensorDiagnostics> {
-        let diagnostics = self.source.region_sensor_diagnostics(region)?;
-        if diagnostics.at_white.iter().any(|v| *v > 0) {
+    fn checked_region(&mut self, region: Rect) -> Result<crate::raw::CaptureFlags> {
+        let diagnostics = self.source.capture_eligibility(region)?;
+        if diagnostics.at_white {
             return Err(Error::UnusableSample(
-                "patch contains sensor values at/above white",
+                "patch includes captured or native-developed white clipping",
             ));
         }
-        if diagnostics.below_black.iter().any(|v| *v > 0) {
+        if diagnostics.below_black {
             return Err(Error::UnusableSample(
                 "patch contains sensor values at/below black",
             ));
@@ -409,6 +438,7 @@ impl Scan {
             .min((area.width / 8) as usize);
         let rows = (budget / columns).min((area.height / 8) as usize);
         let grid = crate::geometry::SourceRaster::new(area, [columns as u32, rows as u32])?;
+        let image = self.source.camera_image()?;
         let mut result = AnalysisSamples {
             pixels: Vec::with_capacity(columns * rows),
             ..AnalysisSamples::default()
@@ -429,10 +459,8 @@ impl Scan {
                     continue;
                 }
                 result.attempted += 1;
-                let diagnostic = self.source.region_sensor_diagnostics(footprint)?;
-                if diagnostic.at_white.iter().any(|n| *n > 0)
-                    || diagnostic.below_black.iter().any(|n| *n > 0)
-                {
+                let diagnostic = self.source.capture_eligibility(footprint)?;
+                if diagnostic.at_white || diagnostic.below_black {
                     result.rejected_capture += 1;
                     continue;
                 }
@@ -440,8 +468,10 @@ impl Scan {
                 let mut floor = false;
                 for yy in footprint.y..footprint.y + 8 {
                     for xx in footprint.x..footprint.x + 8 {
-                        white |= self.source.camera_image()?.pixel_codes(xx, yy)?[..3]
-                            .contains(&u16::MAX);
+                        white |= !image.is_continuous()
+                            && image.pixel_samples(xx, yy)?[..3]
+                                .iter()
+                                .any(|&v| v >= 65535.);
                         let p = self.pixel(xx, yy)?;
                         if !p.is_finite() {
                             return Err(Error::NumericalOverflow);
@@ -636,17 +666,17 @@ impl Scan {
         y: u32,
         width: u32,
         height: u32,
-    ) -> Result<Vec<[u16; 4]>> {
+    ) -> Result<Vec<[f32; 4]>> {
         self.validate_area(area)?;
         if width == 0 || height == 0 || x >= area.width || y >= area.height {
             return Err(Error::InvalidParameter("invalid source tile"));
         }
         let image = self.source.camera_image()?;
-        let mut pixels = vec![[0; 4]; width as usize * height as usize];
+        let mut pixels = vec![[0.; 4]; width as usize * height as usize];
         for dy in 0..height.min(area.height - y) {
             for dx in 0..width.min(area.width - x) {
                 pixels[(dy * width + dx) as usize] =
-                    image.pixel_codes(area.x + x + dx, area.y + y + dy)?;
+                    image.pixel_samples(area.x + x + dx, area.y + y + dy)?;
             }
         }
         Ok(pixels)
@@ -672,8 +702,31 @@ impl Scan {
         Ok((width, height))
     }
 
-    /// Unconverted camera RGB16 samples at display-grid centers for the provisional preview.
-    pub fn preview_source(&self, maximum: u32) -> Result<(u32, u32, Vec<[u16; 4]>)> {
+    /// Rounded inference evidence, normalized by one declared headroom bound for the whole roll.
+    /// Photographic samples stay in their original continuous code units.
+    #[cfg(feature = "editor")]
+    pub(crate) fn measurement_preview(
+        &self,
+        maximum: u32,
+        code_scale: f64,
+    ) -> Result<(u32, u32, Vec<[u16; 4]>)> {
+        if !code_scale.is_finite()
+            || code_scale < self.source.input_floor / crate::processing::CAMERA_INPUT_FLOOR
+        {
+            return Err(Error::Raw(
+                "region-evidence scale does not cover source headroom".into(),
+            ));
+        }
+        let (width, height, samples) = self.preview_source(maximum)?;
+        let pixels = samples
+            .into_iter()
+            .map(|p| measurement_codes(p, code_scale))
+            .collect::<Result<_>>()?;
+        Ok((width, height, pixels))
+    }
+
+    /// Unconverted camera samples in code units at display-grid centres; no requantization.
+    pub fn preview_source(&self, maximum: u32) -> Result<(u32, u32, Vec<[f32; 4]>)> {
         let (width, height) = self.preview_dimensions(maximum)?;
         let image = self.source.camera_image()?;
         let raster = SourceRaster::new(self.area, [width, height])?;
@@ -681,7 +734,7 @@ impl Scan {
         for y in 0..height {
             for x in 0..width {
                 let [sx, sy] = raster.source_pixel([x, y])?;
-                pixels.push(image.pixel_codes(sx, sy)?);
+                pixels.push(image.pixel_samples(sx, sy)?);
             }
         }
         Ok((width, height, pixels))

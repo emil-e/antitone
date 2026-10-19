@@ -13,7 +13,7 @@ fn proxy() -> Arc<Proxy> {
     Arc::new(Proxy {
         width: 3,
         height: 2,
-        pixels: vec![[8000, 6000, 4000, 0]; 6],
+        pixels: vec![[8000., 6000., 4000., 0.]; 6],
         matrix: glam::DMat3::IDENTITY,
     })
 }
@@ -28,6 +28,7 @@ fn add_source(editor: &mut Editor, path: PathBuf) -> SourceId {
                 id: SourceId(0),
                 path: path.clone(),
                 development: SourceDevelopment {
+                    lens_correction: None,
                     dimensions: [900, 600],
                     active_area: [12, 7, 864, 576],
                     camera_model: "test-camera".into(),
