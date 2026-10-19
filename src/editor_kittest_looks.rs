@@ -84,6 +84,83 @@ fn choose(harness: &mut Harness<'_, Editor>, name: &str) {
     harness.step();
 }
 #[test]
+fn rendering_dropdowns_share_section_geometry_and_target_help() {
+    let (mut harness, _) = editor_harness();
+    harness.state_mut().scopes.visible = false;
+    harness.run();
+    for scale in [1., 2.] {
+        harness
+            .input_mut()
+            .viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .unwrap()
+            .native_pixels_per_point = Some(scale);
+        for (size, width, name) in [
+            (egui::vec2(1100., 800.), 315., "normal"),
+            (egui::vec2(800., 600.), 270., "narrow"),
+        ] {
+            set_layout(&mut harness, size, width);
+            stage(&mut harness, "Rendering");
+            harness.event(egui::Event::PointerGone);
+            harness.run();
+            let look = harness
+                .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Look")
+                .rect();
+            let target = harness
+                .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Target")
+                .rect();
+            assert_eq!(look.x_range(), target.x_range());
+            assert_eq!(look.height(), presentation::CONTROL_HEIGHT);
+            assert_eq!(target.height(), look.height());
+            assert!(look.left() >= size.x - width && look.right() <= size.x);
+            for (label, rect) in [("Look", look), ("Target", target)] {
+                let headings: Vec<_> = harness
+                    .output()
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) if text.galley.job.text == label => Some(text),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(headings.len(), 1, "section heading supplies the label");
+                assert!(headings[0].pos.y < rect.top());
+            }
+            if let Some(output) = std::env::var_os("ANTITONE_UI_CAPTURE") {
+                let output = PathBuf::from(output);
+                std::fs::create_dir_all(&output).unwrap();
+                harness
+                    .render()
+                    .unwrap()
+                    .save(output.join(format!("rendering-dropdowns-{name}-{scale}x.png")))
+                    .unwrap();
+            }
+            // Hover must follow the stage click, not fall inside egui's click suppression.
+            let time = harness.ctx.input(|input| input.time);
+            harness.input_mut().time = Some(time + 0.2);
+            harness.step();
+            harness
+                .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Target")
+                .hover();
+            harness.step();
+            let time = harness.ctx.input(|input| input.time);
+            harness.input_mut().time = Some(time + 1.);
+            harness.step();
+            harness.step();
+            assert!(
+                harness
+                    .query_by_label("Output colour space, not the monitor profile.")
+                    .is_some()
+            );
+            select_target(&mut harness, OutputTarget::Srgb);
+            harness.get_by_label("Reset Target").click();
+            harness.run();
+            assert_eq!(harness.state().target, OutputTarget::DisplayP3);
+        }
+    }
+}
+
+#[test]
 fn look_dropdown_contains_load_action_without_a_separate_import_button() {
     let (mut harness, _) = fixture_editor();
     let before = harness.state().document.project.clone();

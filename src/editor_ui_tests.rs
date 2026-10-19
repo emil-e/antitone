@@ -1,3 +1,5 @@
+#[path = "editor_ui_dropdown_tests.rs"]
+mod dropdowns;
 #[path = "editor_ui_row_tests.rs"]
 mod rows;
 #[path = "editor_ui_selection_tests.rs"]

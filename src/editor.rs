@@ -2502,33 +2502,30 @@ impl Editor {
                                     default_open: Some(true),
                                 },
                                 |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.label("Target");
-                                        egui::ComboBox::from_id_salt("rendering-target")
-                                            .width(150.)
-                                            .selected_text(
-                                                if self.target == OutputTarget::DisplayP3 {
-                                                    "Display P3"
-                                                } else {
-                                                    "sRGB"
-                                                },
-                                            )
-                                            .show_ui(ui, |ui| {
-                                                ui.selectable_value(
-                                                    &mut self.target,
-                                                    OutputTarget::DisplayP3,
-                                                    "Display P3",
-                                                );
-                                                ui.selectable_value(
-                                                    &mut self.target,
-                                                    OutputTarget::Srgb,
-                                                    "sRGB",
-                                                );
-                                            });
-                                    });
-                                    ui.small("Preview + TIFF · 100 nit").on_hover_text(
-                                        "Choose the output colour space, not the monitor profile. EXR is unaffected.",
-                                    );
+                                    presentation::inspector_dropdown(
+                                        ui,
+                                        "rendering-target",
+                                        "Target",
+                                        if self.target == OutputTarget::DisplayP3 {
+                                            "Display P3"
+                                        } else {
+                                            "sRGB"
+                                        },
+                                        |ui| {
+                                            ui.selectable_value(
+                                                &mut self.target,
+                                                OutputTarget::DisplayP3,
+                                                "Display P3",
+                                            );
+                                            ui.selectable_value(
+                                                &mut self.target,
+                                                OutputTarget::Srgb,
+                                                "sRGB",
+                                            );
+                                        },
+                                    )
+                                    .response
+                                    .on_hover_text("Output colour space, not the monitor profile.");
                                 },
                             );
                             if reset && !controls::defer_reset(ui, controls::Reset::Target) {

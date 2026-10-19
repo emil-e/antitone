@@ -377,7 +377,7 @@ fn all_three_stage_controls_are_reachable_at_normal_and_narrow_inspector_sizes()
                     "Density",
                 ],
             ),
-            (2, vec!["Target", "Display P3", "Preview + TIFF · 100 nit"]),
+            (2, vec!["Look", "None", "Target", "Display P3"]),
         ] {
             let (mut editor, _send, _receiver) = fixture();
             editor.tab = tab;
@@ -519,9 +519,5 @@ fn rendering_target_selector_and_reset_retain_grade_and_draft_guards() {
     editor.tab = 1;
     let context = egui::Context::default();
     let photo = controls_frame(&mut editor, &context, 315., vec![]);
-    assert!(
-        !photo
-            .iter()
-            .any(|(s, _)| s == "Target" || s == "Preview + TIFF · 100 nit")
-    );
+    assert!(!photo.iter().any(|(s, _)| s == "Target"));
 }

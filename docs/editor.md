@@ -251,7 +251,7 @@ GPU infrastructure is shared, but mutable image storage, revision and processing
 
 Use the existing component families rather than copying their painting or interaction logic:
 
-- [Presentation](../src/editor_ui.rs): application header/branding, fallback menus and application panels, labelled rows, text actions, stage tool shelves and viewer tool/session groups.
+- [Presentation](../src/editor_ui.rs): application header/branding, fallback menus and application panels, labelled rows, full-width inspector dropdowns, text actions, stage tool shelves and viewer tool/session groups.
 - [Viewer framing](../src/editor_ui_viewer.rs): docked/auto-hiding controls and full-canvas presentation, separate from navigation and native window state.
 - [Hierarchy](../src/editor_ui_hierarchy.rs): sections, disclosure/reset, stage tabs and icon-labelled selectable rows.
 - [Decisions](../src/editor_ui_dialogs.rs): shared modal framing, actions and dismissal.
@@ -261,6 +261,8 @@ Use the existing component families rather than copying their painting or intera
 - [Cards](../src/editor_ui_cards.rs): contact-sheet geometry, captions and supplied-state artwork.
 - [Icons](../src/editor_icons.rs): semantic actions and artwork.
 - [Controls](../src/editor_controls.rs): photographic values, precision and calibration/balance adapters.
+
+Inspector dropdowns fill the section width at the shared control height, with truncation rather than value-dependent sizing. Their enclosing section supplies the visible heading; each control retains its own accessible name and complete selected value.
 
 Presentation receives display-ready state and returns responses. Controllers still own availability, IDs, accepted/draft state, resets and dispatch. Cards receive selected/active/availability state, and their caption supplies the unelided semantic filename; they do not own images, selection, virtualization or workers. Pinned section titles expose label semantics without disclosure/focus behavior. Stage tool shelves use `ToolShelf`/`ToolButton` for immediate commands and selected canvas tools, and `ToolIdentity::inspector` for expanded contextual controls. In the workspace, the fixed viewer bar hosts tool identity and Apply/Cancel or session Done without resizing the canvas; only selection/frame artwork belongs over the photograph. Photo-only inspection uses the shared floating-bar variant rather than moving tool transactions onto the image.
 

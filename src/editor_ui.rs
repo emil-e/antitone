@@ -160,6 +160,36 @@ pub(super) fn labelled_row<R>(
     })
 }
 
+/// A full-width inspector selection; the enclosing section supplies its visible heading.
+pub(super) fn inspector_dropdown<R>(
+    ui: &mut Ui,
+    id: &str,
+    name: &str,
+    selected: &str,
+    contents: impl FnOnce(&mut Ui) -> R,
+) -> egui::InnerResponse<Option<R>> {
+    let response = ui
+        .scope(|ui| {
+            ui.spacing_mut().interact_size.y = CONTROL_HEIGHT;
+            egui::ComboBox::from_id_salt(id)
+                .width(ui.available_width())
+                .truncate()
+                .selected_text(selected)
+                .show_ui(ui, contents)
+        })
+        .inner;
+    response.response.widget_info(|| {
+        let mut info = egui::WidgetInfo::labeled(
+            egui::WidgetType::ComboBox,
+            response.response.enabled(),
+            name,
+        );
+        info.current_text_value = Some(selected.into());
+        info
+    });
+    response
+}
+
 pub(super) fn reset_button(ui: &mut Ui, enabled: bool, name: &str) -> Response {
     let name = format!("Reset {name}");
     icons::button(ui, Icon::Reset, enabled, &name, &name)

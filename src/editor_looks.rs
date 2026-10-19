@@ -311,12 +311,13 @@ impl Editor {
                     default_open: Some(true),
                 },
                 |ui| {
-                    presentation::labelled_row(ui, "Look", None, |ui, label| {
-                        let response = egui::ComboBox::from_id_salt("creative-look")
-                            .width(160.)
-                            .truncate()
-                            .selected_text(&name)
-                            .show_ui(ui, |ui| {
+                    let response =
+                        presentation::inspector_dropdown(
+                            ui,
+                            "creative-look",
+                            "Look",
+                            &name,
+                            |ui| {
                                 if ui.selectable_label(!changed, "None").clicked() {
                                     clear = true;
                                 }
@@ -365,12 +366,11 @@ impl Editor {
                                     import = true;
                                     ui.close();
                                 }
-                            });
-                        let response = response.response.labelled_by(label);
-                        if let Some(builtin) = source {
-                            response.on_hover_text(source_note(builtin));
-                        }
-                    });
+                            },
+                        );
+                    if let Some(builtin) = source {
+                        response.response.on_hover_text(source_note(builtin));
+                    }
                 },
             );
             clear |= reset;
