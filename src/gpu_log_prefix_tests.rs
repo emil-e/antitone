@@ -109,7 +109,7 @@ async fn setup(
         calibration()
     };
     let calibration = field.processing_calibration(calibration).unwrap();
-    let kernel = ProcessingKernel::new(&device, &queue).await.unwrap();
+    let kernel = ProcessingKernel::new(&device).await.unwrap();
     let probe = Probe::new(&device, pixels.len()).await;
     (device, queue, kernel, probe, source, calibration, pixels)
 }

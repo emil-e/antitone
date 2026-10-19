@@ -1,5 +1,6 @@
 use super::*;
 use crate::dust_repair::{DonorChoice, RepairOrigin, SupportMask};
+use crate::working_precision;
 
 fn exr_pixels(path: &std::path::Path, precision: ExrPrecision) -> Vec<[f64; 3]> {
     use exr::prelude::{FlatSamples, read_first_flat_layer_from_file};
@@ -186,7 +187,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
                     for (index, expected) in &expected_exr {
                         for c in 0..3 {
                             let expected = expected[c];
-                            // Match the compensated EXR gate plus one serialized-sample ULP.
+                            // Shared FP32 working comparison, plus file-storage rounding.
                             let quantization = match precision {
                                 ExrPrecision::Half => {
                                     0.0009765625 * expected.abs() + 5.960464477539063e-8
@@ -195,7 +196,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
                             };
                             assert!(
                                 (pixels[*index][c] - expected).abs()
-                                    <= 2e-12 + 2e-11 * expected.abs() + quantization,
+                                    <= working_precision::allowance(expected) + quantization,
                                 "{precision:?} repair pixel {index}, channel {c}: {} vs {expected}",
                                 pixels[*index][c]
                             );

@@ -16,6 +16,9 @@ use tiff::{
 };
 
 #[cfg(all(test, target_os = "macos"))]
+#[path = "export_publication_tests.rs"]
+mod publication_tests;
+#[cfg(all(test, target_os = "macos"))]
 #[path = "export_tests.rs"]
 mod tests;
 
@@ -114,6 +117,7 @@ fn atomic_file(
     path: &Path,
     overwrite: Overwrite,
     write: impl FnOnce(&mut fs::File) -> Result<()>,
+    before_publish: impl FnOnce() -> Result<()>,
 ) -> Result<()> {
     let parent = path
         .parent()
@@ -123,6 +127,7 @@ fn atomic_file(
     write(temporary.as_file_mut())?;
     timed!(DestinationFinalize, {
         temporary.as_file().sync_all().map_err(failure)?;
+        before_publish()?;
         match overwrite {
             Overwrite::Confirmed => fs::rename(temporary.path(), path).map_err(failure)?,
             Overwrite::Refuse => exclusive_rename(temporary.path(), path)?,
@@ -282,7 +287,6 @@ fn blocks(size: ImageSize) -> impl Iterator<Item = ([u32; 2], [u32; 2])> {
 pub(crate) enum BlockOrder {
     RowMajor,
     Spatial2x2,
-    Spatial1x5,
 }
 
 pub(crate) fn ordered_blocks(
@@ -292,7 +296,6 @@ pub(crate) fn ordered_blocks(
     let step = match order {
         BlockOrder::RowMajor => [1, 1],
         BlockOrder::Spatial2x2 => [2, 2],
-        BlockOrder::Spatial1x5 => [1, 5],
     };
     let group = [BLOCK[0] * step[0], BLOCK[1] * step[1]];
     (0..size.height)
@@ -351,81 +354,118 @@ pub(crate) fn tiff_encoded_ordered(
     overwrite: Overwrite,
     metadata: ProcessingMetadata,
     order: BlockOrder,
+    block: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<[u16; 3]>>,
+) -> Result<()> {
+    tiff_encoded_checked(
+        (path, overwrite),
+        size,
+        target,
+        metadata,
+        order,
+        block,
+        || Ok(()),
+    )
+}
+
+pub(crate) fn tiff_encoded_checked(
+    (path, overwrite): (&Path, Overwrite),
+    size: ImageSize,
+    target: OutputTarget,
+    metadata: ProcessingMetadata,
+    order: BlockOrder,
     mut block: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<[u16; 3]>>,
+    before_publish: impl FnOnce() -> Result<()>,
 ) -> Result<()> {
     let response = metadata.response;
     response.shape()?;
     let count = size.count()?;
+    #[cfg(test)]
+    let mut before_publish = Some(before_publish);
+    #[cfg(test)]
+    if let Some(result) =
+        crate::export_timing::pixels::intercept(size, target, metadata, order, &mut block, || {
+            before_publish.take().expect("one completion check")()
+        })
+    {
+        return result;
+    }
+    #[cfg(test)]
+    let before_publish = before_publish.expect("uncaptured completion check");
     if count > (1024 * 1024 * 1024) / 6 {
         return Err(Error::Export(
             "TIFF RGB16 buffer exceeds the current 1 GiB export budget".into(),
         ));
     }
-    atomic_file(path, overwrite, |file| {
-        let mut buffered = BufWriter::new(file);
-        {
-            let mut encoder = TiffEncoder::new(&mut buffered)
-                .map_err(failure)?
-                .with_compression(Compression::Lzw)
-                .with_predictor(Predictor::Horizontal);
-            let mut image = encoder
-                .new_image::<RGB16>(size.width, size.height)
-                .map_err(failure)?;
-            image.rows_per_strip(8).map_err(failure)?;
-            image
-                .encoder()
-                .write_tag(Tag::Unknown(34675), Icc(profiles::icc(target)))
-                .map_err(failure)?;
-            image
-                .encoder()
-                .write_tag(Tag::Software, "Antitone 0.1")
-                .map_err(failure)?;
-            let model = response.processing_model();
-            let mut description = format!(
-                "Antitone model {model}; native-camera RGB inversion to AP1; ACES 2 / OCIO 2.6.0; {target:?} v1 / 100-nit SDR; rendering and encoding in matching target RGB"
-            );
-            description.push_str(&format!("; photographic={}", crate::photographic::CONTRACT));
-            if let Some(id) = metadata.look {
-                let hash = id.iter().map(|b| format!("{b:02x}")).collect::<String>();
-                description.push_str(&format!(
-                    "; creative-look-blake3={hash}; creative-look-input-range=clip"
-                ));
-            }
-            if metadata.locals {
-                description.push_str(&format!(
-                    "; local-adjustments={}",
-                    crate::local_adjustments::CONTRACT
-                ));
-            }
-            if let Response::Film { toe, shoulder } = response {
-                description.push_str(&format!(
-                    "; film toe={toe}; shoulder={shoulder}; signed-root continuation above base"
-                ));
-            }
-            image
-                .encoder()
-                .write_tag(Tag::ImageDescription, description.as_str())
-                .map_err(failure)?;
-            // tiff 0.11.3 activates compression only in write_data, not write_strip.
-            let mut samples = timed!(FrameAllocation, vec![0; count * 3]);
-            for (origin, extent) in ordered_blocks(size, order) {
-                let encoded = block(origin, extent)?;
-                if encoded.len() != (extent[0] * extent[1]) as usize {
-                    return Err(Error::InvalidParameter("invalid TIFF block length"));
+    atomic_file(
+        path,
+        overwrite,
+        |file| {
+            let mut buffered = BufWriter::new(file);
+            {
+                let mut encoder = TiffEncoder::new(&mut buffered)
+                    .map_err(failure)?
+                    .with_compression(Compression::Lzw)
+                    .with_predictor(Predictor::Horizontal);
+                let mut image = encoder
+                    .new_image::<RGB16>(size.width, size.height)
+                    .map_err(failure)?;
+                image.rows_per_strip(8).map_err(failure)?;
+                image
+                    .encoder()
+                    .write_tag(Tag::Unknown(34675), Icc(profiles::icc(target)))
+                    .map_err(failure)?;
+                image
+                    .encoder()
+                    .write_tag(Tag::Software, "Antitone 0.1")
+                    .map_err(failure)?;
+                let model = response.processing_model();
+                let mut description = format!(
+                    "Antitone model {model}; native-camera RGB inversion to AP1; ACES 2 / OCIO 2.6.0; {target:?} v1 / 100-nit SDR; rendering and encoding in matching target RGB"
+                );
+                description.push_str(&format!("; photographic={}", crate::photographic::CONTRACT));
+                if let Some(id) = metadata.look {
+                    let hash = id.iter().map(|b| format!("{b:02x}")).collect::<String>();
+                    description.push_str(&format!(
+                        "; creative-look-blake3={hash}; creative-look-input-range=clip"
+                    ));
                 }
-                timed!(FormatPack, {
-                    for (i, pixel) in encoded.into_iter().enumerate() {
-                        let x = origin[0] + i as u32 % extent[0];
-                        let y = origin[1] + i as u32 / extent[0];
-                        let index = (y as usize * size.width as usize + x as usize) * 3;
-                        samples[index..index + 3].copy_from_slice(&pixel);
+                if metadata.locals {
+                    description.push_str(&format!(
+                        "; local-adjustments={}",
+                        crate::local_adjustments::CONTRACT
+                    ));
+                }
+                if let Response::Film { toe, shoulder } = response {
+                    description.push_str(&format!(
+                        "; film toe={toe}; shoulder={shoulder}; signed-root continuation above base"
+                    ));
+                }
+                image
+                    .encoder()
+                    .write_tag(Tag::ImageDescription, description.as_str())
+                    .map_err(failure)?;
+                // tiff 0.11.3 activates compression only in write_data, not write_strip.
+                let mut samples = timed!(FrameAllocation, vec![0; count * 3]);
+                for (origin, extent) in ordered_blocks(size, order) {
+                    let encoded = block(origin, extent)?;
+                    if encoded.len() != (extent[0] * extent[1]) as usize {
+                        return Err(Error::InvalidParameter("invalid TIFF block length"));
                     }
-                });
+                    timed!(FormatPack, {
+                        for (i, pixel) in encoded.into_iter().enumerate() {
+                            let x = origin[0] + i as u32 % extent[0];
+                            let y = origin[1] + i as u32 / extent[0];
+                            let index = (y as usize * size.width as usize + x as usize) * 3;
+                            samples[index..index + 3].copy_from_slice(&pixel);
+                        }
+                    });
+                }
+                timed!(FileEncode, image.write_data(&samples).map_err(failure))?;
             }
-            timed!(FileEncode, image.write_data(&samples).map_err(failure))?;
-        }
-        timed!(FileFlush, buffered.flush().map_err(failure))
-    })
+            timed!(FileFlush, buffered.flush().map_err(failure))
+        },
+        before_publish,
+    )
 }
 
 pub fn exr(
@@ -460,7 +500,20 @@ pub(crate) fn exr_blocks(
     precision: ExrPrecision,
     overwrite: Overwrite,
     metadata: ProcessingMetadata,
+    block: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<DVec3>>,
+) -> Result<()> {
+    exr_blocks_checked((path, overwrite), size, precision, metadata, block, || {
+        Ok(())
+    })
+}
+
+pub(crate) fn exr_blocks_checked(
+    (path, overwrite): (&Path, Overwrite),
+    size: ImageSize,
+    precision: ExrPrecision,
+    metadata: ProcessingMetadata,
     mut block: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<DVec3>>,
+    before_publish: impl FnOnce() -> Result<()>,
 ) -> Result<()> {
     let response = metadata.response;
     response.shape()?;
@@ -589,14 +642,19 @@ pub(crate) fn exr_blocks(
         blue: Vec2(0.0001, -0.0770),
         white: Vec2(0.32168, 0.33767),
     });
-    atomic_file(path, overwrite, |file| {
-        timed!(
-            FileEncode,
-            image
-                .write()
-                .non_parallel()
-                .to_unbuffered(file)
-                .map_err(failure)
-        )
-    })
+    atomic_file(
+        path,
+        overwrite,
+        |file| {
+            timed!(
+                FileEncode,
+                image
+                    .write()
+                    .non_parallel()
+                    .to_unbuffered(file)
+                    .map_err(failure)
+            )
+        },
+        before_publish,
+    )
 }

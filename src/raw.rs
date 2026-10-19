@@ -20,7 +20,7 @@ mod lens_source;
 #[cfg(all(test, feature = "project"))]
 #[path = "../tests/support/raw_fixture.rs"]
 pub(crate) mod fixture;
-#[cfg(all(test, feature = "editor"))]
+#[cfg(all(test, feature = "project"))]
 #[path = "../tests/support/sony_fixture.rs"]
 pub(crate) mod sony_fixture;
 

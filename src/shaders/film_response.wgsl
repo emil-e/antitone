@@ -112,7 +112,7 @@ fn precise_log_abs_expm1(x: Triple) -> Triple {
     return precise_log(precise_neg(precise_expm1(x)));
 }
 
-fn invert_film(sample: Triple, c: u32) -> Triple {
+fn precise_invert_film(sample: Triple, c: u32) -> Triple {
     let base = Triple(parameters.dmin_floor[c], parameters.dmin_low[c], parameters.dmin_tail[c]);
     let l = precise_log_ratio(base, sample);
     let beta = Triple(parameters.shape.x, parameters.shape.z, parameters.shape_tail.x);

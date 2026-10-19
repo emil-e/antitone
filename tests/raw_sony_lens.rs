@@ -4,6 +4,9 @@ use std::fs;
 
 #[path = "support/sony_fixture.rs"]
 mod fixture;
+#[cfg(all(feature = "gpu", feature = "export", feature = "ocio-reference"))]
+#[path = "support/working_precision.rs"]
+mod working_precision;
 use fixture::{Entry, Order, profile_tags, source};
 
 use antitone::{
@@ -674,8 +677,7 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
                             let expected = b as f64;
                             assert!(
                                 (a as f64 - expected).abs()
-                                    <= 2e-12
-                                        + 2e-11 * expected.abs()
+                                    <= working_precision::allowance(expected)
                                         + f32::EPSILON as f64 * expected.abs(),
                                 "flat={flat}: actual={a} expected={expected}"
                             );

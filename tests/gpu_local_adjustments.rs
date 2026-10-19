@@ -23,7 +23,7 @@ fn context() -> (wgpu::Device, wgpu::Queue, ProcessingKernel) {
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let kernel = ProcessingKernel::new(&device, &queue).await.unwrap();
+        let kernel = ProcessingKernel::new(&device).await.unwrap();
         (device, queue, kernel)
     })
 }

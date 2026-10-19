@@ -12,10 +12,14 @@ pub use local::GpuPhotoGrade;
 #[path = "gpu_processing_input.rs"]
 mod input;
 pub use input::{ProcessingInput, ProcessingSignature};
-#[path = "gpu_response_table.rs"]
-mod response;
+#[cfg(all(test, target_os = "macos", feature = "raw", feature = "export"))]
+#[path = "gpu_export_arithmetic_research.rs"]
+pub(crate) mod arithmetic_research;
 #[path = "gpu_submission.rs"]
 mod submission;
+#[cfg(all(test, target_os = "macos", feature = "raw", feature = "export"))]
+#[path = "gpu_timestamp_ledger.rs"]
+pub(crate) mod timestamp_ledger;
 pub use submission::SubmissionGate;
 #[cfg(feature = "editor")]
 #[path = "gpu_dust_screening.rs"]
@@ -54,6 +58,8 @@ pub struct ProcessingParameters {
     anchor_tail: Vec4,
     post_tail: [Vec4; 3],
     creative_tail: [Vec4; 3],
+    // Inverse downstream sensitivity limits native magnitude in one-word response kernels.
+    response_precision: Vec4,
 }
 
 // A common ACES source-display convention, not a camera exposure calibration or JPEG fit.
@@ -208,6 +214,15 @@ impl ProcessingParameters {
         ]
         .map(|v| split_constants(DVec3::new(v[0], v[1], v[2]), v[3]));
         let controls = [contrast?, colour?, luminance?];
+        let (_, output, creative_sensitivity) = grade.weighted_bounds(bound.max_element(), 1.);
+        let camera_sensitivity =
+            camera_to_ap1.x_axis.abs() + camera_to_ap1.y_axis.abs() + camera_to_ap1.z_axis.abs();
+        let downstream_sensitivity = (matrix.x_axis.abs() * camera_sensitivity.x
+            + matrix.y_axis.abs() * camera_sensitivity.y
+            + matrix.z_axis.abs() * camera_sensitivity.z)
+            .max_element()
+            .max(1.)
+            * creative_sensitivity.max(1.);
         let result = Self {
             dmin_floor: reference[0],
             dmin_low: reference[1],
@@ -226,6 +241,16 @@ impl ProcessingParameters {
             creative: std::array::from_fn(|c| controls[c][0]),
             creative_low: std::array::from_fn(|c| controls[c][1]),
             creative_tail: std::array::from_fn(|c| controls[c][2]),
+            response_precision: Vec4::new(
+                if downstream_sensitivity.is_finite() {
+                    (1. / downstream_sensitivity) as f32
+                } else {
+                    0.
+                },
+                0.,
+                0.,
+                0.,
+            ),
         };
         if !result.dmin_floor.is_finite()
             || result.dmin_floor.w < f32::MIN_POSITIVE
@@ -244,7 +269,6 @@ impl ProcessingParameters {
         }
         // Scratch maxima must not become the next stage's input. Both bounds
         // cover the actual full-strength output; keep the tighter envelope.
-        let (_, output, _) = grade.weighted_bounds(bound.max_element(), 1.);
         Ok((result, output.min(creative_bound)))
     }
 }
@@ -488,130 +512,66 @@ pub struct ProcessingKernel {
     identity: wgpu::Buffer,
     empty_locals: wgpu::Buffer,
     empty_local_context: wgpu::Buffer,
-    responses: Option<response::ResponseCache>,
 }
 
 impl ProcessingKernel {
-    /// `queue` must be this device's queue used for subsequent processing submissions.
-    pub async fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Self, Error> {
-        Self::new_with_submissions(device, queue, SubmissionGate::default()).await
+    pub async fn new(device: &wgpu::Device) -> Result<Self, Error> {
+        Self::build_pipeline(device, Self::shader()).await
     }
 
-    /// Hosted queues must share the surface's submission gate with response initialization.
-    pub async fn new_with_submissions(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        submissions: SubmissionGate,
-    ) -> Result<Self, Error> {
-        Self::new_pipeline(device, queue, true, false, submissions).await
+    fn shader() -> String {
+        Self::shader_with_response(include_str!("shaders/film_inversion_precise.wgsl"))
     }
 
-    #[cfg(test)]
-    async fn new_fused(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Self, Error> {
-        Self::new_pipeline(device, queue, false, false, SubmissionGate::default()).await
-    }
-
-    /// Job-local compensated AP1 readback; normal image outputs remain RGBA f32.
-    #[cfg(all(feature = "export", feature = "raw"))]
-    pub(crate) async fn new_export(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        submissions: SubmissionGate,
-    ) -> Result<Self, Error> {
-        Self::new_pipeline(device, queue, true, true, submissions).await
-    }
-
-    fn shader(lookup: bool) -> String {
-        Self::shader_with_math(lookup, include_str!("shaders/processing_math.wgsl"))
-    }
-
-    fn shader_with_math(lookup: bool, math: &str) -> String {
+    fn shader_with_response(response: &str) -> String {
         let common = [
             include_str!("shaders/camera_conversion.wgsl"),
             include_str!("shaders/flat_field.wgsl"),
             include_str!("shaders/film_response.wgsl"),
-            math,
+            response,
+            include_str!("shaders/processing_math.wgsl"),
             include_str!("shaders/photographic.wgsl"),
             include_str!("shaders/local_adjustments.wgsl"),
         ]
         .join("\n");
-        let main = include_str!("shaders/processing.wgsl");
-        if lookup {
-            [
-                common.as_str(),
-                include_str!("shaders/response_table.wgsl"),
-                main,
-            ]
-            .join("\n")
-        } else {
-            let main = main.replace(
-                "process_positive(scans[index], index)",
-                "process_film(convert_source(scans[index], index))",
-            );
-            [common.as_str(), main.as_str()].join("\n")
-        }
+        [common.as_str(), include_str!("shaders/processing.wgsl")].join("\n")
     }
 
-    fn pipeline_shader(lookup: bool, precise_output: bool) -> String {
-        // Compensated AP1 export retains its full-series math before f64 reconstruction.
-        let mut shader = if precise_output {
-            Self::shader_with_math(lookup, include_str!("shaders/export_math.wgsl"))
-        } else {
-            Self::shader(lookup)
-        };
-        if precise_output {
-            shader.push_str(include_str!("shaders/export.wgsl"));
-        }
-        shader
+    #[cfg(all(feature = "raw", feature = "export"))]
+    pub(crate) fn export_shader() -> String {
+        Self::shader_with_response(include_str!("shaders/film_inversion_export.wgsl"))
     }
 
-    async fn new_pipeline(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        lookup: bool,
-        precise_output: bool,
-        submissions: SubmissionGate,
-    ) -> Result<Self, Error> {
-        if lookup
-            && (response::BYTE_LEN > device.limits().max_buffer_size
-                || response::BYTE_LEN > device.limits().max_storage_buffer_binding_size)
-        {
-            return Err(Error::Gpu(
-                "RGB16 response table exceeds GPU buffer limits".into(),
-            ));
-        }
+    #[cfg(all(feature = "raw", feature = "export"))]
+    pub(crate) async fn new_export(device: &wgpu::Device) -> Result<Self, Error> {
+        Self::build_pipeline(device, Self::export_shader()).await
+    }
+
+    async fn build_pipeline(device: &wgpu::Device, shader: String) -> Result<Self, Error> {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let shader = Self::pipeline_shader(lookup, precise_output);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("camera RGB16 to AP1 photographic processing"),
+            label: Some("camera originals to AP1 photographic processing"),
             source: wgpu::ShaderSource::Wgsl(shader.into()),
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("Antitone processing"),
             layout: None,
             module: &module,
-            entry_point: Some(if precise_output {
-                "export_main"
-            } else {
-                "main"
-            }),
+            entry_point: Some("main"),
             compilation_options: Default::default(),
             cache: None,
         });
-        let responses =
-            lookup.then(|| response::ResponseCache::new(device, queue, &module, submissions));
         if let Some(error) = scope.pop().await {
             return Err(Error::Gpu(error.to_string()));
         }
         Ok(Self {
             pipeline,
-            output_binding: if precise_output { 10 } else { 1 },
-            output_stride: if precise_output { 48 } else { 16 },
+            output_binding: 1,
+            output_stride: 16,
             workgroup_size: 64,
             identity: flat::identity_nodes(device),
             empty_locals: local::empty_buffer(device),
             empty_local_context: local::context_buffer(device, 0, [0; 4])?,
-            responses,
         })
     }
 
@@ -630,6 +590,8 @@ impl ProcessingKernel {
             output,
             parameters,
             (&self.empty_locals, &self.empty_local_context),
+            #[cfg(test)]
+            (None, None),
         );
     }
 
@@ -649,6 +611,31 @@ impl ProcessingKernel {
             output,
             grade.parameters,
             (&grade.buffer, &grade.context),
+            #[cfg(test)]
+            (None, None),
+        );
+        Ok(())
+    }
+
+    #[cfg(all(test, target_os = "macos", feature = "raw", feature = "export"))]
+    pub(crate) fn encode_grade_with_query(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        source: &ProcessingSource,
+        output: &wgpu::Buffer,
+        grade: &GpuPhotoGrade,
+        queries: (&wgpu::QuerySet, u32),
+    ) -> Result<(), Error> {
+        grade.require_source(source)?;
+        self.encode_resources(
+            device,
+            encoder,
+            source,
+            output,
+            grade.parameters,
+            (&grade.buffer, &grade.context),
+            (Some(queries), None),
         );
         Ok(())
     }
@@ -662,6 +649,7 @@ impl ProcessingKernel {
         output: &wgpu::Buffer,
         parameters: ProcessingParameters,
         (locals, context): (&wgpu::Buffer, &wgpu::Buffer),
+        #[cfg(test)] diagnostics: (Option<(&wgpu::QuerySet, u32)>, Option<&wgpu::Buffer>),
     ) {
         let pixels = source.pixels;
         let size = NonZeroU64::new(u64::from(pixels) * self.output_stride).unwrap();
@@ -688,14 +676,7 @@ impl ProcessingKernel {
             contents: bytemuck::bytes_of(&geometry),
             usage: wgpu::BufferUsages::UNIFORM,
         });
-        let table = self.responses.as_ref().map(|responses| {
-            if parameters.gamma_mode.w > 0.5 && source.flat_field.is_none() {
-                responses.buffer(device, parameters)
-            } else {
-                responses.empty.clone()
-            }
-        });
-        let mut entries = vec![
+        let entries = vec![
             wgpu::BindGroupEntry {
                 binding: 0,
                 resource: source.input.as_entire_binding(),
@@ -733,10 +714,13 @@ impl ProcessingKernel {
                 resource: context.as_entire_binding(),
             },
         ];
-        if let Some(table) = &table {
+        #[cfg(test)]
+        let mut entries = entries;
+        #[cfg(test)]
+        if let Some(prepared) = diagnostics.1 {
             entries.push(wgpu::BindGroupEntry {
-                binding: 8,
-                resource: table.as_entire_binding(),
+                binding: 9,
+                resource: prepared.as_entire_binding(),
             });
         }
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -746,7 +730,22 @@ impl ProcessingKernel {
         });
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("inversion/edits"),
-            timestamp_writes: None,
+            timestamp_writes: {
+                #[cfg(test)]
+                {
+                    diagnostics
+                        .0
+                        .map(|(query_set, index)| wgpu::ComputePassTimestampWrites {
+                            query_set,
+                            beginning_of_pass_write_index: Some(index),
+                            end_of_pass_write_index: Some(index + 1),
+                        })
+                }
+                #[cfg(not(test))]
+                {
+                    None
+                }
+            },
         });
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &group, &[]);

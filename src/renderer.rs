@@ -71,9 +71,13 @@ impl RendererCache {
     }
     pub(crate) fn prewarm(self: &Arc<Self>, device: wgpu::Device, queue: wgpu::Queue) {
         let cache = self.clone();
-        // Initialization errors remain cached and are reported by the foreground get.
+        // Initialization errors remain cached and are reported by foreground consumers.
         std::thread::spawn(move || {
-            let _ = cache.get(&device, &queue);
+            if let Ok(renderer) = cache.get(&device, &queue) {
+                // Export's additional pipeline shares this existing infrastructure warm-up;
+                // direct library callers still initialize it lazily on first export.
+                let _ = renderer.export_kernel(&device);
+            }
         });
     }
 
@@ -150,6 +154,8 @@ pub(crate) struct TargetResources {
 /// Image storage and processing signatures remain image-owned.
 pub struct GpuRenderer {
     pub(crate) kernel: ProcessingKernel,
+    #[cfg(all(feature = "raw", feature = "export"))]
+    export: std::sync::OnceLock<Result<ProcessingKernel, Error>>,
     pub(crate) submissions: crate::gpu::SubmissionGate,
     #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
     pub(crate) repairs: crate::gpu::repairs::Kernels,
@@ -157,6 +163,8 @@ pub struct GpuRenderer {
     pub(crate) display: wgpu::RenderPipeline,
     targets: [TargetResources; 2],
     look_kernel: crate::gpu::look::Kernel,
+    #[cfg(test)]
+    look_uploads: std::sync::atomic::AtomicU64,
     look_cache: std::sync::Mutex<
         std::collections::HashMap<crate::looks::LookId, std::sync::Weak<crate::gpu::look::Lut>>,
     >,
@@ -174,8 +182,7 @@ impl GpuRenderer {
         queue: &wgpu::Queue,
         submissions: crate::gpu::SubmissionGate,
     ) -> Result<Arc<Self>, Error> {
-        let kernel =
-            ProcessingKernel::new_with_submissions(device, queue, submissions.clone()).await?;
+        let kernel = ProcessingKernel::new(device).await?;
         #[cfg(feature = "ui")]
         let average = Arc::new(AveragePipelines::new(device).await?);
         #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
@@ -197,6 +204,8 @@ impl GpuRenderer {
         }
         Ok(Arc::new(Self {
             kernel,
+            #[cfg(all(feature = "raw", feature = "export"))]
+            export: std::sync::OnceLock::new(),
             submissions,
             #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
             repairs,
@@ -204,6 +213,8 @@ impl GpuRenderer {
             display,
             targets,
             look_kernel,
+            #[cfg(test)]
+            look_uploads: std::sync::atomic::AtomicU64::new(0),
             look_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
             #[cfg(feature = "project")]
             look_reference: std::sync::OnceLock::new(),
@@ -211,6 +222,20 @@ impl GpuRenderer {
             average,
         }))
     }
+    /// One original-processing pipeline for both export formats; ACES/look resources stay shared.
+    #[cfg(all(feature = "raw", feature = "export"))]
+    pub(crate) fn export_kernel(&self, device: &wgpu::Device) -> Result<&ProcessingKernel, Error> {
+        self.export
+            .get_or_init(|| pollster::block_on(ProcessingKernel::new_export(device)))
+            .as_ref()
+            .map_err(Clone::clone)
+    }
+
+    #[cfg(all(test, feature = "raw", feature = "export"))]
+    pub(crate) fn export_initialized(&self) -> bool {
+        self.export.get().is_some()
+    }
+
     /// Native worker-only generation. No compiler, Python or OCIO runtime is involved.
     #[cfg(feature = "project")]
     pub fn bake_builtin(
@@ -267,6 +292,41 @@ impl GpuRenderer {
         }
         LookAsset::new(builtin.name().into(), builtin.origin(), lut)
     }
+    #[cfg(test)]
+    pub(crate) fn look_uploads(&self) -> u64 {
+        self.look_uploads.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn live_look_resources(&self) -> usize {
+        self.look_cache
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|value| value.strong_count() != 0)
+            .count()
+    }
+
+    /// A job can retain this lease independently of its size-dependent render bindings.
+    pub(crate) fn look_resource(
+        &self,
+        device: &wgpu::Device,
+        asset: &Arc<crate::looks::LookAsset>,
+    ) -> Result<Arc<crate::gpu::look::Lut>, Error> {
+        let mut cache = self.look_cache.lock().unwrap();
+        cache.retain(|_, value| value.strong_count() != 0);
+        let id = asset.lut().id();
+        if let Some(value) = cache.get(&id).and_then(std::sync::Weak::upgrade) {
+            return Ok(value);
+        }
+        let value = crate::gpu::look::Lut::new(device, asset.lut())?;
+        #[cfg(test)]
+        self.look_uploads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        cache.insert(id, Arc::downgrade(&value));
+        Ok(value)
+    }
+
     pub(crate) fn render_binding(
         &self,
         device: &wgpu::Device,
@@ -281,17 +341,7 @@ impl GpuRenderer {
             .ok_or(Error::InvalidParameter("invalid rendered dimensions"))?;
         let looked = look
             .map(|asset| {
-                let mut cache = self.look_cache.lock().unwrap();
-                cache.retain(|_, value| value.strong_count() != 0);
-                let id = asset.lut().id();
-                let resource = match cache.get(&id).and_then(std::sync::Weak::upgrade) {
-                    Some(value) => value,
-                    None => {
-                        let value = crate::gpu::look::Lut::new(device, asset.lut())?;
-                        cache.insert(id, Arc::downgrade(&value));
-                        value
-                    }
-                };
+                let resource = self.look_resource(device, asset)?;
                 let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("looked scene-linear AP1"),
                     size: u64::from(count) * 16,

@@ -113,7 +113,7 @@ fn local_stage_cost_at_live_preview_and_refinement_tile_sizes() {
             adapter.get_info()
         );
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let kernel = ProcessingKernel::new(&device, &queue).await.unwrap();
+        let kernel = ProcessingKernel::new(&device).await.unwrap();
         let renderer = antitone::renderer::GpuRenderer::new(&device, &queue)
             .await
             .unwrap();

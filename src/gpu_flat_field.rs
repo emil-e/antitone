@@ -48,7 +48,7 @@ impl SourceGeometry {
     }
 
     /// Two real original rectangles, concatenated vertically without resampling.
-    #[cfg(all(feature = "raw", feature = "export"))]
+    #[cfg(all(test, feature = "raw", feature = "export"))]
     pub(crate) fn original_pair(origins: [[u32; 2]; 2], size: [u32; 2]) -> Result<Self, Error> {
         let height = size[1].checked_mul(2).ok_or(Error::NumericalOverflow)?;
         if u64::from(size[0]) * u64::from(height) > u32::MAX as u64 {

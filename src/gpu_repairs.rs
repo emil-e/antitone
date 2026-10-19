@@ -21,7 +21,7 @@ pub(crate) struct Patch {
 }
 
 impl Patch {
-    #[cfg(any(feature = "editor", test))]
+    #[cfg(feature = "editor")]
     pub fn new(device: &wgpu::Device, evaluated: Arc<EvaluatedRepair>) -> Result<Arc<Self>, Error> {
         let mut patch = Self::logical(evaluated)?;
         patch.buffer = patch.buffer_for(device, patch.region)?;
@@ -52,6 +52,18 @@ impl Patch {
         })
     }
 
+    fn pixels_in(
+        &self,
+        region: SourceRegion,
+    ) -> impl Iterator<Item = ([u32; 2], crate::dust_repair::Ap1)> + '_ {
+        self.evaluated.pixels().filter(move |(point, _)| {
+            point[0] >= region.x
+                && point[1] >= region.y
+                && point[0] < region.x + region.width
+                && point[1] < region.y + region.height
+        })
+    }
+
     fn buffer_for(
         &self,
         device: &wgpu::Device,
@@ -64,28 +76,29 @@ impl Patch {
         let support = evaluated.support();
         let [x, y] = support.origin();
         let [width, _] = support.size();
-        let pixels = evaluated
-            .pixels()
-            .filter(|(point, _)| {
-                point[0] >= region.x
-                    && point[1] >= region.y
-                    && point[0] < region.x + region.width
-                    && point[1] < region.y + region.height
-            })
-            .map(|(point, value)| Pixel {
-                position: [point[0], point[1], (point[1] - y) * width + point[0] - x, 0],
-                value: [value[0], value[1], value[2], 0.],
-            })
-            .collect::<Vec<_>>();
-        if pixels.is_empty() {
+        let count = self.pixels_in(region).count();
+        if count == 0 {
             return Ok(None);
         }
-        let bytes = bytemuck::cast_slice(&pixels);
-        if bytes.len() as u64 > device.limits().max_buffer_size
-            || bytes.len() as u64 > device.limits().max_storage_buffer_binding_size
+        let length = count as u64 * std::mem::size_of::<Pixel>() as u64;
+        if length > device.limits().max_buffer_size
+            || length > device.limits().max_storage_buffer_binding_size
         {
             return Err(Error::Gpu("repair patch exceeds GPU limits".into()));
         }
+        // Fix explicit vector capacity before materializing the upload, rather than growing it.
+        let mut pixels = Vec::with_capacity(count);
+        pixels.extend(self.pixels_in(region).map(|(point, value)| Pixel {
+            position: [point[0], point[1], (point[1] - y) * width + point[0] - x, 0],
+            value: [value[0], value[1], value[2], 0.],
+        }));
+        #[cfg(test)]
+        assert_eq!(
+            pixels.capacity(),
+            count,
+            "repair upload bound includes exact host vector capacity"
+        );
+        let bytes = bytemuck::cast_slice(&pixels);
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("immutable sparse neutral AP1 repair"),
             contents: bytes,
@@ -104,18 +117,6 @@ impl Snapshot {
         evaluated
             .into_iter()
             .map(|repair| Patch::logical(repair).map(Arc::new))
-            .collect::<Result<Vec<_>, _>>()
-            .map(Self)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn from_evaluations(
-        device: &wgpu::Device,
-        evaluated: Vec<Arc<EvaluatedRepair>>,
-    ) -> Result<Self, Error> {
-        evaluated
-            .into_iter()
-            .map(|repair| Patch::new(device, repair))
             .collect::<Result<Vec<_>, _>>()
             .map(Self)
     }
@@ -139,7 +140,25 @@ impl Snapshot {
         Ok(())
     }
 
-    #[cfg(feature = "editor")]
+    #[cfg(all(test, feature = "raw", feature = "export"))]
+    pub(crate) fn upload_scratch_bytes(&self, region: SourceRegion) -> u64 {
+        self.0
+            .iter()
+            .filter(|patch| intersects(patch.region, region))
+            .map(|patch| {
+                patch.buffer.as_ref().map_or_else(
+                    || {
+                        patch.pixels_in(region).count() as u64
+                            * std::mem::size_of::<Pixel>() as u64
+                            * 2
+                    },
+                    wgpu::Buffer::size,
+                )
+            })
+            .sum()
+    }
+
+    #[cfg(any(feature = "editor", all(test, feature = "raw", feature = "export")))]
     pub(crate) fn byte_len(&self) -> u64 {
         (std::mem::size_of::<Self>() + self.0.capacity() * std::mem::size_of::<Arc<Patch>>()) as u64
             + self
@@ -220,7 +239,7 @@ impl Kernels {
     pub async fn new(device: &wgpu::Device) -> Result<Self, Error> {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let shader = [
-            ProcessingKernel::shader(true),
+            ProcessingKernel::shader(),
             include_str!("shaders/footprint.wgsl").into(),
             include_str!("shaders/repairs.wgsl").into(),
         ]
@@ -376,52 +395,6 @@ impl Kernels {
     }
 }
 
-#[cfg(all(feature = "raw", feature = "export"))]
-pub(crate) struct ExportKernel(wgpu::ComputePipeline);
-
-#[cfg(all(feature = "raw", feature = "export"))]
-impl ExportKernel {
-    pub(crate) async fn new(device: &wgpu::Device) -> Result<Self, Error> {
-        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let shader = [
-            ProcessingKernel::pipeline_shader(true, true),
-            include_str!("shaders/footprint.wgsl").into(),
-            include_str!("shaders/repairs.wgsl").into(),
-            include_str!("shaders/repairs_export.wgsl").into(),
-        ]
-        .join("\n");
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("compensated neutral repair grading"),
-            source: wgpu::ShaderSource::Wgsl(shader.into()),
-        });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("repair_export"),
-            layout: None,
-            module: &module,
-            entry_point: Some("repair_export"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
-        if let Some(error) = scope.pop().await {
-            return Err(Error::Gpu(error.to_string()));
-        }
-        Ok(Self(pipeline))
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn encode(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        kernel: &ProcessingKernel,
-        output: &wgpu::Buffer,
-        input: &ProcessingInput,
-        geometry: SourceGeometry,
-    ) -> Result<(), Error> {
-        encode_original(&self.0, device, encoder, kernel, output, input, geometry)
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn encode_original(
     pipeline: &wgpu::ComputePipeline,
@@ -464,12 +437,11 @@ fn encode_original(
             let Some(buffer) = patch.buffer_for(device, region)? else {
                 continue;
             };
-            let binding = if kernel.output_stride == 48 { 10 } else { 1 };
             let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("source-coordinate repair grading resources"),
                 layout: &pipeline.get_bind_group_layout(0),
                 entries: &[
-                    entry(binding, output),
+                    entry(1, output),
                     entry(2, &parameters),
                     entry(5, &field),
                     entry(6, locals),

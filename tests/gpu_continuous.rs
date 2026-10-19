@@ -16,7 +16,7 @@ async fn context() -> (wgpu::Device, wgpu::Queue, ProcessingKernel) {
     });
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
     let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-    let kernel = ProcessingKernel::new(&device, &queue).await.unwrap();
+    let kernel = ProcessingKernel::new(&device).await.unwrap();
     (device, queue, kernel)
 }
 
@@ -183,7 +183,7 @@ fn camera_gain_headroom_is_checked_before_a_compensating_matrix() {
 }
 
 #[test]
-fn exact_integer_transport_reuses_the_same_response_without_changing_output_bits() {
+fn integer_values_preserve_output_bits_in_native_and_continuous_transport() {
     pollster::block_on(async {
         let (device, queue, kernel) = context().await;
         let codes: Vec<[u16; 4]> = (0..67u32)

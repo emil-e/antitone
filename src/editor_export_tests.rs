@@ -1,6 +1,8 @@
 use super::*;
 use tiff::decoder::{Decoder, DecodingResult};
 
+#[path = "editor_export_production_tests.rs"]
+mod production;
 #[path = "editor_export_repair_tests.rs"]
 mod repairs;
 

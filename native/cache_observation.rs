@@ -269,6 +269,13 @@ fn preflight(read: Reading) -> Result<()> {
 pub(super) fn with_monitor(
     action: impl FnOnce(&Arc<Monitor>, &wgpu::Device, &wgpu::Queue) -> Result<()>,
 ) -> Result<()> {
+    with_monitor_features(wgpu::Features::empty(), action)
+}
+
+pub(super) fn with_monitor_features(
+    features: wgpu::Features,
+    action: impl FnOnce(&Arc<Monitor>, &wgpu::Device, &wgpu::Queue) -> Result<()>,
+) -> Result<()> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::METAL,
         ..wgpu::InstanceDescriptor::new_without_display_handle()
@@ -278,7 +285,10 @@ pub(super) fn with_monitor(
             .request_adapter(&Default::default())
             .await
             .unwrap()
-            .request_device(&Default::default())
+            .request_device(&wgpu::DeviceDescriptor {
+                required_features: features,
+                ..Default::default()
+            })
             .await
             .unwrap()
     });

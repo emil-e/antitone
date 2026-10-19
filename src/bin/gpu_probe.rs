@@ -378,7 +378,7 @@ async fn camera_processing(
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    let kernel = ProcessingKernel::new(device, queue).await?;
+    let kernel = ProcessingKernel::new(device).await?;
     let started = Instant::now();
     let mut encoder = device.create_command_encoder(&Default::default());
     kernel.encode(device, &mut encoder, &input, &output, parameters);

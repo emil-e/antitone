@@ -3,14 +3,10 @@ use super::*;
 #[path = "gpu_viewport_performance_tests.rs"]
 mod viewport_tests;
 
-async fn shader_kernel(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    shader: String,
-) -> ProcessingKernel {
+async fn shader_kernel(device: &wgpu::Device, shader: String) -> ProcessingKernel {
     let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("isolated production-lookup kernel variant"),
+        label: Some("isolated direct-processing kernel variant"),
         source: wgpu::ShaderSource::Wgsl(shader.into()),
     });
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -21,12 +17,6 @@ async fn shader_kernel(
         compilation_options: Default::default(),
         cache: None,
     });
-    let responses = Some(response::ResponseCache::new(
-        device,
-        queue,
-        &module,
-        super::SubmissionGate::default(),
-    ));
     assert!(scope.pop().await.is_none(), "variant validation failed");
     ProcessingKernel {
         pipeline,
@@ -36,7 +26,6 @@ async fn shader_kernel(
         identity: flat::identity_nodes(device),
         empty_locals: local::empty_buffer(device),
         empty_local_context: local::context_buffer(device, 0, [0; 4]).unwrap(),
-        responses,
     }
 }
 
@@ -160,7 +149,7 @@ async fn investigate(
         "stage_probe adapter={:?} size={size:?} corrected={corrected} samples=9 timing=encode_submit_gpu_completion excludes=compilation_upload_readback_rendering_reconstruction",
         adapter.get_info()
     );
-    let kernel = ProcessingKernel::new(&device, &queue).await.unwrap();
+    let kernel = ProcessingKernel::new(&device).await.unwrap();
     let probe = Probe::new(&device, pixels.len()).await;
     let geometry = SourceGeometry::new([area.x, area.y, area.width, area.height], size).unwrap();
     let mut source = ProcessingSource::new_continuous(&device, &pixels, matrix).unwrap();
@@ -519,7 +508,7 @@ fn paired_production_local_kernel() {
         );
         std::fs::read_to_string(path).unwrap()
     } else {
-        ProcessingKernel::shader(true)
+        ProcessingKernel::shader()
     };
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -528,8 +517,8 @@ fn paired_production_local_kernel() {
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let baseline = ProcessingKernel::new(&device, &queue).await.unwrap();
-        let variants = [("candidate", shader_kernel(&device, &queue, shader).await)];
+        let baseline = ProcessingKernel::new(&device).await.unwrap();
+        let variants = [("candidate", shader_kernel(&device, shader).await)];
         let pixels: Vec<_> = (0u32..SIZE[0] * SIZE[1])
             .map(|i| {
                 [

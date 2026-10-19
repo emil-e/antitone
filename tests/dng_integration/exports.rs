@@ -1,4 +1,6 @@
 use super::*;
+#[path = "../support/working_precision.rs"]
+mod working_precision;
 use antitone::{
     export::{self, ExrPrecision, Overwrite, ProcessingMetadata},
     geometry::{Composition, PhotoOrientation, RollOrientation},
@@ -192,8 +194,7 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
                         let expected = f64::from(*b);
                         assert!(
                             (f64::from(*a) - expected).abs()
-                                <= 2e-12
-                                    + 2e-11 * expected.abs()
+                                <= working_precision::allowance(expected)
                                     + f64::from(f32::EPSILON) * expected.abs()
                         );
                     }

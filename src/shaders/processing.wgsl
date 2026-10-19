@@ -16,6 +16,7 @@ struct Parameters {
     anchor_tail: vec4f,
     post_tail: array<vec4f, 3>,
     creative_tail: array<vec4f, 3>,
+    response_precision: vec4f,
 }
 @group(0) @binding(0)
 var<storage, read> scans: array<vec2u>;
@@ -33,7 +34,7 @@ fn main(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) group
         return;
     }
     if parameters.gamma_mode.w > 0.5 {
-        let global = process_positive(scans[index], index);
+        let global = process_film(convert_source(scans[index], index));
         positives[index] =
             finish_pixel(ProcessedPixel(local_grade(global.rgb, index), global.flags));
     } else {

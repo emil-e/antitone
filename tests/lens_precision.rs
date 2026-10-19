@@ -195,7 +195,7 @@ impl Gpu {
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         println!("precision adapter={:?}", adapter.get_info());
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let kernel = ProcessingKernel::new(&device, &queue).await.unwrap();
+        let kernel = ProcessingKernel::new(&device).await.unwrap();
         Self {
             device,
             queue,

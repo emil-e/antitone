@@ -85,7 +85,6 @@ async fn variant(
             identity: baseline.identity.clone(),
             empty_locals: baseline.empty_locals.clone(),
             empty_local_context: baseline.empty_local_context.clone(),
-            responses: None,
         },
     }
 }
@@ -128,7 +127,7 @@ fn paired_kernel_variants() {
             adapter.get_info()
         );
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let shader = ProcessingKernel::shader(false);
+        let shader = ProcessingKernel::shader();
         let shader = if let Some(path) = std::env::var_os("ANTITONE_KERNEL_CANDIDATE_WGSL") {
             println!(
                 "kernel_variants candidate={}",
@@ -138,7 +137,7 @@ fn paired_kernel_variants() {
         } else {
             shader
         };
-        let baseline = ProcessingKernel::new_fused(&device, &queue).await.unwrap();
+        let baseline = ProcessingKernel::new(&device).await.unwrap();
         let baseline = if let Some(path) = std::env::var_os("ANTITONE_KERNEL_REFERENCE_WGSL") {
             println!(
                 "kernel_variants reference={}",

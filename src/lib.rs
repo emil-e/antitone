@@ -57,6 +57,16 @@ mod source_revision;
 pub mod source_store;
 #[cfg(feature = "editor")]
 pub mod viewport;
+#[cfg(all(
+    test,
+    target_os = "macos",
+    feature = "gpu",
+    feature = "export",
+    feature = "raw",
+    any(feature = "editor", feature = "ocio-reference")
+))]
+#[path = "../tests/support/working_precision.rs"]
+mod working_precision;
 
 #[cfg(all(feature = "ui", feature = "render"))]
 pub mod gpu_scopes;

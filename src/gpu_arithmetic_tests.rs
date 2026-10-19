@@ -149,7 +149,7 @@ fn compensated_arithmetic_and_polynomials_retain_precision() {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        let shader = ProcessingKernel::shader(false);
+        let shader = ProcessingKernel::shader();
         let shader = if let Some(path) = std::env::var_os("ANTITONE_KERNEL_CANDIDATE_WGSL") {
             println!(
                 "arithmetic candidate={}",

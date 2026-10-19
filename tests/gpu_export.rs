@@ -19,6 +19,8 @@ use antitone::{
 use glam::DVec3;
 use std::{path::Path, sync::Arc};
 use tiff::decoder::{Decoder, DecodingResult};
+#[path = "support/working_precision.rs"]
+mod working_precision;
 
 fn context() -> (wgpu::Device, wgpu::Queue, Arc<GpuRenderer>) {
     pollster::block_on(async {
@@ -142,7 +144,7 @@ fn gpu_tiff_matches_scalar_ocio_within_one_rgb16_code_on_authored_patches() {
 }
 
 #[test]
-fn gpu_exr_keeps_compensated_precision_through_ap0_on_authored_patches() {
+fn gpu_exr_uses_shared_working_precision_through_linear_ap0_on_authored_patches() {
     use exr::prelude::*;
     let (device, queue, renderer) = context();
     let (scan, calibration, roll, grade, composition) = source();
@@ -244,7 +246,7 @@ fn gpu_exr_keeps_compensated_precision_through_ap0_on_authored_patches() {
                         let quantization = 0.0009765625 * expected.abs() + 5.960464477539063e-8;
                         assert!(
                             (actual.to_f64() - expected).abs()
-                                <= 2e-12 + 2e-11 * expected.abs() + quantization
+                                <= working_precision::allowance(expected) + quantization
                         );
                     }
                     maximum = a
@@ -261,7 +263,7 @@ fn gpu_exr_keeps_compensated_precision_through_ap0_on_authored_patches() {
                         let quantization = f32::EPSILON as f64 * expected.abs();
                         assert!(
                             (*actual as f64 - expected).abs()
-                                <= 2e-12 + 2e-11 * expected.abs() + quantization
+                                <= working_precision::allowance(expected) + quantization
                         );
                     }
                     maximum = a
@@ -479,7 +481,8 @@ fn corrected_ordered_locals_reopen_after_native_permutations_and_rotated_coverag
                                     };
                                     assert!(
                                         (actual - expected).abs()
-                                            <= 2e-12 + 2e-11 * expected.abs() + quantization,
+                                            <= working_precision::allowance(expected)
+                                                + quantization,
                                         "corrected={corrected}, angle={angle}, precision={precision:?}, actual={actual}, expected={expected}"
                                     );
                                 }

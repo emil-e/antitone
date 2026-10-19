@@ -44,7 +44,7 @@ fn precise_kernels(device: &wgpu::Device, base: &ViewKernels) -> Arc<ViewKernels
         label: Some("original precise colour oracle"),
         source: wgpu::ShaderSource::Wgsl(
             [
-                ProcessingKernel::shader(true),
+                ProcessingKernel::shader(),
                 include_str!("shaders/view_geometry.wgsl").to_owned(),
                 local,
                 include_str!("shaders/test_view_reference.wgsl").to_owned(),

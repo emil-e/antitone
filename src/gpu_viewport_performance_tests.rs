@@ -31,7 +31,7 @@ async fn viewport_probe(
     });
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
     let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-    let kernel = ProcessingKernel::new(&device, &queue).await.unwrap();
+    let kernel = ProcessingKernel::new(&device).await.unwrap();
     let geometry = SourceGeometry::new([area.x, area.y, area.width, area.height], size).unwrap();
     let origin = [size[0] / 4, size[1] / 4];
     let crop_size = [size[0] / 2, size[1] / 2];
@@ -75,9 +75,9 @@ async fn viewport_probe(
         size[0],
         size[1]
     );
-    let shader = ProcessingKernel::shader(true);
+    let shader = ProcessingKernel::shader();
     assert_eq!(shader.matches(old).count(), 1);
-    let crop_kernel = shader_kernel(&device, &queue, shader.replace(old, &replacement)).await;
+    let crop_kernel = shader_kernel(&device, shader.replace(old, &replacement)).await;
     let mut full_source = ProcessingSource::new_continuous(&device, &pixels, matrix).unwrap();
     full_source.set_geometry(geometry).unwrap();
     let mut crop_source = ProcessingSource::new_continuous(&device, &crop_pixels, matrix).unwrap();

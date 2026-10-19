@@ -172,7 +172,7 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
             compilation_options: Default::default(),
             cache: None,
         });
-        let kernel = ProcessingKernel::new(&device, &queue).await.unwrap();
+        let kernel = ProcessingKernel::new(&device).await.unwrap();
         for (area, size) in [
             ([12, 12, 8640, 5760], [257, 173]),
             ([4000, 2600, 64, 32], [64, 32]),

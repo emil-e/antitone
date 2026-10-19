@@ -22,10 +22,6 @@ fn full_size_export_resources_with_retained_working_view() {
 #[derive(Clone, Copy, Debug)]
 enum Backend {
     Gpu,
-    PairedLru,
-    Serial,
-    Uncached,
-    Cached,
     #[cfg(feature = "ocio-reference")]
     Reference,
 }
@@ -37,15 +33,6 @@ fn exercise(
 ) -> Result<(), String> {
     let backends: &[Backend] = match std::env::var("ANTITONE_EXPORT_RESOURCE_BACKEND").as_deref() {
         Ok("gpu") | Err(_) => &[Backend::Gpu],
-        Ok("serial") => &[Backend::Serial],
-        Ok("paired-lru") => &[Backend::PairedLru],
-        Ok("compare-batch") => &[Backend::Serial, Backend::PairedLru],
-        Ok("compare-batch-reverse") => &[Backend::PairedLru, Backend::Serial],
-        Ok("compare-forecast") => &[Backend::PairedLru, Backend::Gpu],
-        Ok("compare-forecast-reverse") => &[Backend::Gpu, Backend::PairedLru],
-        Ok("uncached") => &[Backend::Uncached],
-        Ok("cached") => &[Backend::Cached],
-        Ok("compare-cache") => &[Backend::Uncached, Backend::Gpu],
         #[cfg(feature = "ocio-reference")]
         Ok("reference") => &[Backend::Reference],
         #[cfg(feature = "ocio-reference")]
@@ -90,6 +77,13 @@ fn exercise(
             crate::rendering::CpuRenderer::new(OutputTarget::Srgb)?.render(&[DVec3::splat(0.18)])
         })?;
     }
+    let clock = if device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+        Some(monitor.phase("export-clock-calibration", || {
+            crate::gpu::timestamp_ledger::Timebase::calibrate(device, queue)
+        })?)
+    } else {
+        None
+    };
     let kernels = monitor.phase("view-infrastructure", || {
         pollster::block_on(ViewKernels::new(device))
     })?;
@@ -242,25 +236,14 @@ fn exercise(
             if tiff_only && matches!(format, Format::Exr(_)) {
                 continue;
             }
-            let compare_outputs = backends.len() > 1
-                && backends.iter().all(|b| {
-                    matches!(
-                        b,
-                        Backend::Gpu
-                            | Backend::PairedLru
-                            | Backend::Serial
-                            | Backend::Uncached
-                            | Backend::Cached
-                    )
-                });
-            let mut expected_digest = None;
             for &backend in backends {
                 let path = directory.path().join("bounded-output");
                 let start = Instant::now();
                 let mut checks = 0_u64;
-                let mut tile_start = None;
-                let mut tile_time = Duration::ZERO;
-                let mut job_stats = (0_u64, 0_u64, 0_usize);
+                let mut gpu_samples = 0;
+                let mut dispatches = 0;
+                let mut readback_bytes = 0;
+                let mut peak_unit_payload = 0;
                 #[cfg(feature = "ocio-reference")]
                 let mut reference_samples = 0;
                 #[cfg(not(feature = "ocio-reference"))]
@@ -300,71 +283,34 @@ fn exercise(
                         Ok(())
                     };
                     match backend {
-                        Backend::Gpu
-                        | Backend::PairedLru
-                        | Backend::Serial
-                        | Backend::Uncached
-                        | Backend::Cached => {
+                        Backend::Gpu => {
                             let stage_start = Instant::now();
                             let (result, timings) = crate::export_timing::record(|| {
-                                let cached = matches!(backend, Backend::Cached)
-                                    || (matches!(
-                                        backend,
-                                        Backend::Gpu | Backend::PairedLru | Backend::Serial
-                                    ) && cache_eligible(composition));
-                                let mut check = || {
-                                    checks += 1;
-                                    if checks > 1 {
-                                        if checks.is_multiple_of(2) {
-                                            tile_start = Some(Instant::now());
-                                        } else {
-                                            tile_time += tile_start.take().unwrap().elapsed();
-                                        }
-                                    }
-                                    stop()
-                                };
-                                if matches!(backend, Backend::Serial) {
-                                    super::pair_tests::write_single(
+                                super::observation_clock::with_clock(clock.clone(), || {
+                                    super::area::write(
                                         &renderer,
                                         device,
                                         (queue, &gate),
                                         request,
                                         (&path, Overwrite::Refuse),
-                                        cached,
-                                        &mut check,
-                                    )
-                                } else if matches!(backend, Backend::PairedLru) {
-                                    write_job_with_policy(
-                                        &renderer,
-                                        device,
-                                        (queue, &gate),
-                                        request,
-                                        (&path, Overwrite::Refuse),
-                                        if cached {
-                                            CachePolicy::Lru
-                                        } else {
-                                            CachePolicy::None
+                                        || {
+                                            checks += 1;
+                                            stop()
                                         },
-                                        &mut check,
                                     )
-                                } else {
-                                    write_job(
-                                        &renderer,
-                                        device,
-                                        (queue, &gate),
-                                        request,
-                                        (&path, Overwrite::Refuse),
-                                        cached,
-                                        &mut check,
-                                    )
-                                }
+                                })
                             });
                             println!(
                                 "export_stage backend={backend:?} format={format:?} complete={}",
                                 result.is_ok()
                             );
                             timings.report(stage_start.elapsed());
-                            result.map(|stats| job_stats = stats)
+                            result.map(|stats| {
+                                gpu_samples = stats.source_pixels;
+                                dispatches = stats.submissions;
+                                readback_bytes = stats.readback_bytes;
+                                peak_unit_payload = stats.peak_unit_payload;
+                            })
                         }
                         #[cfg(feature = "ocio-reference")]
                         Backend::Reference => {
@@ -373,22 +319,14 @@ fn exercise(
                         }
                     }
                 })?;
-                let source_size = tile_size(area);
-                let gpu_samples =
-                    job_stats.1 * u64::from(source_size[0]) * u64::from(source_size[1]);
+
                 println!(
                     "export_resources backend={backend:?} reference_sample_evaluations={reference_samples} gpu_sample_evaluations={gpu_samples}"
                 );
                 println!(
-                    "export_resources file_bytes={} seconds={:.6} tile_requests={} original_tiles={} cache_hits={} peak_cached_payload_bytes={} tile_access_seconds={:.6} other_job_seconds={:.6}",
+                    "export_resources file_bytes={} seconds={:.6} dispatches={dispatches} readback_bytes={readback_bytes} peak_unit_payload_upper_bound={peak_unit_payload} stop_checks={checks}",
                     std::fs::metadata(&path).map_err(|e| e.to_string())?.len(),
-                    start.elapsed().as_secs_f64(),
-                    job_stats.0,
-                    job_stats.1,
-                    job_stats.0.saturating_sub(job_stats.1),
-                    job_stats.2,
-                    tile_time.as_secs_f64(),
-                    start.elapsed().saturating_sub(tile_time).as_secs_f64()
+                    start.elapsed().as_secs_f64()
                 );
                 monitor.phase(
                     "reopen-full-file-with-view-retained",
@@ -487,32 +425,6 @@ fn exercise(
                         Ok(())
                     },
                 )?;
-                if compare_outputs && matches!(format, Format::Tiff(_)) {
-                    let digest =
-                        monitor.phase("compare-complete-gpu-files", || -> Result<_, Error> {
-                            use std::io::Read;
-                            let mut file = std::fs::File::open(&path)
-                                .map_err(|e| Error::Export(e.to_string()))?;
-                            let mut hash = blake3::Hasher::new();
-                            let mut buffer = vec![0u8; 1024 * 1024];
-                            loop {
-                                let n = file
-                                    .read(&mut buffer)
-                                    .map_err(|e| Error::Export(e.to_string()))?;
-                                if n == 0 {
-                                    break;
-                                }
-                                hash.update(&buffer[..n]);
-                            }
-                            Ok(hash.finalize())
-                        })?;
-                    if let Some(expected) = expected_digest {
-                        assert_eq!(digest, expected, "complete GPU files differ");
-                        println!("export_batch complete_file_equal=true digest={digest}");
-                    } else {
-                        expected_digest = Some(digest);
-                    }
-                }
                 std::fs::remove_file(&path).map_err(|e| e.to_string())?;
             }
         }
@@ -524,7 +436,7 @@ fn exercise(
     Ok(())
 }
 
-fn resource_locals(
+pub(super) fn resource_locals(
     area: crate::geometry::SourceRegion,
 ) -> Vec<crate::local_adjustments::LocalAdjustment> {
     use crate::{

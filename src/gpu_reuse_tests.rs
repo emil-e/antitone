@@ -35,7 +35,28 @@ const ENTRIES: [&str; 9] = [
     "log_prefix_main",
 ];
 
-use super::response::ResponseKey;
+// Counterfactual reuse probes key native inversion separately from downstream grades.
+#[derive(Debug, PartialEq, Eq)]
+struct ResponseKey([u8; 176]);
+
+impl ResponseKey {
+    fn new(p: ProcessingParameters) -> Self {
+        let words = [
+            p.dmin_floor,
+            p.dmin_low,
+            p.dmin_tail,
+            p.gamma_mode.xyz().extend(0.),
+            p.gamma_low.xyz().extend(0.),
+            p.gamma_tail.xyz().extend(0.),
+            p.shape,
+            p.shape_tail,
+            p.anchor,
+            p.anchor_low,
+            p.anchor_tail,
+        ];
+        Self(bytemuck::cast_slice(&words).try_into().unwrap())
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 struct PrefixKey {
@@ -257,7 +278,7 @@ struct Probe {
 impl Probe {
     async fn new(device: &wgpu::Device, pixels: usize) -> Self {
         let shader = [
-            ProcessingKernel::shader(false).as_str(),
+            ProcessingKernel::shader().as_str(),
             include_str!("shaders/probe_reuse.wgsl"),
             include_str!("shaders/probe_log_prefix.wgsl"),
         ]
@@ -449,7 +470,7 @@ fn reuse_probe_preserves_both_source_formats_and_fractional_samples() {
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let baseline = ProcessingKernel::new_fused(&device, &queue).await.unwrap();
+        let baseline = ProcessingKernel::new(&device).await.unwrap();
         // Extra output slots expose writes from incomplete-workgroup lanes past the source count.
         let probe = Probe::new(&device, 128).await;
         let codes: Vec<[u16; 4]> = (0..67u32)
@@ -542,7 +563,7 @@ fn exact_response_and_prefix_reuse() {
             adapter.get_info()
         );
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let baseline = ProcessingKernel::new_fused(&device, &queue).await.unwrap();
+        let baseline = ProcessingKernel::new(&device).await.unwrap();
         let pixels: Vec<_> = (0u32..SIZE[0] * SIZE[1])
             .map(|i| {
                 [
@@ -775,7 +796,7 @@ fn reuse_edits_and_bypasses() {
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let baseline = ProcessingKernel::new_fused(&device, &queue).await.unwrap();
+        let baseline = ProcessingKernel::new(&device).await.unwrap();
         let mut pixels: Vec<_> = (0u32..SIZE[0] * SIZE[1])
             .map(|i| {
                 [

@@ -213,6 +213,7 @@ impl LoadCache {
 struct ExportIdentity {
     source: u64,
     request: u64,
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
 }
 
 enum Command {
@@ -988,29 +989,16 @@ fn backend(
                     if id.source != *loaded {
                         return Err(Error::UnusableSample("source changed before export"));
                     }
-                    let repairs = crate::repair_source::resolve_output_with(
-                        scan,
-                        &recipe,
-                        &mut crate::dust_repair::Execution {
-                            screener: Some(&mut dust_screening),
-                            cancelled: &|| false,
-                        },
-                    )?
-                    .ok_or_else(|| Error::Export("repair preparation cancelled".into()))?;
                     let renderer = renderers.get(&device, &queue)?;
-                    crate::gpu_export::write(
+                    let cancelled = || id.cancelled.load(std::sync::atomic::Ordering::Relaxed);
+                    crate::gpu_export::job::write(
                         &renderer,
                         &device,
                         (&queue, &submissions),
-                        crate::gpu_export::Request {
+                        crate::gpu_export::job::Job {
                             scan,
                             field: correction.as_ref().map(|c| c.gpu.clone()),
-                            look: recipe.look,
-                            calibration: recipe.neutral.calibration,
-                            roll: recipe.roll,
-                            grade: recipe.grade,
-                            repairs: &repairs,
-                            composition: recipe.composition,
+                            recipe: &recipe,
                             format: match format {
                                 OutputFormat::Tiff(target) => {
                                     crate::gpu_export::Format::Tiff(target)
@@ -1020,8 +1008,12 @@ fn backend(
                                 }
                             },
                         },
-                        &path,
-                        overwrite,
+                        (&path, overwrite),
+                        &mut crate::dust_repair::Execution {
+                            screener: Some(&mut dust_screening),
+                            cancelled: &cancelled,
+                        },
+                        || Ok(()),
                     )?;
                     Ok(path)
                 })()
@@ -1107,6 +1099,7 @@ pub struct Editor {
     next_request: u64,
     document_pending: Option<u64>,
     export_pending: Option<u64>,
+    export_cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
     transition: Option<Transition>,
     after_save: Option<Transition>,
     resume_transition: Option<Transition>,
@@ -1267,6 +1260,7 @@ impl Editor {
             next_request: 0,
             document_pending: None,
             export_pending: None,
+            export_cancel: None,
             transition: None,
             after_save: None,
             resume_transition: None,
@@ -1998,6 +1992,7 @@ impl Editor {
                 }
                 Message::Exported(id, result) if self.export_pending == Some(id) => {
                     self.export_pending = None;
+                    self.export_cancel.take();
                     let foreground = self.tasks.finish(TaskRequest::Export(id));
                     if !foreground {
                         // The captured file still completed, but a newer operation owns busy/status.
@@ -2233,6 +2228,8 @@ impl Editor {
             debug_assert_eq!(recipe.composition.area(), ready.area);
             let request = self.request_id();
             self.export_pending = Some(request);
+            let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            self.export_cancel = Some(cancelled.clone());
             self.thumbnails.cancel();
             self.busy = true;
             self.status = "Exporting full-resolution source; preview pixels are not used…".into();
@@ -2243,6 +2240,7 @@ impl Editor {
                     ExportIdentity {
                         source: self.id,
                         request,
+                        cancelled,
                     },
                     path,
                     format,
@@ -2253,6 +2251,7 @@ impl Editor {
             {
                 self.busy = false;
                 self.export_pending = None;
+                self.export_cancel.take();
                 self.tasks.finish(TaskRequest::Export(request));
                 self.status = "RAW worker stopped".into();
                 self.report_failure(FailureKind::Export, self.status.clone());

@@ -55,7 +55,7 @@ fn film_gpu_matches_full_f64_for_shapes_matrices_balances_wb_and_exposure_extrem
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let kernel = ProcessingKernel::new(&device, &queue).await.unwrap();
+        let kernel = ProcessingKernel::new(&device).await.unwrap();
         let matrices = [
             DMat3::from_cols(
                 DVec3::new(

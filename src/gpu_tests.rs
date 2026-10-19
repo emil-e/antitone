@@ -1,24 +1,11 @@
 use super::*;
 
 #[test]
-fn ordinary_and_compensated_export_select_distinct_math_and_optional_response_lookup() {
-    let ordinary = include_str!("shaders/processing_math.wgsl");
-    let export = include_str!("shaders/export_math.wgsl");
-    for lookup in [false, true] {
-        let general = ProcessingKernel::shader(lookup);
-        assert_eq!(ProcessingKernel::pipeline_shader(lookup, false), general);
-        assert!(general.contains(ordinary));
-        assert!(!general.contains(export));
-        let precise = ProcessingKernel::pipeline_shader(lookup, true);
-        assert!(precise.contains(export));
-        assert!(!precise.contains(ordinary));
-        assert!(precise.contains(include_str!("shaders/export.wgsl")));
-        for shader in [&general, &precise] {
-            for name in ["precise_log1p", "precise_exp", "precise_expm1"] {
-                assert_eq!(shader.matches(&format!("fn {name}(")).count(), 1);
-            }
-            assert_eq!(shader.contains("fn build_response_codes("), lookup);
-        }
+fn processing_assembles_one_precise_primitive_family() {
+    let shader = ProcessingKernel::shader();
+    assert!(shader.contains(include_str!("shaders/processing_math.wgsl")));
+    for name in ["precise_log1p", "precise_exp", "precise_expm1"] {
+        assert_eq!(shader.matches(&format!("fn {name}(")).count(), 1);
     }
 }
 
@@ -221,7 +208,7 @@ fn source_inspection_gpu_matches_scaled_camera_to_ap1_with_zero_diagnostic_flags
             DVec3::new(0., -0.22, 1.16),
         );
         let source = ProcessingSource::new(&device, &codes, matrix).unwrap();
-        let kernel = ProcessingKernel::new(&device, &queue).await.unwrap();
+        let kernel = ProcessingKernel::new(&device).await.unwrap();
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: 64,
@@ -361,7 +348,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
             compilation_options: Default::default(),
             cache: None,
         });
-        let kernel = ProcessingKernel::new(&device, &queue).await.unwrap();
+        let kernel = ProcessingKernel::new(&device).await.unwrap();
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: codes.len() as u64 * 48,

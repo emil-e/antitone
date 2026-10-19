@@ -138,7 +138,7 @@ impl ViewSourceSpec {
 
 pub(crate) fn colour_shader() -> String {
     [
-        ProcessingKernel::shader(true),
+        ProcessingKernel::shader(),
         include_str!("shaders/view_geometry.wgsl").to_owned(),
         include_str!("shaders/view_colour.wgsl").to_owned(),
     ]
@@ -173,7 +173,7 @@ impl ViewKernels {
         let inspection = compute(
             "physical-view linear source inspection",
             [
-                ProcessingKernel::shader(true),
+                ProcessingKernel::shader(),
                 include_str!("shaders/view_geometry.wgsl").to_owned(),
                 include_str!("shaders/view_inspection.wgsl").to_owned(),
             ]

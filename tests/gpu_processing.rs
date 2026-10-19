@@ -14,7 +14,7 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let kernel = ProcessingKernel::new(&device, &queue).await.unwrap();
+        let kernel = ProcessingKernel::new(&device).await.unwrap();
         let cal = Calibration {
             dmin: DVec3::new(0.75, 0.48, 0.22),
             dmax: DVec3::new(0.003, 0.006, 0.008),
@@ -217,10 +217,10 @@ fn metal_creative_primitives_cover_zero_y_continuations_and_signed_hdr_planes() 
                     include_str!("../src/shaders/camera_conversion.wgsl"),
                     include_str!("../src/shaders/flat_field.wgsl"),
                     include_str!("../src/shaders/film_response.wgsl"),
+                    include_str!("../src/shaders/film_inversion_precise.wgsl"),
                     include_str!("../src/shaders/processing_math.wgsl"),
                     include_str!("../src/shaders/photographic.wgsl"),
                     include_str!("../src/shaders/local_adjustments.wgsl"),
-                    include_str!("../src/shaders/response_table.wgsl"),
                     include_str!("../src/shaders/processing.wgsl"),
                     r#"
 @group(0) @binding(5) var<storage, read> grade_high: array<vec4f>;
@@ -493,5 +493,5 @@ fn gpu_parameters_reject_overflow_instead_of_silent_cpu_fallback() {
         )
         .is_err()
     );
-    assert_eq!(std::mem::size_of::<ProcessingParameters>(), 464);
+    assert_eq!(std::mem::size_of::<ProcessingParameters>(), 480);
 }

@@ -186,7 +186,7 @@ fn real_raw_local_preview_tiles_and_refinement() {
             scan.camera_model
         );
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let kernel = ProcessingKernel::new(&device, &queue).await.unwrap();
+        let kernel = ProcessingKernel::new(&device).await.unwrap();
         let renderer = api::renderer::GpuRenderer::new(&device, &queue)
             .await
             .unwrap();

@@ -148,7 +148,7 @@ impl GpuPhotoGrade {
             return Err(Error::Gpu("invalid neutral repair bound".into()));
         }
         let area = area.validate()?;
-        let (parameters, mut bound) = ProcessingParameters::positive_with_neutral_bound(
+        let (mut parameters, mut bound) = ProcessingParameters::positive_with_neutral_bound(
             calibration,
             roll,
             snapshot.global(),
@@ -175,6 +175,8 @@ impl GpuPhotoGrade {
             supported(peak)?;
             bound = output;
             sensitivities.push(sensitivity);
+            parameters.response_precision.x =
+                (f64::from(parameters.response_precision.x) / sensitivity.max(1.)) as f32;
             packed.push(LocalParameters::new(adjustment, area)?);
         }
         require_normal_precision(&sensitivities)?;
