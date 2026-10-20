@@ -93,7 +93,9 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
                     .original(&device, &mut encoder, kernel, &working, &input, geometry)
                     .unwrap();
             }
-            reconstruction.encode(&device, &mut encoder, &unit, &texture, &working);
+            reconstruction
+                .encode(&device, &mut encoder, &unit, &texture, &working)
+                .unwrap();
             reconstruction
                 .read(&device, gate.submit(&queue, [encoder.finish()]), [128; 2])
                 .unwrap()

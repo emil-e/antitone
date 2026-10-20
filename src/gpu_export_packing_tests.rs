@@ -105,7 +105,10 @@ fn invalid_readback_preserves_existing_destination_for_tiff_and_both_exr_precisi
             (&path, Overwrite::Confirmed),
             |_, extent| {
                 assert_eq!(extent, [2, 1]);
-                Ok(vec![[0.25, 0.5, 0.75, 0.], [0.25, 0.5, 0.75, -1.]])
+                Ok(OutputBlock::Linear(vec![
+                    [0.25, 0.5, 0.75, 0.],
+                    [0.25, 0.5, 0.75, -1.],
+                ]))
             },
             || {
                 published = true;

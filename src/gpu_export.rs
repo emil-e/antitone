@@ -22,6 +22,8 @@ mod area;
 #[cfg(feature = "project")]
 #[path = "gpu_export_job.rs"]
 pub(crate) mod job;
+#[path = "gpu_rgb16.rs"]
+mod rgb16;
 
 #[cfg(all(test, target_os = "macos", feature = "ocio-reference"))]
 #[path = "gpu_export_common_exr_tests.rs"]
@@ -40,6 +42,14 @@ mod resource_tests;
 mod tests;
 
 const TILE: [u32; 2] = export::BLOCK;
+
+enum OutputBlock {
+    Linear(Vec<[f32; 4]>),
+    Rgb16 {
+        target: OutputTarget,
+        words: Vec<[u32; 2]>,
+    },
+}
 
 #[derive(Clone, Copy, Debug)]
 pub enum Format {
@@ -99,7 +109,7 @@ fn encode_with_checked(
     format: Format,
     metadata: ProcessingMetadata,
     destination: (&Path, Overwrite),
-    build: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<[f32; 4]>, Error>,
+    build: impl FnMut([u32; 2], [u32; 2]) -> Result<OutputBlock, Error>,
     before_publish: impl FnOnce() -> Result<(), Error>,
 ) -> Result<(), Error> {
     encode_ordered_checked(
@@ -119,7 +129,7 @@ fn encode_ordered_checked(
     metadata: ProcessingMetadata,
     (path, overwrite): (&Path, Overwrite),
     order: export::BlockOrder,
-    mut build: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<[f32; 4]>, Error>,
+    mut build: impl FnMut([u32; 2], [u32; 2]) -> Result<OutputBlock, Error>,
     before_publish: impl FnOnce() -> Result<(), Error>,
 ) -> Result<(), Error> {
     let [width, height] = composition.size();
@@ -131,7 +141,17 @@ fn encode_ordered_checked(
             target,
             metadata,
             order,
-            |origin, extent| encode_readback(target, build(origin, extent)?),
+            |origin, extent| match build(origin, extent)? {
+                OutputBlock::Rgb16 {
+                    target: encoded_target,
+                    words,
+                } if encoded_target == target => {
+                    timed!(WorkingPack, rgb16::decode(&words))
+                }
+                #[cfg(test)]
+                OutputBlock::Linear(pixels) => encode_readback(target, pixels),
+                _ => Err(Error::Gpu("unexpected RGB16 output representation".into())),
+            },
             before_publish,
         ),
         Format::Exr(precision) => export::exr_blocks_checked(
@@ -139,7 +159,12 @@ fn encode_ordered_checked(
             size,
             precision,
             metadata,
-            |origin, extent| working_readback(build(origin, extent)?),
+            |origin, extent| match build(origin, extent)? {
+                OutputBlock::Linear(pixels) => working_readback(pixels),
+                _ => Err(Error::Gpu(
+                    "expected scene-linear output representation".into(),
+                )),
+            },
             before_publish,
         ),
     }
@@ -155,6 +180,7 @@ fn readback_rgb(pixel: &[f32; 4]) -> Result<Vec3, Error> {
     Ok(Vec3::new(pixel[0], pixel[1], pixel[2]))
 }
 
+#[cfg(test)]
 fn encode_readback(target: OutputTarget, pixels: Vec<[f32; 4]>) -> Result<Vec<[u16; 3]>, Error> {
     // Give invalid GPU contribution markers diagnostic priority over target-range failures.
     timed!(WorkingPack, {
@@ -182,3 +208,6 @@ fn working_readback(pixels: Vec<[f32; 4]>) -> Result<Vec<DVec3>, Error> {
 #[cfg(all(test, target_os = "macos"))]
 #[path = "gpu_export_packing_tests.rs"]
 mod packing_tests;
+#[cfg(all(test, target_os = "macos"))]
+#[path = "gpu_rgb16_publication_tests.rs"]
+mod rgb16_publication_tests;

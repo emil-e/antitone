@@ -103,10 +103,16 @@ pub(super) struct Reconstructor {
     pipeline: wgpu::ComputePipeline,
     output: wgpu::Buffer,
     readback: wgpu::Buffer,
+    rgb16: Option<(OutputTarget, rgb16::Rgb16, wgpu::Buffer)>,
 }
 
 impl Reconstructor {
+    #[cfg(test)]
     pub fn new(device: &wgpu::Device) -> Result<Self, Error> {
+        Self::new_output(device, None)
+    }
+
+    fn new_output(device: &wgpu::Device, target: Option<OutputTarget>) -> Result<Self, Error> {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("cell-local export area reconstruction"),
@@ -136,10 +142,23 @@ impl Reconstructor {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
+        let rgb16 = target
+            .map(|target| {
+                let kernel = rgb16::Rgb16::new(device, target)?;
+                let packed = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("bounded RGB16 output records"),
+                    size: u64::from(TILE[0]) * u64::from(TILE[1]) * 8,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                });
+                Ok::<_, Error>((target, kernel, packed))
+            })
+            .transpose()?;
         Ok(Self {
             pipeline,
             output,
             readback,
+            rgb16,
         })
     }
 
@@ -150,7 +169,7 @@ impl Reconstructor {
         unit: &Unit,
         texture: &wgpu::Texture,
         working: &wgpu::Buffer,
-    ) {
+    ) -> Result<(), Error> {
         let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("tile-local backward affine map"),
             contents: bytemuck::bytes_of(&unit.mapping),
@@ -203,22 +222,49 @@ impl Reconstructor {
                 1,
             );
         }
+        let count = unit.mapping.sizes[2] * unit.mapping.sizes[3];
+        let output = if let Some((_, kernel, packed)) = &self.rgb16 {
+            kernel.encode(device, encoder, &self.output, packed, count)?;
+            packed
+        } else {
+            &self.output
+        };
         encoder.copy_buffer_to_buffer(
-            &self.output,
+            output,
             0,
             &self.readback,
             0,
-            u64::from(unit.mapping.sizes[2]) * u64::from(unit.mapping.sizes[3]) * 16,
+            u64::from(count) * self.bytes_per_pixel(),
         );
+        Ok(())
     }
 
+    fn bytes_per_pixel(&self) -> u64 {
+        if self.rgb16.is_some() { 8 } else { 16 }
+    }
+
+    #[cfg(test)]
     fn read(
         &self,
         device: &wgpu::Device,
         submission: wgpu::SubmissionIndex,
         extent: [u32; 2],
     ) -> Result<Vec<[f32; 4]>, Error> {
-        let bytes = u64::from(extent[0]) * u64::from(extent[1]) * 16;
+        match self.read_output(device, submission, extent)? {
+            OutputBlock::Linear(pixels) => Ok(pixels),
+            _ => Err(Error::Gpu(
+                "expected linear reconstruction test output".into(),
+            )),
+        }
+    }
+
+    fn read_output(
+        &self,
+        device: &wgpu::Device,
+        submission: wgpu::SubmissionIndex,
+        extent: [u32; 2],
+    ) -> Result<OutputBlock, Error> {
+        let bytes = u64::from(extent[0]) * u64::from(extent[1]) * self.bytes_per_pixel();
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         timed!(
             MapArm,
@@ -242,7 +288,14 @@ impl Reconstructor {
             ReadbackCopy,
             self.readback
                 .get_mapped_range(0..bytes)
-                .map(|mapped| bytemuck::cast_slice::<u8, [f32; 4]>(&mapped).to_vec())
+                .map(|mapped| match &self.rgb16 {
+                    Some((target, _, _)) => OutputBlock::Rgb16 {
+                        target: *target,
+                        words: bytemuck::cast_slice::<u8, [u32; 2]>(&mapped).to_vec(),
+                    },
+                    None =>
+                        OutputBlock::Linear(bytemuck::cast_slice::<u8, [f32; 4]>(&mapped).to_vec()),
+                })
                 .map_err(|e| Error::Gpu(e.to_string()))
         );
         timed!(ReadbackUnmap, self.readback.unmap());
@@ -325,6 +378,7 @@ pub(super) struct Stats {
     pub look_payload_bytes: u64,
     pub retained_repair_payload_bytes: u64,
     pub peak_repair_upload_bytes: u64,
+    pub rgb16_payload_bytes: u64,
 }
 
 #[cfg(not(all(test, target_os = "macos")))]
@@ -377,10 +431,19 @@ pub(super) fn write(
         .filter(|_| matches!(request.format, Format::Tiff(_)))
         .map(|asset| renderer.look_resource(device, asset))
         .transpose()?;
-    let reconstruction = Reconstructor::new(device)?;
+    let target = match request.format {
+        Format::Tiff(target) => Some(target),
+        Format::Exr(_) => None,
+    };
+    let reconstruction = timed!(Setup, Reconstructor::new_output(device, target))?;
     let mut originals: Option<Originals> = None;
     #[cfg(all(test, target_os = "macos"))]
     let mut stats = Stats {
+        rgb16_payload_bytes: if reconstruction.rgb16.is_some() {
+            rgb16::THRESHOLD_BYTES
+        } else {
+            0
+        },
         retained_repair_payload_bytes: repairs.byte_len(),
         look_payload_bytes: _look_resource
             .as_ref()
@@ -526,7 +589,7 @@ pub(super) fn write(
                     &unit,
                     &source.texture,
                     &source.working,
-                );
+                )?;
                 Ok::<_, Error>(encoder)
             })?;
             #[cfg(all(test, target_os = "macos"))]
@@ -541,7 +604,10 @@ pub(super) fn write(
             if let Some(probe) = timing.as_mut() {
                 probe.arm();
             }
-            let pixels = timed!(TileAccess, reconstruction.read(device, submission, extent))?;
+            let pixels = timed!(
+                TileAccess,
+                reconstruction.read_output(device, submission, extent)
+            )?;
             #[cfg(all(test, target_os = "macos"))]
             if let Some(probe) = timing.as_mut() {
                 probe.complete(device)?;
@@ -552,7 +618,8 @@ pub(super) fn write(
                 stats.source_pixels += u64::from(size[0]) * u64::from(size[1]);
                 stats.destination_pixels += u64::from(extent[0]) * u64::from(extent[1]);
                 stats.submissions += 1;
-                stats.readback_bytes += u64::from(extent[0]) * u64::from(extent[1]) * 16;
+                stats.readback_bytes +=
+                    u64::from(extent[0]) * u64::from(extent[1]) * reconstruction.bytes_per_pixel();
                 let repair_upload = repairs.upload_scratch_bytes(unit.bounds);
                 stats.peak_repair_upload_bytes = stats.peak_repair_upload_bytes.max(repair_upload);
                 // Conservative explicit payload upper bound, not sampled process footprint. Count
@@ -572,7 +639,9 @@ pub(super) fn write(
                             } else {
                                 0
                             })
-                        + u64::from(TILE[0]) * u64::from(TILE[1]) * 32
+                        + u64::from(TILE[0])
+                            * u64::from(TILE[1])
+                            * (32 + if reconstruction.rgb16.is_some() { 8 } else { 0 })
                         + u64::from(extent[0]) * u64::from(extent[1]) * 42
                         + repair_upload
                         + unit
@@ -602,7 +671,7 @@ pub(super) fn write(
             probe.stats.report();
         }
         println!(
-            "export_area source_pixels={} destination_pixels={} submissions={} readback_bytes={} unit_payload_upper_bound_bytes={} job_look_payload_bytes={} source_allocations={} retained_repair_payload_bytes={} peak_repair_upload_bytes={}",
+            "export_area source_pixels={} destination_pixels={} submissions={} readback_bytes={} unit_payload_upper_bound_bytes={} job_look_payload_bytes={} source_allocations={} retained_repair_payload_bytes={} peak_repair_upload_bytes={} job_rgb16_payload_bytes={}",
             stats.source_pixels,
             stats.destination_pixels,
             stats.submissions,
@@ -611,7 +680,8 @@ pub(super) fn write(
             stats.look_payload_bytes,
             stats.source_allocations,
             stats.retained_repair_payload_bytes,
-            stats.peak_repair_upload_bytes
+            stats.peak_repair_upload_bytes,
+            stats.rgb16_payload_bytes
         );
     }
     Ok(stats)

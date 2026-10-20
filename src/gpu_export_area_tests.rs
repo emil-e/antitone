@@ -71,7 +71,9 @@ pub(super) fn reconstructed(
         usage: wgpu::BufferUsages::STORAGE,
     });
     let mut encoder = device.create_command_encoder(&Default::default());
-    engine.encode(device, &mut encoder, unit, &texture, &working);
+    engine
+        .encode(device, &mut encoder, unit, &texture, &working)
+        .unwrap();
     let submission = SubmissionGate::default().submit(queue, [encoder.finish()]);
     engine
         .read(
