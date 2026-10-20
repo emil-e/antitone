@@ -581,25 +581,7 @@ pub(super) fn write(
                             .map_or(4, |bits| bits.len() as u64 * 8),
                 );
             }
-            timed!(
-                WorkingPack,
-                pixels
-                    .into_iter()
-                    .map(|p| {
-                        if p[3] < 0. || p.iter().any(|v| !v.is_finite()) {
-                            return Err(Error::Gpu(format!(
-                                "export reconstruction invalid contributing input/support marker={}",
-                                p[3]
-                            )));
-                        }
-                        Ok(DVec3::new(
-                            f64::from(p[0]),
-                            f64::from(p[1]),
-                            f64::from(p[2]),
-                        ))
-                    })
-                    .collect()
-            )
+            Ok(pixels)
         },
         || {
             #[cfg(all(test, target_os = "macos"))]

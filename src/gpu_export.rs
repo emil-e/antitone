@@ -14,7 +14,7 @@ use crate::{
     rendering::OutputTarget,
     scan::Scan,
 };
-use glam::DVec3;
+use glam::{DVec3, Vec3};
 use std::{path::Path, sync::Arc};
 
 #[path = "gpu_export_area.rs"]
@@ -99,7 +99,7 @@ fn encode_with_checked(
     format: Format,
     metadata: ProcessingMetadata,
     destination: (&Path, Overwrite),
-    build: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<DVec3>, Error>,
+    build: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<[f32; 4]>, Error>,
     before_publish: impl FnOnce() -> Result<(), Error>,
 ) -> Result<(), Error> {
     encode_ordered_checked(
@@ -119,7 +119,7 @@ fn encode_ordered_checked(
     metadata: ProcessingMetadata,
     (path, overwrite): (&Path, Overwrite),
     order: export::BlockOrder,
-    mut build: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<DVec3>, Error>,
+    mut build: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<[f32; 4]>, Error>,
     before_publish: impl FnOnce() -> Result<(), Error>,
 ) -> Result<(), Error> {
     let [width, height] = composition.size();
@@ -131,16 +131,7 @@ fn encode_ordered_checked(
             target,
             metadata,
             order,
-            |origin, extent| {
-                let linear = build(origin, extent)?;
-                timed!(TargetEncode, {
-                    let linear = timed!(
-                        TargetLayout,
-                        linear.iter().map(|v| v.as_vec3()).collect::<Vec<_>>()
-                    );
-                    target.encode_u16(&linear)
-                })
-            },
+            |origin, extent| encode_readback(target, build(origin, extent)?),
             before_publish,
         ),
         Format::Exr(precision) => export::exr_blocks_checked(
@@ -148,8 +139,46 @@ fn encode_ordered_checked(
             size,
             precision,
             metadata,
-            build,
+            |origin, extent| working_readback(build(origin, extent)?),
             before_publish,
         ),
     }
 }
+
+fn readback_rgb(pixel: &[f32; 4]) -> Result<Vec3, Error> {
+    if pixel[3] < 0. || pixel.iter().any(|v| !v.is_finite()) {
+        return Err(Error::Gpu(format!(
+            "export reconstruction invalid contributing input/support marker={}",
+            pixel[3]
+        )));
+    }
+    Ok(Vec3::new(pixel[0], pixel[1], pixel[2]))
+}
+
+fn encode_readback(target: OutputTarget, pixels: Vec<[f32; 4]>) -> Result<Vec<[u16; 3]>, Error> {
+    // Give invalid GPU contribution markers diagnostic priority over target-range failures.
+    timed!(WorkingPack, {
+        for pixel in &pixels {
+            readback_rgb(pixel)?;
+        }
+        Ok::<_, Error>(())
+    })?;
+    timed!(
+        TargetEncode,
+        target.encode_u16_pixels(pixels.into_iter().map(|p| Vec3::new(p[0], p[1], p[2])))
+    )
+}
+
+fn working_readback(pixels: Vec<[f32; 4]>) -> Result<Vec<DVec3>, Error> {
+    timed!(
+        WorkingPack,
+        pixels
+            .iter()
+            .map(|p| readback_rgb(p).map(|rgb| rgb.as_dvec3()))
+            .collect()
+    )
+}
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "gpu_export_packing_tests.rs"]
+mod packing_tests;

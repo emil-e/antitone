@@ -82,8 +82,15 @@ impl OutputTarget {
     }
 
     pub fn encode_u16(self, linear: &[Vec3]) -> Result<Vec<[u16; 3]>, Error> {
+        self.encode_u16_pixels(linear.iter().copied())
+    }
+
+    pub(crate) fn encode_u16_pixels(
+        self,
+        linear: impl IntoIterator<Item = Vec3>,
+    ) -> Result<Vec<[u16; 3]>, Error> {
         linear
-            .iter()
+            .into_iter()
             .map(|pixel| {
                 let mut encoded = [0; 3];
                 for (channel, value) in pixel.to_array().into_iter().enumerate() {
