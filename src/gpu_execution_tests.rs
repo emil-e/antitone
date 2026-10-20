@@ -79,6 +79,8 @@ async fn variant(
         global_only,
         kernel: ProcessingKernel {
             pipeline,
+            // These dispatch-size/global-only diagnostics do not apply repairs.
+            repair: baseline.repair.clone(),
             output_binding: 1,
             output_stride: 16,
             workgroup_size: workgroup,

@@ -133,10 +133,13 @@ fn encode_ordered_checked(
             order,
             |origin, extent| {
                 let linear = build(origin, extent)?;
-                timed!(
-                    TargetEncode,
-                    target.encode_u16(&linear.iter().map(|v| v.as_vec3()).collect::<Vec<_>>())
-                )
+                timed!(TargetEncode, {
+                    let linear = timed!(
+                        TargetLayout,
+                        linear.iter().map(|v| v.as_vec3()).collect::<Vec<_>>()
+                    );
+                    target.encode_u16(&linear)
+                })
             },
             before_publish,
         ),

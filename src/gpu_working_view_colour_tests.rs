@@ -4,13 +4,15 @@ use super::*;
 mod comparison;
 #[path = "gpu_working_view_oracle_tests.rs"]
 mod oracles;
+#[path = "gpu_shared_colour_tests.rs"]
+mod shared_colour;
 use crate::{
     geometry::{FramePoint, SourcePoint, SourceRegion},
     local_adjustments::{GradientMask, LocalAdjustment},
 };
 
 fn precise_kernels(device: &wgpu::Device, base: &ViewKernels) -> Arc<ViewKernels> {
-    let locals = include_str!("shaders/local_adjustments.wgsl");
+    let locals = include_str!("shaders/photographic_precise.wgsl");
     let local = &locals[locals.find("fn local_grade(").unwrap()..];
     let replace = |text: String, old: &str, new: &str| {
         assert_eq!(text.matches(old).count(), 1, "precise oracle seam: {old}");

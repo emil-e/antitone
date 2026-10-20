@@ -132,10 +132,6 @@ fn global_creative_grade() -> CreativeGrade {
         );
 }
 
-fn photographic_grade(input: array<Triple, 3>) -> array<Triple, 3> {
-    return apply_creative_grade(input, global_creative_grade());
-}
-
 fn apply_creative_grade(input: array<Triple, 3>, grade: CreativeGrade) -> array<Triple, 3> {
     var rgb = input;
     if !precise_eq(grade.amount, number(1.0)) {

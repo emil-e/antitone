@@ -28,7 +28,7 @@ mod precision_margins;
 pub(crate) mod tests;
 
 #[test]
-fn shared_export_response_changes_only_inversion_and_preserves_floor_and_stage_routing() {
+fn shared_export_assembles_guarded_response_and_common_colour_without_changing_stage_routing() {
     let text = shader();
     assert_eq!(text.matches("fn invert_film(").count(), 1);
     assert!(text.contains("precise_sub(reference, sample).h / sample.h"));
@@ -37,11 +37,15 @@ fn shared_export_response_changes_only_inversion_and_preserves_floor_and_stage_r
         include_str!("shaders/flat_field.wgsl"),
         include_str!("shaders/photographic.wgsl"),
         include_str!("shaders/local_adjustments.wgsl"),
+        include_str!("shaders/photographic_colour.wgsl"),
+        include_str!("shaders/photographic_export.wgsl"),
         include_str!("shaders/processing.wgsl"),
     ] {
         assert!(text.contains(source));
     }
     let control = ProcessingKernel::shader();
+    assert!(control.contains(include_str!("shaders/photographic_precise.wgsl")));
+    assert!(!text.contains(include_str!("shaders/photographic_precise.wgsl")));
     assert!(!control.contains("response_log1p"));
     assert!(control.contains(include_str!("shaders/film_inversion_precise.wgsl")));
 }

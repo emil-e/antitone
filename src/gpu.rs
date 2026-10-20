@@ -506,6 +506,7 @@ impl ProcessingSource {
 
 pub struct ProcessingKernel {
     pipeline: wgpu::ComputePipeline,
+    repair: wgpu::ComputePipeline,
     output_binding: u32,
     output_stride: u64,
     workgroup_size: u32,
@@ -520,10 +521,13 @@ impl ProcessingKernel {
     }
 
     fn shader() -> String {
-        Self::shader_with_response(include_str!("shaders/film_inversion_precise.wgsl"))
+        Self::shader_with_response(
+            include_str!("shaders/film_inversion_precise.wgsl"),
+            include_str!("shaders/photographic_precise.wgsl"),
+        )
     }
 
-    fn shader_with_response(response: &str) -> String {
+    fn shader_with_response(response: &str, colour: &str) -> String {
         let common = [
             include_str!("shaders/camera_conversion.wgsl"),
             include_str!("shaders/flat_field.wgsl"),
@@ -532,6 +536,8 @@ impl ProcessingKernel {
             include_str!("shaders/processing_math.wgsl"),
             include_str!("shaders/photographic.wgsl"),
             include_str!("shaders/local_adjustments.wgsl"),
+            include_str!("shaders/photographic_colour.wgsl"),
+            colour,
         ]
         .join("\n");
         [common.as_str(), include_str!("shaders/processing.wgsl")].join("\n")
@@ -539,7 +545,10 @@ impl ProcessingKernel {
 
     #[cfg(all(feature = "raw", feature = "export"))]
     pub(crate) fn export_shader() -> String {
-        Self::shader_with_response(include_str!("shaders/film_inversion_export.wgsl"))
+        Self::shader_with_response(
+            include_str!("shaders/film_inversion_export.wgsl"),
+            include_str!("shaders/photographic_export.wgsl"),
+        )
     }
 
     #[cfg(all(feature = "raw", feature = "export"))]
@@ -551,7 +560,15 @@ impl ProcessingKernel {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("camera originals to AP1 photographic processing"),
-            source: wgpu::ShaderSource::Wgsl(shader.into()),
+            source: wgpu::ShaderSource::Wgsl(
+                [
+                    shader.as_str(),
+                    include_str!("shaders/footprint.wgsl"),
+                    include_str!("shaders/repairs.wgsl"),
+                ]
+                .join("\n")
+                .into(),
+            ),
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("Antitone processing"),
@@ -561,11 +578,20 @@ impl ProcessingKernel {
             compilation_options: Default::default(),
             cache: None,
         });
+        let repair = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("source-coordinate repair grading"),
+            layout: None,
+            module: &module,
+            entry_point: Some("repair_original"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
         if let Some(error) = scope.pop().await {
             return Err(Error::Gpu(error.to_string()));
         }
         Ok(Self {
             pipeline,
+            repair,
             output_binding: 1,
             output_stride: 16,
             workgroup_size: 64,

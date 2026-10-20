@@ -228,7 +228,6 @@ impl std::fmt::Debug for Snapshot {
 }
 
 pub(crate) struct Kernels {
-    original: wgpu::ComputePipeline,
     #[cfg(feature = "editor")]
     neutral: wgpu::ComputePipeline,
     #[cfg(feature = "editor")]
@@ -236,6 +235,12 @@ pub(crate) struct Kernels {
 }
 
 impl Kernels {
+    #[cfg(not(feature = "editor"))]
+    pub async fn new(_device: &wgpu::Device) -> Result<Self, Error> {
+        Ok(Self {})
+    }
+
+    #[cfg(feature = "editor")]
     pub async fn new(device: &wgpu::Device) -> Result<Self, Error> {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let shader = [
@@ -259,10 +264,7 @@ impl Kernels {
             })
         };
         let result = Self {
-            original: pipeline("repair_original"),
-            #[cfg(feature = "editor")]
             neutral: pipeline("repair_neutral"),
-            #[cfg(feature = "editor")]
             copy: pipeline("repair_copy"),
         };
         if let Some(error) = scope.pop().await {
@@ -271,7 +273,7 @@ impl Kernels {
         Ok(result)
     }
 
-    /// Only support pixels are overwritten; the normal precise original pipeline is untouched elsewhere.
+    /// Grade only support pixels with the same operators as the selected original kernel.
     pub fn original(
         &self,
         device: &wgpu::Device,
@@ -285,7 +287,7 @@ impl Kernels {
             return Ok(());
         }
         encode_original(
-            &self.original,
+            &kernel.repair,
             device,
             encoder,
             kernel,

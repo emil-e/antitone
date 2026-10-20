@@ -4,29 +4,9 @@ use super::*;
 mod viewport_tests;
 
 async fn shader_kernel(device: &wgpu::Device, shader: String) -> ProcessingKernel {
-    let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("isolated direct-processing kernel variant"),
-        source: wgpu::ShaderSource::Wgsl(shader.into()),
-    });
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: None,
-        layout: None,
-        module: &module,
-        entry_point: Some("main"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
-    assert!(scope.pop().await.is_none(), "variant validation failed");
-    ProcessingKernel {
-        pipeline,
-        output_binding: 1,
-        output_stride: 16,
-        workgroup_size: 64,
-        identity: flat::identity_nodes(device),
-        empty_locals: local::empty_buffer(device),
-        empty_local_context: local::context_buffer(device, 0, [0; 4]).unwrap(),
-    }
+    ProcessingKernel::build_pipeline(device, shader)
+        .await
+        .unwrap()
 }
 
 #[derive(Debug, PartialEq)]

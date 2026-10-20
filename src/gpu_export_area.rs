@@ -220,25 +220,32 @@ impl Reconstructor {
     ) -> Result<Vec<[f32; 4]>, Error> {
         let bytes = u64::from(extent[0]) * u64::from(extent[1]) * 16;
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
-        self.readback
-            .map_async(wgpu::MapMode::Read, 0..bytes, move |result| {
-                let _ = tx.send(result);
-            });
-        device
-            .poll(wgpu::PollType::Wait {
-                submission_index: Some(submission),
-                timeout: Some(std::time::Duration::from_secs(10)),
-            })
-            .map_err(|e| Error::Gpu(e.to_string()))?;
-        rx.recv_timeout(std::time::Duration::from_secs(2))
-            .map_err(|e| Error::Gpu(e.to_string()))?
-            .map_err(|e| Error::Gpu(e.to_string()))?;
-        let result = self
-            .readback
-            .get_mapped_range(0..bytes)
-            .map(|mapped| bytemuck::cast_slice::<u8, [f32; 4]>(&mapped).to_vec())
-            .map_err(|e| Error::Gpu(e.to_string()));
-        self.readback.unmap();
+        timed!(
+            MapArm,
+            self.readback
+                .map_async(wgpu::MapMode::Read, 0..bytes, move |result| {
+                    let _ = tx.send(result);
+                })
+        );
+        timed!(DeviceWait, {
+            device
+                .poll(wgpu::PollType::Wait {
+                    submission_index: Some(submission),
+                    timeout: Some(std::time::Duration::from_secs(10)),
+                })
+                .map_err(|e| Error::Gpu(e.to_string()))?;
+            rx.recv_timeout(std::time::Duration::from_secs(2))
+                .map_err(|e| Error::Gpu(e.to_string()))?
+                .map_err(|e| Error::Gpu(e.to_string()))
+        })?;
+        let result = timed!(
+            ReadbackCopy,
+            self.readback
+                .get_mapped_range(0..bytes)
+                .map(|mapped| bytemuck::cast_slice::<u8, [f32; 4]>(&mapped).to_vec())
+                .map_err(|e| Error::Gpu(e.to_string()))
+        );
+        timed!(ReadbackUnmap, self.readback.unmap());
         result
     }
 }
@@ -443,87 +450,93 @@ pub(super) fn write(
                     size[1]
                 )
             )?;
-            let mut encoder = device.create_command_encoder(&Default::default());
-            #[cfg(all(test, target_os = "macos"))]
-            if let Some(probe) = timing.as_ref() {
-                source.source.write_continuous(queue, &pixels)?;
-                kernel.encode_grade_with_query(
-                    device,
-                    &mut encoder,
-                    &source.source,
-                    &source.working,
-                    &grade,
-                    probe.processing_queries()?,
-                )?;
-            } else {
-                source.source.write_continuous(queue, &pixels)?;
-                kernel.encode_grade(
-                    device,
-                    &mut encoder,
-                    &source.source,
-                    &source.working,
-                    &grade,
-                )?;
-            }
-            #[cfg(not(all(test, target_os = "macos")))]
-            {
-                source.source.write_continuous(queue, &pixels)?;
-                kernel.encode_grade(
-                    device,
-                    &mut encoder,
-                    &source.source,
-                    &source.working,
-                    &grade,
-                )?;
-            }
-            if !repairs.0.is_empty() {
-                let mut input = crate::gpu::ProcessingInput::from(grade.clone());
-                input.repairs = repairs.clone();
-                renderer.repairs.original(
-                    device,
-                    &mut encoder,
-                    kernel,
-                    &source.working,
-                    &input,
-                    geometry,
-                )?;
-            }
-            if let (Format::Tiff(target), Some(binding)) = (request.format, source.binding.as_ref())
-            {
-                binding.encode_look(renderer, device, &mut encoder)?;
-                let view = source.texture.create_view(&Default::default());
-                {
-                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("per-original ACES before area reconstruction"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &view,
-                            depth_slice: None,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                                store: wgpu::StoreOp::Store,
-                            },
-                        })],
-                        ..Default::default()
-                    });
-                    pass.set_pipeline(&renderer.target(target).pipeline);
-                    pass.set_bind_group(0, &binding.group, &[]);
-                    pass.draw(0..3, 0..1);
+            let encoder = timed!(CommandEncode, {
+                let mut encoder = device.create_command_encoder(&Default::default());
+                #[cfg(all(test, target_os = "macos"))]
+                if let Some(probe) = timing.as_ref() {
+                    timed!(SourceUpload, source.source.write_continuous(queue, &pixels))?;
+                    kernel.encode_grade_with_query(
+                        device,
+                        &mut encoder,
+                        &source.source,
+                        &source.working,
+                        &grade,
+                        probe.processing_queries()?,
+                    )?;
+                } else {
+                    timed!(SourceUpload, source.source.write_continuous(queue, &pixels))?;
+                    kernel.encode_grade(
+                        device,
+                        &mut encoder,
+                        &source.source,
+                        &source.working,
+                        &grade,
+                    )?;
                 }
-            }
-            reconstruction.encode(
-                device,
-                &mut encoder,
-                &unit,
-                &source.texture,
-                &source.working,
-            );
+                #[cfg(not(all(test, target_os = "macos")))]
+                {
+                    timed!(SourceUpload, source.source.write_continuous(queue, &pixels))?;
+                    kernel.encode_grade(
+                        device,
+                        &mut encoder,
+                        &source.source,
+                        &source.working,
+                        &grade,
+                    )?;
+                }
+                if !repairs.0.is_empty() {
+                    let mut input = crate::gpu::ProcessingInput::from(grade.clone());
+                    input.repairs = repairs.clone();
+                    renderer.repairs.original(
+                        device,
+                        &mut encoder,
+                        kernel,
+                        &source.working,
+                        &input,
+                        geometry,
+                    )?;
+                }
+                if let (Format::Tiff(target), Some(binding)) =
+                    (request.format, source.binding.as_ref())
+                {
+                    binding.encode_look(renderer, device, &mut encoder)?;
+                    let view = source.texture.create_view(&Default::default());
+                    {
+                        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("per-original ACES before area reconstruction"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: &view,
+                                depth_slice: None,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                    store: wgpu::StoreOp::Store,
+                                },
+                            })],
+                            ..Default::default()
+                        });
+                        pass.set_pipeline(&renderer.target(target).pipeline);
+                        pass.set_bind_group(0, &binding.group, &[]);
+                        pass.draw(0..3, 0..1);
+                    }
+                }
+                reconstruction.encode(
+                    device,
+                    &mut encoder,
+                    &unit,
+                    &source.texture,
+                    &source.working,
+                );
+                Ok::<_, Error>(encoder)
+            })?;
+            #[cfg(all(test, target_os = "macos"))]
+            let mut encoder = encoder;
             #[cfg(all(test, target_os = "macos"))]
             if let Some(probe) = timing.as_mut() {
                 probe.resolve(&mut encoder);
                 probe.submitting();
             }
-            let submission = gate.submit(queue, [encoder.finish()]);
+            let submission = timed!(Submit, gate.submit(queue, [encoder.finish()]));
             #[cfg(all(test, target_os = "macos"))]
             if let Some(probe) = timing.as_mut() {
                 probe.arm();
@@ -568,22 +581,25 @@ pub(super) fn write(
                             .map_or(4, |bits| bits.len() as u64 * 8),
                 );
             }
-            pixels
-                .into_iter()
-                .map(|p| {
-                    if p[3] < 0. || p.iter().any(|v| !v.is_finite()) {
-                        return Err(Error::Gpu(format!(
-                            "export reconstruction invalid contributing input/support marker={}",
-                            p[3]
-                        )));
-                    }
-                    Ok(DVec3::new(
-                        f64::from(p[0]),
-                        f64::from(p[1]),
-                        f64::from(p[2]),
-                    ))
-                })
-                .collect()
+            timed!(
+                WorkingPack,
+                pixels
+                    .into_iter()
+                    .map(|p| {
+                        if p[3] < 0. || p.iter().any(|v| !v.is_finite()) {
+                            return Err(Error::Gpu(format!(
+                                "export reconstruction invalid contributing input/support marker={}",
+                                p[3]
+                            )));
+                        }
+                        Ok(DVec3::new(
+                            f64::from(p[0]),
+                            f64::from(p[1]),
+                            f64::from(p[2]),
+                        ))
+                    })
+                    .collect()
+            )
         },
         || {
             #[cfg(all(test, target_os = "macos"))]

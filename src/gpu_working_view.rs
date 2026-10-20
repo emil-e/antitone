@@ -660,12 +660,15 @@ impl RenderedView {
         target: OutputTarget,
         previous: Option<&Arc<Self>>,
     ) -> Result<Arc<Self>, Error> {
-        let expected = ProcessingParameters::positive(
+        let mut expected = ProcessingParameters::positive(
             calibration,
             roll,
             snapshot.global(),
             source.spec.matrix,
         )?;
+        // Local preflight can tighten the original-response error budget. It does not change
+        // photographic identity, and this colour pass does not evaluate the response.
+        expected.response_precision.x = input.parameters().response_precision.x;
         if bytemuck::bytes_of(&expected) != bytemuck::bytes_of(&input.parameters())
             || input
                 .grade()

@@ -41,10 +41,19 @@ mod recording {
         FileFlush,
         DestinationFinalize,
         SourcePrepare,
+        SourceUpload,
+        CommandEncode,
+        Submit,
+        MapArm,
+        DeviceWait,
+        ReadbackCopy,
+        ReadbackUnmap,
+        WorkingPack,
+        TargetLayout,
     }
 
     impl Stage {
-        const ALL: [Self; 12] = [
+        const ALL: [Self; 21] = [
             Self::Setup,
             Self::CoveragePlan,
             Self::TileAccess,
@@ -57,13 +66,22 @@ mod recording {
             Self::FileFlush,
             Self::DestinationFinalize,
             Self::SourcePrepare,
+            Self::SourceUpload,
+            Self::CommandEncode,
+            Self::Submit,
+            Self::MapArm,
+            Self::DeviceWait,
+            Self::ReadbackCopy,
+            Self::ReadbackUnmap,
+            Self::WorkingPack,
+            Self::TargetLayout,
         ];
     }
 
     #[derive(Default)]
     pub(crate) struct Timings {
-        elapsed: [Duration; 12],
-        calls: [u64; 12],
+        elapsed: [Duration; Stage::ALL.len()],
+        calls: [u64; Stage::ALL.len()],
     }
 
     impl Timings {
@@ -135,6 +153,29 @@ mod recording {
         let result = run();
         let timings = ACTIVE.with(|active| active.borrow_mut().take().unwrap());
         (result, timings)
+    }
+
+    #[test]
+    fn nested_attribution_counts_once_and_keeps_parent_child_times_separate() {
+        let mut executions = 0;
+        let (result, timings) = record(|| {
+            super::timed!(
+                TileAccess,
+                super::timed!(DeviceWait, {
+                    executions += 1;
+                    42
+                })
+            )
+        });
+        assert_eq!(result, 42);
+        assert_eq!(executions, 1);
+        assert_eq!(timings.calls[Stage::TileAccess as usize], 1);
+        assert_eq!(timings.calls[Stage::DeviceWait as usize], 1);
+        assert_eq!(timings.calls.iter().sum::<u64>(), 2);
+        assert!(
+            timings.elapsed[Stage::TileAccess as usize]
+                >= timings.elapsed[Stage::DeviceWait as usize]
+        );
     }
 
     #[test]
