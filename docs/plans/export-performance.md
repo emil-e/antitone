@@ -30,11 +30,13 @@ Full-size timing so far used a synthetic continuous flat field on a source witho
 
 ## Remaining acceptance
 
+TIFF's fast lossless Deflate default has separate [encoding and total-Save observations](../diagnostics.md#tiff-encoding-cost): one balanced window measured about 21–25% shorter normal-worker Save time and smaller files than LZW, with exact reopened pixels. This does not resolve broader reader/device, cold/steady-state or aggregate-resource acceptance, nor establish a new ready-pixel speedup.
+
 - Broaden normal-app cold/steady-state observations for concrete use cases beyond the focused confirmation. Reopen files independently; preserve adverse/noisy/refused/stopped attempts and report cold infrastructure separately. Do not inherit preceding pixel identities or speedup figures without checking.
 - Maintain proportionate feature/lint/build checks and independent review as numerical/lifecycle boundaries change. Preserve signed/headroom/floor semantics, publication safety and meaningful independent references rather than incidental tests of removed orchestration.
 - Broaden photographic/camera/device and actual lens-developed full-size observations for concrete use cases. Avoid new residency, traversal or lookup machinery unless observed remaining whole-job costs justify it. The approximate-halving aspiration is not yet an achieved result or a product latency promise.
 - Compare external implementations only at matched work boundaries. Different source state, DRTs and modules remain explicit; an unmatched darktable time is neither a hard total-time requirement nor evidence of equivalent photographs.
 
-This work retains the existing area filter and photographic order. Alternative filters, continuous-response tables or residency strategies would need their own evidence and support-aware repair/ringing/range analysis, not an added clamp. Codec optimization, batch/progress/cancellation UI and broad release/device characterisation remain unfinished separately.
+This work retains the existing area filter and photographic order. Alternative filters, continuous-response tables or residency strategies would need their own evidence and support-aware repair/ringing/range analysis, not an added clamp. Broader codec/I/O characterization, batch/progress/cancellation UI and release/device acceptance remain separate.
 
 [Export checks](../development.md#export-checks) and [shared-engine diagnostics](../diagnostics.md#shared-export-precision-and-pixel-endpoint-checks) cover the normal engine and independent references. Native pressure/free-memory admission, swap, growth, telemetry and duration stops remain unchanged. Do not manipulate system pressure, power or other applications for favorable latency. Declared payload, footprint, resident and Metal counters overlap and are not additive aggregate admission.

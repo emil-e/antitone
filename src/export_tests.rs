@@ -1,5 +1,8 @@
 use super::*;
-use tiff::decoder::{Decoder, DecodingResult};
+use tiff::{
+    decoder::{Decoder, DecodingResult},
+    tags::CompressionMethod,
+};
 
 #[test]
 fn spatial_block_visits_preserve_complete_files_and_public_row_major_order() {
@@ -68,42 +71,68 @@ fn spatial_block_visits_preserve_complete_files_and_public_row_major_order() {
 
 #[test]
 fn encoded_blocks_reopen_exactly_with_bounded_inputs_and_partial_edges() {
+    type Codes = fn(u32, u32) -> [u16; 3];
+
     let directory = tempfile::tempdir().unwrap();
     let size = ImageSize {
         width: 513,
         height: 257,
     };
-    let codes = |x: u32, y: u32| [(x * 127 + y * 31) as u16, (y * 997) as u16, (x + y) as u16];
-    for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-        let path = directory.path().join(format!("{target:?}.tif"));
-        tiff_encoded(
-            &path,
-            size,
-            target,
-            Overwrite::Refuse,
-            Response::film().into(),
-            |origin, extent| {
-                assert!(extent[0] <= BLOCK[0] && extent[1] <= BLOCK[1]);
-                Ok((origin[1]..origin[1] + extent[1])
-                    .flat_map(|y| (origin[0]..origin[0] + extent[0]).map(move |x| codes(x, y)))
-                    .collect())
-            },
-        )
-        .unwrap();
-        let mut decoder = Decoder::new(fs::File::open(path).unwrap()).unwrap();
-        assert_eq!(decoder.dimensions().unwrap(), (size.width, size.height));
-        assert_eq!(
-            decoder.get_tag_u8_vec(Tag::Unknown(34675)).unwrap(),
-            profiles::icc(target)
-        );
-        let DecodingResult::U16(actual) = decoder.read_image().unwrap() else {
-            panic!()
-        };
-        let expected: Vec<_> = (0..size.height)
-            .flat_map(|y| (0..size.width).flat_map(move |x| codes(x, y)))
-            .collect();
-        assert_eq!(actual, expected);
+    let fixtures: [(&str, Codes); 3] = [
+        ("flat", |_, _| [0, 32768, 65535]),
+        ("ramp", |x, y| {
+            [(x * 127 + y * 31) as u16, (y * 997) as u16, (x + y) as u16]
+        }),
+        ("noise", |x, y| {
+            // Coordinate-keyed mixing keeps noisy inputs independent of block visitation.
+            let mut state = (u64::from(y) << 32) | u64::from(x);
+            std::array::from_fn(|_| {
+                state = state.wrapping_add(0x9e3779b97f4a7c15);
+                let mut word = state;
+                word = (word ^ (word >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+                word = (word ^ (word >> 27)).wrapping_mul(0x94d049bb133111eb);
+                (word ^ (word >> 31)) as u16
+            })
+        }),
+    ];
+
+    for (name, codes) in fixtures {
+        for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
+            let path = directory.path().join(format!("{name}-{target:?}.tif"));
+            tiff_encoded(
+                &path,
+                size,
+                target,
+                Overwrite::Refuse,
+                Response::film().into(),
+                |origin, extent| {
+                    assert!(extent[0] <= BLOCK[0] && extent[1] <= BLOCK[1]);
+                    Ok((origin[1]..origin[1] + extent[1])
+                        .flat_map(|y| (origin[0]..origin[0] + extent[0]).map(move |x| codes(x, y)))
+                        .collect())
+                },
+            )
+            .unwrap();
+            let mut decoder = Decoder::new(fs::File::open(path).unwrap()).unwrap();
+            assert_eq!(decoder.dimensions().unwrap(), (size.width, size.height));
+            assert_eq!(
+                decoder.get_tag_u32(Tag::Compression).unwrap(),
+                u32::from(CompressionMethod::Deflate.to_u16())
+            );
+            assert_eq!(
+                decoder.get_tag_u8_vec(Tag::Unknown(34675)).unwrap(),
+                profiles::icc(target)
+            );
+            let DecodingResult::U16(actual) = decoder.read_image().unwrap() else {
+                panic!("expected RGB16 for {name}, {target:?}")
+            };
+            let expected: Vec<_> = (0..size.height)
+                .flat_map(|y| (0..size.width).flat_map(move |x| codes(x, y)))
+                .collect();
+            assert_eq!(actual, expected, "{name}, {target:?}");
+        }
     }
+
     let pixel = |x: u32, y: u32| DVec3::new(x as f64 / 10. - 4., y as f64 / 7., -0.1);
     for precision in [ExrPrecision::Half, ExrPrecision::Full] {
         let path = directory.path().join(format!("{precision:?}.exr"));

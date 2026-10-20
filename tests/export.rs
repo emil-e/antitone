@@ -12,7 +12,7 @@ use glam::DVec3;
 use std::{fs, path::Path};
 use tiff::{
     decoder::{Decoder, DecodingResult},
-    tags::Tag,
+    tags::{CompressionMethod, Tag},
 };
 
 #[test]
@@ -40,7 +40,10 @@ fn tiff_reopens_with_exact_rendered_codes_lossless_compression_and_pinned_icc() 
             decoder.get_tag_u16_vec(Tag::BitsPerSample).unwrap(),
             vec![16; 3]
         );
-        assert_eq!(decoder.get_tag_u32(Tag::Compression).unwrap(), 5);
+        assert_eq!(
+            decoder.get_tag_u32(Tag::Compression).unwrap(),
+            u32::from(CompressionMethod::Deflate.to_u16())
+        );
         assert_eq!(
             decoder.get_tag_u8_vec(Tag::Unknown(34675)).unwrap(),
             profiles::icc(target)

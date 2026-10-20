@@ -11,7 +11,7 @@ use std::{
 };
 use tempfile::NamedTempFile;
 use tiff::{
-    encoder::{Compression, Predictor, TiffEncoder, colortype::RGB16},
+    encoder::{Compression, DeflateLevel, Predictor, TiffEncoder, colortype::RGB16},
     tags::Tag,
 };
 
@@ -404,7 +404,7 @@ pub(crate) fn tiff_encoded_checked(
             {
                 let mut encoder = TiffEncoder::new(&mut buffered)
                     .map_err(failure)?
-                    .with_compression(Compression::Lzw)
+                    .with_compression(Compression::Deflate(DeflateLevel::Fast))
                     .with_predictor(Predictor::Horizontal);
                 let mut image = encoder
                     .new_image::<RGB16>(size.width, size.height)
