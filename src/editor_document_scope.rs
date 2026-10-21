@@ -8,10 +8,17 @@ use std::{
 #[path = "editor_document_scope_tests.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "editor_spatial_metadata_tests.rs"]
+mod spatial_tests;
+
 /// Accepted document authority, cross-photo tool context and the dependent visit.
 /// Captured documents are data snapshots, not histories or continuation owners.
 pub(super) struct DocumentScope {
     pub state: Document,
+    pub spatial: crate::spatial_metadata::Store,
+    pub spatial_preparing: Option<super::spatial::Pending>,
+    pub spatial_consumer: Option<super::spatial::Consumer>,
     pub history: History,
     pub visit: PhotoScope,
     pub embedded_preview: Option<super::thumbnails::EmbeddedWork>,
@@ -30,7 +37,9 @@ pub(super) struct DocumentScope {
 
 impl DocumentScope {
     pub fn capture(&self) -> Document {
-        self.state.clone()
+        let mut document = self.state.clone();
+        document.spatial_metadata = self.spatial.ready();
+        document
     }
 
     pub fn accept_save(&mut self, saved: Document) {
@@ -67,6 +76,9 @@ impl DocumentScope {
 impl From<Document> for DocumentScope {
     fn from(state: Document) -> Self {
         Self {
+            spatial: crate::spatial_metadata::Store::restored((*state.spatial_metadata).clone()),
+            spatial_preparing: None,
+            spatial_consumer: None,
             state,
             history: History::default(),
             visit: PhotoScope::default(),
@@ -101,6 +113,9 @@ impl DerefMut for DocumentScope {
 
 impl Drop for DocumentScope {
     fn drop(&mut self) {
+        self.spatial.close();
+        drop(self.spatial_preparing.take());
+        drop(self.spatial_consumer.take());
         drop(self.look.take());
         drop(self.embedded_preview.take());
         drop(std::mem::take(&mut self.thumbnail_work));

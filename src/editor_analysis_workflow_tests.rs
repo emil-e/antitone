@@ -61,7 +61,10 @@ pub(super) fn fixture(scheduler: development::Scheduler) -> Editor {
 
 pub(super) fn start(app: &TestApplication<'_, Editor>) {
     app.enter(|e, access| {
-        e.request_analysis(access);
+        // These cases isolate sampling preparation after shared metadata. The composed
+        // Analyze entry and both consumer orders are covered by spatial workflow tests.
+        let request = e.analysis_request().expect("eligible analysis request");
+        e.prepare_analysis_review(request, access);
         assert!(e.document.analysis_preparing.is_some());
     });
 }

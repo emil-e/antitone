@@ -3,6 +3,14 @@ use super::*;
 mod private;
 use crate::{project::SourceAnalysis, scan_regions::Areas};
 
+// Controller cases supply area replies, not native sources. Enter the sampling stage
+// explicitly; authored spatial workflows cover acquisition and the public Analyze command.
+pub(super) fn start_area_preparation(editor: &mut Editor, cx: &UiContext<'_, Editor>) {
+    if let Some(request) = editor.analysis_request() {
+        editor.prepare_analysis_review(request, cx);
+    }
+}
+
 fn reply(editor: &mut Editor) -> (u64, analysis_review::Approved) {
     let pending = editor
         .document
@@ -70,7 +78,7 @@ fn both_sampling_frames_select_directly_and_resize_without_changing_accepted_are
     let editor = ready_state();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.request_analysis(cx);
+            start_area_preparation(editor, cx);
             prepared(editor);
             let active = editor.document.visit.ready.as_ref().unwrap().area;
             let opening = Coverage::rectangle(active);
@@ -149,7 +157,7 @@ fn drawing_missing_opening_does_not_invent_picture_support_and_last_picture_edit
     let ctx = egui::Context::default();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|e, cx| {
-            e.request_analysis(cx);
+            start_area_preparation(e, cx);
             let (id, mut approved) = reply(e);
             approved.entries[0].areas = Areas::default();
             e.analysis_areas_result(id, Ok(Some(approved)), cx);
@@ -183,7 +191,7 @@ fn opening_exception_updates_automatic_picture_coverage_but_not_authored_picture
             other.id = SourceId(0);
             other.path = "other.ARW".into();
             editor.document.project.add_source(other).unwrap();
-            editor.request_analysis(cx);
+            start_area_preparation(editor, cx);
             prepared(editor);
             let active = editor.document.visit.ready.as_ref().unwrap().area;
             let review = editor.document.analysis_review.as_mut().unwrap();
@@ -245,7 +253,7 @@ fn all_ordered_photo_fields_control_the_warning_in_one_review_not_a_second_dialo
                 editor.document.project.add_source(other).unwrap();
                 editor.sync_document();
                 let before = editor.document.project.clone();
-                editor.request_analysis(cx);
+                start_area_preparation(editor, cx);
                 assert!(
                     editor.busy
                         && editor.document.analysis_preparing.is_some()
@@ -261,7 +269,7 @@ fn all_ordered_photo_fields_control_the_warning_in_one_review_not_a_second_dialo
                         .replaces_photos,
                     "field {field}"
                 );
-                editor.request_analysis(cx);
+                start_area_preparation(editor, cx);
                 assert!(editor.document.analysis_preparing.is_none());
                 editor.finish_pick(cx);
                 assert_eq!(editor.document.project, before);
@@ -286,7 +294,7 @@ fn unavailable_analysis_services_tear_down_review_and_restore_working_photo() {
             other.photo.exposure = 1.7;
             let other = editor.document.project.add_source(other).unwrap();
             editor.select_roll_photo(1, egui::Modifiers::COMMAND, cx);
-            editor.request_analysis(cx);
+            start_area_preparation(editor, cx);
             prepared(editor);
             let before = editor.document.project.clone();
             let proxy = editor.document.visit.ready.as_ref().unwrap().proxy.clone();
@@ -349,7 +357,7 @@ fn default_photos_still_require_area_review_but_retired_grades_do_not_trigger_re
             editor.document.project.order.retain(|id| *id != retired);
             editor.roll.exposure = 1.;
             editor.roll.wb.tint = 0.2;
-            editor.request_analysis(cx);
+            start_area_preparation(editor, cx);
             prepared(editor);
             assert!(
                 !editor
@@ -403,7 +411,7 @@ fn stale_preparation_cannot_open_review_or_change_accepted_state() {
         let editor = ready_state();
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
-                editor.request_analysis(cx);
+                start_area_preparation(editor, cx);
                 let (id, approved) = reply(editor);
                 change(editor, changed);
                 let before = editor.document.project.clone();
@@ -425,7 +433,7 @@ fn stale_review_cannot_authorize_analyze() {
         let editor = ready_state();
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
-                editor.request_analysis(cx);
+                start_area_preparation(editor, cx);
                 prepared(editor);
                 change(editor, changed);
                 let before = editor.document.project.clone();
@@ -449,7 +457,7 @@ fn preparation_cancellation_and_late_or_failed_replies_preserve_grade_and_areas(
             app.enter(|editor, cx| {
                 editor.sync_document();
                 let before = editor.document.project.clone();
-                editor.request_analysis(cx);
+                start_area_preparation(editor, cx);
                 let (id, approved) = reply(editor);
                 editor.analysis_areas_result(id + 1, Ok(Some(approved.clone())), cx);
                 assert!(editor.document.analysis_preparing.is_some());
@@ -480,7 +488,7 @@ fn per_photo_edits_are_drafts_until_analysis_success_and_do_not_copy_to_peers() 
             other.id = SourceId(0);
             other.path = "other.ARW".into();
             let other = editor.document.project.add_source(other).unwrap();
-            editor.request_analysis(cx);
+            start_area_preparation(editor, cx);
             prepared(editor);
             let before = editor.document.project.clone();
             let original = editor
@@ -526,7 +534,7 @@ fn changed_file_while_a_completed_native_reply_waits_cannot_promote_its_candidat
             let path = dir.path().join("source.ARW");
             std::fs::write(&path, b"first snapshot").unwrap();
             editor.document.project.sources[0].path = path.clone();
-            editor.request_analysis(cx);
+            start_area_preparation(editor, cx);
             prepared(editor);
             let before = editor.document.project.clone();
             editor.confirm_analysis_review(cx);
@@ -546,7 +554,7 @@ fn missing_or_revised_sources_cannot_start_analyze_even_after_area_confirmation(
     let editor = ready_state();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.request_analysis(cx);
+            start_area_preparation(editor, cx);
             prepared(editor);
             editor
                 .document
@@ -565,7 +573,7 @@ fn missing_or_revised_sources_cannot_start_analyze_even_after_area_confirmation(
             let path = dir.path().join("source.ARW");
             std::fs::write(&path, b"first snapshot").unwrap();
             editor.document.project.sources[0].path = path.clone();
-            editor.request_analysis(cx);
+            start_area_preparation(editor, cx);
             prepared(editor);
             std::fs::write(path, b"different-length snapshot").unwrap();
             editor.confirm_analysis_review(cx);
@@ -585,7 +593,7 @@ fn roll_review_controls_restore_scope_visibility_and_context() {
                     editor.tab = 1;
                     editor.scopes.visible = scopes_visible;
                     editor.preferences.scopes_visible = scopes_visible;
-                    editor.request_analysis(cx);
+                    start_area_preparation(editor, cx);
                     prepared(editor);
                     assert_eq!(editor.tab, 0);
                     assert!(!editor.scopes.visible);
@@ -629,7 +637,7 @@ fn valid_sampling_exceptions_have_no_inspect_badge_or_extra_photo_warning() {
     let editor = ready_state();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.request_analysis(cx);
+            start_area_preparation(editor, cx);
             prepared(editor);
             let areas = &mut editor
                 .document
@@ -662,7 +670,7 @@ fn composed_review_shows_reset_consequence_and_has_one_analyze_or_cancel_action(
         editor.photo.pivot = 0.3;
         let ctx = egui::Context::default();
         crate::application::test_support::with_application(editor, |app| {
-            click_label(app, &ctx, "Analyze");
+            app.enter(start_area_preparation);
             app.update(prepared);
             let before = app.read(|e| e.document.project.clone());
             let labels = super::super::super::tests::app_frame(app, &ctx, vec![]);
@@ -707,7 +715,7 @@ fn review_browsing_and_cancel_restore_working_photo_without_changing_multi_selec
             let other = editor.document.project.add_source(other).unwrap();
             editor.select_roll_photo(1, egui::Modifiers::COMMAND, cx);
             assert!(editor.roll_selection.contains(first) && editor.roll_selection.contains(other));
-            editor.request_analysis(cx);
+            start_area_preparation(editor, cx);
             prepared(editor);
             editor.browse_analysis_review(other, cx);
             let pending = editor.id;

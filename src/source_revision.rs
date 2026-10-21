@@ -1,12 +1,11 @@
 use serde::{Deserialize, Serialize};
-use std::{
-    path::{Path, PathBuf},
-    time::SystemTime,
-};
+#[cfg(feature = "raw")]
+use std::path::PathBuf;
+use std::{path::Path, time::SystemTime};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct FileRevision {
+pub struct FileRevision {
     pub(crate) bytes: u64,
     pub(crate) modified: SystemTime,
     #[cfg(unix)]
@@ -18,7 +17,7 @@ pub(crate) struct FileRevision {
 }
 
 impl FileRevision {
-    fn read(path: &Path) -> std::io::Result<Self> {
+    pub fn read(path: &Path) -> std::io::Result<Self> {
         #[cfg(unix)]
         use std::os::unix::fs::MetadataExt;
         let metadata = std::fs::metadata(path)?;
@@ -36,6 +35,7 @@ impl FileRevision {
 }
 
 /// Disposable freshness, not photograph identity or permission to accept a grade.
+#[cfg(feature = "raw")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct FileKey {
@@ -43,6 +43,7 @@ pub(crate) struct FileKey {
     pub(crate) revision: Option<FileRevision>,
 }
 
+#[cfg(feature = "raw")]
 impl FileKey {
     pub(crate) fn new(path: &Path) -> Self {
         Self {

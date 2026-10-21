@@ -61,6 +61,47 @@ fn setup<R>(test: impl FnOnce(Harness<'_, Editor>, tempfile::TempDir) -> R) -> R
                 })
                 .collect();
             e.sync_document();
+            // UI controls consume declared hypotheses; actual discovery/acquisition is
+            // exercised by the authored spatial workflow cases, not this fixture.
+            let sources: Vec<_> = e
+                .document
+                .spatial_inputs()
+                .into_iter()
+                .map(|input| {
+                    let areas = &e
+                        .document
+                        .project
+                        .analysis_regions
+                        .iter()
+                        .find(|row| row.source == input.source)
+                        .unwrap()
+                        .areas;
+                    let region = crate::spatial_metadata::Region::from_picture(
+                        areas.picture_geometry.as_ref().unwrap(),
+                        input.development.active_area.into(),
+                        [true; 4],
+                    )
+                    .unwrap();
+                    crate::spatial_metadata::SourceRegions {
+                        input,
+                        observation: Some(region.clone()),
+                        picture: Some(region),
+                        film: None,
+                        holder_opening: None,
+                        material: None,
+                    }
+                })
+                .collect();
+            let metadata = crate::spatial_metadata::Metadata {
+                version: crate::spatial_metadata::VERSION,
+                groups: vec![crate::spatial_metadata::Group {
+                    development: e.document.project.development.clone().unwrap(),
+                    code_scale: e.document.spatial_code_scale(),
+                    common_size: crate::spatial_metadata::CommonSize::fit(&sources),
+                    sources,
+                }],
+            };
+            publish_regions(e, metadata);
         });
         h.step();
         h.enter(|editor, cx| {
@@ -77,6 +118,32 @@ fn setup<R>(test: impl FnOnce(Harness<'_, Editor>, tempfile::TempDir) -> R) -> R
     })
 }
 
+fn publish_regions(editor: &mut Editor, metadata: crate::spatial_metadata::Metadata) {
+    let inputs = editor.document.spatial_inputs();
+    let scope = &mut editor.document;
+    let request = scope.spatial.begin().unwrap();
+    assert!(
+        scope
+            .spatial
+            .publish(request, metadata, &scope.state.project, &inputs)
+            .unwrap()
+    );
+}
+
+fn unavailable_regions(editor: &mut Editor, ids: &[SourceId]) {
+    let mut metadata = (*editor.document.spatial.ready()).clone();
+    for row in metadata
+        .groups
+        .iter_mut()
+        .flat_map(|group| &mut group.sources)
+    {
+        if ids.contains(&row.input.source) {
+            row.picture = None;
+        }
+    }
+    publish_regions(editor, metadata);
+}
+
 fn click_action(h: &mut Harness<'_, Editor>, label: &str) {
     h.get_by_role_and_label(egui::accesskit::Role::Button, label)
         .scroll_to_me();
@@ -85,6 +152,7 @@ fn click_action(h: &mut Harness<'_, Editor>, label: &str) {
         .click();
     h.step();
     h.step();
+    wait_for(h, |editor| editor.document.spatial_preparing.is_none());
 }
 
 fn prior_crop(h: &mut Harness<'_, Editor>) -> Crop {
@@ -182,6 +250,14 @@ fn unavailable_outlines_have_compact_tool_and_thumbnail_cues_at_both_layouts() {
                 let areas = &mut e.document.project.analysis_regions[0].areas;
                 areas.picture_observed[0] = false;
                 areas.picture_weak[0] = true;
+                let mut metadata = (*e.document.spatial.ready()).clone();
+                metadata.groups[0].sources[0].picture = None;
+                metadata.groups[0].sources[1]
+                    .picture
+                    .as_mut()
+                    .unwrap()
+                    .boundaries[0] = crate::spatial_metadata::Boundary::Unknown;
+                publish_regions(e, metadata);
             });
             h.step();
             save_existing_project(&mut h);
@@ -201,7 +277,7 @@ fn unavailable_outlines_have_compact_tool_and_thumbnail_cues_at_both_layouts() {
                 cue.accesskit_node()
                     .description()
                     .unwrap()
-                    .contains("no retained frame evidence")
+                    .contains("picture region is unavailable")
             );
             assert_eq!(
                 h.get_all_by_role_and_label(egui::accesskit::Role::Image, "Photo warning")
@@ -214,7 +290,7 @@ fn unavailable_outlines_have_compact_tool_and_thumbnail_cues_at_both_layouts() {
                     n.accesskit_node()
                         .description()
                         .unwrap()
-                        .contains("four measured picture edges")
+                        .contains("picture extent is unresolved")
                 })
                 .unwrap()
                 .rect()
@@ -243,7 +319,7 @@ fn unavailable_outlines_have_compact_tool_and_thumbnail_cues_at_both_layouts() {
                     .accesskit_node()
                     .description()
                     .unwrap()
-                    .contains("four measured picture edges")
+                    .contains("picture extent is unresolved")
             );
             assert_lifecycle(&h, size);
             save_capture(&h.render().unwrap(), &format!("crop-warning-{name}"));
@@ -274,7 +350,11 @@ fn unavailable_outlines_have_compact_tool_and_thumbnail_cues_at_both_layouts() {
                         .is_some_and(|d| d.contains("crop proposal"))
                 );
             }
-            h.update(|editor| editor.document.project.analysis_regions.clear());
+            h.update(|editor| {
+                editor.document.project.analysis_regions.clear();
+                let ids = editor.document.project.order.clone();
+                unavailable_regions(editor, &ids);
+            });
             h.step();
             save_existing_project(&mut h);
             let before = h.read(|editor| editor.document.project.clone());
@@ -456,6 +536,7 @@ fn whole_roll_entry_ignores_selection_and_keeps_abstentions_unchanged() {
             let a = &mut e.document.project.analysis_regions[1].areas;
             a.picture_observed[0] = false;
             a.picture_weak[0] = true;
+            unavailable_regions(e, &[ids[1]]);
         });
         h.step();
         save_existing_project(&mut h);

@@ -860,7 +860,7 @@ fn click_analyze(editor: Editor, limit: Duration) -> Editor {
         let ctx = egui::Context::default();
         click_label(&mut app, &ctx, "Analyze");
         app.run_until(Duration::from_secs(60), |e| {
-            e.document.analysis_preparing.is_none()
+            e.document.spatial_preparing.is_none() && e.document.analysis_preparing.is_none()
         });
         app.read(|e| assert!(e.document.analysis_review.is_some(), "{}", e.status));
         click_label(&mut app, &ctx, "Analyze roll");
@@ -943,13 +943,19 @@ fn photo_numeric_focus_commit_precedes_analysis_area_preparation_snapshot() {
         });
         click_label(app, &ctx, "Analyze");
         app.read(|e| {
-            let snapshot = &e
+            let request = e
                 .document
                 .analysis_preparing
                 .as_ref()
-                .unwrap()
-                .request
-                .document;
+                .map(|pending| &pending.request)
+                .or_else(|| {
+                    e.document
+                        .spatial_preparing
+                        .as_ref()
+                        .and_then(spatial::Pending::analysis_request)
+                })
+                .expect("captured Analyze request");
+            let snapshot = &request.document;
             assert_eq!(
                 snapshot
                     .project
@@ -1002,8 +1008,9 @@ fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade(
                 }],
             );
             assert!(editor.document.analysis_pending.is_none());
-            assert!(editor.document.analysis_preparing.is_some());
-            assert_eq!(editor.status, "Cancelling analysis…");
+            assert!(editor.document.spatial_preparing.is_none());
+            assert!(editor.document.analysis_preparing.is_none());
+            assert!(editor.tasks.view().is_none());
             assert_eq!(editor.document.project, before);
             assert_eq!(editor.original.signature, signature);
             assert_eq!(editor.original.revision(), revision);

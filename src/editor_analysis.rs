@@ -354,7 +354,7 @@ impl Editor {
         analyze
     }
 
-    fn analysis_request(&mut self) -> Option<Request> {
+    pub(super) fn analysis_request(&mut self) -> Option<Request> {
         if self.busy
             || self.pick.is_some()
             || self.document.visit.crop_edit.is_some()
@@ -388,7 +388,7 @@ impl Editor {
         let Some(request) = self.analysis_request() else {
             return;
         };
-        self.prepare_analysis_review(request, cx);
+        self.request_spatial(spatial::Consumer::Analyze(Box::new(request)), cx);
     }
 
     #[cfg(test)]
@@ -400,6 +400,15 @@ impl Editor {
     }
 
     pub(super) fn cancel_analysis(&mut self) {
+        if self
+            .document
+            .spatial_preparing
+            .as_ref()
+            .is_some_and(|pending| pending.analysis_request().is_some())
+        {
+            self.cancel_spatial();
+            return;
+        }
         self.document
             .analysis_generation
             .fetch_add(1, Ordering::Relaxed);

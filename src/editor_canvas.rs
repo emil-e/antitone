@@ -1,6 +1,10 @@
 use super::*;
 use crate::viewport::CanvasLayout;
 
+#[cfg(test)]
+#[path = "editor_canvas_tests.rs"]
+mod tests;
+
 impl Editor {
     fn canvas_composition(&self, area: Rect, active_pick: Option<Pick>) -> Composition {
         let crop = if self.auto_crop_context()
@@ -177,8 +181,9 @@ impl Editor {
         let pixels_per_point = ui.ctx().pixels_per_point();
         let canvas = geometry.canvas;
         let active_pick = self.pick;
-        let area = geometry.area;
         let composition = geometry.composition;
+        // The camera proxy covers the full source, not the crop's bounding region.
+        let proxy_area = composition.area();
         let rect = geometry.image.intersect(canvas);
         // An editing frame may be offscreen at explicit zoom; no refinement raster is requested.
         let physical_frame = if cropping {
@@ -294,7 +299,7 @@ impl Editor {
                     };
                     (image.clone(), None, mapping)
                 }
-                _ => (provisional, Some(parameters), geometry.uv(draw, area)),
+                _ => (provisional, Some(parameters), geometry.uv(draw, proxy_area)),
             };
             match processing::image_paint(image, parameters, mapping, ui.ctx()) {
                 Ok(paint) => paint,

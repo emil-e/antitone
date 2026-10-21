@@ -17,8 +17,9 @@ struct Entry {
     draft: Option<Crop>,
     file: thumbnails::FileKey,
     development: SourceDevelopment,
-    geometry: PictureGeometry,
+    geometry: Option<PictureGeometry>,
     constraints: Vec<[f64; 3]>,
+    spatial: Option<Arc<crate::spatial_metadata::Metadata>>,
 }
 
 pub(super) struct Draft {
@@ -45,6 +46,22 @@ impl Draft {
             .is_some_and(|s| !s.is_closed() && Arc::ptr_eq(&s, editor.document.cache()))
             && self.development == editor.document.project.development
             && self.order == editor.document.project.order
+            && self
+                .entries
+                .iter()
+                .find_map(|entry| entry.spatial.as_ref())
+                .is_none_or(|metadata| {
+                    metadata.groups.iter().all(|group| {
+                        Some(&group.development) == editor.document.project.development.as_ref()
+                            && group.sources.iter().all(|row| {
+                                editor
+                                    .document
+                                    .project
+                                    .source(row.input.source)
+                                    .is_ok_and(|source| source.development == row.input.development)
+                            })
+                    })
+                })
     }
 }
 
@@ -56,19 +73,23 @@ impl Entry {
         source.crop == self.before
             && (editor.current_source != Some(self.source) || editor.crop == self.before)
             && source.development == self.development
-            && editor
-                .document
-                .project
-                .analysis_regions
-                .iter()
-                .find(|r| r.source == self.source)
-                .is_some_and(|r| {
-                    !r.areas.picture_edited
-                        && r.areas.picture_observed == [true; 4]
-                        && r.areas.picture_weak == [false; 4]
-                        && r.areas.picture_geometry.as_ref() == Some(&self.geometry)
-                        && r.areas.picture_constraints == self.constraints
-                })
+            && if let Some(metadata) = &self.spatial {
+                Arc::ptr_eq(metadata, &editor.document.spatial.ready())
+            } else {
+                editor
+                    .document
+                    .project
+                    .analysis_regions
+                    .iter()
+                    .find(|r| r.source == self.source)
+                    .is_some_and(|r| {
+                        !r.areas.picture_edited
+                            && r.areas.picture_observed == [true; 4]
+                            && r.areas.picture_weak == [false; 4]
+                            && r.areas.picture_geometry.as_ref() == self.geometry.as_ref()
+                            && r.areas.picture_constraints == self.constraints
+                    })
+            }
     }
 }
 
@@ -124,7 +145,6 @@ impl Editor {
         };
         if presentation::TextAction::new(label)
             .enabled(available)
-            .help("Use frame measurements retained by Analyze.")
             .show(ui)
             .clicked()
         {
@@ -248,16 +268,6 @@ impl Editor {
 
     fn crop_proposal(&self, id: SourceId) -> Result<Entry, Error> {
         let source = self.document.project.source(id)?;
-        let areas = &self
-            .document
-            .project
-            .analysis_regions
-            .iter()
-            .find(|r| r.source == id)
-            .ok_or(Error::UnusableSample(
-                "no retained frame evidence; run Analyze roll first",
-            ))?
-            .areas;
         let path = self.document.source_path(id)?;
         let file = thumbnails::FileKey::new(&path);
         if file.revision.is_none() {
@@ -269,7 +279,45 @@ impl Editor {
             ));
         }
         let active = source.development.active_area.into();
-        let proposal = framing::propose(active, areas)?;
+        let metadata = self.document.spatial.ready();
+        let regions = metadata
+            .groups
+            .iter()
+            .flat_map(|group| &group.sources)
+            .find(|row| row.input.source == id);
+        let (proposal, geometry, constraints, spatial) = if let Some(regions) = regions {
+            if regions.input.development != source.development
+                || crate::source_revision::FileRevision::read(&path).ok()
+                    != Some(regions.input.revision.clone())
+            {
+                return Err(Error::UnusableSample(
+                    "shared picture regions are out of date",
+                ));
+            }
+            (
+                framing::propose_spatial(regions)?,
+                None,
+                vec![],
+                Some(metadata.clone()),
+            )
+        } else {
+            let areas = &self
+                .document
+                .project
+                .analysis_regions
+                .iter()
+                .find(|r| r.source == id)
+                .ok_or(Error::UnusableSample(
+                    "no retained frame evidence or prepared picture regions",
+                ))?
+                .areas;
+            (
+                framing::propose(active, areas)?,
+                areas.picture_geometry.clone(),
+                areas.picture_constraints.clone(),
+                None,
+            )
+        };
         let crop = framing::inward_margin(proposal, active, self.auto_crop_margin)?;
         if !file.current_at(&path) {
             return Err(Error::UnusableSample("source changed during auto-crop"));
@@ -281,8 +329,9 @@ impl Editor {
             draft: accepted(crop, active),
             file,
             development: source.development.clone(),
-            geometry: areas.picture_geometry.clone().expect("eligible frame"),
-            constraints: areas.picture_constraints.clone(),
+            geometry,
+            constraints,
+            spatial,
         })
     }
 
@@ -312,17 +361,30 @@ impl Editor {
         }
     }
 
-    pub(super) fn auto_crop(&mut self, target: Target) {
-        if target == Target::Photo {
-            self.auto_crop_photo();
+    pub(super) fn request_auto_crop(&mut self, target: Target, cx: &UiContext<'_, Self>) {
+        let available = if target == Target::Photo {
+            !self.busy
+                && self.document.visit.crop_edit.is_some()
+                && self.document.visit.ready.is_some()
+        } else {
+            self.auto_crop_entry_available()
+        };
+        if !available {
             return;
         }
-        if !self.auto_crop_entry_available() {
-            return;
-        }
-        self.sync_document();
-        let ids: Vec<_> = self
-            .document
+        let sources = self.auto_crop_source_ids(target);
+        self.request_spatial(
+            spatial::Consumer::AutoCrop {
+                target,
+                sources,
+                visit: self.document.visit.view,
+            },
+            cx,
+        );
+    }
+
+    fn auto_crop_source_ids(&self, target: Target) -> Vec<SourceId> {
+        self.document
             .project
             .order
             .iter()
@@ -332,7 +394,23 @@ impl Editor {
                 Target::Roll => true,
                 Target::Selected => self.roll_selection.contains(*id),
             })
-            .collect();
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(super) fn auto_crop(&mut self, target: Target) {
+        self.auto_crop_sources(target, self.auto_crop_source_ids(target));
+    }
+
+    pub(super) fn auto_crop_sources(&mut self, target: Target, ids: Vec<SourceId>) {
+        if target == Target::Photo {
+            self.auto_crop_photo();
+            return;
+        }
+        if !self.auto_crop_entry_available() {
+            return;
+        }
+        self.sync_document();
         let attempted = ids.len();
         let mut entries = Vec::new();
         let mut problems = Vec::new();
@@ -461,6 +539,17 @@ impl Editor {
                 if !self.auto_crop_valid() {
                     return Err(Error::UnusableSample(
                         "document, crops or measurements changed",
+                    ));
+                }
+                let ready = self.document.capture().ready_spatial_metadata();
+                if edit.entries.iter().any(|entry| {
+                    entry
+                        .spatial
+                        .as_ref()
+                        .is_some_and(|metadata| **metadata != ready)
+                }) {
+                    return Err(Error::UnusableSample(
+                        "shared region dependencies changed since the proposal",
                     ));
                 }
                 let mut candidate = self.document.project.clone();

@@ -12,6 +12,7 @@ mod opening;
 mod rectangles;
 pub use lines::{Capture, Evidence};
 pub use material::RollModel;
+pub use material::framing::{FrameInput, prepare_spatial};
 
 pub type Quad = [[f64; 2]; 4];
 
@@ -48,7 +49,7 @@ impl Material {
             [Self::nearest(&self.ys, p[1]) * self.xs.len() + Self::nearest(&self.xs, p[0])]
     }
 
-    fn validate(&self) -> Result<(), Error> {
+    pub(crate) fn validate(&self) -> Result<(), Error> {
         let valid = self.size.iter().all(|&v| (16..=768).contains(&v))
             && self.xs.len() <= 96
             && self.ys.len() <= 64

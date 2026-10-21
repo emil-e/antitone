@@ -14,6 +14,7 @@ Start with [build and run](../README.md), then choose the part of the project yo
 | Why do preview, TIFF and EXR differ? | [Colour and output](colour-and-output.md) |
 | How are independent creative looks authored offline? | [Look catalog and authoring](../assets/looks/README.md) |
 | Which pixels does a crop, pick or export represent? | [Geometry](geometry.md) |
+| How can features share film and picture locations? | [Spatial metadata](spatial-metadata.md) |
 | How do tools, workers and previews stay coherent? | [Editor](editor.md) |
 | How does the editor run slow work without freezing the UI? | [Architecture](architecture.md) |
 | What is saved, and what makes a source compatible? | [Projects](projects.md) |

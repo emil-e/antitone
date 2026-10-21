@@ -85,7 +85,7 @@ impl Development {
         Self::new(crate::raw::version(), wb)
     }
 
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         require(
             !self.backend_version.is_empty()
                 && !self.contract.is_empty()
@@ -168,7 +168,7 @@ impl SourceDevelopment {
         )
     }
 
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         self.camera_basis().validate()?;
         require(
             self.lens_correction.as_ref().is_none_or(|identity| {
@@ -319,6 +319,14 @@ pub struct Project {
     pub analysis_area: Option<[u32; 4]>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub analysis_regions: Vec<SourceAnalysis>,
+    /// Derived file payload. Runtime document owners detach this from accepted state with
+    /// `load_with_spatial_metadata`; snapshots save it separately without changing project equality.
+    #[serde(
+        default,
+        deserialize_with = "crate::spatial_metadata::read_cached",
+        skip_serializing_if = "crate::spatial_metadata::empty_or_invalid"
+    )]
+    pub spatial_metadata: Option<crate::spatial_metadata::Metadata>,
 }
 
 fn deserialize_schema<'de, D: serde::Deserializer<'de>>(
@@ -350,6 +358,7 @@ impl Default for Project {
             flat_field: None,
             analysis_area: None,
             analysis_regions: Vec::new(),
+            spatial_metadata: None,
         }
     }
 }
@@ -589,6 +598,33 @@ impl Project {
         let project: Self = serde_json::from_reader(input).map_err(failure)?;
         project.validate()?;
         Ok(project)
+    }
+
+    /// Keep disposable region data outside accepted project snapshots/history. Legacy files
+    /// have no such payload; unsupported or invalid derived records are unavailable, not grades.
+    pub fn load_with_spatial_metadata(
+        path: &Path,
+    ) -> Result<(Self, crate::spatial_metadata::Metadata)> {
+        let mut project = Self::load(path)?;
+        let metadata = project
+            .spatial_metadata
+            .take()
+            .unwrap_or_default()
+            .for_project(&project);
+        Ok((project, metadata))
+    }
+
+    /// Capture ready metadata with the write, never install it into the caller's accepted state.
+    pub fn save_with_spatial_metadata(
+        &self,
+        path: &Path,
+        policy: Save,
+        metadata: &crate::spatial_metadata::Metadata,
+    ) -> Result<()> {
+        let mut snapshot = self.clone();
+        let metadata = metadata.for_project(self);
+        snapshot.spatial_metadata = (!metadata.groups.is_empty()).then_some(metadata);
+        snapshot.save(path, policy)
     }
 
     pub fn save(&self, path: &Path, policy: Save) -> Result<()> {

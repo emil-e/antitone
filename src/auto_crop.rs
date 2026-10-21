@@ -77,6 +77,12 @@ pub fn propose(active: SourceRegion, areas: &Areas) -> Result<Crop, Error> {
     rectangle(active, quad)
 }
 
+/// Consume prepared spatial evidence without installing sampling, grading or accepted crops.
+/// The document owner validates metadata freshness before calling this pure adapter.
+pub fn propose_spatial(metadata: &crate::spatial_metadata::SourceRegions) -> Result<Crop, Error> {
+    metadata.visible_picture()
+}
+
 fn rectangle(active: SourceRegion, q: Quad) -> Result<Crop, Error> {
     let x = [q[1][0] - q[0][0], q[1][1] - q[0][1]];
     let y = [q[3][0] - q[0][0], q[3][1] - q[0][1]];
@@ -119,10 +125,17 @@ fn rectangle(active: SourceRegion, q: Quad) -> Result<Crop, Error> {
     Ok(crop)
 }
 
+/// Research regression adapter; inferred input is not relabelled as measured evidence.
+#[cfg(test)]
+pub(crate) fn inferred_draft(active: SourceRegion, frame: Quad) -> Result<Crop, Error> {
+    Areas::coverage(frame)?.bounds(active)?;
+    rectangle(active, frame)
+}
+
 #[cfg(test)]
 #[path = "auto_crop_tests.rs"]
 mod tests;
 
 #[cfg(test)]
 #[path = "../native/crop_quality/mod.rs"]
-mod diagnostics;
+pub(crate) mod diagnostics;

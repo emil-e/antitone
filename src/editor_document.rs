@@ -28,6 +28,7 @@ impl Drop for CacheScope {
 pub(super) struct Document {
     pub project: Project,
     pub path: Option<PathBuf>,
+    pub spatial_metadata: Arc<crate::spatial_metadata::Metadata>,
     saved: Project,
     cache: Arc<CacheScope>,
     parent_cache: Option<Arc<SourceStore>>,
@@ -42,6 +43,7 @@ impl Default for Document {
             saved: project.clone(),
             project,
             path: None,
+            spatial_metadata: Arc::default(),
             cache: Arc::new(CacheScope(Arc::new(SourceStore::new(0)))),
             parent_cache: None,
             #[cfg(test)]
@@ -93,6 +95,44 @@ impl Document {
 
     pub fn dirty(&self) -> bool {
         self.project != self.saved
+    }
+
+    pub fn spatial_code_scale(&self) -> f64 {
+        self.project
+            .sources
+            .iter()
+            .filter(|source| !source.reference_only)
+            .fold(1f64, |scale, source| {
+                scale.max(source.development.input_floor / crate::processing::CAMERA_INPUT_FLOOR)
+            })
+    }
+
+    /// Cheap freshness queries belong to preparation/publication, not drawing. Measurement omits
+    /// the roll flat-field; embedded camera correction remains part of source interpretation.
+    pub fn spatial_inputs(&self) -> Vec<crate::spatial_metadata::Input> {
+        let code_scale = self.spatial_code_scale();
+        self.project
+            .sources
+            .iter()
+            .filter(|source| !source.reference_only)
+            .filter_map(|source| {
+                Some(crate::spatial_metadata::Input {
+                    source: source.id,
+                    revision: crate::source_revision::FileRevision::read(
+                        &self.source_path(source.id).ok()?,
+                    )
+                    .ok()?,
+                    development: source.development.clone(),
+                    correction: None,
+                    code_scale,
+                })
+            })
+            .collect()
+    }
+
+    pub fn ready_spatial_metadata(&self) -> crate::spatial_metadata::Metadata {
+        self.spatial_metadata
+            .matching(&self.project, &self.spatial_inputs())
     }
 
     /// Accept the written snapshot as a baseline, without replacing edits made since dispatch.
@@ -187,11 +227,12 @@ impl Document {
         mut progress: impl FnMut(usize, usize),
     ) -> Result<Self> {
         let path = absolute(path)?;
-        let project = Project::load(&path)?;
-        let document = Self {
+        let (project, spatial_metadata) = Project::load_with_spatial_metadata(&path)?;
+        let mut document = Self {
             saved: project.clone(),
             project,
             path: Some(path),
+            spatial_metadata: Arc::new(spatial_metadata),
             cache: Arc::new(CacheScope(Arc::new(SourceStore::new(0)))),
             parent_cache: None,
             #[cfg(test)]
@@ -209,6 +250,7 @@ impl Document {
             verify_source(document.project.source(*id)?, &actual)?;
             progress(index + 1, total);
         }
+        document.spatial_metadata = Arc::new(document.ready_spatial_metadata());
         Ok(document)
     }
 
@@ -323,7 +365,11 @@ impl Document {
             }
         }
         candidate.validate_with_device(device)?;
-        candidate.project.save(&path, policy)?;
+        let metadata = self.ready_spatial_metadata();
+        candidate
+            .project
+            .save_with_spatial_metadata(&path, policy, &metadata)?;
+        candidate.spatial_metadata = Arc::new(metadata);
         candidate.path = Some(path);
         candidate.saved = candidate.project.clone();
         Ok(candidate)

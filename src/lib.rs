@@ -57,10 +57,12 @@ pub mod sampling;
 pub mod scan;
 #[cfg(feature = "project")]
 pub mod scan_regions;
-#[cfg(all(feature = "raw", feature = "project"))]
+#[cfg(feature = "project")]
 mod source_revision;
 #[cfg(all(feature = "raw", feature = "project"))]
 pub mod source_store;
+#[cfg(feature = "project")]
+pub mod spatial_metadata;
 #[cfg(feature = "editor")]
 pub mod viewport;
 #[cfg(all(
@@ -93,6 +95,10 @@ mod raw_test_support;
 
 #[cfg(all(test, feature = "ocio-reference", target_os = "macos"))]
 mod view_sampling_tests;
+
+#[cfg(all(test, feature = "raw", feature = "project"))]
+#[path = "../native/spatial_observation.rs"]
+mod spatial_observation;
 
 pub const PROCESSING_MODEL_VERSION: u32 = 4;
 

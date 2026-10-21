@@ -134,7 +134,7 @@ fn any_local_record_adds_an_explicit_reset_warning_to_the_area_review() {
                 source.local_adjustments = Some(locals);
                 editor.sync_document();
                 let before = editor.document.project.clone();
-                editor.request_analysis(cx);
+                review_tests::start_area_preparation(editor, cx);
                 review_tests::prepared(editor);
                 assert!(
                     editor
@@ -173,7 +173,7 @@ fn retired_local_records_and_empty_allocator_history_do_not_trigger_reset_warnin
             editor.document.project.sources[0].local_adjustments = Some(empty);
             editor.sync_document();
             let before = editor.document.project.clone();
-            editor.request_analysis(cx);
+            review_tests::start_area_preparation(editor, cx);
             review_tests::prepared(editor);
             assert!(
                 !editor

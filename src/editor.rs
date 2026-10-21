@@ -113,6 +113,8 @@ mod flat;
 mod reference_services;
 #[path = "editor_reference_workflow.rs"]
 mod reference_workflow;
+#[path = "editor_spatial.rs"]
+mod spatial;
 #[path = "editor_support_workflow.rs"]
 mod support_workflow;
 #[cfg(test)]

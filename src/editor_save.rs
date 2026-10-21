@@ -74,5 +74,14 @@ impl Editor {
                 self.report_failure(FailureKind::Save, error);
             }
         }
+        if self.document_pending.is_none()
+            && let Some(pending) = self.document.spatial_preparing.as_ref()
+        {
+            self.tasks.begin(Task::Regions(pending.id));
+            self.busy = true;
+            self.status = "Preparing film and picture regions…".into();
+        } else {
+            self.resume_spatial_consumer(cx);
+        }
     }
 }

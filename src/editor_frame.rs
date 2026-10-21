@@ -121,6 +121,15 @@ impl Editor {
         text_was_focused: bool,
         dialog_escape_available: bool,
     ) {
+        if self.document.spatial_preparing.is_some()
+            && self.failure.is_none()
+            && dialog_escape_available
+            && !text_was_focused
+            && !ui.ctx().egui_wants_keyboard_input()
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.cancel_spatial();
+        }
         if self.document.analysis_preparing.is_some()
             && dialog_escape_available
             && !text_was_focused
@@ -510,7 +519,7 @@ impl Editor {
             // Inspect the validated, focus-committed Photo state before confirming a reset.
             self.request_analysis(cx);
         } else if let Some(target) = auto_crop {
-            self.auto_crop(target);
+            self.request_auto_crop(target, cx);
             ui.ctx().request_repaint();
         }
     }
@@ -522,7 +531,7 @@ impl Editor {
         dialog_escape_available: bool,
     ) {
         if self.failure.is_some() {
-            self.feedback_dialog(ui.ctx(), dialog_escape_available);
+            self.feedback_dialog(ui.ctx(), dialog_escape_available, cx);
             return;
         }
         self.document_dialogs(ui.ctx(), dialog_escape_available, cx);

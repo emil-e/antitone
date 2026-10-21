@@ -256,6 +256,40 @@ impl Preparation {
         self.verify_file(index)
     }
 
+    fn apply_shared_picture_support(&mut self) -> Result<(), Error> {
+        let project = &self.request.document.project;
+        if project.analysis_area.is_some() {
+            return Ok(());
+        }
+        let metadata = self.request.document.ready_spatial_metadata();
+        for entry in &mut self.entries {
+            if entry.areas.picture_edited {
+                continue;
+            }
+            let Some(regions) = metadata
+                .groups
+                .iter()
+                .flat_map(|group| &group.sources)
+                .find(|row| row.input.source == entry.source)
+            else {
+                continue;
+            };
+            let active = regions.input.development.active_area;
+            // Two evidence pixels keep statistical samples away from soft transitions. This is
+            // sampling policy, not a displacement or an uncertainty claim about physical edges.
+            let inset = 2. * (f64::from(active[2]) / 768.).max(f64::from(active[3]) / 512.);
+            if let Ok(quad) = regions.picture_sampling(inset) {
+                entry.areas.picture = Some(quad);
+                entry.areas.picture_geometry = None;
+                entry.areas.picture_constraints.clear();
+                entry.areas.picture_observed = [false; 4];
+                entry.areas.picture_weak = [false; 4];
+                entry.areas.validate(active.into())?;
+            }
+        }
+        Ok(())
+    }
+
     fn finish(mut self) -> Result<Approved, Error> {
         if self.need_model {
             for (group, model) in self.groups.iter().zip(&self.models) {
@@ -269,6 +303,7 @@ impl Preparation {
                 }
             }
         }
+        self.apply_shared_picture_support()?;
         Ok(Approved {
             entries: self.entries,
             files: self.files,

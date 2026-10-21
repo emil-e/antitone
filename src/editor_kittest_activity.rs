@@ -168,6 +168,16 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                 harness.update(|editor| editor.busy = false);
                 harness.step();
             }
+            let admission = harness.read(|editor| editor.workflow_jobs.hold());
+            harness.enter(|editor, cx| editor.request_analysis(cx));
+            harness.update(|editor| editor.tasks.elapse(Duration::from_secs(1)));
+            render_case(&mut harness, &format!("regions-modal-{layout}"));
+            harness.get_by_label("Cancel region preparation").click();
+            harness.step();
+            wait_for(&mut harness, |editor| {
+                editor.document.spatial_preparing.is_none() && !editor.busy
+            });
+            drop(admission);
             let source = harness.read(|editor| editor.current_source.unwrap());
             let pending = harness.read(|editor| {
                 super::super::analysis_workflow::Pending::new(
@@ -187,8 +197,11 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                     },
                 )
             });
-            harness.update(|editor| editor.document.analysis_pending = Some(pending));
-            harness.update(|editor| editor.tasks.begin(Task::Analyze(9000)));
+            harness.update(|editor| editor.document.analysis_preparing = Some(pending));
+            harness.update(|editor| {
+                editor.tasks.begin(Task::AnalysisAreas(9000));
+                editor.tasks.elapse(Duration::from_secs(1));
+            });
             harness.update(|editor| {
                 editor.tasks.report(
                     TaskRequest::Analyze(9000),
@@ -200,11 +213,18 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
             });
             harness.update(|editor| editor.busy = true);
             render_case(&mut harness, &format!("analysis-sampling-{layout}"));
+            let previous_stage = harness.read(|editor| editor.tab);
             harness
                 .get_by_role_and_label(egui::accesskit::Role::Tab, "Photo")
                 .click();
             harness.step();
-            render_case(&mut harness, &format!("analysis-other-stage-{layout}"));
+            harness.read(|editor| {
+                assert_eq!(
+                    editor.tab, previous_stage,
+                    "modal preparation intercepts background stage changes"
+                )
+            });
+            render_case(&mut harness, &format!("analysis-modal-background-{layout}"));
             assert!(
                 !harness
                     .get_by_label("Cancel analysis")
@@ -212,13 +232,16 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                     .is_disabled()
             );
             harness.update(|editor| {
+                editor.document.analysis_pending = editor.document.analysis_preparing.take();
+                editor.tasks.begin(Task::Analyze(9000));
+                editor.tasks.elapse(Duration::from_secs(1));
                 editor.tasks.report(
                     TaskRequest::Analyze(9000),
                     TaskProgress::Counted {
                         completed: 12,
                         total: 12,
                     },
-                )
+                );
             });
             render_case(&mut harness, &format!("analysis-fitting-{layout}"));
             harness.get_by_label("Cancel analysis").click();

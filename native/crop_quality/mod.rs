@@ -256,12 +256,12 @@ fn overlap(crop: Crop, mark: Coverage) -> f64 {
 }
 
 #[derive(Serialize)]
-struct Score {
+pub(crate) struct Score {
     marked_source_pixel_area: f64,
     error_source_pixel_area: Option<f64>,
 }
 
-fn score(crop: Crop, marks: &[Quad], wanted: bool) -> Result<Score> {
+pub(crate) fn score(crop: Crop, marks: &[Quad], wanted: bool) -> Result<Score> {
     let mut total = 0.;
     let mut included = 0.;
     for &quad in marks {
