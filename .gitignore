@@ -14,3 +14,6 @@ target/
 .env.*
 !.env.example
 !.env.template
+
+# Local agent configuration; shared procedures stay tracked
+.pi/settings.json

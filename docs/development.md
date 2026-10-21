@@ -14,7 +14,9 @@ Understand the current processing, output and project-compatibility behavior bef
 
 Explain current behavior, rationale and non-obvious constraints — ownership, lifecycle, numerical assumptions, platform quirks, compatibility. Distinguish an implementation dependency from product intent, and give requirements their source rather than inferring them from code or tests. Public documentation describes supported behavior at the reader's level, not private call paths.
 
-Remove restatements, patch narration and completed investigation notes; replace "previously X, now Y" with the reason Y matters. Negative statements earn their place when they prevent a plausible, consequential misunderstanding: "Edits are not persisted until Save" explains a boundary; "the old toolbar is no longer rendered" usually records only a completed change.
+Remove restatements, patch narration and completed investigation notes; replace "previously X, now Y" with the reason Y matters. A negative statement earns its place only if you can name what a reader would otherwise *do* wrong — "Edits are not persisted until Save" prevents lost work; a sentence like "the old toolbar is no longer rendered" records only a completed change, and "this check does not establish X" defends a claim no reader acted on. If no wrong action exists, cut the sentence.
+
+Run `python3 scripts/check-docs.py` after documentation changes. It fails on broken links and reports word growth per changed guide, long paragraphs and hedge density — findings to judge, not verdicts.
 
 Write for prospective contributors: the problem, the mental model, the guarantees. Keep one explanation per topic in its owning guide, with links rather than parallel inventories. Plans describe unfinished scope and next actions, not execution history; transfer useful knowledge into the owning guide before removing finished plans.
 

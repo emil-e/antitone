@@ -34,6 +34,8 @@ Tie experiments to the requested outcome. Prefer a simple useful baseline, and a
 
 Follow the [development guide](docs/development.md) for engineering standards, documentation conventions and proportionate checks before handoff. Use the relevant [processing](docs/processing.md), [colour/output](docs/colour-and-output.md) and [project compatibility](docs/projects.md) guides to understand the boundaries being changed, not to treat their implementation choices as immutable requirements.
 
+Before editing any guide or README under `docs/` or `assets/`, follow the [documentation skill](.pi/skills/documentation/SKILL.md) — including documentation updates made while finishing a coding task.
+
 For editor work, follow [shared presentation](docs/editor.md#build-ui-from-shared-presentation) and the [tooltip/contextual-help guidance](docs/editor.md#tooltips-and-contextual-help). Verify the component and its composed feature.
 
 Write `docs/` for human contributors. Keep agent-only execution instructions here or in skills.
