@@ -141,7 +141,7 @@ impl Editor {
                 state.enabled.insert(Redo);
             }
         }
-        if !self.busy || self.export_operation.pending.is_some() {
+        if !self.busy {
             state.enabled.extend([About, Settings, Help]);
         }
         if self.file_available() {

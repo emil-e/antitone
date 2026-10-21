@@ -15,6 +15,15 @@ struct Intent {
 
 fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> Intent {
     let mut intent = Intent::default();
+    let form_inputs = (
+        draft.scope,
+        draft.folder.clone(),
+        draft.kind,
+        draft.target,
+        draft.precision,
+        draft.suffix.clone(),
+        draft.collision,
+    );
     ui.heading("Export photos");
     ui.add_space(8.);
     let height = (ui.ctx().content_rect().height() - 190.).max(80.);
@@ -161,6 +170,18 @@ fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> In
                     .response
                     .labelled_by(label);
             });
+            let inputs = (
+                draft.scope,
+                draft.folder.clone(),
+                draft.kind,
+                draft.target,
+                draft.precision,
+                draft.suffix.clone(),
+                draft.collision,
+            );
+            if inputs != form_inputs {
+                draft.error = None;
+            }
             if let Some(error) = &draft.error {
                 ui.label(error);
             }
@@ -234,6 +255,7 @@ impl Editor {
                 if let Some(folder) =
                     crate::platform::menu::with_native_dialog(|| picker.pick_folder())
                 {
+                    draft.error = None;
                     draft.folder = folder;
                 }
             }

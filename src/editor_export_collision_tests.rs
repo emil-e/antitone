@@ -182,10 +182,13 @@ fn duplicate_basenames_are_disambiguated_even_when_replace_is_confirmed() {
     let directory = tempfile::tempdir().unwrap();
     let ids = editor.document.project.order.clone();
     // Distinct sources retain their interpretation/grades but have equal basenames.
-    // Only naming is exercised here: no development from these altered locators.
     for (index, id) in ids.iter().enumerate() {
-        editor.document.project.source_mut(*id).unwrap().path =
-            directory.path().join(format!("input-{index}/frame.dng"));
+        let folder = directory.path().join(format!("input-{index}"));
+        std::fs::create_dir(&folder).unwrap();
+        let original = editor.document.source_path(*id).unwrap();
+        let copy = folder.join("frame.dng");
+        std::fs::copy(original, &copy).unwrap();
+        editor.document.project.source_mut(*id).unwrap().path = copy;
     }
     let mut settings = draft(directory.path());
     settings.collision = Collision::Replace;
@@ -195,4 +198,20 @@ fn duplicate_basenames_are_disambiguated_even_when_replace_is_confirmed() {
         request.photos[1].path,
         directory.path().join("frame (2).exr")
     );
+    let services = editor.export_services.take().unwrap();
+    drop(editor);
+    let summary = pollster::block_on(services.batch(request, Cancellation::default(), |_, _| {}));
+    assert_eq!((summary.exported(), summary.failed()), (2, 0));
+    let paths = summary
+        .outcomes
+        .iter()
+        .filter_map(|outcome| match outcome {
+            Outcome::Exported(path) => Some(path),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    // Replace confirmation never collapses equal basenames: each reported file
+    // must still contain its own photograph after the whole batch.
+    assert_eq!(exr_size(paths[0]), [16, 16]);
+    assert_eq!(exr_size(paths[1]), [24, 12]);
 }
