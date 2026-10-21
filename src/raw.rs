@@ -1255,6 +1255,73 @@ mod tests {
         assert_eq!(std::fs::read(path).unwrap(), original);
     }
 
+    #[cfg(feature = "editor")]
+    #[test]
+    fn authored_jpeg_selection_prefers_the_smallest_sufficient_preview_or_largest_tiny_fallback() {
+        fn u16_at(bytes: &[u8], offset: usize) -> u16 {
+            u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap())
+        }
+        fn u32_at(bytes: &[u8], offset: usize) -> u32 {
+            u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
+        }
+        for (dimensions, expected) in [
+            (vec![[512, 344], [160, 120], [320, 216]], [320, 216]),
+            (vec![[320, 216], [512, 344]], [320, 216]),
+            (vec![[2049, 64], [160, 120]], [160, 120]),
+            (vec![], [16, 8]),
+        ] {
+            let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/preview.dng");
+            let mut bytes = std::fs::read(path).unwrap();
+            // Chain additional authored JPEG IFDs after the fixture's tiny preview;
+            // all original sensor data, metadata and absolute TIFF payload offsets stay intact.
+            let root = u32_at(&bytes, 4) as usize;
+            let root_link = root + 2 + 12 * usize::from(u16_at(&bytes, root));
+            let preview = u32_at(&bytes, root_link) as usize;
+            let fields = usize::from(u16_at(&bytes, preview));
+            let ifd_bytes = 2 + 12 * fields + 4;
+            let template = bytes[preview..preview + ifd_bytes].to_vec();
+            let mut link = preview + 2 + 12 * fields;
+            for [width, height] in dimensions {
+                let mut jpeg = Vec::new();
+                image::codecs::jpeg::JpegEncoder::new(&mut jpeg)
+                    .encode(
+                        &vec![127; width as usize * height as usize * 3],
+                        width,
+                        height,
+                        image::ExtendedColorType::Rgb8,
+                    )
+                    .unwrap();
+                if !bytes.len().is_multiple_of(2) {
+                    bytes.push(0);
+                }
+                let start = bytes.len();
+                bytes[link..link + 4].copy_from_slice(&(start as u32).to_le_bytes());
+                bytes.extend_from_slice(&template);
+                for index in 0..fields {
+                    let offset = start + 2 + index * 12;
+                    let value = match u16_at(&bytes, offset) {
+                        256 => width,
+                        257 => height,
+                        513 => (start + ifd_bytes) as u32,
+                        514 => jpeg.len() as u32,
+                        _ => continue,
+                    };
+                    bytes[offset + 8..offset + 12].copy_from_slice(&value.to_le_bytes());
+                }
+                bytes.extend_from_slice(&jpeg);
+                link = start + 2 + 12 * fields;
+            }
+            let file = tempfile::Builder::new().suffix(".dng").tempfile().unwrap();
+            std::fs::write(file.path(), bytes).unwrap();
+            let mut raw = RawFile::open(file.path()).unwrap();
+            let thumbnail = raw.embedded_thumbnail().unwrap().unwrap();
+            let image = image::load_from_memory(&thumbnail.jpeg).unwrap();
+            assert_eq!([image.width(), image.height()], expected);
+            assert!(!raw.unpacked);
+            assert!(raw.camera_image().is_err());
+        }
+    }
+
     #[test]
     fn bridge_layout_matches_native_static_assertions() {
         assert_eq!(size_of::<NativeMetadata>(), 664);

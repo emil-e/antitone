@@ -72,9 +72,17 @@ fn authored_dng_preview_worker_installs_and_releases_the_visible_placeholder_wit
         // The proper-thumbnail coordinator removes replaced images from this wanted list.
         app.update(|editor| editor.thumbnails.embedded.request_visible(&[], true));
         app.read(|editor| {
-            assert!(editor.thumbnails.embedded.entries.is_empty());
+            assert!(
+                editor
+                    .thumbnails
+                    .embedded
+                    .get(&visible[0].1.source)
+                    .is_some()
+            );
             assert!(!editor.thumbnails.embedded.pending());
         });
+        app.update(|editor| editor.thumbnails.embedded.set_budget(0));
+        app.read(|editor| assert!(editor.thumbnails.embedded.entries.is_empty()));
     });
 }
 
@@ -164,7 +172,7 @@ fn complete(
 }
 
 #[test]
-fn visible_jpeg_pass_is_independent_bounded_and_drops_completed_or_offscreen_placeholders() {
+fn visible_jpeg_pass_keeps_recent_navigation_feedback_until_budget_pressure() {
     let document = fixture();
     let context = egui::Context::default();
     let mut previews = state();
@@ -182,11 +190,74 @@ fn visible_jpeg_pass_is_independent_bounded_and_drops_completed_or_offscreen_pla
     complete(&mut previews, second, &document, &context, true);
     assert!(previews.get(&wanted[1].1.source).is_some());
     previews.request_visible(&wanted[1..], true);
+    assert!(previews.get(&wanted[0].1.source).is_some());
+    previews.set_budget(0);
     assert!(previews.get(&wanted[0].1.source).is_none());
-    previews.request_visible(&[], true);
     assert!(
-        previews.entries.is_empty(),
-        "no recent/offscreen JPEG retention after proper replacement"
+        previews.get(&wanted[1].1.source).is_some(),
+        "visible feedback survives zero optional retention"
+    );
+    previews.request_visible(&[], true);
+    assert!(previews.entries.is_empty());
+}
+
+#[test]
+fn camera_feedback_for_a_36_shot_roll_survives_scrolling_and_shares_the_image_budget() {
+    let document = fixture();
+    let context = egui::Context::default();
+    let mut thumbnails = Thumbnails {
+        embedded: state(),
+        ..Default::default()
+    };
+    for index in 0..36 {
+        let wanted = vec![wanted(&document, index)];
+        thumbnails.embedded.request_visible(&wanted, true);
+        let request = thumbnails.embedded.begin(&document).unwrap().0;
+        thumbnails.embedded.complete(
+            request.ticket,
+            request.key,
+            Completion::Image(Ok(Some(egui::ColorImage::filled(
+                [256, 256],
+                egui::Color32::RED,
+            )))),
+            &document,
+            &context,
+        );
+        thumbnails.sync_image_budget();
+    }
+    for index in (0..36).rev().chain(0..36) {
+        let wanted = vec![wanted(&document, index)];
+        thumbnails.embedded.request_visible(&wanted, true);
+        assert!(thumbnails.embedded.get(&wanted[0].1.source).is_some());
+        assert!(
+            thumbnails.embedded.begin(&document).is_none(),
+            "warm scrolling must not extract JPEGs again"
+        );
+    }
+    let retained = thumbnails.embedded.byte_len();
+    assert!(
+        retained >= 36 * 256 * 256 * 4,
+        "charge actual texture pixels"
+    );
+    assert!(
+        !thumbnails
+            .cache
+            .can_retain(thumbnails.budgets.images - retained + 1),
+        "camera and processed textures must not each spend the full image allowance"
+    );
+    thumbnails.set_limits(cache_limits::CacheLimits {
+        cpu_bytes: 0,
+        gpu_bytes: 0,
+    });
+    assert_eq!(
+        thumbnails.embedded.entries.len(),
+        1,
+        "only visible feedback survives zero retention"
+    );
+    thumbnails.embedded.reset_demand();
+    assert!(
+        thumbnails.embedded.entries.is_empty(),
+        "replacement document must release JPEG ownership"
     );
 }
 
@@ -478,10 +549,115 @@ fn camera_images_and_badges_fit_polished_wells_and_clip_without_squeezing_or_hid
 }
 
 #[test]
+fn sufficient_camera_preview_and_developed_card_have_matching_display_size() {
+    let camera = decode(jpeg(1616, 1080, 0)).unwrap().unwrap();
+    let (device, queue) = pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        adapter.request_device(&Default::default()).await.unwrap()
+    });
+    let developed = Arc::new(
+        pollster::block_on(GpuImage::new(
+            &device,
+            &queue,
+            256,
+            171,
+            &vec![[1000, 2000, 3000, 0]; 256 * 171],
+            glam::DMat3::IDENTITY,
+            OutputTarget::DisplayP3,
+        ))
+        .unwrap(),
+    );
+    for height in [52., 140., 240.] {
+        for scale in [1., 2.] {
+            let mut editor = Editor::state();
+            *editor.document = fixture();
+            editor.document.project.order.truncate(1);
+            editor.preferences.filmstrip_height = height;
+            editor.busy = true;
+            editor
+                .thumbnails
+                .bind_sources(editor.document.cache().clone());
+            let key = key(&editor.document, editor.document.project.order[0]);
+            let context = egui::Context::default();
+            context.set_pixels_per_point(scale);
+            let texture = context.load_texture(
+                "sufficient camera preview",
+                camera.clone(),
+                egui::TextureOptions::LINEAR,
+            );
+            editor
+                .thumbnails
+                .embedded
+                .entries
+                .push((key.source.clone(), Some(texture.clone())));
+            let frame = |editor: &mut Editor| {
+                let mut output = context.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(1100., 800.),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| editor.filmstrip(ui, &crate::application::UiContext::render_only()),
+                );
+                output.textures_delta.clear();
+                output
+            };
+            frame(&mut editor);
+            let before = frame(&mut editor);
+            let camera_rect = before
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Mesh(mesh) if mesh.texture_id == texture.id() => {
+                        Some(mesh.calc_bounds())
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            editor
+                .thumbnails
+                .cache
+                .insert(key, Ok(Product::camera(developed.clone())));
+            let after = frame(&mut editor);
+            let developed_rect = after
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Callback(callback) => Some(callback.rect),
+                    _ => None,
+                })
+                .unwrap();
+            // The JPEG's 1616:1080 aspect and integer proxy resizing differ slightly
+            // from the source's 3:2 inset. Their fitted edges should still agree to a pixel.
+            for (before, after) in [
+                (camera_rect.left(), developed_rect.left()),
+                (camera_rect.top(), developed_rect.top()),
+                (camera_rect.right(), developed_rect.right()),
+                (camera_rect.bottom(), developed_rect.bottom()),
+            ] {
+                assert!(
+                    (before - after).abs() * scale <= 1.,
+                    "replacement changed thumbnail size: {camera_rect:?} -> {developed_rect:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_ready() {
     let mut editor = Editor::state();
     *editor.document = fixture();
     editor.current_source = Some(editor.document.project.order[0]);
+    editor
+        .thumbnails
+        .bind_sources(editor.document.cache().clone());
     let original = editor.document.project.clone();
     let context = egui::Context::default();
     context.enable_accesskit();
@@ -526,6 +702,25 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
             .unwrap();
         assert_eq!(selected.1.toggled(), Some(egui::accesskit::Toggled::True));
         let bounds = selected.1.bounds().unwrap();
+        assert!(
+            !output
+                .platform_output
+                .accesskit_update
+                .as_ref()
+                .unwrap()
+                .nodes
+                .iter()
+                .any(|(_, node)| {
+                    node.label() == Some("Photo updating")
+                        && node.bounds().is_some_and(|marker| {
+                            marker.x0 >= bounds.x0
+                                && marker.x1 <= bounds.x1
+                                && marker.y0 >= bounds.y0
+                                && marker.y1 <= bounds.y1
+                        })
+                }),
+            "available camera feedback does not need a loading icon"
+        );
         assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
             egui::Shape::Rect(rect)
                 if f64::from(rect.rect.left()) == bounds.x0
@@ -632,16 +827,16 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
             .iter()
             .any(|label| label == "Camera preview")
     );
-    assert!(editor.thumbnails.embedded.entries.is_empty());
+    assert!(editor.thumbnails.embedded.get(&image_key.source).is_some());
     assert!(editor.document.visit.ready.is_none() && editor.pending_preview.is_none());
     editor
         .thumbnails
         .cache
-        .insert(image_key, Err("authoritative RAW failure".into()));
+        .insert(image_key.clone(), Err("authoritative RAW failure".into()));
     assert!(
         !frame(&mut editor)
             .iter()
             .any(|label| label == "Camera preview")
     );
-    assert!(editor.thumbnails.embedded.entries.is_empty());
+    assert!(editor.thumbnails.embedded.get(&image_key.source).is_some());
 }

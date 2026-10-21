@@ -491,15 +491,6 @@ impl SourceStore {
         self.state.lock().unwrap().closed
     }
 
-    #[cfg(feature = "editor")]
-    pub(crate) fn contains_proxy(&self, key: &SourceKey) -> bool {
-        let state = self.state.lock().unwrap();
-        !state.closed
-            && state.entries.iter().any(|entry| {
-                entry.key == *key && entry.resource.kind() == Kind::Proxy && entry.resource.live()
-            })
-    }
-
     #[cfg(all(test, feature = "editor"))]
     pub(crate) fn proxy_count(&self) -> usize {
         let state = self.state.lock().unwrap();

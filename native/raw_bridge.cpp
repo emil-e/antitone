@@ -321,17 +321,24 @@ extern "C" int antitone_raw_thumbnail(void *handle, AntitoneRawThumbnail *out, c
     auto &raw = *static_cast<LibRaw *>(handle);
     const auto &list = raw.imgdata.thumbs_list;
     int selected = -1;
-    uint64_t smallest = UINT64_MAX;
+    uint64_t selected_area = 0;
+    bool sufficient = false;
+    // Tiny EXIF thumbnails can letterbox a 3:2 camera image into a 4:3 canvas.
+    // Prefer enough resolution for a 256-pixel filmstrip proxy before minimizing decode cost.
+    constexpr unsigned preview_edge = 256;
     for (int index = 0; index < list.thumbcount; ++index) {
         const auto &item = list.thumblist[index];
         if (item.tformat != LIBRAW_INTERNAL_THUMBNAIL_JPEG || !item.twidth || !item.theight ||
             item.twidth > 2048 || item.theight > 2048 || !item.tlength ||
             item.tlength > 1024 * 1024)
             continue;
-        uint64_t area = uint64_t(item.twidth) * item.theight;
-        if (area < smallest) {
+        const bool enough = item.twidth >= preview_edge || item.theight >= preview_edge;
+        const uint64_t area = uint64_t(item.twidth) * item.theight;
+        const bool better_size = enough ? area < selected_area : area > selected_area;
+        if (selected < 0 || (enough && !sufficient) || (enough == sufficient && better_size)) {
             selected = index;
-            smallest = area;
+            selected_area = area;
+            sufficient = enough;
         }
     }
     if (selected < 0)

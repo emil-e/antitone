@@ -264,6 +264,227 @@ fn repaired_thumbnails_capture_looks_reuse_neutral_and_grade_and_charge_retained
 }
 
 #[test]
+fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_versions() {
+    let (device, queue) = gpu();
+    let mut thumbnails = Thumbnails::with_disk(
+        device,
+        queue,
+        Arc::new(crate::renderer::RendererCache::default()),
+        None,
+    );
+    let document = document();
+    let id = document.project.order[0];
+    let initial_key = tests::key(&document, id);
+    complete(&mut thumbnails, &document, initial_key.clone()).unwrap();
+    let mut editor = Editor::state();
+    editor.document = document.into();
+    editor.thumbnails = thumbnails;
+    editor.current_source = Some(id);
+    // Hold asynchronous replacement so the composed filmstrip must use existing pixels.
+    editor.busy = true;
+    let context = egui::Context::default();
+    context.enable_accesskit();
+    let frame = |editor: &mut Editor| {
+        let mut output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1100., 800.),
+                )),
+                ..Default::default()
+            },
+            |ui| editor.filmstrip(ui, &crate::application::UiContext::render_only()),
+        );
+        output.textures_delta.clear();
+        output
+    };
+    let gamma = editor.document.project.roll.gamma;
+    for (index, (exposure, gamma)) in [(0.25, gamma), (0.5, gamma), (0.75, gamma), (1., 1.2)]
+        .into_iter()
+        .enumerate()
+    {
+        if index == 3 {
+            editor.thumbnails.set_limits(cache_limits::CacheLimits {
+                cpu_bytes: 0,
+                gpu_bytes: 0,
+            });
+        }
+        editor.document.project.roll.gamma = gamma;
+        editor.roll.gamma = gamma;
+        editor
+            .document
+            .project
+            .source_mut(id)
+            .unwrap()
+            .photo
+            .exposure = exposure;
+        editor.photo.exposure = exposure;
+        let output = frame(&mut editor);
+        assert!(
+            output
+                .shapes
+                .iter()
+                .any(|shape| matches!(shape.shape, egui::Shape::Callback(_))),
+            "grading must not replace the existing image with a blank/JPEG"
+        );
+        assert!(!output.shapes.iter().any(|shape| matches!(&shape.shape,
+            egui::Shape::Text(text) if text.galley.job.text == "…")));
+        assert!(
+            output
+                .platform_output
+                .accesskit_update
+                .as_ref()
+                .unwrap()
+                .nodes
+                .iter()
+                .any(|(_, node)| node.label() == Some("Photo updating")),
+            "previous pixels must not claim to be a current grade"
+        );
+        let key = tests::key(&editor.document, id);
+        complete(&mut editor.thumbnails, &editor.document, key.clone()).unwrap();
+        assert_eq!(
+            editor.thumbnails.cache.entries.len(),
+            1,
+            "superseded grades must not compete with other roll photos for retention"
+        );
+        assert!(editor.thumbnails.cache.contains(&key));
+        let output = frame(&mut editor);
+        assert!(
+            !output
+                .platform_output
+                .accesskit_update
+                .as_ref()
+                .unwrap()
+                .nodes
+                .iter()
+                .any(|(_, node)| node.label() == Some("Photo updating"))
+        );
+    }
+    editor
+        .document
+        .project
+        .source_mut(id)
+        .unwrap()
+        .photo
+        .exposure = 1.25;
+    let key = tests::key(&editor.document, id);
+    editor.thumbnails.protect_images(vec![key.clone()]);
+    editor
+        .thumbnails
+        .cache
+        .insert(key, Err("render rejected".into()));
+    let output = frame(&mut editor);
+    assert!(
+        !output
+            .shapes
+            .iter()
+            .any(|shape| matches!(shape.shape, egui::Shape::Callback(_))),
+        "an authoritative error must not be hidden by old pixels"
+    );
+    assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+        egui::Shape::Text(text) if text.galley.job.text == "!")));
+}
+
+#[test]
+fn replacing_a_grade_preserves_other_photos_in_the_roll_cache() {
+    let (device, queue) = gpu();
+    let mut thumbnails = Thumbnails::with_disk(
+        device,
+        queue,
+        Arc::new(crate::renderer::RendererCache::default()),
+        None,
+    );
+    let mut document = document();
+    document
+        .import(&[PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/preview.dng")])
+        .unwrap();
+    let first = document.project.order[0];
+    let other = document.project.order[1];
+    let first_key = tests::key(&document, first);
+    let other_key = tests::key(&document, other);
+    complete(&mut thumbnails, &document, first_key.clone()).unwrap();
+    let other_product = complete(&mut thumbnails, &document, other_key.clone()).unwrap();
+    document.project.source_mut(first).unwrap().photo.exposure = 0.5;
+    let replacement = tests::key(&document, first);
+    complete(&mut thumbnails, &document, replacement.clone()).unwrap();
+    assert!(!thumbnails.cache.contains(&first_key));
+    assert!(thumbnails.cache.contains(&replacement));
+    assert!(
+        Arc::ptr_eq(
+            thumbnails.cache.get(&other_key).unwrap().as_ref().unwrap(),
+            &other_product
+        ),
+        "replacing one photo's grade must preserve another photo's ready pixels"
+    );
+}
+
+#[test]
+fn previous_card_presentation_requires_the_same_source_repairs_framing_and_target() {
+    let mut document = document();
+    let id = document.project.order[0];
+    let original = tests::key(&document, id);
+    document.project.source_mut(id).unwrap().photo.exposure = 0.5;
+    let graded = tests::key(&document, id);
+    assert!(original.same_presentation(&graded));
+    document.project.roll.gamma = 1.2;
+    let interpreted = tests::key(&document, id);
+    assert!(!original.same_neutral(&interpreted));
+    assert!(
+        original.same_presentation(&interpreted),
+        "interpretation updates can show an explicitly pending previous grade"
+    );
+    let mut other = graded.clone();
+    other.target = OutputTarget::Srgb;
+    assert!(!original.same_presentation(&other));
+    other = graded.clone();
+    let area = document.project.source(id).unwrap().development.active_area;
+    other.field = Some(FieldKey(Arc::new(
+        crate::flat_field::FlatField::from_nodes(area, [2, 2], vec![DVec3::splat(1.1); 4]).unwrap(),
+    )));
+    assert!(!original.same_presentation(&other));
+    other = graded.clone();
+    other.source.file = FileKey::new(std::path::Path::new("changed-source.ARW"));
+    assert!(!original.same_presentation(&other));
+    document
+        .project
+        .source_mut(id)
+        .unwrap()
+        .repairs
+        .insert(
+            SupportMask::new([120, 60], [3, 3], vec![true; 9]).unwrap(),
+            RepairOrigin::Manual,
+            DonorChoice::Offset([-64, 0]),
+        )
+        .unwrap();
+    assert!(
+        !original.same_presentation(&tests::key(&document, id)),
+        "old unrepaired pixels are not compatible accepted repair feedback"
+    );
+    let uncropped = tests::key(&document, id);
+    document.project.source_mut(id).unwrap().crop = Some(crate::crop::Crop {
+        center: [128., 96.],
+        size: [64, 64],
+        angle: 0.,
+    });
+    let cropped = tests::key(&document, id);
+    assert!(!cropped.same_presentation(&uncropped));
+    let mut projected = uncropped.clone();
+    projected.projection = Some(
+        cropped
+            .recipe
+            .as_ref()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .composition,
+    );
+    assert!(
+        !projected.same_presentation(&uncropped),
+        "transient tool framing must not reuse a card validated for another footprint"
+    );
+}
+
+#[test]
 fn authored_failed_thumbnail_repairs_publish_only_a_failure_under_the_current_recipe() {
     let (device, queue) = gpu();
     let mut thumbnails = Thumbnails::with_disk(

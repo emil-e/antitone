@@ -108,7 +108,6 @@ impl Drop for Retire {
     }
 }
 
-#[derive(Default)]
 pub(super) struct EmbeddedPreviews {
     entries: Vec<(SourceKey, Option<egui::TextureHandle>)>,
     services: Option<Services>,
@@ -116,6 +115,21 @@ pub(super) struct EmbeddedPreviews {
     pending: Option<Projection>,
     wanted: Vec<(SourceKey, PathBuf)>,
     allowed: bool,
+    budget: usize,
+}
+
+impl Default for EmbeddedPreviews {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            services: None,
+            next: 0,
+            pending: None,
+            wanted: Vec::new(),
+            allowed: false,
+            budget: 16 << 20,
+        }
+    }
 }
 
 impl EmbeddedPreviews {
@@ -137,6 +151,54 @@ impl EmbeddedPreviews {
         self.cancel();
         self.pending = None;
         self.wanted.clear();
+        self.entries.clear();
+    }
+
+    fn entry_bytes(key: &SourceKey, texture: &Option<egui::TextureHandle>) -> usize {
+        std::mem::size_of::<SourceKey>()
+            + key.file.path.capacity()
+            + key.source.camera_model.capacity()
+            + key
+                .source
+                .lens_correction
+                .as_ref()
+                .map_or(0, String::capacity)
+            + key.development.backend_version.capacity()
+            + key.development.contract.capacity()
+            + key.development.inversion_space.capacity()
+            + key.development.working_space.capacity()
+            + 1024
+            + texture.as_ref().map_or(0, |texture| {
+                let [width, height] = texture.size();
+                width * height * 4
+            })
+    }
+
+    pub(super) fn byte_len(&self) -> usize {
+        self.entries
+            .iter()
+            .map(|(key, texture)| Self::entry_bytes(key, texture))
+            .sum()
+    }
+
+    pub(super) fn set_budget(&mut self, budget: usize) {
+        self.budget = budget;
+        self.trim();
+    }
+
+    fn trim(&mut self) {
+        let mut bytes = self.byte_len();
+        while bytes > self.budget {
+            let Some(index) = self
+                .entries
+                .iter()
+                .position(|(key, _)| !self.wanted.iter().any(|(wanted, _)| wanted == key))
+            else {
+                break;
+            };
+            let (key, texture) = self.entries.remove(index);
+            bytes = bytes.saturating_sub(Self::entry_bytes(&key, &texture));
+        }
     }
 
     fn begin(&mut self, document: &Document) -> Option<(Request, Arc<AtomicBool>)> {
@@ -204,6 +266,7 @@ impl EmbeddedPreviews {
             }
         };
         self.entries.push((key, texture));
+        self.trim();
     }
 
     pub(super) fn get(&self, key: &SourceKey) -> Option<&egui::TextureHandle> {
@@ -218,9 +281,17 @@ impl EmbeddedPreviews {
         wanted: &[(usize, ImageKey, PathBuf, Source)],
         allowed: bool,
     ) {
-        // Keep only visible missing cells; source records are captured one at a time.
-        self.entries
-            .retain(|(key, _)| wanted.iter().any(|(_, image, _, _)| &image.source == key));
+        // Touch visible entries without discarding recently seen navigation feedback.
+        for (_, image, _, _) in wanted {
+            if let Some(index) = self
+                .entries
+                .iter()
+                .position(|(key, _)| key == &image.source)
+            {
+                let entry = self.entries.remove(index);
+                self.entries.push(entry);
+            }
+        }
         if let Some(pending) = &self.pending
             && (!allowed
                 || !wanted
@@ -234,6 +305,7 @@ impl EmbeddedPreviews {
             .iter()
             .map(|(_, image, path, _)| (image.source.clone(), path.clone()))
             .collect();
+        self.trim();
     }
 
     pub(super) fn pending(&self) -> bool {
@@ -250,6 +322,7 @@ impl Editor {
         cx: &UiContext<'_, Self>,
     ) {
         self.thumbnails.embedded.request_visible(wanted, allowed);
+        self.thumbnails.sync_image_budget();
         self.acquire_embedded(context, cx);
     }
 
@@ -292,6 +365,7 @@ impl Editor {
                     &workflow_context,
                 );
                 drop(pending);
+                editor.thumbnails.sync_image_budget();
                 editor.acquire_embedded(&workflow_context, &cx);
             });
         }) else {

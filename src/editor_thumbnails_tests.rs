@@ -1340,14 +1340,18 @@ fn warm_normal_roll_survives_rapid_forward_and_reverse_scrolling() {
         let mut editor = Editor::state();
         *editor.document = fixture();
         editor.document.project.order.truncate(36);
+        editor.thumbnails.set_limits(cache_limits::CacheLimits {
+            cpu_bytes: 0,
+            gpu_bytes: 256 << 20,
+        });
         for id in editor.document.project.order.clone() {
             let image = Arc::new(
                 GpuImage::new_shared(
                     &renderer,
                     &device,
-                    8,
-                    8,
-                    &[[0; 4]; 64],
+                    256,
+                    256,
+                    &vec![[0; 4]; 256 * 256],
                     glam::DMat3::IDENTITY,
                     OutputTarget::DisplayP3,
                 )

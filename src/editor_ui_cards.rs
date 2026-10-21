@@ -81,8 +81,7 @@ impl ContactSheetLayout {
             cell.min + Vec2::splat(self.padding),
             egui::vec2(self.size.x - 2. * self.padding, self.image_height),
         );
-        ui.painter()
-            .rect_filled(image_rect, 0., Color32::from_gray(14));
+        ui.painter().rect_filled(image_rect, 0., fill);
         let caption_rect = Rect::from_min_size(
             egui::pos2(image_rect.left(), image_rect.bottom() + self.caption_gap),
             egui::vec2(image_rect.width(), self.caption_height),

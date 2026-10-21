@@ -148,6 +148,15 @@ impl ImageKey {
             }
     }
 
+    fn same_presentation(&self, other: &Self) -> bool {
+        self.source == other.source
+            && self.field == other.field
+            && self.target == other.target
+            && self.projection == other.projection
+            && matches!((&self.recipe, &other.recipe), (Ok(Some(a)), Ok(Some(b)))
+                if a.composition == b.composition && a.repairs() == b.repairs())
+    }
+
     fn estimated_product_bytes(&self) -> Option<usize> {
         let positive = matches!(&self.recipe, Ok(Some(_)));
         let mut bytes = 256_u64 * 256 * 48 + Product::overhead(positive) as u64;
@@ -443,10 +452,12 @@ impl Thumbnails {
     }
 
     pub(super) fn refresh_hidden_memory(&mut self) {
+        self.embedded.request_visible(&[], false);
         self.cache.protect(Vec::new());
         self.visible_keys.clear();
         self.protect_cpu();
         self.update_memory();
+        self.sync_image_budget();
     }
 
     fn protect_cpu(&self) {
@@ -477,8 +488,7 @@ impl Thumbnails {
     pub(super) fn reserve_view(&mut self, bytes: usize) -> bool {
         let admitted = bytes <= self.budgets.images;
         self.view_reservation = if admitted { bytes } else { 0 };
-        self.cache
-            .set_budget(self.budgets.images.saturating_sub(self.view_reservation));
+        self.sync_image_budget();
         admitted
     }
 
@@ -505,14 +515,28 @@ impl Thumbnails {
         if budgets.pressure == memory::Pressure::Critical {
             self.cancel();
         }
-        self.cache
-            .set_budget(self.budgets.images.saturating_sub(self.view_reservation));
+        self.sync_image_budget();
         self.sources.set_budget(self.budgets.sources as u64);
+    }
+
+    fn sync_image_budget(&mut self) {
+        let available = self.budgets.images.saturating_sub(self.view_reservation);
+        self.embedded.set_budget(available.min(16 << 20));
+        self.cache
+            .set_budget(available.saturating_sub(self.embedded.byte_len()));
     }
 
     fn compatible_product(&self, key: &ImageKey) -> Option<(&ImageKey, &Arc<Product>)> {
         self.cache.entries.iter().rev().find_map(|(old, product)| {
             key.same_neutral(old)
+                .then(|| product.as_ref().ok().map(|product| (old, product)))
+                .flatten()
+        })
+    }
+
+    fn previous_product(&self, key: &ImageKey) -> Option<(&ImageKey, &Arc<Product>)> {
+        self.cache.entries.iter().rev().find_map(|(old, product)| {
+            key.same_presentation(old)
                 .then(|| product.as_ref().ok().map(|product| (old, product)))
                 .flatten()
         })
@@ -528,7 +552,11 @@ impl Thumbnails {
                     .iter()
                     .any(|(old, product)| old == *key && product.is_ok())
             })
-            .filter_map(|key| self.compatible_product(key).map(|(old, _)| old.clone()))
+            .filter_map(|key| {
+                self.previous_product(key)
+                    .or_else(|| self.compatible_product(key))
+                    .map(|(old, _)| old.clone())
+            })
             .collect::<Vec<_>>();
         wanted.extend(previous);
         self.cache.protect(wanted);
@@ -706,7 +734,11 @@ impl Thumbnails {
                 == document.project.active_flat_field().map(|f| &f.map)
         {
             match outcome.image {
-                Ok(Some(image)) => self.cache.insert(outcome.key, Ok(image)),
+                Ok(Some(image)) => {
+                    // A new version replaces this source's old outputs, not another photo.
+                    self.cache.retain(|key, _| key.source != outcome.key.source);
+                    self.cache.insert(outcome.key, Ok(image));
+                }
                 Err(error) => self.cache.insert(outcome.key, Err(error)),
                 Ok(None) => {}
             }
@@ -1010,11 +1042,22 @@ impl Editor {
                     if let Some(key) = &key {
                         protected.push(key.clone());
                     }
-                    let entry = key
+                    let current = key
                         .as_ref()
                         .and_then(|key| self.thumbnails.cache.get(key))
                         .cloned();
-                    let pending = entry.is_none() && key.is_some();
+                    let pending = current.is_none() && key.is_some();
+                    // Keep the previous accepted grade visible until its replacement is ready.
+                    // Exact-key failures still take precedence over navigation feedback.
+                    let entry = current.or_else(|| {
+                        key.as_ref().and_then(|key| {
+                            self.thumbnails
+                                .previous_product(key)
+                                .map(|(_, product)| Ok(product.clone()))
+                        })
+                    });
+                    let previous = pending && entry.as_ref().is_some_and(Result::is_ok);
+                    let mut available = false;
                     let parameters = if entry
                         .as_ref()
                         .and_then(|entry| entry.as_ref().ok())
@@ -1027,6 +1070,7 @@ impl Editor {
                     let mut error = None;
                     match (entry, parameters) {
                         (Some(Ok(image)), Ok(parameters)) => {
+                            available = true;
                             let composition = self.thumbnail_composition(source);
                             let dimensions = composition.size();
                             let aspect = dimensions[0] as f32 / dimensions[1] as f32;
@@ -1119,6 +1163,7 @@ impl Editor {
                         (None, Ok(_)) => {
                             if let Some(key) = key {
                                 if let Some(texture) = self.thumbnails.embedded.get(&key.source) {
+                                    available = true;
                                     let dimensions = texture.size_vec2();
                                     let scale = (image_rect.width() / dimensions.x)
                                         .min(image_rect.height() / dimensions.y);
@@ -1142,18 +1187,12 @@ impl Editor {
                                 } else {
                                     card.loading(ui);
                                 }
-                                if self.thumbnails.embedded.get(&key.source).is_some()
-                                    || !key.source.store_key().is_some_and(|key| {
-                                        self.thumbnails.sources.contains_proxy(&key)
-                                    })
-                                {
-                                    camera_wanted.push((
-                                        index,
-                                        key.clone(),
-                                        path.clone(),
-                                        source.clone(),
-                                    ));
-                                }
+                                camera_wanted.push((
+                                    index,
+                                    key.clone(),
+                                    path.clone(),
+                                    source.clone(),
+                                ));
                             }
                         }
                     }
@@ -1168,7 +1207,7 @@ impl Editor {
                             StatusLevel::Error,
                             format!("Thumbnail unavailable: {error}"),
                         ))
-                    } else if pending {
+                    } else if pending && (!available || previous) {
                         Some(ContextualStatus::new(
                             StatusLevel::Activity,
                             "Preparing thumbnail; navigation preview may differ.",

@@ -496,8 +496,11 @@ fn active_background_preserves_geometry_selection_outline_and_filename_semantics
                 };
                 let normal_well = image_well(&before);
                 let active_well = image_well(&output);
-                assert_eq!(normal_well, active_well);
-                assert!(active_well.r() < normal_frame.fill.r());
+                assert_eq!(normal_well, normal_frame.fill);
+                assert_eq!(
+                    active_well, active_frame.fill,
+                    "letterboxing follows the card background, without an extra black frame"
+                );
                 let (_, node) = output
                     .platform_output
                     .accesskit_update
