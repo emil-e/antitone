@@ -12,6 +12,8 @@ import re
 import subprocess
 import sys
 
+BASE_REF = "HEAD"
+
 EXCLUDED_DIRS = {".git", ".worktrees", "node_modules", ".cache", "target", "samples"}
 HEDGE_PATTERNS = [
     r"\bdoes not establish\b",
@@ -55,7 +57,7 @@ def fail(message):
 
 def slug(heading):
     text = re.sub(r"[^\w\s-]", "", heading.strip().strip("#").strip())
-    return re.sub(r"[\s_]+", "-", text.strip()).lower()
+    return re.sub(r"\s+", "-", text.strip()).lower()  # GitHub keeps underscores
 
 
 def check_links(files):
@@ -71,6 +73,8 @@ def check_links(files):
                 continue
             path_part = target_url.split("#")[0]
             if not path_part:
+                if "#" in target_url and target_url.split("#", 1)[1] not in anchors[p]:
+                    broken.append(f"{p}: missing anchor: {target_url}")
                 continue
             target = os.path.normpath(os.path.join(os.path.dirname(p), path_part))
             if not os.path.exists(target):
@@ -83,7 +87,7 @@ def check_links(files):
 
 def tracked_word_count(path):
     result = subprocess.run(
-        ["git", "show", f"HEAD:{path}"],
+        ["git", "show", f"{BASE_REF}:{path}"],
         capture_output=True,
         text=True,
         check=False,
@@ -95,7 +99,7 @@ def tracked_word_count(path):
 
 def report_word_growth(files):
     changed = subprocess.run(
-        ["git", "diff", "--name-only", "HEAD", "--", "*.md"],
+        ["git", "diff", "--name-only", BASE_REF, "--", "*.md"],
         capture_output=True,
         text=True,
         check=True,
@@ -141,6 +145,9 @@ def report_long_paragraphs(files):
                 print(f"  {path}:{start}  {words} words")
                 found = True
             start, words = None, 0
+        if start is not None and words > LONG_PARAGRAPH_WORDS:
+            print(f"  {path}:{start}  {words} words")
+            found = True
     if not found:
         print("  none")
 
@@ -159,8 +166,19 @@ def report_hedges(files):
 
 
 def main():
+    global BASE_REF
+    args = sys.argv[1:]
+    if "--base" in args:
+        index = args.index("--base")
+        if index + 1 >= len(args):
+            fail("--base needs a revision argument")
+        BASE_REF = args.pop(index + 1)
+        args.pop(index)
+    if args:
+        fail("usage: check-docs.py [--base <rev>]")
     if not os.path.exists(".git"):
-        fail("run from the repository root")
+        # In a linked worktree .git is a file pointing at the main checkout.
+        fail("run from the repository or worktree root")
     files = md_files(".")
     broken = check_links(files)
     print(f"{len(files)} markdown files checked")

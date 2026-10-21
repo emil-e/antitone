@@ -28,7 +28,7 @@ Keep tooling that has current use: the build chain, regenerators with a document
 
 For each test, ask: **What plausible defect would this catch, and why would that defect matter?** Derive expectations from requirements, justified invariants or independent references — agreement between two paths can establish consistency without establishing that either is correct.
 
-Apply this scrutiny at both whole-case and individual-assertion level, including fixture setup and control discovery. For UX regressions, distinguish user-visible protection from locking down the current arrangement: fixed dimensions, wording, colours or widget placement need a reason beyond matching today's UI, and finding a control through its painted colour can impose the same lock indirectly.
+Apply this scrutiny at both whole-case and individual-assertion level, including fixture setup and control discovery. For UX regressions, distinguish user-visible protection from locking down the current arrangement: fixed dimensions, wording, colours or widget placement need a reason beyond matching today's UI, and finding a control through its painted colour can impose the same lock indirectly. The reverse also holds: for accessibility, serialization, resource lifetime and performance, exact assertions can be the essential protection, not incidental lock-in.
 
 Watch for self-comparisons, expectations that mirror implementation calculations, mocks that confirm their own arrangement, and broad snapshots that obscure the meaningful expectation — review signals, not automatic deletion rules. Test names and assertions should describe the scenario and invariant actually exercised. Establish why a new expected value or tolerance is correct before updating it; a green test is not that justification. Before deleting a test, identify the protection being removed and whether it is still needed or covered elsewhere.
 
@@ -295,7 +295,7 @@ Test [saved repair intent](projects.md#source-owned-dust-repairs) separately fro
 
 Read [shared presentation](editor.md#build-ui-from-shared-presentation) before adding a widget. Check the component **and** its composed consumer: paint alone does not verify state or input ownership.
 
-App-level fixtures must run production startup before injecting events and bring controls into view before clicking. Workflow commands need a live application context: admitted commands register their owned task immediately, with the factory deferred until the mutable UI borrow ends; rendering-only fixtures reject execution instead of emulating a queued operation. Keep immutable-input/service checks separate from live command checks.
+App-level fixtures must run production startup before injecting events and bring controls into view before clicking. Workflow commands need a live application context: admitted commands register their owned task immediately, with the factory deferred until the mutable UI borrow ends; rendering-only fixtures reject execution instead of emulating a queued operation. Resource-policy tests supply explicit budgets/pressure rather than depending on the host's current pressure.
 
 ```sh
 cargo test --locked --features editor --lib editor::presentation

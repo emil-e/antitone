@@ -58,7 +58,7 @@ A continuous gesture is one action; numeric text commits, resets and commands ar
 
 ## Numeric edits own their input
 
-A displayed number is not necessarily a rounded stored value. Controls preserve precise values while the user reads or redraws them; only a deliberate edit may change processing. Pending text commits before a stage switch or file action, and discrete commands wait for that admission so they remain separately undoable. Escape cancels text editing before it can cancel an image tool.
+A displayed number is not necessarily a rounded stored value. Controls preserve precise values while the user reads or redraws them; only a deliberate edit may change processing. Pending text commits before a stage switch, Analyze snapshot or file action, and discrete commands wait for that admission so they remain separately undoable. Escape cancels text editing before it can cancel an image tool.
 
 Colour wheels position the marker under the pointer; holding Shift gives ten-times finer motion, and changing Shift mid-drag keeps the marker continuous rather than snapping back. Popovers, numeric controls and toolbar gestures own input ahead of the canvas, so one action cannot also pan, pick or apply a draft.
 

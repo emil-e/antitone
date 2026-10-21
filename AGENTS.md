@@ -22,7 +22,7 @@ Follow the global collaboration instructions. Roadmaps and plans provide context
 
 For substantive changes, create a task branch and separate worktree in `.worktrees` from current main, or resume the existing worktree for that task. Keep task edits and verification artifacts in that worktree, isolated from other agents, and preserve unrelated changes. Small one-off edits and read-only investigations do not require a new worktree or task plan.
 
-Maintain the task's implementation plan in `WORK_PLAN.md` at the worktree root. Record agreed scope, acceptance, remaining steps, blockers and next actions; keep it current and include it in checkpoint commits so another session can resume.
+Maintain the task's implementation plan in `WORK_PLAN.md` at the worktree root. Record agreed scope, acceptance, remaining steps, blockers and next actions; keep it current and include it in checkpoint commits so another session can resume. When a task runs directly in main rather than a task worktree, keep `WORK_PLAN.md` untracked instead: checkpoint commits there become shared history, and a session plan is not part of it.
 
 At substantial milestones and before integration, refresh current guidance and inspect relevant changes on main.
 
@@ -34,7 +34,7 @@ Tie experiments to the requested outcome. Prefer a simple useful baseline, and a
 
 Follow the [development guide](docs/development.md) for engineering standards, documentation conventions and proportionate checks before handoff. Use the relevant [processing](docs/processing.md), [colour/output](docs/colour-and-output.md) and [project compatibility](docs/projects.md) guides to understand the boundaries being changed, not to treat their implementation choices as immutable requirements.
 
-Before editing any guide or README under `docs/` or `assets/`, follow the [documentation skill](.pi/skills/documentation/SKILL.md) — including documentation updates made while finishing a coding task.
+Before editing any guide or README, including the root `README.md`, follow the [documentation skill](.pi/skills/documentation/SKILL.md) — including documentation updates made while finishing a coding task.
 
 For editor work, follow [shared presentation](docs/editor.md#build-ui-from-shared-presentation) and the [tooltip/contextual-help guidance](docs/editor.md#tooltips-and-contextual-help). Verify the component and its composed feature.
 

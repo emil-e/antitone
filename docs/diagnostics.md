@@ -63,7 +63,7 @@ Compare the current provider with that frozen baseline across the retained corpu
 ```sh
 ANTITONE_REGION_EVIDENCE=/absolute/retained-evidence \
 ANTITONE_REGION_OUTPUT="$PWD/.cache/holder-comparison" \
-ANTITONE_REGION_IMAGES=DSC04331,DSC04335 \
+ANTITONE_REGION_IMAGES=DSC04331,DSC01635 \
   cargo test --locked --offline --release --features editor --lib \
   compare_shared_holder_with_frozen_local_baseline \
   -- --ignored --nocapture --test-threads=1
@@ -190,7 +190,7 @@ ANTITONE_LATENCY_TRACE=1 cargo test --locked --offline --features editor \
   --test native_host -- --run editor
 ```
 
-Match frame/completion rows by ID. Timestamps separate drawable acquisition, UI handling, encoding, submission and the present call; input starts at delivery to winit, not the physical gesture. Completion callbacks attach under the shared submission gate; callback observation includes polling/thread scheduling and is not a hardware GPU timestamp. Metal allocation includes resources retained by native commands but not all driver/process memory — sampled peaks are not exhaustive, and Arc counts or declared bytes do not establish aggregate pressure safety.
+Match frame/completion rows by ID. Timestamps separate drawable acquisition, UI handling, encoding, submission and the present call; input starts at delivery to winit, not the physical gesture. Completion callbacks attach under the shared submission gate; callback observation includes polling/thread scheduling and is not a hardware GPU timestamp. Metal allocation includes resources retained by native commands but not all driver/process memory — sampled peaks are not exhaustive, and Arc counts or declared bytes do not establish aggregate pressure safety. Measure same-PID RSS separately; on Apple Silicon these views overlap and must not be added.
 
 For native scheduling and shared native builds, see [native development](native-development.md#editor-scheduling).
 
