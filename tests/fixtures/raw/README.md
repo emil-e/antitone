@@ -84,4 +84,4 @@ Pinned LibRaw supplies `[1,1,1,0]` for this three-plane DNG's raw metadata WB. A
 
 Tag choices follow [DNG definitions](https://www.adobe.com/go/dng_spec) and were checked against pinned LibRaw's parser. Adobe DNG Validator acceptance is not established. Successful LibRaw decoding is not general DNG conformance.
 
-Synthetic fixtures do not establish photographic correction/Analyze quality, desktop presentation, physical colour or realistic resource/performance acceptance. [Framework UI checks](../../../docs/development.md#framework-ui-regressions), [thumbnail/real-use acceptance](../../../docs/plans/visual-feedback.md) and [native/physical interaction](../../../docs/plans/inspection-and-interaction.md) address separate boundaries.
+Synthetic fixtures do not establish photographic correction/Analyze quality, desktop presentation, physical colour or realistic resource/performance acceptance. [Framework UI checks](../../../docs/development.md#framework-ui-regressions) address a separate boundary.

@@ -13,7 +13,7 @@ The current photo input is ARW RAW, with Sony ILCE-1M2 lossless-compressed ARW a
 
 ## Prerequisites
 
-The long-term goal is a cross-platform application. The implemented desktop application and development workflow currently target **macOS on Apple Silicon**; other platforms are not yet supported. Broader device testing and macOS 14 acceptance remain open; see [project status](PLAN.md).
+The long-term goal is a cross-platform application. The implemented desktop application and development workflow currently target **macOS on Apple Silicon**; other platforms are not yet supported. Broader device testing and macOS 14 acceptance remain open.
 
 Install these tools using your normal developer setup:
 
@@ -70,9 +70,9 @@ The bundle is disposable and can be regenerated after `cargo build-app`. It stil
 
 ### Direct DNG SDK setup
 
-The editor includes the bounded [direct-SDK DNG backend](docs/research/dng-sdk.md#maintained-direct-sdk-adapter). Non-DNG/Sony development remains on LibRaw. The `dng-sdk` feature also exposes the independent adapter and read-only probe without the editor or LibRaw. Its current build needs full Xcode on Apple Silicon, not just command-line tools.
+The editor includes the bounded direct-SDK DNG backend. Non-DNG/Sony development remains on LibRaw. The `dng-sdk` feature also exposes the independent adapter and read-only probe without the editor or LibRaw. Its current build needs full Xcode on Apple Silicon, not just command-line tools.
 
-Obtain Adobe DNG SDK **1.7.1 build 2768** yourself and review its [license and dependency terms](docs/research/dng-sdk.md#release-build-and-licensing). Setup never downloads it implicitly. Using the SDK accepts Adobe's terms. With the supplied ZIP:
+Obtain Adobe DNG SDK **1.7.1 build 2768** yourself and review its license and dependency terms. Setup never downloads it implicitly. Using the SDK accepts Adobe's terms. With the supplied ZIP:
 
 ```sh
 python3 scripts/build-dng-sdk.py --archive /absolute/path/to/SDK.zip
@@ -101,4 +101,4 @@ For feature-specific tests, see [development checks](docs/development.md). Numer
 
 The [contributor guide](docs/README.md) helps you choose an area without reading every document. Start with its explanation, follow the implementation links, and run the relevant [development checks](docs/development.md).
 
-[Architecture](docs/architecture.md) maps ownership. [The roadmap](PLAN.md) and [work plans](docs/plans/README.md) distinguish current behavior from unfinished features and acceptance.
+[Architecture](docs/architecture.md) maps ownership.

@@ -1,15 +1,21 @@
 # Feedback inbox
 
-No untriaged feedback remains. Add new observations here; persistent requirements live in the linked plans, not this inbox.
+- Source inspection exposure should apply to thumbnail previews as well
+- Undeveloped source renders much darker than embedded previews. Why?
+- Greater range for contrast control
+- Prevent too lifted shadows in roll analysis
+- Lightbox/grid view
+- Sort/rearrange
+- Dmax/Dmin UX improvements - color patches?
+- Disable other tabs (ROLL/PHOTO/RENDERING) while a tool for that tab is active?
+- Flat field correction UX is bad
+- Flicker thumbnails when adjusting roll settings
+- Better channel gamma defaults
+- Order of controls
+- Disabled scope text is silly
+- Dust sometimes finds no donor. Not good.
+- Remove "classic" response
 
-## Routed feedback
+- The event listener pattern for progress and similar things, can that not be a Stream instead?
+- Crop scaling around center
 
-- [Interaction follow-up](plans/inspection-and-interaction.md#triaged-interaction-follow-up): save-dialog placement, RAW drag/drop, roll selection/removal, physical interaction and wheel feel. Implemented controls and workspace behavior are explained in [the editor guide](editor.md).
-- [Colour investigation](plans/inspection-and-interaction.md#decisions-and-open-questions): DSC04524 dark reds and the separate cold-shadow observation. Capture the exact grade; inversion-space causality remains unproven.
-- [Thumbnail follow-up](plans/visual-feedback.md#triaged-thumbnail-follow-up): edge squashing, excessive invalidation and the 1.516 s cache-miss performance report.
-- [Operation feedback](plans/completion.md#operation-feedback): shared progress and main-view/thumbnail development spinners.
-- [Photographic controls and B&W](plans/completion.md#photographic-controls-and-bw-handling): Photo contrast/pivot/saturation and black-and-white negative design discussion.
-- [Code readability/style](plans/completion.md#code-readability-and-style): standard formatting, manual humanization, brief type/public-function documentation, `SAFETY:` comments and subsequent `AGENTS.md` conventions.
-- [Inputs](../README.md) and [CPU/GPU responsibilities](architecture.md#ownership-and-execution): CPU-path purpose and supported inputs.
-
-Triage is documentation-only. No code fixes, runtime checks or new design approvals are implied; [the roadmap](../PLAN.md) still owns priority and current focus.

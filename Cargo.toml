@@ -91,11 +91,6 @@ path = "src/bin/gpu_probe.rs"
 required-features = ["gpu"]
 
 [[bin]]
-name = "antitone-dust-source-probe"
-path = "scripts/dust-experiments/source.rs"
-required-features = ["raw", "export", "project", "ocio-reference"]
-
-[[bin]]
 name = "antitone-rendering-probe"
 path = "src/bin/rendering_probe.rs"
 required-features = ["ocio-reference"]

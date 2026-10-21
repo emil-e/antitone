@@ -6,35 +6,29 @@ Use [the README](../README.md) to build and run. If you are new to an area, read
 
 ### Code and design
 
-Follow the neighboring code. Separate declarations and logical phases with blank lines, name values by role outside conventional mathematics, and expand dense control flow and macros even when the formatter accepts them. Inspect complete touched functions; formatting success alone does not establish readability.
+Follow the neighboring code. Separate declarations and logical phases with blank lines, name values by role outside conventional mathematics, and expand dense control flow even when the formatter accepts it.
 
-Understand the current processing, output and project-compatibility behavior before changing it. Code, tests and topic guides describe the present defaults, formats, numerical checks and dependencies; their existence does not make each choice a product requirement. Explain a design change in terms of its benefits, drawbacks and affected callers or saved data, rather than treating the current implementation as authority against alternatives. Product intent and values need separate consideration from the mechanisms used to achieve them. Judge storage and caching choices by measured benefit, memory cost and lifetime.
+Understand the current processing, output and project-compatibility behavior before changing it. Code, tests and topic guides describe present choices; their existence does not make each choice a product requirement. Explain a design change in terms of its benefits, drawbacks and affected callers or saved data, and judge storage and caching choices by measured benefit, memory cost and lifetime.
 
 ### Comments and documentation
 
-Explain current behavior, rationale and non-obvious constraints, including ownership, lifecycle, numerical assumptions, platform quirks, compatibility and security. Distinguish an implementation dependency from product intent, and give requirements their source rather than inferring them from code or tests. Public documentation should describe supported behavior at the reader's level rather than enumerate private helpers or call paths.
+Explain current behavior, rationale and non-obvious constraints — ownership, lifecycle, numerical assumptions, platform quirks, compatibility. Distinguish an implementation dependency from product intent, and give requirements their source rather than inferring them from code or tests. Public documentation describes supported behavior at the reader's level, not private call paths.
 
-Remove obvious restatements, patch narration, completed TODOs and temporary investigation/review notes. Replace “previously X, now Y” with the reason Y matters, if still useful. Keep history where it serves the reader: decision rationale, migration guidance and changelogs. Negative statements earn their place when they prevent a plausible, consequential misunderstanding: “Edits are not persisted until Save” explains a boundary; “the old toolbar is no longer rendered” usually records only a completed change.
+Remove restatements, patch narration and completed investigation notes; replace "previously X, now Y" with the reason Y matters. Negative statements earn their place when they prevent a plausible, consequential misunderstanding: "Edits are not persisted until Save" explains a boundary; "the old toolbar is no longer rendered" usually records only a completed change.
 
-Write for prospective contributors: explain the problem, mental model and guarantees. Keep one explanation per topic in its owning guide, with links rather than parallel implementation inventories. Keep build/run prerequisites in the top-level README and contributor workflow in this guide. Update affected guides and links when behavior changes; update the roadmap when priorities, status or blockers change.
+Write for prospective contributors: the problem, the mental model, the guarantees. Keep one explanation per topic in its owning guide, with links rather than parallel inventories. Plans describe unfinished scope and next actions, not execution history; transfer useful knowledge into the owning guide before removing finished plans.
 
-Plans describe unfinished scope, proposed evaluation and next actions, not execution history. Label undecided designs and suggested experiments accordingly; a plan's list of checks is not automatically a delivery gate. Transfer useful knowledge into the owning guide before removing completed steps or finished plans. Delete obsolete tools and superseded material rather than creating archives. Rewrite awkward prose when it contains useful knowledge instead of deleting that knowledge with it.
+### Tooling retention
+
+Keep tooling that has current use: the build chain, regenerators with a documented recipe for committed artifacts, diagnostics listed in this guide, and sources compiled into the crate. Retire a study's scaffolding once its outcome lands — conclusions belong in code, tests and the owning topic guide, and the derivation stays recoverable in git history. Before handing off an investigation, ask which of its scripts a fresh contributor would still run today; anything without a live consumer or a documented workflow is history, not product.
 
 ### Meaningful tests
 
-For each test, ask: **What plausible defect would this catch, and why would that defect matter?** Derive expectations from requirements, justified invariants or independent references. Agreement between two paths can establish consistency without establishing that either is correct.
+For each test, ask: **What plausible defect would this catch, and why would that defect matter?** Derive expectations from requirements, justified invariants or independent references — agreement between two paths can establish consistency without establishing that either is correct.
 
-Apply this scrutiny at both whole-case and individual-assertion level, including fixture setup and control discovery. A useful scenario does not justify every assertion inside it. For UX regressions, distinguish user-visible protection from locking down the current arrangement: fixed dimensions, wording, colours, widget placement or absence of alternative controls need a reason beyond matching today's UI. Finding a control through its painted colour or exact shape can impose the same lock indirectly. Preserve meaningful interaction, accessibility, state and presentation guarantees when reshaping coverage; do not discard them merely because their current assertions are brittle.
+Apply this scrutiny at both whole-case and individual-assertion level, including fixture setup and control discovery. For UX regressions, distinguish user-visible protection from locking down the current arrangement: fixed dimensions, wording, colours or widget placement need a reason beyond matching today's UI, and finding a control through its painted colour can impose the same lock indirectly.
 
-Protect the relevant contract while allowing behavior-preserving changes. Exact wording, snapshots, private calls, ordering, representations and operation counts need justification; accessibility, serialization, resource lifetime and performance can make them essential. Structural guarantees and source inspection can also deserve architectural tests. Distinguish those from facts guaranteed only by the test's own setup.
-
-Watch for self-comparisons, expected results that mirror implementation calculations, checks for permanently removed UI text, mocks that merely confirm their arrangement, duplicate tests without distinct failure coverage and broad snapshots that obscure the meaningful expectation. These are review signals, not automatic deletion rules.
-
-Test names and assertions should describe the scenario and invariant actually exercised. Preserve unusual fixture rationale and non-obvious preconditions beside the relevant setup.
-
-Establish why a new expected value or tolerance is correct before updating it; a green test or newly accepted snapshot is not that justification. Do not weaken checks or alter development behavior to improve an experiment's appearance.
-
-Before deleting a test, identify the protection being removed and whether it is still needed or covered elsewhere. Inspect cleanup diffs for lost meaning; documentation and comments can also contain executable examples or affect generated output.
+Watch for self-comparisons, expectations that mirror implementation calculations, mocks that confirm their own arrangement, and broad snapshots that obscure the meaningful expectation — review signals, not automatic deletion rules. Test names and assertions should describe the scenario and invariant actually exercised. Establish why a new expected value or tolerance is correct before updating it; a green test is not that justification. Before deleting a test, identify the protection being removed and whether it is still needed or covered elsewhere.
 
 ## Everyday checks
 
@@ -52,7 +46,7 @@ Cargo uses the committed lockfile. Add `--offline` when caches are populated and
 
 Run `python3 scripts/check-format.py` before handing off a change. It checks tracked and new authored Rust, native, Python, WGSL and Swift sources, plus shell syntax; ignored caches, samples and generated OCIO GLSL are excluded. `--write` applies the configured formatters without changing lint rules. Neither mode builds the editor or needs native dependencies.
 
-Rust uses the checked-in toolchain. Native formatting requires **clang-format 22.1.8** on `PATH`; Swift uses `swift-format` from the selected Xcode toolchain with `.swift-format`. Install the other formatters in ignored checkout-local storage:
+Rust uses the checked-in toolchain. Native formatting requires **clang-format 22.1.8** on `PATH`; Swift uses `swift-format` from the selected Xcode toolchain. Install the other formatters in ignored checkout-local storage:
 
 ```sh
 python3 -m venv .cache/format-tools/venv
@@ -65,7 +59,7 @@ python3 scripts/check-format.py
 python3 scripts/check-format.py --write
 ```
 
-`RUFF`, `WGSLFMT` and `CLANG_FORMAT` can point to existing compatible executables. Ruff's version and conservative syntax/undefined-name/unused-code checks live in `ruff.toml`. The WGSL formatter is pinned by revision because its package version does not distinguish development snapshots. Upgrade tools deliberately and inspect their output rather than mixing versions in one cleanup.
+`RUFF`, `WGSLFMT` and `CLANG_FORMAT` can point to existing compatible executables. Ruff's version and conservative syntax/undefined-name/unused-code checks live in `ruff.toml`. The WGSL formatter is pinned by revision because its package version does not distinguish development snapshots.
 
 ## Feature-specific checks
 
@@ -84,7 +78,7 @@ Production and reference dependencies are separate:
 | `ocio-reference` | Independent OCIO renderer and scalar composed export oracles |
 | `ui-tests` | Editor interaction checks, including independent OCIO assertions |
 
-Tests that explicitly use the CPU/OCIO oracle require `ocio-reference`; this is not a production fallback. Editor and `--all-features` builds need the [explicit SDK setup](../README.md#direct-dng-sdk-setup); SDK acquisition is never implicit. Verify the production configuration separately so reference-feature unification cannot hide a runtime dependency.
+Tests that explicitly use the CPU/OCIO oracle require `ocio-reference`; this is not a production fallback. Editor and `--all-features` builds need the [explicit SDK setup](../README.md#direct-dng-sdk-setup). Verify the production configuration separately so reference-feature unification cannot hide a runtime dependency.
 
 Choose checks for the boundary you changed rather than running every native/sample-dependent exercise:
 
@@ -145,9 +139,7 @@ cargo test --locked --features gpu --test gpu_processing --test gpu_film_respons
 cargo test --locked --features editor,ocio-reference --lib --test scopes --test viewer
 ```
 
-The [authored RAW fixtures](../tests/fixtures/raw/README.md) supply declared sensor data for API, worker and UI checks. Tests read the committed files directly and write exports/projects to temporary directories. The fixture guide explains their construction and maintenance; private photographs are optional diagnostic inputs, not ordinary test prerequisites.
-
-The photographic tests use an independent scalar oracle in [test support](../tests/support/photographic_reference.rs). A missing Metal device is a verification limit, not a numerical pass.
+The [authored RAW fixtures](../tests/fixtures/raw/README.md) supply declared sensor data for API, worker and UI checks. The photographic tests use an independent scalar oracle in [test support](../tests/support/photographic_reference.rs); a missing Metal device is a verification limit, not a numerical pass.
 
 After native setup, use broader integration/lints when the change warrants them:
 
@@ -169,9 +161,9 @@ cargo test --locked --features raw,gpu,export,project,ocio-reference \
 cargo build --locked --release --features editor --bin antitone
 ```
 
-Check captured service output separately from UI decisions/activity: no-paint completion, document/grade independence, stale results, supersession, admitted-work retention after application retirement, and stops before versus after publication. Controlled submitted-GPU gates must observe actual submission, not merely a busy flag or occupied permit. Distinguish numerical correspondence from exact serialization: GPU/scalar processing comparisons allow justified rounding differences, while encoder tests require exact supplied-sample serialization. Check reconstruction and reopened files as well as intermediate arithmetic. The [output guide](colour-and-output.md#tiff-and-exr-serve-different-purposes) owns processing and resource boundaries; per-job bounds are not an aggregate memory-pressure guarantee.
+Check captured service output separately from UI decisions/activity, and distinguish numerical correspondence from exact serialization: GPU/scalar comparisons allow justified rounding differences, while encoder tests require exact supplied-sample serialization. Check reconstruction and reopened files as well as intermediate arithmetic. The [output guide](colour-and-output.md#tiff-and-exr-serve-different-purposes) owns processing and resource boundaries.
 
-The opt-in [ImageIO export check](diagnostics.md#export) independently reopens TIFF storage/profiles using a native checker compiled into temporary storage. It needs no private files or prebuilt helper.
+The opt-in [ImageIO export check](diagnostics.md#export) independently reopens TIFF storage/profiles; it needs no private files.
 
 ## Roll analysis
 
@@ -203,11 +195,11 @@ cargo test --locked --features ui-tests --lib editor::kittest_tests::auto_crop -
 cargo test --locked --release --features ui-tests --lib editor::kittest_tests::auto_crop -- --test-threads=1
 ```
 
-Check both proposal geometry and the composed Apply/Cancel workflow described in [the editor guide](editor.md#auto-crop-is-an-explicit-accepted-edit). Visit retirement must discard manual Crop and local-tool state without changing accepted geometry, adjustments or history. Batch proposals must survive browsing without retargeting; picker return restores only a still-existing local target, while failed document preparation preserves the accepted visit's local context. `ANTITONE_UI_CAPTURE` enables `auto-crop-` inspection images. Software checks do not establish photographic border accuracy or physical interaction; [remaining acceptance](plans/region-detection.md) covers those boundaries.
+Check both proposal geometry and the composed Apply/Cancel workflow described in [the editor guide](editor.md#auto-crop-is-an-explicit-accepted-edit). Batch proposals must survive browsing without retargeting. `ANTITONE_UI_CAPTURE` enables `auto-crop-` inspection images.
 
 ## Creative-look checks
 
-The [catalog guide](../assets/looks/README.md) owns photo-free authoring and pinned-reference/compact-fixture regeneration. Application checks distinguish strict asset/storage admission, source-model agreement, fixed-reference numerical gates and composed consumer behavior:
+The [catalog guide](../assets/looks/README.md) owns photo-free authoring and pinned-reference regeneration. Application checks distinguish strict asset/storage admission, source-model agreement, fixed-reference numerical gates and composed consumer behavior:
 
 ```sh
 cargo test --locked --features project --lib looks::
@@ -221,9 +213,7 @@ cargo test --locked --features ui-tests --lib editor::kittest_tests::looks -- --
 cargo test --locked --features ui-tests --lib viewer::look_tests
 ```
 
-Verify rendered pixels and scope contents against independent expectations, not only agreement between production signatures. Nonlinear interpolation fixtures must distinguish tetrahedral from trilinear sampling. Lifecycle checks preserve accepted selection through failure, cancellation and stale replies, and reopen embedded assets without their original files. Exercise None and EXR bypasses separately. Host-idle completion matters: continuously painting the UI can conceal stranded map callbacks. Admission tests bound streamed payloads before materialization; resource checks account for actual retained ownership.
-
-`ANTITONE_UI_CAPTURE` optionally writes `look*-offscreen.png` captures. These authored-RAW checks do not drive native file dialogs or establish photographic, physical-input or monitor acceptance.
+Verify rendered pixels and scope contents against independent expectations, not only agreement between production signatures. Nonlinear interpolation fixtures must distinguish tetrahedral from trilinear sampling. Lifecycle checks preserve accepted selection through failure, cancellation and stale replies, and reopen embedded assets without their original files; host-idle completion matters because continuously painting the UI can conceal stranded map callbacks. `ANTITONE_UI_CAPTURE` optionally writes `look*-offscreen.png` captures.
 
 ## Shared GPU queue checks
 
@@ -253,7 +243,7 @@ cargo test --locked --features editor --lib editor::document::tests::admission -
 cargo test --locked --features ui-tests --lib editor::kittest_tests::masks -- --test-threads=1
 ```
 
-Processing admission, source-owned transactions and downstream consumers need separate checks. Exercise correction, ordered local grades and source/target changes where relevant; one supported fixture does not establish admission for every response or control combination. Keep numerical gates intact and use [performance/RAW diagnostics](diagnostics.md#local-processing-and-reuse) for opt-in resource observations.
+Processing admission, source-owned transactions and downstream consumers need separate checks; one supported fixture does not establish admission for every response or control combination. Use [performance/RAW diagnostics](diagnostics.md#local-processing-and-reuse) for opt-in resource observations.
 
 ## Undo/redo
 
@@ -263,7 +253,7 @@ cargo test --locked --features ui-tests --lib editor::kittest_tests::history:: -
 cargo test --locked --release --features ui-tests --lib editor::kittest_tests::history:: -- --test-threads=1
 ```
 
-Exercise accepted-state hooks separately from snapshot storage: zero idle history snapshots on repair-bearing projects, gesture grouping, Photo activation, drafts/text ownership, exact values outside slider spans, redo branching, Save As locators/dirty baseline, failed restoration and stale worker replies. Authored RAW checks prepare restored state through the production worker; supplied controller replies test promotion/failure without pretending to validate RAW preparation. These checks do not establish physical-input feel or long-session memory/latency acceptance.
+Exercise accepted-state hooks separately from snapshot storage: zero idle history snapshots on repair-bearing projects, gesture grouping, drafts/text ownership, exact values outside slider spans, redo branching, failed restoration and stale worker replies.
 
 ## Dust persistence
 
@@ -281,15 +271,13 @@ cargo test --locked --features ui-tests --lib editor::document::tests -- --test-
 cargo test --locked --release --features ui-tests --lib editor::kittest_tests::dust -- --test-threads=1
 ```
 
-Test [saved repair intent](projects.md#source-owned-dust-repairs) separately from evaluation. Project checks need malformed-contract/record rejection, destination safety and lossless masks/IDs at uneven roll scale without a document-size cap. Controller and composed checks need accepted-only dirty state, pending/failed evaluation saves, source removal/reimport and failure-safe Save/Open/Save As. Authored RAW reopening must reproduce donor metadata and repaired f32 bits across supported CPU/GPU routes, with viewer/reference/scopes sharing the accepted repair content. Verify cold/reopened repaired TIFF/AP0 EXR, pending/no-donor destination safety, large integer source coordinates, cross-unit repair placement, exact frame-edge exclusion and proper-thumbnail source/recipe isolation. Check completed thumbnail pixels against repairs composed before filtering, then scalar grading and independent output rendering. A nonconstant look must not hide missing repairs, and disabling repairs must restore unrepaired pixels. Grade/target changes reuse compatible neutral support even at zero optional retention; cache keys and failures must charge retained instruction payload. Verify shared activity/warning/error indicators and composed proper cards, Auto-crop and Analyze at normal/narrow sizes; optional captures use `dust-persistence-{normal,narrow}-offscreen.png`. These checks do not establish photographic or physical-input acceptance.
+Test [saved repair intent](projects.md#source-owned-dust-repairs) separately from evaluation. Project checks need malformed-record rejection, destination safety and lossless masks/IDs at uneven roll scale. Composed checks need accepted-only dirty state, failure-safe Save/Open/Save As, reopened donor metadata and repaired f32 bits, and proper-thumbnail pixels with repairs composed before filtering. A nonconstant look must not hide missing repairs, and disabling repairs must restore unrepaired pixels. Optional captures use `dust-persistence-{normal,narrow}-offscreen.png`.
 
 ## Shared editor UI checks
 
 Read [shared presentation](editor.md#build-ui-from-shared-presentation) before adding a widget. Check the component **and** its composed consumer: paint alone does not verify state or input ownership.
 
-App-level fixtures must run production startup before injecting events and bring controls into view before clicking; painted text bounds alone do not establish an interactive target. Resource-policy tests supply explicit budgets/pressure rather than depending on the host's current pressure.
-
-Workflow commands need a live application context: admitted commands register their owned task immediately, with the factory deferred until the mutable UI borrow ends. Rendering-only fixtures reject execution instead of emulating a queued or running operation. Keep immutable-input/service checks separate from live command checks. Typed controller proposals isolate freshness and acceptance; controlled service submissions can establish capture and continuation ownership without establishing native production or physical admission. Use real gated producers for those claims.
+App-level fixtures must run production startup before injecting events and bring controls into view before clicking. Workflow commands need a live application context: admitted commands register their owned task immediately, with the factory deferred until the mutable UI borrow ends; rendering-only fixtures reject execution instead of emulating a queued operation. Keep immutable-input/service checks separate from live command checks.
 
 ```sh
 cargo test --locked --features editor --lib editor::presentation
@@ -309,11 +297,9 @@ for module in application:: blocking_jobs:: editor::development:: editor::measur
 done
 ```
 
-The [live application fixture](../src/application_test_support.rs) exposes short state transactions, explicit workflow entry and bounded wake pumping without painting. Control incomplete work with a dependency/computation gate, not a disabled executor. The composed harness uses closure-scoped construction and the same driver outside egui callbacks; short read/update transactions do not expose borrow guards. The Dmin case awaits completion without another paint. Controller-only cases paint supplied state or inspect immutable inputs and typed proposals; they do not establish asynchronous command initiation or completion. Source/measurement consistency checks do not replace independent photographic/numerical oracles. Embedded-preview checks include no-paint visible sequencing, document/application retirement, worker closure, cancelled-not-missing retry and the composed Editor consuming actual completed camera textures. Controlled private producer handoffs prove reply/admission ownership, not a native call's cancellation timing; authored extraction/decoder cases separately exercise real metadata/JPEG work. Proper-thumbnail checks distinguish independent service output from live document-owned continuation behavior: visible/eager and hidden completion without paint, zero-budget disk persistence, GPU retirement preserving CPU completion, source freshness, producer closure and document/application teardown. Native phase traces protect scheduling order; local-future delivery order is not its oracle.
+The [live application fixture](../src/application_test_support.rs) exposes short state transactions, explicit workflow entry and bounded wake pumping without painting. For feature transactions, filter the owning module: for example `editor::analysis::tests`, `editor::flat::tests`, `editor::files::tests`, `editor::navigation::tests`, `editor::preferences::tests`, `editor::feedback::tests` or `editor::scopes::tests`. Use [layout/GPU diagnostics](diagnostics.md#editor-and-layout-checks) when painting changes. For wordmark/icon changes, also [regenerate the branding assets](../assets/branding/README.md#regenerate) and inspect the generated artwork.
 
-For feature transactions, filter the owning module: for example `editor::analysis::tests`, `editor::flat::tests`, `editor::files::tests`, `editor::navigation::tests`, `editor::preferences::tests`, `editor::feedback::tests` or `editor::scopes::tests`. Use [layout/GPU diagnostics](diagnostics.md#editor-and-layout-checks) when painting changes. For wordmark/icon changes, also [regenerate the branding assets](../assets/branding/README.md#regenerate) and inspect the generated artwork and local bundle.
-
-Physical pointer/trackpad behavior, VoiceOver and preference relaunch need real-use checks. [Interaction follow-up](plans/inspection-and-interaction.md) tracks that acceptance, including wheel semantics.
+Physical pointer/trackpad behavior, VoiceOver, preference relaunch and wheel semantics need real-use checks.
 
 ### Framework UI regressions
 
@@ -327,9 +313,7 @@ cargo clippy --locked --features ui-tests --lib --tests -- -D warnings
 
 The [harness](../src/editor_kittest.rs) uses the Editor's device, queue and submission gate to paint production callbacks into RGBA16Float. CPU source-rendering agreement checks are not an independent ACES oracle; rendering changes also need the relevant [OCIO/Apple references](diagnostics.md#rendering-gamut-and-icc). Worker/readback waits are bounded; an unfinished operation must fail at its deadline.
 
-Personal preferences are not restored. Most scenarios disable thumbnail scheduling; project/correction scenarios run the production thumbnail worker with disk storage disabled. Known Save destinations and chooser results are fixture setup; menu actions, guards and workers remain production code. Native file dialogs are not automated.
-
-Use Cargo's test filter or `-- --list` to select cases. For optional inspection artifacts:
+Known Save destinations and chooser results are fixture setup; menu actions, guards and workers remain production code. Native file dialogs are not automated. For optional inspection artifacts:
 
 ```sh
 ANTITONE_UI_CAPTURE="$PWD/.cache/ui-captures" \
@@ -337,7 +321,7 @@ ANTITONE_UI_CAPTURE="$PWD/.cache/ui-captures" \
   -- --test-threads=1
 ```
 
-Tests own capture names and available scenarios. Captures are clipped/quantized from float output for inspection, not approval of appearance or proof of native surface/ColorSync presentation. Small fixture viewports exercise native-pixel regions without claiming native-shell layout acceptance. Working-feedback galleries supply presentation states and counts; they do not measure backend duration or cancellation. Use [native-host checks](#explicit-native-host-checks) and [physical/photographic acceptance](plans/inspection-and-interaction.md) for their respective boundaries.
+Captures are clipped/quantized from float output for inspection, not approval of appearance or proof of native surface presentation. Use [native-host checks](#explicit-native-host-checks) for the native-surface boundary.
 
 ### Explicit native-host checks
 
@@ -365,9 +349,9 @@ cargo test --locked --features ui --test native_host -- --run timeout
 cargo test --locked --features ui --test native_host -- --run process-timeout
 ```
 
-Lifecycle success requires actual surface paints and explicit completion; premature closure and UI/process watchdog expiry fail. Hardware errors are failures after a requested launch. The authored Editor case additionally requires selected-image callbacks and paint acknowledgments at each requested size, establishing basic Editor/host composition rather than per-tool or physical-input acceptance.
+Lifecycle success requires actual surface paints and explicit completion; premature closure and watchdog expiry fail. The authored Editor case additionally requires selected-image callbacks and paint acknowledgments at each requested size.
 
-The native-menu executable also requires explicit `--run`; its ordinary invocation opens no window. It activates real AppKit menu items/accelerators, verifies dynamic Undo/Redo labels and Cmd–Z / Shift–Cmd–Z, and checks event-loop wakeup, minimized-window restoration, editor-owned Quit dispatch and temporary native-responder Edit routing without opening a file chooser or changing the clipboard. Editor controller/composed checks separately cover unsaved-change protection, numeric commits, Settings persistence/dismissal and focused-text selection:
+The native-menu executable also requires explicit `--run`: it activates real AppKit menu items/accelerators, verifies dynamic Undo/Redo labels, and checks event-loop wakeup, minimized-window restoration and temporary native-responder Edit routing. Editor controller/composed checks separately cover unsaved-change protection, numeric commits and Settings:
 
 ```sh
 cargo test --locked --features ui-tests --lib editor::menu::tests -- --test-threads=1
@@ -375,7 +359,7 @@ cargo test --locked --features ui-tests --lib editor::kittest_tests::menus -- --
 cargo test --locked --release --features ui-tests --lib editor::kittest_tests::menus -- --test-threads=1
 ```
 
-The native-termination executable also launches only with explicit `--run`. Its isolated children send real AppKit termination requests and check deferred painting, repeated-request coalescing, rejection/retry, fullscreen restoration and cleanup-before-exit. Negative cases cover an interrupted host, panic while a reply is pending and an incompatible pre-existing delegate method; host return must restore the scoped entry gate. Each child has a process deadline. No child initiates logout/shutdown or changes personal projects/preferences. Editor controller tests separately exercise dirty/clean requests, blocking tools/work, cancelled decisions/replacement, stale/failed/successful saves and leading clipboard input:
+The native-termination executable launches children that send real AppKit termination requests and check deferred painting, repeated-request coalescing, rejection/retry and cleanup-before-exit; negative cases cover an interrupted host, a panic while a reply is pending and an incompatible pre-existing delegate method. No child initiates logout/shutdown. Editor controller tests separately exercise dirty/clean requests and blocking tools:
 
 ```sh
 cargo test --locked --features ui-tests --lib editor::menu::quit_tests -- --test-threads=1
@@ -383,12 +367,8 @@ cargo test --locked --release --features ui-tests --lib editor::menu::quit_tests
 cargo test --locked --features ui-tests --lib system_quit_preserves_leading_paste -- --test-threads=1
 ```
 
-These checks require an unlocked desktop for focus and native paints; headless or locked-session timeouts are not passes. They do not establish physical shortcut/VoiceOver behavior, actual file-panel interaction or real logout/shutdown acceptance.
-
-Fullscreen checks current-Space borderless display coverage, system menu/Dock access, actual painting and restoration of window bounds/presentation options. This is distinct from native fullscreen Spaces and requires an unlocked desktop. Do not substitute kittest viewport metadata for that round trip. [Presentation references/stress checks](diagnostics.md#macos-presentation) and [remaining native lifecycle/input/display acceptance](plans/inspection-and-interaction.md#layout-and-controls) address separate boundaries.
+These checks require an unlocked desktop for focus and native paints; headless or locked-session timeouts are not passes. Fullscreen checks current-Space borderless display coverage and restoration of window bounds/presentation options — do not substitute kittest viewport metadata for that round trip. [Presentation references/stress checks](diagnostics.md#macos-presentation) address a separate boundary.
 
 ## Specialist diagnostics
 
-Tests marked ignored are opt-in because they need samples, hardware, visible windows or substantial resources. Choose them for the boundary being investigated; [diagnostics](diagnostics.md) explains safe workloads and interpretation.
-
-Keep local photographs and generated images/logs in ignored storage. Automated agreement establishes a tested software boundary, not photographic quality, physical monitor matching or broad device support. [The roadmap](../PLAN.md) tracks remaining acceptance.
+Tests marked ignored are opt-in because they need samples, hardware, visible windows or substantial resources. Choose them for the boundary being investigated; [diagnostics](diagnostics.md) explains safe workloads and interpretation. Keep local photographs and generated images/logs in ignored storage.
