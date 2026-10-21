@@ -51,7 +51,7 @@ impl PhotoScope {
 impl Editor {
     pub(super) fn replace_photo_scope(&mut self, view: u64) {
         let activity = self.document.visit.activity();
-        self.original.invalidate();
+        self.invalidate_original();
         self.working.clear();
         // Replacing the owner drops its task handles, cancelling their continuations.
         self.document.visit = PhotoScope::new(view);

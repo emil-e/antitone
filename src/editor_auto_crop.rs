@@ -368,7 +368,7 @@ impl Editor {
             });
             self.viewport.fit();
             self.last_layout = None;
-            self.original.invalidate();
+            self.invalidate_original();
         }
         self.status = format!("Auto-crop: {count} proposed, {skipped} skipped");
         if let Some(edit) = &mut self.document.auto_crop_edit {
@@ -518,7 +518,7 @@ impl Editor {
             self.viewport.fit();
         }
         self.last_layout = None;
-        self.original.invalidate();
+        self.invalidate_original();
     }
 }
 

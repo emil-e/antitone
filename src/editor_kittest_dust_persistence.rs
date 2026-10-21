@@ -272,9 +272,12 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         h.step();
         ready(&mut h, 2);
 
-        let path = h.read(|editor| editor.document.source_path(source).unwrap());
-        let scan =
-            Scan::open(&path, Some(expected.development.as_ref().unwrap().fixed_wb)).unwrap();
+        let raw_path = h.read(|editor| editor.document.source_path(source).unwrap());
+        let scan = Scan::open(
+            &raw_path,
+            Some(expected.development.as_ref().unwrap().fixed_wb),
+        )
+        .unwrap();
         for repair in expected.source(source).unwrap().repairs.repairs() {
             let request = h.read(|editor| crate::editor::dust::Request {
                 request: 1,
@@ -327,12 +330,14 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         h.get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
             .click();
         h.step();
+        h.try_run_realtime().unwrap();
 
         for (name, size) in [
             ("normal", egui::vec2(1100., 800.)),
             ("narrow", egui::vec2(800., 600.)),
         ] {
             h.set_size(size);
+            h.step();
             h.get_by_label("Brush size").scroll_to_me();
             h.try_run_realtime().unwrap();
             let brush = h.get_by_label("Brush size").rect();

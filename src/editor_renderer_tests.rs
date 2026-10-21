@@ -277,12 +277,19 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
             pixels_per_point: 1.,
         };
         let mut resources = egui_wgpu::CallbackResources::default();
-        seeded.request(key.clone(), paths[2].clone(), source.clone(), None);
+        let job = tests::service_job(
+            &seeded,
+            key.clone(),
+            paths[2].clone(),
+            source.clone(),
+            None,
+            true,
+        );
         let mut encoder = device.create_command_encoder(&Default::default());
         scope.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
         assert!(!image.prepare(&device, &mut encoder, parameters));
         queue.submit([encoder.finish()]);
-        tests::complete_service_request(&mut seeded, &document);
+        tests::complete_service_request(&mut seeded, &document, job);
         assert_eq!(seeded.ready_count(&document, OutputTarget::DisplayP3), 1);
         wait(&device, &queue);
         let counts = gpu
@@ -301,8 +308,15 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
             renderers,
             Some(disk::DiskCache::at(directory.path().into())),
         );
-        restarted.request(key, paths[2].clone(), source.clone(), None);
-        tests::complete_service_request(&mut restarted, &document);
+        let job = tests::service_job(
+            &restarted,
+            key,
+            paths[2].clone(),
+            source.clone(),
+            None,
+            true,
+        );
+        tests::complete_service_request(&mut restarted, &document, job);
         assert_eq!(restarted.ready_count(&document, OutputTarget::DisplayP3), 1);
         let mut encoder = device.create_command_encoder(&Default::default());
         scope.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
@@ -362,8 +376,15 @@ fn authored_project_relative_locator_develops_a_cold_thumbnail() {
             target: OutputTarget::DisplayP3,
             field: None,
         };
-        thumbnails.request(key, document.source_path(id).unwrap(), source, None);
-        tests::complete_service_request(&mut thumbnails, &document);
+        let job = tests::service_job(
+            &thumbnails,
+            key,
+            document.source_path(id).unwrap(),
+            source,
+            None,
+            true,
+        );
+        tests::complete_service_request(&mut thumbnails, &document, job);
         assert_eq!(
             thumbnails.ready_count(&document, OutputTarget::DisplayP3),
             1

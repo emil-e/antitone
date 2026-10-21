@@ -63,11 +63,16 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
             .await
             .expect("authored worker test requires Metal");
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let mut editor = Editor::new(&device, &queue, None);
+        let mut editor = Editor::new(&device, &queue);
         // Thumbnail scheduling is separate; this worker test must not touch the user's disk cache.
         editor.thumbnails = Thumbnails::default();
-        editor.add_raws(vec![root.join("roll-0.dng"), root.join("roll-1.dng")]);
-        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(60));
+        editor = crate::editor::tests::complete_document_operation(
+            editor,
+            Duration::from_secs(60),
+            |editor, cx| {
+                editor.add_raws(vec![root.join("roll-0.dng"), root.join("roll-1.dng")], cx)
+            },
+        );
         assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
         assert_eq!(editor.document.project.order.len(), 2);
         let selected = editor.current_source;
@@ -82,9 +87,7 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
         });
         editor.sync_document();
         let before = editor.document.project.clone();
-        editor = click_analyze(editor);
-        assert!(editor.document.analysis_pending.is_some());
-        editor = wait_with_limit(editor, Duration::from_secs(60));
+        editor = click_analyze(editor, Duration::from_secs(60));
         assert!(editor.status.starts_with("Analyzed 2"), "{}", editor.status);
         assert_eq!(editor.current_source, selected);
         assert_eq!(editor.roll.gamma, 0.7);
@@ -125,16 +128,23 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
         let accepted = editor.document.project.clone();
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("authored-roll.antitone.json");
-        editor.queue_save(path.clone(), crate::project::Save::New, None);
-        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(60));
+        editor = crate::editor::tests::complete_document_operation(
+            editor,
+            Duration::from_secs(60),
+            |editor, cx| editor.save_project(path.clone(), crate::project::Save::New, None, cx),
+        );
         assert!(!editor.document.dirty(), "{}", editor.status);
-        editor.start_document(Preparation::Open(path));
-        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(60));
+        editor = crate::editor::tests::complete_document_operation(
+            editor,
+            Duration::from_secs(60),
+            |editor, cx| editor.start_document(Preparation::Open(path), cx),
+        );
         assert_eq!(editor.document.project, accepted);
         editor.document.project.analysis_area = Some([96, 96, 8, 8]);
         let sparse = editor.document.project.clone();
-        editor.begin_analysis();
-        editor = wait_with_limit(editor, Duration::from_secs(60));
+        editor = wait_with_limit(editor, Duration::from_secs(60), |editor, cx| {
+            editor.begin_analysis(cx)
+        });
         assert!(
             editor.status.contains("picture samples"),
             "{}",
@@ -159,9 +169,10 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
             .development
             .camera_model = "incompatible-camera".into();
         let incompatible = editor.document.project.clone();
-        editor.begin_analysis();
-        assert!(editor.busy);
-        editor = wait_with_limit(editor, Duration::from_secs(60));
+        editor = wait_with_limit(editor, Duration::from_secs(60), |e, cx| {
+            e.begin_analysis(cx);
+            assert!(e.busy && e.document.analysis_pending.is_some());
+        });
         assert!(editor.status.contains("failed"), "{}", editor.status);
         assert_eq!(editor.document.project, incompatible);
         editor
@@ -172,11 +183,11 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
             .development
             .camera_model = camera;
         let before_cancel = editor.document.project.clone();
-        editor.begin_analysis();
-        assert!(editor.document.analysis_pending.is_some());
-        assert!(editor.busy);
-        editor.cancel_analysis();
-        editor = wait_with_limit(editor, Duration::from_secs(60));
+        editor = wait_with_limit(editor, Duration::from_secs(60), |e, cx| {
+            e.begin_analysis(cx);
+            assert!(e.document.analysis_pending.is_some() && e.busy);
+            e.cancel_analysis();
+        });
         assert!(editor.document.analysis_pending.is_none());
         assert!(!editor.busy);
         assert_eq!(editor.status, "Analysis cancelled");
@@ -346,7 +357,11 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
     assert!(editor.busy);
     let result = outcome(&editor);
     let expected = result.document.project.clone();
-    editor.analysis_result(id, Ok(Some(Box::new(result))));
+    editor.analysis_result(
+        id,
+        Ok(Some(Box::new(result))),
+        &crate::application::UiContext::render_only(),
+    );
     assert!(!editor.busy && editor.document.analysis_pending.is_none());
     assert_eq!(editor.dmin.unwrap(), DVec3::new(0.8, 0.4, 0.2));
     assert_eq!(editor.dmax.unwrap(), DVec3::new(0.04, 0.02, 0.01));
@@ -427,6 +442,7 @@ fn failure_cancel_and_invalid_gpu_combination_preserve_all_processing_state() {
             } else {
                 Ok(Some(Box::new(result)))
             },
+            &crate::application::UiContext::render_only(),
         );
         assert_eq!(editor.document.project, before);
         assert_eq!(editor.roll, before.roll);
@@ -460,9 +476,17 @@ fn stale_request_generation_source_document_and_controls_cannot_install() {
             }
         }
         let before = editor.document.project.clone();
-        editor.analysis_result(id + 1, Ok(None));
+        editor.analysis_result(
+            id + 1,
+            Ok(None),
+            &crate::application::UiContext::render_only(),
+        );
         assert!(editor.busy);
-        editor.analysis_result(id, Ok(Some(Box::new(result))));
+        editor.analysis_result(
+            id,
+            Ok(Some(Box::new(result))),
+            &crate::application::UiContext::render_only(),
+        );
         assert_eq!(editor.document.project, before);
     }
 }
@@ -471,17 +495,23 @@ fn stale_request_generation_source_document_and_controls_cannot_install() {
 fn area_accept_cancel_and_invalid_edits_do_not_change_calibration_or_exposure() {
     let mut editor = state();
     let original = editor.document.project.clone();
-    editor.begin_pick(Pick::Analysis);
+    editor.begin_pick(
+        Pick::Analysis,
+        &crate::application::UiContext::render_only(),
+    );
     editor.region = Some(Coverage::rectangle(rect([52, 42, 720, 540])));
-    editor.finish_pick();
+    editor.finish_pick(&crate::application::UiContext::render_only());
     assert_eq!(editor.document.project, original);
-    editor.begin_pick(Pick::Analysis);
+    editor.begin_pick(
+        Pick::Analysis,
+        &crate::application::UiContext::render_only(),
+    );
     editor.region = Some(Coverage::rectangle(rect([0, 0, 900, 700])));
-    editor.apply_pick();
+    editor.apply_analysis_area(&crate::application::UiContext::render_only());
     assert_eq!(editor.document.project, original);
     assert_eq!(editor.pick, Some(Pick::Analysis));
     editor.region = Some(Coverage::rectangle(rect([52, 42, 720, 540])));
-    editor.apply_pick();
+    editor.apply_analysis_area(&crate::application::UiContext::render_only());
     assert!(editor.pick.is_none());
     assert_eq!(
         editor.document.project.analysis_area,
@@ -496,146 +526,155 @@ fn area_accept_cancel_and_invalid_edits_do_not_change_calibration_or_exposure() 
 fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_requested_work() {
     for (settled, outstanding) in [(false, true), (true, true), (true, false)] {
         for cancel in [false, true] {
-            let mut editor = super::super::tests::fixture();
-            super::super::tests::add_ready_fixture(&mut editor);
-            editor.source = false;
-            editor.working.compare = true;
-            let ctx = egui::Context::default();
-            let frame = |editor: &mut Editor| {
-                let mut output = ctx.run_ui(
-                    egui::RawInput {
-                        screen_rect: Some(egui::Rect::from_min_size(
-                            egui::Pos2::ZERO,
-                            egui::vec2(1100., 800.),
-                        )),
-                        ..Default::default()
-                    },
-                    |ui| crate::editor::tests::paint_controller(editor, ui),
-                );
-                output.textures_delta.clear();
-            };
-            frame(&mut editor);
-            editor.original.last_edit = std::time::Instant::now() - Duration::from_secs(1);
-            frame(&mut editor);
-            let revision = editor.original.revision();
-            let signature = editor.original.signature.clone();
-            let view = signature.as_ref().unwrap().2.unwrap();
-            let image = editor
-                .document
-                .visit
-                .ready
-                .as_ref()
-                .unwrap()
-                .proxy
-                .image(OutputTarget::Srgb)
-                .unwrap();
-            assert!(editor.original.refining.is_some());
-            editor.document.visit.grade.request.take();
-            if !outstanding {
-                editor.original_result(revision, Ok(Some(image.clone())));
-            } else if settled {
-                editor.original.settled = Some((revision, view, image.clone()));
-            }
-            let before = editor.document.project.clone();
-            editor.begin_analysis();
-            assert_eq!(editor.original.signature, signature);
-            assert_eq!(editor.original.settled.is_some(), settled);
-            if outstanding {
-                // A late completion from cancelled work cannot replace the accepted image.
-                editor.original_result(revision, Ok(Some(image.clone())));
-            } else {
-                assert_eq!(editor.original.revision(), revision);
-            }
-            assert_eq!(editor.original.settled.is_some(), settled);
-            frame(&mut editor);
-            let pending = editor.document.analysis_pending.as_ref().unwrap().id;
-            if cancel {
-                editor.cancel_analysis();
-            }
-            editor.analysis_result(
-                pending,
-                if cancel {
-                    Ok(None)
-                } else {
-                    Err("sampling failed".into())
-                },
-            );
-            assert_eq!(editor.document.project, before);
-            frame(&mut editor);
-            if settled {
-                let (current_revision, current_view, retained) =
-                    editor.original.settled.as_ref().unwrap();
-                assert_eq!(*current_revision, editor.original.revision());
-                assert_eq!(*current_view, view);
-                assert!(Arc::ptr_eq(retained, &image));
-                assert!(editor.original.refining.is_none());
-                assert!(editor.document.visit.grade.request.is_none());
-            } else {
-                assert!(editor.original.refining.is_some());
-                assert!(editor.document.visit.grade.request.is_some());
-            }
+            let editor =
+                super::super::tests::with_document_services(super::super::tests::fixture());
+            crate::application::test_support::with_application(editor, |app| {
+                app.enter(|editor, cx| {
+                    super::super::tests::add_ready_fixture(editor);
+                    editor.source = false;
+                    editor.working.compare = true;
+                    let ctx = egui::Context::default();
+                    let frame = |editor: &mut Editor| {
+                        let mut output = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(egui::Rect::from_min_size(
+                                    egui::Pos2::ZERO,
+                                    egui::vec2(1100., 800.),
+                                )),
+                                ..Default::default()
+                            },
+                            |ui| editor.draw_ui(ui, cx),
+                        );
+                        output.textures_delta.clear();
+                    };
+                    frame(editor);
+                    editor.original.last_edit = std::time::Instant::now() - Duration::from_secs(1);
+                    frame(editor);
+                    let revision = editor.original.revision();
+                    let signature = editor.original.signature.clone();
+                    let view = signature.as_ref().unwrap().2.unwrap();
+                    let image = editor
+                        .document
+                        .visit
+                        .ready
+                        .as_ref()
+                        .unwrap()
+                        .proxy
+                        .image(OutputTarget::Srgb)
+                        .unwrap();
+                    assert!(editor.original.refining.is_some());
+                    if !outstanding {
+                        editor.original_result(revision, Ok(Some(image.clone())));
+                    } else if settled {
+                        editor.original.settled = Some((revision, view, image.clone()));
+                    }
+                    let before = editor.document.project.clone();
+                    editor.begin_analysis(cx);
+                    assert_eq!(editor.original.signature, signature);
+                    assert_eq!(editor.original.settled.is_some(), settled);
+                    if outstanding {
+                        // A late completion from cancelled work cannot replace the accepted image.
+                        editor.original_result(revision, Ok(Some(image.clone())));
+                    } else {
+                        assert_eq!(editor.original.revision(), revision);
+                    }
+                    assert_eq!(editor.original.settled.is_some(), settled);
+                    frame(editor);
+                    let pending = editor.document.analysis_pending.as_ref().unwrap().id;
+                    if cancel {
+                        editor.cancel_analysis();
+                    }
+                    editor.analysis_result(
+                        pending,
+                        if cancel {
+                            Ok(None)
+                        } else {
+                            Err("sampling failed".into())
+                        },
+                        cx,
+                    );
+                    assert_eq!(editor.document.project, before);
+                    frame(editor);
+                    if settled {
+                        let (current_revision, current_view, retained) =
+                            editor.original.settled.as_ref().unwrap();
+                        assert_eq!(*current_revision, editor.original.revision());
+                        assert_eq!(*current_view, view);
+                        assert!(Arc::ptr_eq(retained, &image));
+                        assert!(editor.original.refining.is_none());
+                        assert!(editor.document.visit.grade.task.is_none());
+                    } else {
+                        assert!(editor.original.refining.is_some());
+                        assert!(editor.document.visit.grade.task.is_some());
+                    }
+                });
+            });
         }
     }
 }
 
 #[test]
 fn statistics_edit_bypasses_composition_and_crop_drafts_cannot_start_analysis() {
-    let mut editor = super::super::tests::fixture();
-    editor.roll_orientation.turn_clockwise();
-    editor.photo_orientation.flips.horizontal = true;
-    editor.crop = Some(crate::crop::Crop {
-        center: [444., 300.],
-        size: [360, 240],
-        angle: 0.1,
+    let editor = super::super::tests::fixture();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.roll_orientation.turn_clockwise();
+            editor.photo_orientation.flips.horizontal = true;
+            editor.crop = Some(crate::crop::Crop {
+                center: [444., 300.],
+                size: [360, 240],
+                angle: 0.1,
+            });
+            super::super::tests::add_ready_fixture(editor);
+            editor.source = false;
+            editor.sync_document();
+            let before = editor.document.project.clone();
+            editor.viewport.zoom = Some(1.7);
+            let view = editor.viewport;
+            editor.begin_pick(Pick::Analysis, cx);
+            let area = editor.document.visit.ready.as_ref().unwrap().area;
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1100., 800.),
+                    )),
+                    ..Default::default()
+                },
+                |ui| crate::editor::tests::paint_controller(editor, ui),
+            );
+            output.textures_delta.clear();
+            assert!(editor.source);
+            assert_eq!(
+                editor.last_layout.unwrap().0.composition,
+                Composition::new(
+                    area,
+                    RollOrientation::default(),
+                    PhotoOrientation::default()
+                )
+                .unwrap()
+            );
+            editor.region = Some(Coverage::rectangle(rect([52, 42, 720, 480])));
+            editor.apply_analysis_area(cx);
+            assert!(editor.pick.is_none());
+            assert_eq!(
+                editor.document.project.analysis_area,
+                Some([52, 42, 720, 480])
+            );
+            assert_eq!(editor.document.project.sources, before.sources);
+            assert_eq!(editor.document.project.orientation, before.orientation);
+            assert_eq!(editor.roll, before.roll);
+            assert_eq!(editor.viewport, view);
+            assert!(!editor.source);
+            editor.begin_crop();
+            assert!(editor.document.visit.crop_edit.is_some());
+            editor.begin_analysis(&UiContext::render_only());
+            assert!(editor.document.analysis_pending.is_none());
+            assert!(editor.document.analysis_pending.is_none());
+            editor.finish_crop(false);
+        });
     });
-    super::super::tests::add_ready_fixture(&mut editor);
-    editor.source = false;
-    editor.sync_document();
-    let before = editor.document.project.clone();
-    editor.viewport.zoom = Some(1.7);
-    let view = editor.viewport;
-    editor.begin_pick(Pick::Analysis);
-    let area = editor.document.visit.ready.as_ref().unwrap().area;
-    let ctx = egui::Context::default();
-    let mut output = ctx.run_ui(
-        egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(1100., 800.),
-            )),
-            ..Default::default()
-        },
-        |ui| crate::editor::tests::paint_controller(&mut editor, ui),
-    );
-    output.textures_delta.clear();
-    assert!(editor.source);
-    assert_eq!(
-        editor.last_layout.unwrap().0.composition,
-        Composition::new(
-            area,
-            RollOrientation::default(),
-            PhotoOrientation::default()
-        )
-        .unwrap()
-    );
-    editor.region = Some(Coverage::rectangle(rect([52, 42, 720, 480])));
-    editor.apply_pick();
-    assert!(editor.pick.is_none());
-    assert_eq!(
-        editor.document.project.analysis_area,
-        Some([52, 42, 720, 480])
-    );
-    assert_eq!(editor.document.project.sources, before.sources);
-    assert_eq!(editor.document.project.orientation, before.orientation);
-    assert_eq!(editor.roll, before.roll);
-    assert_eq!(editor.viewport, view);
-    assert!(!editor.source);
-    editor.begin_crop();
-    assert!(editor.document.visit.crop_edit.is_some());
-    editor.begin_analysis();
-    assert!(editor.document.analysis_pending.is_none());
-    assert!(editor.document.analysis_pending.is_none());
-    editor.finish_crop(false);
 }
 
 #[test]
@@ -663,7 +702,11 @@ fn sparse_eligibility_is_rejected_before_any_grade_installation() {
         ..Default::default()
     };
     let error = require_picture(&samples).unwrap_err();
-    editor.analysis_result(id, Err(error.to_string()));
+    editor.analysis_result(
+        id,
+        Err(error.to_string()),
+        &crate::application::UiContext::render_only(),
+    );
     assert_eq!(editor.document.project, before);
     let enough = roll_analysis::FrameStatistics {
         film_samples: 0,
@@ -709,14 +752,17 @@ fn real_ambiguous_first_frame_uses_roll_opening_instead_of_holder() {
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let mut editor = Editor::new(&device, &queue, None);
+        let mut editor = Editor::new(&device, &queue);
         let mut paths: Vec<_> = [4321, 4322, 4323]
             .iter()
             .map(|n| root.join(format!("DSC0{n}.ARW")))
             .collect();
         paths.extend((4312..=4320).map(|n| root.join(format!("DSC0{n}.ARW"))));
-        editor.add_raws(paths);
-        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(60));
+        editor = crate::editor::tests::complete_document_operation(
+            editor,
+            Duration::from_secs(60),
+            |editor, cx| editor.add_raws(paths, cx),
+        );
         assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
         assert_eq!(
             editor
@@ -730,8 +776,7 @@ fn real_ambiguous_first_frame_uses_roll_opening_instead_of_holder() {
         );
         assert_eq!(editor.analysis_picture(), None);
         let before = editor.document.project.clone();
-        editor = click_analyze(editor);
-        editor = wait(editor);
+        editor = click_analyze(editor, Duration::from_secs(180));
         assert!(
             editor.status.starts_with("Analyzed 12"),
             "{}",
@@ -778,7 +823,11 @@ fn ready_state() -> Editor {
     editor
 }
 
-fn click_label(editor: &mut Editor, ctx: &egui::Context, label: &str) {
+fn click_label(
+    editor: &mut impl crate::editor::tests::UiFixture,
+    ctx: &egui::Context,
+    label: &str,
+) {
     super::super::tests::app_frame(editor, ctx, vec![]);
     let labels = super::super::tests::app_frame(editor, ctx, vec![]);
     let point = labels
@@ -804,17 +853,24 @@ fn click_label(editor: &mut Editor, ctx: &egui::Context, label: &str) {
     }
 }
 
-fn click_analyze(mut editor: Editor) -> Editor {
-    let ctx = egui::Context::default();
-    click_label(&mut editor, &ctx, "Analyze");
-    editor = crate::editor::tests::complete_analysis_preparation(editor, Duration::from_secs(60));
-    assert!(
-        editor.document.analysis_review.is_some(),
-        "{}",
-        editor.status
-    );
-    click_label(&mut editor, &ctx, "Analyze roll");
-    editor
+fn click_analyze(editor: Editor, limit: Duration) -> Editor {
+    let owner = std::cell::RefCell::new(Some(editor));
+    {
+        let mut app = crate::application::test_support::TestApplication::new(&owner, || {});
+        let ctx = egui::Context::default();
+        click_label(&mut app, &ctx, "Analyze");
+        app.run_until(Duration::from_secs(60), |e| {
+            e.document.analysis_preparing.is_none()
+        });
+        app.read(|e| assert!(e.document.analysis_review.is_some(), "{}", e.status));
+        click_label(&mut app, &ctx, "Analyze roll");
+        assert!(app.read(|e| e.document.analysis_pending.is_some()));
+        app.run_until(limit, |e| {
+            e.document.analysis_pending.is_none() && !e.document.visit.source.pending() && !e.busy
+        });
+        app.close_execution();
+    }
+    owner.into_inner().unwrap()
 }
 
 #[path = "editor_local_analysis_tests.rs"]
@@ -835,126 +891,134 @@ fn photo_numeric_focus_commit_precedes_analysis_area_preparation_snapshot() {
         editor.preferences.sections.insert(section.into(), false);
     }
     let ctx = egui::Context::default();
-    for _ in 0..4 {
-        super::super::tests::app_frame(&mut editor, &ctx, vec![]);
-    }
-    let labels = super::super::tests::app_frame(&mut editor, &ctx, vec![]);
-    let exposure = labels
-        .iter()
-        .find(|(label, _)| label == "Exposure")
-        .unwrap()
-        .1;
-    let point = labels
-        .iter()
-        .filter(|(label, rect)| {
-            label.contains("0.00") && rect.min.y >= exposure.min.y && rect.min.x >= exposure.min.x
-        })
-        .min_by(|(_, a), (_, b)| a.min.y.total_cmp(&b.min.y))
-        .unwrap()
-        .1
-        .center();
-    for pressed in [true, false] {
-        super::super::tests::app_frame(
-            &mut editor,
-            &ctx,
-            vec![
-                egui::Event::PointerMoved(point),
-                egui::Event::PointerButton {
-                    pos: point,
-                    button: egui::PointerButton::Primary,
-                    pressed,
-                    modifiers: egui::Modifiers::NONE,
-                },
-            ],
-        );
-    }
-    assert!(
-        ctx.text_edit_focused(),
-        "numeric point {point:?}, labels {labels:?}"
-    );
-    super::super::tests::app_frame(
-        &mut editor,
-        &ctx,
-        vec![egui::Event::Text("0.7654321".into())],
-    );
-    assert_eq!(editor.photo.exposure, 0.);
-    click_label(&mut editor, &ctx, "Roll");
-    assert_eq!(
-        editor.photo.exposure, 0.7654321,
-        "tab={} status={}",
-        editor.tab, editor.status
-    );
-    click_label(&mut editor, &ctx, "Analyze");
-    let snapshot = &editor
-        .document
-        .analysis_preparing
-        .as_ref()
-        .unwrap()
-        .request
-        .document;
-    assert_eq!(
-        snapshot
-            .project
-            .source(editor.current_source.unwrap())
+    crate::application::test_support::with_application(editor, |app| {
+        for _ in 0..4 {
+            super::super::tests::app_frame(app, &ctx, vec![]);
+        }
+        let labels = super::super::tests::app_frame(app, &ctx, vec![]);
+        let exposure = labels
+            .iter()
+            .find(|(label, _)| label == "Exposure")
             .unwrap()
-            .photo
-            .exposure,
-        0.7654321
-    );
-    assert!(editor.document.analysis_pending.is_none());
+            .1;
+        let point = labels
+            .iter()
+            .filter(|(label, rect)| {
+                label.contains("0.00")
+                    && rect.min.y >= exposure.min.y
+                    && rect.min.x >= exposure.min.x
+            })
+            .min_by(|(_, a), (_, b)| a.min.y.total_cmp(&b.min.y))
+            .unwrap()
+            .1
+            .center();
+        for pressed in [true, false] {
+            super::super::tests::app_frame(
+                app,
+                &ctx,
+                vec![
+                    egui::Event::PointerMoved(point),
+                    egui::Event::PointerButton {
+                        pos: point,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        assert!(
+            ctx.text_edit_focused(),
+            "numeric point {point:?}, labels {labels:?}"
+        );
+        super::super::tests::app_frame(app, &ctx, vec![egui::Event::Text("0.7654321".into())]);
+        assert_eq!(app.read(|e| e.photo.exposure), 0.);
+        click_label(app, &ctx, "Roll");
+        app.read(|e| {
+            assert_eq!(
+                e.photo.exposure, 0.7654321,
+                "tab={} status={}",
+                e.tab, e.status
+            )
+        });
+        click_label(app, &ctx, "Analyze");
+        app.read(|e| {
+            let snapshot = &e
+                .document
+                .analysis_preparing
+                .as_ref()
+                .unwrap()
+                .request
+                .document;
+            assert_eq!(
+                snapshot
+                    .project
+                    .source(e.current_source.unwrap())
+                    .unwrap()
+                    .photo
+                    .exposure,
+                0.7654321
+            );
+            assert!(e.document.analysis_pending.is_none());
+        });
+    });
 }
 
 #[test]
 fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade() {
-    let mut editor = ready_state();
-    editor.photo.contrast = 1.2;
-    editor.source = false;
-    editor.working.compare = true;
-    let ctx = egui::Context::default();
-    super::super::tests::app_frame(&mut editor, &ctx, vec![]);
-    let signature = editor.original.signature.clone();
-    let revision = editor.original.revision();
-    let view = signature.as_ref().unwrap().2.unwrap();
-    let image = editor
-        .document
-        .visit
-        .ready
-        .as_ref()
-        .unwrap()
-        .proxy
-        .image(OutputTarget::Srgb)
-        .unwrap();
-    editor.original.settled = Some((revision, view, image.clone()));
-    editor.request_analysis();
-    let before = editor.document.project.clone();
-    super::super::tests::app_frame(&mut editor, &ctx, vec![]);
-    super::super::tests::app_frame(
-        &mut editor,
-        &ctx,
-        vec![egui::Event::Key {
-            key: egui::Key::Escape,
-            physical_key: None,
-            pressed: true,
-            repeat: false,
-            modifiers: egui::Modifiers::NONE,
-        }],
-    );
-    assert!(editor.document.analysis_pending.is_none());
-    assert!(editor.document.analysis_preparing.is_some());
-    assert_eq!(editor.status, "Cancelling analysis…");
-    assert_eq!(editor.document.project, before);
-    assert_eq!(editor.original.signature, signature);
-    assert_eq!(editor.original.revision(), revision);
-    assert!(Arc::ptr_eq(
-        &editor.original.settled.as_ref().unwrap().2,
-        &image
-    ));
+    let editor = ready_state();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.photo.contrast = 1.2;
+            editor.source = false;
+            editor.working.compare = true;
+            let ctx = egui::Context::default();
+            super::super::tests::app_frame(editor, &ctx, vec![]);
+            let signature = editor.original.signature.clone();
+            let revision = editor.original.revision();
+            let view = signature.as_ref().unwrap().2.unwrap();
+            let image = editor
+                .document
+                .visit
+                .ready
+                .as_ref()
+                .unwrap()
+                .proxy
+                .image(OutputTarget::Srgb)
+                .unwrap();
+            editor.original.settled = Some((revision, view, image.clone()));
+            editor.request_analysis(cx);
+            let before = editor.document.project.clone();
+            super::super::tests::app_frame(editor, &ctx, vec![]);
+            super::super::tests::app_frame(
+                editor,
+                &ctx,
+                vec![egui::Event::Key {
+                    key: egui::Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+            assert!(editor.document.analysis_pending.is_none());
+            assert!(editor.document.analysis_preparing.is_some());
+            assert_eq!(editor.status, "Cancelling analysis…");
+            assert_eq!(editor.document.project, before);
+            assert_eq!(editor.original.signature, signature);
+            assert_eq!(editor.original.revision(), revision);
+            assert!(Arc::ptr_eq(
+                &editor.original.settled.as_ref().unwrap().2,
+                &image
+            ));
+        });
+    });
 }
 
-fn wait(editor: Editor) -> Editor {
-    wait_with_limit(editor, Duration::from_secs(180))
-}
-
-fn wait_with_limit(editor: Editor, limit: Duration) -> Editor {
-    crate::editor::tests::complete_analysis_operation(editor, limit)
+fn wait_with_limit(
+    editor: Editor,
+    limit: Duration,
+    start: impl FnOnce(&mut Editor, &UiContext<'_, Editor>),
+) -> Editor {
+    crate::editor::tests::complete_analysis_operation(editor, limit, start)
 }

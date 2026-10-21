@@ -56,27 +56,54 @@ pub(super) enum Demand {
 }
 
 impl Editor {
-    pub(in crate::editor) fn start_thumbnail_workflow(
+    pub(super) fn request_thumbnail(
         &mut self,
-        access: &crate::application::UiAccess<'_, Self>,
+        key: ImageKey,
+        path: PathBuf,
+        source: Source,
+        render: bool,
+        priority: development::Priority,
+        cx: &UiContext<'_, Self>,
     ) {
-        let Some(job) = self.thumbnails.request.take() else {
+        if self.thumbnails.pending.is_some() || self.thumbnails.cache.get(&key).is_some() {
+            return;
+        }
+        let Some(services) = self.thumbnails.services.clone() else {
+            if self.thumbnails.gpu.is_some() {
+                self.thumbnails
+                    .cache
+                    .insert(key, Err("Thumbnail worker stopped".into()));
+            }
             return;
         };
-        let ticket = job.ticket;
-        let key = job.key.clone();
+        let generation = self.thumbnails.generation.clone();
+        let ticket = generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        let previous = render
+            .then(|| {
+                self.thumbnails
+                    .compatible_product(&key)
+                    .map(|(_, product)| product.clone())
+            })
+            .flatten();
+        let job = Job {
+            ticket,
+            key: key.clone(),
+            path,
+            source,
+            correction: self.correction.clone(),
+            store: self.thumbnails.sources.clone(),
+            render,
+            priority,
+            previous,
+        };
+        self.thumbnails.pending_render = render;
+        self.thumbnails.pending = Some((ticket, key.clone()));
         let fallback_key = key.clone();
         let store = job.store.clone();
-        let generation = self.thumbnails.generation.clone();
-        let Some(services) = self.thumbnails.services.clone() else {
-            self.thumbnails.stopped(ticket, key);
-            return;
-        };
         let identity = generation.clone();
-        let target = access.clone();
-        let Some(task) = access.spawn(async move {
+        let Some(task) = cx.spawn(move |cx| async move {
             let result = services.process(job).await;
-            target.update(|editor| {
+            cx.update(|editor| {
                 let Some(index) = editor
                     .document
                     .thumbnail_work
@@ -99,8 +126,7 @@ impl Editor {
                 }
                 drop(pending);
                 editor.thumbnails.update_memory();
-                editor.advance_thumbnail_demand();
-                editor.start_thumbnail_workflow(&target);
+                editor.advance_thumbnail_demand(&cx);
             });
         }) else {
             self.thumbnails.stopped(ticket, fallback_key);
@@ -113,14 +139,14 @@ impl Editor {
         });
     }
 
-    pub(in crate::editor) fn advance_thumbnail_demand(&mut self) {
+    pub(in crate::editor) fn advance_thumbnail_demand(&mut self, cx: &UiContext<'_, Self>) {
         let (visible, hidden) = match &self.thumbnails.demand {
             Demand::None => return,
             Demand::Visible(visible) if self.fullscreen.is_none() => (visible.clone(), false),
             Demand::Visible(_) | Demand::Hidden => (Vec::new(), true),
         };
         if self.document.cache().is_closed() {
-            if self.thumbnails.pending.is_some() || self.thumbnails.request.is_some() {
+            if self.thumbnails.pending.is_some() {
                 self.thumbnails.cancel();
             }
             return;
@@ -235,17 +261,17 @@ impl Editor {
                     && key
                         .estimated_product_bytes()
                         .is_some_and(|bytes| self.thumbnails.cache.can_retain(bytes)));
-            self.thumbnails.request_prioritized(
+            self.request_thumbnail(
                 key,
                 path,
                 source.clone(),
-                self.correction.clone(),
                 render,
                 if visible {
                     development::Priority::Visible
                 } else {
                     development::Priority::Eager
                 },
+                cx,
             );
             break;
         }

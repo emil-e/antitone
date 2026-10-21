@@ -21,7 +21,7 @@ fn frame(editor: &mut Editor, context: &egui::Context, time: f64, scroll: f32) -
             ],
             ..Default::default()
         },
-        |ui| editor.filmstrip(ui),
+        |ui| editor.filmstrip(ui, &crate::application::UiContext::render_only()),
     );
     output.textures_delta.clear();
     output

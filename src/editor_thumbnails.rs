@@ -289,7 +289,6 @@ pub(super) struct Thumbnails {
         Arc<crate::renderer::RendererCache>,
     )>,
     services: Option<Services>,
-    request: Option<Job>,
     demand: Demand,
     generation: Arc<std::sync::atomic::AtomicU64>,
     pending: Option<(u64, ImageKey)>,
@@ -326,7 +325,6 @@ impl Default for Thumbnails {
             embedded: Default::default(),
             gpu: None,
             services: None,
-            request: None,
             demand: Demand::None,
             generation: Arc::default(),
             pending: None,
@@ -512,6 +510,14 @@ impl Thumbnails {
         self.sources.set_budget(self.budgets.sources as u64);
     }
 
+    fn compatible_product(&self, key: &ImageKey) -> Option<(&ImageKey, &Arc<Product>)> {
+        self.cache.entries.iter().rev().find_map(|(old, product)| {
+            key.same_neutral(old)
+                .then(|| product.as_ref().ok().map(|product| (old, product)))
+                .flatten()
+        })
+    }
+
     fn protect_images(&mut self, mut wanted: Vec<ImageKey>) {
         let previous = wanted
             .iter()
@@ -522,14 +528,7 @@ impl Thumbnails {
                     .iter()
                     .any(|(old, product)| old == *key && product.is_ok())
             })
-            .filter_map(|key| {
-                self.cache
-                    .entries
-                    .iter()
-                    .rev()
-                    .find(|(old, product)| product.is_ok() && key.same_neutral(old))
-                    .map(|(old, _)| old.clone())
-            })
+            .filter_map(|key| self.compatible_product(key).map(|(old, _)| old.clone()))
             .collect::<Vec<_>>();
         wanted.extend(previous);
         self.cache.protect(wanted);
@@ -663,7 +662,6 @@ impl Thumbnails {
     }
 
     pub fn cancel(&mut self) {
-        self.request = None;
         self.pending = None;
         self.pending_render = false;
         self.embedded.cancel();
@@ -717,7 +715,6 @@ impl Thumbnails {
 
     fn stopped(&mut self, ticket: u64, key: ImageKey) {
         self.services = None;
-        self.request = None;
         if self
             .pending
             .as_ref()
@@ -728,91 +725,6 @@ impl Thumbnails {
             self.cache
                 .insert(key, Err("Thumbnail worker stopped".into()));
         }
-    }
-
-    #[cfg(test)]
-    fn request(
-        &mut self,
-        key: ImageKey,
-        path: PathBuf,
-        source: Source,
-        correction: Option<Arc<Correction>>,
-    ) {
-        self.request_mode(key, path, source, correction, true);
-    }
-
-    #[cfg(test)]
-    fn request_mode(
-        &mut self,
-        key: ImageKey,
-        path: PathBuf,
-        source: Source,
-        correction: Option<Arc<Correction>>,
-        render: bool,
-    ) {
-        self.request_prioritized(
-            key,
-            path,
-            source,
-            correction,
-            render,
-            if render {
-                development::Priority::Visible
-            } else {
-                development::Priority::Eager
-            },
-        );
-    }
-
-    fn request_prioritized(
-        &mut self,
-        key: ImageKey,
-        path: PathBuf,
-        source: Source,
-        correction: Option<Arc<Correction>>,
-        render: bool,
-        priority: development::Priority,
-    ) {
-        if self.pending.is_some() || self.cache.get(&key).is_some() {
-            return;
-        }
-        if self.services.is_none() {
-            if self.gpu.is_some() {
-                self.cache
-                    .insert(key, Err("Thumbnail worker stopped".into()));
-            }
-            return;
-        };
-        let ticket = self
-            .generation
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            + 1;
-        let previous = render
-            .then(|| {
-                self.cache
-                    .entries
-                    .iter()
-                    .rev()
-                    .find_map(|(old_key, product)| {
-                        key.same_neutral(old_key)
-                            .then(|| product.as_ref().ok().cloned())
-                            .flatten()
-                    })
-            })
-            .flatten();
-        self.request = Some(Job {
-            ticket,
-            key: key.clone(),
-            path,
-            source,
-            correction,
-            store: self.sources.clone(),
-            render,
-            priority,
-            previous,
-        });
-        self.pending_render = render;
-        self.pending = Some((ticket, key));
     }
 }
 #[path = "editor_thumbnail_worker.rs"]
@@ -974,27 +886,32 @@ impl Editor {
             && self.removal_pending.is_none()
     }
 
-    pub(super) fn hidden_filmstrip(&mut self, ui: &egui::Ui) {
+    pub(super) fn hidden_filmstrip(&mut self, ui: &egui::Ui, cx: &UiContext<'_, Self>) {
         self.thumbnails.embedded.cancel();
         self.thumbnails.refresh_hidden_memory();
         self.thumbnails.demand = Demand::Hidden;
-        self.advance_thumbnail_demand();
+        self.advance_thumbnail_demand(cx);
         if self.thumbnails.pending.is_some() {
             ui.ctx().request_repaint_after(Duration::from_millis(50));
         }
     }
 
-    pub(super) fn filmstrip(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn filmstrip(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
         self.thumbnails.bind_sources(self.document.cache().clone());
         if self.thumbnails.memory_watch.is_none() {
             self.thumbnails.repaint.get_or_init(|| ui.ctx().clone());
             self.thumbnails.memory_watch = Some(memory::PressureWatch::new(ui.ctx().clone()));
         }
         self.thumbnails.update_memory();
-        self.filmstrip_with_budgets(ui, self.thumbnails.budgets);
+        self.filmstrip_with_budgets(ui, self.thumbnails.budgets, cx);
     }
 
-    fn filmstrip_with_budgets(&mut self, ui: &mut egui::Ui, budgets: memory::CacheBudgets) {
+    fn filmstrip_with_budgets(
+        &mut self,
+        ui: &mut egui::Ui,
+        budgets: memory::CacheBudgets,
+        cx: &UiContext<'_, Self>,
+    ) {
         if self.document.visit.ready.is_none()
             && self.pending_preview.is_none()
             && self.flat_edit.is_none()
@@ -1348,20 +1265,22 @@ impl Editor {
             .collect();
         self.thumbnails.protect_cpu();
         self.thumbnails.protect_images(protected);
-        self.thumbnails.embedded.request_visible(
+        self.request_embedded_previews(
             &camera_wanted,
             visible_allowed && select.is_none() && !remove,
+            ui.ctx(),
+            cx,
         );
         if let Some((index, modifiers)) = select {
             if self.document.analysis_review.is_some() {
-                self.browse_analysis_review(self.document.project.order[index]);
+                self.browse_analysis_review(self.document.project.order[index], cx);
             } else if matches!(self.pick, Some(Pick::Dmin | Pick::Dmax)) {
-                self.pick_roll_source(self.document.project.order[index]);
+                self.pick_roll_source(self.document.project.order[index], cx);
             } else {
-                self.select_roll_photo(index, modifiers);
+                self.select_roll_photo(index, modifiers, cx);
             }
         } else if !remove {
-            self.advance_thumbnail_demand();
+            self.advance_thumbnail_demand(cx);
         }
         if self.thumbnails.pending.is_some() || self.thumbnails.embedded.pending() {
             ui.ctx().request_repaint_after(Duration::from_millis(50));

@@ -97,18 +97,22 @@ fn deferred_drag_captures_locals_after_an_outgoing_rename_commits() {
             id: order[0],
         };
         editor.begin_control_history("Photo settings");
-        editor.control_command(editing::Command::Adjustment(Action::Rename(
-            order[0],
-            "Renamed".into(),
-        )));
-        editor.control_command(editing::Command::OrderInput {
-            start: Some(order[0]),
-            drop: Some((key, 2)),
-            finish: true,
-        });
+        let cx = UiContext::render_only();
+        editor.control_command(
+            editing::Command::Adjustment(Action::Rename(order[0], "Renamed".into())),
+            &cx,
+        );
+        editor.control_command(
+            editing::Command::OrderInput {
+                start: Some(order[0]),
+                drop: Some((key, 2)),
+                finish: true,
+            },
+            &cx,
+        );
         editor.history_controls = None;
         for command in std::mem::take(&mut editor.control_commands) {
-            editor.apply_control_command(command);
+            editor.apply_control_command(command, &cx);
         }
         assert_eq!(ids(&editor), vec![order[1], order[0]]);
         let locals = editor
@@ -264,21 +268,25 @@ fn drawer_visibility_routes_global_and_reopening_validates_source_owned_selectio
 #[test]
 fn failed_document_candidate_preserves_the_visit_and_its_local_tool_context() {
     pollster::block_on(async {
-        let (mut editor, _, _) = processing::tests::fixture().await;
-        let id = ids(&editor)[1];
-        editor.select_adjustment(Target::Local(id));
-        editor.document.visit.adjustments.show_coverage = true;
-        editor.sync_document();
-        let accepted = editor.document.project.clone();
-        let visit = editor.document.visit.view;
-        editor.start_document(Preparation::Open("unavailable.antitone".into()));
-        let request = editor.document_pending.unwrap();
-        editor.document_prepared(request, Err("candidate rejected".into()));
-        assert_eq!(editor.document.visit.view, visit);
-        assert_eq!(editor.adjustment_target(), Target::Local(id));
-        assert!(editor.document.visit.adjustments.drawer_open());
-        assert!(editor.document.visit.adjustments.show_coverage);
-        assert_eq!(editor.document.project, accepted);
+        let (editor, _, _) = processing::tests::fixture().await;
+        crate::application::test_support::with_application(editor, |app| {
+            app.enter(|editor, cx| {
+                let id = ids(editor)[1];
+                editor.select_adjustment(Target::Local(id));
+                editor.document.visit.adjustments.show_coverage = true;
+                editor.sync_document();
+                let accepted = editor.document.project.clone();
+                let visit = editor.document.visit.view;
+                editor.start_document(Preparation::Open("unavailable.antitone".into()), cx);
+                let request = editor.document_pending.unwrap();
+                editor.document_prepared(request, Err("candidate rejected".into()));
+                assert_eq!(editor.document.visit.view, visit);
+                assert_eq!(editor.adjustment_target(), Target::Local(id));
+                assert!(editor.document.visit.adjustments.drawer_open());
+                assert!(editor.document.visit.adjustments.show_coverage);
+                assert_eq!(editor.document.project, accepted);
+            });
+        });
     });
 }
 
@@ -308,11 +316,11 @@ fn explicitly_closing_during_a_roll_pick_prevents_its_return_context_reopening_l
         let (mut editor, _, _) = processing::tests::fixture().await;
         let id = ids(&editor)[0];
         editor.select_adjustment(Target::Local(id));
-        editor.begin_pick(Pick::Dmin);
+        editor.begin_pick(Pick::Dmin, &crate::application::UiContext::render_only());
         assert!(editor.document.pick_return.is_some());
         let before = editor.document.project.clone();
         editor.close_adjustments();
-        editor.finish_pick();
+        editor.finish_pick(&crate::application::UiContext::render_only());
         assert_eq!(editor.adjustment_target(), Target::Global);
         assert!(!editor.document.visit.adjustments.drawer_open());
         assert_eq!(editor.document.project, before);
@@ -445,56 +453,60 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
 fn temporary_roll_picking_restores_only_an_existing_source_owned_target() {
     pollster::block_on(async {
         for removed in [false, true] {
-            let (mut editor, _, _) = processing::tests::fixture().await;
-            let original = editor.current_source.unwrap();
-            let target = ids(&editor)[0];
-            let mut other = editor.document.project.source(original).unwrap().clone();
-            other.id = SourceId(0);
-            other.path = "other-fixture.ARW".into();
-            let other = editor.document.project.add_source(other).unwrap();
-            editor.sync_document();
-            editor.select_adjustment(Target::Local(target));
-            editor.begin_pick(Pick::Dmin);
-            let mut ready = editor.document.visit.ready.take().unwrap();
-            editor.pick_roll_source(other);
-            assert_eq!(editor.current_source, Some(other));
-            assert_eq!(editor.adjustment_target(), Target::Global);
-            assert!(editor.document.visit.source.request.is_some());
-            // Both fixture sources use identical pixels/metadata; deliver the other owner's Ready.
-            ready.path = editor.document.source_path(other).unwrap();
-            ready.record = editor.document.project.source(other).unwrap().clone();
-            ready.record.id = SourceId(0);
-            ready.record.path = ready.path.clone();
-            editor.source_result(editor.id, Ok(Box::new(ready)));
-            assert!(
-                editor.document.visit.ready.is_some() && !editor.busy,
-                "{}",
-                editor.status
-            );
-            if removed {
-                editor
-                    .document
-                    .project
-                    .source_mut(original)
-                    .unwrap()
-                    .local_adjustments
-                    .as_mut()
-                    .unwrap()
-                    .adjustments
-                    .clear();
-            }
-            editor.finish_pick();
-            assert_eq!(editor.current_source, Some(original));
-            assert!(editor.document.pick_return.is_none());
-            assert_eq!(
-                editor.adjustment_target(),
-                if removed {
-                    Target::Global
-                } else {
-                    Target::Local(target)
-                }
-            );
-            assert!(editor.document.visit.source.request.is_some());
+            let (editor, _, _) = processing::tests::fixture().await;
+            crate::application::test_support::with_application(editor, |app| {
+                app.enter(|editor, cx| {
+                    let original = editor.current_source.unwrap();
+                    let target = ids(editor)[0];
+                    let mut other = editor.document.project.source(original).unwrap().clone();
+                    other.id = SourceId(0);
+                    other.path = "other-fixture.ARW".into();
+                    let other = editor.document.project.add_source(other).unwrap();
+                    editor.sync_document();
+                    editor.select_adjustment(Target::Local(target));
+                    editor.begin_pick(Pick::Dmin, cx);
+                    let mut ready = editor.document.visit.ready.take().unwrap();
+                    editor.pick_roll_source(other, cx);
+                    assert_eq!(editor.current_source, Some(other));
+                    assert_eq!(editor.adjustment_target(), Target::Global);
+                    assert!(editor.document.visit.source.pending());
+                    // Both fixture sources use identical pixels/metadata; deliver the other owner's Ready.
+                    ready.path = editor.document.source_path(other).unwrap();
+                    ready.record = editor.document.project.source(other).unwrap().clone();
+                    ready.record.id = SourceId(0);
+                    ready.record.path = ready.path.clone();
+                    editor.source_result(editor.id, Ok(Box::new(ready)));
+                    assert!(
+                        editor.document.visit.ready.is_some() && !editor.busy,
+                        "{}",
+                        editor.status
+                    );
+                    if removed {
+                        editor
+                            .document
+                            .project
+                            .source_mut(original)
+                            .unwrap()
+                            .local_adjustments
+                            .as_mut()
+                            .unwrap()
+                            .adjustments
+                            .clear();
+                    }
+                    editor.finish_pick(cx);
+                    assert_eq!(editor.current_source, Some(original));
+                    assert!(editor.document.pick_return.is_none());
+                    assert_eq!(
+                        editor.adjustment_target(),
+                        if removed {
+                            Target::Global
+                        } else {
+                            Target::Local(target)
+                        }
+                    );
+                    assert!(editor.document.visit.source.pending());
+                });
+            });
         }
     });
 }

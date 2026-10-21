@@ -55,8 +55,7 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
     let scheduler = development::Scheduler::new();
     with_application(editor(scheduler.clone()), |app| {
         app.enter(|e, access| {
-            e.add_raws(vec![path("patches.dng")]);
-            e.start_document_workflow(access);
+            e.add_raws(vec![path("patches.dng")], access);
         });
         app.run_until(Duration::from_secs(15), |e| !e.busy);
         let (accepted, selected, visit) = app.read(|e| {
@@ -70,8 +69,10 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
             )
         });
         app.enter(|e, access| {
-            e.start_document(Preparation::Correction(e.document.capture(), selected));
-            e.start_document_workflow(access);
+            e.start_document(
+                Preparation::Correction(e.document.capture(), selected),
+                access,
+            );
         });
         app.run_until(Duration::from_secs(15), |e| !e.busy);
         app.read(|e| {
@@ -79,8 +80,7 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
             assert_eq!(e.document.visit.view, visit);
         });
         app.enter(|e, access| {
-            e.restore_history(crate::editor::history::Direction::Undo);
-            e.start_document_workflow(access);
+            e.restore_history(crate::editor::history::Direction::Undo, access);
         });
         app.run_until(Duration::from_secs(15), |e| !e.busy);
         app.read(|e| {
@@ -93,8 +93,7 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
             assert!(e.document.visit.ready.is_none());
         });
         app.enter(|e, access| {
-            e.restore_history(crate::editor::history::Direction::Redo);
-            e.start_document_workflow(access);
+            e.restore_history(crate::editor::history::Direction::Redo, access);
         });
         app.run_until(Duration::from_secs(15), |e| !e.busy);
         app.read(|e| {
@@ -103,8 +102,7 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
         });
         let cache = app.read(|e| e.document.cache().clone());
         app.enter(|e, access| {
-            e.start_document(Preparation::New);
-            e.start_document_workflow(access);
+            e.start_document(Preparation::New, access);
         });
         app.run_until(Duration::from_secs(15), |e| !e.busy);
         app.read(|e| {
@@ -134,8 +132,7 @@ fn open_prepares_first_source_before_promotion_and_failed_open_preserves_owner_h
         .unwrap();
     with_application(editor(scheduler.clone()), |app| {
         app.enter(|e, access| {
-            e.start_document(Preparation::Open(destination.clone()));
-            e.start_document_workflow(access);
+            e.start_document(Preparation::Open(destination.clone()), access);
         });
         app.run_until(Duration::from_secs(15), |e| !e.busy);
         let (snapshot, visit, native, store) = app.update(|e| {
@@ -150,8 +147,10 @@ fn open_prepares_first_source_before_promotion_and_failed_open_preserves_owner_h
             )
         });
         app.enter(|e, access| {
-            e.start_document(Preparation::Open(directory.path().join("missing.antitone")));
-            e.start_document_workflow(access);
+            e.start_document(
+                Preparation::Open(directory.path().join("missing.antitone")),
+                access,
+            );
         });
         app.run_until(Duration::from_secs(15), |e| !e.busy);
         app.read(|e| {
@@ -178,14 +177,12 @@ fn queued_supersession_retires_old_continuation_and_stale_progress_cannot_touch_
     let hold = hold_blocking_work(&e.workflow_jobs);
     with_application(e, |app| {
         app.enter(|e, access| {
-            e.add_raws(vec![path("patches.dng")]);
-            e.start_document_workflow(access);
+            e.add_raws(vec![path("patches.dng")], access);
         });
         app.pump();
         let old = app.read(|e| e.document_pending.unwrap());
         app.enter(|e, access| {
-            e.start_document(Preparation::New);
-            e.start_document_workflow(access);
+            e.start_document(Preparation::New, access);
         });
         let current = app.read(|e| e.document_pending.unwrap());
         app.pump();
@@ -232,8 +229,7 @@ fn pending_native_candidate_keeps_accepted_state_and_admission_after_logical_ret
     with_application(e, |app| {
         let accepted = app.read(|e| e.document.project.clone());
         app.enter(|e, access| {
-            e.add_raws(vec![path("patches.dng")]);
-            e.start_document_workflow(access);
+            e.add_raws(vec![path("patches.dng")], access);
         });
         app.run_until(Duration::from_secs(10), |_| scheduler.waiter_count() > 0);
         starts.recv_timeout(Duration::from_secs(10)).unwrap();
@@ -242,8 +238,7 @@ fn pending_native_candidate_keeps_accepted_state_and_admission_after_logical_ret
             assert!(e.document.visit.ready.is_none() && e.busy);
         });
         app.enter(|e, access| {
-            e.start_document(Preparation::New);
-            e.start_document_workflow(access);
+            e.start_document(Preparation::New, access);
         });
         app.pump();
         assert_eq!(scheduler.waiter_count(), 0);

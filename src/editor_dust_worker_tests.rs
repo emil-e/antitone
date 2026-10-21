@@ -90,8 +90,7 @@ fn authored_dust_workflow_slices_share_presentation_queue_and_retire_without_fai
         with_application(editor, |app| {
             armed.store(true, Ordering::Release);
             app.enter(|e, access| {
-                e.schedule_dust(signature);
-                e.start_dust_workflow(access);
+                e.schedule_dust(signature, access);
             });
             let first = app.read(|e| e.document.dust.pending_request().unwrap());
             app.pump();
@@ -161,8 +160,7 @@ fn authored_dust_workflow_slices_share_presentation_queue_and_retire_without_fai
             // this same visit/signature protects against memoising cancellation as failure.
             epoch.store(1, Ordering::Relaxed);
             app.enter(|e, access| {
-                e.schedule_dust(signature);
-                e.start_dust_workflow(access);
+                e.schedule_dust(signature, access);
             });
             let second = app.read(|e| {
                 e.document

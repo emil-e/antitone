@@ -93,25 +93,33 @@ impl Services {
 }
 
 impl Editor {
-    pub(super) fn start_look_workflow(&mut self, access: &crate::application::UiAccess<'_, Self>) {
-        let Some(pending) = self.document.look.as_mut() else {
+    pub(super) fn begin_look(
+        &mut self,
+        source: Source,
+        cx: &crate::application::UiContext<'_, Self>,
+    ) {
+        if self.busy && self.document.look.is_none() {
             return;
-        };
-        let Some(source) = pending.source.take() else {
-            return;
-        };
-        let id = pending.id;
-        let cancel = pending.cancel.clone();
-        let Some(services) = self.look_services.clone() else {
-            self.receive_look(id, Err("Look services unavailable".into()));
-            return;
-        };
+        }
+        self.document.look = None;
+        let id = self.request_id();
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.document.look = Some(look_ui::Pending {
+            id,
+            cancel: cancel.clone(),
+            task: None,
+        });
+        self.busy = true;
+        self.tasks.begin(super::Task::Look(id));
+        let services = self.look_services.clone();
         let retire = Retire(cancel.clone());
-        let target = access.clone();
-        let Some(task) = access.spawn(async move {
+        let Some(task) = cx.spawn(move |cx| async move {
             let _retire = retire;
-            let result = services.resolve(source, cancel).await;
-            target.update(|editor| editor.receive_look(id, result));
+            let result = match services {
+                Some(services) => services.resolve(source, cancel).await,
+                None => Err("Look services unavailable".into()),
+            };
+            cx.update(|editor| editor.receive_look(id, result));
         }) else {
             self.receive_look(id, Err("Application stopped".into()));
             return;

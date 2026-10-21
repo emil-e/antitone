@@ -35,11 +35,16 @@ fn editor() -> (Editor, development::Scheduler) {
     (e, scheduler)
 }
 
-fn demand(e: &mut Editor, ev: f64) {
+fn demand(
+    e: &mut Editor,
+    ev: f64,
+    cx: &UiContext<'_, Editor>,
+) -> std::sync::Weak<crate::scan::DevelopedSource> {
     let source = source::Context {
         source: crate::editor::tests::developed_fixture(),
         correction: None,
     };
+    let resource = Arc::downgrade(&source.source);
     let view = ViewRequest {
         area: source.source.area(),
         output: [16, 12],
@@ -50,8 +55,8 @@ fn demand(e: &mut Editor, ev: f64) {
             .unwrap();
     let input = ProcessingInput::from(ProcessingParameters::source_inspection(ev).unwrap());
     e.observe_grade(&input);
-    e.original.observe(
-        OriginalPurpose::Tool,
+    e.observe_original(
+        Some(OriginalPurpose::Tool),
         (
             input.signature(),
             OutputTarget::Srgb,
@@ -60,13 +65,14 @@ fn demand(e: &mut Editor, ev: f64) {
         ),
     );
     e.original.last_edit = Instant::now() - Duration::from_secs(1);
-    e.original.schedule(
+    e.request_original(
         &input,
         OutputTarget::Srgb,
-        &mut e.document.visit.grade,
         &egui::Context::default(),
         source,
+        cx,
     );
+    resource
 }
 
 #[test]
@@ -74,8 +80,7 @@ fn original_reconstruction_finishes_without_backend_or_another_paint() {
     let (e, scheduler) = editor();
     with_application(e, |app| {
         app.enter(|e, access| {
-            demand(e, 0.);
-            e.start_original_workflow(access);
+            demand(e, 0., access);
         });
         app.run_until(Duration::from_secs(15), |e| e.original.settled.is_some());
         app.read(|e| {
@@ -97,18 +102,7 @@ fn rapid_output_demand_drops_queued_inputs_and_only_latest_reconstruction_can_pu
         let mut retired = Vec::new();
         for n in 0..40 {
             app.enter(|e, access| {
-                demand(e, n as f64 / 100.);
-                retired.push(Arc::downgrade(
-                    &e.document
-                        .visit
-                        .grade
-                        .request
-                        .as_ref()
-                        .unwrap()
-                        .source
-                        .source,
-                ));
-                e.start_original_workflow(access);
+                retired.push(demand(e, n as f64 / 100., access));
             });
             app.pump();
         }
@@ -137,12 +131,8 @@ fn leaving_a_photo_retires_queued_original_work_and_cannot_publish_into_a_revisi
     let hold = hold_blocking_work(&e.workflow_jobs);
     with_application(e, |app| {
         let (old, resource) = app.enter(|e, access| {
-            demand(e, 0.);
-            let request = e.document.visit.grade.request.as_ref().unwrap();
-            let old = request.revision;
-            let resource = Arc::downgrade(&request.source.source);
-            e.start_original_workflow(access);
-            (old, resource)
+            let resource = demand(e, 0., access);
+            (e.original.revision(), resource)
         });
         app.pump();
         app.update(|e| e.replace_photo_scope(8));
@@ -150,8 +140,7 @@ fn leaving_a_photo_retires_queued_original_work_and_cannot_publish_into_a_revisi
         assert!(resource.upgrade().is_none());
         drop(hold);
         app.enter(|e, access| {
-            demand(e, 0.2);
-            e.start_original_workflow(access);
+            demand(e, 0.2, access);
         });
         app.run_until(Duration::from_secs(15), |e| e.original.settled.is_some());
         let image = app.read(|e| e.original.settled.as_ref().unwrap().2.clone());
@@ -170,26 +159,9 @@ fn leaving_a_purpose_retires_queued_input_without_waiting_for_physical_admission
     let (e, scheduler) = editor();
     let hold = hold_blocking_work(&e.workflow_jobs);
     with_application(e, |app| {
-        let source = app.enter(|e, access| {
-            demand(e, 0.);
-            let source = Arc::downgrade(
-                &e.document
-                    .visit
-                    .grade
-                    .request
-                    .as_ref()
-                    .unwrap()
-                    .source
-                    .source,
-            );
-            e.start_original_workflow(access);
-            source
-        });
+        let source = app.enter(|e, access| demand(e, 0., access));
         app.pump();
-        app.enter(|e, access| {
-            e.original.leave();
-            e.start_original_workflow(access);
-        });
+        app.update(Editor::leave_original);
         app.pump();
         assert!(source.upgrade().is_none());
         app.read(|e| {
@@ -220,27 +192,12 @@ fn retired_running_original_keeps_its_source_and_admission_until_the_submitted_u
         }
     }));
     with_application(e, |app| {
-        let source = app.enter(|e, access| {
-            demand(e, 0.);
-            let source = Arc::downgrade(
-                &e.document
-                    .visit
-                    .grade
-                    .request
-                    .as_ref()
-                    .unwrap()
-                    .source
-                    .source,
-            );
-            e.start_original_workflow(access);
-            source
-        });
+        let source = app.enter(|e, access| demand(e, 0., access));
         app.pump();
         starts.recv_timeout(Duration::from_secs(10)).unwrap();
         app.enter(|e, access| {
             e.replace_photo_scope(8);
-            demand(e, 0.2);
-            e.start_original_workflow(access);
+            demand(e, 0.2, access);
         });
         app.pump();
         assert!(
@@ -272,17 +229,38 @@ fn malformed_original_request_latches_error_and_retires_its_demand() {
     let (e, scheduler) = editor();
     with_application(e, |app| {
         app.enter(|e, access| {
-            demand(e, 0.);
-            e.document
-                .visit
-                .grade
-                .request
-                .as_mut()
-                .unwrap()
-                .view
-                .area
-                .width = u32::MAX;
-            e.start_original_workflow(access);
+            let source = source::Context {
+                source: crate::editor::tests::developed_fixture(),
+                correction: None,
+            };
+            let area = source.source.area();
+            let composition =
+                crate::geometry::Composition::new(area, Default::default(), Default::default())
+                    .unwrap();
+            let input = ProcessingInput::from(ProcessingParameters::source_inspection(0.).unwrap());
+            let mut view = ViewRequest {
+                area,
+                output: [16, 12],
+                frame: None,
+            };
+            view.area.width = u32::MAX;
+            e.observe_original(
+                Some(OriginalPurpose::Tool),
+                (
+                    input.signature(),
+                    OutputTarget::Srgb,
+                    Some(view),
+                    composition,
+                ),
+            );
+            e.original.last_edit = Instant::now() - Duration::from_secs(1);
+            e.request_original(
+                &input,
+                OutputTarget::Srgb,
+                &egui::Context::default(),
+                source,
+                access,
+            );
         });
         app.run_until(Duration::from_secs(15), |e| {
             e.original.refinement_error.is_some()

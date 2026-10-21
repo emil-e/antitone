@@ -90,12 +90,11 @@ fn rejected_navigation_keeps_the_current_visit_and_its_measurement() {
     let hold = hold_blocking_work(&editor.workflow_jobs);
     with_application(editor, |app| {
         app.enter(|editor, access| {
-            editor.begin_pick(Pick::Dmin);
+            editor.begin_pick(Pick::Dmin, access);
             editor.region = Some(Coverage::rectangle(
                 editor.document.visit.ready.as_ref().unwrap().area,
             ));
-            editor.apply_pick();
-            editor.start_measurement_workflow(access);
+            editor.start_measurement(Pick::Dmin, editor.region.unwrap(), access);
         });
         app.pump();
         let (view, path) = app.read(|editor| {
@@ -104,9 +103,9 @@ fn rejected_navigation_keeps_the_current_visit_and_its_measurement() {
                 editor.document.visit.ready.as_ref().unwrap().path.clone(),
             )
         });
-        app.update(|editor| {
+        app.enter(|editor, cx| {
             editor.roll.gamma = 0.;
-            editor.load("next.dng".into());
+            editor.load("next.dng".into(), cx);
         });
         app.read(|editor| {
             assert_eq!(editor.document.visit.view, view);
@@ -121,17 +120,16 @@ fn rejected_navigation_keeps_the_current_visit_and_its_measurement() {
 
 #[test]
 fn revisiting_the_same_source_does_not_restore_its_departed_measurement() {
-    let mut editor = fixture();
+    let mut editor = crate::editor::tests::with_document_services(fixture());
     add_ready_fixture(&mut editor);
     let hold = hold_blocking_work(&editor.workflow_jobs);
     with_application(editor, |app| {
         app.enter(|editor, access| {
-            editor.begin_pick(Pick::Dmin);
+            editor.begin_pick(Pick::Dmin, access);
             editor.region = Some(Coverage::rectangle(
                 editor.document.visit.ready.as_ref().unwrap().area,
             ));
-            editor.apply_pick();
-            editor.start_measurement_workflow(access);
+            editor.start_measurement(Pick::Dmin, editor.region.unwrap(), access);
         });
         app.pump();
         app.update(Editor::sync_document);
@@ -142,10 +140,10 @@ fn revisiting_the_same_source_does_not_restore_its_departed_measurement() {
                 editor.document.project.clone(),
             )
         });
-        app.update(|editor| editor.load("next.dng".into()));
-        assert!(app.read(|e| e.document.visit.source.request.is_some()));
-        app.update(|editor| editor.load(path));
-        assert!(app.read(|e| e.document.visit.source.request.is_some()));
+        app.enter(|editor, cx| editor.load("next.dng".into(), cx));
+        assert!(app.read(|e| e.document.visit.source.pending()));
+        app.enter(|editor, cx| editor.load(path, cx));
+        assert!(app.read(|e| e.document.visit.source.pending()));
         app.pump();
         app.read(|editor| {
             assert_ne!(editor.document.visit.view, view);
@@ -159,15 +157,17 @@ fn revisiting_the_same_source_does_not_restore_its_departed_measurement() {
 
 #[test]
 fn leaving_a_visit_cancels_its_continuation_but_not_running_source_computation() {
-    let mut editor = fixture();
+    let mut editor = crate::editor::tests::with_document_services(fixture());
     add_ready_fixture(&mut editor);
+    let directory = tempfile::tempdir().unwrap();
+    let next_path = directory.path().join("missing.dng");
     let source = Arc::downgrade(&editor.document.visit.ready.as_ref().unwrap().developed);
     let continued = Rc::new(Cell::new(false));
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let (finished, finishes) = mpsc::channel();
     with_application(editor, |app| {
-        let access = app.access();
+        let tasks = app.access();
         let input = app.read(|editor| {
             let area = Scan::from_source(
                 editor
@@ -187,9 +187,8 @@ fn leaving_a_visit_cancels_its_continuation_but_not_running_source_computation()
         let jobs = app.read(|editor| editor.workflow_jobs.clone());
         let continuation = continued.clone();
         let view = app.read(|editor| editor.document.visit.view);
-        let target = access.clone();
-        let task = access
-            .spawn(async move {
+        let task = tasks
+            .spawn(move |state| async move {
                 let result = jobs
                     .run(move || {
                         entered.send(()).unwrap();
@@ -201,39 +200,43 @@ fn leaving_a_visit_cancels_its_continuation_but_not_running_source_computation()
                     .await
                     .unwrap();
                 continuation.set(true);
-                target.update(|editor| editor.measurement_result(view, Pick::Dmin, result));
+                state.update(|editor| editor.measurement_result(view, Pick::Dmin, result, &state));
             })
             .unwrap();
         app.update(|editor| {
             editor.document.visit.measurement = Some(measurement::Pending {
                 kind: Pick::Dmin,
-                request: None,
-                _task: Some(task),
+                _task: task,
             });
             editor.busy = true;
         });
         app.pump();
         starts.recv_timeout(Duration::from_secs(5)).unwrap();
-        app.update(|editor| editor.load("next.dng".into()));
-        assert!(app.read(|e| e.document.visit.source.request.is_some()));
-        let status = app.read(|editor| editor.status.clone());
+        app.enter(|editor, cx| editor.load(next_path, cx));
+        assert!(app.read(|e| e.document.visit.source.pending()));
         app.pump();
         assert!(
             source.upgrade().is_some(),
             "running work retains its source after visit teardown"
         );
+        assert!(
+            !app.read(|editor| editor.workflow_jobs.idle()),
+            "running work retains foreground admission after task retirement"
+        );
         release.send(()).unwrap();
         finishes.recv_timeout(Duration::from_secs(5)).unwrap();
-        app.run_until(Duration::from_secs(5), |_| source.upgrade().is_none());
-        app.pump();
+        app.run_until(Duration::from_secs(5), |editor| {
+            source.upgrade().is_none() && !editor.busy
+        });
         assert!(
             !continued.get(),
             "the departed visit's continuation must not resume at all"
         );
         app.read(|editor| {
             assert!(editor.document.visit.measurement.is_none());
-            assert_eq!(editor.status, status);
-            assert!(editor.busy);
+            assert!(!editor.document.visit.source.pending());
+            assert!(editor.document.visit.ready.is_none());
+            assert!(editor.tasks.view().is_none());
         });
     });
 }

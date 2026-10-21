@@ -104,22 +104,18 @@ fn measurement_uses_the_captured_source_and_updates_history_without_receiving_or
         drop(scan);
         let hold = crate::editor::tests::hold_blocking_work(&editor.workflow_jobs);
         crate::application::test_support::with_application(editor, |app| {
-            app.update(|editor| {
-                editor.begin_pick(Pick::Dmin);
+            let tasks = app.access();
+            app.enter(|editor, cx| {
+                editor.begin_pick(Pick::Dmin, cx);
                 editor.region = Some(region);
-                editor.apply_pick();
-                let pending = editor.document.visit.measurement.as_ref().unwrap();
-                assert!(pending.request.is_some() && pending._task.is_none() && editor.busy);
+                editor.start_measurement(Pick::Dmin, region, &tasks);
+                assert!(editor.document.visit.measurement.is_some() && editor.busy);
                 editor.document.visit.ready = None;
             });
             std::fs::write(&path, b"replaced after the operation captured its input").unwrap();
             assert!(lease.upgrade().is_some());
-            app.enter(|editor, access| editor.start_measurement_workflow(access));
             app.pump();
-            app.read(|editor| {
-                let pending = editor.document.visit.measurement.as_ref().unwrap();
-                assert!(pending.request.is_none() && pending._task.is_some());
-            });
+            assert!(app.read(|editor| editor.document.visit.measurement.is_some()));
             assert_eq!(
                 app.read(|editor| editor.document.cache().charges().retained),
                 0
@@ -144,52 +140,117 @@ fn measurement_uses_the_captured_source_and_updates_history_without_receiving_or
 }
 
 #[test]
-fn cancelling_captured_measurement_before_workflow_entry_releases_its_input() {
+fn cancelling_an_unpolled_measurement_releases_its_input_without_admission() {
     let mut editor = crate::editor::tests::fixture();
     crate::editor::tests::add_ready_fixture(&mut editor);
     let source = Arc::downgrade(&editor.document.visit.ready.as_ref().unwrap().developed);
     let before = editor.document.project.clone();
-    editor.begin_pick(Pick::Dmin);
+    editor.begin_pick(Pick::Dmin, &crate::application::UiContext::render_only());
     editor.region = Some(Coverage::rectangle(
         editor.document.visit.ready.as_ref().unwrap().area,
     ));
-    editor.apply_pick();
-    assert!(editor.busy);
-    editor.finish_pick();
-    editor.document.visit.ready = None;
-    assert!(editor.document.visit.measurement.is_none() && !editor.busy);
-    assert!(source.upgrade().is_none());
-    assert!(editor.workflow_jobs.idle());
-    assert_eq!(editor.document.project, before);
+    crate::application::test_support::with_application(editor, |app| {
+        let tasks = app.access();
+        app.update(|editor| {
+            editor.start_measurement(Pick::Dmin, editor.region.unwrap(), &tasks);
+            assert!(editor.busy && editor.document.visit.measurement.is_some());
+        });
+        app.enter(|editor, cx| {
+            editor.finish_pick(cx);
+            editor.document.visit.ready = None;
+        });
+        app.pump();
+        app.read(|editor| {
+            assert!(editor.document.visit.measurement.is_none() && !editor.busy);
+            assert!(editor.workflow_jobs.idle());
+            assert_eq!(editor.document.project, before);
+        });
+        assert!(source.upgrade().is_none());
+    });
+}
+
+#[test]
+fn service_rejection_retires_the_pick_without_changing_processing_or_history() {
+    let mut editor = crate::editor::tests::fixture();
+    crate::editor::tests::add_ready_fixture(&mut editor);
+    editor.sync_document();
+    let area = Scan::from_source(
+        editor
+            .document
+            .visit
+            .ready
+            .as_ref()
+            .unwrap()
+            .developed
+            .clone(),
+    )
+    .area;
+    let region = Coverage::rectangle(Rect {
+        x: area.x + area.width + 16,
+        y: area.y + area.height + 16,
+        width: 4,
+        height: 4,
+    });
+    let expected_error = editor
+        .measurement_input(Pick::Dmin, region)
+        .unwrap()
+        .measure()
+        .err()
+        .expect("coverage outside the sensor must be rejected")
+        .to_string();
+    let before = editor.document.project.clone();
+    let undo = editor
+        .history_label(crate::editor::history::Direction::Undo)
+        .map(str::to_owned);
+    crate::application::test_support::with_application(editor, |app| {
+        let tasks = app.access();
+        app.enter(|editor, cx| {
+            editor.begin_pick(Pick::Dmin, cx);
+            editor.region = Some(region);
+            editor.start_measurement(Pick::Dmin, region, &tasks);
+            assert!(editor.busy && editor.document.visit.measurement.is_some());
+        });
+        app.run_until(Duration::from_secs(5), |editor| !editor.busy);
+        app.read(|editor| {
+            assert_eq!(editor.status, expected_error);
+            assert!(editor.pick.is_none() && editor.document.visit.measurement.is_none());
+            assert!(editor.tasks.view().is_none());
+            assert_eq!(editor.document.project, before);
+            assert_eq!(
+                editor.history_label(crate::editor::history::Direction::Undo),
+                undo.as_deref()
+            );
+        });
+    });
 }
 
 #[test]
 fn cancelling_or_replacing_a_queued_measurement_does_not_finish_new_work() {
     for replace in [false, true] {
-        let mut editor = crate::editor::tests::fixture();
+        let mut editor =
+            crate::editor::tests::with_document_services(crate::editor::tests::fixture());
         crate::editor::tests::add_ready_fixture(&mut editor);
         let source = Arc::downgrade(&editor.document.visit.ready.as_ref().unwrap().developed);
         let hold = crate::editor::tests::hold_blocking_work(&editor.workflow_jobs);
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, access| {
-                editor.begin_pick(Pick::Dmin);
+                editor.begin_pick(Pick::Dmin, access);
                 editor.region = Some(Coverage::rectangle(Rect {
                     x: 12,
                     y: 7,
                     width: 32,
                     height: 32,
                 }));
-                editor.apply_pick();
-                editor.start_measurement_workflow(access);
+                editor.start_measurement(Pick::Dmin, editor.region.unwrap(), access);
                 assert!(editor.document.visit.measurement.is_some());
             });
             app.pump();
-            let (status, activity) = app.update(|editor| {
+            let (status, activity) = app.enter(|editor, cx| {
                 if replace {
-                    editor.load("next.dng".into());
-                    assert!(editor.document.visit.source.request.is_some());
+                    editor.load("next.dng".into(), cx);
+                    assert!(editor.document.visit.source.pending());
                 } else {
-                    editor.finish_pick();
+                    editor.finish_pick(cx);
                     editor.document.visit.ready = None;
                 }
                 assert!(editor.document.visit.measurement.is_none());
@@ -233,7 +294,7 @@ fn cancelling_a_running_measurement_retains_its_source_until_the_computation_ret
     let (release, resume) = mpsc::channel();
     let (finished, finishes) = mpsc::channel();
     let task = access
-        .spawn(async move {
+        .spawn(move |_| async move {
             jobs.run(move || {
                 entered.send(()).unwrap();
                 resume.recv().unwrap();

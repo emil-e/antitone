@@ -1,6 +1,6 @@
 //! A live host substitute: state transactions and wake delivery are separate
 //! from painting, and state storage outlives the borrowing executor.
-use super::{Application, UiAccess};
+use super::{Application, UiContext};
 use std::{
     cell::RefCell,
     sync::mpsc,
@@ -8,7 +8,7 @@ use std::{
 };
 
 pub(crate) struct TestApplication<'scope, T> {
-    access: UiAccess<'scope, T>,
+    access: UiContext<'scope, T>,
     application: Application<'scope>,
     wakes: mpsc::Receiver<()>,
 }
@@ -42,7 +42,7 @@ impl<'scope, T: 'scope> TestApplication<'scope, T> {
         }
     }
 
-    pub fn access(&self) -> UiAccess<'scope, T> {
+    pub fn access(&self) -> UiContext<'scope, T> {
         self.access.clone()
     }
 
@@ -54,7 +54,7 @@ impl<'scope, T: 'scope> TestApplication<'scope, T> {
         self.access.with_mut(update)
     }
 
-    pub fn enter<R>(&self, input: impl FnOnce(&mut T, &UiAccess<'scope, T>) -> R) -> R {
+    pub fn enter<R>(&self, input: impl FnOnce(&mut T, &UiContext<'scope, T>) -> R) -> R {
         self.access.with_mut(|state| input(state, &self.access))
     }
 
@@ -137,7 +137,7 @@ mod tests {
                 let guard = FutureDrop(app.read(|state| state.future.clone()));
                 let task = access
                     .clone()
-                    .spawn(async move {
+                    .spawn(move |_| async move {
                         let _guard = guard;
                         std::future::pending::<()>().await;
                         access.update(|_| panic!("retired continuation resumed"));
@@ -156,10 +156,12 @@ mod tests {
         with_application((), |app| {
             let task = app
                 .access()
-                .spawn(std::future::poll_fn(|cx| {
-                    cx.waker().wake_by_ref();
-                    std::task::Poll::<()>::Pending
-                }))
+                .spawn(|_| {
+                    std::future::poll_fn(|cx| {
+                        cx.waker().wake_by_ref();
+                        std::task::Poll::<()>::Pending
+                    })
+                })
                 .unwrap();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 app.run_until(Duration::ZERO, |_| false);
@@ -178,7 +180,7 @@ mod tests {
             let completed = local.clone();
             let task = access
                 .clone()
-                .spawn(async move {
+                .spawn(move |_| async move {
                     let value = result.await.unwrap();
                     access.update(|state| *state = value).unwrap();
                     completed.set(true);

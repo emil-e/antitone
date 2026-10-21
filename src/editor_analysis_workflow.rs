@@ -9,21 +9,19 @@ mod fit_tests;
 mod tests;
 
 use super::{
-    Editor, Error, TaskProgress, TaskRequest, analysis, analysis_review,
+    Editor, Error, Task, TaskProgress, TaskRequest, UiContext, analysis, analysis_review,
     analysis_services::{Cancellation, Services},
-    source,
 };
 #[cfg(test)]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::{
     future::Future,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, atomic::Ordering},
 };
 
 pub(super) struct Pending {
     pub id: u64,
     pub request: analysis::Request,
-    input: Option<source::Context>,
     cancelled: Cancellation,
     task: Option<async_executor::Task<()>>,
 }
@@ -33,18 +31,10 @@ impl Pending {
         Self {
             id,
             request,
-            input: None,
             cancelled: Cancellation::default(),
             task: None,
         }
     }
-
-    pub fn fitting(id: u64, request: analysis::Request, input: source::Context) -> Self {
-        let mut pending = Self::new(id, request);
-        pending.input = Some(input);
-        pending
-    }
-
     pub fn cancel(&self) {
         self.cancelled.cancel();
     }
@@ -68,7 +58,6 @@ struct Progress {
     latest: Mutex<Option<(usize, usize)>>,
     changed: event_listener::Event,
 }
-
 impl Progress {
     fn report(&self, done: usize, total: usize) {
         *self.latest.lock().unwrap() = Some((done, total));
@@ -79,7 +68,7 @@ impl Progress {
 async fn drive<T>(
     work: impl Future<Output = Result<Option<T>, Error>>,
     progress: Arc<Progress>,
-    target: &crate::application::UiAccess<'_, Editor>,
+    cx: &UiContext<'_, Editor>,
     id: u64,
 ) -> Result<Option<T>, String> {
     let reports = async {
@@ -87,7 +76,7 @@ async fn drive<T>(
             let changed = progress.changed.listen();
             let latest = progress.latest.lock().unwrap().take();
             if let Some((done, total)) = latest {
-                target.update(|editor| editor.analysis_progress(id, done, total));
+                cx.update(|editor| editor.analysis_progress(id, done, total));
             }
             changed.await;
         }
@@ -98,39 +87,51 @@ async fn drive<T>(
 }
 
 impl Editor {
-    pub(super) fn start_analysis_preparation(
+    pub(super) fn prepare_analysis_review(
         &mut self,
-        access: &crate::application::UiAccess<'_, Self>,
+        mut request: analysis::Request,
+        cx: &UiContext<'_, Self>,
     ) {
-        let Some(pending) = &self.document.analysis_preparing else {
-            return;
-        };
-        if pending.task.is_some() {
+        if self.document.visit.mask_edit.is_some()
+            || self.document.auto_crop_edit.is_some()
+            || self.document.visit.adjustments.confirming()
+        {
             return;
         }
-        let id = pending.id;
-        let request = pending.request.clone();
+        request.revision = self
+            .document
+            .analysis_generation
+            .fetch_add(1, Ordering::Relaxed)
+            + 1;
+        let id = self.request_id();
+        self.thumbnails.cancel();
+        self.tasks.begin(Task::AnalysisAreas(id));
+        let pending = Pending::new(id, request.clone());
         let cancelled = pending.cancelled.clone();
-        let Some(services) = self.source_services.as_ref().map(Services::from) else {
-            self.analysis_areas_result(id, Err("Analysis services unavailable".into()));
-            return;
-        };
+        self.document.analysis_preparing = Some(pending);
+        self.busy = true;
+        self.status = "Preparing per-photo analysis areas…".into();
+        let services = self.source_services.as_ref().map(Services::from);
         let progress = Arc::new(Progress::default());
         let produced = progress.clone();
-        let target = access.clone();
         let retire = Retire(cancelled.clone());
-        let Some(task) = access.spawn(async move {
+        let Some(task) = cx.spawn(move |cx| async move {
             let _retire = retire;
-            let preparation = analysis_review::preparation::prepare(
-                request,
-                services,
-                cancelled.clone(),
-                move |done, total| produced.report(done, total),
-            );
-            let result = drive(preparation, progress, &target, id).await;
-            target.update(|editor| editor.analysis_areas_result(id, result));
+            let result = match services {
+                Some(services) => {
+                    let preparation = analysis_review::preparation::prepare(
+                        request,
+                        services,
+                        cancelled,
+                        move |done, total| produced.report(done, total),
+                    );
+                    drive(preparation, progress, &cx, id).await
+                }
+                None => Err("Analysis services unavailable".into()),
+            };
+            cx.update(|editor| editor.analysis_areas_result(id, result, &cx));
         }) else {
-            self.analysis_areas_result(id, Err("Application stopped".into()));
+            self.analysis_areas_result(id, Err("Application stopped".into()), cx);
             return;
         };
         self.document
@@ -140,49 +141,63 @@ impl Editor {
             .task = Some(task);
     }
 
-    pub(super) fn start_analysis_workflow(
+    pub(super) fn start_analysis(
         &mut self,
-        access: &crate::application::UiAccess<'_, Self>,
+        mut request: analysis::Request,
+        cx: &UiContext<'_, Self>,
     ) {
-        let Some(pending) = &mut self.document.analysis_pending else {
+        let Some(input) = self.source_context() else {
             return;
         };
-        let Some(input) = pending.input.take() else {
-            return;
-        };
-        let id = pending.id;
-        let request = pending.request.clone();
+        request.revision = self
+            .document
+            .analysis_generation
+            .fetch_add(1, Ordering::Relaxed)
+            + 1;
+        let id = self.request_id();
+        self.thumbnails.cancel();
+        self.cancel_original_pending();
+        self.tasks.begin(Task::Analyze(id));
+        self.tasks.report(
+            TaskRequest::Analyze(id),
+            TaskProgress::Counted {
+                completed: 0,
+                total: request.document.project.order.len(),
+            },
+        );
+        let pending = Pending::new(id, request.clone());
         let cancelled = pending.cancelled.clone();
-        let Some(services) = self.source_services.as_ref().map(Services::from) else {
-            self.analysis_result(id, Err("Analysis services unavailable".into()));
-            self.start_source_workflow(access);
-            return;
-        };
+        self.document.analysis_pending = Some(pending);
+        self.busy = true;
+        self.status = "Analyzing roll…".into();
+        let services = self.source_services.as_ref().map(Services::from);
         let progress = Arc::new(Progress::default());
         let produced = progress.clone();
-        let target = access.clone();
         let retire = Retire(cancelled.clone());
-        let Some(task) = access.spawn(async move {
+        let Some(task) = cx.spawn(move |cx| async move {
             let _retire = retire;
-            let fitting = analysis::fit::run(
-                request,
-                input,
-                services,
-                cancelled.clone(),
-                move |done, total| produced.report(done, total),
-            );
-            let result = drive(fitting, progress, &target, id)
-                .await
-                .map(|outcome| outcome.map(Box::new));
-            target.update(|editor| {
-                editor.analysis_result(id, result);
-                editor.start_source_workflow(&target);
-                editor.start_working_workflow(&target);
-                editor.start_original_workflow(&target);
+            let result = match services {
+                Some(services) => {
+                    let fitting = analysis::fit::run(
+                        request,
+                        input,
+                        services,
+                        cancelled,
+                        move |done, total| produced.report(done, total),
+                    );
+                    drive(fitting, progress, &cx, id)
+                        .await
+                        .map(|outcome| outcome.map(Box::new))
+                }
+                None => Err("Analysis services unavailable".into()),
+            };
+            cx.update(|editor| {
+                editor.analysis_result(id, result, &cx);
+                editor.acquire_working(&cx);
             });
         }) else {
-            self.analysis_result(id, Err("Application stopped".into()));
-            self.start_source_workflow(access);
+            self.analysis_result(id, Err("Application stopped".into()), cx);
+
             return;
         };
         self.document

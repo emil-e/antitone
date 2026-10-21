@@ -59,7 +59,6 @@ pub(super) struct FlatEdit {
     pub reference: Option<FlatPreview>,
     pub viewport: Viewport,
     pub source: bool,
-    pub request: Option<super::reference_services::Operation>,
     pub task: Option<async_executor::Task<()>>,
 }
 
@@ -69,7 +68,7 @@ pub(super) struct FlatPreview {
 }
 
 impl Editor {
-    pub(super) fn flat_controls(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn flat_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
         let editing = self.pick == Some(Pick::Flat);
         let settings = self.document.project.flat_field.as_ref();
         let summary = match settings {
@@ -118,7 +117,7 @@ impl Editor {
                                     .pick_file()
                             })
                         {
-                            self.control_command(editing::Command::FlatEdit(path, None));
+                            self.control_command(editing::Command::FlatEdit(path, None), cx);
                         }
                         if let Some(settings) = self.document.project.flat_field.clone() {
                             let path = self.document.source_path(settings.reference).ok();
@@ -130,7 +129,10 @@ impl Editor {
                             );
                             let mut enabled = settings.enabled;
                             if ui.checkbox(&mut enabled, "Enabled").changed() {
-                                self.control_command(editing::Command::Correction(Some(enabled)));
+                                self.control_command(
+                                    editing::Command::Correction(Some(enabled)),
+                                    cx,
+                                );
                             }
                             ui.horizontal(|ui| {
                                 if presentation::TextAction::new("Edit area…")
@@ -139,18 +141,21 @@ impl Editor {
                                     && let Some(path) = path
                                 {
                                     let [x, y, width, height] = settings.map.area();
-                                    self.control_command(editing::Command::FlatEdit(
-                                        path,
-                                        Some(Rect {
-                                            x,
-                                            y,
-                                            width,
-                                            height,
-                                        }),
-                                    ));
+                                    self.control_command(
+                                        editing::Command::FlatEdit(
+                                            path,
+                                            Some(Rect {
+                                                x,
+                                                y,
+                                                width,
+                                                height,
+                                            }),
+                                        ),
+                                        cx,
+                                    );
                                 }
                                 if presentation::TextAction::new("Clear").show(ui).clicked() {
-                                    self.control_command(editing::Command::Correction(None));
+                                    self.control_command(editing::Command::Correction(None), cx);
                                 }
                             });
                         }
@@ -163,7 +168,12 @@ impl Editor {
         );
     }
 
-    pub(super) fn begin_flat_edit(&mut self, path: PathBuf, region: Option<Rect>) {
+    pub(super) fn begin_flat_edit(
+        &mut self,
+        path: PathBuf,
+        region: Option<Rect>,
+        cx: &UiContext<'_, Self>,
+    ) {
         if self.busy
             || self.pick.is_some()
             || self.document.visit.crop_edit.is_some()
@@ -179,7 +189,6 @@ impl Editor {
             reference: None,
             viewport: self.viewport,
             source: self.source,
-            request: None,
             task: None,
         };
         self.flat_edit = Some(context);
@@ -187,12 +196,19 @@ impl Editor {
         self.region = region.map(Coverage::rectangle);
         self.source = true;
         self.viewport.fit();
-        self.original.invalidate();
+        self.invalidate_original();
         self.id = self.request_id();
         self.replace_photo_scope(self.id);
         self.source_epoch
             .store(self.id, std::sync::atomic::Ordering::Relaxed);
         self.busy = true;
+        self.status = "Preparing uncorrected flat-field reference…".into();
+        self.tasks.begin(Task::Reference(self.id));
+        let request = self.reference_preview_input(path);
+        self.preview_reference(request, cx);
+    }
+
+    pub(super) fn reference_preview_input(&self, path: PathBuf) -> source::Request {
         let expected = self
             .document
             .find_source(&path)
@@ -207,18 +223,44 @@ impl Editor {
         let cache = expected
             .as_ref()
             .map(|source| LoadCache::new(&path, Some(source), wb, &self.document));
-        self.status = "Preparing uncorrected flat-field reference…".into();
-        self.tasks.begin(Task::Reference(self.id));
-        self.flat_edit.as_mut().unwrap().request = Some(
-            super::reference_services::Operation::Preview(Box::new(source::Request {
-                path,
-                wb,
-                expected,
-                basis: self.document.project.camera_basis.clone(),
-                cache,
+        source::Request {
+            path,
+            wb,
+            expected,
+            basis: self.document.project.camera_basis.clone(),
+            cache,
+            correction: None,
+        }
+    }
+
+    pub(super) fn reference_input(
+        &self,
+    ) -> Result<Option<super::reference_services::Acceptance>, &'static str> {
+        let Some(coverage) = self.region else {
+            return Ok(None);
+        };
+        let Some(reference) = self
+            .flat_edit
+            .as_ref()
+            .and_then(|edit| edit.reference.as_ref())
+        else {
+            return Ok(None);
+        };
+        let ready = &reference.ready;
+        let region = coverage
+            .exact_rectangle(ready.area)
+            .ok_or("Flat-field support must be an integer source rectangle")?;
+        Ok(Some(super::reference_services::Acceptance {
+            region,
+            document: self.document.capture(),
+            selected: self.current_source,
+            source: source::Context {
+                source: ready.developed.clone(),
                 correction: None,
-            })),
-        );
+            },
+            record: ready.record.clone(),
+            correction: self.correction.clone(),
+        }))
     }
 
     pub(super) fn finish_flat_edit(&mut self) {
@@ -248,31 +290,23 @@ impl Editor {
         self.region = None;
         self.pick_drag = None;
         self.last_layout = None;
-        self.original.invalidate();
+        self.invalidate_original();
     }
 
-    pub(super) fn apply_flat_edit(&mut self) {
-        let Some(coverage) = self.region else {
+    pub(super) fn apply_flat_edit(&mut self, cx: &UiContext<'_, Self>) {
+        if self.busy || self.document_pending.is_some() {
             return;
+        }
+        self.sync_document();
+        let input = match self.reference_input() {
+            Ok(Some(input)) => input,
+            Ok(None) => return,
+            Err(message) => {
+                self.status = message.into();
+                self.report_failure(FailureKind::FlatSupport, self.status.clone());
+                return;
+            }
         };
-        let Some(reference) = self
-            .flat_edit
-            .as_ref()
-            .and_then(|session| session.reference.as_ref())
-        else {
-            return;
-        };
-        let ready = &reference.ready;
-        let Some(region) = coverage.exact_rectangle(ready.area) else {
-            self.status = "Flat-field support must be an integer source rectangle".into();
-            self.report_failure(FailureKind::FlatSupport, self.status.clone());
-            return;
-        };
-        let source = source::Context {
-            source: ready.developed.clone(),
-            correction: None,
-        };
-        let record = ready.record.clone();
         self.history_pending = Some(history::Pending::Edit {
             before: Box::new(self.history_snapshot()),
             label: "Correction",
@@ -283,17 +317,7 @@ impl Editor {
         self.document_failure = Some(FailureKind::FlatCorrection);
         self.tasks.begin(Task::Correction(self.id));
         self.status = "Estimating and validating full-resolution correction…".into();
-        self.flat_edit.as_mut().expect("reference session").request =
-            Some(super::reference_services::Operation::Accept(Box::new(
-                super::reference_services::Acceptance {
-                    region,
-                    document: self.document.capture(),
-                    selected: self.current_source,
-                    source,
-                    record,
-                    correction: self.correction.clone(),
-                },
-            )));
+        self.accept_reference(input, cx);
     }
 
     pub(super) fn positive_parameters(

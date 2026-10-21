@@ -19,18 +19,20 @@ fn editor() -> Editor {
             .await
             .unwrap()
     });
-    let mut e = Editor::new(&device, &queue, None);
+    let mut e = Editor::new(&device, &queue);
     e.thumbnails = Thumbnails::default();
     e
 }
 
 fn imported(app: &mut TestApplication<'_, Editor>) {
     app.enter(|e, access| {
-        e.add_raws(vec![
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/raw/illuminated-patches.dng"),
-        ]);
-        e.start_document_workflow(access);
+        e.add_raws(
+            vec![
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/raw/illuminated-patches.dng"),
+            ],
+            access,
+        );
     });
     app.run_until(Duration::from_secs(20), |e| !e.busy);
     app.read(|e| assert!(e.document.visit.ready.is_some(), "{}", e.status));
@@ -63,8 +65,7 @@ fn lazy_support_progresses_without_paint_and_does_not_accept_a_picture_or_change
             )
         });
         app.enter(|e, access| {
-            e.begin_pick(Pick::Analysis);
-            e.start_support_workflow(access);
+            e.begin_pick(Pick::Analysis, access);
         });
         app.run_until(Duration::from_secs(20), |e| {
             e.document.visit.support.pending.is_none()
@@ -78,9 +79,8 @@ fn lazy_support_progresses_without_paint_and_does_not_accept_a_picture_or_change
             assert!(!e.busy);
         });
         app.enter(|e, access| {
-            e.finish_pick();
-            e.begin_pick(Pick::Analysis);
-            e.start_support_workflow(access);
+            e.finish_pick(access);
+            e.begin_pick(Pick::Analysis, access);
         });
         app.read(|e| {
             assert!(
@@ -101,10 +101,9 @@ fn queued_support_respects_drawn_geometry_and_reopened_picker_identity() {
             imported(app);
             let hold = app.read(|e| hold_blocking_work(&e.workflow_jobs));
             let old = app.enter(|e, access| {
-                e.begin_pick(Pick::Analysis);
-                let id = e.document.visit.support.pending.as_ref().unwrap().id;
-                e.start_support_workflow(access);
-                id
+                e.begin_pick(Pick::Analysis, access);
+
+                e.document.visit.support.pending.as_ref().unwrap().id
             });
             app.pump();
             let drawn = crate::coverage::Coverage::rectangle(Rect {
@@ -115,9 +114,8 @@ fn queued_support_respects_drawn_geometry_and_reopened_picker_identity() {
             });
             app.enter(|e, access| {
                 if reopen {
-                    e.finish_pick();
-                    e.begin_pick(Pick::Analysis);
-                    e.start_support_workflow(access);
+                    e.finish_pick(access);
+                    e.begin_pick(Pick::Analysis, access);
                 }
                 e.region = Some(drawn);
             });
@@ -157,17 +155,15 @@ fn document_replacement_retires_support_without_waiting_for_a_paint_or_accepting
         imported(app);
         let hold = app.read(|e| hold_blocking_work(&e.workflow_jobs));
         let (old, loaded) = app.enter(|e, access| {
-            e.begin_pick(Pick::Analysis);
+            e.begin_pick(Pick::Analysis, access);
             let pending = e.document.visit.support.pending.as_ref().unwrap();
-            let id = (pending.id, pending.loaded);
-            e.start_support_workflow(access);
-            id
+
+            (pending.id, pending.loaded)
         });
         app.pump();
         app.enter(|e, access| {
-            e.finish_pick();
-            e.start_document(Preparation::New);
-            e.start_document_workflow(access);
+            e.finish_pick(access);
+            e.start_document(Preparation::New, access);
         });
         app.update(|e| {
             e.analysis_support_result(

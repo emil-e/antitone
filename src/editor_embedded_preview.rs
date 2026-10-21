@@ -242,11 +242,18 @@ impl EmbeddedPreviews {
 }
 
 impl Editor {
-    pub(in crate::editor) fn start_embedded_workflow(
+    pub(super) fn request_embedded_previews(
         &mut self,
-        access: &crate::application::UiAccess<'_, Self>,
+        wanted: &[(usize, ImageKey, PathBuf, Source)],
+        allowed: bool,
         context: &egui::Context,
+        cx: &UiContext<'_, Self>,
     ) {
+        self.thumbnails.embedded.request_visible(wanted, allowed);
+        self.acquire_embedded(context, cx);
+    }
+
+    fn acquire_embedded(&mut self, context: &egui::Context, cx: &UiContext<'_, Self>) {
         if self.fullscreen.is_some() || !self.thumbnail_work_allowed() {
             self.thumbnails.embedded.cancel();
             return;
@@ -263,12 +270,11 @@ impl Editor {
         let services = self.thumbnails.embedded.services.clone().unwrap();
         let retire = Retire(cancelled.clone());
         let stopped = cancelled.clone();
-        let target = access.clone();
         let workflow_context = context.clone();
-        let Some(task) = access.spawn(async move {
+        let Some(task) = cx.spawn(move |cx| async move {
             let _retire = retire;
             let image = services.load(request, stopped).await;
-            target.update(|editor| {
+            cx.update(|editor| {
                 if !editor
                     .document
                     .embedded_preview
@@ -286,7 +292,7 @@ impl Editor {
                     &workflow_context,
                 );
                 drop(pending);
-                editor.start_embedded_workflow(&target, &workflow_context);
+                editor.acquire_embedded(&workflow_context, &cx);
             });
         }) else {
             self.thumbnails.embedded.complete(

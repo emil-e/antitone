@@ -39,12 +39,17 @@ fn fixture() -> Editor {
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let mut editor = Editor::new(&device, &queue, None);
+        let mut editor = Editor::new(&device, &queue);
         editor.thumbnails = Thumbnails::default();
-        editor.add_raws(vec![
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
-        ]);
-        editor = complete_document_operation(editor, Duration::from_secs(30));
+        editor = complete_document_operation(editor, Duration::from_secs(30), |editor, cx| {
+            editor.add_raws(
+                vec![
+                    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("tests/fixtures/raw/patches.dng"),
+                ],
+                cx,
+            )
+        });
         editor.dmin = Some(DVec3::splat(0.8));
         editor.dmax = Some(DVec3::splat(0.02));
         let area = editor.document.visit.ready.as_ref().unwrap().area;
@@ -83,8 +88,9 @@ fn captured_export_completes_without_paint_and_survives_document_retirement() {
                     path.clone(),
                     OutputFormat::Tiff(OutputTarget::Srgb),
                     Overwrite::Refuse,
+                    access,
                 );
-                editor.start_export_workflow(access);
+
                 if replace {
                     editor.document = Document::default().into();
                 }
@@ -123,8 +129,8 @@ fn superseded_export_keeps_physical_admission_until_its_submitted_gpu_work_retir
                 old.clone(),
                 OutputFormat::Tiff(OutputTarget::Srgb),
                 Overwrite::Refuse,
+                access,
             );
-            editor.start_export_workflow(access);
         });
         app.pump();
         starts.recv_timeout(Duration::from_secs(30)).unwrap();
@@ -139,8 +145,8 @@ fn superseded_export_keeps_physical_admission_until_its_submitted_gpu_work_retir
                 new.clone(),
                 OutputFormat::Tiff(OutputTarget::Srgb),
                 Overwrite::Refuse,
+                access,
             );
-            editor.start_export_workflow(access);
         });
         app.pump();
         assert!(cancelled.load(Ordering::Relaxed));
@@ -180,8 +186,8 @@ fn application_retirement_signals_stop_but_retains_the_admitted_export_source_un
                 path.clone(),
                 OutputFormat::Tiff(OutputTarget::Srgb),
                 Overwrite::Refuse,
+                access,
             );
-            editor.start_export_workflow(access);
         });
         app.pump();
         starts.recv_timeout(Duration::from_secs(30)).unwrap();
@@ -219,8 +225,8 @@ fn a_stop_after_publication_acknowledges_the_committed_file_without_rewriting_su
                 path.clone(),
                 OutputFormat::Tiff(OutputTarget::Srgb),
                 Overwrite::Refuse,
+                access,
             );
-            editor.start_export_workflow(access);
         });
         app.pump();
         starts.recv_timeout(Duration::from_secs(30)).unwrap();
@@ -267,16 +273,19 @@ fn captured_service_writes_after_ui_ownership_ends_and_preserves_destinations_on
         if stopped {
             std::fs::write(&path, b"existing destination").unwrap();
         }
-        editor.export(
-            path.clone(),
-            OutputFormat::Tiff(OutputTarget::Srgb),
-            if stopped {
-                Overwrite::Confirmed
-            } else {
-                Overwrite::Refuse
-            },
-        );
-        let request = editor.export_operation.request.take().unwrap();
+        editor.sync_document();
+        let request = editor
+            .export_input(
+                path.clone(),
+                OutputFormat::Tiff(OutputTarget::Srgb),
+                if stopped {
+                    Overwrite::Confirmed
+                } else {
+                    Overwrite::Refuse
+                },
+            )
+            .unwrap()
+            .unwrap();
         let services = editor.export_services.take().unwrap();
         drop(editor);
         let result =

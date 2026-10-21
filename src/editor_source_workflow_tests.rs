@@ -67,23 +67,26 @@ fn paused() -> (development::Scheduler, mpsc::Receiver<()>, mpsc::Sender<()>) {
 
 fn start(app: &crate::application::test_support::TestApplication<'_, Editor>) {
     app.enter(|editor, access| {
-        editor.load(path());
-        editor.start_source_workflow(access);
+        editor.load(path(), access);
     });
 }
 
 #[test]
 fn retiring_source_ownership_does_not_clear_an_unrelated_document_activity() {
-    let mut editor = super::super::tests::fixture();
-    editor.load("not-opened.dng".into());
-    editor.start_document(Preparation::New);
-    let operation = editor.document_pending;
-    let activity = editor.tasks.view().unwrap().title;
-    let view = editor.request_id();
-    editor.replace_photo_scope(view);
-    assert!(editor.busy);
-    assert_eq!(editor.document_pending, operation);
-    assert_eq!(editor.tasks.view().unwrap().title, activity);
+    let editor = super::super::tests::fixture();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.load("not-opened.dng".into(), cx);
+            editor.start_document(Preparation::New, cx);
+            let operation = editor.document_pending;
+            let activity = editor.tasks.view().unwrap().title;
+            let view = editor.request_id();
+            editor.replace_photo_scope(view);
+            assert!(editor.busy);
+            assert_eq!(editor.document_pending, operation);
+            assert_eq!(editor.tasks.view().unwrap().title, activity);
+        });
+    });
 }
 
 #[test]
@@ -139,7 +142,7 @@ fn retired_visit_cannot_publish_and_running_native_work_keeps_foreground_admissi
         let (entered, observed) = mpsc::channel();
         let access = app.access();
         let probe = access
-            .spawn(async move {
+            .spawn(move |_| async move {
                 jobs.run(move || entered.send(()).unwrap()).await.unwrap();
             })
             .unwrap();
@@ -194,7 +197,7 @@ fn cancelling_an_unstarted_native_demand_releases_admission_without_waiting_for_
         let (entered, observed) = mpsc::channel();
         let probe = app
             .access()
-            .spawn(async move {
+            .spawn(move |_| async move {
                 jobs.run(move || entered.send(()).unwrap()).await.unwrap();
             })
             .unwrap();
@@ -267,7 +270,7 @@ fn closed_worker_retains_parked_native_backing_until_another_call_returns_and_cl
         let (entered, observed) = mpsc::channel();
         let probe = app
             .access()
-            .spawn(async move {
+            .spawn(move |_| async move {
                 jobs.run(move || entered.send(()).unwrap()).await.unwrap();
             })
             .unwrap();
@@ -301,7 +304,7 @@ fn worker_closure_finishes_the_waiter_but_holds_admission_until_the_native_call_
         let (entered, observed) = mpsc::channel();
         let probe = app
             .access()
-            .spawn(async move {
+            .spawn(move |_| async move {
                 jobs.run(move || entered.send(()).unwrap()).await.unwrap();
             })
             .unwrap();
@@ -319,100 +322,108 @@ fn worker_closure_finishes_the_waiter_but_holds_admission_until_the_native_call_
 
 #[test]
 fn failed_candidate_keeps_pending_source_and_defers_its_completion_without_losing_it() {
+    let (scheduler, starts, release) = paused();
+    let editor = editor(scheduler.clone());
+    let directory = tempfile::tempdir().unwrap();
+    with_application(editor, |app| {
+        start(app);
+        app.pump();
+        starts.recv_timeout(Duration::from_secs(10)).unwrap();
+        let (view, accepted) = app.read(|e| (e.document.visit.view, e.document.project.clone()));
+        app.enter(|e, cx| {
+            e.start_document(
+                Preparation::Open(directory.path().join("missing.antitone")),
+                cx,
+            )
+        });
+        assert!(app.read(|e| e.document_pending.is_some() && e.busy));
+        release.send(()).unwrap();
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document_pending.is_none() && !e.busy
+        });
+        app.read(|e| {
+            assert_eq!(e.document.visit.view, view);
+            assert!(e.document.visit.ready.is_some());
+            assert_eq!(e.document.project, accepted);
+            assert!(e.tasks.view().is_none());
+        });
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn typed_candidate_and_source_completions_preserve_the_visit_in_both_orders() {
     for complete_first in [false, true] {
-        let (scheduler, starts, release) = paused();
-        let editor = editor(scheduler.clone());
+        let editor = super::super::tests::authored_fixture(&["patches.dng"]);
+        let ready = editor.document.visit.ready.as_ref().unwrap().clone();
+        let path = ready.path.clone();
+        let accepted = editor.document.project.clone();
         with_application(editor, |app| {
-            start(app);
-            app.pump();
-            starts.recv_timeout(Duration::from_secs(10)).unwrap();
-            let (view, accepted) =
-                app.read(|e| (e.document.visit.view, e.document.project.clone()));
-            app.update(|e| e.start_document(Preparation::Open("unavailable.antitone".into())));
-            let operation = app.read(|e| e.document_pending.unwrap());
-            assert!(app.read(|e| e.candidate_operation.request.is_some()));
-            if complete_first {
-                release.send(()).unwrap();
-                app.run_until(Duration::from_secs(15), |e| {
-                    e.document.visit.source.completion.is_some()
-                });
-                app.read(|e| {
-                    assert!(e.busy && e.document.visit.ready.is_none());
-                    assert_eq!(e.document_pending, Some(operation));
-                    assert_eq!(e.document.project, accepted);
-                });
-            }
-            app.update(|editor| {
-                editor.document_prepared(operation, Err("candidate rejected".into()))
-            });
-            if !complete_first {
-                assert!(app.read(|e| e.busy && e.document.visit.source.pending()));
-                release.send(()).unwrap();
-                app.run_until(Duration::from_secs(15), |e| !e.busy);
-            }
-            app.read(|e| {
+            app.enter(|e, cx| {
+                e.load(path, cx);
+
+                let view = e.document.visit.view;
+                e.start_document(Preparation::Open("not-prepared.antitone".into()), cx);
+                let operation = e.document_pending.unwrap();
+                if complete_first {
+                    e.source_result(view, Ok(Box::new(ready.clone())));
+                    assert!(e.document.visit.source.completion.is_some());
+                    assert!(e.document.visit.ready.is_none() && e.busy);
+                }
+                e.document_prepared(operation, Err("candidate rejected".into()));
+                if !complete_first {
+                    assert!(e.busy && e.document.visit.source.pending());
+                    e.source_result(view, Ok(Box::new(ready)));
+                }
                 assert_eq!(e.document.visit.view, view);
-                assert!(e.document.visit.ready.is_some());
+                assert!(e.document.visit.ready.is_some() && e.tasks.view().is_none());
                 assert_eq!(e.document.project, accepted);
                 assert!(e.status.contains("candidate rejected"));
-                assert!(e.tasks.view().is_none());
             });
+            app.pump();
         });
-        scheduler.close_and_wait().unwrap();
     }
 }
 
 #[test]
 fn save_preserves_pending_visit_and_later_edits_in_both_completion_orders() {
+    // Typed-outcome ordering is a controller test. Worker/admission cases above
+    // exercise physical source execution; this case does not simulate that timing.
     for complete_first in [false, true] {
-        let (scheduler, starts, release) = paused();
-        let editor = editor(scheduler.clone());
+        let editor = super::super::tests::authored_fixture(&["patches.dng"]);
+        let ready = editor.document.visit.ready.as_ref().unwrap().clone();
+        let source_path = ready.path.clone();
         let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("written.antitone");
         with_application(editor, |app| {
-            start(app);
-            app.pump();
-            starts.recv_timeout(Duration::from_secs(10)).unwrap();
-            let view = app.read(|e| e.document.visit.view);
-            app.update(|e| {
-                e.queue_save(
-                    directory.path().join("written.antitone"),
-                    crate::project::Save::New,
-                    None,
-                )
-            });
-            let operation = app.read(|e| e.document_pending.unwrap());
-            let super::super::document_services::Write {
-                document: snapshot,
-                path,
-                policy,
-            } = app.update(|e| e.document.write.request.take().unwrap());
-            let saved = snapshot.save(&path, policy).unwrap();
-            app.update(|e| {
+            app.enter(|e, cx| {
+                e.load(source_path, cx);
+
+                let view = e.document.visit.view;
+                let snapshot = e.document.capture();
+                e.save_project(path.clone(), crate::project::Save::New, None, cx);
+                let operation = e.document_pending.unwrap();
+                let saved = snapshot.save(&path, crate::project::Save::New).unwrap();
                 e.roll.exposure = 0.5;
                 e.sync_document();
-            });
-            if complete_first {
-                release.send(()).unwrap();
-                app.run_until(Duration::from_secs(15), |e| {
-                    e.document.visit.source.completion.is_some()
-                });
-                assert!(app.read(|e| e.document.visit.ready.is_none() && e.busy));
-            }
-            app.update(|e| e.save_result(operation, Ok(Box::new(saved))));
-            if !complete_first {
-                assert!(app.read(|e| e.busy && e.document.visit.source.pending()));
-                release.send(()).unwrap();
-                app.run_until(Duration::from_secs(15), |e| !e.busy);
-            }
-            app.read(|e| {
+                if complete_first {
+                    e.source_result(view, Ok(Box::new(ready.clone())));
+                    assert!(e.document.visit.source.completion.is_some());
+                    assert!(e.document.visit.ready.is_none() && e.busy);
+                }
+                e.save_result(operation, Ok(Box::new(saved)), cx);
+                if !complete_first {
+                    assert!(e.busy && e.document.visit.source.pending());
+                    e.source_result(view, Ok(Box::new(ready)));
+                }
                 assert_eq!(e.document.visit.view, view);
                 assert!(e.document.visit.ready.is_some() && e.tasks.view().is_none());
                 assert!(e.document.dirty());
                 assert_eq!(e.document.project.roll.exposure, 0.5);
                 assert_eq!(e.document.path.as_deref(), Some(path.as_path()));
             });
+            app.pump();
         });
-        scheduler.close_and_wait().unwrap();
     }
 }
 
@@ -423,14 +434,14 @@ fn same_source_candidate_supplies_readiness_without_replacing_the_pending_visit(
     with_application(editor, |app| {
         start(app);
         let view = app.read(|e| e.document.visit.view);
-        app.update(|e| {
-            e.start_document(Preparation::Correction(
-                e.document.capture(),
-                e.current_source,
-            ))
+        app.enter(|e, cx| {
+            e.start_document(
+                Preparation::Correction(e.document.capture(), e.current_source),
+                cx,
+            )
         });
         let operation = app.read(|e| e.document_pending.unwrap());
-        assert!(app.read(|e| e.candidate_operation.request.is_some()));
+        assert!(app.read(|e| e.busy && e.document_pending.is_some()));
         app.run_until(Duration::from_secs(15), |e| {
             e.document.visit.source.completion.is_some()
         });
@@ -480,9 +491,9 @@ fn replacing_document_retires_pending_source_but_not_its_running_native_call() {
         app.pump();
         starts.recv_timeout(Duration::from_secs(10)).unwrap();
         let store = app.read(|e| e.document.cache().clone());
-        app.update(|e| e.start_document(Preparation::New));
+        app.enter(|e, cx| e.start_document(Preparation::New, cx));
         let operation = app.read(|e| e.document_pending.unwrap());
-        assert!(app.read(|e| e.candidate_operation.request.is_some()));
+        assert!(app.read(|e| e.busy && e.document_pending.is_some()));
         app.update(|editor| {
             editor.document_prepared(
                 operation,
@@ -502,7 +513,7 @@ fn replacing_document_retires_pending_source_but_not_its_running_native_call() {
         let (entered, observed) = mpsc::channel();
         let probe = app
             .access()
-            .spawn(async move {
+            .spawn(move |_| async move {
                 jobs.run(move || entered.send(()).unwrap()).await.unwrap();
             })
             .unwrap();

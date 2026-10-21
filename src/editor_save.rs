@@ -3,19 +3,18 @@
 mod tests;
 
 use super::{
-    Editor, FailureKind, Task, TaskRequest,
+    Editor, FailureKind, Task, TaskRequest, UiContext,
     document::Document,
     document_services::{Services, Write},
 };
 
 #[derive(Default)]
 pub(super) struct State {
-    pub request: Option<Write>,
     task: Option<async_executor::Task<()>>,
 }
 
 impl Editor {
-    pub(super) fn start_save(&mut self, write: Write) {
+    pub(super) fn start_save(&mut self, write: Write, cx: &UiContext<'_, Self>) {
         self.cancel_measurement();
         self.document.history.finish_group();
         self.history_pending = None;
@@ -23,41 +22,32 @@ impl Editor {
         self.tasks.begin(Task::Save(id));
         self.document_failure = Some(FailureKind::Save);
         self.new_project_pending = false;
-        self.document.write = State {
-            request: Some(write),
-            task: None,
-        };
-    }
-
-    pub(super) fn start_save_workflow(&mut self, access: &crate::application::UiAccess<'_, Self>) {
-        let Some(write) = self.document.write.request.take() else {
-            return;
-        };
-        let id = self.document_pending.expect("captured save operation");
-        let Some(source) = self.source_services.as_ref() else {
-            self.save_result(id, Err("Document services unavailable".into()));
-            return;
-        };
-        let services = Services {
+        let services = self.source_services.as_ref().map(|source| Services {
             jobs: self.workflow_jobs.clone(),
             device: source.device.clone(),
-        };
-        let target = access.clone();
-        let Some(task) = access.spawn(async move {
-            let result = services.write(write).await.map(Box::new);
-            target.update(|editor| {
-                editor.save_result(id, result);
-                editor.start_document_workflow(&target);
-                editor.start_source_workflow(&target);
+        });
+        let Some(task) = cx.spawn(move |cx| async move {
+            let result = match services {
+                Some(services) => services.write(write).await.map(Box::new),
+                None => Err("Document services unavailable".into()),
+            };
+            cx.update(|editor| {
+                editor.save_result(id, result, &cx);
+                editor.acquire_working(&cx);
             });
         }) else {
-            self.save_result(id, Err("Application stopped".into()));
+            self.save_result(id, Err("Application stopped".into()), cx);
             return;
         };
         self.document.write.task = Some(task);
     }
 
-    pub(super) fn save_result(&mut self, id: u64, result: Result<Box<Document>, String>) {
+    pub(super) fn save_result(
+        &mut self,
+        id: u64,
+        result: Result<Box<Document>, String>,
+        cx: &UiContext<'_, Self>,
+    ) {
         if self.document_pending != Some(id) {
             return;
         }
@@ -75,7 +65,7 @@ impl Editor {
                 self.status = "Project saved".into();
                 self.resolve_failure(FailureKind::Save);
                 if let Some(transition) = self.after_save.take() {
-                    self.perform_transition(transition);
+                    self.perform_transition(transition, cx);
                 }
             }
             Err(error) => {

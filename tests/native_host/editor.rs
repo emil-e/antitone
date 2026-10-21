@@ -114,7 +114,7 @@ impl host::App for EditorApp<'_> {
         self.report.lock().unwrap().exited = true;
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, access: &antitone::application::UiAccess<'_, Self>) {
+    fn ui(&mut self, ui: &mut egui::Ui, access: &antitone::application::UiContext<'_, Self>) {
         let editor_access = access.for_state(self.editor);
         self.update(|editor| editor.ui(ui, &editor_access));
         if ui.input(|input| input.viewport().close_requested()) {

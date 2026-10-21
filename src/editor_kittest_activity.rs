@@ -29,7 +29,7 @@ fn render_case(harness: &mut Harness<'_, Editor>, name: &str) {
 #[test]
 fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_style() {
     editor_harness(|mut harness, _capture| {
-        harness.update(|editor| editor.add_raws(vec![fixture("patches.dng")]));
+        harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
         wait_for(&mut harness, |editor| {
             !editor.busy && editor.document_pending.is_none()
         });
@@ -214,7 +214,7 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
             harness.step();
             render_case(&mut harness, &format!("analysis-cancelling-{layout}"));
             assert!(harness.query_by_label("Cancel analysis").is_none());
-            harness.update(|editor| editor.analysis_result(9000, Ok(None)));
+            harness.enter(|editor, cx| editor.analysis_result(9000, Ok(None), cx));
             render_case(&mut harness, &format!("analysis-cancelled-{layout}"));
             harness.read(|editor| assert!(editor.tasks.view().is_none()));
             harness.read(|editor| assert_eq!(editor.status, "Analysis cancelled"));

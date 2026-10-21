@@ -70,6 +70,7 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         h.get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
             .click();
         h.step();
+        h.try_run_realtime().unwrap();
         let source = h.read(|editor| editor.current_source.unwrap());
         let project = h.read(|editor| editor.document.project.clone());
         h.read(|editor| assert!(editor.document.dirty()));

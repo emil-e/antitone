@@ -13,44 +13,86 @@ fn controlled() -> (Thumbnails, mpsc::Receiver<workflow::Submission>) {
 
 pub(super) type ServiceResults = Vec<Result<Outcome, workflow::Stopped>>;
 
-pub(super) fn start_service_request<'a>(
-    thumbnails: &mut Thumbnails,
-    access: &crate::application::UiAccess<'a, ServiceResults>,
-) -> async_executor::Task<()> {
-    let job = thumbnails
-        .request
-        .take()
-        .expect("captured thumbnail request");
-    let services = thumbnails.services.clone().expect("thumbnail service");
-    let target = access.clone();
-    access
-        .spawn(async move {
-            let outcome = services.process(job).await;
-            target.update(|results| results.push(outcome));
+// Standalone service input: no Editor command, continuation ownership or admission claim.
+pub(super) fn service_job(
+    thumbnails: &Thumbnails,
+    key: ImageKey,
+    path: PathBuf,
+    source: Source,
+    correction: Option<Arc<Correction>>,
+    render: bool,
+) -> Job {
+    let previous = render
+        .then(|| {
+            thumbnails
+                .compatible_product(&key)
+                .map(|(_, product)| product.clone())
         })
-        .unwrap()
+        .flatten();
+    Job {
+        ticket: thumbnails
+            .generation
+            .load(std::sync::atomic::Ordering::Relaxed),
+        key,
+        path,
+        source,
+        correction,
+        store: thumbnails.sources.clone(),
+        render,
+        priority: if render {
+            development::Priority::Visible
+        } else {
+            development::Priority::Eager
+        },
+        previous,
+    }
+}
+
+pub(super) fn start_service_request<'a>(
+    thumbnails: &Thumbnails,
+    job: Job,
+    cx: &UiContext<'a, ServiceResults>,
+) -> async_executor::Task<()> {
+    let services = thumbnails.services.clone().expect("thumbnail service");
+    cx.spawn(move |cx| async move {
+        let outcome = services.process(job).await;
+        cx.update(|results| results.push(outcome));
+    })
+    .unwrap()
 }
 
 pub(super) fn run_service_request(
-    thumbnails: &mut Thumbnails,
+    thumbnails: &Thumbnails,
+    job: Job,
 ) -> Result<Outcome, workflow::Stopped> {
     crate::application::test_support::with_application(Vec::new(), |app| {
-        let _task = start_service_request(thumbnails, &app.access());
+        let _task = start_service_request(thumbnails, job, &app.access());
         app.run_until(Duration::from_secs(30), |results| !results.is_empty());
         app.update(|results| results.pop().unwrap())
     })
 }
 
-// Independent service computation, followed by a separate controller proposal.
-pub(super) fn complete_service_request(thumbnails: &mut Thumbnails, document: &Document) {
-    let (ticket, key) = thumbnails
-        .pending
-        .clone()
-        .expect("current thumbnail request");
-    match run_service_request(thumbnails) {
+// Real service computation, then a typed controller proposal; not command-initiation coverage.
+pub(super) fn complete_service_request(thumbnails: &mut Thumbnails, document: &Document, job: Job) {
+    let ticket = job.ticket;
+    let key = job.key.clone();
+    thumbnails.pending = Some((ticket, key.clone()));
+    thumbnails.pending_render = job.render;
+    match run_service_request(thumbnails, job) {
         Ok(outcome) => thumbnails.complete(outcome, document),
         Err(_) => thumbnails.stopped(ticket, key),
     }
+}
+
+// Controller-only authority fixture. No producer is scheduled by this transition.
+fn typed_ticket(thumbnails: &mut Thumbnails, key: ImageKey) -> (u64, ImageKey) {
+    let ticket = thumbnails
+        .generation
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        + 1;
+    thumbnails.pending = Some((ticket, key.clone()));
+    thumbnails.pending_render = true;
+    (ticket, key)
 }
 
 pub(super) fn fixture() -> Document {
@@ -191,25 +233,19 @@ fn queued_thumbnail_results_do_not_install_after_file_stats_change() {
     let id = document.project.order[0];
     document.project.source_mut(id).unwrap().path = path.clone();
     let (mut thumbnails, _requests) = controlled();
-    thumbnails.request(
-        key(&document, id),
-        path.clone(),
-        document.project.source(id).unwrap().clone(),
-        None,
-    );
-    let job = thumbnails.request.take().unwrap();
+    let (ticket, key) = typed_ticket(&mut thumbnails, key(&document, id));
     std::fs::write(&path, b"after a deliberate edit").unwrap();
     thumbnails.complete(
         Outcome {
-            ticket: job.ticket,
-            key: job.key,
+            ticket,
+            key,
             image: Err("old outcome".into()),
             proper: false,
         },
         &document,
     );
     assert!(thumbnails.cache.entries.is_empty());
-    assert!(thumbnails.pending.is_none());
+    assert!(thumbnails.attempted_sources.is_empty());
 }
 
 #[test]
@@ -333,88 +369,57 @@ fn correction_changes_image_identity_without_invalidating_unconverted_raw_proxie
 }
 
 #[test]
-fn cancelled_gpu_ticket_releases_admission_and_stale_results_do_not_install() {
+fn cancelled_gpu_ticket_retires_logical_authority_and_stale_results_do_not_install() {
     let document = fixture();
     let id = document.project.order[0];
     let (mut thumbnails, _requests) = controlled();
     let image_key = key(&document, id);
-    thumbnails.request(
-        image_key.clone(),
-        document.source_path(id).unwrap(),
-        document.project.source(id).unwrap().clone(),
-        None,
-    );
-    let job = thumbnails.request.take().unwrap();
+    let (old, old_key) = typed_ticket(&mut thumbnails, image_key.clone());
     thumbnails.cancel();
-    thumbnails.request(
-        image_key.clone(),
-        document.source_path(id).unwrap(),
-        document.project.source(id).unwrap().clone(),
-        None,
-    );
-    let replacement = thumbnails.request.take().unwrap();
-    assert!(thumbnails.pending.is_some());
+    assert!(thumbnails.pending.is_none());
+    let (replacement, replacement_key) = typed_ticket(&mut thumbnails, image_key);
     thumbnails.complete(
         Outcome {
-            ticket: job.ticket,
-            key: job.key,
+            ticket: old,
+            key: old_key,
             image: Err("stale failure".into()),
             proper: false,
         },
         &document,
     );
-    assert!(thumbnails.pending.is_some());
+    assert_eq!(thumbnails.pending.as_ref().map(|p| p.0), Some(replacement));
     assert!(thumbnails.cache.entries.is_empty());
     thumbnails.complete(
         Outcome {
-            ticket: replacement.ticket,
-            key: replacement.key,
+            ticket: replacement,
+            key: replacement_key,
             image: Ok(None),
             proper: true,
         },
         &document,
     );
     assert!(thumbnails.pending.is_none());
-    thumbnails.request(
-        image_key,
-        document.source_path(id).unwrap(),
-        document.project.source(id).unwrap().clone(),
-        None,
-    );
-    assert!(thumbnails.request.take().is_some());
 }
 
 #[test]
-fn changed_document_identity_rejects_result_and_worker_disconnection_clears_pending() {
+fn changed_document_identity_rejects_result_and_typed_worker_stop_clears_pending() {
     let mut document = fixture();
     let id = document.project.order[0];
     let (mut thumbnails, _requests) = controlled();
-    thumbnails.request(
-        key(&document, id),
-        document.source_path(id).unwrap(),
-        document.project.source(id).unwrap().clone(),
-        None,
-    );
-    let job = thumbnails.request.take().unwrap();
+    let (ticket, old_key) = typed_ticket(&mut thumbnails, key(&document, id));
     document.project.development.as_mut().unwrap().fixed_wb[0] += 0.1;
     thumbnails.complete(
         Outcome {
-            ticket: job.ticket,
-            key: job.key,
+            ticket,
+            key: old_key,
             image: Err("old WB".into()),
             proper: false,
         },
         &document,
     );
     assert!(thumbnails.cache.entries.is_empty());
-    thumbnails.request(
-        key(&document, id),
-        document.source_path(id).unwrap(),
-        document.project.source(id).unwrap().clone(),
-        None,
-    );
-    let job = thumbnails.request.take().unwrap();
-    thumbnails.stopped(job.ticket, job.key);
+    let (ticket, current) = typed_ticket(&mut thumbnails, key(&document, id));
+    thumbnails.stopped(ticket, current);
     assert!(thumbnails.pending.is_none());
     assert!(thumbnails.services.is_none());
     assert!(thumbnails.cache.get(&key(&document, id)).unwrap().is_err());
@@ -422,100 +427,108 @@ fn changed_document_identity_rejects_result_and_worker_disconnection_clears_pend
 
 #[test]
 fn filmstrip_resize_and_selection_preserve_project_state_and_loading_placeholders() {
-    let mut editor = Editor::state();
-    *editor.document = fixture();
-    editor.floor = editor.document.project.input_floor.unwrap();
-    let before = editor.document.project.clone();
-    let context = egui::Context::default();
-    let mut run = |events| {
-        let mut source_positions = Vec::new();
-        let mut output = context.run_ui(
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(1100., 800.),
-                )),
-                events,
-                ..Default::default()
-            },
-            |ui| editor.filmstrip(ui),
-        );
-        output.textures_delta.clear();
-        for shape in output.shapes {
-            if let egui::Shape::Text(text) = shape.shape
-                && text.galley.job.text.starts_with("photo-")
-            {
-                source_positions.push(text.pos);
-            }
-        }
-        source_positions
-    };
-    let positions = run(vec![]);
-    assert!(!positions.is_empty());
-    assert!(positions.len() < 40);
-    let initial =
-        egui::containers::panel::PanelState::load(&context, egui::Id::new("thumbnail-filmstrip"))
+    let editor = Editor::state();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            *editor.document = fixture();
+            editor.floor = editor.document.project.input_floor.unwrap();
+            let before = editor.document.project.clone();
+            let context = egui::Context::default();
+            let mut run = |events| {
+                let mut source_positions = Vec::new();
+                let mut output = context.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(1100., 800.),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| editor.filmstrip(ui, cx),
+                );
+                output.textures_delta.clear();
+                for shape in output.shapes {
+                    if let egui::Shape::Text(text) = shape.shape
+                        && text.galley.job.text.starts_with("photo-")
+                    {
+                        source_positions.push(text.pos);
+                    }
+                }
+                source_positions
+            };
+            let positions = run(vec![]);
+            assert!(!positions.is_empty());
+            assert!(positions.len() < 40);
+            let initial = egui::containers::panel::PanelState::load(
+                &context,
+                egui::Id::new("thumbnail-filmstrip"),
+            )
             .unwrap()
             .outer_rect;
-    assert!(
-        (initial.height() - 140.).abs() < 1.,
-        "initial strip height: {}",
-        initial.height()
-    );
-    let edge = initial.center_top();
-    run(vec![
-        egui::Event::PointerMoved(edge),
-        egui::Event::PointerButton {
-            pos: edge,
-            button: egui::PointerButton::Primary,
-            pressed: true,
-            modifiers: egui::Modifiers::NONE,
-        },
-    ]);
-    run(vec![egui::Event::PointerMoved(edge - egui::vec2(0., 50.))]);
-    run(vec![egui::Event::PointerButton {
-        pos: edge - egui::vec2(0., 50.),
-        button: egui::PointerButton::Primary,
-        pressed: false,
-        modifiers: egui::Modifiers::NONE,
-    }]);
-    let resized =
-        egui::containers::panel::PanelState::load(&context, egui::Id::new("thumbnail-filmstrip"))
-            .unwrap()
-            .outer_rect;
-    assert!(resized.height() > initial.height() + 40.);
-    for _ in 0..20 {
-        run(vec![]);
-        let idle = egui::containers::panel::PanelState::load(
-            &context,
-            egui::Id::new("thumbnail-filmstrip"),
-        )
-        .unwrap()
-        .outer_rect;
-        assert!(
-            (idle.height() - resized.height()).abs() < 1.,
-            "filmstrip shrank after release: {} -> {}",
-            resized.height(),
-            idle.height()
-        );
-    }
-    let positions = run(vec![]);
-    let point = positions[0] + egui::vec2(10., -20.);
-    for pressed in [true, false] {
-        run(vec![
-            egui::Event::PointerMoved(point),
-            egui::Event::PointerButton {
-                pos: point,
+            assert!(
+                (initial.height() - 140.).abs() < 1.,
+                "initial strip height: {}",
+                initial.height()
+            );
+            let edge = initial.center_top();
+            run(vec![
+                egui::Event::PointerMoved(edge),
+                egui::Event::PointerButton {
+                    pos: edge,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+            run(vec![egui::Event::PointerMoved(edge - egui::vec2(0., 50.))]);
+            run(vec![egui::Event::PointerButton {
+                pos: edge - egui::vec2(0., 50.),
                 button: egui::PointerButton::Primary,
-                pressed,
+                pressed: false,
                 modifiers: egui::Modifiers::NONE,
-            },
-        ]);
-    }
-    drop(run);
-    assert!(editor.document.visit.source.request.is_some());
-    assert!((editor.preferences.filmstrip_height - resized.height()).abs() < 1.);
-    assert_eq!(editor.document.project, before);
+            }]);
+            let resized = egui::containers::panel::PanelState::load(
+                &context,
+                egui::Id::new("thumbnail-filmstrip"),
+            )
+            .unwrap()
+            .outer_rect;
+            assert!(resized.height() > initial.height() + 40.);
+            for _ in 0..20 {
+                run(vec![]);
+                let idle = egui::containers::panel::PanelState::load(
+                    &context,
+                    egui::Id::new("thumbnail-filmstrip"),
+                )
+                .unwrap()
+                .outer_rect;
+                assert!(
+                    (idle.height() - resized.height()).abs() < 1.,
+                    "filmstrip shrank after release: {} -> {}",
+                    resized.height(),
+                    idle.height()
+                );
+            }
+            let positions = run(vec![]);
+            let point = positions[0] + egui::vec2(10., -20.);
+            for pressed in [true, false] {
+                run(vec![
+                    egui::Event::PointerMoved(point),
+                    egui::Event::PointerButton {
+                        pos: point,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]);
+            }
+            drop(run);
+            assert!(editor.document.visit.source.pending());
+            assert!((editor.preferences.filmstrip_height - resized.height()).abs() < 1.);
+            assert_eq!(editor.document.project, before);
+        });
+    });
 }
 
 #[test]
@@ -533,7 +546,7 @@ fn restored_filmstrip_height_survives_window_constraints_and_a_fresh_context() {
                     )),
                     ..Default::default()
                 },
-                |ui| editor.filmstrip(ui),
+                |ui| editor.filmstrip(ui, &crate::application::UiContext::render_only()),
             );
             output.textures_delta.clear();
             let panel = egui::containers::panel::PanelState::load(
@@ -693,7 +706,7 @@ fn uncalibrated_thumbnails_share_source_default_but_not_transient_inspection_ev(
 }
 
 #[test]
-fn critical_pressure_cancels_work_once_and_drops_optional_images() {
+fn critical_pressure_retires_gpu_ticket_once_and_drops_optional_images() {
     let document = fixture();
     let id = document.project.order[0];
     let (mut thumbnails, _requests) = controlled();
@@ -704,13 +717,7 @@ fn critical_pressure_cancels_work_once_and_drops_optional_images() {
     thumbnails
         .cache
         .insert(key(&document, id), Err("cached error".into()));
-    thumbnails.request(
-        key(&document, document.project.order[1]),
-        document.source_path(id).unwrap(),
-        document.project.source(id).unwrap().clone(),
-        None,
-    );
-    thumbnails.request.take().unwrap();
+    typed_ticket(&mut thumbnails, key(&document, document.project.order[1]));
     let generation = thumbnails
         .generation
         .load(std::sync::atomic::Ordering::Relaxed);
@@ -752,8 +759,9 @@ fn visible_jobs_do_not_wait_for_refinement_or_grading_idle() {
             .cache
             .insert(key(&editor.document, id), Err("already visited".into()));
     }
-    let (commands, _requests) = mpsc::channel();
+    let (commands, requests) = mpsc::channel();
     editor.thumbnails.services = Some(Services { commands });
+    // Only original-policy state is involved here, not an original producer.
     editor.original.refining = Some((
         0,
         crate::refinement::ViewRequest {
@@ -762,53 +770,28 @@ fn visible_jobs_do_not_wait_for_refinement_or_grading_idle() {
             frame: None,
         },
     ));
-    editor.original.last_edit = std::time::Instant::now();
     let context = egui::Context::default();
-    let frame = |editor: &mut Editor| {
-        let mut output = context.run_ui(
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(1100., 800.),
-                )),
-                ..Default::default()
-            },
-            |ui| editor.filmstrip(ui),
+    let budgets = memory::CacheBudgets::for_memory(48 << 30, memory::Pressure::Normal);
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|e, cx| filmstrip_frame(e, &context, budgets, cx));
+        let visible = take_submission(app, &requests);
+        assert_eq!(visible.job.key.source.id, first);
+        assert_eq!(visible.job.priority, development::Priority::Visible);
+        app.enter(|e, cx| filmstrip_frame(e, &context, budgets, cx));
+        app.pump();
+        assert!(matches!(
+            requests.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        finish_submission(visible, Err("fixture completed".into()), false);
+        let eager = take_submission(app, &requests);
+        assert_eq!(eager.job.key.source.id, last);
+        assert!(
+            !eager.job.render,
+            "original refinement keeps optional GPU priority"
         );
-        output.textures_delta.clear();
-    };
-    frame(&mut editor);
-    let job = editor
-        .thumbnails
-        .request
-        .take()
-        .expect("missing visible cell must not wait for settled refinement");
-    assert_eq!(job.key.source.id, first);
-    frame(&mut editor);
-    assert!(
-        editor.thumbnails.request.take().is_none(),
-        "only one current GPU demand"
-    );
-    editor.thumbnails.complete(
-        Outcome {
-            ticket: job.ticket,
-            key: job.key,
-            image: Err("fixture completed".into()),
-            proper: false,
-        },
-        &editor.document,
-    );
-    frame(&mut editor);
-    let eager = editor
-        .thumbnails
-        .request
-        .take()
-        .expect("unvisited CPU/disk work must not wait for grading idle");
-    assert_eq!(eager.key.source.id, last);
-    assert!(
-        !eager.render,
-        "refinement keeps priority over optional offscreen GPU work"
-    );
+        assert_eq!(eager.job.priority, development::Priority::Eager);
+    });
 }
 
 #[test]
@@ -820,69 +803,72 @@ fn eager_zero_budget_pass_completes_unvisited_work_without_idle_or_eviction_loop
         cpu_bytes: 0,
         gpu_bytes: 0,
     });
-    editor.original.last_edit = std::time::Instant::now();
-    let (commands, _requests) = mpsc::channel();
+    let count = editor.document.project.order.len();
+    let (commands, requests) = mpsc::channel();
     editor.thumbnails.services = Some(Services { commands });
     let context = egui::Context::default();
-    let frame = |editor: &mut Editor| {
-        let mut output = context.run_ui(
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(1100., 800.),
-                )),
-                ..Default::default()
-            },
-            |ui| editor.filmstrip(ui),
-        );
-        output.textures_delta.clear();
-    };
-    let mut finished = Vec::new();
-    let mut cpu_only = 0;
-    for _ in &editor.document.project.order.clone() {
-        frame(&mut editor);
-        let job = editor
-            .thumbnails
-            .request
-            .take()
-            .expect("finite eager pass must reach an unvisited source");
-        assert!(!finished.contains(&job.key.source.id));
-        finished.push(job.key.source.id);
-        cpu_only += usize::from(!job.render);
-        editor.thumbnails.complete(
-            Outcome {
-                ticket: job.ticket,
-                key: job.key,
-                // Visible fixture errors stand in for protected resident results; offscreen
-                // completion deliberately has no GPU entry and must still quiesce.
-                image: if job.render {
-                    Err("fixture processed".into())
-                } else {
-                    Ok(None)
-                },
-                proper: true,
-            },
-            &editor.document,
-        );
-    }
-    assert!(cpu_only > 0);
-    assert_eq!(finished.len(), editor.document.project.order.len());
-    assert_eq!(editor.thumbnails.sources.charges().retained, 0);
-    for _ in 0..4 {
-        frame(&mut editor);
-        assert!(editor.thumbnails.request.take().is_none());
-    }
-    let last = *editor.document.project.order.last().unwrap();
-    std::fs::write(
-        editor.document.source_path(last).unwrap(),
-        b"changed revision",
-    )
-    .unwrap();
-    frame(&mut editor);
-    assert_eq!(
-        editor.thumbnails.request.take().unwrap().key.source.id,
-        last
-    );
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|e, cx| {
+            filmstrip_frame(
+                e,
+                &context,
+                memory::CacheBudgets::new(e.thumbnails.limits, memory::Pressure::Normal),
+                cx,
+            )
+        });
+        let mut finished = Vec::new();
+        let mut cpu_only = 0;
+        for _ in 0..count {
+            let submitted = take_submission(app, &requests);
+            let job = &submitted.job;
+            assert!(!finished.contains(&job.key.source.id));
+            finished.push(job.key.source.id);
+            cpu_only += usize::from(!job.render);
+            let image = if job.render {
+                Err("fixture processed".into())
+            } else {
+                Ok(None)
+            };
+            finish_submission(submitted, image, true);
+        }
+        app.pump();
+        assert!(cpu_only > 0);
+        assert_eq!(finished.len(), count);
+        app.read(|e| {
+            assert_eq!(e.thumbnails.sources.charges().retained, 0);
+            assert!(e.thumbnails.pending.is_none() && !e.document.thumbnail_work.pending());
+        });
+        for _ in 0..4 {
+            app.enter(|e, cx| {
+                filmstrip_frame(
+                    e,
+                    &context,
+                    memory::CacheBudgets::new(e.thumbnails.limits, memory::Pressure::Normal),
+                    cx,
+                )
+            });
+            app.pump();
+            assert!(matches!(
+                requests.try_recv(),
+                Err(mpsc::TryRecvError::Empty)
+            ));
+        }
+        let last = app.read(|e| *e.document.project.order.last().unwrap());
+        std::fs::write(
+            app.read(|e| e.document.source_path(last).unwrap()),
+            b"changed revision",
+        )
+        .unwrap();
+        app.enter(|e, cx| {
+            filmstrip_frame(
+                e,
+                &context,
+                memory::CacheBudgets::new(e.thumbnails.limits, memory::Pressure::Normal),
+                cx,
+            )
+        });
+        assert_eq!(take_submission(app, &requests).job.key.source.id, last);
+    });
 }
 
 #[test]
@@ -890,7 +876,7 @@ fn visible_jobs_remain_suspended_for_foreground_and_reference_work() {
     for suspension in ["busy", "pick", "document"] {
         let mut editor = Editor::state();
         *editor.document = fixture();
-        let (commands, _requests) = mpsc::channel();
+        let (commands, requests) = mpsc::channel();
         editor.thumbnails.services = Some(Services { commands });
         match suspension {
             "busy" => editor.busy = true,
@@ -898,22 +884,19 @@ fn visible_jobs_remain_suspended_for_foreground_and_reference_work() {
             "document" => editor.document_pending = Some(0),
             _ => unreachable!(),
         }
-        let context = egui::Context::default();
-        let mut output = context.run_ui(
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(1100., 800.),
-                )),
-                ..Default::default()
-            },
-            |ui| editor.filmstrip(ui),
-        );
-        output.textures_delta.clear();
-        assert!(
-            editor.thumbnails.request.take().is_none(),
-            "{suspension} must block visible admission"
-        );
+        crate::application::test_support::with_application(editor, |app| {
+            app.enter(|e, cx| {
+                filmstrip_frame(e, &egui::Context::default(), e.thumbnails.budgets, cx)
+            });
+            app.pump();
+            assert!(
+                matches!(requests.try_recv(), Err(mpsc::TryRecvError::Empty)),
+                "{suspension}"
+            );
+            app.read(|e| {
+                assert!(e.thumbnails.pending.is_none() && !e.document.thumbnail_work.pending())
+            });
+        });
     }
 }
 
@@ -930,13 +913,15 @@ fn worker_completion_wakes_an_awaiting_service_consumer_without_frame_polling() 
         let mut thumbnails = Thumbnails::with_disk(device, queue, renderers, None);
         let document = fixture();
         let id = document.project.order[0];
-        thumbnails.request(
+        let job = service_job(
+            &thumbnails,
             key(&document, id),
             document.source_path(id).unwrap(),
             document.project.source(id).unwrap().clone(),
             None,
+            true,
         );
-        complete_service_request(&mut thumbnails, &document);
+        complete_service_request(&mut thumbnails, &document, job);
         assert!(thumbnails.pending.is_none());
         assert!(matches!(
             thumbnails.cache.get(&key(&document, id)),
@@ -968,7 +953,15 @@ fn idle_prefetch_fixture() -> (Editor, mpsc::Receiver<workflow::Submission>) {
     (editor, requests)
 }
 
-fn filmstrip_frame(editor: &mut Editor, context: &egui::Context, budgets: memory::CacheBudgets) {
+fn filmstrip_frame(
+    editor: &mut Editor,
+    context: &egui::Context,
+    budgets: memory::CacheBudgets,
+    cx: &UiContext<'_, Editor>,
+) {
+    editor
+        .thumbnails
+        .bind_sources(editor.document.cache().clone());
     let mut output = context.run_ui(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -977,14 +970,56 @@ fn filmstrip_frame(editor: &mut Editor, context: &egui::Context, budgets: memory
             )),
             ..Default::default()
         },
-        |ui| editor.filmstrip_with_budgets(ui, budgets),
+        |ui| editor.filmstrip_with_budgets(ui, budgets, cx),
     );
     output.textures_delta.clear();
 }
 
+// These fixtures exercise real command registration and service submission, not native production.
+fn take_submission(
+    app: &mut crate::application::test_support::TestApplication<'_, Editor>,
+    requests: &mpsc::Receiver<workflow::Submission>,
+) -> workflow::Submission {
+    app.pump();
+    requests.try_recv().unwrap_or_else(|error| {
+        let state = app.read(|e| {
+            (
+                e.thumbnails
+                    .pending
+                    .as_ref()
+                    .map(|(ticket, key)| (*ticket, key.source.id)),
+                e.thumbnails.services.is_some(),
+                e.thumbnails.budgets,
+                e.thumbnails.attempted_sources.len(),
+                e.document.thumbnail_work.pending(),
+                matches!(e.thumbnails.demand, Demand::None),
+            )
+        });
+        panic!("live thumbnail command did not submit: {error:?}; {state:?}");
+    })
+}
+
+fn finish_submission(
+    submission: workflow::Submission,
+    image: Result<Option<Arc<Product>>, String>,
+    proper: bool,
+) {
+    assert!(
+        submission
+            .reply
+            .send(Outcome {
+                ticket: submission.job.ticket,
+                key: submission.job.key,
+                image,
+                proper,
+            })
+            .is_ok()
+    );
+}
+
 #[test]
 fn offscreen_positive_demand_stays_cpu_only_without_space_for_its_neutral_and_graded_product() {
-    let (mut editor, _requests) = idle_prefetch_fixture();
+    let (mut editor, requests) = idle_prefetch_fixture();
     editor.document.project.dmin = Some([0.8; 3]);
     editor.document.project.dmax = Some([0.02; 3]);
     editor.document.project.input_floor = Some(crate::processing::CAMERA_INPUT_FLOOR);
@@ -1005,94 +1040,65 @@ fn offscreen_positive_demand_stays_cpu_only_without_space_for_its_neutral_and_gr
         },
         memory::Pressure::Normal,
     );
-    filmstrip_frame(&mut editor, &egui::Context::default(), budgets);
-    let job = editor.thumbnails.request.take().unwrap();
-    assert_eq!(job.key.source.id, last);
-    assert!(matches!(job.key.recipe, Ok(Some(_))));
-    assert!(
-        !job.render,
-        "positive products need more than the old camera-proxy admission estimate"
-    );
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|e, cx| filmstrip_frame(e, &egui::Context::default(), budgets, cx));
+        let submitted = take_submission(app, &requests);
+        assert_eq!(submitted.job.key.source.id, last);
+        assert!(matches!(submitted.job.key.recipe, Ok(Some(_))));
+        assert!(
+            !submitted.job.render,
+            "positive forecast includes neutral and graded ownership"
+        );
+    });
 }
 
 #[test]
 fn idle_roll_prefetch_reaches_unshown_photos_after_visible_work() {
-    let (mut editor, _requests) = idle_prefetch_fixture();
+    let (editor, requests) = idle_prefetch_fixture();
     let last = *editor.document.project.order.last().unwrap();
     let context = egui::Context::default();
     let budgets = memory::CacheBudgets::for_memory(48 << 30, memory::Pressure::Normal);
-    filmstrip_frame(&mut editor, &context, budgets);
-    let job = editor.thumbnails.request.take().unwrap();
-    assert_eq!(
-        job.key.source.id, last,
-        "should prefetch even the unshown far end of the roll"
-    );
-    editor.original.last_edit = std::time::Instant::now();
-    let generation = editor
-        .thumbnails
-        .generation
-        .load(std::sync::atomic::Ordering::Relaxed);
-    filmstrip_frame(&mut editor, &context, budgets);
-    assert_eq!(
-        editor
-            .thumbnails
-            .generation
-            .load(std::sync::atomic::Ordering::Relaxed),
-        generation + 2,
-        "resumed grading replaces optional GPU demand with eager CPU-only demand"
-    );
-    let cpu_only = editor.thumbnails.request.take().unwrap();
-    assert_eq!(cpu_only.key.source.id, last);
-    assert!(!cpu_only.render);
-    assert!(editor.thumbnails.request.take().is_none());
-    editor.thumbnails.complete(
-        Outcome {
-            ticket: job.ticket,
-            key: job.key,
-            image: Ok(None),
-            proper: false,
-        },
-        &editor.document,
-    );
-    assert!(editor.thumbnails.pending.is_some());
-    editor.thumbnails.complete(
-        Outcome {
-            ticket: cpu_only.ticket,
-            key: cpu_only.key,
-            image: Ok(None),
-            proper: false,
-        },
-        &editor.document,
-    );
-    editor.original.last_edit = std::time::Instant::now() - Duration::from_secs(1);
-    filmstrip_frame(&mut editor, &context, budgets);
-    assert_eq!(
-        editor.thumbnails.request.take().unwrap().key.source.id,
-        last
-    );
-    let first = editor.document.project.order[0];
-    editor
-        .thumbnails
-        .cache
-        .retain(|key, _| key.source.id != first);
-    let before = editor
-        .thumbnails
-        .generation
-        .load(std::sync::atomic::Ordering::Relaxed);
-    filmstrip_frame(&mut editor, &context, budgets);
-    assert_eq!(
-        editor
-            .thumbnails
-            .generation
-            .load(std::sync::atomic::Ordering::Relaxed),
-        before + 2,
-        "missing visible work is admitted ahead of the old eager waiter"
-    );
-    assert_eq!(
-        editor.thumbnails.request.take().unwrap().key.source.id,
-        first
-    );
-    assert!(editor.thumbnails.request.take().is_none());
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|e, cx| filmstrip_frame(e, &context, budgets, cx));
+        let old = take_submission(app, &requests);
+        assert_eq!(old.job.key.source.id, last);
+        assert!(old.job.render);
+        app.enter(|e, cx| {
+            e.original.last_edit = std::time::Instant::now();
+            filmstrip_frame(e, &context, budgets, cx);
+        });
+        let cpu_only = take_submission(app, &requests);
+        assert_ne!(old.job.ticket, cpu_only.job.ticket);
+        assert_eq!(cpu_only.job.key.source.id, last);
+        assert!(!cpu_only.job.render);
+        let current = cpu_only.job.ticket;
+        finish_submission(old, Ok(None), false);
+        app.pump();
+        app.read(|e| assert_eq!(e.thumbnails.pending.as_ref().map(|p| p.0), Some(current)));
+        finish_submission(cpu_only, Ok(None), false);
+        app.pump();
+        app.enter(|e, cx| {
+            e.original.last_edit = std::time::Instant::now() - Duration::from_secs(1);
+            filmstrip_frame(e, &context, budgets, cx);
+        });
+        let retry = take_submission(app, &requests);
+        assert_eq!(retry.job.key.source.id, last);
+        let first = app.read(|e| e.document.project.order[0]);
+        app.enter(|e, cx| {
+            e.thumbnails.cache.retain(|key, _| key.source.id != first);
+            filmstrip_frame(e, &context, budgets, cx);
+        });
+        let visible = take_submission(app, &requests);
+        assert_ne!(retry.job.ticket, visible.job.ticket);
+        assert_eq!(visible.job.key.source.id, first);
+        assert_eq!(visible.job.priority, development::Priority::Visible);
+        app.enter(|e, cx| filmstrip_frame(e, &context, budgets, cx));
+        app.pump();
+        assert!(matches!(
+            requests.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+    });
 }
 
 #[test]
@@ -1102,76 +1108,90 @@ fn memory_pressure_suspends_idle_prefetch_without_blocking_allowed_visible_work(
         memory::Pressure::Warning,
         memory::Pressure::Critical,
     ] {
-        let (mut editor, _requests) = idle_prefetch_fixture();
+        let (editor, requests) = idle_prefetch_fixture();
         let context = egui::Context::default();
         let budgets = memory::CacheBudgets::for_memory(48 << 30, pressure);
-        filmstrip_frame(&mut editor, &context, budgets);
-        if pressure == memory::Pressure::Normal {
-            let job = editor
-                .thumbnails
-                .request
-                .take()
-                .expect("normal pressure admits idle prefetch");
+        crate::application::test_support::with_application(editor, |app| {
+            app.enter(|e, cx| filmstrip_frame(e, &context, budgets, cx));
+            if pressure == memory::Pressure::Critical {
+                app.pump();
+                assert!(matches!(
+                    requests.try_recv(),
+                    Err(mpsc::TryRecvError::Empty)
+                ));
+                app.read(|e| {
+                    assert!(e.thumbnails.pending.is_none() && !e.document.thumbnail_work.pending())
+                });
+                return;
+            }
+            let submitted = take_submission(app, &requests);
+            let expected = app.read(|e| {
+                if pressure == memory::Pressure::Normal {
+                    *e.document.project.order.last().unwrap()
+                } else {
+                    e.document.project.order[0]
+                }
+            });
+            assert_eq!(submitted.job.key.source.id, expected);
             assert_eq!(
-                job.key.source.id,
-                *editor.document.project.order.last().unwrap()
+                submitted.job.priority,
+                if pressure == memory::Pressure::Normal {
+                    development::Priority::Eager
+                } else {
+                    development::Priority::Visible
+                }
             );
-        } else if pressure == memory::Pressure::Warning {
-            // Zero optional ownership trims the fixture's unprotected cache entries;
-            // visible replacement remains allowed, eager demand does not.
-            let job = editor
-                .thumbnails
-                .request
-                .take()
-                .expect("warning pressure still admits visible work");
-            assert_eq!(job.key.source.id, editor.document.project.order[0]);
-            assert_eq!(job.priority, development::Priority::Visible);
-            assert!(editor.thumbnails.request.take().is_none());
-        } else {
-            assert!(
-                editor.thumbnails.request.take().is_none(),
-                "critical pressure stops visible work too"
-            );
-            assert!(editor.thumbnails.pending.is_none());
-        }
+            app.enter(|e, cx| filmstrip_frame(e, &context, budgets, cx));
+            app.pump();
+            assert!(matches!(
+                requests.try_recv(),
+                Err(mpsc::TryRecvError::Empty)
+            ));
+        });
     }
 }
 
 #[test]
 fn hidden_filmstrip_keeps_cpu_only_eager_completion_and_pressure_gates() {
-    let (mut editor, _requests) = idle_prefetch_fixture();
+    let (mut editor, requests) = idle_prefetch_fixture();
     editor.thumbnails.cache.retain(|_, _| false);
     editor
         .thumbnails
         .bind_sources(editor.document.cache().clone());
+    let ids = editor.document.project.order.clone();
     let context = egui::Context::default();
-    for id in editor.document.project.order.clone() {
-        let mut output = context.run_ui(Default::default(), |ui| editor.hidden_filmstrip(ui));
-        output.textures_delta.clear();
-        let job = editor.thumbnails.request.take().unwrap();
-        assert_eq!(job.key.source.id, id);
-        assert!(!job.render);
-        assert_eq!(job.priority, development::Priority::Eager);
-        editor.thumbnails.complete(
-            Outcome {
-                ticket: job.ticket,
-                key: job.key,
-                image: Ok(None),
-                proper: true,
-            },
-            &editor.document,
-        );
-    }
-    let mut output = context.run_ui(Default::default(), |ui| editor.hidden_filmstrip(ui));
-    output.textures_delta.clear();
-    assert!(editor.thumbnails.request.take().is_none());
-    editor.thumbnails.attempted_sources.clear();
-    for pressure in [memory::Pressure::Warning, memory::Pressure::Critical] {
-        editor.thumbnails.pressure_override = Some(pressure);
-        let mut output = context.run_ui(Default::default(), |ui| editor.hidden_filmstrip(ui));
-        output.textures_delta.clear();
-        assert!(editor.thumbnails.request.take().is_none());
-    }
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|e, cx| {
+            let mut output = context.run_ui(Default::default(), |ui| e.hidden_filmstrip(ui, cx));
+            output.textures_delta.clear();
+        });
+        for id in ids {
+            let submitted = take_submission(app, &requests);
+            assert_eq!(submitted.job.key.source.id, id);
+            assert!(!submitted.job.render);
+            assert_eq!(submitted.job.priority, development::Priority::Eager);
+            finish_submission(submitted, Ok(None), true);
+        }
+        app.pump();
+        assert!(matches!(
+            requests.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        app.update(|e| e.thumbnails.attempted_sources.clear());
+        for pressure in [memory::Pressure::Warning, memory::Pressure::Critical] {
+            app.enter(|e, cx| {
+                e.thumbnails.pressure_override = Some(pressure);
+                let mut output =
+                    context.run_ui(Default::default(), |ui| e.hidden_filmstrip(ui, cx));
+                output.textures_delta.clear();
+            });
+            app.pump();
+            assert!(matches!(
+                requests.try_recv(),
+                Err(mpsc::TryRecvError::Empty)
+            ));
+        }
+    });
 }
 
 #[test]
@@ -1179,25 +1199,33 @@ fn blocked_new_admission_preserves_the_existing_current_visible_ticket() {
     let mut editor = super::super::tests::fixture();
     editor.document = fixture().into();
     let id = editor.document.project.order[0];
-    let (thumbnails, _requests) = controlled();
+    let (thumbnails, requests) = controlled();
     editor.thumbnails = thumbnails;
     editor
         .thumbnails
         .bind_sources(editor.document.cache().clone());
-    editor.thumbnails.demand = Demand::Visible(vec![id]);
-    editor.advance_thumbnail_demand();
-    let request = editor.thumbnails.request.take().unwrap();
-    editor.busy = true;
-    editor.advance_thumbnail_demand();
-    assert_eq!(
-        editor
-            .thumbnails
-            .pending
-            .as_ref()
-            .map(|(ticket, _)| *ticket),
-        Some(request.ticket)
-    );
-    assert!(editor.thumbnails.request.is_none());
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|e, cx| {
+            e.thumbnails.demand = Demand::Visible(vec![id]);
+            e.advance_thumbnail_demand(cx);
+        });
+        let submitted = take_submission(app, &requests);
+        app.enter(|e, cx| {
+            e.busy = true;
+            e.advance_thumbnail_demand(cx);
+        });
+        app.pump();
+        assert!(matches!(
+            requests.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        app.read(|e| {
+            assert_eq!(
+                e.thumbnails.pending.as_ref().map(|p| p.0),
+                Some(submitted.job.ticket)
+            )
+        });
+    });
 }
 
 #[test]
@@ -1208,70 +1236,60 @@ fn crop_draft_cancels_offscreen_prefetch_and_suspends_idle_admission() {
     super::super::tests::add_ready_fixture(&mut editor);
     let last = *editor.document.project.order.last().unwrap();
     let image_key = key(&editor.document, last);
-    let (commands, _requests) = mpsc::channel();
+    let (commands, requests) = mpsc::channel();
     editor.thumbnails.services = Some(Services { commands });
     editor
         .thumbnails
         .bind_sources(editor.document.cache().clone());
-    editor.thumbnails.request(
-        image_key.clone(),
-        editor.document.source_path(last).unwrap(),
-        editor.document.project.source(last).unwrap().clone(),
-        None,
-    );
-    let job = editor.thumbnails.request.take().unwrap();
-    editor.begin_crop();
-    assert!(editor.document.visit.crop_edit.is_some());
-    editor.original.last_edit = std::time::Instant::now() - Duration::from_secs(1);
-    let before = editor
-        .thumbnails
-        .generation
-        .load(std::sync::atomic::Ordering::Relaxed);
     let context = egui::Context::default();
-    let frame = |editor: &mut Editor| {
-        let mut output = context.run_ui(
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(1100., 800.),
-                )),
-                ..Default::default()
-            },
-            |ui| editor.filmstrip(ui),
-        );
-        output.textures_delta.clear();
-    };
-    frame(&mut editor);
-    assert!(
-        editor.thumbnails.pending.is_none(),
-        "the bound offscreen ticket retires before completion"
-    );
-    assert_ne!(
-        editor
-            .thumbnails
-            .generation
-            .load(std::sync::atomic::Ordering::Relaxed),
-        job.ticket
-    );
-    editor.thumbnails.complete(
-        Outcome {
-            ticket: job.ticket,
-            key: image_key,
-            image: Ok(None),
-            proper: false,
-        },
-        &editor.document,
-    );
-    frame(&mut editor);
-    assert_eq!(
-        editor
-            .thumbnails
-            .generation
-            .load(std::sync::atomic::Ordering::Relaxed),
-        before + 1
-    );
-    assert!(editor.thumbnails.pending.is_none());
-    assert!(editor.thumbnails.request.take().is_none());
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|e, cx| {
+            e.request_thumbnail(
+                image_key,
+                e.document.source_path(last).unwrap(),
+                e.document.project.source(last).unwrap().clone(),
+                true,
+                development::Priority::Eager,
+                cx,
+            )
+        });
+        let old = take_submission(app, &requests);
+        app.enter(|e, cx| {
+            e.begin_crop();
+            assert!(e.document.visit.crop_edit.is_some());
+            e.original.last_edit = std::time::Instant::now() - Duration::from_secs(1);
+            filmstrip_frame(e, &context, e.thumbnails.budgets, cx);
+            assert!(e.thumbnails.pending.is_none());
+            assert_ne!(
+                e.thumbnails
+                    .generation
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                old.job.ticket
+            );
+        });
+        finish_submission(old, Ok(None), false);
+        app.pump();
+        let retired = app.read(|e| {
+            e.thumbnails
+                .generation
+                .load(std::sync::atomic::Ordering::Relaxed)
+        });
+        app.enter(|e, cx| filmstrip_frame(e, &context, e.thumbnails.budgets, cx));
+        app.pump();
+        assert!(matches!(
+            requests.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        app.read(|e| {
+            assert_eq!(
+                e.thumbnails
+                    .generation
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                retired
+            );
+            assert!(e.thumbnails.pending.is_none() && !e.document.thumbnail_work.pending());
+        });
+    });
 }
 
 #[test]
@@ -1366,7 +1384,7 @@ fn warm_normal_roll_survives_rapid_forward_and_reverse_scrolling() {
                         },
                         ..Default::default()
                     },
-                    |ui| editor.filmstrip(ui),
+                    |ui| editor.filmstrip(ui, &crate::application::UiContext::render_only()),
                 );
                 output.textures_delta.clear();
                 for shape in output.shapes {
@@ -1413,14 +1431,13 @@ fn obsolete_scroll_work_is_replaced_once_without_dropping_valid_source_seeds() {
     let next = document.project.order[1];
     let mut editor = super::super::tests::fixture();
     editor.document = document.into();
-    let (thumbnails, _requests) = controlled();
+    let (thumbnails, requests) = controlled();
     editor.thumbnails = thumbnails;
     editor
         .thumbnails
         .bind_sources(editor.document.cache().clone());
-    let source = editor.document.project.source(id).unwrap();
     editor.thumbnails.seed(
-        source,
+        editor.document.project.source(id).unwrap(),
         editor.document.project.development.as_ref().unwrap(),
         FileKey::new(&editor.document.source_path(id).unwrap()),
         Arc::new(Proxy {
@@ -1430,25 +1447,33 @@ fn obsolete_scroll_work_is_replaced_once_without_dropping_valid_source_seeds() {
             matrix: glam::DMat3::IDENTITY,
         }),
     );
-    editor.thumbnails.demand = Demand::Visible(vec![id]);
-    editor.advance_thumbnail_demand();
-    let old = editor.thumbnails.request.take().unwrap();
-    editor.thumbnails.demand = Demand::Visible(vec![next]);
-    editor.advance_thumbnail_demand();
-    let replacement = editor.thumbnails.request.take().unwrap();
-    assert_ne!(old.ticket, replacement.ticket);
-    assert_eq!(replacement.key.source.id, next);
-    editor.advance_thumbnail_demand();
-    assert!(editor.thumbnails.request.is_none());
-    assert_eq!(
-        editor
-            .thumbnails
-            .pending
-            .as_ref()
-            .map(|(ticket, _)| *ticket),
-        Some(replacement.ticket)
-    );
-    assert_eq!(editor.thumbnails.sources.proxy_count(), 1);
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|e, cx| {
+            e.thumbnails.demand = Demand::Visible(vec![id]);
+            e.advance_thumbnail_demand(cx);
+        });
+        let old = take_submission(app, &requests);
+        app.enter(|e, cx| {
+            e.thumbnails.demand = Demand::Visible(vec![next]);
+            e.advance_thumbnail_demand(cx);
+        });
+        let replacement = take_submission(app, &requests);
+        assert_ne!(old.job.ticket, replacement.job.ticket);
+        assert_eq!(replacement.job.key.source.id, next);
+        app.enter(|e, cx| e.advance_thumbnail_demand(cx));
+        app.pump();
+        assert!(matches!(
+            requests.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        app.read(|e| {
+            assert_eq!(
+                e.thumbnails.pending.as_ref().map(|p| p.0),
+                Some(replacement.job.ticket)
+            );
+            assert_eq!(e.thumbnails.sources.proxy_count(), 1);
+        });
+    });
 }
 
 #[test]
@@ -1485,8 +1510,15 @@ fn disk_worker_reuses_checksummed_pixels_and_changed_stats_miss_instead_of_rejec
         let renderers = Arc::new(crate::renderer::RendererCache::default());
         let mut thumbnails =
             Thumbnails::with_disk(device.clone(), queue.clone(), renderers.clone(), Some(disk));
-        thumbnails.request(key(&document, id), path.clone(), source.clone(), None);
-        complete_service_request(&mut thumbnails, &document);
+        let job = service_job(
+            &thumbnails,
+            key(&document, id),
+            path.clone(),
+            source.clone(),
+            None,
+            true,
+        );
+        complete_service_request(&mut thumbnails, &document, job);
         assert_eq!(
             thumbnails.ready_count(&document, OutputTarget::DisplayP3),
             1
@@ -1498,8 +1530,8 @@ fn disk_worker_reuses_checksummed_pixels_and_changed_stats_miss_instead_of_rejec
             renderers,
             Some(disk::DiskCache::at(directory.path().join("cache"))),
         );
-        restarted.request(key(&document, id), path, source, None);
-        complete_service_request(&mut restarted, &document);
+        let job = service_job(&restarted, key(&document, id), path, source, None, true);
+        complete_service_request(&mut restarted, &document, job);
         assert!(
             matches!(restarted.cache.get(&key(&document, id)).unwrap(), Err(error) if !error.contains("content changed"))
         );

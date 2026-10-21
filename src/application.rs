@@ -17,6 +17,10 @@ mod tests;
 #[path = "application_test_support.rs"]
 pub(crate) mod test_support;
 
+#[cfg(test)]
+#[path = "application_context_tests.rs"]
+mod context_tests;
+
 type Repaint = Arc<dyn Fn() + Send + Sync>;
 
 struct HostWake(Box<dyn Fn() + Send + Sync>);
@@ -60,9 +64,9 @@ impl<'scope> Application<'scope> {
 
     /// The slot permits deferred native initialization. Initialize it before
     /// driving spawned tasks, and retire execution before taking the state out.
-    pub fn access<T: 'scope>(&self, state: &'scope RefCell<Option<T>>) -> UiAccess<'scope, T> {
-        UiAccess {
-            state,
+    pub fn access<T: 'scope>(&self, state: &'scope RefCell<Option<T>>) -> UiContext<'scope, T> {
+        UiContext {
+            state: Some(state),
             executor: self
                 .executor
                 .as_ref()
@@ -95,37 +99,67 @@ impl Drop for Application<'_> {
     }
 }
 
-/// An explicitly passed, scoped capability, not an owner of application state.
-/// Its synchronous closure API keeps borrow guards out of suspended workflows.
-pub struct UiAccess<'scope, T> {
-    state: &'scope RefCell<Option<T>>,
+/// Borrowed UI-thread state access, task spawning and update notification.
+/// Use the existing mutable model during synchronous UI, and short context
+/// transactions in continuations; overlapping transactions still panic.
+pub struct UiContext<'scope, T> {
+    state: Option<&'scope RefCell<Option<T>>>,
     executor: Weak<LocalExecutor<'scope>>,
     repaint: Repaint,
 }
 
-impl<'scope, T: 'scope> UiAccess<'scope, T> {
+impl<'scope, T: 'scope> UiContext<'scope, T> {
+    fn state(&self) -> &'scope RefCell<Option<T>> {
+        self.state
+            .expect("workflow input requires a live application fixture")
+    }
+
     pub fn read<R>(&self, read: impl FnOnce(&T) -> R) -> R {
-        let state = self.state.borrow();
+        let state = self.state().borrow();
         read(state.as_ref().expect("application initialized"))
     }
 
+    /// Notify after releasing the borrow, including successful no-op updates.
+    /// Reads are silent; this is not field-level change detection.
     pub fn update<R>(&self, update: impl FnOnce(&mut T) -> R) -> Option<R> {
+        self.state();
         let _executor = self.executor.upgrade()?;
         let result = self.with_mut(update);
         (self.repaint)();
         Some(result)
     }
 
-    /// The caller retains the library task handle. Drop cancels its continuation;
-    /// already-running synchronous work is not interrupted by that cancellation.
-    pub fn spawn<R: 'scope>(&self, future: impl Future<Output = R> + 'scope) -> Option<Task<R>> {
-        Some(self.executor.upgrade()?.spawn(future))
+    /// Defer the factory itself until the host polls outside the UI borrow.
+    /// Keep the returned library task in its logical owner: dropping it cancels
+    /// the continuation, not already-running synchronous work.
+    pub fn spawn<R, F, Fut>(&self, body: F) -> Option<Task<R>>
+    where
+        R: 'scope,
+        F: FnOnce(UiContext<'scope, T>) -> Fut + 'scope,
+        Fut: Future<Output = R> + 'scope,
+    {
+        self.state();
+        let executor = self.executor.upgrade()?;
+        let cx = self.clone();
+        Some(executor.spawn(async move { body(cx).await }))
+    }
+
+    // Controller/layout tests have no application state or execution. Starting
+    // work through this context is a test error, not a fake closed executor.
+    #[cfg(test)]
+    pub(crate) fn render_only() -> Self {
+        Self {
+            state: None,
+            executor: Weak::new(),
+            repaint: Arc::new(|| {}),
+        }
     }
 
     /// Bind another independently owned state cell in the same execution scope.
-    pub fn for_state<U: 'scope>(&self, state: &'scope RefCell<Option<U>>) -> UiAccess<'scope, U> {
-        UiAccess {
-            state,
+    pub fn for_state<U: 'scope>(&self, state: &'scope RefCell<Option<U>>) -> UiContext<'scope, U> {
+        self.state();
+        UiContext {
+            state: Some(state),
             executor: self.executor.clone(),
             repaint: self.repaint.clone(),
         }
@@ -134,12 +168,12 @@ impl<'scope, T: 'scope> UiAccess<'scope, T> {
     // Host callbacks already control repaint delivery. They use the same short
     // borrowing boundary without turning every presentation pass into a redraw.
     pub(crate) fn with_mut<R>(&self, update: impl FnOnce(&mut T) -> R) -> R {
-        let mut state = self.state.borrow_mut();
+        let mut state = self.state().borrow_mut();
         update(state.as_mut().expect("application initialized"))
     }
 }
 
-impl<T> Clone for UiAccess<'_, T> {
+impl<T> Clone for UiContext<'_, T> {
     fn clone(&self) -> Self {
         Self {
             state: self.state,

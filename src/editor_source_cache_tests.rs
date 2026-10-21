@@ -238,8 +238,15 @@ fn cpu_only_proper_work_persists_disk_at_zero_limits_then_materializes_on_demand
             "a seed is not yet a durable completed attempt"
         );
         thumbnails.release_selected();
-        thumbnails.request_mode(image_key.clone(), path.clone(), source.clone(), None, false);
-        tests::complete_service_request(&mut thumbnails, &document);
+        let job = tests::service_job(
+            &thumbnails,
+            image_key.clone(),
+            path.clone(),
+            source.clone(),
+            None,
+            false,
+        );
+        tests::complete_service_request(&mut thumbnails, &document, job);
         assert!(thumbnails.pending.is_none());
         assert!(thumbnails.attempted_sources.contains(&image_key.source));
         assert!(thumbnails.cache.entries.is_empty());
@@ -249,8 +256,15 @@ fn cpu_only_proper_work_persists_disk_at_zero_limits_then_materializes_on_demand
         drop(seed);
         thumbnails.cache.protect(vec![image_key.clone()]);
         document.cache().protect_proxies(vec![key(&document)]);
-        thumbnails.request(image_key.clone(), path, source.clone(), None);
-        tests::complete_service_request(&mut thumbnails, &document);
+        let job = tests::service_job(
+            &thumbnails,
+            image_key.clone(),
+            path,
+            source.clone(),
+            None,
+            true,
+        );
+        tests::complete_service_request(&mut thumbnails, &document, job);
         assert!(thumbnails.pending.is_none());
         assert!(thumbnails.cache.get(&image_key).unwrap().is_ok());
         assert_eq!(document.cache().charges().retained, 0);
@@ -325,8 +339,8 @@ fn background_native_by_product_is_a_foreground_hit_under_the_shared_cpu_limit()
             projection: None,
         };
         // Exercise the same serial worker and publication path used by filmstrip demand.
-        thumbnails.request(image_key, path, source.clone(), None);
-        let outcome = tests::run_service_request(&mut thumbnails).unwrap();
+        let job = tests::service_job(&thumbnails, image_key, path, source.clone(), None, true);
+        let outcome = tests::run_service_request(&thumbnails, job).unwrap();
         assert!(outcome.image.unwrap().is_some());
         let native = document.cache().get(&key(&document)).unwrap();
         assert!(document.cache().get_proxy(&key(&document)).is_some());
@@ -396,9 +410,16 @@ fn cancelled_gpu_ticket_keeps_proper_disk_demand_and_shares_foreground_handoff()
             recipe: Ok(None),
             projection: None,
         };
-        thumbnails.request_mode(key.clone(), path.clone(), expected.clone(), None, true);
+        let job = tests::service_job(
+            &thumbnails,
+            key.clone(),
+            path.clone(),
+            expected.clone(),
+            None,
+            true,
+        );
         crate::application::test_support::with_application(Vec::new(), |app| {
-            let _task = tests::start_service_request(&mut thumbnails, &app.access());
+            let _task = tests::start_service_request(&thumbnails, job, &app.access());
             app.pump();
             starts.recv_timeout(Duration::from_secs(5)).unwrap();
             thumbnails.cancel();
@@ -518,7 +539,8 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
                 projection: None,
             }
         };
-        thumbnails.request_mode(
+        let job = tests::service_job(
+            &thumbnails,
             image_key(0),
             path_a.clone(),
             document
@@ -530,11 +552,12 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
             false,
         );
         crate::application::test_support::with_application(Vec::new(), |app| {
-            let _eager = tests::start_service_request(&mut thumbnails, &app.access());
+            let _eager = tests::start_service_request(&thumbnails, job, &app.access());
             app.pump();
             starts.recv_timeout(Duration::from_secs(5)).unwrap();
             thumbnails.cancel();
-            thumbnails.request_mode(
+            let job = tests::service_job(
+                &thumbnails,
                 image_key(1),
                 path_b.clone(),
                 document
@@ -545,7 +568,7 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
                 None,
                 true,
             );
-            let _visible = tests::start_service_request(&mut thumbnails, &app.access());
+            let _visible = tests::start_service_request(&thumbnails, job, &app.access());
             app.pump();
             let deadline = std::time::Instant::now() + Duration::from_secs(5);
             while developments.waiter_count() != 2 {
@@ -585,12 +608,7 @@ fn registered_flat_reference_carries_its_document_native_reuse_key() {
     let mut editor = Editor::state();
     let expected_key = key(&document);
     *editor.document = document;
-    editor.begin_flat_edit(file.path().to_owned(), None);
-    let Some(reference_services::Operation::Preview(request)) =
-        editor.flat_edit.as_mut().unwrap().request.take()
-    else {
-        panic!("expected captured reference request");
-    };
+    let request = editor.reference_preview_input(file.path().to_owned());
     let cache = request
         .cache
         .expect("registered reference needs a scoped native key");

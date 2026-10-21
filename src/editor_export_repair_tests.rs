@@ -59,12 +59,21 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let mut editor = Editor::new(&device, &queue, None);
+        let mut editor = Editor::new(&device, &queue);
         editor.thumbnails = Thumbnails::default();
-        editor.add_raws(vec![
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
-        ]);
-        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(30));
+        editor = crate::editor::tests::complete_document_operation(
+            editor,
+            Duration::from_secs(30),
+            |editor, cx| {
+                editor.add_raws(
+                    vec![
+                        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                            .join("tests/fixtures/raw/patches.dng"),
+                    ],
+                    cx,
+                )
+            },
+        );
         editor.dmin = Some(DVec3::splat(0.8));
         editor.dmax = Some(DVec3::splat(0.02));
         editor.sync_document();
@@ -106,10 +115,16 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             .project
             .save(&saved, crate::project::Save::New)
             .unwrap();
-        editor.start_document(Preparation::New);
-        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(30));
-        editor.start_document(Preparation::Open(saved));
-        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(30));
+        editor = crate::editor::tests::complete_document_operation(
+            editor,
+            Duration::from_secs(30),
+            |editor, cx| editor.start_document(Preparation::New, cx),
+        );
+        editor = crate::editor::tests::complete_document_operation(
+            editor,
+            Duration::from_secs(30),
+            |editor, cx| editor.start_document(Preparation::Open(saved), cx),
+        );
         let id = editor.current_source.unwrap();
         let dirty = editor.document.dirty();
         let recipe = editor.document.project.image_recipe(id).unwrap();
@@ -163,9 +178,10 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
                 "export must not require or warm the viewer cache"
             );
             let path = directory.path().join(name);
-            editor.export(path.clone(), format, Overwrite::Refuse);
-            editor.document.project.output.look = None;
-            editor = wait(editor);
+            editor = wait(editor, |editor, cx| {
+                editor.export(path.clone(), format, Overwrite::Refuse, cx);
+                editor.document.project.output.look = None;
+            });
             editor.document.project.output.look = Some(look.clone());
             assert!(editor.failure.is_none(), "{}", editor.status);
             assert!(path.exists());
@@ -243,12 +259,14 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             "zero exact output coverage, including a hole inside a support rectangle, excludes irrelevant repairs"
         );
         let cropped = directory.path().join("outside-failed-repair.tif");
-        editor.export(
-            cropped.clone(),
-            OutputFormat::Tiff(OutputTarget::Srgb),
-            Overwrite::Refuse,
-        );
-        editor = wait(editor);
+        editor = wait(editor, |editor, cx| {
+            editor.export(
+                cropped.clone(),
+                OutputFormat::Tiff(OutputTarget::Srgb),
+                Overwrite::Refuse,
+                cx,
+            )
+        });
         assert!(editor.failure.is_none(), "{}", editor.status);
         assert_eq!(tiff_pixels(&cropped).len(), 32 * 32 * 3);
         editor
@@ -270,12 +288,14 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             .set_enabled(crate::dust_repair::RepairId(1), false)
             .unwrap();
         let plain = directory.path().join("plain.tif");
-        editor.export(
-            plain.clone(),
-            OutputFormat::Tiff(OutputTarget::Srgb),
-            Overwrite::Refuse,
-        );
-        editor = wait(editor);
+        editor = wait(editor, |editor, cx| {
+            editor.export(
+                plain.clone(),
+                OutputFormat::Tiff(OutputTarget::Srgb),
+                Overwrite::Refuse,
+                cx,
+            )
+        });
         assert!(editor.failure.is_none(), "{}", editor.status);
         assert_ne!(
             tiff_pixels(&plain),
@@ -284,12 +304,14 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
         );
         for (name, precision) in [("half", ExrPrecision::Half), ("full", ExrPrecision::Full)] {
             let plain = directory.path().join(format!("plain-{name}.exr"));
-            editor.export(
-                plain.clone(),
-                OutputFormat::Exr(precision),
-                Overwrite::Refuse,
-            );
-            editor = wait(editor);
+            editor = wait(editor, |editor, cx| {
+                editor.export(
+                    plain.clone(),
+                    OutputFormat::Exr(precision),
+                    Overwrite::Refuse,
+                    cx,
+                )
+            });
             assert!(editor.failure.is_none(), "{}", editor.status);
             let repaired = exr_pixels(
                 &directory.path().join(format!("repaired-{name}.exr")),
@@ -315,12 +337,14 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
                 DonorChoice::Automatic,
             )
             .unwrap();
-        editor.export(
-            before.clone(),
-            OutputFormat::Tiff(OutputTarget::Srgb),
-            Overwrite::Confirmed,
-        );
-        editor = wait(editor);
+        editor = wait(editor, |editor, cx| {
+            editor.export(
+                before.clone(),
+                OutputFormat::Tiff(OutputTarget::Srgb),
+                Overwrite::Confirmed,
+                cx,
+            )
+        });
         assert!(editor.failure.is_some());
         assert!(
             editor.status.contains("repair") && editor.status.contains("donor"),

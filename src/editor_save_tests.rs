@@ -59,8 +59,7 @@ fn live_save_without_backend_or_paint_preserves_later_edits_history_visit_and_so
         });
         app.enter(|e, access| {
             e.roll.exposure = 0.25;
-            e.queue_save(path.clone(), crate::project::Save::New, None);
-            e.start_save_workflow(access);
+            e.save_project(path.clone(), crate::project::Save::New, None, access);
         });
         app.pump();
         assert!(app.read(|e| e.busy && e.document_pending.is_some()));
@@ -102,12 +101,12 @@ fn failed_live_save_preserves_destination_dirty_state_and_guarded_transition() {
     std::fs::write(&path, b"existing destination").unwrap();
     with_application(editor, |app| {
         app.enter(|e, access| {
-            e.queue_save(
+            e.save_project(
                 path.clone(),
                 crate::project::Save::New,
                 Some(crate::editor::Transition::Close),
+                access,
             );
-            e.start_save_workflow(access);
         });
         let accepted = app.read(|e| e.document.project.clone());
         app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
@@ -116,7 +115,7 @@ fn failed_live_save_preserves_destination_dirty_state_and_guarded_transition() {
             assert_eq!(e.document.project, accepted);
             assert!(e.document.dirty());
             assert_eq!(e.transition, Some(crate::editor::Transition::Close));
-            assert!(e.candidate_operation.request.is_none() && !e.allow_close);
+            assert!(e.document_pending.is_none() && !e.allow_close);
             assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::Save);
             assert!(!e.busy && e.tasks.view().is_none());
         });
@@ -133,17 +132,16 @@ fn retiring_queued_write_drops_its_continuation_and_cannot_finish_a_new_operatio
     let path = directory.path().join("retired.antitone");
     with_application(editor, |app| {
         app.enter(|e, access| {
-            e.queue_save(path.clone(), crate::project::Save::New, None);
-            e.start_save_workflow(access);
+            e.save_project(path.clone(), crate::project::Save::New, None, access);
         });
         let retired = app.read(|e| e.document_pending.unwrap());
         app.pump();
-        app.update(|e| e.start_document(Preparation::New));
+        app.enter(|e, cx| e.start_document(Preparation::New, cx));
         let current = app.read(|e| e.document_pending.unwrap());
         app.pump();
         drop(hold);
         pollster::block_on(jobs.run(|| {})).unwrap();
-        app.update(|e| e.save_result(retired, Err("stale write failure".into())));
+        app.enter(|e, cx| e.save_result(retired, Err("stale write failure".into()), cx));
         app.read(|e| {
             assert_eq!(e.document_pending, Some(current));
             assert!(e.busy && e.tasks.view().is_some());
@@ -162,12 +160,12 @@ fn cancelling_the_after_save_decision_does_not_cancel_the_accepted_write_or_clos
     let path = directory.path().join("saved.antitone");
     with_application(editor, |app| {
         app.enter(|e, access| {
-            e.queue_save(
+            e.save_project(
                 path.clone(),
                 crate::project::Save::New,
                 Some(crate::editor::Transition::Close),
+                access,
             );
-            e.start_save_workflow(access);
         });
         app.pump();
         app.update(|e| e.after_save = None);
@@ -177,7 +175,7 @@ fn cancelling_the_after_save_decision_does_not_cancel_the_accepted_write_or_clos
         app.read(|e| {
             assert!(!e.document.dirty());
             assert!(e.after_save.is_none() && e.transition.is_none() && !e.allow_close);
-            assert!(e.candidate_operation.request.is_none());
+            assert!(e.document_pending.is_none());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -201,14 +199,14 @@ fn successful_save_continues_new_open_and_close_without_another_ui_pass() {
         let store = editor.document.cache().clone();
         with_application(editor, |app| {
             let captured = app.enter(|e, access| {
-                e.queue_save(
+                e.save_project(
                     written.clone(),
                     crate::project::Save::New,
                     Some(transition.clone()),
+                    access,
                 );
-                let captured = e.document.project.clone();
-                e.start_save_workflow(access);
-                captured
+
+                e.document.project.clone()
             });
             app.run_until(Duration::from_secs(15), |e| {
                 !e.busy && e.document_pending.is_none()
@@ -257,14 +255,14 @@ fn failed_open_after_successful_save_keeps_the_written_document_without_a_ui_pas
     let missing = directory.path().join("missing.antitone");
     with_application(editor, |app| {
         let accepted = app.enter(|e, access| {
-            e.queue_save(
+            e.save_project(
                 written.clone(),
                 crate::project::Save::New,
                 Some(crate::editor::Transition::Open(missing)),
+                access,
             );
-            let accepted = e.document.project.clone();
-            e.start_save_workflow(access);
-            accepted
+
+            e.document.project.clone()
         });
         app.run_until(Duration::from_secs(15), |e| {
             !e.busy && e.document_pending.is_none()

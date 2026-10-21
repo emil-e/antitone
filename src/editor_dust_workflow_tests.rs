@@ -124,8 +124,7 @@ fn automatic(e: &mut Editor) -> RepairId {
 
 fn start(app: &TestApplication<'_, Editor>) {
     app.enter(|e, access| {
-        e.schedule_dust(e.dust_signature().unwrap());
-        e.start_dust_workflow(access);
+        e.schedule_dust(e.dust_signature().unwrap(), access);
     });
 }
 
@@ -189,7 +188,7 @@ fn actual_failure_is_memoized_without_blocking_later_enabled_repairs() {
     with_application(e, |app| {
         start(app);
         app.run_until(LIMIT, |e| e.document.dust.has_evaluation(source, good));
-        app.update(|e| e.schedule_dust(e.dust_signature().unwrap()));
+        app.enter(|e, cx| e.schedule_dust(e.dust_signature().unwrap(), cx));
         app.read(|e| {
             assert!(!e.document.dust.has_evaluation(source, failed));
             assert!(e.document.dust.pending_request().is_none());
@@ -212,11 +211,11 @@ fn downstream_grading_and_viewport_navigation_keep_running_healing_and_its_captu
         let request = app.read(|e| e.document.dust.pending_request().unwrap());
         app.pump();
         starts.recv_timeout(LIMIT).unwrap();
-        app.update(|e| {
+        app.enter(|e, cx| {
             e.photo.exposure = 1.;
             e.roll.exposure = 2.;
             e.viewport.zoom = Some(2.);
-            e.schedule_dust(e.dust_signature().unwrap());
+            e.schedule_dust(e.dust_signature().unwrap(), cx);
             e.sync_document();
         });
         let edited = app.read(|e| e.document.project.clone());
@@ -242,8 +241,8 @@ fn deleted_running_repair_cannot_publish_or_release_admission_to_its_replacement
         let replacement = app.enter(|e, access| {
             e.reset_dust_repairs(source);
             let id = manual(e, 100);
-            e.schedule_dust(e.dust_signature().unwrap());
-            e.start_dust_workflow(access);
+            e.schedule_dust(e.dust_signature().unwrap(), access);
+
             id
         });
         app.pump();
@@ -256,7 +255,7 @@ fn deleted_running_repair_cannot_publish_or_release_admission_to_its_replacement
         let (entered, observed) = mpsc::channel();
         let probe = app
             .access()
-            .spawn(async move {
+            .spawn(move |_| async move {
                 jobs.run(move || entered.send(()).unwrap()).await.unwrap();
             })
             .unwrap();
@@ -331,8 +330,7 @@ fn source_visit_retirement_cancels_healing_without_promoting_old_evaluations_on_
         starts.recv_timeout(LIMIT).unwrap();
         let old_visit = app.read(|e| e.id);
         app.enter(|e, access| {
-            e.load(path);
-            e.start_source_workflow(access);
+            e.load(path, access);
         });
         app.pump();
         app.read(|e| assert_ne!(e.id, old_visit));

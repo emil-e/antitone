@@ -98,6 +98,7 @@ impl Editor {
     pub(super) fn frame_shortcuts(
         &mut self,
         ui: &mut egui::Ui,
+        cx: &UiContext<'_, Self>,
         file_action: &mut Option<FileAction>,
         fullscreen_was_active: bool,
         dialog_escape_available: bool,
@@ -109,13 +110,14 @@ impl Editor {
                 .unwrap_or(false)
         });
         self.fullscreen_shortcuts(ui, text_was_focused, dialog_escape_available);
-        self.analysis_shortcuts(ui, text_was_focused, dialog_escape_available);
-        self.workspace_shortcuts(ui, file_action, fullscreen_was_active, text_was_focused);
+        self.analysis_shortcuts(ui, cx, text_was_focused, dialog_escape_available);
+        self.workspace_shortcuts(ui, cx, file_action, fullscreen_was_active, text_was_focused);
     }
 
     fn analysis_shortcuts(
         &mut self,
         ui: &mut egui::Ui,
+        cx: &UiContext<'_, Self>,
         text_was_focused: bool,
         dialog_escape_available: bool,
     ) {
@@ -134,7 +136,7 @@ impl Editor {
             && !ui.ctx().egui_wants_keyboard_input()
         {
             if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-                self.finish_pick();
+                self.finish_pick(cx);
             } else {
                 let previous =
                     ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft));
@@ -147,7 +149,7 @@ impl Editor {
                         (self.selected + 1).min(self.document.project.order.len().saturating_sub(1))
                     };
                     if let Some(&id) = self.document.project.order.get(index) {
-                        self.browse_analysis_review(id);
+                        self.browse_analysis_review(id, cx);
                     }
                 }
             }
@@ -157,6 +159,7 @@ impl Editor {
     fn workspace_shortcuts(
         &mut self,
         ui: &mut egui::Ui,
+        cx: &UiContext<'_, Self>,
         file_action: &mut Option<FileAction>,
         fullscreen_was_active: bool,
         text_was_focused: bool,
@@ -186,24 +189,24 @@ impl Editor {
                 self.viewport.fit();
             }
             self.select_active_shortcut(ui.ctx());
-            self.tool_shortcuts(ui);
-            self.selection_shortcuts(ui, file_action);
+            self.tool_shortcuts(ui, cx);
+            self.selection_shortcuts(ui, cx, file_action);
         }
     }
 
-    fn tool_shortcuts(&mut self, ui: &mut egui::Ui) {
+    fn tool_shortcuts(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
         if self.pick.is_some()
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             self.status = "Pick cancelled; processing unchanged".into();
-            self.finish_pick();
+            self.finish_pick(cx);
             self.region = None;
         }
         if self.pick.is_some()
             && self.region.is_some()
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
         {
-            self.apply_pick();
+            self.apply_pick(cx);
         }
         if self.document.visit.crop_edit.is_some() {
             if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
@@ -243,7 +246,12 @@ impl Editor {
         }
     }
 
-    fn selection_shortcuts(&mut self, ui: &mut egui::Ui, file_action: &mut Option<FileAction>) {
+    fn selection_shortcuts(
+        &mut self,
+        ui: &mut egui::Ui,
+        cx: &UiContext<'_, Self>,
+        file_action: &mut Option<FileAction>,
+    ) {
         let adjustment_delete = self.adjustment_owns_delete();
         if adjustment_delete
             && !self.document.visit.adjustments.dragging()
@@ -284,7 +292,7 @@ impl Editor {
                 self.selected
             };
             if index != self.selected {
-                self.select_roll_photo(index, egui::Modifiers::NONE);
+                self.select_roll_photo(index, egui::Modifiers::NONE, cx);
             }
         }
     }
@@ -306,6 +314,7 @@ impl Editor {
     pub(super) fn workspace_chrome(
         &mut self,
         ui: &mut egui::Ui,
+        cx: &UiContext<'_, Self>,
         actions: &mut Actions,
     ) -> Option<presentation::MenuFocus> {
         let mut focus = None;
@@ -353,7 +362,7 @@ impl Editor {
                             .on_hover_text(&self.status);
                     }
                 });
-            self.filmstrip(ui);
+            self.filmstrip(ui, cx);
             if self.removal_pending.is_some() {
                 ui.disable();
             }
@@ -391,6 +400,7 @@ impl Editor {
     pub(super) fn edit_frame_controls(
         &mut self,
         ui: &mut egui::Ui,
+        cx: &UiContext<'_, Self>,
         previous_roll: RollSettings,
         previous_photo: PhotoSettings,
     ) -> (Option<ScopeSlot>, bool) {
@@ -407,7 +417,7 @@ impl Editor {
         ui.ctx()
             .data_mut(|data| data.insert_temp(egui::Id::new("defer-control-resets"), true));
         let controls_photo = (self.tab == 1).then_some(self.current_source).flatten();
-        let controls = self.workspace_controls(ui);
+        let controls = self.workspace_controls(ui, cx);
         self.validate_frame_edits(previous_roll, previous_photo);
         self.record_controls(controls_photo, ui);
         let resets = ui.ctx().data_mut(|data| {
@@ -421,21 +431,25 @@ impl Editor {
                 .map(|reset| editing::Command::Reset(reset_scope, reset)),
         );
         for command in std::mem::take(&mut self.control_commands) {
-            self.apply_control_command(command);
+            self.apply_control_command(command, cx);
             ui.ctx().request_repaint();
         }
         controls
     }
 
-    fn workspace_controls(&mut self, ui: &mut egui::Ui) -> (Option<ScopeSlot>, bool) {
+    fn workspace_controls(
+        &mut self,
+        ui: &mut egui::Ui,
+        cx: &UiContext<'_, Self>,
+    ) -> (Option<ScopeSlot>, bool) {
         if self.fullscreen.is_none() {
             egui::Panel::right("controls")
                 .default_size(315.)
                 .min_size(270.)
-                .show(ui, |ui| self.controls(ui))
+                .show(ui, |ui| self.controls(ui, cx))
                 .inner
         } else {
-            self.hidden_filmstrip(ui);
+            self.hidden_filmstrip(ui, cx);
             (None, false)
         }
     }
@@ -466,19 +480,20 @@ impl Editor {
     pub(super) fn dispatch_frame_actions(
         &mut self,
         ui: &mut egui::Ui,
+        cx: &UiContext<'_, Self>,
         actions: Actions,
         analyze: bool,
     ) {
         let auto_crop = self.auto_crop_requested.take();
         if let Some(action) = actions.file {
             if self.document.visit.mask_edit.is_none() {
-                self.file_action(action);
+                self.file_action(action, cx);
             } else {
                 self.status = "Apply or cancel the mask before a file action".into();
             }
         } else if let Some(format) = actions.export {
             if self.document.visit.mask_edit.is_none() {
-                self.export_dialog(format);
+                self.export_dialog(format, cx);
             } else {
                 self.status = "Apply or cancel the mask before exporting".into();
             }
@@ -488,24 +503,29 @@ impl Editor {
                 self.menus.pending.push_front(action);
                 ui.ctx().request_repaint();
             } else {
-                self.apply_menu_action(action, ui.ctx());
+                self.apply_menu_action(action, ui.ctx(), cx);
             }
         } else if analyze {
             // Inspect the validated, focus-committed Photo state before confirming a reset.
-            self.request_analysis();
+            self.request_analysis(cx);
         } else if let Some(target) = auto_crop {
             self.auto_crop(target);
             ui.ctx().request_repaint();
         }
     }
 
-    pub(super) fn frame_dialogs(&mut self, ui: &mut egui::Ui, dialog_escape_available: bool) {
+    pub(super) fn frame_dialogs(
+        &mut self,
+        ui: &mut egui::Ui,
+        cx: &UiContext<'_, Self>,
+        dialog_escape_available: bool,
+    ) {
         if self.failure.is_some() {
             self.feedback_dialog(ui.ctx(), dialog_escape_available);
             return;
         }
-        self.document_dialogs(ui.ctx(), dialog_escape_available);
-        self.removal_dialog(ui.ctx(), dialog_escape_available);
+        self.document_dialogs(ui.ctx(), dialog_escape_available, cx);
+        self.removal_dialog(ui.ctx(), dialog_escape_available, cx);
         self.adjustment_dialog(ui.ctx(), dialog_escape_available);
         if let Some((path, format)) = self.overwrite.clone() {
             let detail = path.display().to_string();
@@ -525,7 +545,7 @@ impl Editor {
                 Some(presentation::DialogChoice::Cancel) => self.overwrite = None,
                 Some(presentation::DialogChoice::Confirm) => {
                     self.overwrite = None;
-                    self.export(path, format, Overwrite::Confirmed);
+                    self.export(path, format, Overwrite::Confirmed, cx);
                 }
                 _ => {}
             }

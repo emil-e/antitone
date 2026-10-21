@@ -2,7 +2,7 @@
 #[path = "editor_grade_scope_tests.rs"]
 mod tests;
 
-use super::{ProcessingInput, ProcessingSignature, original_view};
+use super::{ProcessingInput, ProcessingSignature};
 
 /// Active photographic content and its purpose-bound original reconstruction.
 /// Published images and reusable constants are retained by their presenters/caches,
@@ -10,7 +10,6 @@ use super::{ProcessingInput, ProcessingSignature, original_view};
 #[derive(Default)]
 pub(super) struct GradeScope {
     processing: Option<ProcessingSignature>,
-    pub request: Option<original_view::Request>,
     pub task: Option<async_executor::Task<()>>,
 }
 
@@ -40,7 +39,7 @@ impl GradeScope {
 impl super::Editor {
     pub(super) fn observe_grade(&mut self, input: &ProcessingInput) {
         if !self.document.visit.grade.matches(input) {
-            self.original.invalidate();
+            self.invalidate_original();
             self.document.visit.grade = GradeScope::new(input);
         }
     }

@@ -121,64 +121,72 @@ fn photo_initialization_removes_only_analyzed_local_records_and_retains_id_histo
 #[test]
 fn any_local_record_adds_an_explicit_reset_warning_to_the_area_review() {
     for index in 0..3 {
-        let mut editor = ready_state();
-        let source = editor
-            .document
-            .project
-            .source_mut(editor.current_source.unwrap())
-            .unwrap();
-        let mut locals = local_records();
-        locals.adjustments = vec![locals.adjustments[index].clone()];
-        source.local_adjustments = Some(locals);
-        editor.sync_document();
-        let before = editor.document.project.clone();
-        editor.request_analysis();
-        review_tests::prepared(&mut editor);
-        assert!(
-            editor
-                .document
-                .analysis_review
-                .as_ref()
-                .unwrap()
-                .replaces_photos,
-            "record {index}"
-        );
-        let ctx = egui::Context::default();
-        super::super::super::tests::app_frame(&mut editor, &ctx, vec![]);
-        let labels = super::super::super::tests::app_frame(&mut editor, &ctx, vec![]);
-        assert!(labels.iter().any(|(label, _)| label == "Tool warning"));
-        editor.end_analysis_review();
-        assert_eq!(editor.document.project, before);
-        assert!(editor.document.analysis_pending.is_none());
+        let editor = ready_state();
+        crate::application::test_support::with_application(editor, |app| {
+            app.enter(|editor, cx| {
+                let source = editor
+                    .document
+                    .project
+                    .source_mut(editor.current_source.unwrap())
+                    .unwrap();
+                let mut locals = local_records();
+                locals.adjustments = vec![locals.adjustments[index].clone()];
+                source.local_adjustments = Some(locals);
+                editor.sync_document();
+                let before = editor.document.project.clone();
+                editor.request_analysis(cx);
+                review_tests::prepared(editor);
+                assert!(
+                    editor
+                        .document
+                        .analysis_review
+                        .as_ref()
+                        .unwrap()
+                        .replaces_photos,
+                    "record {index}"
+                );
+                let ctx = egui::Context::default();
+                super::super::super::tests::app_frame(editor, &ctx, vec![]);
+                let labels = super::super::super::tests::app_frame(editor, &ctx, vec![]);
+                assert!(labels.iter().any(|(label, _)| label == "Tool warning"));
+                editor.end_analysis_review(cx);
+                assert_eq!(editor.document.project, before);
+                assert!(editor.document.analysis_pending.is_none());
+            });
+        });
     }
 }
 
 #[test]
 fn retired_local_records_and_empty_allocator_history_do_not_trigger_reset_warning() {
-    let mut editor = ready_state();
-    let mut retired = editor.document.project.sources[0].clone();
-    retired.id = SourceId(0);
-    retired.path = "retired.ARW".into();
-    retired.local_adjustments = Some(local_records());
-    let id = editor.document.project.add_source(retired).unwrap();
-    editor.document.project.order.retain(|source| *source != id);
-    let mut empty = local_records();
-    empty.adjustments.clear();
-    editor.document.project.sources[0].local_adjustments = Some(empty);
-    editor.sync_document();
-    let before = editor.document.project.clone();
-    editor.request_analysis();
-    review_tests::prepared(&mut editor);
-    assert!(
-        !editor
-            .document
-            .analysis_review
-            .as_ref()
-            .unwrap()
-            .replaces_photos
-    );
-    editor.end_analysis_review();
-    assert_eq!(editor.document.project, before);
+    let editor = ready_state();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            let mut retired = editor.document.project.sources[0].clone();
+            retired.id = SourceId(0);
+            retired.path = "retired.ARW".into();
+            retired.local_adjustments = Some(local_records());
+            let id = editor.document.project.add_source(retired).unwrap();
+            editor.document.project.order.retain(|source| *source != id);
+            let mut empty = local_records();
+            empty.adjustments.clear();
+            editor.document.project.sources[0].local_adjustments = Some(empty);
+            editor.sync_document();
+            let before = editor.document.project.clone();
+            editor.request_analysis(cx);
+            review_tests::prepared(editor);
+            assert!(
+                !editor
+                    .document
+                    .analysis_review
+                    .as_ref()
+                    .unwrap()
+                    .replaces_photos
+            );
+            editor.end_analysis_review(cx);
+            assert_eq!(editor.document.project, before);
+        });
+    });
 }
 
 #[test]
@@ -215,7 +223,7 @@ fn local_removal_is_installed_only_with_a_successful_current_analysis_candidate(
                 support: rect([12, 12, 800, 600]),
             })))
         };
-        editor.analysis_result(id, result);
+        editor.analysis_result(id, result, &crate::application::UiContext::render_only());
         if mode == 3 {
             let source = editor
                 .document

@@ -112,7 +112,7 @@ fn bar_and_canvas_are_stable_across_tools_source_quality_loading_and_errors() {
         let fit = before.iter().find(|(s, _)| s == "Fit").unwrap().1;
         assert!(fit.top() >= canvas.bottom());
         for pick in [Pick::Dmin, Pick::Dmax, Pick::Gamma, Pick::Wb, Pick::Flat] {
-            editor.begin_pick(pick);
+            editor.begin_pick(pick, &crate::application::UiContext::render_only());
             warm(&mut editor, &context, size);
             assert_eq!(editor.last_layout.unwrap().0.canvas, canvas, "{pick:?}");
             assert_eq!(
@@ -123,7 +123,7 @@ fn bar_and_canvas_are_stable_across_tools_source_quality_loading_and_errors() {
                     .1,
                 fit
             );
-            editor.finish_pick();
+            editor.finish_pick(&crate::application::UiContext::render_only());
         }
         editor.begin_crop();
         warm(&mut editor, &context, size);
@@ -163,123 +163,128 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
         egui::vec2(800., 600.),
         egui::vec2(700., 600.),
     ] {
-        let mut editor = fixture();
-        add_ready_fixture(&mut editor);
-        let context = egui::Context::default();
-        for pick in [
-            Pick::Dmin,
-            Pick::Dmax,
-            Pick::Gamma,
-            Pick::RollWb,
-            Pick::Wb,
-            Pick::Analysis,
-        ] {
-            editor.begin_pick(pick);
-            for tab in 0..3 {
-                editor.tab = tab;
-                warm(&mut editor, &context, size);
-                let canvas = editor
-                    .document
-                    .visit
-                    .crop_edit
-                    .as_ref()
-                    .and_then(|edit| edit.layout)
-                    .or(editor.last_layout.map(|(layout, _)| layout))
-                    .unwrap()
-                    .canvas;
-                let output = frame(&mut editor, &context, size, vec![]);
-                for name in ["Cancel", "Apply"] {
-                    let bounds = output
-                        .platform_output
-                        .accesskit_update
-                        .as_ref()
-                        .unwrap()
-                        .nodes
-                        .iter()
-                        .find(|(_, node)| node.label() == Some(name))
-                        .unwrap()
-                        .1
-                        .bounds()
-                        .unwrap();
-                    assert_eq!(bounds.y1 - bounds.y0, 28.);
-                    assert!(bounds.y0 as f32 >= canvas.bottom());
-                    assert!(bounds.x1 as f32 <= canvas.right() + 4.);
-                }
-                let text = ui_labels(output);
-                let title = match pick {
-                    Pick::Dmin => "Dmin",
-                    Pick::Dmax => "Dmax",
-                    Pick::Gamma => "Gamma neutral",
-                    Pick::RollWb => "Roll WB neutral",
-                    Pick::Wb => "WB neutral",
-                    Pick::Analysis => "Picture area",
-                    Pick::Flat => unreachable!(),
-                };
-                let marking = title.to_uppercase();
-                let identity = text
-                    .iter()
-                    .find(|(s, rect)| s == &marking && rect.top() >= canvas.bottom())
-                    .unwrap()
-                    .1;
-                assert!(
-                    text.iter().find(|(s, _)| s == "Cancel").unwrap().1.left() - identity.right()
-                        >= 11.5
-                );
-                assert!(
-                    !text
-                        .iter()
-                        .any(|(s, rect)| s == &marking && canvas.contains_rect(*rect))
-                );
-                for name in ["Cancel", "Apply"] {
-                    let rect = text.iter().find(|(s, _)| s == name).unwrap().1;
-                    assert!(
-                        rect.top() >= canvas.bottom(),
-                        "{size:?} {pick:?} {tab}: {name} {rect:?} / {canvas:?}"
-                    );
-                    assert_eq!(text.iter().filter(|(s, _)| s == name).count(), 1);
-                }
-                for name in ["Details", "Choose reference RAW…", "current.ARW"] {
-                    assert!(
-                        !text
+        let editor = fixture();
+        crate::application::test_support::with_application(editor, |app| {
+            app.enter(|editor, cx| {
+                add_ready_fixture(editor);
+                let context = egui::Context::default();
+                for pick in [
+                    Pick::Dmin,
+                    Pick::Dmax,
+                    Pick::Gamma,
+                    Pick::RollWb,
+                    Pick::Wb,
+                    Pick::Analysis,
+                ] {
+                    editor.begin_pick(pick, cx);
+                    for tab in 0..3 {
+                        editor.tab = tab;
+                        warm(editor, &context, size);
+                        let canvas = editor
+                            .document
+                            .visit
+                            .crop_edit
+                            .as_ref()
+                            .and_then(|edit| edit.layout)
+                            .or(editor.last_layout.map(|(layout, _)| layout))
+                            .unwrap()
+                            .canvas;
+                        let output = frame(editor, &context, size, vec![]);
+                        for name in ["Cancel", "Apply"] {
+                            let bounds = output
+                                .platform_output
+                                .accesskit_update
+                                .as_ref()
+                                .unwrap()
+                                .nodes
+                                .iter()
+                                .find(|(_, node)| node.label() == Some(name))
+                                .unwrap()
+                                .1
+                                .bounds()
+                                .unwrap();
+                            assert_eq!(bounds.y1 - bounds.y0, 28.);
+                            assert!(bounds.y0 as f32 >= canvas.bottom());
+                            assert!(bounds.x1 as f32 <= canvas.right() + 4.);
+                        }
+                        let text = ui_labels(output);
+                        let title = match pick {
+                            Pick::Dmin => "Dmin",
+                            Pick::Dmax => "Dmax",
+                            Pick::Gamma => "Gamma neutral",
+                            Pick::RollWb => "Roll WB neutral",
+                            Pick::Wb => "WB neutral",
+                            Pick::Analysis => "Picture area",
+                            Pick::Flat => unreachable!(),
+                        };
+                        let marking = title.to_uppercase();
+                        let identity = text
                             .iter()
-                            .any(|(s, rect)| s == name && canvas.contains_rect(*rect))
-                    );
-                }
-                let cancel = text.iter().find(|(s, _)| s == "Cancel").unwrap().1;
-                let apply = text.iter().find(|(s, _)| s == "Apply").unwrap().1;
-                assert_eq!(cancel.center().y, apply.center().y);
-                assert!(cancel.right() < apply.left());
-                assert!(apply.right() - cancel.left() < 120.);
-                assert_eq!(identity.center().y, cancel.center().y);
-                let tint = context
-                    .global_style()
-                    .visuals
-                    .selection
-                    .bg_fill
-                    .linear_multiply(0.15);
-                let output = frame(&mut editor, &context, size, vec![]);
-                assert!(
-                    output
-                        .platform_output
-                        .accesskit_update
-                        .as_ref()
-                        .unwrap()
-                        .nodes
-                        .iter()
-                        .any(|(_, node)| node.value()
-                            == Some(format!("Active tool: {title}").as_str()))
-                );
-                assert!(output.shapes.iter().any(|shape| match &shape.shape {
-                    egui::Shape::Rect(rect) => {
-                        rect.fill == tint
-                            && rect.rect.contains_rect(identity)
-                            && rect.rect.contains_rect(apply)
+                            .find(|(s, rect)| s == &marking && rect.top() >= canvas.bottom())
+                            .unwrap()
+                            .1;
+                        assert!(
+                            text.iter().find(|(s, _)| s == "Cancel").unwrap().1.left()
+                                - identity.right()
+                                >= 11.5
+                        );
+                        assert!(
+                            !text
+                                .iter()
+                                .any(|(s, rect)| s == &marking && canvas.contains_rect(*rect))
+                        );
+                        for name in ["Cancel", "Apply"] {
+                            let rect = text.iter().find(|(s, _)| s == name).unwrap().1;
+                            assert!(
+                                rect.top() >= canvas.bottom(),
+                                "{size:?} {pick:?} {tab}: {name} {rect:?} / {canvas:?}"
+                            );
+                            assert_eq!(text.iter().filter(|(s, _)| s == name).count(), 1);
+                        }
+                        for name in ["Details", "Choose reference RAW…", "current.ARW"] {
+                            assert!(
+                                !text
+                                    .iter()
+                                    .any(|(s, rect)| s == name && canvas.contains_rect(*rect))
+                            );
+                        }
+                        let cancel = text.iter().find(|(s, _)| s == "Cancel").unwrap().1;
+                        let apply = text.iter().find(|(s, _)| s == "Apply").unwrap().1;
+                        assert_eq!(cancel.center().y, apply.center().y);
+                        assert!(cancel.right() < apply.left());
+                        assert!(apply.right() - cancel.left() < 120.);
+                        assert_eq!(identity.center().y, cancel.center().y);
+                        let tint = context
+                            .global_style()
+                            .visuals
+                            .selection
+                            .bg_fill
+                            .linear_multiply(0.15);
+                        let output = frame(editor, &context, size, vec![]);
+                        assert!(
+                            output
+                                .platform_output
+                                .accesskit_update
+                                .as_ref()
+                                .unwrap()
+                                .nodes
+                                .iter()
+                                .any(|(_, node)| node.value()
+                                    == Some(format!("Active tool: {title}").as_str()))
+                        );
+                        assert!(output.shapes.iter().any(|shape| match &shape.shape {
+                            egui::Shape::Rect(rect) => {
+                                rect.fill == tint
+                                    && rect.rect.contains_rect(identity)
+                                    && rect.rect.contains_rect(apply)
+                            }
+                            _ => false,
+                        }));
                     }
-                    _ => false,
-                }));
-            }
-            editor.finish_pick();
-        }
+                    editor.finish_pick(cx);
+                }
+            });
+        });
     }
 }
 
@@ -326,7 +331,7 @@ fn bar_inspector_and_help_own_pointer_drag_wheel_and_escape_before_the_canvas() 
             editor.scopes.visible = false;
             editor.begin_crop();
         } else {
-            editor.begin_pick(Pick::Wb);
+            editor.begin_pick(Pick::Wb, &crate::application::UiContext::render_only());
         }
         editor.viewport.zoom = Some(2.);
         warm(&mut editor, &context, size);
@@ -530,7 +535,7 @@ fn numeric_enter_and_escape_are_handled_before_picker_or_crop_shortcuts() {
             editor.scopes.visible = false;
             editor.begin_crop();
         } else {
-            editor.begin_pick(Pick::Dmin);
+            editor.begin_pick(Pick::Dmin, &crate::application::UiContext::render_only());
             editor.region = Some(Coverage::rectangle(Rect {
                 x: 20,
                 y: 30,
@@ -670,18 +675,7 @@ fn flat_fixture(editor: &mut Editor) {
         record,
         development: ready.development.clone(),
     };
-    editor.begin_flat_edit(reference.path.clone(), None);
-    assert!(matches!(
-        editor.flat_edit.as_ref().unwrap().request,
-        Some(reference_services::Operation::Preview(_))
-    ));
-    editor.reference_previewed(
-        editor.id,
-        Ok(FlatPreview {
-            ready: reference,
-            region: None,
-        }),
-    );
+    crate::editor::tests::paused_reference_fixture(editor, reference, None);
 }
 
 #[test]
@@ -958,7 +952,7 @@ fn picker_bar_actions_preserve_cancel_and_measurement_transactions() {
             warm(app, &context, size);
             let project = app.read(|editor| editor.document.project.clone());
             let view = app.read(|editor| editor.viewport);
-            app.update(|editor| editor.begin_pick(pick));
+            app.enter(|editor, cx| editor.begin_pick(pick, cx));
             warm(app, &context, size);
             let output = frame(app, &context, size, vec![]);
             assert!(
@@ -985,8 +979,8 @@ fn picker_bar_actions_preserve_cancel_and_measurement_transactions() {
                 assert_eq!(editor.viewport, view);
                 assert_eq!(editor.document.project, project);
             });
-            app.update(|editor| {
-                editor.begin_pick(pick);
+            app.enter(|editor, cx| {
+                editor.begin_pick(pick, cx);
                 let area = editor.document.visit.ready.as_ref().unwrap().area;
                 editor.region = Some(Coverage::rectangle(Rect {
                     x: area.x + 20,
@@ -1031,7 +1025,106 @@ fn picker_bar_actions_preserve_cancel_and_measurement_transactions() {
 }
 
 #[test]
-fn geometry_apply_and_busy_guards_use_the_original_transactions() {
+fn measurement_button_and_enter_register_and_finish_without_the_post_draw_launchers() {
+    use crate::application::test_support::{TestApplication, with_application};
+
+    struct FeatureUi<'frame, 'scope>(&'frame mut TestApplication<'scope, Editor>);
+    impl UiFixture for FeatureUi<'_, '_> {
+        fn ui(&mut self, ui: &mut egui::Ui) {
+            let cx = self.0.access();
+            self.0.update(|editor| editor.draw_ui(ui, &cx));
+        }
+    }
+
+    for enter in [false, true] {
+        let mut editor = fixture();
+        add_ready_fixture(&mut editor);
+        // This proxy fixture's display geometry is larger than its SDK sensor.
+        // Use an eligible sensor interior, also inside the displayed source area.
+        let region = Coverage::rectangle(Rect {
+            x: 20,
+            y: 20,
+            width: 24,
+            height: 24,
+        });
+        let expected = Scan::from_source(
+            editor
+                .document
+                .visit
+                .ready
+                .as_ref()
+                .unwrap()
+                .developed
+                .clone(),
+        )
+        .reference_coverage(region)
+        .unwrap();
+        editor.dmin = Some(expected * 1.05);
+        editor.sync_document();
+        with_application(editor, |app| {
+            let context = egui::Context::default();
+            let size = egui::vec2(800., 600.);
+            let mut feature = FeatureUi(app);
+            warm(&mut feature, &context, size);
+            feature.0.update(|editor| {
+                editor.begin_pick(Pick::Dmin, &crate::application::UiContext::render_only());
+                editor.region = Some(region);
+            });
+            if enter {
+                frame(&mut feature, &context, size, key(egui::Key::Enter));
+            } else {
+                let output = frame(&mut feature, &context, size, vec![]);
+                let nodes = output.platform_output.accesskit_update.unwrap().nodes;
+                let apply = nodes
+                    .iter()
+                    .find(|(_, node)| {
+                        node.role() == egui::accesskit::Role::Button
+                            && node.label() == Some("Apply")
+                    })
+                    .unwrap()
+                    .1
+                    .bounds()
+                    .unwrap();
+                click(
+                    &mut feature,
+                    &context,
+                    size,
+                    egui::pos2(
+                        ((apply.x0 + apply.x1) * 0.5) as f32,
+                        ((apply.y0 + apply.y1) * 0.5) as f32,
+                    ),
+                );
+            }
+            feature.0.read(|editor| {
+                assert!(editor.busy);
+                assert!(
+                    !editor
+                        .document
+                        .visit
+                        .measurement
+                        .as_ref()
+                        .unwrap()
+                        ._task
+                        .is_finished()
+                );
+                assert_eq!(editor.dmin, Some(expected * 1.05));
+            });
+            // This is a real application's first executor turn after input, not
+            // an inert fixture. No other frame or central launch call follows.
+            feature
+                .0
+                .run_until(Duration::from_secs(5), |editor| !editor.busy);
+            feature.0.read(|editor| {
+                assert_eq!(editor.dmin, Some(expected), "{}", editor.status);
+                assert!(editor.pick.is_none() && editor.document.visit.measurement.is_none());
+                assert!(editor.history_label(history::Direction::Undo).is_some());
+            });
+        });
+    }
+}
+
+#[test]
+fn geometry_busy_guards_and_crop_apply_use_the_original_transactions() {
     let size = egui::vec2(800., 600.);
     for cropping in [true, false] {
         let mut editor = fixture();
@@ -1097,23 +1190,18 @@ fn geometry_apply_and_busy_guards_use_the_original_transactions() {
                 .map(|edit| edit.draft),
             draft
         );
-        editor.busy = false;
-        let text = labels(&mut editor, &context, size, vec![]);
-        click(
-            &mut editor,
-            &context,
-            size,
-            text.iter().find(|(s, _)| s == "Apply").unwrap().1.center(),
-        );
+        // Flat Apply is exercised with a live workflow, not a render-only fixture.
         if cropping {
+            editor.busy = false;
+            let text = labels(&mut editor, &context, size, vec![]);
+            click(
+                &mut editor,
+                &context,
+                size,
+                text.iter().find(|(s, _)| s == "Apply").unwrap().1.center(),
+            );
             assert!(editor.document.visit.crop_edit.is_none());
             assert!(editor.viewport.zoom.is_none());
-        } else {
-            assert!(editor.busy);
-            assert!(matches!(
-                editor.flat_edit.as_ref().unwrap().request,
-                Some(reference_services::Operation::Accept(_))
-            ));
         }
     }
 }
@@ -1207,7 +1295,7 @@ fn sampling_rejects_sources_that_are_not_in_the_roll_without_changing_the_pick()
         .document
         .register_reference(reference, development)
         .unwrap();
-    editor.begin_pick(Pick::Dmin);
+    editor.begin_pick(Pick::Dmin, &crate::application::UiContext::render_only());
     editor.region = Some(Coverage::rectangle(Rect {
         x: 20,
         y: 30,
@@ -1222,7 +1310,7 @@ fn sampling_rejects_sources_that_are_not_in_the_roll_without_changing_the_pick()
         editor.document.project.clone(),
     );
     for id in [reference_id, SourceId(u64::MAX)] {
-        editor.pick_roll_source(id);
+        editor.pick_roll_source(id, &UiContext::render_only());
         assert_eq!(
             (
                 editor.current_source,
@@ -1283,7 +1371,7 @@ fn pick_apply_is_present_but_disabled_until_selection_and_while_measuring() {
     let _hold = crate::editor::tests::hold_blocking_work(&editor.workflow_jobs);
     crate::application::test_support::with_application(editor, |app| {
         let context = egui::Context::default();
-        app.update(|editor| editor.begin_pick(Pick::Gamma));
+        app.enter(|editor, cx| editor.begin_pick(Pick::Gamma, cx));
         warm(app, &context, size);
         let output = frame(app, &context, size, vec![]);
         let apply = output

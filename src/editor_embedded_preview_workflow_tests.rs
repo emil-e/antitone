@@ -41,9 +41,12 @@ fn editor(document: Document, services: Services) -> Editor {
     editor
         .thumbnails
         .bind_sources(editor.document.cache().clone());
-    let visible = wanted(&editor.document);
-    editor.thumbnails.embedded.request_visible(&visible, true);
     editor
+}
+
+fn request(editor: &mut Editor, cx: &UiContext<'_, Editor>, context: &egui::Context) {
+    let visible = wanted(&editor.document);
+    editor.request_embedded_previews(&visible, true, context, cx);
 }
 
 fn controlled() -> (Services, mpsc::Receiver<Work>) {
@@ -69,7 +72,7 @@ fn visible_authored_previews_advance_and_install_without_another_paint() {
     let editor = editor(document, Services::new());
     let context = egui::Context::default();
     with_application(editor, |app| {
-        app.enter(|editor, access| editor.start_embedded_workflow(access, &context));
+        app.enter(|editor, access| request(editor, access, &context));
         app.run_until(Duration::from_secs(5), |editor| {
             editor.document.embedded_preview.is_none()
         });
@@ -88,9 +91,7 @@ fn visible_authored_previews_advance_and_install_without_another_paint() {
 #[test]
 fn composed_editor_registers_visible_demand_then_uses_completed_camera_textures() {
     let (document, _directory) = document(2);
-    let mut editor = editor(document, Services::new());
-    // Demand must originate in the composed filmstrip, not this fixture's helper.
-    editor.thumbnails.embedded.reset_demand();
+    let editor = editor(document, Services::new());
     let context = egui::Context::default();
     with_application(editor, |app| {
         for _ in 0..4 {
@@ -157,7 +158,7 @@ fn document_retirement_drops_publication_but_private_producer_retains_serial_adm
     let editor = editor(first, services);
     let context = egui::Context::default();
     with_application(editor, |app| {
-        app.enter(|editor, access| editor.start_embedded_workflow(access, &context));
+        app.enter(|editor, access| request(editor, access, &context));
         app.pump();
         let first = requests.recv_timeout(Duration::from_secs(5)).unwrap();
         app.enter(|editor, access| {
@@ -165,8 +166,7 @@ fn document_retirement_drops_publication_but_private_producer_retains_serial_adm
             editor
                 .thumbnails
                 .bind_sources(editor.document.cache().clone());
-            editor.thumbnails.embedded.request_visible(&next, true);
-            editor.start_embedded_workflow(access, &context);
+            editor.request_embedded_previews(&next, true, &context, access);
         });
         app.pump();
         assert!(first.cancelled.load(Ordering::Relaxed));
@@ -222,7 +222,7 @@ fn application_retirement_signals_stop_without_releasing_private_producer_admiss
     let editor = editor(document, services);
     let context = egui::Context::default();
     with_application(editor, |app| {
-        app.enter(|editor, access| editor.start_embedded_workflow(access, &context));
+        app.enter(|editor, access| request(editor, access, &context));
         app.pump();
         let work = requests.recv_timeout(Duration::from_secs(5)).unwrap();
         app.close_execution();
@@ -248,7 +248,7 @@ fn closed_worker_acknowledges_current_demand_without_paint_or_retries() {
     let editor = editor(document, services);
     let context = egui::Context::default();
     with_application(editor, |app| {
-        app.enter(|editor, access| editor.start_embedded_workflow(access, &context));
+        app.enter(|editor, access| request(editor, access, &context));
         app.pump();
         let work = requests.recv_timeout(Duration::from_secs(5)).unwrap();
         drop(work);
@@ -260,7 +260,7 @@ fn closed_worker_acknowledges_current_demand_without_paint_or_retries() {
             assert_eq!(editor.thumbnails.embedded.entries.len(), 1);
             assert!(editor.thumbnails.embedded.entries[0].1.is_none());
         });
-        app.enter(|editor, access| editor.start_embedded_workflow(access, &context));
+        app.enter(|editor, access| request(editor, access, &context));
         app.pump();
         assert!(requests.try_recv().is_err());
     });
@@ -273,7 +273,7 @@ fn cancelled_preview_is_not_memoised_as_missing_and_can_be_requested_again() {
     let editor = editor(document, services);
     let context = egui::Context::default();
     with_application(editor, |app| {
-        app.enter(|editor, access| editor.start_embedded_workflow(access, &context));
+        app.enter(|editor, access| request(editor, access, &context));
         app.pump();
         let work = requests.recv_timeout(Duration::from_secs(5)).unwrap();
         app.update(|editor| {
@@ -294,9 +294,7 @@ fn cancelled_preview_is_not_memoised_as_missing_and_can_be_requested_again() {
                 editor.thumbnails.limits,
                 memory::Pressure::Normal,
             ));
-            let visible = wanted(&editor.document);
-            editor.thumbnails.embedded.request_visible(&visible, true);
-            editor.start_embedded_workflow(access, &context);
+            request(editor, access, &context);
         });
         app.pump();
         finish(requests.recv_timeout(Duration::from_secs(5)).unwrap());

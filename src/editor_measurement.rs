@@ -70,8 +70,7 @@ impl Input {
 
 pub(super) struct Pending {
     pub kind: Pick,
-    pub request: Option<Input>,
-    pub _task: Option<async_executor::Task<()>>,
+    pub _task: async_executor::Task<()>,
 }
 
 impl Editor {
@@ -90,56 +89,41 @@ impl Editor {
         })
     }
 
-    pub(super) fn queue_measurement(&mut self, kind: Pick, region: Coverage) {
+    pub(super) fn start_measurement(
+        &mut self,
+        kind: Pick,
+        region: Coverage,
+        cx: &crate::application::UiContext<'_, Self>,
+    ) {
         if self.document.visit.measurement.is_some() {
             return;
         }
+        self.thumbnails.cancel();
         let Some(input) = self.measurement_input(kind, region) else {
             self.status = "No developed source for measurement".into();
-            self.finish_pick();
+            self.finish_pick(cx);
             return;
         };
-        self.document.visit.measurement = Some(Pending {
-            kind,
-            request: Some(input),
-            _task: None,
-        });
-        self.tasks
-            .begin(Task::Measurement(self.document.visit.view, kind));
-        self.busy = true;
-        self.status = "Measuring full-resolution patch…".into();
-    }
-
-    pub(super) fn start_measurement_workflow(
-        &mut self,
-        access: &crate::application::UiAccess<'_, Self>,
-    ) {
-        let Some(pending) = &mut self.document.visit.measurement else {
-            return;
-        };
-        let Some(input) = pending.request.take() else {
-            return;
-        };
-        let kind = pending.kind;
         let blocking = self.workflow_jobs.clone();
         let view = self.document.visit.view;
-        let target = access.clone();
-        let Some(task) = access.spawn(async move {
+        let Some(task) = cx.spawn(move |cx| async move {
             let result = blocking
                 .run(move || input.measure())
                 .await
                 .map_err(|_| "Measurement worker panicked".to_owned())
                 .and_then(|result| result.map_err(|error| error.to_string()));
-            target.update(|editor| {
-                editor.measurement_result(view, kind, result);
-                editor.start_source_workflow(&target);
+            cx.update(|editor| {
+                editor.measurement_result(view, kind, result, &cx);
             });
         }) else {
             self.status = "Application stopped".into();
-            self.finish_pick();
+            self.finish_pick(cx);
             return;
         };
-        self.document.visit.measurement.as_mut().unwrap()._task = Some(task);
+        self.document.visit.measurement = Some(Pending { kind, _task: task });
+        self.tasks.begin(Task::Measurement(view, kind));
+        self.busy = true;
+        self.status = "Measuring full-resolution patch…".into();
     }
 
     pub(super) fn cancel_measurement(&mut self) {
@@ -157,6 +141,7 @@ impl Editor {
         view: u64,
         kind: Pick,
         result: Result<Measurement, String>,
+        cx: &crate::application::UiContext<'_, Self>,
     ) {
         if view != self.document.visit.view || self.document_pending.is_some() {
             return;
@@ -202,7 +187,7 @@ impl Editor {
                     .transpose();
                 if let Err(error) = valid {
                     self.status = error.to_string();
-                    self.finish_pick();
+                    self.finish_pick(cx);
                     return;
                 }
                 if kind == Pick::Dmin {
@@ -224,7 +209,7 @@ impl Editor {
                     && let Err(error) = self.validate_processing(cal, roll, photo)
                 {
                     self.status = format!("Pick rejected: {error}");
-                    self.finish_pick();
+                    self.finish_pick(cx);
                     return;
                 }
                 self.roll = roll;
@@ -234,6 +219,6 @@ impl Editor {
             Err(error) => self.status = error,
         }
         self.record_edit(before, "Calibration pick", photo);
-        self.finish_pick();
+        self.finish_pick(cx);
     }
 }

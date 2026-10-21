@@ -1,14 +1,9 @@
-use super::{Document, Prepared, Source, SourceId, document_services, flat::FlatPreview, source};
+use super::{Document, Source, SourceId, document_services, flat::FlatPreview, source};
 use crate::{Error, raw::Rect};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-
-pub(super) enum Operation {
-    Preview(Box<source::Request>),
-    Accept(Box<Acceptance>),
-}
 
 pub(super) struct Acceptance {
     pub region: Rect,
@@ -89,26 +84,21 @@ impl Services {
             .map_err(|error: Error| error.to_string())
     }
 
-    pub async fn accept(
-        self,
+    pub async fn estimate(
+        &self,
         request: Acceptance,
         cancelled: Arc<AtomicBool>,
-    ) -> Result<Prepared, String> {
-        let retired = cancelled.clone();
-        let request = self
-            .0
+    ) -> Result<document_services::Request, String> {
+        self.0
             .jobs
             .run(move || {
-                if retired.load(Ordering::Relaxed) {
+                if cancelled.load(Ordering::Relaxed) {
                     return Err(Error::UnusableSample("reference retired"));
                 }
                 request.estimate()
             })
             .await
             .map_err(|_| "Reference estimation worker panicked".to_owned())?
-            .map_err(|error| error.to_string())?;
-        document_services::PreparationServices(self.0)
-            .prepare(request, cancelled, |_, _| {})
-            .await
+            .map_err(|error| error.to_string())
     }
 }

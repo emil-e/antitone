@@ -19,7 +19,7 @@ pub(super) struct Request {
     pub source: source::Context,
 }
 
-type Signature = (
+pub(super) type Signature = (
     ProcessingSignature,
     OutputTarget,
     Option<ViewRequest>,
@@ -81,6 +81,7 @@ impl OriginalView {
                 *accepted = revision;
             }
         }
+        self.refining = None;
     }
 
     pub fn observe(&mut self, purpose: OriginalPurpose, signature: Signature) {
@@ -110,40 +111,29 @@ impl OriginalView {
             && self.last_edit.elapsed() >= Duration::from_millis(250)
     }
 
-    pub fn schedule(
-        &mut self,
+    pub fn request(
+        &self,
         input: &ProcessingInput,
         target: OutputTarget,
-        scope: &mut super::grade_scope::GradeScope,
-        context: &egui::Context,
         source: source::Context,
-    ) {
-        let Some(signature) = &self.signature else {
-            return;
-        };
+    ) -> Option<Request> {
+        let view = self.signature.as_ref()?.2?;
         let revision = self.revision();
-        let view = signature.2;
-        if self.refining.is_none()
-            && self.settled.is_none()
-            && self.refinement_error != Some(revision)
-            && self.last_edit.elapsed() >= Duration::from_millis(250)
-            && let Some(view) = view
-        {
-            scope.request = Some(Request {
-                revision,
-                generation: self.generation.clone(),
-                input: input.clone(),
-                target,
-                view,
-                source,
-            });
-            self.refining = Some((revision, view));
-        }
         if self.refining.is_some()
-            || self.settled.is_none() && self.refinement_error != Some(revision)
+            || self.settled.is_some()
+            || self.refinement_error == Some(revision)
+            || self.last_edit.elapsed() < Duration::from_millis(250)
         {
-            context.request_repaint_after(Duration::from_millis(50));
+            return None;
         }
+        Some(Request {
+            revision,
+            generation: self.generation.clone(),
+            input: input.clone(),
+            target,
+            view,
+            source,
+        })
     }
 
     pub fn receive(

@@ -14,9 +14,8 @@ fn review(app: &mut TestApplication<'_, Editor>) {
 
 fn confirm(app: &TestApplication<'_, Editor>) {
     app.enter(|e, access| {
-        e.confirm_analysis_review();
+        e.confirm_analysis_review(access);
         assert!(e.document.analysis_pending.is_some(), "{}", e.status);
-        e.start_analysis_workflow(access);
     });
 }
 
@@ -49,7 +48,11 @@ fn reviewed_fit_returns_across_photo_visits_without_paint_and_undoes_support_and
     let mut editor = fixture(scheduler.clone());
     let first = editor.current_source.unwrap();
     let other = editor.document.project.order[1];
-    editor.select_roll_photo(1, egui::Modifiers::COMMAND);
+    editor.select_roll_photo(
+        1,
+        egui::Modifiers::COMMAND,
+        &crate::application::UiContext::render_only(),
+    );
     editor.tab = 2;
     editor.scopes.visible = true;
     editor.viewport.zoom = Some(0.5);
@@ -58,8 +61,7 @@ fn reviewed_fit_returns_across_photo_visits_without_paint_and_undoes_support_and
     with_application(editor, |app| {
         review(app);
         app.enter(|e, access| {
-            e.browse_analysis_review(other);
-            e.start_source_workflow(access);
+            e.browse_analysis_review(other, access);
         });
         app.run_until(LIMIT, |e| !e.busy);
         app.read(|e| {
@@ -86,8 +88,7 @@ fn reviewed_fit_returns_across_photo_visits_without_paint_and_undoes_support_and
             assert!(e.history_label(Direction::Undo).is_some());
         });
         app.enter(|e, access| {
-            e.restore_history(Direction::Undo);
-            e.start_document_workflow(access);
+            e.restore_history(Direction::Undo, access);
         });
         app.run_until(LIMIT, |e| !e.busy);
         app.read(|e| assert_eq!(e.document.project, before));
@@ -118,7 +119,7 @@ fn native_fit_demand_cancellation_preserves_accepted_data_and_cleanup_admission(
         let (entered, observed) = mpsc::channel();
         let probe = app
             .access()
-            .spawn(async move {
+            .spawn(move |_| async move {
                 jobs.run(move || entered.send(()).unwrap()).await.unwrap();
             })
             .unwrap();
@@ -212,8 +213,7 @@ fn new_document_supersedes_a_queued_fit_without_consuming_its_areas_or_history()
         confirm(app);
         app.pump();
         app.enter(|e, access| {
-            e.start_document(Preparation::New);
-            e.start_document_workflow(access);
+            e.start_document(Preparation::New, access);
         });
         app.pump();
         app.read(|e| {

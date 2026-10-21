@@ -32,25 +32,23 @@ fn request(ev: f64) -> (Signature, ProcessingInput) {
 }
 
 #[test]
-fn original_demand_captures_purpose_and_latest_input_and_rejects_stale_completion() {
+fn original_request_is_readonly_and_policy_rejects_departed_completion() {
     let mut owner = OriginalView::new(Arc::default());
-    let mut scope = super::super::grade_scope::GradeScope::default();
-    let context = egui::Context::default();
     let mut retired = None;
     for i in 0..40 {
         let (signature, input) = request(i as f64 / 10.);
         owner.observe(OriginalPurpose::Tool, signature);
         owner.last_edit = std::time::Instant::now() - Duration::from_secs(1);
-        owner.schedule(
-            &input,
-            OutputTarget::Srgb,
-            &mut scope,
-            &context,
-            source_input(),
-        );
-        let captured = scope.request.as_ref().unwrap();
+        let captured = owner
+            .request(&input, OutputTarget::Srgb, source_input())
+            .unwrap();
         assert_eq!(captured.input.signature(), input.signature());
-        assert_eq!(owner.refining.unwrap().0, captured.revision);
+        assert!(
+            owner.refining.is_none(),
+            "building input does not stage work"
+        );
+        // Policy-only producer event; real task registration/retirement has workflow coverage.
+        owner.refining = Some((captured.revision, captured.view));
         retired.get_or_insert(captured.revision);
     }
     let running = owner.refining.unwrap();
@@ -72,9 +70,8 @@ fn ordinary_views_without_working_device_never_become_original_tool_requests() {
             editor.original.last_edit = std::time::Instant::now() - Duration::from_secs(1);
             super::super::tests::app_frame(&mut editor, &context, vec![]);
         }
-        assert!(editor.original.signature.is_none());
-        assert!(editor.original.refining.is_none());
-        assert!(editor.document.visit.grade.request.is_none());
+        assert!(editor.original.signature.is_none() && editor.original.refining.is_none());
+        assert!(editor.document.visit.grade.task.is_none());
     }
 }
 
@@ -96,33 +93,25 @@ fn leaving_unbuilt_reference_releases_idle_authority_without_revision_churn() {
 #[test]
 fn original_failure_latches_once_and_rejects_unrequested_completions() {
     let mut owner = OriginalView::new(Arc::default());
-    let mut scope = super::super::grade_scope::GradeScope::default();
     let (signature, input) = request(0.);
     owner.observe(OriginalPurpose::Tool, signature);
     owner.last_edit = std::time::Instant::now() - Duration::from_secs(1);
-    let context = egui::Context::default();
-    owner.schedule(
-        &input,
-        OutputTarget::Srgb,
-        &mut scope,
-        &context,
-        source_input(),
-    );
-    let revision = scope.request.take().unwrap().revision;
+    let captured = owner
+        .request(&input, OutputTarget::Srgb, source_input())
+        .unwrap();
+    let revision = captured.revision;
+    owner.refining = Some((revision, captured.view));
     assert_eq!(
         owner
             .receive(revision, Err("source unavailable".into()))
             .as_deref(),
         Some("Original view failed: source unavailable")
     );
-    owner.schedule(
-        &input,
-        OutputTarget::Srgb,
-        &mut scope,
-        &context,
-        source_input(),
+    assert!(
+        owner
+            .request(&input, OutputTarget::Srgb, source_input())
+            .is_none()
     );
-    assert!(scope.request.is_none());
     assert!(owner.receive(revision, Ok(None)).is_none());
     assert_eq!(owner.refinement_error, Some(revision));
 }

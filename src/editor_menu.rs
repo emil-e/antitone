@@ -274,14 +274,19 @@ impl Editor {
         events
     }
 
-    pub(super) fn apply_menu_action(&mut self, action: Action, context: &egui::Context) {
+    pub(super) fn apply_menu_action(
+        &mut self,
+        action: Action,
+        context: &egui::Context,
+        cx: &UiContext<'_, Self>,
+    ) {
         use Action::*;
         if !self.history_menu_input_available(action, context) {
             return;
         }
         match action {
-            Undo => self.restore_history(history::Direction::Undo),
-            Redo => self.restore_history(history::Direction::Redo),
+            Undo => self.restore_history(history::Direction::Undo, cx),
+            Redo => self.restore_history(history::Direction::Redo, cx),
             About => self.menus.panel = Some(presentation::AppPanel::About),
             Settings => self.menus.panel = Some(presentation::AppPanel::Settings),
             Help => self.menus.panel = Some(presentation::AppPanel::Help),

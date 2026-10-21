@@ -94,11 +94,7 @@ fn system_quit_joins_one_dirty_decision_and_cancel_retires_it_without_mutation()
     );
     assert!(!editor.allow_close);
     assert_eq!(editor.document.project, before);
-    assert!(
-        editor.candidate_operation.request.is_none()
-            && editor.document.write.request.is_none()
-            && editor.export_operation.request.is_none()
-    );
+    assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
 }
 
 #[test]
@@ -119,7 +115,7 @@ fn a_clean_system_quit_approves_without_saving_again() {
         Some(host::QuitState::Approved)
     );
     assert!(editor.allow_close && !editor.document.dirty());
-    assert!(editor.document.write.request.is_none());
+    assert!(editor.document_pending.is_none());
 }
 
 #[test]
@@ -144,76 +140,66 @@ fn blocked_system_quit_never_accepts_a_tool_or_replaces_an_existing_decision() {
         assert_eq!(editor.document.project, before);
         assert_eq!(editor.pick, (gate == 1).then_some(Pick::Dmin));
         assert_eq!(editor.transition, (gate == 2).then_some(Transition::New));
-        assert!(
-            editor.candidate_operation.request.is_none()
-                && editor.document.write.request.is_none()
-                && editor.export_operation.request.is_none()
-        );
+        assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
     }
 }
 
 #[test]
 fn system_quit_waits_for_save_success_and_cannot_approve_a_failed_or_stale_save() {
     for success in [false, true] {
-        let (mut editor, context) = initialized();
+        let (editor, context) = initialized();
+        let mut editor = super::super::tests::with_document_services(editor);
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("saved.antitone");
         *editor.document = editor
             .document
             .save(&path, crate::project::Save::New)
             .unwrap();
+        if !success {
+            std::fs::remove_file(&path).unwrap();
+            std::fs::create_dir(&path).unwrap();
+        }
         editor.roll.exposure = 0.25;
         editor.sync_document();
         let before = editor.document.project.clone();
-        host::App::request_quit(&mut editor);
-        frame(&mut editor, &context, vec![]);
-        click(&mut editor, &context, "Save changes");
-        assert_eq!(
-            host::App::quit_state(&editor),
-            Some(host::QuitState::Pending)
-        );
-        assert!(!editor.allow_close);
-        let request = editor.document_pending.unwrap();
-        let crate::editor::document_services::Write {
-            document: snapshot,
-            path: destination,
-            policy,
-            ..
-        } = editor.document.write.request.take().unwrap();
-        editor.save_result(request + 1, Err("stale save failure".into()));
-        assert_eq!(
-            host::App::quit_state(&editor),
-            Some(host::QuitState::Pending)
-        );
-        let result = if success {
-            Ok(Box::new(snapshot.save(&destination, policy).unwrap()))
-        } else {
-            Err("fixture write failure".into())
-        };
-        editor.save_result(request, result);
-        if success {
-            assert_eq!(
-                host::App::quit_state(&editor),
-                Some(host::QuitState::Approved)
-            );
-            assert!(!editor.document.dirty());
-            let presented = frame(&mut editor, &context, vec![]);
-            assert!(presented.viewport_output.values().any(|viewport| {
-                viewport
-                    .commands
-                    .iter()
-                    .any(|command| matches!(command, egui::ViewportCommand::Close))
-            }));
-        } else {
-            assert_eq!(
-                host::App::quit_state(&editor),
-                Some(host::QuitState::Running)
-            );
-            assert!(!editor.allow_close && editor.document.dirty());
-            assert_eq!(editor.document.project, before);
-            assert!(editor.failure.is_some());
-        }
-        assert!(editor.candidate_operation.request.is_none());
+        crate::application::test_support::with_application(editor, |app| {
+            app.update(host::App::request_quit);
+            frame(app, &context, vec![]);
+            click(app, &context, "Save changes");
+            let request = app.read(|e| {
+                assert_eq!(host::App::quit_state(e), Some(host::QuitState::Pending));
+                assert!(!e.allow_close);
+                e.document_pending.unwrap()
+            });
+            app.enter(|e, cx| e.save_result(request + 1, Err("stale save failure".into()), cx));
+            app.read(|e| {
+                assert_eq!(host::App::quit_state(e), Some(host::QuitState::Pending));
+                assert_eq!(e.document_pending, Some(request));
+            });
+            app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
+            if success {
+                app.read(|e| {
+                    assert_eq!(host::App::quit_state(e), Some(host::QuitState::Approved));
+                    assert!(!e.document.dirty() && e.failure.is_none());
+                });
+                assert_eq!(crate::project::Project::load(&path).unwrap(), before);
+                let presented = frame(app, &context, vec![]);
+                assert!(presented.viewport_output.values().any(|viewport| {
+                    viewport
+                        .commands
+                        .iter()
+                        .any(|command| matches!(command, egui::ViewportCommand::Close))
+                }));
+            } else {
+                app.read(|e| {
+                    assert_eq!(host::App::quit_state(e), Some(host::QuitState::Running));
+                    assert!(!e.allow_close && e.document.dirty());
+                    assert_eq!(e.document.project, before);
+                    assert!(e.failure.is_some());
+                });
+                assert!(path.is_dir());
+            }
+        });
     }
 }
 
@@ -235,9 +221,5 @@ fn cancelling_project_replacement_retires_the_native_close_continuation() {
     );
     assert!(!editor.allow_close);
     assert_eq!(std::fs::read(destination).unwrap(), b"existing project");
-    assert!(
-        editor.candidate_operation.request.is_none()
-            && editor.document.write.request.is_none()
-            && editor.export_operation.request.is_none()
-    );
+    assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
 }

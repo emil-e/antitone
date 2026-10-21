@@ -21,7 +21,6 @@ pub(super) enum Source {
 pub(super) struct Pending {
     pub id: u64,
     pub cancel: Arc<AtomicBool>,
-    pub source: Option<Source>,
     pub task: Option<async_executor::Task<()>>,
 }
 
@@ -193,23 +192,6 @@ impl Editor {
             .look_failure(id)
     }
 
-    pub(super) fn begin_look(&mut self, source: Source) {
-        if self.busy && self.document.look.is_none() {
-            return;
-        }
-        self.document.look = None;
-        let id = self.request_id();
-        let cancel = Arc::new(AtomicBool::new(false));
-        self.document.look = Some(Pending {
-            id,
-            cancel,
-            source: Some(source),
-            task: None,
-        });
-        self.busy = true;
-        self.tasks.begin(Task::Look(id));
-    }
-
     pub(super) fn cancel_look(&mut self) {
         if let Some(pending) = &self.document.look {
             pending.cancel.store(true, Ordering::Relaxed);
@@ -230,7 +212,7 @@ impl Editor {
         if self.document.project.output.look.is_some() {
             let before = self.history_snapshot();
             self.document.project.output.look = None;
-            self.original.invalidate();
+            self.invalidate_original();
             self.record_edit(before, "Creative look", None);
         }
         self.resolve_failure(FailureKind::Look);
@@ -254,7 +236,7 @@ impl Editor {
                 let before = self.history_snapshot();
                 self.document.project.output.look = Some(asset);
                 self.remember_current_look();
-                self.original.invalidate();
+                self.invalidate_original();
                 self.record_edit(before, "Creative look", None);
                 self.resolve_failure(FailureKind::Look);
                 self.resolve_failure(FailureKind::LookRendering);
@@ -264,7 +246,7 @@ impl Editor {
         }
     }
 
-    pub(super) fn look_controls(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn look_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
         let allowed = (!self.busy || self.document.look.is_some())
             && self.document.visit.crop_edit.is_none()
             && self.document.auto_crop_edit.is_none()
@@ -388,7 +370,7 @@ impl Editor {
             choice = Some(Source::Imported(path));
         }
         if let Some(source) = choice {
-            self.begin_look(source);
+            self.begin_look(source, cx);
         }
     }
 }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::application::test_support::with_application;
 
 #[test]
 fn project_save_names_use_antitone_without_duplicating_legacy_suffixes() {
@@ -90,37 +91,42 @@ fn click(
 
 #[test]
 fn cancel_preserves_the_document_and_discard_dispatches_the_guarded_transition() {
-    let mut editor = fixture();
+    let editor = fixture();
+    let before = editor.document.project.clone();
     let context = egui::Context::default();
-    ui_frame(&mut editor, &context, vec![]);
-    editor.guard_transition(Transition::New);
-    ui_frame(&mut editor, &context, vec![]);
-    let modal = ui_frame(&mut editor, &context, vec![]);
-    let cancel = modal
-        .iter()
-        .find(|(label, _)| label == "Cancel")
-        .unwrap()
-        .1
-        .center();
-    click(&mut editor, &context, cancel);
-    assert!(editor.transition.is_none());
-    assert!(
-        editor.candidate_operation.request.is_none()
-            && editor.document.write.request.is_none()
-            && editor.export_operation.request.is_none()
-    );
-    editor.guard_transition(Transition::New);
-    ui_frame(&mut editor, &context, vec![]);
-    let modal = ui_frame(&mut editor, &context, vec![]);
-    let discard = modal
-        .iter()
-        .find(|(label, _)| label == "Discard changes")
-        .unwrap()
-        .1
-        .center();
-    click(&mut editor, &context, discard);
-    let work = editor.candidate_operation.request.take().unwrap();
-    assert!(matches!(work.work, Preparation::New));
+    with_application(editor, |app| {
+        ui_frame(app, &context, vec![]);
+        app.enter(|e, cx| e.guard_transition(Transition::New, cx));
+        ui_frame(app, &context, vec![]);
+        let modal = ui_frame(app, &context, vec![]);
+        let cancel = modal
+            .iter()
+            .find(|(label, _)| label == "Cancel")
+            .unwrap()
+            .1
+            .center();
+        click(app, &context, cancel);
+        app.read(|e| {
+            assert!(e.transition.is_none() && e.document_pending.is_none());
+            assert_eq!(e.document.project, before);
+        });
+        app.enter(|e, cx| e.guard_transition(Transition::New, cx));
+        ui_frame(app, &context, vec![]);
+        let modal = ui_frame(app, &context, vec![]);
+        let discard = modal
+            .iter()
+            .find(|(label, _)| label == "Discard changes")
+            .unwrap()
+            .1
+            .center();
+        click(app, &context, discard);
+        assert!(app.read(|e| e.busy && e.document_pending.is_some()));
+        app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
+        app.read(|e| {
+            assert_eq!(e.document.project, crate::project::Project::default());
+            assert!(e.failure.is_none() && !e.document.dirty());
+        });
+    });
 }
 
 #[test]
@@ -192,115 +198,120 @@ fn numeric_save(route: SaveInput) {
         host::App::native_menu_installed(&mut editor);
     }
     let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("numeric.antitone");
     *editor.document = editor
         .document
-        .save(
-            &directory.path().join("numeric.antitone"),
-            crate::project::Save::New,
-        )
+        .save(&path, crate::project::Save::New)
         .unwrap();
+    let id = editor.current_source.unwrap();
     editor.tab = 1;
-    // Keep the pending Exposure edit visible; scrolling is unrelated to this contract.
     for section in ["photo-white-balance", "photo-contrast", "photo-saturation"] {
         editor.preferences.sections.insert(section.into(), false);
     }
     let context = egui::Context::default();
-    for _ in 0..12 {
-        ui_frame(&mut editor, &context, Vec::new());
-    }
-    let shapes = ui_frame(&mut editor, &context, vec![]);
-    let exposure = shapes
-        .iter()
-        .find(|(label, _)| label == "Exposure")
-        .unwrap()
-        .1;
-    let number = shapes
-        .iter()
-        .filter(|(label, rect)| label.contains("0.00") && rect.min.y >= exposure.min.y)
-        .min_by(|(_, a), (_, b)| a.min.y.total_cmp(&b.min.y))
-        .unwrap()
-        .1
-        .center();
-    click(&mut editor, &context, number);
-    assert!(
-        context.text_edit_focused(),
-        "numeric field was not focused: {shapes:?}"
-    );
-    ui_frame(
-        &mut editor,
-        &context,
-        vec![egui::Event::Text(
-            if matches!(
-                route,
-                SaveInput::PasteThenSave | SaveInput::PasteThenSystemQuit
-            ) {
-                "1.25"
-            } else {
-                "7.123456789"
-            }
-            .into(),
-        )],
-    );
-    assert_eq!(editor.photo.exposure, 0.);
-    use crate::platform::menu::Action;
-    let events = match route {
-        SaveInput::NativeMenu => {
-            host::App::menu_action(&mut editor, Action::Save);
-            vec![]
+    with_application(editor, |app| {
+        for _ in 0..12 {
+            ui_frame(app, &context, vec![]);
         }
-        SaveInput::PasteThenSave => {
-            for action in [Action::SelectAll, Action::Paste, Action::Save] {
-                host::App::menu_action(&mut editor, action);
-            }
-            host::App::menu_input(&mut editor, Some("7.123456789".into()))
-        }
-        SaveInput::PasteThenSystemQuit => {
-            for action in [Action::SelectAll, Action::Paste, Action::Settings] {
-                host::App::menu_action(&mut editor, action);
-            }
-            host::App::request_quit(&mut editor);
-            host::App::menu_input(&mut editor, Some("7.123456789".into()))
-        }
-        SaveInput::Shortcut => vec![egui::Event::Key {
-            key: egui::Key::S,
-            physical_key: None,
-            pressed: true,
-            repeat: false,
-            modifiers: egui::Modifiers::COMMAND,
-        }],
-    };
-    ui_frame(&mut editor, &context, events);
-    if !matches!(route, SaveInput::NativeMenu) {
-        ui_frame(&mut editor, &context, vec![]);
-    }
-    if matches!(route, SaveInput::PasteThenSystemQuit) {
-        assert_eq!(editor.transition, Some(Transition::Close));
-        assert_eq!(
-            host::App::quit_state(&editor),
-            Some(host::QuitState::Pending)
-        );
-        assert!(!editor.allow_close);
-        let shapes = ui_frame(&mut editor, &context, vec![]);
-        let save = shapes
+        let shapes = ui_frame(app, &context, vec![]);
+        let exposure = shapes
             .iter()
-            .find(|(label, _)| label == "Save changes")
+            .find(|(label, _)| label == "Exposure")
+            .unwrap()
+            .1;
+        let number = shapes
+            .iter()
+            .filter(|(label, rect)| label.contains("0.00") && rect.min.y >= exposure.min.y)
+            .min_by(|(_, a), (_, b)| a.min.y.total_cmp(&b.min.y))
             .unwrap()
             .1
             .center();
-        click(&mut editor, &context, save);
-    }
-    let crate::editor::document_services::Write {
-        document: snapshot, ..
-    } = editor.document.write.request.take().unwrap();
-    assert_eq!(
-        snapshot
-            .project
-            .source(editor.current_source.unwrap())
-            .unwrap()
-            .photo
-            .exposure,
-        7.123456789
-    );
+        click(app, &context, number);
+        assert!(
+            context.text_edit_focused(),
+            "numeric field was not focused: {shapes:?}"
+        );
+        ui_frame(
+            app,
+            &context,
+            vec![egui::Event::Text(
+                if matches!(
+                    route,
+                    SaveInput::PasteThenSave | SaveInput::PasteThenSystemQuit
+                ) {
+                    "1.25"
+                } else {
+                    "7.123456789"
+                }
+                .into(),
+            )],
+        );
+        assert_eq!(app.read(|e| e.photo.exposure), 0.);
+        use crate::platform::menu::Action;
+        let events = app.update(|e| match route {
+            SaveInput::NativeMenu => {
+                host::App::menu_action(e, Action::Save);
+                vec![]
+            }
+            SaveInput::PasteThenSave => {
+                for action in [Action::SelectAll, Action::Paste, Action::Save] {
+                    host::App::menu_action(e, action);
+                }
+                host::App::menu_input(e, Some("7.123456789".into()))
+            }
+            SaveInput::PasteThenSystemQuit => {
+                for action in [Action::SelectAll, Action::Paste, Action::Settings] {
+                    host::App::menu_action(e, action);
+                }
+                host::App::request_quit(e);
+                host::App::menu_input(e, Some("7.123456789".into()))
+            }
+            SaveInput::Shortcut => vec![egui::Event::Key {
+                key: egui::Key::S,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            }],
+        });
+        ui_frame(app, &context, events);
+        if !matches!(route, SaveInput::NativeMenu) {
+            ui_frame(app, &context, vec![]);
+        }
+        if matches!(route, SaveInput::PasteThenSystemQuit) {
+            app.read(|e| {
+                assert_eq!(e.transition, Some(Transition::Close));
+                assert_eq!(host::App::quit_state(e), Some(host::QuitState::Pending));
+                assert!(!e.allow_close);
+            });
+            let shapes = ui_frame(app, &context, vec![]);
+            let save = shapes
+                .iter()
+                .find(|(label, _)| label == "Save changes")
+                .unwrap()
+                .1
+                .center();
+            click(app, &context, save);
+        }
+        assert!(app.read(|e| e.busy && e.document_pending.is_some()));
+        app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
+        assert_eq!(
+            crate::project::Project::load(&path)
+                .unwrap()
+                .source(id)
+                .unwrap()
+                .photo
+                .exposure,
+            7.123456789
+        );
+        app.read(|e| {
+            assert!(e.failure.is_none() && !e.document.dirty(), "{}", e.status);
+            assert_eq!(
+                e.allow_close,
+                matches!(route, SaveInput::PasteThenSystemQuit)
+            );
+        });
+    });
 }
 
 #[test]
@@ -334,11 +345,7 @@ fn viewport_close_is_vetoed_until_the_dirty_document_decision() {
     );
     assert_eq!(editor.transition, Some(Transition::Close));
     assert!(!editor.allow_close);
-    assert!(
-        editor.candidate_operation.request.is_none()
-            && editor.document.write.request.is_none()
-            && editor.export_operation.request.is_none()
-    );
+    assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
     let mut output = context.run_ui(input, |ui| {
         egui::CentralPanel::default().show(ui, |ui| {
             crate::editor::tests::paint_controller(&mut editor, ui)
@@ -352,11 +359,7 @@ fn viewport_close_is_vetoed_until_the_dirty_document_decision() {
     );
     assert_eq!(editor.transition, Some(Transition::Close));
     assert!(!editor.allow_close);
-    assert!(
-        editor.candidate_operation.request.is_none()
-            && editor.document.write.request.is_none()
-            && editor.export_operation.request.is_none()
-    );
+    assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
 }
 
 #[test]
@@ -373,6 +376,7 @@ fn export_cannot_replace_the_open_project_document() {
         path.clone(),
         OutputFormat::Tiff(OutputTarget::Srgb),
         Overwrite::Confirmed,
+        &UiContext::render_only(),
     );
     assert!(editor.export_operation.pending.is_none());
     assert_eq!(std::fs::read(path).unwrap(), before);
@@ -404,22 +408,14 @@ fn document_and_export_decisions_ignore_outside_clicks_and_cancel_without_dispat
                     || editor.project_overwrite.is_some()
                     || editor.overwrite.is_some()
             );
-            assert!(
-                editor.candidate_operation.request.is_none()
-                    && editor.document.write.request.is_none()
-                    && editor.export_operation.request.is_none()
-            );
+            assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
             ui_frame(&mut editor, &context, key(cancel_key));
             assert!(
                 editor.transition.is_none()
                     && editor.project_overwrite.is_none()
                     && editor.overwrite.is_none()
             );
-            assert!(
-                editor.candidate_operation.request.is_none()
-                    && editor.document.write.request.is_none()
-                    && editor.export_operation.request.is_none()
-            );
+            assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
             assert!(!editor.allow_close && !editor.busy);
             assert_eq!(editor.document.project, before);
             assert_eq!(std::fs::read(path).unwrap(), b"unchanged destination");
@@ -436,67 +432,81 @@ fn save_decision_queues_the_snapshot_with_its_original_continuation() {
         .document
         .save(&path, crate::project::Save::New)
         .unwrap();
+    let id = editor.current_source.unwrap();
     editor.photo.exposure = 1.25;
     let context = egui::Context::default();
-    editor.guard_transition(Transition::Close);
-    ui_frame(&mut editor, &context, vec![]);
-    let labels = ui_frame(&mut editor, &context, vec![]);
-    let point = labels
-        .iter()
-        .find(|(label, _)| label == "Save changes")
-        .unwrap()
-        .1
-        .center();
-    click(&mut editor, &context, point);
-    assert!(editor.transition.is_none());
-    assert_eq!(editor.after_save, Some(Transition::Close));
-    assert!(!editor.allow_close);
-    let crate::editor::document_services::Write {
-        document: snapshot,
-        path: destination,
-        policy,
-        ..
-    } = editor.document.write.request.take().unwrap();
-    assert_eq!(destination, path);
-    assert!(matches!(policy, crate::project::Save::Replace));
-    assert_eq!(snapshot.project, editor.document.project);
-    assert_eq!(
-        snapshot
-            .project
-            .source(editor.current_source.unwrap())
+    with_application(editor, |app| {
+        app.enter(|e, cx| e.guard_transition(Transition::Close, cx));
+        ui_frame(app, &context, vec![]);
+        let labels = ui_frame(app, &context, vec![]);
+        let point = labels
+            .iter()
+            .find(|(label, _)| label == "Save changes")
             .unwrap()
-            .photo
-            .exposure,
-        1.25
-    );
+            .1
+            .center();
+        click(app, &context, point);
+        app.read(|e| {
+            assert!(e.transition.is_none() && !e.allow_close);
+            assert_eq!(e.after_save, Some(Transition::Close));
+            assert!(e.document_pending.is_some());
+        });
+        app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
+        assert_eq!(
+            crate::project::Project::load(&path)
+                .unwrap()
+                .source(id)
+                .unwrap()
+                .photo
+                .exposure,
+            1.25
+        );
+        app.read(|e| {
+            assert!(e.allow_close && !e.document.dirty() && e.failure.is_none());
+            assert!(e.after_save.is_none());
+        });
+    });
 }
 
 #[test]
 fn project_replace_decision_preserves_destination_snapshot_and_continuation() {
     let mut editor = fixture();
-    let path = PathBuf::from("existing.antitone.json");
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("existing.antitone");
+    std::fs::write(&path, b"existing destination").unwrap();
+    let id = editor.current_source.unwrap();
+    editor.photo.exposure = 1.25;
     editor.project_overwrite = Some((path.clone(), Some(Transition::New)));
     let context = egui::Context::default();
-    ui_frame(&mut editor, &context, vec![]);
-    let labels = ui_frame(&mut editor, &context, vec![]);
-    let point = labels
-        .iter()
-        .find(|(label, _)| label == "Replace project")
-        .unwrap()
-        .1
-        .center();
-    click(&mut editor, &context, point);
-    assert!(editor.project_overwrite.is_none());
-    assert_eq!(editor.after_save, Some(Transition::New));
-    let crate::editor::document_services::Write {
-        document: snapshot,
-        path: destination,
-        policy,
-        ..
-    } = editor.document.write.request.take().unwrap();
-    assert_eq!(destination, path);
-    assert_eq!(snapshot.project, editor.document.project);
-    assert!(matches!(policy, crate::project::Save::Replace));
+    with_application(editor, |app| {
+        ui_frame(app, &context, vec![]);
+        let labels = ui_frame(app, &context, vec![]);
+        let point = labels
+            .iter()
+            .find(|(label, _)| label == "Replace project")
+            .unwrap()
+            .1
+            .center();
+        click(app, &context, point);
+        app.read(|e| {
+            assert!(e.project_overwrite.is_none() && e.document_pending.is_some());
+            assert_eq!(e.after_save, Some(Transition::New));
+        });
+        app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
+        assert_eq!(
+            crate::project::Project::load(&path)
+                .unwrap()
+                .source(id)
+                .unwrap()
+                .photo
+                .exposure,
+            1.25
+        );
+        app.read(|e| {
+            assert_eq!(e.document.project, crate::project::Project::default());
+            assert!(e.failure.is_none() && e.after_save.is_none());
+        });
+    });
 }
 
 #[test]
@@ -507,8 +517,11 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
         OutputFormat::Exr(ExrPrecision::Half),
         OutputFormat::Exr(ExrPrecision::Full),
     ] {
-        let mut editor = super::super::tests::fixture();
-        super::super::tests::add_ready_fixture(&mut editor);
+        let mut editor = super::super::tests::authored_fixture(&["patches.dng"]);
+        editor.dmin = Some(DVec3::splat(0.8));
+        editor.dmax = Some(DVec3::splat(0.02));
+        editor.photo.exposure = 1.25;
+        editor.roll.exposure = -0.25;
         editor.crop = Some(Crop::from_region(Rect {
             x: 20,
             y: 20,
@@ -516,50 +529,97 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
             height: 80,
         }));
         editor.sync_document();
-        let path = PathBuf::from("existing-output");
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("existing-output");
+        let reference = directory.path().join("reference-output");
+        std::fs::write(&path, b"existing destination").unwrap();
+        let expected = editor
+            .export_input(reference.clone(), format, Overwrite::Refuse)
+            .unwrap()
+            .unwrap();
+        assert!(Arc::ptr_eq(
+            &expected.input.source,
+            &editor.document.visit.ready.as_ref().unwrap().developed
+        ));
+        assert_eq!(
+            expected.recipe.neutral.calibration,
+            editor.calibration().unwrap()
+        );
+        assert_eq!(expected.recipe.roll, editor.roll);
+        assert_eq!(expected.recipe.grade.global(), editor.photo);
+        assert_eq!(expected.recipe.composition.crop(), editor.crop.unwrap());
+        let services = editor.export_services.as_ref().unwrap().clone();
         editor.overwrite = Some((path.clone(), format));
         let before = editor.document.project.clone();
         let context = egui::Context::default();
-        ui_frame(&mut editor, &context, vec![]);
-        let labels = ui_frame(&mut editor, &context, vec![]);
-        let point = labels
-            .iter()
-            .find(|(label, _)| label == "Replace file")
-            .unwrap()
-            .1
-            .center();
-        click(&mut editor, &context, point);
-        assert!(editor.overwrite.is_none());
-        let export_services::Request {
-            input,
-            path: destination,
-            format: dispatched,
-            recipe,
-            overwrite: policy,
-        } = editor.export_operation.request.take().unwrap();
-        assert!(Arc::ptr_eq(
-            &input.source,
-            &editor.document.visit.ready.as_ref().unwrap().developed
-        ));
-        assert!(editor.export_operation.pending.is_some());
-        assert_eq!(destination, path);
-        match (dispatched, format) {
-            (OutputFormat::Tiff(a), OutputFormat::Tiff(b)) => assert_eq!(a, b),
-            (OutputFormat::Exr(ExrPrecision::Half), OutputFormat::Exr(ExrPrecision::Half))
-            | (OutputFormat::Exr(ExrPrecision::Full), OutputFormat::Exr(ExrPrecision::Full)) => {}
-            _ => panic!("staged export format changed"),
-        }
-        assert_eq!(recipe.neutral.calibration, editor.calibration().unwrap());
-        assert_eq!(recipe.roll, editor.roll);
-        assert_eq!(recipe.grade.global(), editor.photo);
-        assert_eq!(recipe.composition.crop(), editor.crop.unwrap());
-        assert!(matches!(policy, Overwrite::Confirmed));
-        assert_eq!(editor.document.project, before);
+        with_application(editor, |app| {
+            ui_frame(app, &context, vec![]);
+            let labels = ui_frame(app, &context, vec![]);
+            let point = labels
+                .iter()
+                .find(|(label, _)| label == "Replace file")
+                .unwrap()
+                .1
+                .center();
+            click(app, &context, point);
+            app.read(|e| assert!(e.overwrite.is_none() && e.export_operation.pending.is_some()));
+            app.run_until(Duration::from_secs(30), |e| {
+                e.export_operation.pending.is_none()
+            });
+            app.read(|e| {
+                assert!(e.failure.is_none() && !e.busy, "{}", e.status);
+                assert_eq!(e.document.project, before);
+            });
+            pollster::block_on(services.write(
+                expected,
+                Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            ))
+            .unwrap();
+            match format {
+                OutputFormat::Tiff(target) => {
+                    use tiff::decoder::{Decoder, DecodingResult};
+                    let mut actual = Decoder::new(std::fs::File::open(&path).unwrap()).unwrap();
+                    let mut expected =
+                        Decoder::new(std::fs::File::open(&reference).unwrap()).unwrap();
+                    assert_eq!(actual.dimensions().unwrap(), (100, 80));
+                    assert_eq!(
+                        actual
+                            .get_tag_u8_vec(tiff::tags::Tag::Unknown(34675))
+                            .unwrap(),
+                        crate::profiles::icc(target)
+                    );
+                    let (DecodingResult::U16(actual), DecodingResult::U16(expected)) =
+                        (actual.read_image().unwrap(), expected.read_image().unwrap())
+                    else {
+                        panic!("RGB16 TIFF expected")
+                    };
+                    assert_eq!(actual, expected);
+                }
+                OutputFormat::Exr(precision) => {
+                    let actual = exr::prelude::read_first_flat_layer_from_file(&path).unwrap();
+                    let expected =
+                        exr::prelude::read_first_flat_layer_from_file(&reference).unwrap();
+                    assert_eq!(actual.layer_data.size, exr::math::Vec2(100, 80));
+                    assert_eq!(
+                        actual.layer_data.channel_data,
+                        expected.layer_data.channel_data
+                    );
+                    for channel in &actual.layer_data.channel_data.list {
+                        assert!(matches!(
+                            (&channel.sample_data, precision),
+                            (exr::image::FlatSamples::F16(_), ExrPrecision::Half)
+                                | (exr::image::FlatSamples::F32(_), ExrPrecision::Full)
+                        ));
+                    }
+                }
+            }
+            assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
+        });
     }
 }
 
 fn fixture() -> Editor {
-    let mut editor = Editor::state();
+    let mut editor = super::super::tests::with_document_services(Editor::state());
     editor
         .document
         .register(
@@ -595,64 +655,68 @@ fn fixture() -> Editor {
 
 #[test]
 fn orientation_is_source_owned_and_restored_without_changing_grade_on_load() {
-    let mut editor = fixture();
-    let id = editor.current_source.unwrap();
-    editor.photo = PhotoSettings {
-        contrast: 0.4,
-        pivot: 0.25,
-        contrast_colour_mix: 0.75,
-        saturation: 1.3,
-        saturation_density: 0.25,
-        ..PhotoSettings::default()
-    };
-    editor.roll_orientation.horizontal = true;
-    editor.roll_orientation.turn_clockwise();
-    editor.photo_orientation.turn_clockwise();
-    editor.photo_orientation.flips.vertical = true;
-    editor.crop = Some(Crop::from_region(Rect {
-        x: 30,
-        y: 20,
-        width: 401,
-        height: 203,
-    }));
-    let crop = editor.crop;
-    let orientation = editor.photo_orientation;
-    let grade = (editor.roll, editor.photo, editor.dmin, editor.dmax);
-    editor.sync_document();
-    assert_eq!(editor.document.project.orientation, editor.roll_orientation);
-    assert_eq!(
-        editor.document.project.source(id).unwrap().orientation,
-        orientation
-    );
-    let mut other = editor.document.project.source(id).unwrap().clone();
-    other.path = "second.ARW".into();
-    other.orientation = PhotoOrientation::default();
-    other.crop = None;
-    other.photo = PhotoSettings {
-        contrast: 1.6,
-        saturation: 0.7,
-        contrast_colour_mix: 0.25,
-        saturation_density: 0.75,
-        ..PhotoSettings::default()
-    };
-    let other_photo = other.photo;
-    let other_id = editor.document.project.add_source(other).unwrap();
-    editor.load("second.ARW".into());
-    assert_eq!(editor.current_source, Some(other_id));
-    assert_eq!(editor.photo, other_photo);
-    editor.load("fixture.ARW".into());
-    assert_eq!(editor.current_source, Some(id));
-    assert_eq!((editor.roll, editor.photo, editor.dmin, editor.dmax), grade);
-    editor.load("temporary-reference.ARW".into());
-    assert_eq!(editor.photo, PhotoSettings::default());
-    assert_eq!(editor.photo_orientation, PhotoOrientation::default());
-    assert!(editor.crop.is_none());
-    editor.load("fixture.ARW".into());
-    assert_eq!(editor.photo_orientation, orientation);
-    assert_eq!(editor.crop, crop);
-    assert_eq!((editor.roll, editor.photo, editor.dmin, editor.dmax), grade);
-    assert_eq!(editor.roll_orientation, editor.document.project.orientation);
-    assert!(editor.document.visit.source.request.is_some());
+    let editor = fixture();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            let id = editor.current_source.unwrap();
+            editor.photo = PhotoSettings {
+                contrast: 0.4,
+                pivot: 0.25,
+                contrast_colour_mix: 0.75,
+                saturation: 1.3,
+                saturation_density: 0.25,
+                ..PhotoSettings::default()
+            };
+            editor.roll_orientation.horizontal = true;
+            editor.roll_orientation.turn_clockwise();
+            editor.photo_orientation.turn_clockwise();
+            editor.photo_orientation.flips.vertical = true;
+            editor.crop = Some(Crop::from_region(Rect {
+                x: 30,
+                y: 20,
+                width: 401,
+                height: 203,
+            }));
+            let crop = editor.crop;
+            let orientation = editor.photo_orientation;
+            let grade = (editor.roll, editor.photo, editor.dmin, editor.dmax);
+            editor.sync_document();
+            assert_eq!(editor.document.project.orientation, editor.roll_orientation);
+            assert_eq!(
+                editor.document.project.source(id).unwrap().orientation,
+                orientation
+            );
+            let mut other = editor.document.project.source(id).unwrap().clone();
+            other.path = "second.ARW".into();
+            other.orientation = PhotoOrientation::default();
+            other.crop = None;
+            other.photo = PhotoSettings {
+                contrast: 1.6,
+                saturation: 0.7,
+                contrast_colour_mix: 0.25,
+                saturation_density: 0.75,
+                ..PhotoSettings::default()
+            };
+            let other_photo = other.photo;
+            let other_id = editor.document.project.add_source(other).unwrap();
+            editor.load("second.ARW".into(), cx);
+            assert_eq!(editor.current_source, Some(other_id));
+            assert_eq!(editor.photo, other_photo);
+            editor.load("fixture.ARW".into(), cx);
+            assert_eq!(editor.current_source, Some(id));
+            assert_eq!((editor.roll, editor.photo, editor.dmin, editor.dmax), grade);
+            editor.load("temporary-reference.ARW".into(), cx);
+            assert_eq!(editor.photo, PhotoSettings::default());
+            assert_eq!(editor.photo_orientation, PhotoOrientation::default());
+            assert!(editor.crop.is_none());
+            editor.load("fixture.ARW".into(), cx);
+            assert_eq!(editor.photo_orientation, orientation);
+            assert_eq!(editor.crop, crop);
+            assert_eq!((editor.roll, editor.photo, editor.dmin, editor.dmax), grade);
+            assert_eq!(editor.roll_orientation, editor.document.project.orientation);
+            assert!(editor.document.visit.source.pending());
+        });
+    });
 }
 
 #[test]
@@ -662,58 +726,73 @@ fn failed_and_stale_document_results_preserve_state_and_active_request() {
     editor.sync_document();
     let before = editor.document.project.clone();
     let active = editor.id;
-    editor.start_document(Preparation::Open("candidate.json".into()));
-    let id = editor.document_pending.unwrap();
-    assert!(editor.candidate_operation.request.is_some());
-    editor.document_prepared(id + 1, Err("stale candidate".into()));
-    editor.measurement_result(active, Pick::Dmin, Ok(Measurement::Reference(DVec3::ONE)));
-    editor.source_result(active, Err("old load".into()));
-    assert_eq!(editor.document_pending, Some(id));
-    assert_eq!(
-        editor
-            .source_epoch
-            .load(std::sync::atomic::Ordering::Relaxed),
-        id
-    );
-    assert!(editor.busy);
-    assert_eq!(editor.document.project, before);
-    editor.document_prepared(id, Err("changed RAW".into()));
-    assert!(!editor.busy);
-    assert_eq!(editor.document.project, before);
-    assert_eq!(editor.id, active);
-    assert_eq!(
-        editor
-            .source_epoch
-            .load(std::sync::atomic::Ordering::Relaxed),
-        active
-    );
-    assert_eq!(editor.photo.exposure, 7.123456789012345);
-    assert!(editor.document.dirty());
+    with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.start_document(Preparation::Open("candidate.json".into()), cx);
+            let id = editor.document_pending.unwrap();
+            editor.document_prepared(id + 1, Err("stale candidate".into()));
+            editor.measurement_result(
+                active,
+                Pick::Dmin,
+                Ok(Measurement::Reference(DVec3::ONE)),
+                cx,
+            );
+            editor.source_result(active, Err("old load".into()));
+            assert_eq!(editor.document_pending, Some(id));
+            assert_eq!(
+                editor
+                    .source_epoch
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                id
+            );
+            assert!(editor.busy);
+            assert_eq!(editor.document.project, before);
+            editor.document_prepared(id, Err("changed RAW".into()));
+            assert!(!editor.busy && editor.document_pending.is_none());
+            assert_eq!(editor.document.project, before);
+            assert_eq!(editor.id, active);
+            assert_eq!(
+                editor
+                    .source_epoch
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                active
+            );
+            assert_eq!(editor.photo.exposure, 7.123456789012345);
+            assert!(editor.document.dirty());
+        });
+        app.pump();
+    });
 }
 
 #[test]
 fn save_failure_preserves_dirty_state_and_does_not_continue_transition() {
-    let mut editor = fixture();
+    let editor = fixture();
     let before = editor.document.project.clone();
-    editor.queue_save(
-        "candidate.json".into(),
-        crate::project::Save::New,
-        Some(Transition::New),
-    );
-    let id = editor.document_pending.unwrap();
-    assert!(editor.document.write.request.is_some());
-    editor.save_result(id, Err("write failed".into()));
-    assert_eq!(editor.document.project, before);
-    assert!(editor.document.dirty());
-    assert_eq!(editor.transition, Some(Transition::New));
-    assert!(editor.candidate_operation.request.is_none());
-    assert_eq!(
-        editor
-            .source_epoch
-            .load(std::sync::atomic::Ordering::Relaxed),
-        editor.id
-    );
-    assert!(editor.candidate_operation.request.is_none());
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("occupied.antitone");
+    std::fs::write(&path, b"existing destination").unwrap();
+    with_application(editor, |app| {
+        app.enter(|e, cx| {
+            e.save_project(
+                path.clone(),
+                crate::project::Save::New,
+                Some(Transition::New),
+                cx,
+            )
+        });
+        app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
+        app.read(|e| {
+            assert_eq!(e.document.project, before);
+            assert!(e.document.dirty() && !e.busy);
+            assert_eq!(e.transition, Some(Transition::New));
+            assert_eq!(
+                e.source_epoch.load(std::sync::atomic::Ordering::Relaxed),
+                e.id
+            );
+            assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::Save);
+        });
+        assert_eq!(std::fs::read(&path).unwrap(), b"existing destination");
+    });
 }
 
 #[test]
@@ -733,88 +812,91 @@ fn save_snapshot_flushes_current_photo_and_retains_other_source_settings() {
         ..PhotoSettings::default()
     };
     editor.roll.exposure = -0.23456789012345678;
-    editor.queue_save("candidate.json".into(), crate::project::Save::New, None);
-    let crate::editor::document_services::Write {
-        document: snapshot, ..
-    } = editor.document.write.request.take().unwrap();
-    assert_eq!(snapshot.project.source(one).unwrap().photo, editor.photo);
-    assert_eq!(
-        snapshot.project.source(two).unwrap().photo,
-        PhotoSettings::default()
-    );
-    assert_eq!(snapshot.project.roll, editor.roll);
-    assert_eq!(
-        snapshot.project.processing_model,
-        editor.roll.response.processing_model()
-    );
+    let photo = editor.photo;
+    let roll = editor.roll;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("snapshot.antitone");
+    with_application(editor, |app| {
+        app.enter(|e, cx| e.save_project(path.clone(), crate::project::Save::New, None, cx));
+        app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
+        let snapshot = crate::project::Project::load(&path).unwrap();
+        assert_eq!(snapshot.source(one).unwrap().photo, photo);
+        assert_eq!(
+            snapshot.source(two).unwrap().photo,
+            PhotoSettings::default()
+        );
+        assert_eq!(snapshot.roll, roll);
+        assert_eq!(snapshot.processing_model, roll.response.processing_model());
+    });
 }
 
 #[test]
 fn new_resets_development_and_rejects_previous_document_messages() {
-    let mut editor = fixture();
+    let editor = fixture();
     let previous = editor.id;
-    editor.start_document(Preparation::New);
-    let id = editor.document_pending.unwrap();
-    editor.document_prepared(
-        id,
-        Ok(Box::new(Prepared {
-            document: Document::default(),
-            ready: None,
-            selected: None,
-            reuse_ready: false,
-            correction: None,
-            preserve_view: false,
-        })),
-    );
-    assert_eq!(editor.document.project, crate::project::Project::default());
-    assert!(editor.document.project.development.is_none());
-    assert!(editor.current_source.is_none());
-    assert_eq!(editor.floor, 0.);
-    assert!(!editor.document.dirty());
-    editor.measurement_result(previous, Pick::Dmin, Ok(Measurement::Reference(DVec3::ONE)));
-    assert!(editor.dmin.is_none());
-    assert!(editor.id > previous);
+    with_application(editor, |app| {
+        app.enter(|e, cx| e.start_document(Preparation::New, cx));
+        app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
+        app.enter(|e, cx| {
+            assert_eq!(e.document.project, crate::project::Project::default());
+            assert!(e.document.project.development.is_none() && e.current_source.is_none());
+            assert_eq!(e.floor, 0.);
+            assert!(!e.document.dirty());
+            e.measurement_result(
+                previous,
+                Pick::Dmin,
+                Ok(Measurement::Reference(DVec3::ONE)),
+                cx,
+            );
+            assert!(e.dmin.is_none());
+            assert!(e.id > previous);
+        });
+    });
 }
 
 #[test]
 fn navigation_and_view_state_do_not_dirty_a_saved_document() {
-    let mut editor = fixture();
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("project.antitone.json");
-    *editor.document = editor
-        .document
-        .save(&path, crate::project::Save::New)
-        .unwrap();
-    let before = editor.document.project.clone();
-    editor.source = false;
-    editor.viewport.zoom = Some(2.);
-    editor.region = Some(Coverage::rectangle(Rect {
-        x: 12,
-        y: 12,
-        width: 32,
-        height: 32,
-    }));
-    let source_path = editor
-        .document
-        .source_path(editor.current_source.unwrap())
-        .unwrap();
-    editor.load(source_path);
-    let request = editor.document.visit.source.request.as_ref().unwrap();
-    let wb = request.wb;
-    let expected = &request.expected;
-    assert_eq!(
-        wb,
-        editor
-            .document
-            .project
-            .development
-            .as_ref()
-            .map(|value| value.fixed_wb)
-    );
-    assert!(expected.is_some());
-    editor.sync_document();
-    assert_eq!(editor.document.project, before);
-    assert!(!editor.document.dirty());
+    let editor = fixture();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("project.antitone.json");
+            *editor.document = editor
+                .document
+                .save(&path, crate::project::Save::New)
+                .unwrap();
+            let before = editor.document.project.clone();
+            editor.source = false;
+            editor.viewport.zoom = Some(2.);
+            editor.region = Some(Coverage::rectangle(Rect {
+                x: 12,
+                y: 12,
+                width: 32,
+                height: 32,
+            }));
+            let source_path = editor
+                .document
+                .source_path(editor.current_source.unwrap())
+                .unwrap();
+            let request = editor.source_input(source_path.clone());
+            editor.load(source_path, cx);
+            let wb = request.wb;
+            let expected = &request.expected;
+            assert_eq!(
+                wb,
+                editor
+                    .document
+                    .project
+                    .development
+                    .as_ref()
+                    .map(|value| value.fixed_wb)
+            );
+            assert!(expected.is_some());
+            editor.sync_document();
+            assert_eq!(editor.document.project, before);
+            assert!(!editor.document.dirty());
+        });
+    });
 }
 
 #[test]
@@ -825,13 +907,9 @@ fn dirty_open_new_and_close_are_guarded_without_dispatching_or_allowing_close() 
         Transition::Open("candidate.json".into()),
         Transition::Close,
     ] {
-        editor.guard_transition(transition.clone());
+        editor.guard_transition(transition.clone(), &UiContext::render_only());
         assert_eq!(editor.transition, Some(transition));
-        assert!(
-            editor.candidate_operation.request.is_none()
-                && editor.document.write.request.is_none()
-                && editor.export_operation.request.is_none()
-        );
+        assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
         assert!(!editor.allow_close);
         editor.transition = None;
     }
@@ -841,57 +919,38 @@ fn dirty_open_new_and_close_are_guarded_without_dispatching_or_allowing_close() 
 fn command_save_uses_the_current_document_after_control_processing() {
     let mut editor = fixture();
     let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("project.antitone");
     *editor.document = editor
         .document
-        .save(
-            &directory.path().join("project.antitone.json"),
-            crate::project::Save::New,
-        )
+        .save(&path, crate::project::Save::New)
         .unwrap();
+    let id = editor.current_source.unwrap();
     let context = egui::Context::default();
-    ui_frame(&mut editor, &context, vec![]);
-    editor.photo.exposure = 7.123456789012345;
-    assert_eq!(
-        editor
-            .document
-            .project
-            .source(editor.current_source.unwrap())
-            .unwrap()
-            .photo
-            .exposure,
-        0.,
-    );
-    let mut output = context.run_ui(
-        egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(1100., 800.),
-            )),
-            events: vec![egui::Event::Key {
+    with_application(editor, |app| {
+        ui_frame(app, &context, vec![]);
+        app.update(|e| {
+            e.photo.exposure = 7.123456789012345;
+            assert_eq!(e.document.project.source(id).unwrap().photo.exposure, 0.);
+        });
+        ui_frame(
+            app,
+            &context,
+            vec![egui::Event::Key {
                 key: egui::Key::S,
                 physical_key: None,
                 pressed: true,
                 repeat: false,
                 modifiers: egui::Modifiers::COMMAND,
             }],
-            ..Default::default()
-        },
-        |ui| {
-            egui::CentralPanel::default().show(ui, |ui| {
-                crate::editor::tests::paint_controller(&mut editor, ui)
-            });
-        },
-    );
-    output.textures_delta.clear();
-    let crate::editor::document_services::Write {
-        document: snapshot, ..
-    } = editor.document.write.request.take().unwrap();
-    assert_eq!(
-        snapshot
-            .project
-            .source(editor.current_source.unwrap())
-            .unwrap()
-            .photo,
-        editor.photo
-    );
+        );
+        app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
+        assert_eq!(
+            crate::project::Project::load(&path)
+                .unwrap()
+                .source(id)
+                .unwrap()
+                .photo,
+            app.read(|e| e.photo)
+        );
+    });
 }

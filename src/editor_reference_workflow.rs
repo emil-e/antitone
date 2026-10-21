@@ -4,9 +4,12 @@ mod tests;
 
 use super::{
     Editor, FailureKind, Pick, TaskRequest,
+    document_services::PreparationServices,
     flat::FlatPreview,
-    reference_services::{Operation, Services},
+    reference_services::{Acceptance, Services},
+    source,
 };
+use crate::application::UiContext;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -20,56 +23,54 @@ impl Drop for Retire {
 }
 
 impl Editor {
-    pub(super) fn start_reference_workflow(
-        &mut self,
-        access: &crate::application::UiAccess<'_, Self>,
-    ) {
-        let Some(operation) = self
-            .flat_edit
-            .as_mut()
-            .and_then(|session| session.request.take())
-        else {
-            return;
-        };
+    pub(super) fn preview_reference(&mut self, request: source::Request, cx: &UiContext<'_, Self>) {
         let id = self.id;
+        let services = self.source_services.clone().map(Services);
         let cancelled = Arc::new(AtomicBool::new(false));
         let retire = Retire(cancelled.clone());
-        let services = self.source_services.clone().map(Services);
-        let accepting = matches!(operation, Operation::Accept(_));
-        let Some(services) = services else {
-            if accepting {
-                self.document_prepared(id, Err("Reference services unavailable".into()));
-            } else {
-                self.reference_previewed(id, Err("Reference services unavailable".into()));
-            }
+        let Some(task) = cx.spawn(move |cx| async move {
+            let _retire = retire;
+            let result = match services {
+                Some(services) => services.preview(request, cancelled).await,
+                None => Err("Reference services unavailable".into()),
+            };
+            cx.update(|editor| editor.reference_previewed(id, result));
+        }) else {
+            self.reference_previewed(id, Err("Application stopped".into()));
             return;
         };
-        let target = access.clone();
-        let Some(task) = access.spawn(async move {
+        self.flat_edit
+            .as_mut()
+            .expect("live reference session")
+            .task = Some(task);
+    }
+
+    pub(super) fn accept_reference(&mut self, input: Acceptance, cx: &UiContext<'_, Self>) {
+        let id = self.id;
+        let services = self.source_services.clone().map(Services);
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let retire = Retire(cancelled.clone());
+        let Some(task) = cx.spawn(move |cx| async move {
             let _retire = retire;
-            match operation {
-                Operation::Preview(request) => {
-                    let result = services.preview(*request, cancelled).await;
-                    target.update(|editor| editor.reference_previewed(id, result));
-                }
-                Operation::Accept(request) => {
-                    let result = services.accept(*request, cancelled).await.map(Box::new);
-                    target.update(|editor| {
-                        if editor.flat_edit.is_some() {
-                            editor.document_prepared(id, result);
-                        }
-                        editor.start_source_workflow(&target);
-                        editor.start_working_workflow(&target);
-                        editor.start_original_workflow(&target);
-                    });
-                }
+            let result = async {
+                let services =
+                    services.ok_or_else(|| "Reference services unavailable".to_owned())?;
+                let request = services.estimate(input, cancelled.clone()).await?;
+                PreparationServices(services.0)
+                    .prepare(request, cancelled, |_, _| {})
+                    .await
             }
+            .await
+            .map(Box::new);
+            cx.update(|editor| {
+                if editor.flat_edit.is_none() || editor.document_pending != Some(id) {
+                    return;
+                }
+                editor.document_prepared(id, result);
+                editor.acquire_working(&cx);
+            });
         }) else {
-            if accepting {
-                self.document_prepared(id, Err("Application stopped".into()));
-            } else {
-                self.reference_previewed(id, Err("Application stopped".into()));
-            }
+            self.document_prepared(id, Err("Application stopped".into()));
             return;
         };
         self.flat_edit
@@ -88,7 +89,6 @@ impl Editor {
         }
         let session = self.flat_edit.as_mut().unwrap();
         session.task = None;
-        session.request = None;
         self.tasks.finish(TaskRequest::Reference(id));
         self.busy = false;
         match result {

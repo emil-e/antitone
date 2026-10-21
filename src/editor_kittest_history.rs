@@ -3,7 +3,9 @@ use super::*;
 
 fn setup<R>(test: impl FnOnce(Harness<'_, Editor>) -> R) -> R {
     editor_harness(|mut h, _| {
-        h.update(|editor| editor.add_raws(vec![fixture("roll-0.dng"), fixture("roll-1.dng")]));
+        h.enter(|editor, cx| {
+            editor.add_raws(vec![fixture("roll-0.dng"), fixture("roll-1.dng")], cx)
+        });
         wait_for(&mut h, |e| !e.busy);
         h.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
         h.update(|e| {
@@ -184,7 +186,7 @@ fn native_history_restores_accepted_creative_looks_and_shares_the_numeric_lut() 
             .unwrap(),
         );
         let original = h.read(|editor| editor.document.project.clone());
-        h.update(|editor| editor.begin_look(look_ui::Source::Loaded(chosen.clone())));
+        h.enter(|editor, cx| editor.begin_look(look_ui::Source::Loaded(chosen.clone()), cx));
         wait_for(&mut h, |e| !e.busy);
         h.read(|editor| assert!(editor.failure.is_none(), "{}", editor.status));
         let accepted = h.read(|editor| editor.document.project.clone());

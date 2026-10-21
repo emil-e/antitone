@@ -351,18 +351,35 @@ fn correction_changes_grade_preparation_but_empty_stacks_release_local_resources
         editor.correction = Correction::prepare(&device, &candidate, None).unwrap();
         let corrected = positive(&editor);
         assert_ne!(first.signature(), corrected.signature());
-        let expected = ProcessingParameters::positive(
-            field
-                .processing_calibration(editor.calibration().unwrap())
-                .unwrap(),
+        let calibration = field
+            .processing_calibration(editor.calibration().unwrap())
+            .unwrap();
+        let expected = ProcessingInput::from(Arc::new(
+            crate::gpu::GpuPhotoGrade::new(
+                &device,
+                calibration,
+                editor.roll,
+                first.grade().unwrap().snapshot().clone(),
+                glam::DMat3::IDENTITY,
+                editor.document.visit.ready.as_ref().unwrap().area,
+            )
+            .unwrap(),
+        ));
+        assert_eq!(
+            bytemuck::bytes_of(&corrected.parameters()),
+            bytemuck::bytes_of(&expected.parameters())
+        );
+        let global = ProcessingParameters::positive(
+            calibration,
             editor.roll,
             editor.photo,
             glam::DMat3::IDENTITY,
         )
         .unwrap();
-        assert_eq!(
+        assert_ne!(
             bytemuck::bytes_of(&corrected.parameters()),
-            bytemuck::bytes_of(&expected)
+            bytemuck::bytes_of(&global),
+            "active locals retain distinct shader precision constants"
         );
         assert!(std::ptr::eq(
             corrected.grade().unwrap(),
@@ -463,6 +480,7 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
                 warmth: 0.1,
                 tint: -0.1,
             })),
+            &crate::application::UiContext::render_only(),
         );
         assert!(editor.status.contains("Pick rejected"));
         assert_eq!(
@@ -510,8 +528,11 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
         let (_, scope, _) = editor.scope_input().unwrap();
         assert_eq!(scope.signature(), accepted.signature());
         editor.original.last_edit = std::time::Instant::now() - Duration::from_secs(1);
-        frame(&mut editor, &context);
-        let request = editor.document.visit.grade.request.take().unwrap();
+        let request = editor
+            .original
+            .request(&accepted, editor.target, editor.source_context().unwrap())
+            .unwrap();
+        editor.original.refining = Some((request.revision, request.view));
         assert_eq!(request.target, editor.target);
         let (revision, captured, view) = (request.revision, request.input, request.view);
         assert_eq!(captured.signature(), accepted.signature());
@@ -580,7 +601,7 @@ fn live_grade_buffers(grades: &[(std::sync::Weak<GpuPhotoGrade>, u64)]) -> (usiz
 }
 
 #[test]
-fn original_demand_coalesces_and_consumers_release_superseded_grade_buffers() {
+fn captured_original_input_keeps_its_grade_alive_across_newer_ui_edits() {
     use crate::gpu_scopes::{GpuScopes, ScopePaint};
     use egui_wgpu::CallbackTrait;
     use std::time::Instant;
@@ -638,36 +659,44 @@ fn original_demand_coalesces_and_consumers_release_superseded_grade_buffers() {
 
         frame(&mut editor, &context);
         editor.original.last_edit = Instant::now() - Duration::from_secs(1);
-        frame(&mut editor, &context);
-        // Retain a captured consumer independently of newer UI demand. Actual
-        // running-job admission is covered by the live workflow tests.
-        let held = editor.document.visit.grade.request.take().unwrap();
+        // Retain consumer input independently of newer UI demand. Actual task and
+        // running-job admission are covered by the live workflow tests.
+        let held = editor
+            .original
+            .request(
+                &positive(&editor),
+                editor.target,
+                editor.source_context().unwrap(),
+            )
+            .unwrap();
         for i in 1..=40 {
             editor.photo.exposure = f64::from(i) / 100.;
             frame(&mut editor, &context);
             tracked.push(tracked_grade(&editor, id));
             editor.original.last_edit = Instant::now() - Duration::from_secs(1);
-            frame(&mut editor, &context);
-            assert_eq!(
-                editor
-                    .document
-                    .visit
-                    .grade
-                    .request
-                    .as_ref()
-                    .unwrap()
-                    .input
-                    .signature(),
-                positive(&editor).signature(),
-                "only the latest unstarted input remains in the demand slot"
-            );
+            let latest = editor
+                .original
+                .request(
+                    &positive(&editor),
+                    editor.target,
+                    editor.source_context().unwrap(),
+                )
+                .unwrap();
+            assert_eq!(latest.input.signature(), positive(&editor).signature());
             assert_eq!(
                 live_grade_buffers(&tracked),
                 (2, 2 * bytes),
                 "only the held grade and latest version remain Arc-owned"
             );
         }
-        let newest = editor.document.visit.grade.request.take().unwrap();
+        let newest = editor
+            .original
+            .request(
+                &positive(&editor),
+                editor.target,
+                editor.source_context().unwrap(),
+            )
+            .unwrap();
         assert!(newest.revision > held.revision);
         editor.original_result(held.revision, Ok(None));
         assert!(editor.original.settled.is_none());

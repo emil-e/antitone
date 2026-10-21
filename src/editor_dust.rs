@@ -64,14 +64,15 @@ struct Failed {
 }
 
 struct Pending {
-    cancelled: Arc<std::sync::atomic::AtomicBool>,
-    request: u64,
-    loaded: u64,
-    source: SourceId,
-    signature: Signature,
-    repair: Repair,
-    job: Option<(Request, source::Context)>,
+    evaluation: Request,
     task: Option<async_executor::Task<()>>,
+}
+
+struct EvaluationRetire(Arc<std::sync::atomic::AtomicBool>);
+impl Drop for EvaluationRetire {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 pub(super) struct DonorRegion {
@@ -198,6 +199,7 @@ impl Drop for State {
     fn drop(&mut self) {
         if let Some(pending) = &self.pending {
             pending
+                .evaluation
                 .cancelled
                 .store(true, std::sync::atomic::Ordering::Relaxed);
         }
@@ -205,12 +207,12 @@ impl Drop for State {
 }
 
 impl State {
-    pub(super) fn take_job(&mut self) -> Option<(Request, source::Context)> {
-        self.pending.as_mut()?.job.take()
-    }
-
     pub(super) fn attach_task(&mut self, request: u64, task: async_executor::Task<()>) {
-        if let Some(pending) = self.pending.as_mut().filter(|p| p.request == request) {
+        if let Some(pending) = self
+            .pending
+            .as_mut()
+            .filter(|p| p.evaluation.request == request)
+        {
             pending.task = Some(task);
         }
     }
@@ -221,7 +223,9 @@ impl State {
 
     #[cfg(test)]
     pub(super) fn pending_request(&self) -> Option<u64> {
-        self.pending.as_ref().map(|pending| pending.request)
+        self.pending
+            .as_ref()
+            .map(|pending| pending.evaluation.request)
     }
 
     #[cfg(test)]
@@ -245,10 +249,11 @@ impl State {
 
     fn removed(&mut self, source: SourceId, repair: RepairId) {
         if let Some(pending) = &self.pending
-            && pending.source == source
-            && pending.repair.id == repair
+            && pending.evaluation.source == source
+            && pending.evaluation.repair.id == repair
         {
             pending
+                .evaluation
                 .cancelled
                 .store(true, std::sync::atomic::Ordering::Relaxed);
         }
@@ -267,8 +272,12 @@ impl State {
         self.preview_cached
             .retain(|(candidate, _), _| *candidate != source);
         self.failed.retain(|(candidate, _), _| *candidate != source);
-        if let Some(pending) = self.pending.take_if(|pending| pending.source == source) {
+        if let Some(pending) = self
+            .pending
+            .take_if(|pending| pending.evaluation.source == source)
+        {
             pending
+                .evaluation
                 .cancelled
                 .store(true, std::sync::atomic::Ordering::Relaxed);
         }
@@ -341,31 +350,32 @@ impl State {
     fn start(&mut self, request: &Request) {
         if let Some(pending) = &self.pending {
             pending
+                .evaluation
                 .cancelled
                 .store(true, std::sync::atomic::Ordering::Relaxed);
         }
         self.pending = Some(Pending {
-            cancelled: request.cancelled.clone(),
-            request: request.request,
-            loaded: request.loaded,
-            source: request.source,
-            signature: request.signature,
-            repair: request.repair.clone(),
-            job: None,
+            evaluation: request.clone(),
             task: None,
         });
     }
 
     fn accept(&mut self, response: Response, expected: Option<&Repair>, accepted: bool) -> bool {
-        let Some(pending) = self.pending.take_if(|p| p.request == response.request) else {
+        let Some(pending) = self
+            .pending
+            .take_if(|p| p.evaluation.request == response.request)
+        else {
             return false;
         };
-        if pending.cancelled.load(std::sync::atomic::Ordering::Relaxed)
-            || pending.request != response.request
-            || pending.loaded != response.loaded
-            || pending.source != response.source
-            || pending.signature != response.signature
-            || pending.repair != response.repair
+        if pending
+            .evaluation
+            .cancelled
+            .load(std::sync::atomic::Ordering::Relaxed)
+            || pending.evaluation.request != response.request
+            || pending.evaluation.loaded != response.loaded
+            || pending.evaluation.source != response.source
+            || pending.evaluation.signature != response.signature
+            || pending.evaluation.repair != response.repair
             || expected != Some(&response.repair)
         {
             return false;
@@ -390,18 +400,25 @@ impl State {
     }
 
     fn fail(&mut self, request: u64) -> bool {
-        let Some(pending) = self.pending.take_if(|pending| pending.request == request) else {
+        let Some(pending) = self
+            .pending
+            .take_if(|pending| pending.evaluation.request == request)
+        else {
             return false;
         };
-        if pending.cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+        if pending
+            .evaluation
+            .cancelled
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
             return false;
         }
         self.failed.insert(
-            (pending.source, pending.repair.id),
+            (pending.evaluation.source, pending.evaluation.repair.id),
             Failed {
-                loaded: pending.loaded,
-                signature: pending.signature,
-                repair: pending.repair,
+                loaded: pending.evaluation.loaded,
+                signature: pending.evaluation.signature,
+                repair: pending.evaluation.repair,
             },
         );
         true
@@ -823,7 +840,7 @@ impl Editor {
         self.record_edit(before, "Reset Dust repairs", Some(source));
     }
 
-    pub(super) fn dust_controls(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn dust_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
         use presentation::ToolIdentity;
         if !self.document.dust.cleanup {
             return;
@@ -907,14 +924,14 @@ impl Editor {
             },
         );
         if reset_repairs {
-            self.control_command(editing::Command::ResetRepairs(source));
+            self.control_command(editing::Command::ResetRepairs(source), cx);
             self.status = "Dust repairs reset".into();
             self.invalidate_settled();
         }
     }
 
     fn invalidate_settled(&mut self) {
-        self.original.invalidate();
+        self.invalidate_original();
     }
 
     pub(super) fn dust_interaction(
@@ -1904,7 +1921,7 @@ impl Editor {
         Ok(crate::gpu::repairs::Snapshot(patches))
     }
 
-    pub(super) fn schedule_dust(&mut self, signature: Signature) {
+    pub(super) fn schedule_dust(&mut self, signature: Signature, cx: &UiContext<'_, Self>) {
         if self.busy
             || self.document_pending.is_some()
             || self.source_epoch.load(std::sync::atomic::Ordering::Relaxed) != self.id
@@ -1916,13 +1933,14 @@ impl Editor {
         };
         let repairs = self.effective_dust_repairs(source);
         if let Some(pending) = &self.document.dust.pending
-            && (pending.source != source
-                || pending.loaded != self.id
-                || pending.signature != signature
-                || !repairs.contains(&pending.repair))
+            && (pending.evaluation.source != source
+                || pending.evaluation.loaded != self.id
+                || pending.evaluation.signature != signature
+                || !repairs.contains(&pending.evaluation.repair))
         {
             // Retain admission until its reply; obsolete work is not a failed heal.
             pending
+                .evaluation
                 .cancelled
                 .store(true, std::sync::atomic::Ordering::Relaxed);
         }
@@ -1947,13 +1965,28 @@ impl Editor {
             cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         self.document.dust.start(&request);
-        self.document
-            .dust
-            .pending
-            .as_mut()
-            .expect("captured dust evaluation")
-            .job = Some((request, input));
         self.status = "Evaluating full-resolution dust repair…".into();
+        let id = request.request;
+        let retire = EvaluationRetire(request.cancelled.clone());
+        let services = self.dust_services.clone();
+        let epoch = self.source_epoch.clone();
+        let Some(task) = cx.spawn(move |cx| async move {
+            let _retire = retire;
+            let result = match services {
+                Some(services) => services.evaluate(request, input, epoch).await,
+                None => Err("Dust services unavailable".into()),
+            };
+            cx.update(|editor| {
+                editor.receive_dust(id, result);
+                if let Some(signature) = editor.dust_signature() {
+                    editor.schedule_dust(signature, &cx);
+                }
+            });
+        }) else {
+            self.receive_dust(id, Err("Application stopped".into()));
+            return;
+        };
+        self.document.dust.attach_task(id, task);
     }
 
     pub(super) fn receive_dust(&mut self, request: u64, result: Result<Option<Response>, String>) {
@@ -1963,7 +1996,10 @@ impl Editor {
                     && Some(response.source) == self.current_source
                     && Some(response.signature) == self.dust_signature();
                 if !current {
-                    self.document.dust.pending.take_if(|p| p.request == request);
+                    self.document
+                        .dust
+                        .pending
+                        .take_if(|p| p.evaluation.request == request);
                     return;
                 }
                 let expected = self.effective_dust_repair(response.source, response.repair.id);
@@ -1980,7 +2016,10 @@ impl Editor {
                 }
             }
             Ok(None) => {
-                self.document.dust.pending.take_if(|p| p.request == request);
+                self.document
+                    .dust
+                    .pending
+                    .take_if(|p| p.evaluation.request == request);
             }
             Err(error) => {
                 if self.document.dust.fail(request) {
@@ -2024,10 +2063,10 @@ impl Editor {
                     continue;
                 }
                 let pending = self.document.dust.pending.as_ref().is_some_and(|pending| {
-                    pending.loaded == self.id
-                        && pending.source == source
-                        && Some(pending.signature) == signature
-                        && pending.repair == *repair
+                    pending.evaluation.loaded == self.id
+                        && pending.evaluation.source == source
+                        && Some(pending.evaluation.signature) == signature
+                        && pending.evaluation.repair == *repair
                 });
                 let failed = self
                     .document
@@ -2295,15 +2334,19 @@ mod tests {
                 .unwrap();
         }
         let first = committed.repairs()[0].clone();
-        state.pending = Some(Pending {
+        state.start(&Request {
             cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             request: 4,
             loaded: 8,
             source,
             signature: [3; ProcessingParameters::BYTE_LEN],
             repair: first,
-            job: None,
-            task: None,
+            calibration: Calibration {
+                dmin: DVec3::splat(0.5),
+                dmax: DVec3::splat(0.01),
+                input_floor: crate::processing::CAMERA_INPUT_FLOOR,
+            },
+            roll: Default::default(),
         });
         assert!(state.fail(4));
         let repairs = committed.repairs().to_vec();

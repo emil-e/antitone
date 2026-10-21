@@ -2,7 +2,7 @@
 #[path = "editor_support_workflow_tests.rs"]
 mod tests;
 
-use super::{Editor, source};
+use super::{Coverage, Editor, UiContext, source};
 use crate::{blocking_jobs::BlockingJobs, raw::Rect};
 
 #[derive(Default)]
@@ -14,7 +14,6 @@ pub(super) struct State {
 pub(super) struct Pending {
     pub id: u64,
     pub loaded: u64,
-    pub input: Option<source::Context>,
 }
 
 pub(super) async fn prepare(
@@ -28,22 +27,29 @@ pub(super) async fn prepare(
 }
 
 impl Editor {
-    pub(super) fn start_support_workflow(
-        &mut self,
-        access: &crate::application::UiAccess<'_, Self>,
-    ) {
-        let Some(pending) = self.document.visit.support.pending.as_mut() else {
+    pub(super) fn request_analysis_support(&mut self, cx: &UiContext<'_, Self>) {
+        self.region = self.analysis_picture().map(Coverage::rectangle);
+        if self.region.is_some()
+            || self
+                .document
+                .visit
+                .ready
+                .as_ref()
+                .is_none_or(|ready| ready.analysis_support.is_some())
+        {
             return;
-        };
-        let Some(input) = pending.input.take() else {
-            return;
-        };
-        let (request, loaded) = (pending.id, pending.loaded);
+        }
+        let input = self.source_context().expect("ready support source");
+        let request = self.request_id();
+        let loaded = self.id;
+        self.document.visit.support.pending = Some(Pending {
+            id: request,
+            loaded,
+        });
         let jobs = self.workflow_jobs.clone();
-        let target = access.clone();
-        let Some(task) = access.spawn(async move {
+        let Some(task) = cx.spawn(move |cx| async move {
             let result = prepare(jobs, input).await;
-            target.update(|editor| editor.analysis_support_result(request, loaded, result));
+            cx.update(|editor| editor.analysis_support_result(request, loaded, result));
         }) else {
             self.analysis_support_result(request, loaded, Err("Application stopped".into()));
             return;

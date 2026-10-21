@@ -163,51 +163,52 @@ fn pointer(point: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
 #[test]
 fn successful_new_from_photo_or_rendering_selects_roll_and_opens_calibration_only() {
     for tab in [1, 2] {
-        let mut editor = fixture();
-        editor.tab = tab;
-        editor
-            .preferences
-            .sections
-            .insert("roll-calibration".into(), false);
-        editor
-            .preferences
-            .sections
-            .insert("photo-white-balance".into(), false);
-        editor
-            .preferences
-            .sections
-            .insert("roll-gamma-balance".into(), false);
-        let before = editor.preferences.clone();
-        editor.start_document(Preparation::New);
-        let id = editor.document_pending.unwrap();
-        assert_eq!(editor.tab, tab);
-        assert!(matches!(
-            editor.candidate_operation.request.as_ref().unwrap().work,
-            Preparation::New
-        ));
-        editor.document_prepared(id + 1, Err("stale".into()));
-        assert_eq!(editor.tab, tab);
-        assert_eq!(editor.document_pending, Some(id));
-        assert!(editor.new_project_pending);
-        editor.document_prepared(
-            id,
-            Ok(Box::new(Prepared {
-                document: Document::default(),
-                ready: None,
-                selected: None,
-                reuse_ready: false,
-                correction: None,
-                preserve_view: false,
-            })),
-        );
-        assert_eq!(editor.tab, 0);
-        assert!(!editor.new_project_pending);
-        assert!(editor.preferences.sections["roll-calibration"]);
-        assert!(!editor.preferences.sections["photo-white-balance"]);
-        assert!(!editor.preferences.sections["roll-gamma-balance"]);
-        assert_eq!(editor.preferences.filmstrip_height, before.filmstrip_height);
-        assert_eq!(editor.preferences.scopes_visible, before.scopes_visible);
-        assert!(!editor.document.dirty());
+        let editor = fixture();
+        crate::application::test_support::with_application(editor, |app| {
+            app.enter(|editor, cx| {
+                editor.tab = tab;
+                editor
+                    .preferences
+                    .sections
+                    .insert("roll-calibration".into(), false);
+                editor
+                    .preferences
+                    .sections
+                    .insert("photo-white-balance".into(), false);
+                editor
+                    .preferences
+                    .sections
+                    .insert("roll-gamma-balance".into(), false);
+                let before = editor.preferences.clone();
+                editor.start_document(Preparation::New, cx);
+                let id = editor.document_pending.unwrap();
+                assert_eq!(editor.tab, tab);
+                assert!(editor.busy && editor.document_pending.is_some());
+                editor.document_prepared(id + 1, Err("stale".into()));
+                assert_eq!(editor.tab, tab);
+                assert_eq!(editor.document_pending, Some(id));
+                assert!(editor.new_project_pending);
+                editor.document_prepared(
+                    id,
+                    Ok(Box::new(Prepared {
+                        document: Document::default(),
+                        ready: None,
+                        selected: None,
+                        reuse_ready: false,
+                        correction: None,
+                        preserve_view: false,
+                    })),
+                );
+                assert_eq!(editor.tab, 0);
+                assert!(!editor.new_project_pending);
+                assert!(editor.preferences.sections["roll-calibration"]);
+                assert!(!editor.preferences.sections["photo-white-balance"]);
+                assert!(!editor.preferences.sections["roll-gamma-balance"]);
+                assert_eq!(editor.preferences.filmstrip_height, before.filmstrip_height);
+                assert_eq!(editor.preferences.scopes_visible, before.scopes_visible);
+                assert!(!editor.document.dirty());
+            });
+        });
     }
 }
 
@@ -218,7 +219,7 @@ fn cancelling_guarded_new_from_rendering_preserves_tab_document_and_preferences(
     editor.sync_document();
     let project = editor.document.project.clone();
     let context = egui::Context::default();
-    editor.file_action(FileAction::New);
+    editor.file_action(FileAction::New, &UiContext::render_only());
     assert_eq!(editor.transition, Some(Transition::New));
     assert_eq!(editor.tab, 2);
     for _ in 0..3 {
@@ -240,41 +241,41 @@ fn cancelling_guarded_new_from_rendering_preserves_tab_document_and_preferences(
     assert_eq!(editor.tab, 2);
     assert_eq!(editor.document.project, project);
     assert_eq!(editor.preferences, preferences);
-    assert!(
-        editor.candidate_operation.request.is_none()
-            && editor.document.write.request.is_none()
-            && editor.export_operation.request.is_none()
-    );
+    assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
 }
 
 #[test]
 fn failed_new_and_open_or_import_do_not_reset_the_selected_tab() {
-    let mut editor = fixture();
-    editor.tab = 2;
-    let before = editor.document.project.clone();
-    editor.start_document(Preparation::New);
-    editor.document_prepared(editor.document_pending.unwrap(), Err("failed".into()));
-    assert_eq!(editor.tab, 2);
-    assert_eq!(editor.document.project, before);
-    assert!(!editor.new_project_pending);
-    for work in [
-        Preparation::Open("project.json".into()),
-        Preparation::Import(Document::default(), vec![], None),
-    ] {
-        editor.start_document(work);
-        editor.document_prepared(
-            editor.document_pending.unwrap(),
-            Ok(Box::new(Prepared {
-                document: Document::default(),
-                ready: None,
-                selected: None,
-                reuse_ready: false,
-                correction: None,
-                preserve_view: false,
-            })),
-        );
-        assert_eq!(editor.tab, 2);
-    }
+    let editor = fixture();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.tab = 2;
+            let before = editor.document.project.clone();
+            editor.start_document(Preparation::New, cx);
+            editor.document_prepared(editor.document_pending.unwrap(), Err("failed".into()));
+            assert_eq!(editor.tab, 2);
+            assert_eq!(editor.document.project, before);
+            assert!(!editor.new_project_pending);
+            for work in [
+                Preparation::Open("project.json".into()),
+                Preparation::Import(Document::default(), vec![], None),
+            ] {
+                editor.start_document(work, cx);
+                editor.document_prepared(
+                    editor.document_pending.unwrap(),
+                    Ok(Box::new(Prepared {
+                        document: Document::default(),
+                        ready: None,
+                        selected: None,
+                        reuse_ready: false,
+                        correction: None,
+                        preserve_view: false,
+                    })),
+                );
+                assert_eq!(editor.tab, 2);
+            }
+        });
+    });
 }
 
 #[test]

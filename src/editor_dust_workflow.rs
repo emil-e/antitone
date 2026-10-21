@@ -2,10 +2,14 @@
 #[path = "editor_dust_workflow_tests.rs"]
 mod tests;
 
-use super::{Editor, dust, source};
+#[cfg(test)]
+use super::Editor;
+use super::{dust, source};
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicU64, Ordering},
 };
 
 #[derive(Clone)]
@@ -62,43 +66,5 @@ impl Services {
         .await
         .map_err(|_| "Dust evaluation worker panicked".to_owned())?
         .map_err(|error: crate::Error| error.to_string())
-    }
-}
-
-struct Retire(Arc<AtomicBool>);
-impl Drop for Retire {
-    fn drop(&mut self) {
-        self.0.store(true, Ordering::Relaxed);
-    }
-}
-
-impl Editor {
-    pub(super) fn start_dust_workflow(&mut self, access: &crate::application::UiAccess<'_, Self>) {
-        let Some((request, input)) = self.document.dust.take_job() else {
-            return;
-        };
-        let id = request.request;
-        let retire = Retire(request.cancelled.clone());
-        let Some(services) = self.dust_services.clone() else {
-            self.receive_dust(id, Err("Dust services unavailable".into()));
-            return;
-        };
-        let epoch = self.source_epoch.clone();
-        let target = access.clone();
-        let Some(task) = access.spawn(async move {
-            let _retire = retire;
-            let result = services.evaluate(request, input, epoch).await;
-            target.update(|editor| {
-                editor.receive_dust(id, result);
-                if let Some(signature) = editor.dust_signature() {
-                    editor.schedule_dust(signature);
-                    editor.start_dust_workflow(&target);
-                }
-            });
-        }) else {
-            self.receive_dust(id, Err("Application stopped".into()));
-            return;
-        };
-        self.document.dust.attach_task(id, task);
     }
 }

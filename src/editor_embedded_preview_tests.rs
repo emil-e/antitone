@@ -52,9 +52,8 @@ fn authored_dng_preview_worker_installs_and_releases_the_visible_placeholder_wit
     let mut editor = crate::editor::tests::fixture();
     editor.document = document.into();
     editor.thumbnails.embedded = EmbeddedPreviews::new();
-    editor.thumbnails.embedded.request_visible(&visible, true);
     crate::application::test_support::with_application(editor, |app| {
-        app.enter(|editor, access| editor.start_embedded_workflow(access, &context));
+        app.enter(|editor, cx| editor.request_embedded_previews(&visible, true, &context, cx));
         assert!(app.read(|editor| editor.document.embedded_preview.is_some()));
         app.run_until(Duration::from_secs(5), |editor| {
             editor.document.embedded_preview.is_none()
@@ -354,7 +353,7 @@ fn camera_images_and_badges_fit_polished_wells_and_clip_without_squeezing_or_hid
                             ],
                             ..Default::default()
                         },
-                        |ui| editor.filmstrip(ui),
+                        |ui| editor.filmstrip(ui, &crate::application::UiContext::render_only()),
                     );
                     output.textures_delta.clear();
                     output
@@ -504,7 +503,7 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
                 )),
                 ..Default::default()
             },
-            |ui| editor.filmstrip(ui),
+            |ui| editor.filmstrip(ui, &crate::application::UiContext::render_only()),
         );
         output.textures_delta.clear();
         let name = editor

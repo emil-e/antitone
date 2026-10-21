@@ -62,8 +62,7 @@ fn physical_support_completes_without_backend_or_another_paint() {
     let (e, input, spec, scheduler) = fixture();
     with_application(e, |app| {
         app.enter(|e, access| {
-            e.working.request(spec.clone(), input);
-            e.start_working_workflow(access);
+            e.request_working(spec.clone(), input, access);
         });
         app.run_until(Duration::from_secs(15), |e| e.working.support_ready());
         app.read(|e| {
@@ -88,8 +87,7 @@ fn queued_navigation_uses_latest_demand_and_reuses_neutral_support_after_grade_o
             spec.frame.min.0[0] += 1.;
             spec.frame.max.0[0] += 1.;
             app.enter(|e, access| {
-                e.working.request(spec.clone(), input.clone());
-                e.start_working_workflow(access);
+                e.request_working(spec.clone(), input.clone(), access);
             });
             app.pump();
             app.read(|e| {
@@ -116,8 +114,7 @@ fn queued_navigation_uses_latest_demand_and_reuses_neutral_support_after_grade_o
             let processing =
                 ProcessingInput::from(ProcessingParameters::source_inspection(1.2).unwrap());
             e.observe_grade(&processing);
-            e.working.request(spec.clone(), input);
-            e.start_working_workflow(access);
+            e.request_working(spec.clone(), input, access);
         });
         app.pump();
         app.read(|e| {
@@ -171,8 +168,7 @@ fn retiring_running_support_keeps_native_lease_and_physical_admission_through_su
     }));
     with_application(e, |app| {
         app.enter(|e, access| {
-            e.working.request(spec.clone(), input);
-            e.start_working_workflow(access);
+            e.request_working(spec.clone(), input, access);
         });
         app.pump();
         starts.recv_timeout(Duration::from_secs(10)).unwrap();
@@ -180,8 +176,7 @@ fn retiring_running_support_keeps_native_lease_and_physical_admission_through_su
         spec.frame.max.0[0] += 1.;
         app.enter(|e, access| {
             e.replace_photo_scope(8);
-            e.working.request(spec.clone(), next);
-            e.start_working_workflow(access);
+            e.request_working(spec.clone(), next, access);
         });
         app.pump();
         assert!(source.upgrade().is_some());
@@ -209,8 +204,7 @@ fn visit_retirement_drops_queued_support_and_cannot_restore_the_old_source() {
     let hold = crate::editor::tests::hold_blocking_work(&e.workflow_jobs);
     with_application(e, |app| {
         app.enter(|e, access| {
-            e.working.request(spec, input);
-            e.start_working_workflow(access);
+            e.request_working(spec, input, access);
         });
         app.pump();
         app.update(|e| e.replace_photo_scope(8));
@@ -222,6 +216,65 @@ fn visit_retirement_drops_queued_support_and_cannot_restore_the_old_source() {
             assert!(e.working.source.is_none() && e.working.underlay.is_none());
             assert!(e.document.visit.working.task.is_none());
         });
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn save_completion_readmits_existing_working_demand_without_another_paint() {
+    let (e, input, spec, scheduler) = fixture();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("saved.antitone");
+    with_application(e, |app| {
+        app.enter(|e, cx| {
+            e.save_project(path.clone(), crate::project::Save::New, None, cx);
+            e.request_working(spec.clone(), input, cx);
+            assert!(e.document_pending.is_some());
+            assert!(
+                e.document.visit.working.task.is_none(),
+                "foreground admission is paused"
+            );
+        });
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document_pending.is_none() && e.working.support_ready()
+        });
+        app.read(|e| {
+            assert!(e.working.source.as_ref().unwrap().spec == spec);
+            assert!(e.document.visit.working.task.is_none() && !e.busy);
+            assert!(e.failure.is_none(), "{}", e.status);
+        });
+        assert!(path.is_file());
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn guarded_save_close_does_not_readmit_waiting_working_demand() {
+    let (e, input, spec, scheduler) = fixture();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("saved.antitone");
+    with_application(e, |app| {
+        app.enter(|e, cx| {
+            e.save_project(
+                path.clone(),
+                crate::project::Save::New,
+                Some(crate::editor::Transition::Close),
+                cx,
+            );
+            e.request_working(spec, input, cx);
+            assert!(e.document.visit.working.task.is_none());
+        });
+        app.run_until(Duration::from_secs(15), |e| e.allow_close);
+        app.pump();
+        app.read(|e| {
+            assert!(e.document_pending.is_none() && !e.busy);
+            assert!(e.document.visit.working.task.is_none());
+            assert!(
+                e.working.source.is_none(),
+                "close must not start another acquisition"
+            );
+        });
+        assert!(path.is_file());
     });
     scheduler.close_and_wait().unwrap();
 }

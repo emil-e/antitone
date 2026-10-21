@@ -1,5 +1,8 @@
-use super::{Editor, Ready, Task, TaskRequest, source};
+use super::{
+    Adjustments, Editor, LoadCache, Ready, SelectionTiming, Task, TaskRequest, UiContext, source,
+};
 use crate::source_store::SourceKey;
+use std::path::PathBuf;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -11,7 +14,6 @@ mod tests;
 
 #[derive(Default)]
 pub(super) struct State {
-    pub request: Option<source::Request>,
     task: Option<async_executor::Task<()>>,
     completion: Option<Result<Box<Ready>, String>>,
     pub key: Option<SourceKey>,
@@ -19,7 +21,7 @@ pub(super) struct State {
 
 impl State {
     pub fn pending(&self) -> bool {
-        self.request.is_some() || self.task.is_some() || self.completion.is_some()
+        self.task.is_some() || self.completion.is_some()
     }
 
     pub fn matches(&self, ready: &Ready) -> bool {
@@ -46,30 +48,142 @@ impl Drop for Retire {
 }
 
 impl Editor {
-    pub(super) fn start_source_workflow(
+    pub(super) fn source_input(&self, path: PathBuf) -> source::Request {
+        let expected = self
+            .document
+            .find_source(&path)
+            .and_then(|id| self.document.project.source(id).ok())
+            .cloned();
+        let wb = self
+            .document
+            .project
+            .development
+            .as_ref()
+            .map(|value| value.fixed_wb);
+        let cache = LoadCache::new(&path, expected.as_ref(), wb, &self.document);
+        source::Request {
+            path,
+            wb,
+            expected,
+            correction: self.correction.clone(),
+            basis: self.document.project.camera_basis.clone(),
+            cache: Some(cache),
+        }
+    }
+
+    pub(super) fn load_source(
         &mut self,
-        access: &crate::application::UiAccess<'_, Self>,
+        path: PathBuf,
+        persistent: bool,
+        cx: &UiContext<'_, Self>,
     ) {
-        let Some(request) = self.document.visit.source.request.take() else {
+        self.sync_document();
+        if let Err(error) = self.validate_document_candidate(&self.document) {
+            self.status = format!("Source not changed: {error}");
             return;
-        };
+        }
+        self.finish_dust_cleanup();
+        self.document.dust.release_gpu();
+        let started = std::time::Instant::now();
+        let selecting_photo = persistent && self.pick.is_none() && self.flat_edit.is_none();
+        self.document.visit.support = Default::default();
+        self.seed_thumbnail();
+        self.pending_preview = None;
+        self.selection_timing = None;
+        if self.document.analysis_pending.take().is_some() {
+            self.cancel_analysis();
+        }
+        self.thumbnails.cancel();
+        self.document.visit.adjustments = Adjustments::default();
+        self.document.visit.mask_edit = None;
+        self.current_source = self.document.find_source(&path);
+        if selecting_photo {
+            self.roll_selection
+                .reconcile(&self.document.project.order, self.current_source);
+        }
+        self.photo = self
+            .current_source
+            .and_then(|id| self.document.project.source(id).ok())
+            .map(|source| source.photo)
+            .unwrap_or_default();
+        self.photo_orientation = self
+            .current_source
+            .and_then(|id| self.document.project.source(id).ok())
+            .map(|source| source.orientation)
+            .unwrap_or_default();
+        self.crop = self
+            .current_source
+            .and_then(|id| self.document.project.source(id).ok())
+            .and_then(|source| source.crop);
+        self.document.visit.crop_edit = None;
+        self.last_layout = None;
+        self.invalidate_original();
+        self.viewport.fit();
+        self.overwrite = None;
+        self.return_notice = None;
+        self.document.pick_view = None;
+        self.document.pick_return = None;
+        self.id = self.request_id();
+        self.replace_photo_scope(self.id);
+        self.source_epoch
+            .store(self.id, std::sync::atomic::Ordering::Relaxed);
+        self.document.visit.ready = None;
+        self.selection_timing =
+            selecting_photo.then(|| Arc::new(SelectionTiming::new(self.id, started)));
+        self.region = None;
+        self.pick = None;
+        self.source = self
+            .document
+            .auto_crop_edit
+            .as_ref()
+            .map_or(self.calibration().is_none(), |d| d.source_view);
+        self.busy = true;
+        self.status = "Developing full-resolution RAW…".into();
+        self.tasks.begin(Task::Photo(self.id));
+        let request = self.source_input(path);
+        self.document.visit.source.key = request.cache.as_ref().and_then(|cache| cache.key.clone());
         let view = self.document.visit.view;
-        let Some(services) = self.source_services.clone() else {
-            self.source_result(view, Err("Source services unavailable".into()));
-            return;
-        };
+        let services = self.source_services.clone();
         let cancelled = Arc::new(AtomicBool::new(false));
         let retire = Retire(cancelled.clone());
-        let target = access.clone();
-        let Some(task) = access.spawn(async move {
+        let Some(task) = cx.spawn(move |cx| async move {
             let _retire = retire;
-            let result = services.prepare(request, cancelled).await.map(Box::new);
-            target.update(|editor| editor.source_result(view, result));
+            let result = match services {
+                Some(services) => services.prepare(request, cancelled).await.map(Box::new),
+                None => Err("Source services unavailable".into()),
+            };
+            cx.update(|editor| editor.source_result(view, result));
         }) else {
             self.source_result(view, Err("Application stopped".into()));
             return;
         };
         self.document.visit.source.task = Some(task);
+        if selecting_photo
+            && self.pick.is_none()
+            && self.flat_edit.is_none()
+            && let Some(source) = self.current_source
+        {
+            match self.thumbnails.selected_preview(
+                self.id,
+                &self.document,
+                source,
+                self.correction.as_ref(),
+            ) {
+                Ok(preview) => {
+                    println!(
+                        "selected_switch request={} cache_hit={} boundary=admission elapsed_ms={:.6}",
+                        self.id,
+                        preview.is_some(),
+                        started.elapsed().as_secs_f64() * 1000.
+                    );
+                    self.pending_preview = preview;
+                }
+                Err(error) => eprintln!(
+                    "selected_preview request={} unavailable reason={error}",
+                    self.id
+                ),
+            }
+        }
     }
 
     pub(super) fn source_result(&mut self, view: u64, result: Result<Box<Ready>, String>) {
@@ -77,7 +191,6 @@ impl Editor {
             return;
         }
         self.document.visit.source.task = None;
-        self.document.visit.source.request = None;
         self.document.visit.source.completion = Some(result);
         self.resume_source_completion();
     }

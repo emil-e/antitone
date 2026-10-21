@@ -153,7 +153,7 @@ fn fullscreen_suspends_crop_and_picker_without_escape_cancelling_them() {
         if crop {
             editor.begin_crop();
         } else {
-            editor.begin_pick(Pick::Dmin);
+            editor.begin_pick(Pick::Dmin, &crate::application::UiContext::render_only());
         }
         frame(&mut editor, &context, Some(false), vec![]);
         let viewport = editor.viewport;

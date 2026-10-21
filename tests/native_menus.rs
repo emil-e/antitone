@@ -117,7 +117,7 @@ impl host::App for MenuApp {
             _ => {}
         }
     }
-    fn ui(&mut self, ui: &mut egui::Ui, _access: &antitone::application::UiAccess<'_, Self>) {
+    fn ui(&mut self, ui: &mut egui::Ui, _access: &antitone::application::UiContext<'_, Self>) {
         ui.heading("Native menu integration check");
         assert!(self.installed);
         if self.waiting {

@@ -2,7 +2,11 @@
 #[path = "editor_original_workflow_tests.rs"]
 mod tests;
 
-use super::{Editor, original_view::Request, source};
+use super::{
+    Editor, OriginalPurpose, OutputTarget, ProcessingInput, UiContext,
+    original_view::{Request, Signature},
+    source,
+};
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -61,60 +65,89 @@ impl Request {
 }
 
 impl Editor {
-    pub(super) fn start_original_workflow(
+    pub(super) fn invalidate_original(&mut self) {
+        self.original.invalidate();
+        self.document.visit.grade.task = None;
+    }
+
+    pub(super) fn discard_original(&mut self) {
+        self.original.discard();
+        self.document.visit.grade.task = None;
+    }
+
+    pub(super) fn cancel_original_pending(&mut self) {
+        self.original.cancel_pending();
+        self.document.visit.grade.task = None;
+    }
+
+    pub(super) fn leave_original(&mut self) {
+        self.original.leave();
+        self.document.visit.grade.task = None;
+    }
+
+    pub(super) fn observe_original(
         &mut self,
-        access: &crate::application::UiAccess<'_, Self>,
+        purpose: Option<OriginalPurpose>,
+        signature: Signature,
     ) {
-        if self
-            .original
-            .refining
-            .is_none_or(|(running, _)| running != self.original.revision())
-        {
+        match purpose {
+            Some(purpose) => self.original.observe(purpose, signature),
+            None => self.leave_original(),
+        }
+        if self.original.refining.is_none() {
             self.document.visit.grade.task = None;
-            if let Some((retired, _)) = self.original.refining {
-                self.original.receive(retired, Ok(None));
-            }
         }
-        let Some(request) = self.document.visit.grade.request.take() else {
-            return;
-        };
-        let revision = request.revision;
-        let generation = request.generation.clone();
-        if self.original.revision() != revision {
-            self.original.receive(revision, Ok(None));
-            return;
-        }
-        let Some(services) = self.source_services.clone() else {
-            self.original_result(
+    }
+
+    pub(super) fn request_original(
+        &mut self,
+        input: &ProcessingInput,
+        target: OutputTarget,
+        context: &egui::Context,
+        source: source::Context,
+        cx: &UiContext<'_, Self>,
+    ) {
+        if let Some(request) = self.original.request(input, target, source) {
+            let revision = request.revision;
+            let generation = request.generation.clone();
+            self.original.refining = Some((revision, request.view));
+            let Some(services) = self.source_services.clone() else {
+                self.original_result(
+                    revision,
+                    Err("Original reconstruction services unavailable".into()),
+                );
+                return;
+            };
+            let visit = self.document.visit.view;
+            let submissions = self.submissions.clone();
+            let retire = Retire {
+                generation: generation.clone(),
                 revision,
-                Err("Original reconstruction services unavailable".into()),
-            );
-            return;
-        };
-        let visit = self.document.visit.view;
-        let submissions = self.submissions.clone();
-        let retire = Retire {
-            generation: generation.clone(),
-            revision,
-            armed: true,
-        };
-        let target = access.clone();
-        let Some(task) = access.spawn(async move {
-            let mut retire = retire;
-            let result = request.prepare(services, submissions).await;
-            retire.armed = false;
-            target.update(|editor| {
-                if editor.document.visit.view == visit
-                    && Arc::ptr_eq(&editor.original.generation, &generation)
-                {
-                    editor.original_result(revision, result);
-                }
-            });
-        }) else {
-            self.original_result(revision, Err("Application stopped".into()));
-            return;
-        };
-        self.document.visit.grade.task = Some(task);
+                armed: true,
+            };
+            let Some(task) = cx.spawn(move |cx| async move {
+                let mut retire = retire;
+                let result = request.prepare(services, submissions).await;
+                retire.armed = false;
+                cx.update(|editor| {
+                    if editor.document.visit.view == visit
+                        && Arc::ptr_eq(&editor.original.generation, &generation)
+                    {
+                        editor.original_result(revision, result);
+                    }
+                });
+            }) else {
+                self.original_result(revision, Err("Application stopped".into()));
+                return;
+            };
+            self.document.visit.grade.task = Some(task);
+        }
+        if self.original.refining.is_some()
+            || self.original.settled.is_none()
+                && self.original.refinement_error != Some(self.original.revision())
+        {
+            context.request_repaint_after(std::time::Duration::from_millis(50));
+        }
     }
 
     pub(super) fn original_result(
@@ -128,16 +161,6 @@ impl Editor {
             .is_some_and(|(running, _)| running == revision)
         {
             self.document.visit.grade.task = None;
-            if self
-                .document
-                .visit
-                .grade
-                .request
-                .as_ref()
-                .is_some_and(|request| request.revision == revision)
-            {
-                self.document.visit.grade.request = None;
-            }
         }
         if let Some(error) = self.original.receive(revision, result) {
             self.status = error;

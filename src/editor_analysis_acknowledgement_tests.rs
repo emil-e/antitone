@@ -17,16 +17,36 @@ fn start_cpu(
     continued: Rc<Cell<bool>>,
 ) {
     app.enter(|editor, access| {
-        editor.request_analysis();
+        // Attach a real gated CPU task directly to its owner: these cases isolate
+        // service acknowledgement and result delivery, not command initiation.
+        editor.sync_document();
+        let revision = editor
+            .document
+            .analysis_generation
+            .fetch_add(1, Ordering::Relaxed)
+            + 1;
+        let id = editor.request_id();
+        let request = analysis::Request {
+            loaded: editor.id,
+            revision,
+            document: editor.document.capture(),
+            selected: editor.current_source.unwrap(),
+            film: None,
+            local_support: false,
+            picture: None,
+            areas: None,
+        };
+        let pending = Pending::new(id, request);
+        editor.busy = true;
+        editor.tasks.begin(if fitting {
+            super::super::Task::Analyze(id)
+        } else {
+            super::super::Task::AnalysisAreas(id)
+        });
         if fitting {
-            let request = editor
-                .document
-                .analysis_preparing
-                .take()
-                .unwrap()
-                .request
-                .clone();
-            editor.start_analysis(request);
+            editor.document.analysis_pending = Some(pending);
+        } else {
+            editor.document.analysis_preparing = Some(pending);
         }
         let pending = if fitting {
             editor.document.analysis_pending.as_ref().unwrap()
@@ -37,9 +57,8 @@ fn start_cpu(
         let stopped = pending.cancelled.clone();
         let retire = Retire(stopped.clone());
         let services = Services::from(editor.source_services.as_ref().unwrap());
-        let target = access.clone();
         let task = access
-            .spawn(async move {
+            .spawn(move |cx| async move {
                 let _retire = retire;
                 let work = services.cpu(&stopped, move || {
                     entered.send(()).unwrap();
@@ -47,13 +66,13 @@ fn start_cpu(
                     returned.send(()).unwrap();
                     Ok(())
                 });
-                let result = drive(work, Arc::default(), &target, id).await;
+                let result = drive(work, Arc::default(), &cx, id).await;
                 continued.set(true);
-                target.update(|editor| {
+                cx.update(|editor| {
                     if fitting {
-                        editor.analysis_result(id, result.map(|_| None));
+                        editor.analysis_result(id, result.map(|_| None), &cx);
                     } else {
-                        editor.analysis_areas_result(id, result.map(|_| None));
+                        editor.analysis_areas_result(id, result.map(|_| None), &cx);
                     }
                 });
             })

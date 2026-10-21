@@ -1,5 +1,5 @@
 use super::*;
-use crate::project::SourceDevelopment;
+use crate::{application::test_support::with_application, project::SourceDevelopment};
 
 fn record(path: &str) -> Source {
     Source {
@@ -44,7 +44,7 @@ fn reference_registration_does_not_add_a_photo_or_hide_an_existing_one() {
 }
 
 #[test]
-fn flat_preview_cancel_failure_and_stale_products_preserve_document_and_working_context() {
+fn reference_rejection_cancel_and_stale_products_preserve_document_and_working_context() {
     let mut editor = Editor::state();
     editor.id = 12;
     editor.next_request = 12;
@@ -55,67 +55,46 @@ fn flat_preview_cancel_failure_and_stale_products_preserve_document_and_working_
     editor.sync_document();
     let original = editor.document.project.clone();
     let roll = editor.roll;
-    editor.begin_flat_edit("light.ARW".into(), None);
-    let request = editor.id;
-    assert!(matches!(
-        editor.flat_edit.as_ref().unwrap().request,
-        Some(reference_services::Operation::Preview(_))
-    ));
-    assert_eq!(editor.document.project, original);
-    editor.reference_previewed(request, Err("reference unavailable".into()));
-    assert!(editor.id > request);
-    assert_eq!(editor.document.visit.view, editor.id);
-    assert!(!editor.source);
-    assert!(editor.pick.is_none());
-    assert!(editor.flat_edit.is_none());
-    assert_eq!(editor.document.project, original);
-    assert_eq!(
-        editor.failure.as_ref().unwrap().kind,
-        FailureKind::FlatReference
-    );
-    assert_eq!(
-        editor.failure.as_ref().unwrap().details,
-        "reference unavailable"
-    );
-    assert!(editor.flat_edit.is_none());
-    editor.begin_flat_edit("other.ARW".into(), None);
-    let current = editor.id;
-    editor.reference_previewed(request, Err("stale".into()));
-    assert!(editor.busy);
-    assert_eq!(editor.id, current);
-    assert_eq!(
-        editor.failure.as_ref().unwrap().details,
-        "reference unavailable"
-    );
-    editor.busy = false;
-    editor.finish_pick();
-    assert!(editor.id > current);
-    assert_eq!(editor.document.visit.view, editor.id);
-    assert_eq!(editor.roll, roll);
-    assert_eq!(editor.document.project, original);
-    assert_eq!(
-        editor.failure.as_ref().unwrap().details,
-        "reference unavailable"
-    );
+    with_application(editor, |app| {
+        app.enter(|e, cx| {
+            e.begin_flat_edit("light.ARW".into(), None, cx);
+            let request = e.id;
+            assert!(e.busy && e.flat_edit.as_ref().unwrap().task.is_some());
+            assert_eq!(e.document.project, original);
+            // This case tests the controller's typed rejection, not a native producer.
+            e.reference_previewed(request, Err("reference unavailable".into()));
+            assert!(e.id > request);
+            assert_eq!(e.document.visit.view, e.id);
+            assert!(!e.source && e.pick.is_none() && e.flat_edit.is_none());
+            assert_eq!(e.document.project, original);
+            assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::FlatReference);
+            assert_eq!(e.failure.as_ref().unwrap().details, "reference unavailable");
+            e.begin_flat_edit("other.ARW".into(), None, cx);
+            let current = e.id;
+            e.reference_previewed(request, Err("stale".into()));
+            assert!(e.busy);
+            assert_eq!(e.id, current);
+            assert_eq!(e.failure.as_ref().unwrap().details, "reference unavailable");
+            e.finish_pick(cx);
+            assert!(e.id > current);
+            assert_eq!(e.document.visit.view, e.id);
+            assert_eq!(e.roll, roll);
+            assert_eq!(e.document.project, original);
+            assert_eq!(e.failure.as_ref().unwrap().details, "reference unavailable");
+        });
+        app.pump();
+    });
 }
 
 #[test]
 fn failed_map_acceptance_restores_transient_edit_without_accepting_document_changes() {
     let mut editor = Editor::state();
-    editor.begin_flat_edit("light.ARW".into(), None);
-    editor.busy = false;
     editor.floor = crate::processing::CAMERA_INPUT_FLOOR;
     editor.document.project.development =
         Some(Development::new(crate::raw::version(), [2., 1., 1.5, 1.]));
     super::super::tests::add_ready_fixture(&mut editor);
-    let ready = editor.document.visit.ready.take().unwrap();
-    editor.reference_previewed(
-        editor.id,
-        Ok(FlatPreview {
-            ready,
-            region: None,
-        }),
-    );
+    let ready = editor.document.visit.ready.as_ref().unwrap().clone();
+    super::super::tests::paused_reference_fixture(&mut editor, ready, None);
     let original = editor.document.project.clone();
     editor.region = Some(Coverage::rectangle(Rect {
         x: 12,
@@ -123,25 +102,23 @@ fn failed_map_acceptance_restores_transient_edit_without_accepting_document_chan
         width: 1,
         height: 1,
     }));
-    editor.apply_pick();
-    let request = editor.id;
-    assert!(matches!(
-        editor.flat_edit.as_ref().unwrap().request,
-        Some(reference_services::Operation::Accept(_))
-    ));
-    editor.document_prepared(request, Err("invalid correction".into()));
-    assert!(editor.flat_edit.is_none());
-    assert!(editor.pick.is_none());
-    assert!(!editor.busy);
-    assert_eq!(editor.document.project, original);
-    assert_eq!(
-        editor.failure.as_ref().unwrap().kind,
-        FailureKind::FlatCorrection
-    );
-    assert_eq!(
-        editor.failure.as_ref().unwrap().details,
-        "invalid correction"
-    );
+    with_application(editor, |app| {
+        app.enter(|e, cx| {
+            e.apply_flat_edit(cx);
+            assert!(e.document_pending.is_some() && e.flat_edit.as_ref().unwrap().task.is_some());
+            e.document_prepared(e.id, Err("invalid correction".into()));
+        });
+        app.pump();
+        app.read(|e| {
+            assert!(e.flat_edit.is_none() && e.pick.is_none() && !e.busy);
+            assert_eq!(e.document.project, original);
+            assert_eq!(
+                e.failure.as_ref().unwrap().kind,
+                FailureKind::FlatCorrection
+            );
+            assert_eq!(e.failure.as_ref().unwrap().details, "invalid correction");
+        });
+    });
 }
 
 #[test]
@@ -183,39 +160,18 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
     let viewport = editor.viewport;
     let ready = editor.document.visit.ready.as_ref().unwrap();
     let area = ready.area;
-    let mut record = ready.record.clone();
-    record.path = "light.ARW".into();
-    record.reference_only = true;
-    let reference = Ready {
-        developed: ready.developed.clone(),
-        file: thumbnails::FileKey::new(&record.path),
-        thumbnail: None,
-        path: record.path.clone(),
-        area,
-        analysis_support: None,
-        floor: ready.floor,
-        proxy: ready.proxy.clone(),
-        record,
-        development: ready.development.clone(),
-    };
+    let mut reference = ready.clone();
+    reference.record.path = "light.ARW".into();
+    reference.record.reference_only = true;
+    reference.path = reference.record.path.clone();
+    reference.file = thumbnails::FileKey::new(&reference.path);
     let region = Rect {
         x: 37,
         y: 26,
         width: 540,
         height: 320,
     };
-    editor.begin_flat_edit(reference.path.clone(), Some(region));
-    assert!(matches!(
-        editor.flat_edit.as_ref().unwrap().request,
-        Some(reference_services::Operation::Preview(_))
-    ));
-    editor.reference_previewed(
-        editor.id,
-        Ok(FlatPreview {
-            ready: reference,
-            region: None,
-        }),
-    );
+    super::super::tests::paused_reference_fixture(&mut editor, reference, Some(region));
     let context = egui::Context::default();
     let mut output = context.run_ui(
         egui::RawInput {
@@ -247,23 +203,11 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
     );
     assert_eq!(editor.document.project, original);
     editor.region = Some(editor.crop.unwrap().coverage().unwrap());
-    editor.apply_flat_edit();
-    assert!(!editor.busy);
-    assert!(
-        editor
-            .flat_edit
-            .as_ref()
-            .is_none_or(|edit| edit.request.is_none())
-    );
+    editor.apply_flat_edit(&UiContext::render_only());
+    assert!(!editor.busy && editor.document_pending.is_none());
     assert_eq!(editor.document.project, original);
     editor.region = Some(Coverage::rectangle(region));
-    editor.apply_flat_edit();
-    let request = editor.id;
-    let Some(reference_services::Operation::Accept(input)) =
-        editor.flat_edit.as_mut().unwrap().request.take()
-    else {
-        panic!("expected source support acceptance")
-    };
+    let input = editor.reference_input().unwrap().unwrap();
     assert_eq!(input.region, region);
     assert!(Arc::ptr_eq(
         &input.source.source,
@@ -272,37 +216,30 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
     assert!(input.source.correction.is_none());
     assert_eq!(input.document.project, original);
     assert_eq!(input.selected, editor.current_source);
-    editor.document_prepared(request, Err("invalid correction".into()));
-    assert_eq!(editor.document.project, original);
-    assert_eq!(
-        editor.crop,
-        original
-            .source(editor.current_source.unwrap())
-            .unwrap()
-            .crop
-    );
-    assert_eq!(editor.roll_orientation, original.orientation);
-    assert_eq!(editor.viewport, viewport);
-    assert!(!editor.source);
-    assert!(editor.last_layout.is_none());
     assert!(
-        editor
-            .flat_edit
-            .as_ref()
-            .is_none_or(|edit| edit.request.is_none())
+        !editor.busy && editor.document_pending.is_none(),
+        "building input must not start an operation"
     );
-    editor.begin_crop();
-    let request = editor.id;
-    editor.begin_flat_edit("another-light.ARW".into(), None);
-    assert_eq!(editor.id, request);
-    assert!(editor.document.visit.crop_edit.is_some());
-    assert!(editor.flat_edit.is_none());
-    assert!(
-        editor
-            .flat_edit
-            .as_ref()
-            .is_none_or(|edit| edit.request.is_none())
-    );
+    with_application(editor, |app| {
+        app.enter(|e, cx| {
+            e.apply_flat_edit(cx);
+            e.document_prepared(e.id, Err("invalid correction".into()));
+            assert_eq!(e.document.project, original);
+            assert_eq!(
+                e.crop,
+                original.source(e.current_source.unwrap()).unwrap().crop
+            );
+            assert_eq!(e.roll_orientation, original.orientation);
+            assert_eq!(e.viewport, viewport);
+            assert!(!e.source && e.last_layout.is_none() && e.flat_edit.is_none());
+            e.begin_crop();
+            let request = e.id;
+            e.begin_flat_edit("another-light.ARW".into(), None, cx);
+            assert_eq!(e.id, request);
+            assert!(e.document.visit.crop_edit.is_some() && e.flat_edit.is_none());
+        });
+        app.pump();
+    });
 }
 
 #[test]
@@ -318,111 +255,110 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
             .await
             .expect("authored correction worker test requires Metal");
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let mut editor = Editor::new(&device, &queue, None);
-        // Thumbnail scheduling is separate and must not write the user's disk cache.
+        let mut editor = Editor::new(&device, &queue);
         editor.thumbnails = Thumbnails::default();
-        editor.add_raws(vec![root.join("illuminated-patches.dng")]);
-        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(60));
-        assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
-        let selected = editor.current_source;
-        let mut scan = Scan::open(&root.join("illuminated-patches.dng"), None).unwrap();
-        editor.dmin = Some(
-            scan.reference(Rect {
-                x: 16,
-                y: 16,
-                width: 32,
-                height: 32,
-            })
-            .unwrap(),
-        );
-        editor.dmax = Some(
-            scan.reference(Rect {
-                x: 80,
-                y: 16,
-                width: 32,
-                height: 32,
-            })
-            .unwrap(),
-        );
-        editor.sync_document();
-        let rgb = (editor.dmin, editor.dmax);
-        let original = editor.document.project.clone();
-        editor.begin_flat_edit(root.join("bare-light.dng"), None);
-        editor =
-            crate::editor::tests::complete_reference_operation(editor, Duration::from_secs(60));
-        assert_eq!(editor.pick, Some(Pick::Flat));
-        assert!(editor.region.is_some());
-        editor.finish_pick();
-        assert_eq!(editor.document.project, original);
-        assert_eq!(editor.current_source, selected);
-        editor.begin_flat_edit(root.join("bare-light.dng"), None);
-        editor =
-            crate::editor::tests::complete_reference_operation(editor, Duration::from_secs(60));
-        editor.apply_pick();
-        editor =
-            crate::editor::tests::complete_reference_operation(editor, Duration::from_secs(60));
-        assert!(editor.correction.is_some(), "{}", editor.status);
-        assert_eq!(editor.document.project.order, original.order);
-        assert_eq!((editor.dmin, editor.dmax), rgb);
-        assert_eq!(editor.current_source, selected);
-        let settings = editor.document.project.flat_field.clone().unwrap();
-        assert!(
-            editor
-                .document
-                .project
-                .source(settings.reference)
-                .unwrap()
-                .reference_only
-        );
-        let directory = tempfile::tempdir().unwrap();
-        let accepted = editor.document.project.clone();
-        editor.restore_history(history::Direction::Undo);
-        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(60));
-        assert_eq!(editor.document.project, original, "{}", editor.status);
-        assert!(editor.correction.is_none());
-        editor.restore_history(history::Direction::Redo);
-        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(60));
-        assert_eq!(editor.document.project, accepted, "{}", editor.status);
-        assert_eq!(
-            editor.correction.as_ref().unwrap().settings.map,
-            settings.map
-        );
-        editor.begin_flat_edit(directory.path().join("missing.dng"), None);
-        assert!(editor.busy);
-        assert!(editor.flat_edit.is_some());
-        editor =
-            crate::editor::tests::complete_reference_operation(editor, Duration::from_secs(60));
-        assert!(editor.status.contains("open"), "{}", editor.status);
-        assert!(!editor.busy);
-        assert!(editor.flat_edit.is_none());
-        assert!(editor.pick.is_none());
-        assert!(editor.document_pending.is_none());
-        assert_eq!(editor.document.project, accepted);
-        assert_eq!(editor.current_source, selected);
-        assert!(editor.document.visit.ready.is_some());
-        let path = directory.path().join("authored-correction.antitone.json");
-        editor.queue_save(path.clone(), crate::project::Save::New, None);
-        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(60));
-        assert!(!editor.document.dirty(), "{}", editor.status);
-        editor.start_document(Preparation::Open(path));
-        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(60));
-        assert_eq!(editor.document.project, accepted);
-        assert_eq!(
-            editor.correction.as_ref().unwrap().settings.map,
-            settings.map
-        );
-        let mut missing = accepted;
-        missing.source_mut(settings.reference).unwrap().path =
-            directory.path().join("unavailable.dng");
-        let path = directory.path().join("missing-reference.antitone.json");
-        missing.save(&path, crate::project::Save::New).unwrap();
-        editor.start_document(Preparation::Open(path));
-        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(60));
-        assert_eq!(editor.document.project, missing);
-        assert_eq!(
-            editor.correction.as_ref().unwrap().settings.map,
-            settings.map
-        );
-        assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
+        with_application(editor, |app| {
+            app.enter(|e, cx| e.add_raws(vec![root.join("illuminated-patches.dng")], cx));
+            app.run_until(Duration::from_secs(60), |e| !e.busy);
+            assert!(app.read(|e| e.document.visit.ready.is_some()));
+            let selected = app.read(|e| e.current_source);
+            let mut scan = Scan::open(&root.join("illuminated-patches.dng"), None).unwrap();
+            let (rgb, original) = app.update(|e| {
+                e.dmin = Some(
+                    scan.reference(Rect {
+                        x: 16,
+                        y: 16,
+                        width: 32,
+                        height: 32,
+                    })
+                    .unwrap(),
+                );
+                e.dmax = Some(
+                    scan.reference(Rect {
+                        x: 80,
+                        y: 16,
+                        width: 32,
+                        height: 32,
+                    })
+                    .unwrap(),
+                );
+                e.sync_document();
+                ((e.dmin, e.dmax), e.document.project.clone())
+            });
+            app.enter(|e, cx| e.begin_flat_edit(root.join("bare-light.dng"), None, cx));
+            app.run_until(Duration::from_secs(60), |e| !e.busy);
+            app.enter(|e, cx| {
+                assert_eq!(e.pick, Some(Pick::Flat));
+                assert!(e.region.is_some());
+                e.finish_pick(cx);
+                assert_eq!(e.document.project, original);
+                assert_eq!(e.current_source, selected);
+            });
+            app.enter(|e, cx| e.begin_flat_edit(root.join("bare-light.dng"), None, cx));
+            app.run_until(Duration::from_secs(60), |e| !e.busy);
+            app.enter(|e, cx| e.apply_flat_edit(cx));
+            app.run_until(Duration::from_secs(60), |e| !e.busy);
+            let settings = app.read(|e| {
+                assert!(e.correction.is_some(), "{}", e.status);
+                assert_eq!(e.document.project.order, original.order);
+                assert_eq!((e.dmin, e.dmax), rgb);
+                assert_eq!(e.current_source, selected);
+                let settings = e.document.project.flat_field.clone().unwrap();
+                assert!(
+                    e.document
+                        .project
+                        .source(settings.reference)
+                        .unwrap()
+                        .reference_only
+                );
+                settings
+            });
+            let directory = tempfile::tempdir().unwrap();
+            let accepted = app.read(|e| e.document.project.clone());
+            app.enter(|e, cx| e.restore_history(history::Direction::Undo, cx));
+            app.run_until(Duration::from_secs(60), |e| !e.busy);
+            app.read(|e| {
+                assert_eq!(e.document.project, original, "{}", e.status);
+                assert!(e.correction.is_none());
+            });
+            app.enter(|e, cx| e.restore_history(history::Direction::Redo, cx));
+            app.run_until(Duration::from_secs(60), |e| !e.busy);
+            app.read(|e| {
+                assert_eq!(e.document.project, accepted, "{}", e.status);
+                assert_eq!(e.correction.as_ref().unwrap().settings.map, settings.map);
+            });
+            app.enter(|e, cx| e.begin_flat_edit(directory.path().join("missing.dng"), None, cx));
+            assert!(app.read(|e| e.busy && e.flat_edit.as_ref().unwrap().task.is_some()));
+            app.run_until(Duration::from_secs(60), |e| !e.busy);
+            app.read(|e| {
+                assert!(e.status.contains("open"), "{}", e.status);
+                assert!(e.flat_edit.is_none() && e.pick.is_none() && e.document_pending.is_none());
+                assert_eq!(e.document.project, accepted);
+                assert_eq!(e.current_source, selected);
+                assert!(e.document.visit.ready.is_some());
+            });
+            let path = directory.path().join("authored-correction.antitone.json");
+            app.enter(|e, cx| e.save_project(path.clone(), crate::project::Save::New, None, cx));
+            app.run_until(Duration::from_secs(60), |e| !e.busy);
+            assert!(!app.read(|e| e.document.dirty()));
+            app.enter(|e, cx| e.start_document(Preparation::Open(path), cx));
+            app.run_until(Duration::from_secs(60), |e| !e.busy);
+            app.read(|e| {
+                assert_eq!(e.document.project, accepted);
+                assert_eq!(e.correction.as_ref().unwrap().settings.map, settings.map);
+            });
+            let mut missing = accepted;
+            missing.source_mut(settings.reference).unwrap().path =
+                directory.path().join("unavailable.dng");
+            let path = directory.path().join("missing-reference.antitone.json");
+            missing.save(&path, crate::project::Save::New).unwrap();
+            app.enter(|e, cx| e.start_document(Preparation::Open(path), cx));
+            app.run_until(Duration::from_secs(60), |e| !e.busy);
+            app.read(|e| {
+                assert_eq!(e.document.project, missing);
+                assert_eq!(e.correction.as_ref().unwrap().settings.map, settings.map);
+                assert!(e.document.visit.ready.is_some(), "{}", e.status);
+            });
+        });
     });
 }

@@ -10,12 +10,21 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let mut editor = Editor::new(&device, &queue, None);
+        let mut editor = Editor::new(&device, &queue);
         editor.thumbnails = Thumbnails::default();
-        editor.add_raws(vec![
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
-        ]);
-        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(30));
+        editor = crate::editor::tests::complete_document_operation(
+            editor,
+            Duration::from_secs(30),
+            |editor, cx| {
+                editor.add_raws(
+                    vec![
+                        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                            .join("tests/fixtures/raw/patches.dng"),
+                    ],
+                    cx,
+                )
+            },
+        );
         editor.dmin = Some(DVec3::splat(0.8));
         editor.dmax = Some(DVec3::splat(0.02));
         editor.roll = RollSettings::new_grade();
@@ -83,14 +92,16 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
                     .dust
                     .has_evaluation(id, crate::dust_repair::RepairId(1))
             );
-            editor.export(
-                path.clone(),
-                OutputFormat::Tiff(OutputTarget::DisplayP3),
-                Overwrite::Refuse,
-            );
-            // Change live state after capture; neither file may follow this newer value.
-            editor.document.project.output.look = (!with_look).then(|| look.clone());
-            editor = wait(editor);
+            editor = wait(editor, |editor, cx| {
+                editor.export(
+                    path.clone(),
+                    OutputFormat::Tiff(OutputTarget::DisplayP3),
+                    Overwrite::Refuse,
+                    cx,
+                );
+                // Change live state after capture; neither file may follow this newer value.
+                editor.document.project.output.look = (!with_look).then(|| look.clone());
+            });
             assert!(editor.failure.is_none(), "{}", editor.status);
             editor.document.project.output.look = Some(look.clone());
             let pixels = tiff_pixels(&path);
@@ -126,20 +137,22 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
         let path = directory.path().join("cancelled.tif");
         std::fs::write(&path, b"existing destination").unwrap();
         let gate = host::App::submission_gate(&editor).clone();
-        gate.configure(|| {
-            editor.export(
-                path.clone(),
-                OutputFormat::Tiff(OutputTarget::DisplayP3),
-                Overwrite::Confirmed,
-            );
-            editor
-                .export_operation
-                .cancelled
-                .as_ref()
-                .unwrap()
-                .store(true, std::sync::atomic::Ordering::Relaxed);
+        editor = wait(editor, |editor, cx| {
+            gate.configure(|| {
+                editor.export(
+                    path.clone(),
+                    OutputFormat::Tiff(OutputTarget::DisplayP3),
+                    Overwrite::Confirmed,
+                    cx,
+                );
+                editor
+                    .export_operation
+                    .cancelled
+                    .as_ref()
+                    .unwrap()
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+            });
         });
-        editor = wait(editor);
         assert!(editor.status.contains("cancel"), "{}", editor.status);
         assert_eq!(std::fs::read(&path).unwrap(), b"existing destination");
         assert_eq!(

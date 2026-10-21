@@ -92,10 +92,10 @@ fn preview(editor: &Editor, id: SourceId) -> Option<Crop> {
     editor.auto_crop_preview(id).expect("fixed proposal member")
 }
 
-fn browse(editor: &mut Editor, index: usize) {
+fn browse(editor: &mut Editor, index: usize, cx: &UiContext<'_, Editor>) {
     // Exercise production selection/load state, then deliver compatible metadata without RAW decoding.
     let mut ready = editor.document.visit.ready.take().unwrap();
-    editor.select_roll_photo(index, egui::Modifiers::NONE);
+    editor.select_roll_photo(index, egui::Modifiers::NONE, cx);
     let id = editor.current_source.unwrap();
     let source = editor.document.project.source(id).unwrap();
     ready.record = source.clone();
@@ -103,8 +103,7 @@ fn browse(editor: &mut Editor, index: usize) {
     ready.file = thumbnails::FileKey::new(&ready.path);
     ready.area = source.development.active_area.into();
     ready.development = editor.document.project.development.clone().unwrap();
-    editor.document.visit.ready = Some(ready);
-    editor.busy = false;
+    editor.source_result(editor.document.visit.view, Ok(Box::new(ready)));
 }
 
 #[test]
@@ -176,46 +175,50 @@ fn batch_crop_closes_local_editing_and_preserves_masks_on_apply_and_cancel() {
 
 #[test]
 fn partial_proposals_keep_source_reasons_without_warning_about_uncaptured_photos() {
-    let (mut e, _directory) = fixture();
-    let ids = e.document.project.order.clone();
-    e.select_roll_photo(1, egui::Modifiers::COMMAND);
-    e.select_roll_photo(2, egui::Modifiers::COMMAND);
-    e.document
-        .project
-        .analysis_regions
-        .retain(|r| r.source != ids[1]);
-    e.document.project.analysis_regions[1]
-        .areas
-        .picture_observed[0] = false;
-    e.document.project.analysis_regions[1].areas.picture_weak[0] = true;
-    let before = e.document.project.clone();
-    e.auto_crop(Target::Selected);
-    assert!(e.auto_crop_valid());
-    assert!(e.source_tool_warning(ids[0]).is_none());
-    assert!(
-        e.source_tool_warning(ids[1])
-            .unwrap()
-            .contains("no retained frame evidence")
-    );
-    assert!(
-        e.source_tool_warning(ids[2])
-            .unwrap()
-            .contains("four measured picture edges")
-    );
-    assert!(
-        e.source_tool_warning(ids[3]).is_none(),
-        "not captured is not a failed proposal"
-    );
-    browse(&mut e, 1);
-    let reason = e.source_tool_warning(ids[1]).unwrap().to_owned();
-    e.select_active_photo_only();
-    e.adjust_auto_crop_margin(2.);
-    assert_eq!(e.source_tool_warning(ids[1]), Some(reason.as_str()));
-    assert!(e.source_tool_warning(ids[3]).is_none());
-    assert_eq!(e.document.project, before);
-    e.finish_auto_crop(false);
-    assert!(ids.iter().all(|&id| e.source_tool_warning(id).is_none()));
-    assert_eq!(e.document.project, before);
+    let (e, _directory) = fixture();
+    crate::application::test_support::with_application(e, |app| {
+        app.enter(|e, cx| {
+            let ids = e.document.project.order.clone();
+            e.select_roll_photo(1, egui::Modifiers::COMMAND, cx);
+            e.select_roll_photo(2, egui::Modifiers::COMMAND, cx);
+            e.document
+                .project
+                .analysis_regions
+                .retain(|r| r.source != ids[1]);
+            e.document.project.analysis_regions[1]
+                .areas
+                .picture_observed[0] = false;
+            e.document.project.analysis_regions[1].areas.picture_weak[0] = true;
+            let before = e.document.project.clone();
+            e.auto_crop(Target::Selected);
+            assert!(e.auto_crop_valid());
+            assert!(e.source_tool_warning(ids[0]).is_none());
+            assert!(
+                e.source_tool_warning(ids[1])
+                    .unwrap()
+                    .contains("no retained frame evidence")
+            );
+            assert!(
+                e.source_tool_warning(ids[2])
+                    .unwrap()
+                    .contains("four measured picture edges")
+            );
+            assert!(
+                e.source_tool_warning(ids[3]).is_none(),
+                "not captured is not a failed proposal"
+            );
+            browse(e, 1, cx);
+            let reason = e.source_tool_warning(ids[1]).unwrap().to_owned();
+            e.select_active_photo_only();
+            e.adjust_auto_crop_margin(2.);
+            assert_eq!(e.source_tool_warning(ids[1]), Some(reason.as_str()));
+            assert!(e.source_tool_warning(ids[3]).is_none());
+            assert_eq!(e.document.project, before);
+            e.finish_auto_crop(false);
+            assert!(ids.iter().all(|&id| e.source_tool_warning(id).is_none()));
+            assert_eq!(e.document.project, before);
+        });
+    });
 }
 
 #[test]
@@ -249,59 +252,63 @@ fn all_failed_attempts_stay_selected_with_reasons_but_cannot_apply_or_edit_crops
 
 #[test]
 fn scopes_capture_drafts_and_apply_only_their_fixed_successful_sources() {
-    let (mut e, _directory) = fixture();
-    let ids = e.document.project.order.clone();
-    e.crop = Some(small());
-    e.sync_document();
-    let mut expected = e.document.project.clone();
-    let active = e.document.visit.ready.as_ref().unwrap().area;
-    let proposed = default_crop(active, &measured_areas());
-    assert!(proposed.angle.abs() > 0.);
-    e.begin_crop();
-    e.auto_crop(Target::Photo);
-    assert_eq!(e.document.project, expected);
-    assert_eq!(e.crop, Some(small()));
-    assert_eq!(e.document.visit.crop_edit.as_ref().unwrap().draft, proposed);
-    assert!(e.document.auto_crop_edit.is_none());
-    e.finish_crop(true);
-    e.sync_document();
-    expected.source_mut(ids[0]).unwrap().crop = Some(proposed);
-    assert_eq!(e.document.project, expected);
-    assert_eq!(e.crop, Some(proposed));
-    assert!(e.document.auto_crop_edit.is_none());
-    e.select_roll_photo(2, egui::Modifiers::COMMAND);
-    e.auto_crop(Target::Selected);
-    e.select_roll_photo(3, egui::Modifiers::COMMAND);
-    e.adjust_auto_crop_margin(1.25);
-    let margin = framing::inward_margin(
-        framing::propose(active, &measured_areas()).unwrap(),
-        active,
-        1.25,
-    )
-    .unwrap();
-    assert_eq!(e.document.project, expected);
-    assert!(e.auto_crop_preview(ids[1]).is_none() && e.auto_crop_preview(ids[3]).is_none());
-    e.finish_auto_crop(true);
-    for &id in &[ids[0], ids[2]] {
-        expected.source_mut(id).unwrap().crop = Some(margin);
-    }
-    assert_eq!(e.document.project, expected);
-    e.auto_crop(Target::Roll);
-    assert!(ids.iter().all(|&id| e.auto_crop_preview(id).is_some()));
-    assert_eq!(e.document.project, expected);
-    e.finish_auto_crop(true);
-    for id in ids {
-        expected.source_mut(id).unwrap().crop = Some(margin);
-    }
-    assert_eq!(e.document.project, expected);
-    assert_eq!(e.current_source, Some(expected.order[0]));
-    assert!(
-        e.document.analysis_preparing.is_none()
-            && e.document.analysis_pending.is_none()
-            && !e.document.visit.source.pending()
-            && e.document.visit.grade.request.is_none(),
-        "no hidden Analyze, RAW reload or grading work"
-    );
+    let (e, _directory) = fixture();
+    crate::application::test_support::with_application(e, |app| {
+        app.enter(|e, cx| {
+            let ids = e.document.project.order.clone();
+            e.crop = Some(small());
+            e.sync_document();
+            let mut expected = e.document.project.clone();
+            let active = e.document.visit.ready.as_ref().unwrap().area;
+            let proposed = default_crop(active, &measured_areas());
+            assert!(proposed.angle.abs() > 0.);
+            e.begin_crop();
+            e.auto_crop(Target::Photo);
+            assert_eq!(e.document.project, expected);
+            assert_eq!(e.crop, Some(small()));
+            assert_eq!(e.document.visit.crop_edit.as_ref().unwrap().draft, proposed);
+            assert!(e.document.auto_crop_edit.is_none());
+            e.finish_crop(true);
+            e.sync_document();
+            expected.source_mut(ids[0]).unwrap().crop = Some(proposed);
+            assert_eq!(e.document.project, expected);
+            assert_eq!(e.crop, Some(proposed));
+            assert!(e.document.auto_crop_edit.is_none());
+            e.select_roll_photo(2, egui::Modifiers::COMMAND, cx);
+            e.auto_crop(Target::Selected);
+            e.select_roll_photo(3, egui::Modifiers::COMMAND, cx);
+            e.adjust_auto_crop_margin(1.25);
+            let margin = framing::inward_margin(
+                framing::propose(active, &measured_areas()).unwrap(),
+                active,
+                1.25,
+            )
+            .unwrap();
+            assert_eq!(e.document.project, expected);
+            assert!(e.auto_crop_preview(ids[1]).is_none() && e.auto_crop_preview(ids[3]).is_none());
+            e.finish_auto_crop(true);
+            for &id in &[ids[0], ids[2]] {
+                expected.source_mut(id).unwrap().crop = Some(margin);
+            }
+            assert_eq!(e.document.project, expected);
+            e.auto_crop(Target::Roll);
+            assert!(ids.iter().all(|&id| e.auto_crop_preview(id).is_some()));
+            assert_eq!(e.document.project, expected);
+            e.finish_auto_crop(true);
+            for id in ids {
+                expected.source_mut(id).unwrap().crop = Some(margin);
+            }
+            assert_eq!(e.document.project, expected);
+            assert_eq!(e.current_source, Some(expected.order[0]));
+            assert!(
+                e.document.analysis_preparing.is_none()
+                    && e.document.analysis_pending.is_none()
+                    && !e.document.visit.source.pending()
+                    && e.document.visit.grade.task.is_none(),
+                "no hidden Analyze, RAW reload or grading work"
+            );
+        });
+    });
 }
 
 #[test]
@@ -366,65 +373,71 @@ fn loaded_file_freshness_survives_thumbnail_seed_consumption() {
 
 #[test]
 fn margin_uses_originals_and_target_identity_across_browsing_and_reselection() {
-    let (mut e, _directory) = fixture();
-    let ids = e.document.project.order.clone();
-    e.source = true;
-    e.select_roll_photo(2, egui::Modifiers::COMMAND);
-    let before = e.document.project.clone();
-    e.auto_crop(Target::Selected);
-    let proposals = e
-        .document
-        .auto_crop_edit
-        .as_ref()
-        .unwrap()
-        .entries
-        .iter()
-        .map(|r| r.proposal)
-        .collect::<Vec<_>>();
-    browse(&mut e, 1);
-    assert!(e.source && e.auto_crop_context());
-    assert!(e.auto_crop_preview(ids[1]).is_none());
-    e.select_active_photo_only();
-    let viewport = e.viewport;
-    for percent in [2., 1.25, 0., 5., 0.] {
-        e.adjust_auto_crop_margin(percent);
-        assert_eq!(e.auto_crop_margin, percent);
-        assert_eq!(e.document.project, before);
-        assert_eq!(e.viewport, viewport);
-        for (&id, &original) in [ids[0], ids[2]].iter().zip(&proposals) {
-            let active = e
+    let (e, _directory) = fixture();
+    crate::application::test_support::with_application(e, |app| {
+        app.enter(|e, cx| {
+            let ids = e.document.project.order.clone();
+            e.source = true;
+            e.select_roll_photo(2, egui::Modifiers::COMMAND, cx);
+            let before = e.document.project.clone();
+            e.auto_crop(Target::Selected);
+            let proposals = e
                 .document
-                .project
-                .source(id)
+                .auto_crop_edit
+                .as_ref()
                 .unwrap()
-                .development
-                .active_area
-                .into();
-            assert_eq!(
-                preview(&e, id),
-                Some(framing::inward_margin(original, active, percent).unwrap())
+                .entries
+                .iter()
+                .map(|r| r.proposal)
+                .collect::<Vec<_>>();
+            browse(e, 1, cx);
+            assert!(e.source && e.auto_crop_context());
+            assert!(e.auto_crop_preview(ids[1]).is_none());
+            e.select_active_photo_only();
+            let viewport = e.viewport;
+            for percent in [2., 1.25, 0., 5., 0.] {
+                e.adjust_auto_crop_margin(percent);
+                assert_eq!(e.auto_crop_margin, percent);
+                assert_eq!(e.document.project, before);
+                assert_eq!(e.viewport, viewport);
+                for (&id, &original) in [ids[0], ids[2]].iter().zip(&proposals) {
+                    let active = e
+                        .document
+                        .project
+                        .source(id)
+                        .unwrap()
+                        .development
+                        .active_area
+                        .into();
+                    assert_eq!(
+                        preview(e, id),
+                        Some(framing::inward_margin(original, active, percent).unwrap())
+                    );
+                }
+                assert!(
+                    e.auto_crop_preview(ids[1]).is_none() && e.auto_crop_preview(ids[3]).is_none()
+                );
+            }
+            assert!(
+                e.document
+                    .auto_crop_edit
+                    .as_ref()
+                    .unwrap()
+                    .entries
+                    .iter()
+                    .map(|r| r.proposal)
+                    .eq(proposals)
             );
-        }
-        assert!(e.auto_crop_preview(ids[1]).is_none() && e.auto_crop_preview(ids[3]).is_none());
-    }
-    assert!(
-        e.document
-            .auto_crop_edit
-            .as_ref()
-            .unwrap()
-            .entries
-            .iter()
-            .map(|r| r.proposal)
-            .eq(proposals)
-    );
-    e.finish_auto_crop(false);
-    assert_eq!(e.current_source, Some(ids[1]));
-    assert_eq!(e.document.project, before);
-    assert!(e.source);
-    assert_eq!(
-        e.auto_crop_margin, 0.,
-        "transient preference is reused, not persisted crop data"
-    );
+            e.finish_auto_crop(false);
+            assert_eq!(e.current_source, Some(ids[1]));
+            assert_eq!(e.document.project, before);
+            assert!(e.source);
+            assert_eq!(
+                e.auto_crop_margin, 0.,
+                "transient preference is reused, not persisted crop data"
+            );
+        });
+    });
 }
 
 #[test]
@@ -599,49 +612,57 @@ fn a_whole_source_proposal_is_an_explicit_draft_reset_not_an_absent_override() {
 
 #[test]
 fn draft_tool_blocks_competing_tools_document_commands_export_and_removal() {
-    let (mut e, directory) = fixture();
-    let before = e.document.project.clone();
-    e.auto_crop(Target::Roll);
-    e.begin_crop();
-    e.begin_pick(Pick::Dmin);
-    e.begin_flat_edit(directory.path().join("flat.ARW"), None);
-    e.begin_dust_cleanup();
-    e.request_analysis();
-    e.request_removal();
-    for action in [
-        FileAction::New,
-        FileAction::Save,
-        FileAction::Add,
-        FileAction::Remove,
-    ] {
-        e.file_action(action);
-    }
-    e.export(
-        directory.path().join("draft.exr"),
-        OutputFormat::Exr(ExrPrecision::Full),
-        Overwrite::Refuse,
-    );
-    assert!(
-        e.document.visit.crop_edit.is_none()
-            && e.pick.is_none()
-            && e.flat_edit.is_none()
-            && !e.document.dust.cleanup
-            && e.removal_pending.is_none()
-    );
-    assert!(e.document.auto_crop_edit.is_some());
-    assert!(e.export_operation.pending.is_none());
-    assert_eq!(e.document.project, before);
-    assert!(
-        e.document.analysis_preparing.is_none()
-            && e.document.analysis_pending.is_none()
-            && e.candidate_operation.request.is_none()
-            && e.document.write.request.is_none()
-            && e.export_operation.request.is_none()
-    );
-    e.start_document(Preparation::New);
-    assert!(e.document.auto_crop_edit.is_none());
-    assert_eq!(e.document.project, before);
-    assert!(e.candidate_operation.request.is_some());
+    let (e, directory) = fixture();
+    crate::application::test_support::with_application(e, |app| {
+        app.enter(|e, cx| {
+            let before = e.document.project.clone();
+            e.auto_crop(Target::Roll);
+            e.begin_crop();
+            e.begin_pick(Pick::Dmin, cx);
+            e.begin_flat_edit(
+                directory.path().join("flat.ARW"),
+                None,
+                &UiContext::render_only(),
+            );
+            e.begin_dust_cleanup();
+            e.request_analysis(cx);
+            e.request_removal();
+            for action in [
+                FileAction::New,
+                FileAction::Save,
+                FileAction::Add,
+                FileAction::Remove,
+            ] {
+                e.file_action(action, cx);
+            }
+            e.export(
+                directory.path().join("draft.exr"),
+                OutputFormat::Exr(ExrPrecision::Full),
+                Overwrite::Refuse,
+                cx,
+            );
+            assert!(
+                e.document.visit.crop_edit.is_none()
+                    && e.pick.is_none()
+                    && e.flat_edit.is_none()
+                    && !e.document.dust.cleanup
+                    && e.removal_pending.is_none()
+            );
+            assert!(e.document.auto_crop_edit.is_some());
+            assert!(e.export_operation.pending.is_none());
+            assert_eq!(e.document.project, before);
+            assert!(
+                e.document.analysis_preparing.is_none()
+                    && e.document.analysis_pending.is_none()
+                    && e.document_pending.is_none()
+                    && e.export_operation.pending.is_none()
+            );
+            e.start_document(Preparation::New, cx);
+            assert!(e.document.auto_crop_edit.is_none());
+            assert_eq!(e.document.project, before);
+            assert!(e.busy && e.document_pending.is_some());
+        });
+    });
 }
 
 #[test]

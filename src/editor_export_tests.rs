@@ -6,52 +6,57 @@ mod production;
 #[path = "editor_export_repair_tests.rs"]
 mod repairs;
 
-fn wait(editor: Editor) -> Editor {
-    super::tests::complete_export_operation(editor, Duration::from_secs(30))
+fn wait(editor: Editor, start: impl FnOnce(&mut Editor, &UiContext<'_, Editor>)) -> Editor {
+    super::tests::complete_export_operation(editor, Duration::from_secs(30), start)
 }
 
 #[test]
 fn export_completion_cannot_retire_new_source_or_document_operations() {
     for document in [false, true] {
-        let mut editor = super::tests::fixture();
-        super::tests::add_ready_fixture(&mut editor);
-        editor.sync_document();
-        editor.export(
-            "captured.exr".into(),
-            OutputFormat::Exr(ExrPrecision::Full),
-            Overwrite::Refuse,
-        );
-        assert!(editor.export_operation.request.is_some());
-        let export = editor.export_operation.pending.unwrap();
-        if document {
-            editor.start_document(Preparation::New);
-        } else {
-            editor.load_source("another.ARW".into(), false);
-        }
-        assert!(if document {
-            editor.candidate_operation.request.is_some()
-        } else {
-            editor.document.visit.source.request.is_some()
+        let editor = super::tests::fixture();
+        crate::application::test_support::with_application(editor, |app| {
+            app.enter(|editor, cx| {
+                super::tests::add_ready_fixture(editor);
+                editor.sync_document();
+                editor.export(
+                    "captured.exr".into(),
+                    OutputFormat::Exr(ExrPrecision::Full),
+                    Overwrite::Refuse,
+                    cx,
+                );
+                assert!(editor.export_operation.pending.is_some());
+                let export = editor.export_operation.pending.unwrap();
+                if document {
+                    editor.start_document(Preparation::New, cx);
+                } else {
+                    editor.load_source("another.ARW".into(), false, cx);
+                }
+                assert!(if document {
+                    editor.busy && editor.document_pending.is_some()
+                } else {
+                    editor.document.visit.source.pending()
+                });
+                let status = editor.status.clone();
+                let title = editor.tasks.view().unwrap().title;
+                let project = editor.document.project.clone();
+                editor.export_result(export, Ok("captured.exr".into()));
+                assert!(editor.busy);
+                assert!(editor.export_operation.pending.is_none());
+                assert_eq!(editor.status, status);
+                assert_eq!(editor.tasks.view().unwrap().title, title);
+                assert_eq!(editor.document.project, project);
+                if document {
+                    editor.document_prepared(
+                        editor.document_pending.unwrap(),
+                        Err("new document failed".into()),
+                    );
+                } else {
+                    editor.source_result(editor.id, Err("new source failed".into()));
+                }
+                assert!(!editor.busy);
+                assert!(editor.tasks.view().is_none());
+            });
         });
-        let status = editor.status.clone();
-        let title = editor.tasks.view().unwrap().title;
-        let project = editor.document.project.clone();
-        editor.export_result(export, Ok("captured.exr".into()));
-        assert!(editor.busy);
-        assert!(editor.export_operation.pending.is_none());
-        assert_eq!(editor.status, status);
-        assert_eq!(editor.tasks.view().unwrap().title, title);
-        assert_eq!(editor.document.project, project);
-        if document {
-            editor.document_prepared(
-                editor.document_pending.unwrap(),
-                Err("new document failed".into()),
-            );
-        } else {
-            editor.source_result(editor.id, Err("new source failed".into()));
-        }
-        assert!(!editor.busy);
-        assert!(editor.tasks.view().is_none());
     }
 }
 
@@ -75,10 +80,13 @@ fn supplied_m9_editor_import_save_open_and_bounded_exports() {
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let mut editor = Editor::new(&device, &queue, None);
+        let mut editor = Editor::new(&device, &queue);
         editor.thumbnails = Thumbnails::default();
-        editor.add_raws(vec![path]);
-        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(30));
+        editor = crate::editor::tests::complete_document_operation(
+            editor,
+            Duration::from_secs(30),
+            |editor, cx| editor.add_raws(vec![path], cx),
+        );
         assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
         assert_eq!(
             editor
@@ -113,8 +121,11 @@ fn supplied_m9_editor_import_save_open_and_bounded_exports() {
             .document
             .save(&project_path, crate::project::Save::New)
             .unwrap();
-        editor.start_document(Preparation::Open(project_path));
-        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(30));
+        editor = crate::editor::tests::complete_document_operation(
+            editor,
+            Duration::from_secs(30),
+            |editor, cx| editor.start_document(Preparation::Open(project_path), cx),
+        );
         assert!(
             editor.document.visit.ready.is_some() && editor.failure.is_none(),
             "{}",
@@ -126,8 +137,9 @@ fn supplied_m9_editor_import_save_open_and_bounded_exports() {
             ("m9.exr", OutputFormat::Exr(ExrPrecision::Full)),
         ] {
             let output = directory.path().join(name);
-            editor.export(output.clone(), format, Overwrite::Refuse);
-            editor = wait(editor);
+            editor = wait(editor, |editor, cx| {
+                editor.export(output.clone(), format, Overwrite::Refuse, cx)
+            });
             assert!(editor.failure.is_none(), "{}", editor.status);
             match format {
                 OutputFormat::Tiff(_) => {
@@ -158,12 +170,21 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let mut editor = Editor::new(&device, &queue, None);
+        let mut editor = Editor::new(&device, &queue);
         editor.thumbnails = Thumbnails::default();
-        editor.add_raws(vec![
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
-        ]);
-        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(30));
+        editor = crate::editor::tests::complete_document_operation(
+            editor,
+            Duration::from_secs(30),
+            |editor, cx| {
+                editor.add_raws(
+                    vec![
+                        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                            .join("tests/fixtures/raw/patches.dng"),
+                    ],
+                    cx,
+                )
+            },
+        );
         assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
         editor.dmin = Some(DVec3::splat(3000. / 4031.));
         editor.dmax = Some(DVec3::splat(128. / 4031.));
@@ -183,9 +204,10 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
             ("full.exr", OutputFormat::Exr(ExrPrecision::Full)),
         ] {
             let path = directory.path().join(name);
-            editor.export(path.clone(), format, Overwrite::Refuse);
-            assert!(editor.busy && editor.export_operation.pending.is_some());
-            editor = wait(editor);
+            editor = wait(editor, |editor, cx| {
+                editor.export(path.clone(), format, Overwrite::Refuse, cx);
+                assert!(editor.busy && editor.export_operation.pending.is_some());
+            });
             assert!(editor.failure.is_none(), "{}", editor.status);
             assert!(editor.export_operation.pending.is_none() && editor.tasks.view().is_none());
             match format {
@@ -213,30 +235,39 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
         let source = directory.path().join("srgb.tif");
         let expected = tiff_pixels(&source);
         let captured = directory.path().join("captured.tif");
-        editor.export(
-            captured.clone(),
-            OutputFormat::Tiff(OutputTarget::Srgb),
-            Overwrite::Refuse,
-        );
-        assert!(editor.export_operation.request.is_some());
-        // Later accepted edits/source identity cannot change the captured file recipe.
-        editor.photo.exposure = 0.75;
-        editor.sync_document();
-        editor.id += 7;
-        let edited = editor.document.project.clone();
-        editor = wait(editor);
+        let mut edited = editor.document.project.clone();
+        edited
+            .source_mut(editor.current_source.unwrap())
+            .unwrap()
+            .photo
+            .exposure = 0.75;
+        editor = wait(editor, |editor, cx| {
+            editor.export(
+                captured.clone(),
+                OutputFormat::Tiff(OutputTarget::Srgb),
+                Overwrite::Refuse,
+                cx,
+            );
+            assert!(editor.export_operation.pending.is_some());
+            // Later accepted edits/source identity cannot change the captured file recipe.
+            editor.photo.exposure = 0.75;
+            editor.sync_document();
+            editor.id += 7;
+        });
         assert!(editor.failure.is_none(), "{}", editor.status);
         assert_eq!(tiff_pixels(&captured), expected);
         assert_eq!(editor.document.project, edited);
         assert_eq!(editor.photo.exposure, 0.75);
         // A refused destination remains intact even after the visible authority and grade change.
         let bytes = std::fs::read(&source).unwrap();
-        editor.export(
-            source.clone(),
-            OutputFormat::Tiff(OutputTarget::Srgb),
-            Overwrite::Refuse,
-        );
-        editor = wait(editor);
+        editor = wait(editor, |editor, cx| {
+            editor.export(
+                source.clone(),
+                OutputFormat::Tiff(OutputTarget::Srgb),
+                Overwrite::Refuse,
+                cx,
+            )
+        });
         assert!(editor.failure.is_some());
         assert_eq!(std::fs::read(&source).unwrap(), bytes);
         assert_eq!(editor.document.project, edited);

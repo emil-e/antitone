@@ -49,11 +49,19 @@ impl Acquisition {
 }
 
 impl Editor {
-    pub(super) fn start_working_workflow(
+    pub(super) fn request_working(
         &mut self,
-        access: &crate::application::UiAccess<'_, Self>,
+        spec: crate::gpu::view::ViewSourceSpec,
+        input: source::Context,
+        cx: &crate::application::UiContext<'_, Self>,
     ) {
-        if self.document.visit.working.task.is_some()
+        self.working.request(spec, input);
+        self.acquire_working(cx);
+    }
+
+    pub(super) fn acquire_working(&mut self, cx: &crate::application::UiContext<'_, Self>) {
+        if self.allow_close
+            || self.document.visit.working.task.is_some()
             || self.source_epoch.load(Ordering::Relaxed) != self.id
         {
             return;
@@ -72,14 +80,13 @@ impl Editor {
         let mailbox = request.mailbox.clone();
         let retired = Arc::new(AtomicBool::new(false));
         let retire = Retire(retired.clone());
-        let target = access.clone();
-        let Some(task) = access.spawn(async move {
+        let Some(task) = cx.spawn(move |cx| async move {
             let _retire = retire;
             let acquisition = request.prepare(services, submissions, epoch, retired);
             let support = async {
                 loop {
                     let changed = mailbox.1.listen();
-                    target.update(|editor| {
+                    cx.update(|editor| {
                         if editor.document.visit.view == visit {
                             editor.working.refresh_support();
                         }
@@ -88,7 +95,7 @@ impl Editor {
                 }
             };
             let result = futures_lite::future::or(acquisition, support).await;
-            target.update(|editor| {
+            cx.update(|editor| {
                 if editor.document.visit.view != visit {
                     return;
                 }
@@ -98,7 +105,7 @@ impl Editor {
                     Ok(None) => {}
                     Err(error) => editor.working.acquisition_failed(error),
                 }
-                editor.start_working_workflow(&target);
+                editor.acquire_working(&cx);
             });
         }) else {
             self.working

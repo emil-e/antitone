@@ -5,7 +5,7 @@ fn typography_keeps_tabs_readouts_and_tool_actions_coherent_at_both_densities() 
     editor_harness(|mut harness, _capture| {
         let fixture =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
-        harness.update(|editor| editor.add_raws(vec![fixture]));
+        harness.enter(|editor, cx| editor.add_raws(vec![fixture], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.update(|editor| {
             editor.dmin = Some(DVec3::splat(3000. / 4031.));
@@ -37,7 +37,7 @@ fn typography_keeps_tabs_readouts_and_tool_actions_coherent_at_both_densities() 
                     ("picker", "Roll"),
                 ] {
                     if harness.read(|editor| editor.pick.is_some()) {
-                        harness.update(|editor| editor.finish_pick());
+                        harness.enter(|editor, cx| editor.finish_pick(cx));
                     }
                     harness
                         .get_by_role_and_label(egui::accesskit::Role::Tab, stage)
@@ -45,7 +45,7 @@ fn typography_keeps_tabs_readouts_and_tool_actions_coherent_at_both_densities() 
                     harness.step();
                     harness.update(|editor| editor.source = scene == "photo");
                     if scene == "picker" {
-                        harness.update(|editor| editor.begin_pick(Pick::Dmin));
+                        harness.enter(|editor, cx| editor.begin_pick(Pick::Dmin, cx));
                     }
                     harness.step();
                     harness.try_run_realtime().unwrap();

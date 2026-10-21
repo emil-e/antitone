@@ -7,6 +7,8 @@ use std::sync::atomic::AtomicU64;
 
 #[path = "gpu_working_view_colour_tests.rs"]
 mod colour;
+#[path = "gpu_working_view_identity_tests.rs"]
+mod identity;
 #[path = "gpu_working_view_inspection_tests.rs"]
 mod inspection;
 #[cfg(target_os = "macos")]

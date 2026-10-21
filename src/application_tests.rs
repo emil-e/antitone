@@ -35,7 +35,7 @@ fn a_borrowed_non_send_workflow_resumes_without_a_ui_frame() {
     let target = access.clone();
     let resumed_ref = &resumed;
     let _task = access
-        .spawn(async move {
+        .spawn(move |_| async move {
             assert_eq!(std::thread::current().id(), ui_thread);
             let value = receive.await.unwrap();
             assert_eq!(std::thread::current().id(), ui_thread);
@@ -75,7 +75,7 @@ fn cancelling_a_scoped_task_destroys_its_borrowed_inputs_without_updating_state(
     let target = access.clone();
     let guard = OnDrop(&dropped);
     let task = access
-        .spawn(async move {
+        .spawn(move |_| async move {
             let _guard = guard;
             std::future::pending::<()>().await;
             target.update(|value| *value = 1);
@@ -98,7 +98,7 @@ fn shutdown_cancels_borrowed_futures_before_state_teardown_and_rejects_new_work(
     let guard = OnDrop(&future_dropped);
     let (send, receive) = oneshot::channel::<()>();
     let _task = access
-        .spawn(async move {
+        .spawn(move |_| async move {
             let _guard = guard;
             let _ = receive.await;
         })
@@ -108,7 +108,7 @@ fn shutdown_cancels_borrowed_futures_before_state_teardown_and_rejects_new_work(
     assert!(future_dropped.get());
     assert!(!state_dropped.get());
     assert!(access.update(|_| ()).is_none());
-    assert!(access.spawn(async {}).is_none());
+    assert!(access.spawn(|_| async {}).is_none());
     drop(state.borrow_mut().take());
     assert!(state_dropped.get());
     assert!(
@@ -125,10 +125,10 @@ fn library_tasks_can_be_awaited_directly_without_a_result_forwarding_channel() {
     let state = RefCell::new(Some(0));
     let (mut application, wakes, _) = application();
     let access = application.access(&state);
-    let result = access.spawn(async { 21 }).unwrap();
+    let result = access.spawn(|_| async { 21 }).unwrap();
     let target = access.clone();
     let _workflow = access
-        .spawn(async move {
+        .spawn(move |_| async move {
             let value = result.await;
             target.update(|state| *state = value * 2).unwrap();
         })
@@ -146,7 +146,7 @@ fn retiring_before_initialization_drops_unpolled_borrowed_work() {
     let guard = OnDrop(&dropped);
     let target = access.clone();
     let _task = access
-        .spawn(async move {
+        .spawn(move |_| async move {
             let _guard = guard;
             target.update(|_| panic!("uninitialized application was accessed"));
         })

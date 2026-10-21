@@ -54,14 +54,16 @@ fn created_linear_and_radial_locals_survive_normal_save_open_source_return_and_g
             GradientMask::Radial { .. }
         ));
         let path = directory.path().join("local-tools.json");
-        harness.update(|editor| editor.queue_save(path.clone(), crate::project::Save::New, None));
+        harness.enter(|editor, cx| {
+            editor.save_project(path.clone(), crate::project::Save::New, None, cx)
+        });
         wait_for(&mut harness, |editor| {
             !editor.busy && editor.document_pending.is_none()
         });
         harness.read(|editor| assert!(!editor.document.dirty(), "{}", editor.status));
         let saved = harness.read(|editor| editor.document.project.clone());
         assert_eq!(crate::project::Project::load(&path).unwrap(), saved);
-        harness.update(|editor| editor.start_document(Preparation::Open(path)));
+        harness.enter(|editor, cx| editor.start_document(Preparation::Open(path), cx));
         wait_for(&mut harness, |editor| {
             !editor.busy && editor.document_pending.is_none()
         });
@@ -112,11 +114,12 @@ fn created_linear_and_radial_locals_survive_normal_save_open_source_return_and_g
             ("locals.exr", OutputFormat::Exr(ExrPrecision::Full)),
         ] {
             let destination = directory.path().join(name);
-            harness.update(|editor| {
+            harness.enter(|editor, cx| {
                 editor.export(
                     destination.clone(),
                     format,
                     crate::export::Overwrite::Refuse,
+                    cx,
                 )
             });
             harness.read(|editor| {

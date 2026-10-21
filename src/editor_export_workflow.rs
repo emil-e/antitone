@@ -2,7 +2,10 @@
 #[path = "editor_export_workflow_tests.rs"]
 mod tests;
 
-use super::{Editor, FailureKind, TaskRequest, export_services::Request};
+use super::{
+    Editor, Error, FailureKind, OutputFormat, Overwrite, Task, TaskRequest, UiContext, document,
+    export_services::Request,
+};
 use std::{
     path::PathBuf,
     sync::{
@@ -14,21 +17,9 @@ use std::{
 /// An accepted file operation is independent of the visible document/grade visit.
 #[derive(Default)]
 pub(super) struct State {
-    pub request: Option<Request>,
     pub pending: Option<u64>,
     pub cancelled: Option<Arc<AtomicBool>>,
     task: Option<async_executor::Task<()>>,
-}
-
-impl State {
-    pub fn new(id: u64, request: Request) -> Self {
-        Self {
-            request: Some(request),
-            pending: Some(id),
-            cancelled: Some(Arc::new(AtomicBool::new(false))),
-            task: None,
-        }
-    }
 }
 
 impl Drop for State {
@@ -47,28 +38,80 @@ impl Drop for Retire {
 }
 
 impl Editor {
-    pub(super) fn start_export_workflow(
-        &mut self,
-        access: &crate::application::UiAccess<'_, Self>,
-    ) {
-        let Some(request) = self.export_operation.request.take() else {
-            return;
+    pub(super) fn export_input(
+        &self,
+        path: PathBuf,
+        format: OutputFormat,
+        overwrite: Overwrite,
+    ) -> Result<Option<Request>, Error> {
+        let (Some(_), Some(ready)) = (self.calibration(), &self.document.visit.ready) else {
+            return Ok(None);
         };
+        self.validate_document_candidate(&self.document)?;
         let id = self
-            .export_operation
-            .pending
-            .expect("captured export operation");
-        let Some(services) = self.export_services.clone() else {
-            self.export_result(id, Err("Export services unavailable".into()));
+            .current_source
+            .ok_or_else(|| Error::Project("no accepted source for export".into()))?;
+        let recipe = self.document.project.image_recipe(id)?;
+        debug_assert_eq!(recipe.composition.area(), ready.area);
+        Ok(Some(Request {
+            input: self.source_context().expect("ready export source"),
+            path,
+            format,
+            recipe,
+            overwrite,
+        }))
+    }
+
+    pub(super) fn export(
+        &mut self,
+        path: PathBuf,
+        format: OutputFormat,
+        overwrite: Overwrite,
+        cx: &UiContext<'_, Self>,
+    ) {
+        if self.document.auto_crop_edit.is_some() {
+            self.status = "Apply or cancel auto-crop before exporting".into();
             return;
+        }
+        if self
+            .document
+            .path
+            .as_ref()
+            .is_some_and(|project| document::same_path(project, &path))
+        {
+            self.status = "Export destination is the current project document".into();
+            self.report_failure(FailureKind::Export, self.status.clone());
+            return;
+        }
+        self.sync_document();
+        let request = match self.export_input(path, format, overwrite) {
+            Ok(Some(request)) => request,
+            Ok(None) => return,
+            Err(error) => {
+                self.status = error.to_string();
+                return;
+            }
         };
-        let cancelled = self.export_operation.cancelled.as_ref().unwrap().clone();
+        let id = self.request_id();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.export_operation = State {
+            pending: Some(id),
+            cancelled: Some(cancelled.clone()),
+            task: None,
+        };
+        self.thumbnails.cancel();
+        self.busy = true;
+        self.status = "Exporting full-resolution source; preview pixels are not used…".into();
+        self.tasks.begin(Task::Export(id));
+        let services = self.export_services.clone();
         let retire = Retire(cancelled.clone());
-        let target = access.clone();
-        let Some(task) = access.spawn(async move {
+        let Some(task) = cx.spawn(move |cx| async move {
             let _retire = retire;
-            let result = services.write(request, cancelled).await;
-            target.update(|editor| editor.export_result(id, result));
+            let result = match services {
+                Some(services) => services.write(request, cancelled).await,
+                None => Err("Export services unavailable".into()),
+            };
+            cx.update(|editor| editor.export_result(id, result));
         }) else {
             self.export_result(id, Err("Application stopped".into()));
             return;

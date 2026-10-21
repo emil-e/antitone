@@ -119,74 +119,83 @@ fn progress_and_cancellation_states_keep_unknown_duration_honest() {
 #[test]
 fn document_activity_is_typed_and_only_the_matching_terminal_reply_retires_it() {
     for save in [false, true] {
-        let mut editor = fixture();
-        editor.sync_document();
-        let before = editor.document.project.clone();
-        if save {
-            editor.queue_save(
-                "project.json".into(),
-                crate::project::Save::New,
-                Some(Transition::Close),
-            );
-        } else {
-            editor.add_raws(vec!["one.ARW".into(), "two.ARW".into()]);
-        }
-        if save {
-            assert!(editor.document.write.request.is_some());
-        } else {
-            assert!(editor.candidate_operation.request.is_some());
-        }
-        let id = editor.document_pending.unwrap();
-        let title = editor.tasks.view().unwrap().title;
-        editor.status = "Unrelated status".into();
-        editor.document_prepared(id + 1, Err("stale".into()));
-        assert_eq!(editor.tasks.view().unwrap().title, title);
-        assert!(editor.busy);
-        assert_eq!(editor.document.project, before);
-        if save {
-            editor.save_result(id, Err("cannot save".into()));
-        } else {
-            editor.document_prepared(id, Err("cannot import".into()));
-        }
-        assert!(editor.tasks.view().is_none() && !editor.busy);
-        assert_eq!(editor.document.project, before);
+        let editor = fixture();
+        crate::application::test_support::with_application(editor, |app| {
+            app.enter(|editor, cx| {
+                editor.sync_document();
+                let before = editor.document.project.clone();
+                if save {
+                    editor.save_project(
+                        "project.json".into(),
+                        crate::project::Save::New,
+                        Some(Transition::Close),
+                        cx,
+                    );
+                } else {
+                    editor.add_raws(vec!["one.ARW".into(), "two.ARW".into()], cx);
+                }
+                assert!(editor.busy && editor.document_pending.is_some());
+                let id = editor.document_pending.unwrap();
+                let title = editor.tasks.view().unwrap().title;
+                editor.status = "Unrelated status".into();
+                editor.document_prepared(id + 1, Err("stale".into()));
+                assert_eq!(editor.tasks.view().unwrap().title, title);
+                assert!(editor.busy);
+                assert_eq!(editor.document.project, before);
+                if save {
+                    editor.save_result(id, Err("cannot save".into()), cx);
+                } else {
+                    editor.document_prepared(id, Err("cannot import".into()));
+                }
+                assert!(editor.tasks.view().is_none() && !editor.busy);
+                assert_eq!(editor.document.project, before);
+            });
+        });
     }
 }
 
 #[test]
 fn file_progress_is_request_owned_and_returns_to_indeterminate_before_promotion() {
     for open in [false, true] {
-        let mut editor = fixture();
-        editor.sync_document();
-        let before = editor.document.project.clone();
-        if open {
-            editor.start_document(Preparation::Open("project.json".into()));
-        } else {
-            editor.add_raws(vec!["one.ARW".into(), "two.ARW".into()]);
-        }
-        assert!(editor.candidate_operation.request.is_some());
-        let id = editor.document_pending.unwrap();
-        editor.document_progress(id + 1, 1, 2);
-        assert!(editor.tasks.view().unwrap().measured.is_none());
-        editor.document_progress(id, 1, 2);
-        assert_eq!(
-            editor.tasks.view().unwrap().measured,
-            Some((0.5, "1 of 2".into()))
-        );
-        assert_eq!(editor.document.project, before);
-        editor.document_progress(id, 2, 2);
-        assert!(editor.tasks.view().unwrap().measured.is_none());
-        assert!(editor.busy && editor.document_pending == Some(id));
-        editor.document_prepared(id, Err("preparation failed".into()));
-        editor.document_progress(id, 1, 2);
-        assert!(editor.tasks.view().is_none() && !editor.busy);
-        assert_eq!(editor.document.project, before);
+        let editor = fixture();
+        crate::application::test_support::with_application(editor, |app| {
+            app.enter(|editor, cx| {
+                editor.sync_document();
+                let before = editor.document.project.clone();
+                if open {
+                    editor.start_document(Preparation::Open("project.json".into()), cx);
+                } else {
+                    editor.add_raws(vec!["one.ARW".into(), "two.ARW".into()], cx);
+                }
+                assert!(editor.busy && editor.document_pending.is_some());
+                let id = editor.document_pending.unwrap();
+                editor.document_progress(id + 1, 1, 2);
+                assert!(editor.tasks.view().unwrap().measured.is_none());
+                editor.document_progress(id, 1, 2);
+                assert_eq!(
+                    editor.tasks.view().unwrap().measured,
+                    Some((0.5, "1 of 2".into()))
+                );
+                assert_eq!(editor.document.project, before);
+                editor.document_progress(id, 2, 2);
+                assert!(editor.tasks.view().unwrap().measured.is_none());
+                assert!(editor.busy && editor.document_pending == Some(id));
+                editor.document_prepared(id, Err("preparation failed".into()));
+                editor.document_progress(id, 1, 2);
+                assert!(editor.tasks.view().is_none() && !editor.busy);
+                assert_eq!(editor.document.project, before);
+            });
+        });
     }
-    let mut editor = fixture();
-    editor.queue_save("project.json".into(), crate::project::Save::New, None);
-    assert!(editor.document.write.request.is_some());
-    editor.document_progress(editor.document_pending.unwrap(), 1, 2);
-    assert!(editor.tasks.view().unwrap().measured.is_none());
+    let editor = fixture();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.save_project("project.json".into(), crate::project::Save::New, None, cx);
+            assert!(editor.busy && editor.document_pending.is_some());
+            editor.document_progress(editor.document_pending.unwrap(), 1, 2);
+            assert!(editor.tasks.view().unwrap().measured.is_none());
+        });
+    });
 }
 
 #[test]
@@ -203,14 +212,14 @@ fn unavailable_export_and_analysis_services_leave_no_working_feedback() {
                         "output.tiff".into(),
                         OutputFormat::Tiff(OutputTarget::Srgb),
                         Overwrite::Refuse,
+                        access,
                     );
-                    assert!(editor.export_operation.request.is_some());
-                    editor.start_export_workflow(access);
+                    assert!(editor.export_operation.pending.is_some());
                 } else {
-                    editor.begin_analysis();
-                    editor.start_analysis_workflow(access);
+                    editor.begin_analysis(access);
                 }
             });
+            app.run_until(Duration::from_secs(5), |e| !e.busy);
             app.read(|editor| {
                 assert!(editor.tasks.view().is_none() && !editor.busy);
                 assert_eq!(editor.document.project, before);
@@ -221,126 +230,143 @@ fn unavailable_export_and_analysis_services_leave_no_working_feedback() {
 
 #[test]
 fn export_activity_preserves_identity_and_closes_before_failure_feedback() {
-    let mut editor = fixture();
-    add_ready_fixture(&mut editor);
-    editor.sync_document();
-    let before = editor.document.project.clone();
-    editor.export(
-        "output.exr".into(),
-        OutputFormat::Exr(ExrPrecision::Full),
-        Overwrite::Refuse,
-    );
-    assert!(editor.export_operation.request.is_some());
-    let id = editor.export_operation.pending.unwrap();
-    editor.status = "Settled preview failed: unrelated".into();
-    assert_eq!(editor.tasks.view().unwrap().title, "Exporting…");
-    editor.export_result(id + 1, Err("stale".into()));
-    assert!(editor.tasks.view().is_some());
-    editor.export_result(id, Err("destination unavailable".into()));
-    assert!(editor.tasks.view().is_none());
-    assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Export);
-    assert_eq!(editor.document.project, before);
+    let editor = fixture();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            add_ready_fixture(editor);
+            editor.sync_document();
+            let before = editor.document.project.clone();
+            editor.export(
+                "output.exr".into(),
+                OutputFormat::Exr(ExrPrecision::Full),
+                Overwrite::Refuse,
+                cx,
+            );
+            assert!(editor.export_operation.pending.is_some());
+            let id = editor.export_operation.pending.unwrap();
+            editor.status = "Settled preview failed: unrelated".into();
+            assert_eq!(editor.tasks.view().unwrap().title, "Exporting…");
+            editor.export_result(id + 1, Err("stale".into()));
+            assert!(editor.tasks.view().is_some());
+            editor.export_result(id, Err("destination unavailable".into()));
+            assert!(editor.tasks.view().is_none());
+            assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Export);
+            assert_eq!(editor.document.project, before);
+        });
+    });
 }
 
 #[test]
 fn analysis_cancellation_is_reachable_from_every_stage_and_stays_pending_until_reply() {
     for tab in 0..3 {
-        let mut editor = fixture();
-        add_ready_fixture(&mut editor);
-        editor.begin_analysis();
-        let pending = editor.document.analysis_pending.as_ref().unwrap();
-        let id = pending.id;
-        let request = pending.request.clone();
-        editor.tab = tab;
-        let context = egui::Context::default();
-        app_frame(&mut editor, &context, vec![]);
-        let labels = app_frame(&mut editor, &context, vec![]);
-        let cancel = labels
-            .iter()
-            .find(|(label, _)| label == "Cancel analysis")
-            .unwrap()
-            .1
-            .center();
-        for pressed in [true, false] {
-            app_frame(&mut editor, &context, pointer(cancel, pressed));
-        }
-        assert!(editor.busy && editor.document.analysis_pending.is_some());
-        assert_ne!(
-            editor
-                .document
-                .analysis_generation
-                .load(std::sync::atomic::Ordering::Relaxed),
-            request.revision
-        );
-        editor.analysis_progress(id, 1, 2);
-        let view = editor.tasks.view().unwrap();
-        assert_eq!(view.title, "Cancelling analysis…");
-        assert!(view.cancel.is_none() && view.measured.is_none());
-        app_frame(&mut editor, &context, key(egui::Key::Escape));
-        assert!(editor.document.analysis_pending.is_some());
-        editor.analysis_result(id, Ok(None));
-        assert!(!editor.busy && editor.tasks.view().is_none());
-        assert_eq!(editor.status, "Analysis cancelled");
+        let editor = fixture();
+        crate::application::test_support::with_application(editor, |app| {
+            app.enter(|editor, cx| {
+                add_ready_fixture(editor);
+                editor.begin_analysis(cx);
+                let pending = editor.document.analysis_pending.as_ref().unwrap();
+                let id = pending.id;
+                let request = pending.request.clone();
+                editor.tab = tab;
+                let context = egui::Context::default();
+                app_frame(editor, &context, vec![]);
+                let labels = app_frame(editor, &context, vec![]);
+                let cancel = labels
+                    .iter()
+                    .find(|(label, _)| label == "Cancel analysis")
+                    .unwrap()
+                    .1
+                    .center();
+                for pressed in [true, false] {
+                    app_frame(editor, &context, pointer(cancel, pressed));
+                }
+                assert!(editor.busy && editor.document.analysis_pending.is_some());
+                assert_ne!(
+                    editor
+                        .document
+                        .analysis_generation
+                        .load(std::sync::atomic::Ordering::Relaxed),
+                    request.revision
+                );
+                editor.analysis_progress(id, 1, 2);
+                let view = editor.tasks.view().unwrap();
+                assert_eq!(view.title, "Cancelling analysis…");
+                assert!(view.cancel.is_none() && view.measured.is_none());
+                app_frame(editor, &context, key(egui::Key::Escape));
+                assert!(editor.document.analysis_pending.is_some());
+                editor.analysis_result(id, Ok(None), cx);
+                assert!(!editor.busy && editor.tasks.view().is_none());
+                assert_eq!(editor.status, "Analysis cancelled");
+            });
+        });
     }
 }
 
 #[test]
 fn superseded_analysis_updates_and_cancel_actions_cannot_touch_the_new_task() {
-    let mut editor = fixture();
-    add_ready_fixture(&mut editor);
-    editor.begin_analysis();
-    let pending = editor.document.analysis_pending.as_ref().unwrap();
-    let id = pending.id;
-    let request = pending.request.clone();
-    let action = editor.tasks.view().unwrap().cancel.unwrap();
-    editor.load("next.ARW".into());
-    assert!(editor.document.analysis_pending.is_none());
-    assert_ne!(
-        editor
-            .document
-            .analysis_generation
-            .load(std::sync::atomic::Ordering::Relaxed),
-        request.revision
-    );
-    let revision = editor
-        .document
-        .analysis_generation
-        .load(std::sync::atomic::Ordering::Relaxed);
-    editor.cancel_task(action.request);
-    assert_eq!(
-        editor
-            .document
-            .analysis_generation
-            .load(std::sync::atomic::Ordering::Relaxed),
-        revision
-    );
-    editor.analysis_progress(id, 1, 2);
-    editor.analysis_result(id, Ok(None));
-    assert_eq!(editor.tasks.view().unwrap().title, "Loading photo…");
-    assert!(editor.busy);
+    let editor = fixture();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            add_ready_fixture(editor);
+            editor.begin_analysis(cx);
+            let pending = editor.document.analysis_pending.as_ref().unwrap();
+            let id = pending.id;
+            let request = pending.request.clone();
+            let action = editor.tasks.view().unwrap().cancel.unwrap();
+            editor.load("next.ARW".into(), cx);
+            assert!(editor.document.analysis_pending.is_none());
+            assert_ne!(
+                editor
+                    .document
+                    .analysis_generation
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                request.revision
+            );
+            let revision = editor
+                .document
+                .analysis_generation
+                .load(std::sync::atomic::Ordering::Relaxed);
+            editor.cancel_task(action.request);
+            assert_eq!(
+                editor
+                    .document
+                    .analysis_generation
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                revision
+            );
+            editor.analysis_progress(id, 1, 2);
+            editor.analysis_result(id, Ok(None), cx);
+            assert_eq!(editor.tasks.view().unwrap().title, "Loading photo…");
+            assert!(editor.busy);
+        });
+    });
 }
 
 #[test]
 fn feedback_prominence_is_delayed_without_changing_document_availability() {
-    let mut editor = fixture();
-    editor.start_document(Preparation::Open("project.json".into()));
-    assert!(editor.candidate_operation.request.is_some());
-    let context = egui::Context::default();
-    app_frame(&mut editor, &context, vec![]);
-    assert!(
-        context
-            .memory(|memory| memory.area_rect(egui::Id::new("working-document")))
-            .is_none()
-    );
-    editor.tasks.elapse(Duration::from_secs(1));
-    app_frame(&mut editor, &context, vec![]);
-    app_frame(&mut editor, &context, vec![]);
-    assert!(
-        context
-            .memory(|memory| memory.area_rect(egui::Id::new("working-document")))
-            .is_some()
-    );
-    assert!(editor.busy && editor.document_pending.is_some());
+    let editor = fixture();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.start_document(Preparation::Open("project.json".into()), cx);
+            assert!(editor.busy && editor.document_pending.is_some());
+            let context = egui::Context::default();
+            app_frame(editor, &context, vec![]);
+            assert!(
+                context
+                    .memory(|memory| memory.area_rect(egui::Id::new("working-document")))
+                    .is_none()
+            );
+            editor.tasks.elapse(Duration::from_secs(1));
+            app_frame(editor, &context, vec![]);
+            app_frame(editor, &context, vec![]);
+            assert!(
+                context
+                    .memory(|memory| memory.area_rect(egui::Id::new("working-document")))
+                    .is_some()
+            );
+            assert!(editor.busy && editor.document_pending.is_some());
+        });
+    });
 }
 
 #[test]
@@ -356,18 +382,23 @@ fn matching_success_retires_source_save_measurement_and_export_activity() {
             app.enter(|editor, access| match operation {
                 0 => {
                     let ready = editor.document.visit.ready.take().unwrap();
-                    editor.load("current.ARW".into());
-                    assert!(editor.document.visit.source.request.is_some());
+                    editor.load("current.ARW".into(), access);
+                    assert!(editor.document.visit.source.pending());
                     source_completion = Some((editor.document.visit.view, ready));
                 }
                 1 => {
-                    editor.queue_save("project.json".into(), crate::project::Save::New, None);
-                    assert!(editor.document.write.request.is_some());
+                    editor.save_project(
+                        "project.json".into(),
+                        crate::project::Save::New,
+                        None,
+                        access,
+                    );
+                    assert!(editor.busy && editor.document_pending.is_some());
                     save_completion =
                         Some((editor.document_pending.unwrap(), editor.document.capture()));
                 }
                 2 => {
-                    editor.begin_pick(Pick::Dmin);
+                    editor.begin_pick(Pick::Dmin, access);
                     let source = editor
                         .document
                         .visit
@@ -385,8 +416,7 @@ fn matching_success_retires_source_save_measurement_and_export_activity() {
                         width: area.width - 16,
                         height: area.height - 16,
                     }));
-                    editor.apply_pick();
-                    editor.start_measurement_workflow(access);
+                    editor.start_measurement(Pick::Dmin, editor.region.unwrap(), access);
                     assert!(editor.document.visit.measurement.is_some());
                 }
                 _ => {
@@ -394,14 +424,15 @@ fn matching_success_retires_source_save_measurement_and_export_activity() {
                         "output.exr".into(),
                         OutputFormat::Exr(ExrPrecision::Full),
                         Overwrite::Refuse,
+                        access,
                     );
-                    assert!(editor.export_operation.request.is_some());
+                    assert!(editor.export_operation.pending.is_some());
                     export_completion = editor.export_operation.pending;
                 }
             });
             assert!(app.read(|editor| editor.tasks.view().is_some()));
             if let Some((id, saved)) = save_completion {
-                app.update(|e| e.save_result(id, Ok(Box::new(saved))));
+                app.enter(|e, cx| e.save_result(id, Ok(Box::new(saved)), cx));
             }
             if let Some((view, ready)) = source_completion {
                 app.update(|e| e.source_result(view, Ok(Box::new(ready))));
@@ -431,49 +462,55 @@ fn reference_failure_retires_only_the_matched_preparation_and_restores_the_view(
     add_ready_fixture(&mut editor);
     let previous_visit = editor.document.visit.view;
     let before = (editor.current_source, editor.viewport, editor.source);
-    editor.begin_flat_edit("reference.ARW".into(), None);
-    let id = editor.id;
-    editor.reference_previewed(id + 1, Err("stale".into()));
-    assert!(editor.tasks.view().is_some() && editor.busy);
-    editor.reference_previewed(id, Err("cannot prepare".into()));
-    assert!(editor.tasks.view().is_none() && !editor.busy);
-    assert_ne!(editor.document.visit.view, previous_visit);
-    assert_eq!(
-        (editor.current_source, editor.viewport, editor.source),
-        before
-    );
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|e, cx| {
+            e.begin_flat_edit("reference.ARW".into(), None, cx);
+            let id = e.id;
+            e.reference_previewed(id + 1, Err("stale".into()));
+            assert!(e.tasks.view().is_some() && e.busy);
+            e.reference_previewed(id, Err("cannot prepare".into()));
+            assert!(e.tasks.view().is_none() && !e.busy);
+            assert_ne!(e.document.visit.view, previous_visit);
+            assert_eq!((e.current_source, e.viewport, e.source), before);
+        });
+        app.pump();
+    });
 }
 
 #[test]
 fn activity_keeps_viewer_geometry_stable_and_never_covers_an_acknowledged_failure() {
-    let mut editor = fixture();
-    add_ready_fixture(&mut editor);
-    let context = egui::Context::default();
-    app_frame(&mut editor, &context, vec![]);
-    app_frame(&mut editor, &context, vec![]);
-    let canvas = editor.last_layout.unwrap().0.canvas;
-    editor.tasks.begin(Task::Export(editor.id));
-    editor.busy = true;
-    app_frame(&mut editor, &context, vec![]);
-    assert_eq!(editor.last_layout.unwrap().0.canvas, canvas);
-    editor.begin_analysis();
-    app_frame(&mut editor, &context, vec![]);
-    assert_eq!(editor.last_layout.unwrap().0.canvas, canvas);
-    editor.document.analysis_pending = None;
-    editor.tasks.begin(Task::Save(editor.id));
-    editor.tasks.elapse(Duration::from_secs(1));
-    editor.report_failure(FailureKind::Save, "previous failure".into());
-    app_frame(&mut editor, &context, vec![]);
-    let labels = app_frame(&mut editor, &context, vec![]);
-    assert!(
-        labels
-            .iter()
-            .any(|(label, _)| label == "Could not save project")
-    );
-    assert!(
-        context
-            .memory(|memory| memory.area_rect(egui::Id::new("working-document")))
-            .is_none()
-    );
-    assert!(editor.failure.is_some() && editor.tasks.view().is_some());
+    let editor = fixture();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            add_ready_fixture(editor);
+            let context = egui::Context::default();
+            app_frame(editor, &context, vec![]);
+            app_frame(editor, &context, vec![]);
+            let canvas = editor.last_layout.unwrap().0.canvas;
+            editor.tasks.begin(Task::Export(editor.id));
+            editor.busy = true;
+            app_frame(editor, &context, vec![]);
+            assert_eq!(editor.last_layout.unwrap().0.canvas, canvas);
+            editor.begin_analysis(cx);
+            app_frame(editor, &context, vec![]);
+            assert_eq!(editor.last_layout.unwrap().0.canvas, canvas);
+            editor.document.analysis_pending = None;
+            editor.tasks.begin(Task::Save(editor.id));
+            editor.tasks.elapse(Duration::from_secs(1));
+            editor.report_failure(FailureKind::Save, "previous failure".into());
+            app_frame(editor, &context, vec![]);
+            let labels = app_frame(editor, &context, vec![]);
+            assert!(
+                labels
+                    .iter()
+                    .any(|(label, _)| label == "Could not save project")
+            );
+            assert!(
+                context
+                    .memory(|memory| memory.area_rect(egui::Id::new("working-document")))
+                    .is_none()
+            );
+            assert!(editor.failure.is_some() && editor.tasks.view().is_some());
+        });
+    });
 }

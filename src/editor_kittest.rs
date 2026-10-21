@@ -90,18 +90,25 @@ const UI_MAX_STEPS: u64 = 240;
 const UI_STEP_DT: f32 = 1. / 60.;
 
 struct Harness<'a, T> {
-    inner: EguiHarness<'a, crate::application::UiAccess<'a, T>>,
+    inner: EguiHarness<'a, crate::application::UiContext<'a, T>>,
     application: crate::application::test_support::TestApplication<'a, T>,
     state: &'a RefCell<Option<T>>,
 }
 
-impl<T> Harness<'_, T> {
+impl<'scope, T: 'scope> Harness<'scope, T> {
     fn read<R>(&self, read: impl FnOnce(&T) -> R) -> R {
         self.application.read(read)
     }
 
     fn update<R>(&self, update: impl FnOnce(&mut T) -> R) -> R {
         self.application.update(update)
+    }
+
+    fn enter<R>(
+        &self,
+        action: impl FnOnce(&mut T, &crate::application::UiContext<'scope, T>) -> R,
+    ) -> R {
+        self.application.enter(action)
     }
 
     fn run_until(&mut self, timeout: Duration, done: impl Fn(&T) -> bool) {
@@ -155,7 +162,7 @@ impl<T> Harness<'_, T> {
 }
 
 impl<'a, T> std::ops::Deref for Harness<'a, T> {
-    type Target = EguiHarness<'a, crate::application::UiAccess<'a, T>>;
+    type Target = EguiHarness<'a, crate::application::UiContext<'a, T>>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
@@ -402,7 +409,7 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
             .expect("dialog captures require Metal");
         adapter.request_device(&Default::default()).await.unwrap()
     });
-    let mut editor = Editor::new(&device, &queue, None);
+    let mut editor = Editor::new(&device, &queue);
     editor.thumbnails = Thumbnails::default();
     let capture = Rc::new(RefCell::new(FloatCapture::default()));
     let renderer = FloatRenderer::new(
@@ -413,10 +420,11 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
     );
     let state = RefCell::new(None);
     let mut harness = app_harness(&state, editor, renderer);
-    harness.update(|editor| {
-        editor.add_raws(vec![
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
-        ])
+    harness.enter(|editor, cx| {
+        editor.add_raws(
+            vec![PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng")],
+            cx,
+        )
     });
     wait_for(&mut harness, |editor| {
         !editor.busy && editor.document_pending.is_none()
@@ -520,7 +528,7 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
             .expect("feedback captures require Metal");
         adapter.request_device(&Default::default()).await.unwrap()
     });
-    let mut editor = Editor::new(&device, &queue, None);
+    let mut editor = Editor::new(&device, &queue);
     editor.thumbnails = Thumbnails::default();
     let renderer = FloatRenderer::new(
         &device,
@@ -531,7 +539,7 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
     let state = RefCell::new(None);
     let mut harness = app_harness(&state, editor, renderer);
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
-    harness.update(|editor| editor.add_raws(vec![fixture.clone()]));
+    harness.enter(|editor, cx| editor.add_raws(vec![fixture.clone()], cx));
     wait_for(&mut harness, |editor| {
         !editor.busy && editor.document_pending.is_none()
     });
@@ -567,11 +575,11 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
             FailureKind::LookRendering,
         ] {
             match kind {
-                FailureKind::FlatReference => harness.update(|editor| {
-                    editor.begin_flat_edit(directory.path().join("missing-reference.dng"), None)
+                FailureKind::FlatReference => harness.enter(|editor, cx| {
+                    editor.begin_flat_edit(directory.path().join("missing-reference.dng"), None, cx)
                 }),
                 FailureKind::FlatSupport | FailureKind::FlatCorrection => {
-                    harness.update(|editor| editor.begin_flat_edit(fixture.clone(), None));
+                    harness.enter(|editor, cx| editor.begin_flat_edit(fixture.clone(), None, cx));
                     wait_for(&mut harness, |editor| !editor.busy);
                     harness.read(|editor| assert!(editor.flat_edit.is_some()));
                     let area =
@@ -594,12 +602,13 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
                             })
                         })
                     });
-                    harness.update(|editor| editor.apply_flat_edit());
+                    harness.enter(|editor, cx| editor.apply_flat_edit(cx));
                 }
-                FailureKind::Look => harness.update(|editor| {
-                    editor.begin_look(look_ui::Source::Imported(
-                        directory.path().join("missing-look.cube"),
-                    ))
+                FailureKind::Look => harness.enter(|editor, cx| {
+                    editor.begin_look(
+                        look_ui::Source::Imported(directory.path().join("missing-look.cube")),
+                        cx,
+                    )
                 }),
                 FailureKind::LookRendering => harness.update(|editor| {
                     editor.report_failure(
@@ -607,20 +616,22 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
                         "The selected look encountered a nonfinite scene-linear value.".into(),
                     )
                 }),
-                FailureKind::Save => harness.update(|editor| {
-                    editor.queue_save(
+                FailureKind::Save => harness.enter(|editor, cx| {
+                    editor.save_project(
                         directory.path().join("missing-parent/project.json"),
                         crate::project::Save::New,
                         Some(Transition::Close),
+                        cx,
                     )
                 }),
                 FailureKind::Export => {
                     let path = harness.read(|editor| editor.document.path.clone().unwrap());
-                    harness.update(|editor| {
+                    harness.enter(|editor, cx| {
                         editor.export(
                             path,
                             OutputFormat::Exr(ExrPrecision::Full),
                             Overwrite::Confirmed,
+                            cx,
                         )
                     });
                 }
@@ -757,7 +768,7 @@ fn editor_harness_with_gpu<R>(
             .expect("composed UI test requires Metal");
         adapter.request_device(&Default::default()).await.unwrap()
     });
-    let mut editor = Editor::new(&device, &queue, None);
+    let mut editor = Editor::new(&device, &queue);
     editor.thumbnails = if thumbnails {
         editor
             .thumbnails
@@ -782,7 +793,7 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
     editor_harness(|mut harness, capture| {
         let fixture =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
-        harness.update(|editor| editor.add_raws(vec![fixture.clone()]));
+        harness.enter(|editor, cx| editor.add_raws(vec![fixture.clone()], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| {
             assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
@@ -986,7 +997,7 @@ fn save_existing_project(harness: &mut Harness<'_, Editor>) {
 
 // Supply the native chooser's result; exercise the real transition guard and worker.
 fn open_project(harness: &mut Harness<'_, Editor>, path: PathBuf) {
-    harness.update(|editor| editor.guard_transition(files::Transition::Open(path)));
+    harness.enter(|editor, cx| editor.guard_transition(files::Transition::Open(path), cx));
     harness.step();
     harness.step();
 }
@@ -1037,7 +1048,7 @@ fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
     editor_harness(|mut harness, _capture| {
         let fixture =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
-        harness.update(|editor| editor.add_raws(vec![fixture]));
+        harness.enter(|editor, cx| editor.add_raws(vec![fixture], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
         harness.update(|editor| {

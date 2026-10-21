@@ -40,7 +40,7 @@ fn grade_owner_survives_output_and_ui_changes_but_retires_for_effective_preview_
         app.enter(|e, access| {
             e.observe_grade(&accepted);
             let guard = Dropped(dropped.clone());
-            e.document.visit.grade.task = access.spawn(async move {
+            e.document.visit.grade.task = access.spawn(move |_| async move {
                 let _guard = guard;
                 std::future::pending::<()>().await;
             });

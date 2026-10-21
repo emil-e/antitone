@@ -290,7 +290,10 @@ fn unsupported_retired_grade_blocks_source_and_export_before_retiring_accepted_s
         let revision = editor.original.revision();
         let viewport = editor.viewport;
         let path = editor.document.visit.ready.as_ref().unwrap().path.clone();
-        editor.load("different.ARW".into());
+        editor.load(
+            "different.ARW".into(),
+            &crate::application::UiContext::render_only(),
+        );
         assert!(
             editor.status.contains("f32 intermediate working range"),
             "{}",
@@ -309,7 +312,7 @@ fn unsupported_retired_grade_blocks_source_and_export_before_retiring_accepted_s
         assert_eq!(editor.original.revision(), revision);
         assert_eq!(editor.document.project, before);
         assert!(
-            !editor.document.visit.source.pending() && editor.export_operation.request.is_none()
+            !editor.document.visit.source.pending() && editor.export_operation.pending.is_none()
         );
         let directory = tempfile::tempdir().unwrap();
         let destination = directory.path().join("existing.tif");
@@ -318,6 +321,7 @@ fn unsupported_retired_grade_blocks_source_and_export_before_retiring_accepted_s
             destination.clone(),
             crate::editor::OutputFormat::Tiff(crate::rendering::OutputTarget::Srgb),
             crate::export::Overwrite::Refuse,
+            &crate::application::UiContext::render_only(),
         );
         assert!(
             editor.status.contains("f32 intermediate working range"),
@@ -327,7 +331,7 @@ fn unsupported_retired_grade_blocks_source_and_export_before_retiring_accepted_s
         assert!(!editor.busy);
         assert!(editor.export_operation.pending.is_none());
         assert!(
-            !editor.document.visit.source.pending() && editor.export_operation.request.is_none()
+            !editor.document.visit.source.pending() && editor.export_operation.pending.is_none()
         );
         assert_eq!(std::fs::read(&destination).unwrap(), b"keep destination");
         assert_eq!(editor.document.project, before);

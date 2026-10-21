@@ -9,7 +9,7 @@ pub(super) fn calibrated_harness_with_thumbnails<R>(
     test: impl FnOnce(Harness<'_, Editor>) -> R,
 ) -> R {
     editor_harness_with_thumbnails(thumbnails, |mut harness, _| {
-        harness.update(|editor| editor.add_raws(vec![fixture("patches.dng")]));
+        harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
         harness.update(|editor| {
@@ -328,7 +328,7 @@ fn picker_drags_keep_press_origin_for_resize_move_and_new_selection() {
 #[test]
 fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
     editor_harness(|mut harness, _| {
-        harness.update(|editor| editor.add_raws(vec![fixture("illuminated-patches.dng")]));
+        harness.enter(|editor, cx| editor.add_raws(vec![fixture("illuminated-patches.dng")], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
         harness.get_by_label("Scopes").click();
@@ -336,7 +336,7 @@ fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
         let before = harness.read(|editor| editor.document.project.clone());
         let selected = harness.read(|editor| editor.current_source);
         // The native file chooser is outside this test: supply its resulting path as fixture setup.
-        harness.update(|editor| editor.begin_flat_edit(fixture("bare-light.dng"), None));
+        harness.enter(|editor, cx| editor.begin_flat_edit(fixture("bare-light.dng"), None, cx));
         wait_for(&mut harness, |e| !e.busy);
         for (layout, size, width) in [
             ("normal", egui::vec2(1100., 800.), 315.),
@@ -368,7 +368,7 @@ fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
         harness.read(|editor| assert!(editor.flat_edit.is_none()));
         harness.read(|editor| assert_eq!(editor.document.project, before));
         harness.read(|editor| assert_eq!(editor.current_source, selected));
-        harness.update(|editor| editor.begin_flat_edit(fixture("bare-light.dng"), None));
+        harness.enter(|editor, cx| editor.begin_flat_edit(fixture("bare-light.dng"), None, cx));
         wait_for(&mut harness, |e| !e.busy);
         harness.get_by_label("Apply").click();
         harness.step();

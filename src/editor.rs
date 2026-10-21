@@ -1,5 +1,6 @@
 use crate::{
     Error,
+    application::UiContext,
     color::Balance,
     coverage::Coverage,
     crop::Crop,
@@ -367,7 +368,7 @@ pub struct Editor {
 }
 
 impl Editor {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, initial: Option<PathBuf>) -> Self {
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let submissions = crate::platform::SubmissionGate::default();
         let renderers = Arc::new(crate::renderer::RendererCache::new(submissions.clone()));
         renderers.prewarm(device.clone(), queue.clone());
@@ -426,18 +427,19 @@ impl Editor {
         editor.preferences.cache_limits = Some(editor.thumbnails.limits);
         editor.scopes = scopes;
         editor.grades = grades;
-        if let Some(path) = initial {
-            if path
-                .extension()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("arw"))
-            {
-                editor.add_raws(vec![path]);
-                editor.new_project_pending = editor.document_pending.is_some();
-            } else {
-                editor.start_document(Preparation::Open(path));
-            }
-        }
         editor
+    }
+
+    pub fn open_initial(&mut self, path: PathBuf, cx: &UiContext<'_, Self>) {
+        if path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("arw"))
+        {
+            self.add_raws(vec![path], cx);
+            self.new_project_pending = self.document_pending.is_some();
+        } else {
+            self.start_document(Preparation::Open(path), cx);
+        }
     }
 
     fn state() -> Self {
@@ -680,67 +682,10 @@ impl Editor {
         self.next_request
     }
 
-    fn start_document(&mut self, work: Preparation) {
-        // Foreground measurements and document work retain their existing exclusion;
-        // candidate preparation itself does not replace the accepted photo visit.
-        self.cancel_measurement();
-        self.document.history.finish_group();
-        self.history_pending = match &work {
-            Preparation::New | Preparation::Open(_) => Some(history::Pending::Reset),
-            Preparation::Import(..) | Preparation::Correction(..) => Some(history::Pending::Edit {
-                before: Box::new(self.document.project.clone()),
-                label: if matches!(&work, Preparation::Import(..)) {
-                    "Import photos"
-                } else {
-                    "Correction"
-                },
-                photo: None,
-            }),
-            Preparation::History(_, _, direction) => Some(history::Pending::Restore {
-                direction: *direction,
-                cleanup: self
-                    .document
-                    .dust
-                    .cleanup
-                    .then_some(self.document.dust.show_masks),
-            }),
-        };
-        let id =
-            self.begin_document_operation(matches!(&work, Preparation::New | Preparation::Open(_)));
-        self.tasks.begin(match &work {
-            Preparation::Import(..) => Task::Import(id),
-            Preparation::Open(_) => Task::Open(id),
-            Preparation::New => Task::New(id),
-            Preparation::Correction(..) => Task::Correction(id),
-            Preparation::History(..) => Task::History(id),
-        });
-        self.document_failure = match &work {
-            Preparation::Correction(..) => Some(FailureKind::FlatCorrection),
-            _ => None,
-        };
-        self.new_project_pending = matches!(work, Preparation::New);
-        let source = if matches!(&work, Preparation::Import(_, _, Some(_))) {
-            self.document
-                .visit
-                .ready
-                .as_ref()
-                .map(|ready| (self.id, ready.clone()))
-        } else {
-            None
-        };
-        let correction = self.correction.clone();
-        self.candidate_operation.request = Some(DocumentRequest {
-            work,
-            source,
-            correction,
-        });
-    }
-
     pub(super) fn begin_document_operation(&mut self, replacement: bool) -> u64 {
         self.document.write = save::State::default();
         self.candidate_operation = document_workflow::State::default();
         if let Some(session) = &mut self.flat_edit {
-            session.request = None;
             session.task = None;
         }
         self.retire_look();
@@ -768,14 +713,14 @@ impl Editor {
         let id = self.request_id();
         self.source_epoch
             .store(id, std::sync::atomic::Ordering::Relaxed);
-        self.original.invalidate();
+        self.invalidate_original();
         self.document_pending = Some(id);
         self.busy = true;
         self.status = "Preparing project…".into();
         id
     }
 
-    fn add_raws(&mut self, paths: Vec<PathBuf>) {
+    fn add_raws(&mut self, paths: Vec<PathBuf>, cx: &UiContext<'_, Self>) {
         self.sync_document();
         let reuse = self
             .document
@@ -784,135 +729,21 @@ impl Editor {
             .as_ref()
             .and(self.current_source)
             .map(|source| (self.id, source));
-        self.start_document(Preparation::Import(self.document.capture(), paths, reuse));
+        self.start_document(
+            Preparation::Import(self.document.capture(), paths, reuse),
+            cx,
+        );
     }
 
-    fn load(&mut self, path: PathBuf) {
-        self.load_source(path, true);
+    fn load(&mut self, path: PathBuf, cx: &UiContext<'_, Self>) {
+        self.load_source(path, true, cx);
     }
 
-    fn load_source(&mut self, path: PathBuf, persistent: bool) {
-        self.sync_document();
-        if let Err(error) = self.validate_document_candidate(&self.document) {
-            self.status = format!("Source not changed: {error}");
-            return;
-        }
-        self.finish_dust_cleanup();
-        self.document.dust.release_gpu();
-        let started = std::time::Instant::now();
-        let selecting_photo = persistent && self.pick.is_none() && self.flat_edit.is_none();
-        self.document.visit.support = Default::default();
-        self.seed_thumbnail();
-        self.pending_preview = None;
-        self.selection_timing = None;
-        if self.document.analysis_pending.take().is_some() {
-            self.cancel_analysis();
-        }
-        self.thumbnails.cancel();
-        self.document.visit.adjustments = Adjustments::default();
-        self.document.visit.mask_edit = None;
-        self.current_source = self.document.find_source(&path);
-        if selecting_photo {
-            self.roll_selection
-                .reconcile(&self.document.project.order, self.current_source);
-        }
-        self.photo = self
-            .current_source
-            .and_then(|id| self.document.project.source(id).ok())
-            .map(|source| source.photo)
-            .unwrap_or_default();
-        self.photo_orientation = self
-            .current_source
-            .and_then(|id| self.document.project.source(id).ok())
-            .map(|source| source.orientation)
-            .unwrap_or_default();
-        self.crop = self
-            .current_source
-            .and_then(|id| self.document.project.source(id).ok())
-            .and_then(|source| source.crop);
-        self.document.visit.crop_edit = None;
-        self.last_layout = None;
-        let expected = self.current_source.map(|id| {
-            Box::new(
-                self.document
-                    .project
-                    .source(id)
-                    .expect("registered source")
-                    .clone(),
-            )
-        });
-        let wb = self
-            .document
-            .project
-            .development
-            .as_ref()
-            .map(|value| value.fixed_wb);
-        self.original.invalidate();
-        self.viewport.fit();
-        self.overwrite = None;
-        self.return_notice = None;
-        self.document.pick_view = None;
-        self.document.pick_return = None;
-        self.id = self.request_id();
-        self.replace_photo_scope(self.id);
-        self.source_epoch
-            .store(self.id, std::sync::atomic::Ordering::Relaxed);
-        self.document.visit.ready = None;
-        self.selection_timing =
-            selecting_photo.then(|| Arc::new(SelectionTiming::new(self.id, started)));
-        self.region = None;
-        self.pick = None;
-        self.source = self
-            .document
-            .auto_crop_edit
-            .as_ref()
-            .map_or(self.calibration().is_none(), |d| d.source_view);
-        self.busy = true;
-        self.status = "Developing full-resolution RAW…".into();
-        self.tasks.begin(Task::Photo(self.id));
-        let cache = LoadCache::new(&path, expected.as_deref(), wb, &self.document);
-        self.document.visit.source.key = cache.key.clone();
-        self.document.visit.source.request = Some(source::Request {
-            path,
-            wb,
-            expected: expected.map(|source| *source),
-            correction: self.correction.clone(),
-            basis: self.document.project.camera_basis.clone(),
-            cache: Some(cache),
-        });
-        if selecting_photo
-            && self.pick.is_none()
-            && self.flat_edit.is_none()
-            && let Some(source) = self.current_source
-        {
-            match self.thumbnails.selected_preview(
-                self.id,
-                &self.document,
-                source,
-                self.correction.as_ref(),
-            ) {
-                Ok(preview) => {
-                    println!(
-                        "selected_switch request={} cache_hit={} boundary=admission elapsed_ms={:.6}",
-                        self.id,
-                        preview.is_some(),
-                        started.elapsed().as_secs_f64() * 1000.
-                    );
-                    self.pending_preview = preview;
-                }
-                Err(error) => eprintln!(
-                    "selected_preview request={} unavailable reason={error}",
-                    self.id
-                ),
-            }
-        }
-    }
-
-    fn finish_pick(&mut self) {
+    fn finish_pick(&mut self, cx: &UiContext<'_, Self>) {
         self.cancel_measurement();
         if self.document.analysis_review.is_some() {
             self.status = "Analysis review cancelled; areas and grade unchanged".into();
-            self.end_analysis_review();
+            self.end_analysis_review(cx);
             return;
         }
         self.document.visit.support = Default::default();
@@ -935,7 +766,7 @@ impl Editor {
                 .is_none_or(|ready| ready.path != context.path)
             {
                 let notice = self.status.clone();
-                self.load(context.path);
+                self.load(context.path, cx);
                 self.return_notice = Some(notice);
             }
             self.selected = context.selected;
@@ -957,10 +788,10 @@ impl Editor {
         self.source = self.calibration().is_none() || source;
     }
 
-    fn begin_pick(&mut self, kind: Pick) {
+    fn begin_pick(&mut self, kind: Pick, cx: &UiContext<'_, Self>) {
         self.finish_dust_cleanup();
         if self.pick.is_some() {
-            self.finish_pick();
+            self.finish_pick(cx);
         }
         if self.busy
             || self.document.visit.crop_edit.is_some()
@@ -1018,12 +849,12 @@ impl Editor {
             if self.document.analysis_review.is_some() {
                 self.refresh_review_region();
             } else {
-                self.request_analysis_support();
+                self.request_analysis_support(cx);
             }
         }
     }
 
-    fn pick_roll_source(&mut self, id: SourceId) {
+    fn pick_roll_source(&mut self, id: SourceId, cx: &UiContext<'_, Self>) {
         let Some(index) = self
             .document
             .project
@@ -1044,7 +875,7 @@ impl Editor {
             .as_ref()
             .is_none_or(|ready| ready.path != path)
         {
-            self.load(path);
+            self.load(path, cx);
         }
         self.selected = index;
         self.pick = kind;
@@ -1054,77 +885,29 @@ impl Editor {
         self.source = true;
     }
 
-    fn apply_pick(&mut self) {
+    fn apply_pick(&mut self, cx: &UiContext<'_, Self>) {
         if self.document.analysis_review.is_some() {
-            self.confirm_analysis_review();
+            self.confirm_analysis_review(cx);
             return;
         }
         if self.pick == Some(Pick::Analysis) {
-            self.apply_analysis_area();
+            self.apply_analysis_area(cx);
             return;
         }
         if self.pick == Some(Pick::Flat) {
-            self.apply_flat_edit();
+            self.apply_flat_edit(cx);
             return;
         }
         if let (Some(kind), Some(region)) = (self.pick, self.region) {
-            self.thumbnails.cancel();
-            self.queue_measurement(kind, region);
+            self.start_measurement(kind, region, cx);
         }
     }
 
-    fn export(&mut self, path: PathBuf, format: OutputFormat, overwrite: Overwrite) {
-        if self.document.auto_crop_edit.is_some() {
-            self.status = "Apply or cancel auto-crop before exporting".into();
-            return;
-        }
-        if self
-            .document
-            .path
-            .as_ref()
-            .is_some_and(|project| document::same_path(project, &path))
-        {
-            self.status = "Export destination is the current project document".into();
-            self.report_failure(FailureKind::Export, self.status.clone());
-            return;
-        }
-        self.sync_document();
-        if let (Some(_), Some(ready)) = (self.calibration(), &self.document.visit.ready) {
-            let recipe = (|| -> Result<crate::image_recipe::ImageRecipe, Error> {
-                self.validate_document_candidate(&self.document)?;
-                let id = self
-                    .current_source
-                    .ok_or_else(|| Error::Project("no accepted source for export".into()))?;
-                self.document.project.image_recipe(id)
-            })();
-            let recipe = match recipe {
-                Ok(recipe) => recipe,
-                Err(error) => {
-                    self.status = error.to_string();
-                    return;
-                }
-            };
-            debug_assert_eq!(recipe.composition.area(), ready.area);
-            let input = self.source_context().expect("ready export source");
-            let request = self.request_id();
-            self.export_operation = export_workflow::State::new(
-                request,
-                export_services::Request {
-                    input,
-                    path,
-                    format,
-                    recipe,
-                    overwrite,
-                },
-            );
-            self.thumbnails.cancel();
-            self.busy = true;
-            self.status = "Exporting full-resolution source; preview pixels are not used…".into();
-            self.tasks.begin(Task::Export(request));
-        }
-    }
-
-    fn controls(&mut self, ui: &mut egui::Ui) -> (Option<ScopeSlot>, bool) {
+    fn controls(
+        &mut self,
+        ui: &mut egui::Ui,
+        cx: &UiContext<'_, Self>,
+    ) -> (Option<ScopeSlot>, bool) {
         use controls::{ColorControl, Parameter};
         use presentation::SectionHeader;
 
@@ -1147,9 +930,9 @@ impl Editor {
         }
 
         if self.tab == 0 {
-            analyze = self.roll_tool_shelf(ui);
+            analyze = self.roll_tool_shelf(ui, cx);
         } else if self.tab == 1 {
-            ui.add_enabled_ui(!reviewing, |ui| self.photo_tool_shelf(ui));
+            ui.add_enabled_ui(!reviewing, |ui| self.photo_tool_shelf(ui, cx));
         }
 
         let editable = !self.busy
@@ -1179,7 +962,7 @@ impl Editor {
                 self.auto_crop_controls(ui);
                 if self.tab == 0 {
                     ui.push_id("roll", |ui| {
-                        ui.add_enabled_ui(!reviewing, |ui| self.flat_controls(ui));
+                        ui.add_enabled_ui(!reviewing, |ui| self.flat_controls(ui, cx));
                         let calibration_summary = match (self.dmin.is_some(), self.dmax.is_some()) {
                             (true, true) => "Dmin + Dmax measured",
                             (false, false) => "Dmin + Dmax not measured",
@@ -1291,7 +1074,7 @@ impl Editor {
                                             self.control_command(editing::Command::Reset(
                                                 editing::Scope::Roll,
                                                 controls::Reset::Response,
-                                            ));
+                                            ), cx);
                                         }
                                     }
                                     crate::processing::Response::Film { toe, shoulder } => {
@@ -1338,13 +1121,13 @@ impl Editor {
                 } else if self.tab == 1 {
                     ui.add_enabled_ui(!reviewing, |ui| {
                         self.crop_controls(ui);
-                        self.dust_controls(ui);
+                        self.dust_controls(ui, cx);
                     });
-                    if self.adjustment_controls(ui, editable, can_pick) {
+                    if self.adjustment_controls(ui, cx, editable, can_pick) {
                         start_pick = Some(Pick::Wb);
                     }
                 } else {
-                    self.look_controls(ui);
+                    self.look_controls(ui, cx);
                     ui.add_enabled_ui(
                         !reviewing
                             && self.document.visit.crop_edit.is_none()
@@ -1411,7 +1194,7 @@ impl Editor {
             self.viewport.fit();
         }
         if let Some(kind) = start_pick {
-            self.control_command(editing::Command::Pick(kind));
+            self.control_command(editing::Command::Pick(kind), cx);
         }
 
         // Render outgoing numeric controls once to commit focus loss before switching stages.
@@ -1419,7 +1202,7 @@ impl Editor {
         (scope_slot, analyze)
     }
 
-    fn export_dialog(&mut self, format: OutputFormat) {
+    fn export_dialog(&mut self, format: OutputFormat, cx: &UiContext<'_, Self>) {
         let Some(ready) = &self.document.visit.ready else {
             return;
         };
@@ -1443,7 +1226,7 @@ impl Editor {
             if path.exists() {
                 self.overwrite = Some((path, format));
             } else {
-                self.export(path, format, Overwrite::Refuse);
+                self.export(path, format, Overwrite::Refuse, cx);
             }
         }
     }
@@ -1520,31 +1303,13 @@ impl host::App for Editor {
         }
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, access: &crate::application::UiAccess<'_, Self>) {
-        self.draw_ui(ui);
-        if self.allow_close {
-            return;
-        }
-        self.start_measurement_workflow(access);
-        self.start_save_workflow(access);
-        self.start_document_workflow(access);
-        self.start_source_workflow(access);
-        self.start_original_workflow(access);
-        self.start_working_workflow(access);
-        self.start_reference_workflow(access);
-        self.start_support_workflow(access);
-        self.start_look_workflow(access);
-        self.start_analysis_preparation(access);
-        self.start_analysis_workflow(access);
-        self.start_dust_workflow(access);
-        self.start_export_workflow(access);
-        self.start_embedded_workflow(access, ui.ctx());
-        self.start_thumbnail_workflow(access);
+    fn ui(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
+        self.draw_ui(ui, cx);
     }
 }
 
 impl Editor {
-    fn draw_ui(&mut self, ui: &mut egui::Ui) {
+    fn draw_ui(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
         if self.allow_close {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             return;
@@ -1563,6 +1328,7 @@ impl Editor {
         let mut actions = self.application_actions(ui);
         self.frame_shortcuts(
             ui,
+            cx,
             &mut actions.file,
             fullscreen_was_active,
             tool_escape_available,
@@ -1572,8 +1338,8 @@ impl Editor {
         let previous_photo = self.photo;
         let was_dirty = self.document.dirty();
         self.disable_blocked_workspace(ui);
-        let _menu_focus = self.workspace_chrome(ui, &mut actions);
-        let (scope_slot, analyze) = self.edit_frame_controls(ui, previous_roll, previous_photo);
+        let _menu_focus = self.workspace_chrome(ui, cx, &mut actions);
+        let (scope_slot, analyze) = self.edit_frame_controls(ui, cx, previous_roll, previous_photo);
         if self.document.analysis_review.is_some() && self.document.analysis_pending.is_none() {
             self.stash_review_region();
         }
@@ -1584,10 +1350,10 @@ impl Editor {
             Some(crate::platform::menu::Action::ZoomOut) => Some(-1. / 1.25),
             _ => None,
         };
-        let zoom_action = self.viewer_bar(ui).or(menu_zoom);
+        let zoom_action = self.viewer_bar(ui, cx).or(menu_zoom);
         let fullscreen = self.fullscreen.is_some();
         presentation::viewer_surface(ui, fullscreen, |ui| {
-            self.viewer_canvas(ui, zoom_action, fullscreen);
+            self.viewer_canvas(ui, zoom_action, fullscreen, cx);
         });
         let text_focused = ui.ctx().text_edit_focused();
         ui.ctx()
@@ -1600,8 +1366,8 @@ impl Editor {
 
         // Deferred actions must see validated edits and committed numeric focus loss.
         self.application_panel(ui.ctx(), panel_escape_available);
-        self.dispatch_frame_actions(ui, actions, analyze);
-        self.frame_dialogs(ui, !popup_was_open);
+        self.dispatch_frame_actions(ui, cx, actions, analyze);
+        self.frame_dialogs(ui, cx, !popup_was_open);
         if self.allow_close {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }

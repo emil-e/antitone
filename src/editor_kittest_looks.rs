@@ -48,8 +48,9 @@ fn fixture_editor_gpu<R>(
 ) -> R {
     editor_harness_with_gpu(true, |mut harness, capture, device, queue| {
         harness.run();
-        harness
-            .update(|editor| editor.add_raws(vec![fixture("roll-0.dng"), fixture("roll-1.dng")]));
+        harness.enter(|editor, cx| {
+            editor.add_raws(vec![fixture("roll-0.dng"), fixture("roll-1.dng")], cx)
+        });
         wait_for(&mut harness, |editor| {
             !editor.busy && editor.document.visit.ready.is_some()
         });
@@ -540,7 +541,7 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
             ));
         }
         std::fs::write(&file, cube).unwrap();
-        harness.update(|editor| editor.begin_look(look_ui::Source::Imported(file)));
+        harness.enter(|editor, cx| editor.begin_look(look_ui::Source::Imported(file), cx));
         paint_until(&mut harness, ready);
         harness.read(|editor| {
             assert!(Arc::ptr_eq(
@@ -633,7 +634,8 @@ fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_sessi
                 }
             }
             std::fs::write(&file, cube).unwrap();
-            harness.update(|editor| editor.begin_look(look_ui::Source::Imported(file.clone())));
+            harness
+                .enter(|editor, cx| editor.begin_look(look_ui::Source::Imported(file.clone()), cx));
             paint_until(&mut harness, |editor| {
                 positive_ready(editor) && editor.loaded_looks.len() == index + 1
             });
@@ -718,7 +720,9 @@ fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_sessi
             harness.read(|editor| assert_eq!((editor.roll, editor.photo), baseline));
         }
         let path = directory.path().join("comparison.json");
-        harness.update(|editor| editor.queue_save(path.clone(), crate::project::Save::New, None));
+        harness.enter(|editor, cx| {
+            editor.save_project(path.clone(), crate::project::Save::New, None, cx)
+        });
         wait_for(&mut harness, |editor| {
             !editor.busy && editor.document_pending.is_none()
         });
@@ -777,8 +781,8 @@ fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapsh
                         }
                     }
                     std::fs::write(&file, cube).unwrap();
-                    harness.update(|editor| {
-                        editor.begin_look(look_ui::Source::Imported(file.clone()))
+                    harness.enter(|editor, cx| {
+                        editor.begin_look(look_ui::Source::Imported(file.clone()), cx)
                     });
                     paint_until(&mut harness, |editor| {
                         positive_ready(editor)
@@ -801,8 +805,8 @@ fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapsh
                 } else {
                     "builtin.antitone.json"
                 });
-                harness.update(|editor| {
-                    editor.queue_save(path.clone(), crate::project::Save::New, None)
+                harness.enter(|editor, cx| {
+                    editor.save_project(path.clone(), crate::project::Save::New, None, cx)
                 });
                 wait_for(&mut harness, |editor| {
                     !editor.busy && editor.document_pending.is_none()
@@ -840,11 +844,12 @@ fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapsh
             }
             let asset = harness.read(|editor| editor.document.project.output.look.clone().unwrap());
             let path = directory.path().join("snapshot.tif");
-            harness.update(|editor| {
+            harness.enter(|editor, cx| {
                 editor.export(
                     path.clone(),
                     OutputFormat::Tiff(OutputTarget::Srgb),
                     Overwrite::Refuse,
+                    cx,
                 )
             });
             harness.update(|editor| editor.clear_look());
@@ -878,7 +883,7 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
             cube.push_str("0.4 0.4 0.4\n");
         }
         std::fs::write(&path, cube).unwrap();
-        harness.update(|editor| editor.begin_look(look_ui::Source::Imported(path.clone())));
+        harness.enter(|editor, cx| editor.begin_look(look_ui::Source::Imported(path.clone()), cx));
         wait_for(&mut harness, |editor| !editor.busy);
         std::fs::remove_file(path).unwrap();
         let accepted = harness.read(|editor| {
@@ -910,7 +915,7 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
             )
         });
         assert!(harness.query_by_label("Look rendering failed").is_none());
-        harness.update(|editor| editor.begin_pick(Pick::Gamma));
+        harness.enter(|editor, cx| editor.begin_pick(Pick::Gamma, cx));
         harness.step();
         paint_until(&mut harness, |editor| {
             assert!(

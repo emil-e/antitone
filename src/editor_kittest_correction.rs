@@ -14,18 +14,113 @@ fn pick_patch(harness: &mut Harness<'_, Editor>, action: &str, area: Rect) {
 }
 
 #[test]
+fn reference_reedit_commits_numeric_focus_before_starting_and_proposes_without_another_paint() {
+    editor_harness(|mut harness, _| {
+        harness.enter(|e, cx| e.add_raws(vec![fixture("illuminated-patches.dng")], cx));
+        wait_for(&mut harness, |e| !e.busy);
+        harness.update(|e| {
+            let mut scan = e.source_context().unwrap().scan().unwrap();
+            e.dmin = Some(
+                scan.reference(Rect {
+                    x: 16,
+                    y: 16,
+                    width: 32,
+                    height: 32,
+                })
+                .unwrap(),
+            );
+            e.dmax = Some(
+                scan.reference(Rect {
+                    x: 80,
+                    y: 16,
+                    width: 32,
+                    height: 32,
+                })
+                .unwrap(),
+            );
+            e.scopes.visible = false;
+            e.sync_document();
+        });
+        // Native chooser interaction is not part of this offscreen case.
+        harness.enter(|e, cx| e.begin_flat_edit(fixture("bare-light.dng"), None, cx));
+        wait_for(&mut harness, |e| !e.busy);
+        harness.get_by_label("Apply").click();
+        harness.step();
+        harness.run_until(Duration::from_secs(20), |e| !e.busy);
+        harness.read(|e| assert!(e.correction.is_some(), "{}", e.status));
+        harness.set_size(egui::vec2(1100., 1100.));
+        harness.update(|e| {
+            e.preferences
+                .sections
+                .insert("roll-flat-field".into(), true);
+            e.preferences
+                .sections
+                .insert("roll-gamma-balance".into(), true);
+        });
+        harness.step();
+        let (old_gamma, selected, viewport, correction) = harness.read(|e| {
+            (
+                e.roll.gamma,
+                e.current_source,
+                e.viewport,
+                e.document.project.flat_field.clone(),
+            )
+        });
+        let desired = old_gamma * 0.99;
+        let role = egui::accesskit::Role::SpinButton;
+        harness.get_by_role_and_label(role, "Gamma").click();
+        harness.step();
+        harness.event(egui::Event::Text(desired.to_string()));
+        harness.step();
+        assert_eq!(
+            harness.read(|e| e.roll.gamma),
+            old_gamma,
+            "typing is still an uncommitted draft"
+        );
+        // This action is drawn above Gamma. Starting it immediately while drawing
+        // would disable the outgoing input before its focus loss can commit.
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, "Edit area…")
+            .click();
+        harness.step();
+        harness.read(|e| {
+            assert!((e.roll.gamma - desired).abs() < 1e-12, "{}", e.status);
+            assert_eq!(e.document.project.roll.gamma, e.roll.gamma);
+            assert_eq!(e.pick, Some(Pick::Flat));
+            assert!(e.busy && e.flat_edit.as_ref().unwrap().task.is_some());
+        });
+        harness.run_until(Duration::from_secs(20), |e| !e.busy);
+        harness.read(|e| {
+            assert!(e.region.is_some());
+            assert!(e.source_context().unwrap().correction.is_none());
+            assert_eq!(e.document.project.flat_field, correction);
+            assert!((e.document.project.roll.gamma - desired).abs() < 1e-12);
+        });
+        harness.get_by_label("Cancel").click();
+        harness.step();
+        harness.read(|e| {
+            assert!(e.flat_edit.is_none());
+            assert_eq!(e.current_source, selected);
+            assert_eq!(e.viewport, viewport);
+            assert_eq!(e.document.project.flat_field, correction);
+            assert!((e.document.project.roll.gamma - desired).abs() < 1e-12);
+        });
+    });
+}
+
+#[test]
 fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
     let directory = tempfile::tempdir().unwrap();
     let reference = directory.path().join("bare-light.dng");
     std::fs::copy(fixture("bare-light.dng"), &reference).unwrap();
     editor_harness_with_thumbnails(true, |mut harness, _| {
-        harness.update(|editor| editor.add_raws(vec![fixture("illuminated-patches.dng")]));
+        harness.enter(|editor, cx| editor.add_raws(vec![fixture("illuminated-patches.dng")], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
         let before = harness.read(|editor| editor.document.project.clone());
         let selected = harness.read(|editor| editor.current_source);
         // The reference chooser itself remains native acceptance; use its resulting path.
-        harness.update(|editor| editor.begin_flat_edit(reference.clone(), None));
+        harness.enter(|editor, cx| editor.begin_flat_edit(reference.clone(), None, cx));
         wait_for(&mut harness, |e| !e.busy);
         wait_settled(&mut harness);
         let geometry = harness.read(|editor| editor.last_layout.unwrap().0);
@@ -68,7 +163,7 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         harness.step();
         harness.read(|editor| assert_eq!(editor.document.project, before));
         harness.read(|editor| assert_eq!(editor.current_source, selected));
-        harness.update(|editor| editor.begin_flat_edit(reference.clone(), None));
+        harness.enter(|editor, cx| editor.begin_flat_edit(reference.clone(), None, cx));
         wait_for(&mut harness, |e| !e.busy);
         let geometry = harness.read(|editor| editor.last_layout.unwrap().0);
         let region = harness.read(|editor| editor.region.unwrap());
@@ -308,11 +403,12 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         harness.step();
         harness.get_by_label("Fit").click();
         harness.step();
-        harness.update(|editor| {
-            editor.queue_save(
+        harness.enter(|editor, cx| {
+            editor.save_project(
                 directory.path().join("correction.antitone.json"),
                 crate::project::Save::New,
                 None,
+                cx,
             )
         });
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());

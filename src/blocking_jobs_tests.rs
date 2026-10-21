@@ -13,7 +13,7 @@ fn a_held_reservation_blocks_async_job_admission() {
         let target = app.access();
         let pending = target
             .clone()
-            .spawn(async move {
+            .spawn(move |_| async move {
                 attempt.set(true);
                 let result = jobs.run(|| 42).await.unwrap();
                 target.update(|done| *done = result == 42);
@@ -38,7 +38,7 @@ fn a_cancelled_waiter_does_not_release_running_work_to_a_blocking_waiter() {
         let target = app.access();
         let task = target
             .clone()
-            .spawn(async move {
+            .spawn(move |_| async move {
                 first
                     .run(move || {
                         started.send(()).unwrap();
@@ -62,7 +62,7 @@ fn a_cancelled_waiter_does_not_release_running_work_to_a_blocking_waiter() {
         let target = app.access();
         let waiter = target
             .clone()
-            .spawn(async move {
+            .spawn(move |_| async move {
                 enters.await.unwrap();
                 target.update(|state| state.1 = true);
             })
@@ -86,7 +86,7 @@ fn cancelling_a_running_job_keeps_its_admission_until_the_worker_returns() {
     with_application(false, |app| {
         let task = app
             .access()
-            .spawn(async move {
+            .spawn(move |_| async move {
                 first
                     .run(move || {
                         started.send(()).unwrap();
@@ -112,7 +112,7 @@ fn cancelling_a_running_job_keeps_its_admission_until_the_worker_returns() {
         let target = app.access();
         let next = target
             .clone()
-            .spawn(async move {
+            .spawn(move |_| async move {
                 attempt.set(true);
                 jobs.run(|| ()).await.unwrap();
                 target.update(|done| *done = true);
@@ -140,7 +140,7 @@ fn cancellable_admission_retires_a_queued_job_without_waiting_for_unrelated_work
         let entry = entered.clone();
         let task = target
             .clone()
-            .spawn(async move {
+            .spawn(move |_| async move {
                 let listener = stop.listen();
                 let result = queued
                     .run_admitted_cancellable(
@@ -179,7 +179,7 @@ fn admission_cancellation_does_not_replace_an_admitted_jobs_acknowledgement() {
         let stop = stopped.clone();
         let task = target
             .clone()
-            .spawn(async move {
+            .spawn(move |_| async move {
                 let listener = stop.listen();
                 let result = worker
                     .run_admitted_cancellable(
@@ -219,7 +219,7 @@ fn a_worker_panic_releases_admission_and_does_not_move_computation_onto_the_ui()
         let target = app.access();
         let task = target
             .clone()
-            .spawn(async move {
+            .spawn(move |_| async move {
                 assert!(jobs.run(|| panic!("job failed")).await.is_err());
                 let worker = jobs.run(|| std::thread::current().id()).await.unwrap();
                 target.update(|state| *state = Some(worker));

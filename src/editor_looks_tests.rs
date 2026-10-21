@@ -19,13 +19,10 @@ fn asset() -> Arc<LookAsset> {
         .unwrap(),
     )
 }
-fn request(editor: &mut Editor) -> (u64, Source, Arc<AtomicBool>) {
-    let pending = editor.document.look.as_mut().unwrap();
-    (
-        pending.id,
-        pending.source.take().unwrap(),
-        pending.cancel.clone(),
-    )
+fn pending(editor: &Editor) -> (u64, Arc<AtomicBool>) {
+    let pending = editor.document.look.as_ref().unwrap();
+    assert!(pending.task.is_some(), "the command must register its task");
+    (pending.id, pending.cancel.clone())
 }
 
 #[test]
@@ -83,126 +80,139 @@ fn historic_builtin_sources_use_catalog_labels_but_imports_keep_their_names() {
 }
 #[test]
 fn loaded_luts_remain_available_after_switching_and_duplicate_loads_reuse_one_entry() {
-    let mut editor = super::super::tests::fixture();
-    let first = asset();
-    let mut nodes = first.lut().nodes().to_vec();
-    nodes[0][0] += 0.01;
-    let second = Arc::new(
-        LookAsset::new(
-            first.name().into(),
-            LookOrigin::Imported,
-            Arc::new(Lut3D::new(2, [0.; 3], [1.; 3], nodes).unwrap()),
-        )
-        .unwrap(),
-    );
-    for chosen in [first.clone(), second.clone(), first.clone()] {
-        editor.begin_look(Source::Loaded(chosen.clone()));
-        let (id, _, _) = request(&mut editor);
-        editor.receive_look(id, Ok(Some(chosen)));
-    }
-    assert_eq!(editor.loaded_looks.len(), 2);
-    assert_eq!(
-        loaded_names(&editor.loaded_looks),
-        ["Embedded test look", "Embedded test look (2)"]
-    );
-    let names = loaded_names(&editor.loaded_looks);
-    assert_eq!(editor.loaded_looks[0].name(), first.name());
-    assert_ne!(first.lut().id(), second.lut().id());
-    editor.clear_look();
-    assert_eq!(editor.loaded_looks.len(), 2);
-    assert!(editor.document.project.output.look.is_none());
-    let mut novel_nodes = second.lut().nodes().to_vec();
-    novel_nodes[0][0] += 0.01;
-    let novel = Arc::new(
-        LookAsset::new(
-            "Unaccepted LUT".into(),
-            LookOrigin::Imported,
-            Arc::new(Lut3D::new(2, [0.; 3], [1.; 3], novel_nodes).unwrap()),
-        )
-        .unwrap(),
-    );
-    for rejected in [false, true] {
-        editor.begin_look(Source::Loaded(novel.clone()));
-        let (id, _, _) = request(&mut editor);
-        if rejected {
-            editor.receive_look(id, Err("invalid LUT".into()));
-        } else {
-            editor.cancel_look();
-            editor.receive_look(id, Ok(Some(novel.clone())));
-        }
-        assert_eq!(editor.loaded_looks.len(), 2);
-        assert!(editor.document.project.output.look.is_none());
-    }
-    let reserved =
-        Arc::new(LookAsset::new("None".into(), LookOrigin::Imported, first.lut().clone()).unwrap());
-    let collision = Arc::new(
-        LookAsset::new(
-            "None (2)".into(),
-            LookOrigin::Imported,
-            second.lut().clone(),
-        )
-        .unwrap(),
-    );
-    assert_eq!(
-        loaded_names(&[reserved.clone(), collision, reserved]),
-        ["None (2)", "None (2) (2)", "None (3)"]
-    );
-    assert_eq!(loaded_names(&editor.loaded_looks), names);
+    let editor = super::super::tests::fixture();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            let first = asset();
+            let mut nodes = first.lut().nodes().to_vec();
+            nodes[0][0] += 0.01;
+            let second = Arc::new(
+                LookAsset::new(
+                    first.name().into(),
+                    LookOrigin::Imported,
+                    Arc::new(Lut3D::new(2, [0.; 3], [1.; 3], nodes).unwrap()),
+                )
+                .unwrap(),
+            );
+            for chosen in [first.clone(), second.clone(), first.clone()] {
+                editor.begin_look(Source::Loaded(chosen.clone()), cx);
+                let (id, _) = pending(editor);
+                editor.receive_look(id, Ok(Some(chosen)));
+            }
+            assert_eq!(editor.loaded_looks.len(), 2);
+            assert_eq!(
+                loaded_names(&editor.loaded_looks),
+                ["Embedded test look", "Embedded test look (2)"]
+            );
+            let names = loaded_names(&editor.loaded_looks);
+            assert_eq!(editor.loaded_looks[0].name(), first.name());
+            assert_ne!(first.lut().id(), second.lut().id());
+            editor.clear_look();
+            assert_eq!(editor.loaded_looks.len(), 2);
+            assert!(editor.document.project.output.look.is_none());
+            let mut novel_nodes = second.lut().nodes().to_vec();
+            novel_nodes[0][0] += 0.01;
+            let novel = Arc::new(
+                LookAsset::new(
+                    "Unaccepted LUT".into(),
+                    LookOrigin::Imported,
+                    Arc::new(Lut3D::new(2, [0.; 3], [1.; 3], novel_nodes).unwrap()),
+                )
+                .unwrap(),
+            );
+            for rejected in [false, true] {
+                editor.begin_look(Source::Loaded(novel.clone()), cx);
+                let (id, _) = pending(editor);
+                if rejected {
+                    editor.receive_look(id, Err("invalid LUT".into()));
+                } else {
+                    editor.cancel_look();
+                    editor.receive_look(id, Ok(Some(novel.clone())));
+                }
+                assert_eq!(editor.loaded_looks.len(), 2);
+                assert!(editor.document.project.output.look.is_none());
+            }
+            let reserved = Arc::new(
+                LookAsset::new("None".into(), LookOrigin::Imported, first.lut().clone()).unwrap(),
+            );
+            let collision = Arc::new(
+                LookAsset::new(
+                    "None (2)".into(),
+                    LookOrigin::Imported,
+                    second.lut().clone(),
+                )
+                .unwrap(),
+            );
+            assert_eq!(
+                loaded_names(&[reserved.clone(), collision, reserved]),
+                ["None (2)", "None (2) (2)", "None (3)"]
+            );
+            assert_eq!(loaded_names(&editor.loaded_looks), names);
+        });
+    });
 }
 #[test]
 fn current_success_installs_one_project_wide_embedded_asset_and_stale_replies_do_not() {
-    let mut editor = super::super::tests::fixture();
-    let original = editor.document.project.clone();
-    editor.begin_look(Source::Builtin(Builtin::PortraEndura));
-    let (old, _, cancel) = request(&mut editor);
-    assert!(editor.busy);
-    assert_eq!(editor.document.project, original);
-    editor.begin_look(Source::Builtin(Builtin::Kodak2383));
-    let (current, _, _) = request(&mut editor);
-    assert!(cancel.load(Ordering::Relaxed));
-    editor.receive_look(old, Ok(Some(asset())));
-    assert!(editor.busy);
-    assert!(editor.document.project.output.look.is_none());
-    assert!(editor.loaded_looks.is_empty());
-    let chosen = asset();
-    editor.receive_look(current, Ok(Some(chosen.clone())));
-    assert!(!editor.busy);
-    assert_eq!(editor.document.project.output.look, Some(chosen));
-    assert!(editor.document.look.is_none());
-    assert_eq!(editor.loaded_looks.len(), 1);
-    let document = serde_json::to_vec(&editor.document.project).unwrap();
-    let reopened: crate::project::Project = serde_json::from_slice(&document).unwrap();
-    assert_eq!(reopened.output.look, editor.document.project.output.look);
+    let editor = super::super::tests::fixture();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            let original = editor.document.project.clone();
+            editor.begin_look(Source::Builtin(Builtin::PortraEndura), cx);
+            let (old, cancel) = pending(editor);
+            assert!(editor.busy);
+            assert_eq!(editor.document.project, original);
+            editor.begin_look(Source::Builtin(Builtin::Kodak2383), cx);
+            let (current, _) = pending(editor);
+            assert!(cancel.load(Ordering::Relaxed));
+            editor.receive_look(old, Ok(Some(asset())));
+            assert!(editor.busy);
+            assert!(editor.document.project.output.look.is_none());
+            assert!(editor.loaded_looks.is_empty());
+            let chosen = asset();
+            editor.receive_look(current, Ok(Some(chosen.clone())));
+            assert!(!editor.busy);
+            assert_eq!(editor.document.project.output.look, Some(chosen));
+            assert!(editor.document.look.is_none());
+            assert_eq!(editor.loaded_looks.len(), 1);
+            let document = serde_json::to_vec(&editor.document.project).unwrap();
+            let reopened: crate::project::Project = serde_json::from_slice(&document).unwrap();
+            assert_eq!(reopened.output.look, editor.document.project.output.look);
+        });
+    });
 }
 #[test]
 fn failure_cancel_and_document_retirement_preserve_prior_appearance() {
-    let mut editor = super::super::tests::fixture();
-    editor.document.project.output.look = Some(asset());
-    let original = editor.document.project.clone();
-    editor.begin_look(Source::Imported("missing.cube".into()));
-    let (id, _, _) = request(&mut editor);
-    editor.receive_look(id, Err("invalid LUT".into()));
-    assert_eq!(editor.document.project, original);
-    assert!(!editor.busy);
-    assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Look);
-    editor.failure = None;
-    editor.begin_look(Source::Builtin(Builtin::ProImageII));
-    let (id, _, cancel) = request(&mut editor);
-    editor.cancel_task(TaskRequest::Look(id));
-    assert!(cancel.load(Ordering::Relaxed));
-    assert!(editor.busy);
-    editor.receive_look(id, Ok(Some(asset())));
-    assert_eq!(editor.document.project, original);
-    assert!(!editor.busy);
-    editor.begin_look(Source::Builtin(Builtin::IlfordFilter2));
-    let (id, _, cancel) = request(&mut editor);
-    editor.retire_look();
-    assert!(cancel.load(Ordering::Relaxed));
-    editor.receive_look(id, Ok(Some(asset())));
-    assert_eq!(editor.document.project, original);
-    editor.clear_look();
-    assert!(editor.document.project.output.look.is_none());
-    assert!(!editor.busy);
+    let editor = super::super::tests::fixture();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.document.project.output.look = Some(asset());
+            let original = editor.document.project.clone();
+            editor.begin_look(Source::Imported("missing.cube".into()), cx);
+            let (id, _) = pending(editor);
+            editor.receive_look(id, Err("invalid LUT".into()));
+            assert_eq!(editor.document.project, original);
+            assert!(!editor.busy);
+            assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Look);
+            editor.failure = None;
+            editor.begin_look(Source::Builtin(Builtin::ProImageII), cx);
+            let (id, cancel) = pending(editor);
+            editor.cancel_task(TaskRequest::Look(id));
+            assert!(cancel.load(Ordering::Relaxed));
+            assert!(editor.busy);
+            editor.receive_look(id, Ok(Some(asset())));
+            assert_eq!(editor.document.project, original);
+            assert!(!editor.busy);
+            editor.begin_look(Source::Builtin(Builtin::IlfordFilter2), cx);
+            let (id, cancel) = pending(editor);
+            editor.retire_look();
+            assert!(cancel.load(Ordering::Relaxed));
+            editor.receive_look(id, Ok(Some(asset())));
+            assert_eq!(editor.document.project, original);
+            editor.clear_look();
+            assert!(editor.document.project.output.look.is_none());
+            assert!(!editor.busy);
+        });
+    });
 }
 #[test]
 fn successful_resolution_is_reused_without_requiring_a_prepared_generator() {

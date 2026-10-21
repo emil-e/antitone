@@ -31,7 +31,7 @@ pub(super) fn calibrated_workflow<R>(
     std::fs::copy(fixture("patches.dng"), &dmax).unwrap();
     std::fs::copy(fixture("roll-0.dng"), &photo).unwrap();
     editor_harness(|mut harness, capture| {
-        harness.update(|editor| editor.add_raws(vec![fixture("patches.dng"), dmax, photo]));
+        harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng"), dmax, photo], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
         harness.read(|editor| assert!(editor.calibration().is_none()));
@@ -192,7 +192,7 @@ fn uncalibrated_source_working_view_uses_saved_roll_wb_in_both_targets_without_i
         harness.update(|editor| {
             editor.document.project.development = Some(raw.metadata.development(wb))
         });
-        harness.update(|editor| editor.add_raws(vec![fixture("patches.dng")]));
+        harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
         let path = directory.path().join("source.antitone.json");
@@ -535,7 +535,7 @@ fn physical_view_local_edits_use_current_input_and_clear_recovered_render_errors
                 );
             });
         }
-        harness.update(|editor| {
+        harness.enter(|editor, cx| {
             let bad = editor
                 .positive_processing(
                     editor.calibration().unwrap(),
@@ -550,7 +550,7 @@ fn physical_view_local_edits_use_current_input_and_clear_recovered_render_errors
             let bad = ProcessingInput::from(bad.parameters());
             let frame = editor.working.current_frame().unwrap();
             let error = editor
-                .working_view(frame, &bad, &egui::Context::default())
+                .working_view(frame, &bad, &egui::Context::default(), cx)
                 .err();
             assert!(error.is_some());
             editor.working.error = error.map(|e| e.to_string());

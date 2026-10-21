@@ -34,13 +34,15 @@ fn complete(
 ) -> Result<Arc<Product>, String> {
     let id = key.source.id;
     thumbnails.protect_images(vec![key.clone()]);
-    thumbnails.request(
+    let job = tests::service_job(
+        thumbnails,
         key.clone(),
         document.source_path(id).unwrap(),
         document.project.source(id).unwrap().clone(),
         None,
+        true,
     );
-    tests::complete_service_request(thumbnails, document);
+    tests::complete_service_request(thumbnails, document, job);
     thumbnails.cache.get(&key).expect("current result").clone()
 }
 

@@ -9,7 +9,7 @@ use winit::window::{Window, WindowId};
 use super::{
     SubmissionGate, fullscreen::PhotoFullscreen, latency::Trace, macos, menu, termination,
 };
-use crate::application::{Application, UiAccess};
+use crate::application::{Application, UiContext};
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -26,7 +26,7 @@ pub enum QuitState {
 pub trait App: Sized {
     /// The same gate used by every background submitter on this host's queue.
     fn submission_gate(&self) -> SubmissionGate;
-    fn ui(&mut self, ui: &mut egui::Ui, access: &UiAccess<'_, Self>);
+    fn ui(&mut self, ui: &mut egui::Ui, access: &UiContext<'_, Self>);
     fn menu_state(&self) -> Option<menu::State> {
         None
     }
@@ -60,7 +60,7 @@ pub trait App: Sized {
 
 pub fn run<A: App>(
     title: &str,
-    create: impl for<'scope> FnOnce(&wgpu::Device, &wgpu::Queue, UiAccess<'scope, A>) -> Result<A>,
+    create: impl for<'scope> FnOnce(&wgpu::Device, &wgpu::Queue, UiContext<'scope, A>) -> Result<A>,
 ) -> Result<u64> {
     let event_loop = EventLoop::<HostEvent>::with_user_event().build()?;
     let context = egui::Context::default();
@@ -160,7 +160,7 @@ impl<A, F> Drop for Host<'_, A, F> {
     }
 }
 
-impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiAccess<'scope, A>) -> Result<A>>
+impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiContext<'scope, A>) -> Result<A>>
     Host<'scope, A, F>
 {
     fn fail(&mut self, event_loop: &ActiveEventLoop, error: Box<dyn std::error::Error>) {
@@ -199,7 +199,7 @@ impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiAccess<'scope, A>)
     }
 }
 
-impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiAccess<'scope, A>) -> Result<A>>
+impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiContext<'scope, A>) -> Result<A>>
     ApplicationHandler<HostEvent> for Host<'scope, A, F>
 {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -404,7 +404,7 @@ impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiAccess<'scope, A>)
 
 struct State<'scope, A> {
     gpu: Gpu,
-    app: UiAccess<'scope, A>,
+    app: UiContext<'scope, A>,
     input: egui_winit::State,
     viewport: egui::ViewportInfo,
     fullscreen: PhotoFullscreen,

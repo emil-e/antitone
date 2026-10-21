@@ -18,46 +18,84 @@ pub(super) fn fixture() -> Editor {
     editor
 }
 
-// Worker integration cases transfer owned state into a live application for the
-// document operation, then recover it after its continuation has retired.
-pub(super) fn complete_document_operation(editor: Editor, timeout: Duration) -> Editor {
-    assert!(
-        editor.document.write.request.is_some() || editor.candidate_operation.request.is_some()
-    );
-    assert!(editor.document.visit.measurement.is_none());
-    assert!(!editor.document.visit.source.pending());
+/// Real resource services and authored inputs for command/outcome tests.
+pub(super) fn authored_fixture(paths: &[&str]) -> Editor {
+    static GPU: std::sync::OnceLock<(wgpu::Device, wgpu::Queue)> = std::sync::OnceLock::new();
+    let (device, queue) = GPU.get_or_init(|| {
+        pollster::block_on(async {
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                backends: wgpu::Backends::METAL,
+                ..wgpu::InstanceDescriptor::new_without_display_handle()
+            });
+            let adapter = instance
+                .request_adapter(&Default::default())
+                .await
+                .expect("workflow tests require Metal");
+            adapter.request_device(&Default::default()).await.unwrap()
+        })
+    });
+    let mut editor = Editor::new(device, queue);
+    editor.thumbnails = Thumbnails::default();
+    if !paths.is_empty() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw");
+        let paths = paths.iter().map(|path| root.join(path)).collect();
+        editor = complete_document_operation(editor, Duration::from_secs(60), |e, cx| {
+            e.add_raws(paths, cx)
+        });
+        assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
+    }
+    editor
+}
+
+pub(super) fn with_document_services(mut editor: Editor) -> Editor {
+    let mut resources = authored_fixture(&[]);
+    let mut services = resources.source_services.take().unwrap();
+    services.jobs = editor.workflow_jobs.clone();
+    editor.source_services = Some(services);
+    editor
+}
+
+// Recover owned state only after the live continuation has retired.
+pub(super) fn complete_document_operation(
+    editor: Editor,
+    timeout: Duration,
+    start: impl FnOnce(&mut Editor, &UiContext<'_, Editor>),
+) -> Editor {
     let owner = std::cell::RefCell::new(Some(editor));
     {
         let mut app = crate::application::test_support::TestApplication::new(&owner, || {});
-        app.enter(|editor, access| {
-            editor.start_save_workflow(access);
-            editor.start_document_workflow(access);
-        });
+        app.enter(start);
         app.run_until(timeout, |editor| editor.document_pending.is_none());
         app.close_execution();
     }
     owner.into_inner().unwrap()
 }
 
-pub(super) fn complete_export_operation(editor: Editor, timeout: Duration) -> Editor {
-    assert!(editor.export_operation.request.is_some());
+pub(super) fn complete_export_operation(
+    editor: Editor,
+    timeout: Duration,
+    start: impl FnOnce(&mut Editor, &UiContext<'_, Editor>),
+) -> Editor {
     let owner = std::cell::RefCell::new(Some(editor));
     {
         let mut app = crate::application::test_support::TestApplication::new(&owner, || {});
-        app.enter(|editor, access| editor.start_export_workflow(access));
+        app.enter(start);
         app.run_until(timeout, |editor| editor.export_operation.pending.is_none());
         app.close_execution();
     }
     owner.into_inner().unwrap()
 }
 
-pub(super) fn complete_reference_operation(editor: Editor, timeout: Duration) -> Editor {
-    assert!(editor.flat_edit.as_ref().unwrap().request.is_some());
+pub(super) fn complete_reference_operation(
+    editor: Editor,
+    timeout: Duration,
+    start: impl FnOnce(&mut Editor, &UiContext<'_, Editor>),
+) -> Editor {
     assert!(editor.document.visit.measurement.is_none());
     let owner = std::cell::RefCell::new(Some(editor));
     {
         let mut app = crate::application::test_support::TestApplication::new(&owner, || {});
-        app.enter(|editor, access| editor.start_reference_workflow(access));
+        app.enter(start);
         app.run_until(timeout, |editor| {
             !editor.busy && editor.document_pending.is_none()
         });
@@ -66,24 +104,27 @@ pub(super) fn complete_reference_operation(editor: Editor, timeout: Duration) ->
     owner.into_inner().unwrap()
 }
 
-pub(super) fn complete_analysis_preparation(editor: Editor, timeout: Duration) -> Editor {
-    assert!(editor.document.analysis_preparing.is_some());
-    complete_analysis_operation(editor, timeout)
+pub(super) fn complete_analysis_preparation(
+    editor: Editor,
+    timeout: Duration,
+    start: impl FnOnce(&mut Editor, &UiContext<'_, Editor>),
+) -> Editor {
+    complete_analysis_operation(editor, timeout, |e, cx| {
+        start(e, cx);
+        assert!(e.document.analysis_preparing.is_some());
+    })
 }
 
-pub(super) fn complete_analysis_operation(editor: Editor, timeout: Duration) -> Editor {
-    assert!(
-        editor.document.analysis_preparing.is_some()
-            || editor.document.analysis_pending.is_some()
-            || editor.document.visit.source.pending()
-    );
+pub(super) fn complete_analysis_operation(
+    editor: Editor,
+    timeout: Duration,
+    start: impl FnOnce(&mut Editor, &UiContext<'_, Editor>),
+) -> Editor {
     let owner = std::cell::RefCell::new(Some(editor));
     {
         let mut app = crate::application::test_support::TestApplication::new(&owner, || {});
-        app.enter(|editor, access| {
-            editor.start_analysis_preparation(access);
-            editor.start_analysis_workflow(access);
-            editor.start_source_workflow(access);
+        app.enter(|editor, cx| {
+            start(editor, cx);
         });
         app.run_until(timeout, |editor| {
             editor.document.analysis_preparing.is_none()
@@ -96,8 +137,8 @@ pub(super) fn complete_analysis_operation(editor: Editor, timeout: Duration) -> 
     owner.into_inner().unwrap()
 }
 
-// Controller fixtures draw and inspect captured intent without starting workflows.
-// Live fixtures enter the production UI and run its owning application between frames.
+// Controller fixtures paint supplied state without execution. Workflow commands
+// need a live application, driven between frames when completion matters.
 pub(in crate::editor) trait UiFixture {
     fn before_frame(&mut self) {}
     fn ui(&mut self, ui: &mut egui::Ui);
@@ -105,7 +146,7 @@ pub(in crate::editor) trait UiFixture {
 
 impl UiFixture for Editor {
     fn ui(&mut self, ui: &mut egui::Ui) {
-        self.draw_ui(ui);
+        self.draw_ui(ui, &UiContext::render_only());
     }
 }
 
@@ -150,12 +191,16 @@ fn refinement_worker_uses_the_submission_gate_supplied_to_the_host() {
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let mut editor = Editor::new(&device, &queue, None);
+        let mut editor = Editor::new(&device, &queue);
         editor.thumbnails = Thumbnails::default();
-        editor.add_raws(vec![
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/roll-0.dng"),
-        ]);
-        editor = complete_document_operation(editor, Duration::from_secs(15));
+        editor = complete_document_operation(editor, Duration::from_secs(15), |editor, cx| {
+            editor.add_raws(
+                vec![
+                    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/roll-0.dng"),
+                ],
+                cx,
+            )
+        });
         assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
         let view = ViewRequest {
             area: editor.document.visit.ready.as_ref().unwrap().area,
@@ -389,7 +434,7 @@ fn source_inspection_is_transient_and_measurement_inputs_exclude_its_gain() {
     editor.sync_document();
     assert_eq!(editor.document.project, project);
 
-    editor.begin_pick(Pick::Dmin);
+    editor.begin_pick(Pick::Dmin, &crate::application::UiContext::render_only());
     editor.region = Some(patch());
     let input = editor.measurement_input(Pick::Dmin, patch()).unwrap();
     assert_eq!(input.roll, expected_roll);
@@ -398,6 +443,7 @@ fn source_inspection_is_transient_and_measurement_inputs_exclude_its_gain() {
         editor.document.visit.view,
         Pick::Dmin,
         Ok(Measurement::Reference(expected_dmin.unwrap())),
+        &crate::application::UiContext::render_only(),
     );
     assert_eq!(editor.dmin, expected_dmin);
     assert_eq!(editor.dmax, expected_dmax);
@@ -431,14 +477,14 @@ fn every_picker_preserves_precise_edge_navigation_and_orientation_on_entry() {
     let geometry = (editor.roll_orientation, editor.photo_orientation);
     let grade = (editor.roll, editor.photo);
     for kind in [Pick::Dmin, Pick::Dmax, Pick::Gamma, Pick::Wb] {
-        editor.begin_pick(kind);
+        editor.begin_pick(kind, &crate::application::UiContext::render_only());
         assert_eq!(editor.viewport, precise);
         assert_eq!(
             (editor.roll_orientation, editor.photo_orientation),
             geometry
         );
         assert_eq!((editor.roll, editor.photo), grade);
-        editor.finish_pick();
+        editor.finish_pick(&crate::application::UiContext::render_only());
         assert_eq!(editor.viewport, precise);
     }
 }
@@ -449,13 +495,14 @@ fn rejected_reference_and_cancel_restore_view_without_changing_processing() {
     editor.source = false;
     let original = (editor.dmin, editor.dmax, editor.roll, editor.photo);
     for (kind, invalid) in [(Pick::Dmin, 0.001), (Pick::Dmax, 1.)] {
-        editor.begin_pick(kind);
+        editor.begin_pick(kind, &crate::application::UiContext::render_only());
         assert!(editor.source);
         editor.region = Some(patch());
         editor.measurement_result(
             editor.document.visit.view,
             kind,
             Ok(Measurement::Reference(DVec3::splat(invalid))),
+            &crate::application::UiContext::render_only(),
         );
         assert!(!editor.source);
         assert!(!editor.busy);
@@ -465,9 +512,9 @@ fn rejected_reference_and_cancel_restore_view_without_changing_processing() {
             (editor.dmin, editor.dmax, editor.roll, editor.photo),
             original
         );
-        editor.begin_pick(kind);
+        editor.begin_pick(kind, &crate::application::UiContext::render_only());
         assert!(editor.source);
-        editor.finish_pick();
+        editor.finish_pick(&crate::application::UiContext::render_only());
         assert!(!editor.source);
         assert_eq!(
             (editor.dmin, editor.dmax, editor.roll, editor.photo),
@@ -475,8 +522,8 @@ fn rejected_reference_and_cancel_restore_view_without_changing_processing() {
         );
     }
     editor.source = true;
-    editor.begin_pick(Pick::Dmax);
-    editor.finish_pick();
+    editor.begin_pick(Pick::Dmax, &crate::application::UiContext::render_only());
+    editor.finish_pick(&crate::application::UiContext::render_only());
     assert!(editor.source);
 }
 
@@ -492,7 +539,7 @@ fn completing_initial_calibration_leaves_forced_source_view_but_preserves_explic
             editor.source = initial_source.unwrap_or(true);
             let settings = (editor.roll, editor.photo);
             for (index, kind) in order.into_iter().enumerate() {
-                editor.begin_pick(kind);
+                editor.begin_pick(kind, &crate::application::UiContext::render_only());
                 assert!(editor.source);
                 editor.region = Some(patch());
                 let value = DVec3::splat(if kind == Pick::Dmin { 0.2 } else { 0.005 });
@@ -500,6 +547,7 @@ fn completing_initial_calibration_leaves_forced_source_view_but_preserves_explic
                     editor.document.visit.view,
                     kind,
                     Ok(Measurement::Reference(value)),
+                    &crate::application::UiContext::render_only(),
                 );
                 let expected = initial_source.unwrap_or(index == 0);
                 assert_eq!(
@@ -534,8 +582,8 @@ fn failed_or_cancelled_initial_reference_picks_keep_forced_source_view_and_calib
             editor.photo,
             editor.viewport,
         );
-        editor.begin_pick(kind);
-        editor.finish_pick();
+        editor.begin_pick(kind, &crate::application::UiContext::render_only());
+        editor.finish_pick(&crate::application::UiContext::render_only());
         assert!(editor.source);
         for result in [
             Ok(Measurement::Reference(DVec3::splat(
@@ -543,9 +591,14 @@ fn failed_or_cancelled_initial_reference_picks_keep_forced_source_view_and_calib
             ))),
             Err("reference measurement failed".into()),
         ] {
-            editor.begin_pick(kind);
+            editor.begin_pick(kind, &crate::application::UiContext::render_only());
             editor.region = Some(patch());
-            editor.measurement_result(editor.document.visit.view, kind, result);
+            editor.measurement_result(
+                editor.document.visit.view,
+                kind,
+                result,
+                &crate::application::UiContext::render_only(),
+            );
             assert!(editor.source);
             assert!(editor.pick.is_none() && !editor.busy && editor.calibration().is_none());
             assert_eq!(
@@ -610,21 +663,23 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
         warmth: 0.1,
         tint: -0.1,
     };
-    editor.begin_pick(Pick::Gamma);
+    editor.begin_pick(Pick::Gamma, &crate::application::UiContext::render_only());
     editor.measurement_result(
         editor.document.visit.view,
         Pick::Gamma,
         Ok(Measurement::Balance(balance)),
+        &crate::application::UiContext::render_only(),
     );
     assert_eq!(editor.roll.balance, balance);
     assert_eq!(editor.roll.gamma, gamma);
     assert_eq!(editor.roll.exposure, exposure);
     assert_eq!(editor.photo, photo);
-    editor.begin_pick(Pick::RollWb);
+    editor.begin_pick(Pick::RollWb, &crate::application::UiContext::render_only());
     editor.measurement_result(
         editor.document.visit.view,
         Pick::RollWb,
         Ok(Measurement::Balance(balance)),
+        &crate::application::UiContext::render_only(),
     );
     assert_eq!(editor.roll.wb, balance);
     assert_eq!(editor.roll.balance, balance);
@@ -632,11 +687,12 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
     assert_eq!(editor.roll.exposure, exposure);
     assert_eq!(editor.photo, photo);
     let roll = editor.roll;
-    editor.begin_pick(Pick::Wb);
+    editor.begin_pick(Pick::Wb, &crate::application::UiContext::render_only());
     editor.measurement_result(
         editor.document.visit.view,
         Pick::Wb,
         Ok(Measurement::Balance(balance)),
+        &crate::application::UiContext::render_only(),
     );
     assert_eq!(editor.roll, roll);
     assert_eq!(
@@ -648,7 +704,7 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
     );
     editor.roll.gamma = 0.1;
     let old = editor.roll.balance;
-    editor.begin_pick(Pick::Gamma);
+    editor.begin_pick(Pick::Gamma, &crate::application::UiContext::render_only());
     editor.measurement_result(
         editor.document.visit.view,
         Pick::Gamma,
@@ -656,6 +712,7 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
             warmth: 1.,
             tint: 1.,
         })),
+        &crate::application::UiContext::render_only(),
     );
     assert_eq!(editor.roll.balance, old);
     assert!(editor.status.contains("rejected"));
@@ -670,10 +727,9 @@ fn closed_application_clears_pick_busy_and_stale_samples_do_not_apply() {
     crate::application::test_support::with_application(editor, |app| {
         app.close_execution();
         app.enter(|editor, access| {
-            editor.begin_pick(Pick::Dmin);
+            editor.begin_pick(Pick::Dmin, access);
             editor.region = Some(patch());
-            editor.apply_pick();
-            editor.start_measurement_workflow(access);
+            editor.start_measurement(Pick::Dmin, editor.region.unwrap(), access);
             assert!(!editor.busy);
             assert!(editor.status.contains("stopped"));
             assert!(!editor.source);
@@ -686,6 +742,7 @@ fn closed_application_clears_pick_busy_and_stale_samples_do_not_apply() {
                     warmth: 0.4,
                     tint: 0.4,
                 })),
+                access,
             );
             assert_eq!(editor.photo, old);
         });
@@ -730,6 +787,39 @@ pub(super) fn developed_fixture() -> Arc<crate::scan::DevelopedSource> {
         .unwrap()
         .source()
         .clone()
+}
+
+// A valid paused area-editing phase for presentation/input tests. Lifecycle and
+// service behavior use begin_flat_edit with a live application instead.
+pub(super) fn paused_reference_fixture(
+    editor: &mut Editor,
+    reference: Ready,
+    region: Option<Rect>,
+) {
+    let working = editor.document.visit.ready.take();
+    editor.flat_edit = Some(FlatEdit {
+        working,
+        reference: Some(FlatPreview {
+            ready: reference.clone(),
+            region,
+        }),
+        viewport: editor.viewport,
+        source: editor.source,
+        task: None,
+    });
+    editor.id = editor.request_id();
+    editor.replace_photo_scope(editor.id);
+    editor
+        .source_epoch
+        .store(editor.id, std::sync::atomic::Ordering::Relaxed);
+    editor.document.visit.ready = Some(reference);
+    editor.pick = Some(Pick::Flat);
+    editor.region = region.map(Coverage::rectangle);
+    editor.source = true;
+    editor.busy = false;
+    editor.viewport.fit();
+    editor.last_layout = None;
+    editor.invalidate_original();
 }
 
 pub(super) fn add_ready_fixture(editor: &mut Editor) {
@@ -1153,7 +1243,7 @@ fn crop_explicit_zoom_can_leave_the_frame_offscreen_without_requesting_refinemen
     assert!(!explicit.image.intersects(explicit.canvas));
     assert_eq!(explicit.scale * context.pixels_per_point(), 1.);
     assert!(editor.original.refining.is_none());
-    assert!(editor.document.visit.grade.request.is_none());
+    assert!(editor.document.visit.grade.task.is_none());
     let text = app_frame(&mut editor, &context, vec![]);
     let fit = text
         .iter()
@@ -1307,13 +1397,13 @@ fn picker_toolbar_layout_does_not_rescale_a_fitted_composition() {
         let (before, _) = editor.last_layout.unwrap();
         let viewport = editor.viewport;
         let source = before.source_point(before.canvas.center());
-        editor.begin_pick(kind);
+        editor.begin_pick(kind, &crate::application::UiContext::render_only());
         app_frame(&mut editor, &context, vec![]);
         let (after, _) = editor.last_layout.unwrap();
         assert_eq!(after.canvas, before.canvas);
         assert_eq!(after.scale, before.scale);
         assert!((after.source_point(after.canvas.center()) - source).length() < 0.002);
-        editor.finish_pick();
+        editor.finish_pick(&crate::application::UiContext::render_only());
         assert_eq!(editor.viewport, viewport);
         for _ in 0..3 {
             app_frame(&mut editor, &context, vec![]);
@@ -1345,7 +1435,7 @@ fn neutral_picker_exit_preserves_deliberate_navigation_not_its_initial_fit() {
         for _ in 0..3 {
             app_frame(&mut editor, &context, vec![]);
         }
-        editor.begin_pick(kind);
+        editor.begin_pick(kind, &crate::application::UiContext::render_only());
         app_frame(&mut editor, &context, vec![]);
         let (layout, ppp) = editor.last_layout.unwrap();
         editor
@@ -1354,7 +1444,7 @@ fn neutral_picker_exit_preserves_deliberate_navigation_not_its_initial_fit() {
         app_frame(&mut editor, &context, vec![]);
         let (navigated, _) = editor.last_layout.unwrap();
         let anchor = navigated.source_point(navigated.canvas.center());
-        editor.finish_pick();
+        editor.finish_pick(&crate::application::UiContext::render_only());
         app_frame(&mut editor, &context, vec![]);
         let (returned, _) = editor.last_layout.unwrap();
         assert_eq!(editor.viewport.zoom, Some(2.));
@@ -1398,8 +1488,8 @@ fn crop_draft_cancel_and_apply_are_transactional_and_source_owned() {
     editor.sync_document();
     assert_eq!(editor.document.project, project);
     assert!(!editor.document.dirty());
-    editor.file_action(files::FileAction::Save);
-    assert!(editor.document.write.request.is_none());
+    editor.file_action(files::FileAction::Save, &UiContext::render_only());
+    assert!(editor.document_pending.is_none());
     editor.finish_crop(false);
     assert_eq!(editor.viewport, viewport);
     assert_eq!(editor.crop, crop);
@@ -1476,15 +1566,15 @@ fn straightened_drafts_and_picks_are_transactional_and_measure_canvas_coverage()
     editor.last_layout = Some((layout, 2.));
     let viewport = editor.viewport;
     let anchor = layout.source_point(canvas.center());
-    editor.begin_pick(Pick::Dmin);
+    editor.begin_pick(Pick::Dmin, &crate::application::UiContext::render_only());
     let full = Composition::new(area, editor.roll_orientation, editor.photo_orientation).unwrap();
     let uncropped = editor.viewport.layout_composition(canvas, full, 2.);
     assert_eq!(uncropped.scale, layout.scale);
     assert!((uncropped.source_point(canvas.center()) - anchor).length() < 0.002);
-    editor.finish_pick();
+    editor.finish_pick(&crate::application::UiContext::render_only());
     assert_eq!(editor.viewport, viewport);
     editor.last_layout = Some((layout, 2.));
-    editor.begin_pick(Pick::Wb);
+    editor.begin_pick(Pick::Wb, &crate::application::UiContext::render_only());
     let coverage = layout.pick_patch(canvas.center(), 32);
     let screen = layout.screen_coverage(coverage);
     assert!((screen.width() - 32. * layout.scale).abs() < 0.001);
@@ -1532,7 +1622,7 @@ fn cropped_picker_views_preserve_source_anchor_and_restore_exact_working_view() 
         editor.dmax,
     );
     for kind in [Pick::Dmin, Pick::Dmax, Pick::Gamma, Pick::Wb] {
-        editor.begin_pick(kind);
+        editor.begin_pick(kind, &crate::application::UiContext::render_only());
         let measuring = if matches!(kind, Pick::Dmin | Pick::Dmax) {
             Composition::new(area, editor.roll_orientation, editor.photo_orientation).unwrap()
         } else {
@@ -1548,7 +1638,7 @@ fn cropped_picker_views_preserve_source_anchor_and_restore_exact_working_view() 
             assert!(editor.source);
             assert_eq!(layout.area, area);
         }
-        editor.finish_pick();
+        editor.finish_pick(&crate::application::UiContext::render_only());
         assert_eq!(editor.viewport, viewport);
         assert_eq!(
             (
@@ -1575,12 +1665,16 @@ fn cropped_export_snapshot_survives_later_crop_and_orientation_edits() {
     editor.photo_orientation.turn_clockwise();
     editor.roll_orientation.horizontal = true;
     add_ready_fixture(&mut editor);
-    editor.export(
-        "crop.tif".into(),
-        OutputFormat::Tiff(OutputTarget::Srgb),
-        Overwrite::Refuse,
-    );
-    let recipe = editor.export_operation.request.take().unwrap().recipe;
+    editor.sync_document();
+    let recipe = editor
+        .export_input(
+            "crop.tif".into(),
+            OutputFormat::Tiff(OutputTarget::Srgb),
+            Overwrite::Refuse,
+        )
+        .unwrap()
+        .unwrap()
+        .recipe;
     let (roll, photo, composition) = (recipe.roll, recipe.grade, recipe.composition);
     assert_eq!(composition.size(), [79, 127]);
     assert_eq!(composition.source_pixel([0, 0]).unwrap(), [326, 218]);
@@ -1593,53 +1687,57 @@ fn cropped_export_snapshot_survives_later_crop_and_orientation_edits() {
 
 #[test]
 fn roll_reference_source_restores_working_orientation_and_precise_viewport() {
-    let mut editor = fixture();
-    editor.photo_orientation.turn_clockwise();
-    editor.roll_orientation.horizontal = true;
-    editor.roll_orientation.turn_clockwise();
-    add_ready_fixture(&mut editor);
-    let roll_orientation = editor.roll_orientation;
-    let composition = Composition::new(
-        editor.document.visit.ready.as_ref().unwrap().area,
-        editor.roll_orientation,
-        editor.photo_orientation,
-    )
-    .unwrap();
-    let canvas = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.));
-    let fit = editor.viewport.layout_composition(canvas, composition, 2.);
-    editor.viewport.zoom_at(fit, 2., 2., fit.image.max);
-    editor.viewport.layout_composition(canvas, composition, 2.);
-    let viewport = editor.viewport;
-    let photo_orientation = editor.photo_orientation;
-    let source_id = editor.current_source;
-    editor.begin_pick(Pick::Dmin);
-    assert_eq!(editor.viewport, viewport);
-    let mut reference = editor.document.visit.ready.as_ref().unwrap().record.clone();
-    reference.path = "reference.ARW".into();
-    reference.orientation = PhotoOrientation::default();
-    let development = editor
-        .document
-        .visit
-        .ready
-        .as_ref()
-        .unwrap()
-        .development
-        .clone();
-    let reference_id = editor.document.register(reference, development).unwrap();
-    editor.pick_roll_source(reference_id);
-    assert_eq!(editor.selected, 1);
-    assert_eq!(editor.current_source, Some(reference_id));
-    assert_eq!(editor.photo_orientation, PhotoOrientation::default());
-    assert_eq!(editor.roll_orientation, roll_orientation);
-    assert!(editor.document.visit.source.request.is_some());
-    editor.finish_pick();
-    assert!(editor.document.visit.source.request.is_some());
-    assert_eq!(editor.current_source, source_id);
-    assert_eq!(editor.selected, 0);
-    assert_eq!(editor.document.project.order.len(), 2);
-    assert_eq!(editor.roll_orientation, roll_orientation);
-    assert_eq!(editor.photo_orientation, photo_orientation);
-    assert_eq!(editor.viewport, viewport);
+    let editor = fixture();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.photo_orientation.turn_clockwise();
+            editor.roll_orientation.horizontal = true;
+            editor.roll_orientation.turn_clockwise();
+            add_ready_fixture(editor);
+            let roll_orientation = editor.roll_orientation;
+            let composition = Composition::new(
+                editor.document.visit.ready.as_ref().unwrap().area,
+                editor.roll_orientation,
+                editor.photo_orientation,
+            )
+            .unwrap();
+            let canvas = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.));
+            let fit = editor.viewport.layout_composition(canvas, composition, 2.);
+            editor.viewport.zoom_at(fit, 2., 2., fit.image.max);
+            editor.viewport.layout_composition(canvas, composition, 2.);
+            let viewport = editor.viewport;
+            let photo_orientation = editor.photo_orientation;
+            let source_id = editor.current_source;
+            editor.begin_pick(Pick::Dmin, cx);
+            assert_eq!(editor.viewport, viewport);
+            let mut reference = editor.document.visit.ready.as_ref().unwrap().record.clone();
+            reference.path = "reference.ARW".into();
+            reference.orientation = PhotoOrientation::default();
+            let development = editor
+                .document
+                .visit
+                .ready
+                .as_ref()
+                .unwrap()
+                .development
+                .clone();
+            let reference_id = editor.document.register(reference, development).unwrap();
+            editor.pick_roll_source(reference_id, cx);
+            assert_eq!(editor.selected, 1);
+            assert_eq!(editor.current_source, Some(reference_id));
+            assert_eq!(editor.photo_orientation, PhotoOrientation::default());
+            assert_eq!(editor.roll_orientation, roll_orientation);
+            assert!(editor.document.visit.source.pending());
+            editor.finish_pick(cx);
+            assert!(editor.document.visit.source.pending());
+            assert_eq!(editor.current_source, source_id);
+            assert_eq!(editor.selected, 0);
+            assert_eq!(editor.document.project.order.len(), 2);
+            assert_eq!(editor.roll_orientation, roll_orientation);
+            assert_eq!(editor.photo_orientation, photo_orientation);
+            assert_eq!(editor.viewport, viewport);
+        });
+    });
 }
 
 #[test]
@@ -1652,12 +1750,16 @@ fn export_owns_the_accepted_photo_snapshot_and_rejects_unpreviewable_locals() {
     let mut editor = fixture();
     editor.photo.exposure = 1.25;
     add_ready_fixture(&mut editor);
-    editor.export(
-        "snapshot.tif".into(),
-        OutputFormat::Tiff(OutputTarget::Srgb),
-        Overwrite::Refuse,
-    );
-    let recipe = editor.export_operation.request.take().unwrap().recipe;
+    editor.sync_document();
+    let recipe = editor
+        .export_input(
+            "snapshot.tif".into(),
+            OutputFormat::Tiff(OutputTarget::Srgb),
+            Overwrite::Refuse,
+        )
+        .unwrap()
+        .unwrap()
+        .recipe;
     let grade = recipe.grade;
     editor.photo.exposure = 7.;
     editor.sync_document();
@@ -1691,8 +1793,9 @@ fn export_owns_the_accepted_photo_snapshot_and_rejects_unpreviewable_locals() {
         "rejected.tif".into(),
         OutputFormat::Tiff(OutputTarget::Srgb),
         Overwrite::Refuse,
+        &UiContext::render_only(),
     );
-    assert!(editor.export_operation.request.is_none());
+    assert!(editor.export_operation.pending.is_none());
     assert!(!editor.busy);
     assert!(editor.status.contains("local adjustments"));
 }
@@ -1703,12 +1806,16 @@ fn export_holds_the_accepted_orientation_snapshot() {
     editor.photo_orientation.turn_clockwise();
     editor.roll_orientation.horizontal = true;
     add_ready_fixture(&mut editor);
-    editor.export(
-        "output.tif".into(),
-        OutputFormat::Tiff(OutputTarget::Srgb),
-        Overwrite::Refuse,
-    );
-    let recipe = editor.export_operation.request.take().unwrap().recipe;
+    editor.sync_document();
+    let recipe = editor
+        .export_input(
+            "output.tif".into(),
+            OutputFormat::Tiff(OutputTarget::Srgb),
+            Overwrite::Refuse,
+        )
+        .unwrap()
+        .unwrap()
+        .recipe;
     let (roll, photo, composition) = (recipe.roll, recipe.grade, recipe.composition);
     assert_eq!(composition.size(), [576, 864]);
     assert_eq!(composition.source_pixel([0, 0]).unwrap(), [875, 582]);
@@ -1849,13 +1956,13 @@ fn flip_buttons_are_repeatable_scoped_actions_and_disabled_when_busy_or_picking(
                 expected
             );
             editor.busy = false;
-            editor.begin_pick(Pick::Wb);
+            editor.begin_pick(Pick::Wb, &crate::application::UiContext::render_only());
             click_section_button(&mut editor, &context, section, label);
             assert_eq!(
                 (editor.roll_orientation, editor.photo_orientation),
                 expected
             );
-            editor.finish_pick();
+            editor.finish_pick(&crate::application::UiContext::render_only());
             click_section_button(&mut editor, &context, section, label);
             assert_eq!((editor.roll_orientation, editor.photo_orientation), before);
         }
@@ -1950,7 +2057,7 @@ fn roll_turn_controls_preserve_photo_crop_and_grade_and_are_disabled_during_pick
         ),
         unchanged
     );
-    editor.begin_pick(Pick::Wb);
+    editor.begin_pick(Pick::Wb, &crate::application::UiContext::render_only());
     for pressed in [true, false] {
         app_frame(
             &mut editor,
@@ -1967,7 +2074,7 @@ fn roll_turn_controls_preserve_photo_crop_and_grade_and_are_disabled_during_pick
         );
     }
     assert_eq!(editor.roll_orientation, turned);
-    editor.finish_pick();
+    editor.finish_pick(&crate::application::UiContext::render_only());
     let labels = app_frame(&mut editor, &context, vec![]);
     let reset = labels
         .iter()
@@ -2006,48 +2113,56 @@ fn roll_turn_controls_preserve_photo_crop_and_grade_and_are_disabled_during_pick
 
 #[test]
 fn shared_roll_turns_apply_to_new_photos_and_export_snapshots() {
-    let mut editor = fixture();
-    editor.roll_orientation.turn_clockwise();
-    add_ready_fixture(&mut editor);
-    let ready = editor.document.visit.ready.take().unwrap();
-    editor.load("new.ARW".into());
-    assert!(editor.document.visit.source.request.is_some());
-    let mut record = ready.record;
-    record.id = SourceId(0);
-    record.path = "new.ARW".into();
-    editor.source_result(
-        editor.id,
-        Ok(Box::new(Ready {
-            developed: ready.developed,
-            file: thumbnails::FileKey::new(&record.path),
-            thumbnail: None,
-            path: record.path.clone(),
-            area: ready.area,
-            analysis_support: None,
-            floor: ready.floor,
-            proxy: ready.proxy,
-            record,
-            development: ready.development,
-        })),
-    );
-    assert_eq!(editor.document.project.sources.len(), 2);
-    assert!(editor.photo_orientation.is_identity());
-    assert_eq!(
-        editor.roll_orientation.turns,
-        crate::geometry::QuarterTurns::One
-    );
-    editor.export(
-        "turned.tif".into(),
-        OutputFormat::Tiff(OutputTarget::Srgb),
-        Overwrite::Refuse,
-    );
-    let recipe = editor.export_operation.request.take().unwrap().recipe;
-    let composition = recipe.composition;
-    assert_eq!(composition.size(), [576, 864]);
-    assert_eq!(composition.source_pixel([0, 0]).unwrap(), [12, 582]);
-    editor.roll_orientation.turn_counterclockwise();
-    assert_eq!(composition.size(), [576, 864]);
-    assert_eq!(composition.source_pixel([0, 0]).unwrap(), [12, 582]);
+    let editor = fixture();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.roll_orientation.turn_clockwise();
+            add_ready_fixture(editor);
+            let ready = editor.document.visit.ready.take().unwrap();
+            editor.load("new.ARW".into(), cx);
+            assert!(editor.document.visit.source.pending());
+            let mut record = ready.record;
+            record.id = SourceId(0);
+            record.path = "new.ARW".into();
+            editor.source_result(
+                editor.id,
+                Ok(Box::new(Ready {
+                    developed: ready.developed,
+                    file: thumbnails::FileKey::new(&record.path),
+                    thumbnail: None,
+                    path: record.path.clone(),
+                    area: ready.area,
+                    analysis_support: None,
+                    floor: ready.floor,
+                    proxy: ready.proxy,
+                    record,
+                    development: ready.development,
+                })),
+            );
+            assert_eq!(editor.document.project.sources.len(), 2);
+            assert!(editor.photo_orientation.is_identity());
+            assert_eq!(
+                editor.roll_orientation.turns,
+                crate::geometry::QuarterTurns::One
+            );
+            editor.sync_document();
+            let recipe = editor
+                .export_input(
+                    "turned.tif".into(),
+                    OutputFormat::Tiff(OutputTarget::Srgb),
+                    Overwrite::Refuse,
+                )
+                .unwrap()
+                .unwrap()
+                .recipe;
+            let composition = recipe.composition;
+            assert_eq!(composition.size(), [576, 864]);
+            assert_eq!(composition.source_pixel([0, 0]).unwrap(), [12, 582]);
+            editor.roll_orientation.turn_counterclockwise();
+            assert_eq!(composition.size(), [576, 864]);
+            assert_eq!(composition.source_pixel([0, 0]).unwrap(), [12, 582]);
+        });
+    });
 }
 
 #[test]
@@ -2080,14 +2195,18 @@ fn contextual_crop_reset_preserves_orientation_grade_and_accepted_state_until_ap
 
 #[test]
 fn navigation_invalidates_pending_overwrite() {
-    let mut editor = fixture();
-    editor.overwrite = Some((
-        "existing.tif".into(),
-        OutputFormat::Tiff(OutputTarget::DisplayP3),
-    ));
-    editor.load("another.arw".into());
-    assert!(editor.overwrite.is_none());
-    assert!(editor.document.visit.source.request.is_some());
+    let editor = fixture();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.overwrite = Some((
+                "existing.tif".into(),
+                OutputFormat::Tiff(OutputTarget::DisplayP3),
+            ));
+            editor.load("another.arw".into(), cx);
+            assert!(editor.overwrite.is_none());
+            assert!(editor.document.visit.source.pending());
+        });
+    });
 }
 
 fn patch() -> Coverage {
@@ -2132,7 +2251,7 @@ fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
     editor.selected = 1;
     editor.current_source = Some(editor.document.project.order[editor.selected]);
     editor.region = Some(patch());
-    editor.begin_pick(Pick::Dmin);
+    editor.begin_pick(Pick::Dmin, &crate::application::UiContext::render_only());
     assert_eq!(editor.selected, 1);
     assert!(editor.region.is_none());
     assert!(editor.document.visit.measurement.is_none());
@@ -2141,11 +2260,12 @@ fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
         editor.document.visit.view,
         Pick::Dmin,
         Ok(Measurement::Reference(value)),
+        &crate::application::UiContext::render_only(),
     );
     assert_eq!(editor.dmin, Some(value));
     editor.document.project.order.clear();
     assert!(editor.calibration().is_some());
-    editor.begin_pick(Pick::Dmax);
+    editor.begin_pick(Pick::Dmax, &crate::application::UiContext::render_only());
     assert!(editor.region.is_none());
     assert!(editor.document.visit.measurement.is_none());
 }
@@ -2219,7 +2339,8 @@ fn controls_frame_sized(
             ..Default::default()
         },
         |ui| {
-            egui::CentralPanel::default().show(ui, |ui| editor.controls(ui));
+            egui::CentralPanel::default()
+                .show(ui, |ui| editor.controls(ui, &UiContext::render_only()));
         },
     );
     output.textures_delta.clear();

@@ -122,11 +122,12 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
             h.read(|editor| assert!(editor.document_pending.is_none()));
             assert_eq!(crate::project::Project::load(&saved).unwrap(), before);
             let output = directory.path().join("draft.tiff");
-            h.update(|editor| {
+            h.enter(|editor, cx| {
                 editor.export(
                     output.clone(),
                     OutputFormat::Tiff(OutputTarget::Srgb),
                     Overwrite::Refuse,
+                    cx,
                 )
             });
             h.step();
@@ -191,11 +192,12 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
                 )
                 .unwrap()
             });
-            h.update(|editor| {
+            h.enter(|editor, cx| {
                 editor.export(
                     output.clone(),
                     OutputFormat::Tiff(OutputTarget::Srgb),
                     Overwrite::Refuse,
+                    cx,
                 )
             });
             h.step();

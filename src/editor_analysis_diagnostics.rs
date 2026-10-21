@@ -17,8 +17,8 @@ struct Case {
     area: Option<[u32; 4]>,
 }
 
-fn wait(editor: Editor) -> Editor {
-    crate::editor::tests::complete_analysis_operation(editor, Duration::from_secs(300))
+fn wait(editor: Editor, start: impl FnOnce(&mut Editor, &UiContext<'_, Editor>)) -> Editor {
+    crate::editor::tests::complete_analysis_operation(editor, Duration::from_secs(300), start)
 }
 
 fn write_preview(
@@ -145,7 +145,7 @@ fn diagnose_sample_rolls() {
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let mut editor = Editor::new(&device, &queue, None);
+        let mut editor = Editor::new(&device, &queue);
         let mut reports = Vec::new();
         for case in cases {
             assert!(!case.sources.is_empty());
@@ -156,24 +156,28 @@ fn diagnose_sample_rolls() {
             );
             let directory = output.join(&case.name);
             fs::create_dir(&directory).unwrap();
-            editor.start_document(Preparation::New);
-            editor =
-                crate::editor::tests::complete_document_operation(editor, Duration::from_secs(300));
-            editor.add_raws(case.sources.clone());
-            editor =
-                crate::editor::tests::complete_document_operation(editor, Duration::from_secs(300));
+            editor = crate::editor::tests::complete_document_operation(
+                editor,
+                Duration::from_secs(300),
+                |editor, cx| editor.start_document(Preparation::New, cx),
+            );
+            editor = crate::editor::tests::complete_document_operation(
+                editor,
+                Duration::from_secs(300),
+                |editor, cx| editor.add_raws(case.sources.clone(), cx),
+            );
             let mut prepared = editor.document.visit.ready.is_some();
             if prepared && let Some(reference) = &case.reference {
-                editor.begin_flat_edit(reference.clone(), None);
                 editor = crate::editor::tests::complete_reference_operation(
                     editor,
                     Duration::from_secs(300),
+                    |e, cx| e.begin_flat_edit(reference.clone(), None, cx),
                 );
                 if editor.region.is_some() {
-                    editor.apply_pick();
                     editor = crate::editor::tests::complete_reference_operation(
                         editor,
                         Duration::from_secs(300),
+                        |e, cx| e.apply_flat_edit(cx),
                     );
                     prepared = editor.correction.is_some();
                 } else {
@@ -184,8 +188,7 @@ fn diagnose_sample_rolls() {
             let before = editor.document.project.clone();
             let started = std::time::Instant::now();
             if prepared {
-                editor.begin_analysis();
-                editor = wait(editor);
+                editor = wait(editor, |editor, cx| editor.begin_analysis(cx));
             }
             let installed = editor.status.starts_with("Analyzed ");
             if installed {

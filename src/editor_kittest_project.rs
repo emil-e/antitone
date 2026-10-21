@@ -54,7 +54,7 @@ fn project_widgets_save_precision_order_wb_and_reject_open_atomically() {
         harness.update(|editor| {
             editor.document.project.development = Some(raw.metadata.development(custom))
         });
-        harness.update(|editor| editor.add_raws(paths.clone()));
+        harness.enter(|editor, cx| editor.add_raws(paths.clone(), cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
         let mut scan = Scan::open(&paths[0], Some(custom)).unwrap();
@@ -133,7 +133,7 @@ fn project_widgets_save_precision_order_wb_and_reject_open_atomically() {
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| assert!(editor.document.project.development.is_none()));
         harness.read(|editor| assert!(editor.document.visit.ready.is_none()));
-        harness.update(|editor| editor.add_raws(vec![paths[0].clone()]));
+        harness.enter(|editor, cx| editor.add_raws(vec![paths[0].clone()], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         let as_shot = crate::raw::RawFile::open(&paths[0])
             .unwrap()

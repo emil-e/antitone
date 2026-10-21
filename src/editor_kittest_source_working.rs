@@ -13,7 +13,7 @@ fn sony_source_inspection_and_positive_share_automatic_development() {
             editor.document.project.development =
                 Some(Development::new(crate::raw::version(), [1.; 4]))
         });
-        h.update(|editor| editor.add_raws(vec![file.path().into()]));
+        h.enter(|editor, cx| editor.add_raws(vec![file.path().into()], cx));
         wait_for(&mut h, |e| {
             !e.busy && e.document_pending.is_none() && e.working.support_ready()
         });
@@ -92,7 +92,7 @@ fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspectio
                 gpu_bytes: 0,
             })
         });
-        harness.update(|editor| editor.add_raws(vec![fixture("patches.dng")]));
+        harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
         wait_for(&mut harness, |e| {
             !e.busy && e.document_pending.is_none() && e.working.support_ready()
         });

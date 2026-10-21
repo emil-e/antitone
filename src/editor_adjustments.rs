@@ -180,7 +180,7 @@ impl Editor {
         self.validate_source_candidate(&candidate)?;
         self.document.project.source_mut(id)?.local_adjustments = candidate.local_adjustments;
         if before != after {
-            self.original.invalidate();
+            self.invalidate_original();
         }
         self.record_edit(project_before, "Local adjustment", Some(id));
         Ok(())
@@ -431,6 +431,7 @@ impl Editor {
     pub(super) fn adjustment_controls(
         &mut self,
         ui: &mut egui::Ui,
+        cx: &UiContext<'_, Self>,
         editable: bool,
         can_pick: bool,
     ) -> bool {
@@ -733,13 +734,13 @@ impl Editor {
             }
         }
         if let Some(command) = invert_action {
-            self.control_command(command);
+            self.control_command(command, cx);
         }
         if let Some(rename) = rename_finish {
-            self.control_command(editing::Command::Adjustment(rename));
+            self.control_command(editing::Command::Adjustment(rename), cx);
         }
         if let Some(action) = action {
-            self.control_command(editing::Command::Adjustment(action));
+            self.control_command(editing::Command::Adjustment(action), cx);
             ui.ctx().request_repaint();
         }
         let drop = drop.filter(|_| !self.document.visit.adjustments.toggle);
@@ -749,19 +750,22 @@ impl Editor {
             || drop.is_some()
             || finish && self.document.visit.adjustments.dragging()
         {
-            self.control_command(editing::Command::OrderInput {
-                start: start_drag,
-                drop,
-                finish,
-            });
+            self.control_command(
+                editing::Command::OrderInput {
+                    start: start_drag,
+                    drop,
+                    finish,
+                },
+                cx,
+            );
             ui.ctx().request_repaint();
         }
         if std::mem::take(&mut self.document.visit.adjustments.toggle) {
-            self.control_command(editing::Command::ToggleAdjustments);
+            self.control_command(editing::Command::ToggleAdjustments, cx);
             ui.ctx().request_repaint();
         }
         if let Some(radial) = self.document.visit.adjustments.creation.take() {
-            self.control_command(editing::Command::CreateMask(radial));
+            self.control_command(editing::Command::CreateMask(radial), cx);
             ui.ctx().request_repaint();
         }
         pick

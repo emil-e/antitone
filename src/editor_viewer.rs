@@ -85,7 +85,11 @@ impl Editor {
         warning
     }
 
-    pub(super) fn viewer_bar(&mut self, ui: &mut egui::Ui) -> Option<f32> {
+    pub(super) fn viewer_bar(
+        &mut self,
+        ui: &mut egui::Ui,
+        cx: &UiContext<'_, Self>,
+    ) -> Option<f32> {
         use icons::Icon;
         use presentation::{
             SessionToolGroup, TextAction, ToolGroup, ToolIdentity, VIEWER_ITEM_GAP,
@@ -509,7 +513,7 @@ impl Editor {
             } else if cropping {
                 self.finish_crop(false);
             } else {
-                self.finish_pick();
+                self.finish_pick(cx);
             }
             ui.ctx().request_repaint();
         } else if apply {
@@ -518,7 +522,7 @@ impl Editor {
             } else if cropping {
                 self.finish_crop(true);
             } else {
-                self.apply_pick();
+                self.apply_pick(cx);
             }
             ui.ctx().request_repaint();
         }

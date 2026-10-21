@@ -235,7 +235,7 @@ impl host::App for NativeApp {
             panic!("fixture panic before native termination approval");
         }
     }
-    fn ui(&mut self, ui: &mut egui::Ui, _access: &antitone::application::UiAccess<'_, Self>) {
+    fn ui(&mut self, ui: &mut egui::Ui, _access: &antitone::application::UiContext<'_, Self>) {
         assert_eq!(
             delegate_identity(),
             self.identity,

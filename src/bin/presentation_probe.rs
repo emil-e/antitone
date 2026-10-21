@@ -165,7 +165,7 @@ impl host::App for Probe {
         }
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _access: &antitone::application::UiAccess<'_, Self>) {
+    fn ui(&mut self, ui: &mut egui::Ui, _access: &antitone::application::UiContext<'_, Self>) {
         self.frame += 1;
         if let Some(size) = ui.input(|input| input.viewport().inner_rect.map(|rect| rect.size())) {
             if self.last_size.is_some_and(|previous| previous != size) {

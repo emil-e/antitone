@@ -248,7 +248,7 @@ impl Editor {
             && !self.document.dust.history_draft()
     }
 
-    pub(super) fn restore_history(&mut self, direction: Direction) {
+    pub(super) fn restore_history(&mut self, direction: Direction, cx: &UiContext<'_, Self>) {
         if !self.history_available() {
             return;
         }
@@ -273,7 +273,7 @@ impl Editor {
             });
         let mut candidate = self.document.capture();
         candidate.project = project;
-        self.start_document(Preparation::History(candidate, selected, direction));
+        self.start_document(Preparation::History(candidate, selected, direction), cx);
     }
 
     pub(super) fn history_prepared(&mut self, pending: Option<Pending>) {

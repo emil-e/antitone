@@ -105,11 +105,11 @@ pub(super) enum Command {
 impl Editor {
     // Numeric widgets must resolve focus loss and pass admission before a separate
     // command takes its snapshot or changes the controls' availability.
-    pub(super) fn control_command(&mut self, command: Command) {
+    pub(super) fn control_command(&mut self, command: Command, cx: &UiContext<'_, Self>) {
         if self.history_controls.is_some() {
             self.control_commands.push(command);
         } else {
-            self.apply_control_command(command);
+            self.apply_control_command(command, cx);
         }
     }
 
@@ -180,7 +180,7 @@ impl Editor {
         }
     }
 
-    pub(super) fn apply_control_command(&mut self, command: Command) {
+    pub(super) fn apply_control_command(&mut self, command: Command, cx: &UiContext<'_, Self>) {
         match command {
             Command::Reset(scope, reset) => self.reset_control(scope, reset),
             Command::InvertLocal(id, invert) => {
@@ -218,7 +218,7 @@ impl Editor {
                     self.begin_linear_mask(None);
                 }
             }
-            Command::Pick(kind) => self.begin_pick(kind),
+            Command::Pick(kind) => self.begin_pick(kind, cx),
             Command::ResetRepairs(source) => self.reset_dust_repairs(source),
             Command::Correction(enabled) => {
                 let mut candidate = self.document.capture();
@@ -232,9 +232,9 @@ impl Editor {
                 } else {
                     candidate.project.flat_field = None;
                 }
-                self.start_document(Preparation::Correction(candidate, self.current_source));
+                self.start_document(Preparation::Correction(candidate, self.current_source), cx);
             }
-            Command::FlatEdit(path, region) => self.begin_flat_edit(path, region),
+            Command::FlatEdit(path, region) => self.begin_flat_edit(path, region, cx),
         }
     }
 }

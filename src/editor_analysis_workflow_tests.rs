@@ -42,11 +42,10 @@ pub(super) fn fixture(scheduler: development::Scheduler) -> Editor {
     document.import(&paths).unwrap();
     document.cache().set_budget(0);
     editor.document.install(document);
-    editor.load(paths[0].clone());
     let owner = RefCell::new(Some(editor));
     {
         let mut app = TestApplication::new(&owner, || {});
-        app.enter(|e, access| e.start_source_workflow(access));
+        app.enter(|e, cx| e.load(paths[0].clone(), cx));
         app.run_until(LIMIT, |e| !e.busy);
         app.read(|e| assert!(e.document.visit.ready.is_some(), "{}", e.status));
         app.close_execution();
@@ -62,9 +61,8 @@ pub(super) fn fixture(scheduler: development::Scheduler) -> Editor {
 
 pub(super) fn start(app: &TestApplication<'_, Editor>) {
     app.enter(|e, access| {
-        e.request_analysis();
+        e.request_analysis(access);
         assert!(e.document.analysis_preparing.is_some());
-        e.start_analysis_preparation(access);
     });
 }
 
@@ -170,7 +168,7 @@ fn native_demand_cancellation_acknowledges_without_releasing_producer_cleanup_ad
         let (entered, observed) = mpsc::channel();
         let probe = app
             .access()
-            .spawn(async move {
+            .spawn(move |_| async move {
                 jobs.run(move || entered.send(()).unwrap()).await.unwrap();
             })
             .unwrap();
@@ -230,8 +228,7 @@ fn document_transition_retires_areas_and_waits_for_native_work_before_promotion(
         start(app);
         await_native(app, &starts);
         app.enter(|e, access| {
-            e.start_document(Preparation::New);
-            e.start_document_workflow(access);
+            e.start_document(Preparation::New, access);
         });
         app.pump();
         app.read(|e| {
@@ -285,6 +282,8 @@ fn unavailable_services_finish_the_activity_without_opening_review() {
     editor.source_services = None;
     with_application(editor, |app| {
         start(app);
+        assert!(app.read(|e| e.document.analysis_preparing.is_some() && e.busy));
+        app.run_until(LIMIT, |e| e.document.analysis_preparing.is_none());
         app.read(|e| {
             assert!(e.document.analysis_preparing.is_none());
             assert!(e.document.analysis_review.is_none());

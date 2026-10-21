@@ -206,27 +206,6 @@ impl Editor {
             .or_else(|| self.analysis_support().map(suggest))
     }
 
-    pub(super) fn request_analysis_support(&mut self) {
-        self.region = self.analysis_picture().map(Coverage::rectangle);
-        if self.region.is_some()
-            || self
-                .document
-                .visit
-                .ready
-                .as_ref()
-                .is_none_or(|ready| ready.analysis_support.is_some())
-        {
-            return;
-        }
-        let input = self.source_context().expect("ready support source");
-        let request = self.request_id();
-        self.document.visit.support.pending = Some(super::support_workflow::Pending {
-            id: request,
-            loaded: self.id,
-            input: Some(input),
-        });
-    }
-
     pub(super) fn analysis_support_result(
         &mut self,
         request: u64,
@@ -239,8 +218,8 @@ impl Editor {
             .support
             .pending
             .as_ref()
-            .map(|pending| pending.id)
-            != Some(request)
+            .map(|pending| (pending.id, pending.loaded))
+            != Some((request, loaded))
             || loaded != self.id
             || self.pick != Some(Pick::Analysis)
             || self.document_pending.is_some()
@@ -276,7 +255,7 @@ impl Editor {
         self.record_edit(before, "Roll orientation", None);
     }
 
-    pub(super) fn roll_tool_shelf(&mut self, ui: &mut egui::Ui) -> bool {
+    pub(super) fn roll_tool_shelf(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) -> bool {
         use icons::Icon;
         use presentation::{ToolButton, ToolShelf};
         let reviewing = self.document.analysis_review.is_some();
@@ -334,7 +313,7 @@ impl Editor {
                     .show(ui)
                     .clicked()
                 {
-                    self.control_command(editing::Command::Roll(action));
+                    self.control_command(editing::Command::Roll(action), cx);
                 }
             }
             ui.separator();
@@ -349,7 +328,7 @@ impl Editor {
             .clicked()
             {
                 if reviewing {
-                    self.finish_pick();
+                    self.finish_pick(cx);
                 } else {
                     analyze = true;
                 }
@@ -405,45 +384,19 @@ impl Editor {
         })
     }
 
-    pub(super) fn request_analysis(&mut self) {
+    pub(super) fn request_analysis(&mut self, cx: &UiContext<'_, Self>) {
         let Some(request) = self.analysis_request() else {
             return;
         };
-        self.prepare_analysis_review(request);
+        self.prepare_analysis_review(request, cx);
     }
 
     #[cfg(test)]
-    pub(super) fn begin_analysis(&mut self) {
+    pub(super) fn begin_analysis(&mut self, cx: &UiContext<'_, Self>) {
         let Some(request) = self.analysis_request() else {
             return;
         };
-        self.start_analysis(request);
-    }
-
-    pub(super) fn start_analysis(&mut self, mut request: Request) {
-        let Some(input) = self.source_context() else {
-            return;
-        };
-        request.revision = self
-            .document
-            .analysis_generation
-            .fetch_add(1, Ordering::Relaxed)
-            + 1;
-        let id = self.request_id();
-        self.thumbnails.cancel();
-        self.original.cancel_pending();
-        self.tasks.begin(Task::Analyze(id));
-        self.tasks.report(
-            TaskRequest::Analyze(id),
-            TaskProgress::Counted {
-                completed: 0,
-                total: request.document.project.order.len(),
-            },
-        );
-        self.document.analysis_pending =
-            Some(analysis_workflow::Pending::fitting(id, request, input));
-        self.busy = true;
-        self.status = "Analyzing roll…".into();
+        self.start_analysis(request, cx);
     }
 
     pub(super) fn cancel_analysis(&mut self) {
@@ -474,6 +427,7 @@ impl Editor {
         &mut self,
         id: u64,
         result: Result<Option<Box<Outcome>>, String>,
+        cx: &UiContext<'_, Self>,
     ) {
         if !self
             .document
@@ -490,7 +444,7 @@ impl Editor {
         let snapshot = &pending.request;
         if self.document.analysis_generation.load(Ordering::Relaxed) != snapshot.revision {
             self.status = "Analysis cancelled".into();
-            self.end_analysis_review();
+            self.end_analysis_review(cx);
             return;
         }
         if self.id != snapshot.loaded
@@ -499,14 +453,14 @@ impl Editor {
             || self.document.project != snapshot.document.project
         {
             self.status = "Analysis discarded: document or settings changed".into();
-            self.end_analysis_review();
+            self.end_analysis_review(cx);
             return;
         }
         match result {
             Ok(Some(outcome)) => {
                 if let Err(error) = analysis_review::verify(snapshot) {
                     self.status = format!("Analysis discarded: {error}; grade unchanged");
-                    self.end_analysis_review();
+                    self.end_analysis_review(cx);
                     return;
                 }
                 let photo = match self
@@ -521,7 +475,7 @@ impl Editor {
                     Ok(photo) => photo,
                     Err(error) => {
                         self.status = format!("Analysis rejected: {error}");
-                        self.end_analysis_review();
+                        self.end_analysis_review(cx);
                         return;
                     }
                 };
@@ -541,7 +495,7 @@ impl Editor {
                 self.photo = photo;
                 self.source = false;
                 self.working.clear();
-                self.original.invalidate();
+                self.invalidate_original();
                 self.record_edit(before, "Analyze roll", None);
                 self.status = format!(
                     "Analyzed {} frames. Adjust normally; re-pick Dmin if needed.",
@@ -551,10 +505,10 @@ impl Editor {
             Ok(None) => self.status = "Analysis cancelled".into(),
             Err(error) => self.status = format!("Analysis failed: {error}. Grade unchanged."),
         }
-        self.end_analysis_review();
+        self.end_analysis_review(cx);
     }
 
-    pub(super) fn apply_analysis_area(&mut self) {
+    pub(super) fn apply_analysis_area(&mut self, cx: &UiContext<'_, Self>) {
         let Some(coverage) = self.region else {
             return;
         };
@@ -575,7 +529,7 @@ impl Editor {
                 self.document.install(candidate);
                 self.record_edit(before, "Picture statistics area", None);
                 self.status = "Picture statistics area updated; processing unchanged".into();
-                self.finish_pick();
+                self.finish_pick(cx);
             }
             Err(error) => self.status = format!("Area rejected: {error}"),
         }

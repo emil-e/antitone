@@ -3,9 +3,9 @@
 mod tests;
 
 use super::{
-    Adjustments, DVec3, DocumentRequest, Editor, OutputTarget, Prepared, RollSelection,
-    TaskProgress, TaskRequest, document_services::PreparationServices, dust, history,
-    source_workflow,
+    Adjustments, DVec3, DocumentRequest, Editor, FailureKind, OutputTarget, Preparation, Prepared,
+    RollSelection, Task, TaskProgress, TaskRequest, document_services::PreparationServices, dust,
+    history, source_workflow,
 };
 use std::sync::{
     Arc, Mutex,
@@ -14,7 +14,6 @@ use std::sync::{
 
 #[derive(Default)]
 pub(super) struct State {
-    pub request: Option<DocumentRequest>,
     task: Option<async_executor::Task<()>>,
 }
 
@@ -39,35 +38,80 @@ impl Drop for Retire {
 }
 
 impl Editor {
-    pub(super) fn start_document_workflow(
+    pub(super) fn start_document(
         &mut self,
-        access: &crate::application::UiAccess<'_, Self>,
+        work: Preparation,
+        cx: &crate::application::UiContext<'_, Self>,
     ) {
-        let Some(request) = self.candidate_operation.request.take() else {
-            return;
+        self.cancel_measurement();
+        self.document.history.finish_group();
+        self.history_pending = match &work {
+            Preparation::New | Preparation::Open(_) => Some(history::Pending::Reset),
+            Preparation::Import(..) | Preparation::Correction(..) => Some(history::Pending::Edit {
+                before: Box::new(self.document.project.clone()),
+                label: if matches!(&work, Preparation::Import(..)) {
+                    "Import photos"
+                } else {
+                    "Correction"
+                },
+                photo: None,
+            }),
+            Preparation::History(_, _, direction) => Some(history::Pending::Restore {
+                direction: *direction,
+                cleanup: self
+                    .document
+                    .dust
+                    .cleanup
+                    .then_some(self.document.dust.show_masks),
+            }),
         };
-        let id = self.document_pending.expect("captured candidate operation");
-        let Some(source) = self.source_services.clone() else {
-            self.document_prepared(id, Err("Document services unavailable".into()));
-            return;
+        let id =
+            self.begin_document_operation(matches!(&work, Preparation::New | Preparation::Open(_)));
+        self.tasks.begin(match &work {
+            Preparation::Import(..) => Task::Import(id),
+            Preparation::Open(_) => Task::Open(id),
+            Preparation::New => Task::New(id),
+            Preparation::Correction(..) => Task::Correction(id),
+            Preparation::History(..) => Task::History(id),
+        });
+        self.document_failure =
+            matches!(&work, Preparation::Correction(..)).then_some(FailureKind::FlatCorrection);
+        self.new_project_pending = matches!(work, Preparation::New);
+        let source = if matches!(&work, Preparation::Import(_, _, Some(_))) {
+            self.document
+                .visit
+                .ready
+                .as_ref()
+                .map(|ready| (self.id, ready.clone()))
+        } else {
+            None
         };
+        let request = DocumentRequest {
+            work,
+            source,
+            correction: self.correction.clone(),
+        };
+        let source = self.source_services.clone();
         let progress = Arc::new(Progress::default());
         let produced = progress.clone();
         let cancelled = Arc::new(AtomicBool::new(false));
         let retire = Retire(cancelled.clone());
-        let target = access.clone();
-        let Some(task) = access.spawn(async move {
+        let Some(task) = cx.spawn(move |cx| async move {
             let _retire = retire;
-            let preparation =
-                PreparationServices(source).prepare(request, cancelled, move |done, total| {
-                    produced.report(done, total)
-                });
+            let preparation = async {
+                let source = source.ok_or_else(|| "Document services unavailable".to_owned())?;
+                PreparationServices(source)
+                    .prepare(request, cancelled, move |done, total| {
+                        produced.report(done, total)
+                    })
+                    .await
+            };
             let reports = async {
                 loop {
                     let changed = progress.changed.listen();
                     let latest = progress.latest.lock().unwrap().take();
                     if let Some((done, total)) = latest {
-                        target.update(|editor| editor.document_progress(id, done, total));
+                        cx.update(|editor| editor.document_progress(id, done, total));
                     }
                     changed.await;
                 }
@@ -75,13 +119,9 @@ impl Editor {
             let result = futures_lite::future::or(preparation, reports)
                 .await
                 .map(Box::new);
-            target.update(|editor| {
+            cx.update(|editor| {
                 editor.document_prepared(id, result);
-                editor.start_source_workflow(&target);
-                editor.start_save_workflow(&target);
-                editor.start_document_workflow(&target);
-                editor.start_working_workflow(&target);
-                editor.start_original_workflow(&target);
+                editor.acquire_working(&cx);
             });
         }) else {
             self.document_prepared(id, Err("Application stopped".into()));
@@ -214,7 +254,7 @@ impl Editor {
                 self.pick_drag = None;
                 self.return_notice = None;
                 self.overwrite = None;
-                self.original.invalidate();
+                self.invalidate_original();
                 if let Some(context) = flat_context {
                     self.viewport = context.viewport;
                     self.source = context.source;

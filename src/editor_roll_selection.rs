@@ -52,7 +52,12 @@ impl Editor {
             && !self.document.visit.adjustments.confirming()
     }
 
-    pub(super) fn select_roll_photo(&mut self, index: usize, modifiers: egui::Modifiers) {
+    pub(super) fn select_roll_photo(
+        &mut self,
+        index: usize,
+        modifiers: egui::Modifiers,
+        cx: &UiContext<'_, Self>,
+    ) {
         if !self.roll_navigation_available() || self.removal_pending.is_some() {
             return;
         }
@@ -115,6 +120,7 @@ impl Editor {
                 self.document
                     .source_path(active)
                     .expect("active photo locator"),
+                cx,
             );
         }
     }
@@ -169,7 +175,7 @@ impl Editor {
         }
     }
 
-    fn remove_selected_photos(&mut self) {
+    fn remove_selected_photos(&mut self, cx: &UiContext<'_, Self>) {
         if !self.roll_edit_available() {
             return;
         }
@@ -195,9 +201,10 @@ impl Editor {
                 self.document
                     .source_path(id)
                     .expect("remaining photo locator"),
+                cx,
             );
         } else {
-            self.original.invalidate();
+            self.invalidate_original();
             self.working.clear();
             self.id = self.request_id();
             self.replace_photo_scope(self.id);
@@ -220,7 +227,12 @@ impl Editor {
         }
     }
 
-    pub(super) fn removal_dialog(&mut self, context: &egui::Context, escape_available: bool) {
+    pub(super) fn removal_dialog(
+        &mut self,
+        context: &egui::Context,
+        escape_available: bool,
+        cx: &UiContext<'_, Self>,
+    ) {
         let Some(ids) = &self.removal_pending else {
             return;
         };
@@ -242,7 +254,7 @@ impl Editor {
         );
         match choice {
             Some(presentation::DialogChoice::Cancel) => self.removal_pending = None,
-            Some(presentation::DialogChoice::Confirm) => self.remove_selected_photos(),
+            Some(presentation::DialogChoice::Confirm) => self.remove_selected_photos(cx),
             _ => {}
         }
     }

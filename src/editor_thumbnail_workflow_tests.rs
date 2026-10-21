@@ -51,10 +51,9 @@ fn editor(document: Document, disk: &std::path::Path, scheduler: development::Sc
     })
 }
 
-fn begin(editor: &mut Editor, access: &crate::application::UiAccess<'_, Editor>, demand: Demand) {
+fn begin(editor: &mut Editor, access: &crate::application::UiContext<'_, Editor>, demand: Demand) {
     editor.thumbnails.demand = demand;
-    editor.advance_thumbnail_demand();
-    editor.start_thumbnail_workflow(access);
+    editor.advance_thumbnail_demand(access);
 }
 
 fn gated(
@@ -108,7 +107,7 @@ fn visible_then_eager_demand_finishes_without_paint_at_zero_optional_limits() {
                     .ready_count(&editor.document, editor.target),
                 1
             );
-            assert!(editor.thumbnails.pending.is_none() && editor.thumbnails.request.is_none());
+            assert!(editor.thumbnails.pending.is_none());
             assert_eq!(editor.document.cache().charges().retained, 0);
             for id in &editor.document.project.order {
                 let key = tests::key(&editor.document, *id);
@@ -208,7 +207,7 @@ fn a_closed_producer_retires_its_request_and_reports_failure_for_current_and_lat
         });
         app.read(|editor| {
             assert!(editor.thumbnails.services.is_none());
-            assert!(editor.thumbnails.pending.is_none() && editor.thumbnails.request.is_none());
+            assert!(editor.thumbnails.pending.is_none());
             for id in &ids[..2] {
                 let key = tests::key(&editor.document, *id);
                 assert!(
@@ -224,9 +223,9 @@ fn a_closed_producer_retires_its_request_and_reports_failure_for_current_and_lat
                 );
             }
         });
-        app.update(|editor| {
+        app.enter(|editor, cx| {
             editor.thumbnails.demand = Demand::Visible(vec![ids[2]]);
-            editor.advance_thumbnail_demand();
+            editor.advance_thumbnail_demand(cx);
             let key = tests::key(&editor.document, ids[2]);
             assert!(
                 editor
@@ -239,7 +238,7 @@ fn a_closed_producer_retires_its_request_and_reports_failure_for_current_and_lat
                             .as_ref()
                             .is_err_and(|error| error.contains("worker stopped")))
             );
-            assert!(editor.thumbnails.pending.is_none() && editor.thumbnails.request.is_none());
+            assert!(editor.thumbnails.pending.is_none());
             assert!(!editor.document.thumbnail_work.pending());
         });
         assert!(

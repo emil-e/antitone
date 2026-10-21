@@ -133,7 +133,7 @@ impl Editor {
         });
         self.viewport.fit();
         self.last_layout = None;
-        self.original.invalidate();
+        self.invalidate_original();
         self.status = "Crop draft; changes are not applied".into();
     }
 
@@ -149,7 +149,7 @@ impl Editor {
         edit.layout = None;
         self.viewport.fit();
         self.last_layout = None;
-        self.original.invalidate();
+        self.invalidate_original();
     }
 
     pub(super) fn finish_crop(&mut self, apply: bool) {
@@ -177,10 +177,10 @@ impl Editor {
             self.status = "Crop cancelled; composition unchanged".into();
         }
         self.last_layout = None;
-        self.original.invalidate();
+        self.invalidate_original();
     }
 
-    pub(super) fn photo_tool_shelf(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn photo_tool_shelf(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
         use icons::Icon;
         use presentation::{ToolButton, ToolShelf};
 
@@ -291,7 +291,7 @@ impl Editor {
         });
 
         if let Some(action) = action {
-            self.control_command(editing::Command::Photo(action));
+            self.control_command(editing::Command::Photo(action), cx);
         }
     }
 

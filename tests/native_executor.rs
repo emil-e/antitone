@@ -1,6 +1,6 @@
 //! Opt-in native idle-executor check; ordinary test invocations do not open a window.
 use antitone::{
-    application::UiAccess,
+    application::UiContext,
     platform::{SubmissionGate, host},
 };
 use futures_channel::oneshot;
@@ -83,7 +83,7 @@ impl host::App for View {
         self.report.exited.store(true, Ordering::SeqCst);
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _access: &UiAccess<'_, Self>) {
+    fn ui(&mut self, ui: &mut egui::Ui, _access: &UiContext<'_, Self>) {
         self.in_ui.set(true);
         if std::mem::take(&mut self.modal_requested) {
             self.report.modal_entered.store(true, Ordering::SeqCst);
@@ -174,7 +174,7 @@ fn main() -> host::Result<()> {
     let view_report = report.clone();
     let result = host::run(
         "Antitone executor test",
-        move |_, _, access: UiAccess<'_, View>| {
+        move |_, _, access: UiContext<'_, View>| {
             let in_ui = Rc::new(Cell::new(false));
             let mut view = View {
                 submissions: SubmissionGate::default(),
@@ -187,7 +187,7 @@ fn main() -> host::Result<()> {
             };
             let target = access.clone();
             let ui_thread = std::thread::current().id();
-            view.task = access.spawn(async move {
+            view.task = access.spawn(move |_| async move {
                 first_result.await.unwrap();
                 assert_eq!(std::thread::current().id(), ui_thread);
                 assert!(!in_ui.get(), "executor re-entered UI presentation");
@@ -211,7 +211,7 @@ fn main() -> host::Result<()> {
                 report: view_report,
                 _local: Rc::new(Cell::new(false)),
             };
-            view.pending = access.spawn(async move {
+            view.pending = access.spawn(move |_| async move {
                 let _guard = guard;
                 std::future::poll_fn(move |cx| {
                     *late.lock().unwrap() = Some(cx.waker().clone());

@@ -74,8 +74,7 @@ fn captured_look_finishes_without_backend_or_paint_and_records_only_accepted_con
     with_application(e, |app| {
         let mut expected = app.read(|e| e.document.project.clone());
         app.enter(|e, access| {
-            e.begin_look(Source::Loaded(selected.clone()));
-            e.start_look_workflow(access);
+            e.begin_look(Source::Loaded(selected.clone()), access);
         });
         app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
         expected.output.look = Some(selected.clone());
@@ -104,8 +103,7 @@ fn import_and_loaded_reselection_need_no_original_file_and_failures_preserve_the
     let (e, scheduler) = editor();
     with_application(e, |app| {
         app.enter(|e, access| {
-            e.begin_look(Source::Imported(path.clone()));
-            e.start_look_workflow(access);
+            e.begin_look(Source::Imported(path.clone()), access);
         });
         app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
         let accepted = app.read(|e| {
@@ -119,8 +117,7 @@ fn import_and_loaded_reselection_need_no_original_file_and_failures_preserve_the
         let before = app.read(|e| e.document.project.clone());
         std::fs::write(&path, "LUT_1D_SIZE 2\n0 0 0\n1 1 1\n").unwrap();
         app.enter(|e, access| {
-            e.begin_look(Source::Imported(path.clone()));
-            e.start_look_workflow(access);
+            e.begin_look(Source::Imported(path.clone()), access);
         });
         app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
         app.read(|e| {
@@ -130,8 +127,7 @@ fn import_and_loaded_reselection_need_no_original_file_and_failures_preserve_the
         });
         std::fs::remove_file(&path).unwrap();
         app.enter(|e, access| {
-            e.begin_look(Source::Imported(path.clone()));
-            e.start_look_workflow(access);
+            e.begin_look(Source::Imported(path.clone()), access);
         });
         app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
         app.read(|e| {
@@ -143,8 +139,7 @@ fn import_and_loaded_reselection_need_no_original_file_and_failures_preserve_the
         });
         app.enter(|e, access| {
             e.clear_look();
-            e.begin_look(Source::Loaded(accepted.clone()));
-            e.start_look_workflow(access);
+            e.begin_look(Source::Loaded(accepted.clone()), access);
         });
         app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
         app.read(|e| {
@@ -164,8 +159,8 @@ fn user_cancel_waits_for_acknowledgement_and_never_replaces_the_accepted_look() 
     let hold = hold_blocking_work(&e.workflow_jobs);
     with_application(e, |app| {
         let id = app.enter(|e, access| {
-            e.begin_look(Source::Loaded(asset(0.7)));
-            e.start_look_workflow(access);
+            e.begin_look(Source::Loaded(asset(0.7)), access);
+
             e.document.look.as_ref().unwrap().id
         });
         app.pump();
@@ -202,14 +197,14 @@ fn superseded_look_drops_queued_input_but_the_current_operation_survives_photo_r
     let chosen = asset(0.7);
     with_application(e, |app| {
         let old_id = app.enter(|e, access| {
-            e.begin_look(Source::Loaded(old));
-            e.start_look_workflow(access);
+            e.begin_look(Source::Loaded(old), access);
+
             e.document.look.as_ref().unwrap().id
         });
         app.pump();
         app.enter(|e, access| {
-            e.begin_look(Source::Loaded(chosen.clone()));
-            e.start_look_workflow(access);
+            e.begin_look(Source::Loaded(chosen.clone()), access);
+
             let view = e.request_id();
             e.replace_photo_scope(view);
         });
@@ -237,14 +232,13 @@ fn document_transition_retires_look_but_keeps_session_comparison_assets() {
     let hold = hold_blocking_work(&e.workflow_jobs);
     with_application(e, |app| {
         let old = app.enter(|e, access| {
-            e.begin_look(Source::Loaded(asset(0.9)));
-            e.start_look_workflow(access);
+            e.begin_look(Source::Loaded(asset(0.9)), access);
+
             e.document.look.as_ref().unwrap().id
         });
         app.pump();
         app.enter(|e, access| {
-            e.start_document(Preparation::New);
-            e.start_document_workflow(access);
+            e.start_document(Preparation::New, access);
         });
         let operation = app.read(|e| e.document_pending);
         app.update(|e| e.receive_look(old, Ok(Some(asset(0.9)))));
@@ -270,11 +264,10 @@ fn owner_and_application_retirement_cancel_queued_work_even_if_editor_data_is_st
         let hold = hold_blocking_work(&e.workflow_jobs);
         with_application(e, |app| {
             let (id, cancel) = app.enter(|e, access| {
-                e.begin_look(Source::Loaded(asset(0.8)));
+                e.begin_look(Source::Loaded(asset(0.8)), access);
                 let p = e.document.look.as_ref().unwrap();
-                let token = (p.id, p.cancel.clone());
-                e.start_look_workflow(access);
-                token
+
+                (p.id, p.cancel.clone())
             });
             app.pump();
             if application {
@@ -323,8 +316,7 @@ fn retired_running_bake_retains_its_cache_and_physical_admission_through_the_sub
     }));
     with_application(e, |app| {
         app.enter(|e, access| {
-            e.begin_look(Source::Builtin(Builtin::Kodak2383));
-            e.start_look_workflow(access);
+            e.begin_look(Source::Builtin(Builtin::Kodak2383), access);
         });
         app.pump();
         starts.recv_timeout(Duration::from_secs(15)).unwrap();
@@ -340,8 +332,7 @@ fn retired_running_bake_retains_its_cache_and_physical_admission_through_the_sub
                 source.queue.clone(),
                 e.submissions.clone(),
             ));
-            e.begin_look(Source::Loaded(selected.clone()));
-            e.start_look_workflow(access);
+            e.begin_look(Source::Loaded(selected.clone()), access);
         });
         app.pump();
         assert!(cache.upgrade().is_some() && directory.exists());
@@ -367,8 +358,7 @@ fn builtin_workflow_reuses_service_cache_across_documents_without_reinitializing
     let (e, scheduler) = editor();
     with_application(e, |app| {
         app.enter(|e, access| {
-            e.begin_look(Source::Builtin(Builtin::Kodak2383));
-            e.start_look_workflow(access);
+            e.begin_look(Source::Builtin(Builtin::Kodak2383), access);
         });
         app.run_until(Duration::from_secs(30), |e| e.document.look.is_none());
         let accepted = app.read(|e| {
@@ -384,8 +374,7 @@ fn builtin_workflow_reuses_service_cache_across_documents_without_reinitializing
             look
         });
         app.enter(|e, access| {
-            e.start_document(Preparation::New);
-            e.start_document_workflow(access);
+            e.start_document(Preparation::New, access);
         });
         app.run_until(Duration::from_secs(15), |e| !e.busy);
         let fresh = app.update(|e| {
@@ -396,8 +385,7 @@ fn builtin_workflow_reuses_service_cache_across_documents_without_reinitializing
         });
         assert!(!fresh.is_initialized());
         app.enter(|e, access| {
-            e.begin_look(Source::Builtin(Builtin::Kodak2383));
-            e.start_look_workflow(access);
+            e.begin_look(Source::Builtin(Builtin::Kodak2383), access);
         });
         app.run_until(Duration::from_secs(30), |e| e.document.look.is_none());
         app.read(|e| assert_eq!(e.document.project.output.look, Some(accepted)));
@@ -416,9 +404,10 @@ fn unavailable_look_service_restores_idle_feedback_without_changing_the_project(
     let before = e.document.project.clone();
     with_application(e, |app| {
         app.enter(|e, access| {
-            e.begin_look(Source::Loaded(asset(0.4)));
-            e.start_look_workflow(access);
+            e.begin_look(Source::Loaded(asset(0.4)), access);
+            assert!(e.busy && e.document.look.as_ref().unwrap().task.is_some());
         });
+        app.run_until(Duration::from_secs(5), |e| !e.busy);
         app.read(|e| {
             assert_eq!(e.document.project, before);
             assert!(!e.busy && e.tasks.view().is_none());

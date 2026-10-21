@@ -239,8 +239,7 @@ fn workload(
                     .document
                     .source_path(editor.document.project.order[0])
                     .map_err(|e| e.to_string())?;
-                editor.load(path);
-                editor.start_source_workflow(access);
+                editor.load(path, access);
                 Ok::<_, String>(())
             })?;
             let mut all_ui = Vec::new();

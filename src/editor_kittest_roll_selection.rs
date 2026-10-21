@@ -23,9 +23,9 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         .map(|path| std::fs::read(path).unwrap())
         .collect();
     editor_harness_with_thumbnails(true, |mut harness, _| {
-        harness.update(|editor| editor.add_raws(paths.clone()));
+        harness.enter(|editor, cx| editor.add_raws(paths.clone(), cx));
         wait_for(&mut harness, |e| !e.busy);
-        harness.update(|editor| editor.begin_flat_edit(fixture("bare-light.dng"), None));
+        harness.enter(|editor, cx| editor.begin_flat_edit(fixture("bare-light.dng"), None, cx));
         wait_for(&mut harness, |e| !e.busy);
         harness.get_by_label("Apply").click();
         harness.step();
@@ -122,13 +122,13 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
                 .toggled(),
             Some(egui::accesskit::Toggled::True)
         );
-        assert_eq!(
+        assert!(
             harness
                 .get_by_label("photo-2.dng")
                 .accesskit_node()
                 .description()
-                .as_deref(),
-            Some("Active photo")
+                .is_some_and(|description| description.contains("Active photo")),
+            "active identity must remain accessible alongside readiness feedback"
         );
         save_capture(&harness.render().unwrap(), "roll-multi-selected-offscreen");
         harness.set_size(egui::vec2(640., 560.));
@@ -208,7 +208,7 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         harness.read(|editor| {
             assert!(editor.document.visit.ready.is_none() && editor.current_source.is_none())
         });
-        harness.update(|editor| editor.add_raws(vec![paths[0].clone()]));
+        harness.enter(|editor, cx| editor.add_raws(vec![paths[0].clone()], cx));
         wait_for(&mut harness, |e| !e.busy);
         expected.order = vec![ids[0]];
         harness.read(|editor| assert_eq!(editor.document.project, expected));
@@ -231,7 +231,7 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
     let other = directory.path().join("other.dng");
     std::fs::copy(fixture("patches.dng"), &other).unwrap();
     editor_harness(|mut harness, _| {
-        harness.update(|editor| editor.add_raws(vec![fixture("patches.dng"), other]));
+        harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng"), other], cx));
         wait_for(&mut harness, |e| !e.busy);
         harness
             .get_by_label("other.dng")

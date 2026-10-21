@@ -1,8 +1,13 @@
 use super::*;
 use egui::{Event, FullOutput, Key, Modifiers, Pos2};
 
-fn frame(editor: &mut Editor, context: &egui::Context, events: Vec<Event>) -> FullOutput {
-    frame_with_modifiers(editor, context, events, Modifiers::NONE)
+fn frame(
+    editor: &mut Editor,
+    context: &egui::Context,
+    events: Vec<Event>,
+    cx: &UiContext<'_, Editor>,
+) -> FullOutput {
+    frame_with_modifiers(editor, context, events, Modifiers::NONE, cx)
 }
 
 fn frame_with_modifiers(
@@ -10,6 +15,7 @@ fn frame_with_modifiers(
     context: &egui::Context,
     events: Vec<Event>,
     modifiers: Modifiers,
+    cx: &UiContext<'_, Editor>,
 ) -> FullOutput {
     let mut events = events;
     events.insert(0, Event::ModifiersChanged(modifiers));
@@ -24,7 +30,7 @@ fn frame_with_modifiers(
             ..Default::default()
         },
         |ui| {
-            editor.filmstrip(ui);
+            editor.filmstrip(ui, cx);
             let _ = ui.button("Following");
         },
     );
@@ -126,209 +132,228 @@ fn selected_outline(output: &FullOutput, point: Pos2, active: bool) {
 
 #[test]
 fn cold_loading_and_failed_selected_raw_retain_selection_and_filename() {
-    let mut editor = crate::editor::tests::fixture();
-    *editor.document = super::tests::fixture();
-    editor.document.project.order.truncate(3);
-    let selected = editor.document.project.order[1];
-    let name = "京都_Long_Scan_Reference_Roll01_Frame_04397.ARW";
-    editor.document.project.source_mut(selected).unwrap().path = name.into();
-    editor.selected = 1;
-    editor.load(editor.document.source_path(selected).unwrap());
-    assert!(editor.document.visit.source.request.is_some());
-    assert!(
-        editor.busy && editor.document.visit.ready.is_none() && editor.pending_preview.is_none()
-    );
-    let before = editor.document.project.clone();
-    let context = egui::Context::default();
-    frame(&mut editor, &context, vec![]);
-    let output = frame(&mut editor, &context, vec![]);
-    assert_eq!(
-        node(&output, name).1.toggled(),
-        Some(egui::accesskit::Toggled::True)
-    );
-    assert!(
-        !node(&output, name).1.is_disabled(),
-        "loading a photo must not block navigation"
-    );
-    selected_outline(&output, point(&output, name), true);
-    assert!(editor.document.visit.ready.is_none() && editor.pending_preview.is_none());
-    assert_eq!(editor.document.project, before);
-    editor.source_result(editor.id, Err("RAW unavailable".into()));
-    assert!(
-        !editor.busy && editor.document.visit.ready.is_none() && editor.pending_preview.is_none()
-    );
-    let output = frame(&mut editor, &context, vec![]);
-    selected_outline(&output, point(&output, name), true);
-    assert_eq!(
-        node(&output, name).1.toggled(),
-        Some(egui::accesskit::Toggled::True)
-    );
-    assert!(
-        !node(&output, name).1.is_disabled(),
-        "allow retry after failure"
-    );
-    assert_eq!(editor.current_source, Some(selected));
-    assert_eq!(editor.document.project, before);
+    let editor = crate::editor::tests::fixture();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            *editor.document = super::tests::fixture();
+            editor.document.project.order.truncate(3);
+            let selected = editor.document.project.order[1];
+            let name = "京都_Long_Scan_Reference_Roll01_Frame_04397.ARW";
+            editor.document.project.source_mut(selected).unwrap().path = name.into();
+            editor.selected = 1;
+            editor.load(editor.document.source_path(selected).unwrap(), cx);
+            assert!(editor.document.visit.source.pending());
+            assert!(
+                editor.busy
+                    && editor.document.visit.ready.is_none()
+                    && editor.pending_preview.is_none()
+            );
+            let before = editor.document.project.clone();
+            let context = egui::Context::default();
+            frame(editor, &context, vec![], cx);
+            let output = frame(editor, &context, vec![], cx);
+            assert_eq!(
+                node(&output, name).1.toggled(),
+                Some(egui::accesskit::Toggled::True)
+            );
+            assert!(
+                !node(&output, name).1.is_disabled(),
+                "loading a photo must not block navigation"
+            );
+            selected_outline(&output, point(&output, name), true);
+            assert!(editor.document.visit.ready.is_none() && editor.pending_preview.is_none());
+            assert_eq!(editor.document.project, before);
+            editor.source_result(editor.id, Err("RAW unavailable".into()));
+            assert!(
+                !editor.busy
+                    && editor.document.visit.ready.is_none()
+                    && editor.pending_preview.is_none()
+            );
+            let output = frame(editor, &context, vec![], cx);
+            selected_outline(&output, point(&output, name), true);
+            assert_eq!(
+                node(&output, name).1.toggled(),
+                Some(egui::accesskit::Toggled::True)
+            );
+            assert!(
+                !node(&output, name).1.is_disabled(),
+                "allow retry after failure"
+            );
+            assert_eq!(editor.current_source, Some(selected));
+            assert_eq!(editor.document.project, before);
+        });
+    });
 }
 
 #[test]
 fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus() {
-    let mut editor = crate::editor::tests::fixture();
-    *editor.document = super::tests::fixture();
-    editor.document.project.order.truncate(2);
-    crate::editor::tests::add_ready_fixture(&mut editor);
-    editor.selected = 2;
-    editor.sync_document();
-    let before = editor.document.project.clone();
-    let context = egui::Context::default();
-    frame(&mut editor, &context, vec![]);
-    let output = frame(&mut editor, &context, vec![]);
-    let target = node(&output, "photo-0.ARW").0;
-    let point = point(&output, "photo-0.ARW");
-    for state in ["busy", "crop", "flat", "pick"] {
-        let mut focused = false;
-        for _ in 0..12 {
-            frame(&mut editor, &context, key(Key::Tab));
-            if context
-                .memory(|memory| memory.focused())
-                .map(|id| id.accesskit_id())
-                == Some(target)
-            {
-                focused = true;
-                break;
+    let editor = crate::editor::tests::fixture();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            *editor.document = super::tests::fixture();
+            editor.document.project.order.truncate(2);
+            crate::editor::tests::add_ready_fixture(editor);
+            editor.selected = 2;
+            editor.sync_document();
+            let before = editor.document.project.clone();
+            let context = egui::Context::default();
+            frame(editor, &context, vec![], cx);
+            let output = frame(editor, &context, vec![], cx);
+            let target = node(&output, "photo-0.ARW").0;
+            let point = point(&output, "photo-0.ARW");
+            for state in ["busy", "crop", "flat", "pick"] {
+                let mut focused = false;
+                for _ in 0..12 {
+                    frame(editor, &context, key(Key::Tab), cx);
+                    if context
+                        .memory(|memory| memory.focused())
+                        .map(|id| id.accesskit_id())
+                        == Some(target)
+                    {
+                        focused = true;
+                        break;
+                    }
+                }
+                assert!(focused, "enabled card is keyboard reachable");
+                match state {
+                    "busy" => editor.busy = true,
+                    "crop" => editor.begin_crop(),
+                    "pick" => editor.pick = Some(Pick::Gamma),
+                    "flat" => {
+                        editor.flat_edit = Some(crate::editor::flat::FlatEdit {
+                            working: None,
+                            reference: None,
+                            viewport: editor.viewport,
+                            source: editor.source,
+                            task: None,
+                        })
+                    }
+                    _ => unreachable!(),
+                }
+                let output = frame(editor, &context, key(Key::Space), cx);
+                assert_eq!(node(&output, "photo-0.ARW").0, target);
+                assert!(node(&output, "photo-0.ARW").1.is_disabled());
+                assert!(!node(&output, "Following").1.is_disabled());
+                assert_ne!(
+                    context
+                        .memory(|memory| memory.focused())
+                        .map(|id| id.accesskit_id()),
+                    Some(target)
+                );
+                frame(editor, &context, pointer(point, true), cx);
+                frame(editor, &context, pointer(point, false), cx);
+                for _ in 0..5 {
+                    frame(editor, &context, key(Key::Tab), cx);
+                    assert_ne!(
+                        context
+                            .memory(|memory| memory.focused())
+                            .map(|id| id.accesskit_id()),
+                        Some(target)
+                    );
+                }
+                assert!(
+                    !editor.document.visit.source.pending(),
+                    "disabled cards dispatch no work"
+                );
+                assert_eq!(editor.document.project, before);
+                editor.busy = false;
+                editor.finish_crop(false);
+                editor.flat_edit = None;
+                editor.pick = None;
+                frame(editor, &context, vec![], cx);
             }
-        }
-        assert!(focused, "enabled card is keyboard reachable");
-        match state {
-            "busy" => editor.busy = true,
-            "crop" => editor.begin_crop(),
-            "pick" => editor.pick = Some(Pick::Gamma),
-            "flat" => {
-                editor.flat_edit = Some(crate::editor::flat::FlatEdit {
-                    working: None,
-                    reference: None,
-                    viewport: editor.viewport,
-                    source: editor.source,
-                    request: None,
-                    task: None,
-                })
-            }
-            _ => unreachable!(),
-        }
-        let output = frame(&mut editor, &context, key(Key::Space));
-        assert_eq!(node(&output, "photo-0.ARW").0, target);
-        assert!(node(&output, "photo-0.ARW").1.is_disabled());
-        assert!(!node(&output, "Following").1.is_disabled());
-        assert_ne!(
-            context
-                .memory(|memory| memory.focused())
-                .map(|id| id.accesskit_id()),
-            Some(target)
-        );
-        frame(&mut editor, &context, pointer(point, true));
-        frame(&mut editor, &context, pointer(point, false));
-        for _ in 0..5 {
-            frame(&mut editor, &context, key(Key::Tab));
-            assert_ne!(
-                context
-                    .memory(|memory| memory.focused())
-                    .map(|id| id.accesskit_id()),
-                Some(target)
+            frame(editor, &context, pointer(point, true), cx);
+            frame(editor, &context, pointer(point, false), cx);
+            assert!(
+                editor
+                    .document
+                    .source_path(editor.current_source.unwrap())
+                    .unwrap()
+                    .ends_with("photo-0.ARW")
             );
-        }
-        assert!(
-            !editor.document.visit.source.pending(),
-            "disabled cards dispatch no work"
-        );
-        assert_eq!(editor.document.project, before);
-        editor.busy = false;
-        editor.finish_crop(false);
-        editor.flat_edit = None;
-        editor.pick = None;
-        frame(&mut editor, &context, vec![]);
-    }
-    frame(&mut editor, &context, pointer(point, true));
-    frame(&mut editor, &context, pointer(point, false));
-    assert!(
-        editor
-            .document
-            .visit
-            .source
-            .request
-            .as_ref()
-            .unwrap()
-            .path
-            .ends_with("photo-0.ARW")
-    );
-    assert_eq!(editor.selected, 0);
+            assert!(editor.document.visit.source.pending());
+            assert_eq!(editor.selected, 0);
+        });
+    });
 }
 
 #[test]
 fn document_work_still_blocks_navigation_when_a_selected_load_was_pending() {
-    let mut editor = crate::editor::tests::fixture();
-    *editor.document = super::tests::fixture();
-    editor.document.project.order.truncate(2);
-    editor.load(
-        editor
-            .document
-            .source_path(editor.document.project.order[0])
-            .unwrap(),
-    );
-    assert!(editor.document.visit.source.request.is_some());
-    editor.document_pending = Some(999);
-    let context = egui::Context::default();
-    frame(&mut editor, &context, vec![]);
-    let output = frame(&mut editor, &context, vec![]);
-    assert!(node(&output, "photo-1.ARW").1.is_disabled());
-    let point = point(&output, "photo-1.ARW");
-    frame(&mut editor, &context, pointer(point, true));
-    frame(&mut editor, &context, pointer(point, false));
-    assert_eq!(
-        editor.current_source,
-        Some(editor.document.project.order[0])
-    );
+    let editor = crate::editor::tests::fixture();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            *editor.document = super::tests::fixture();
+            editor.document.project.order.truncate(2);
+            editor.load(
+                editor
+                    .document
+                    .source_path(editor.document.project.order[0])
+                    .unwrap(),
+                cx,
+            );
+            assert!(editor.document.visit.source.pending());
+            editor.document_pending = Some(999);
+            let context = egui::Context::default();
+            frame(editor, &context, vec![], cx);
+            let output = frame(editor, &context, vec![], cx);
+            assert!(node(&output, "photo-1.ARW").1.is_disabled());
+            let point = point(&output, "photo-1.ARW");
+            frame(editor, &context, pointer(point, true), cx);
+            frame(editor, &context, pointer(point, false), cx);
+            assert_eq!(
+                editor.current_source,
+                Some(editor.document.project.order[0])
+            );
+        });
+    });
 }
 
 #[test]
 fn card_tooltips_reveal_only_the_source_path_even_when_selection_is_disabled() {
     for disabled in [false, true] {
-        let mut editor = crate::editor::tests::fixture();
-        *editor.document = super::tests::fixture();
-        editor.document.project.order.truncate(1);
-        editor.current_source = Some(editor.document.project.order[0]);
-        editor.busy = disabled;
-        let path = editor
-            .document
-            .source_path(editor.current_source.unwrap())
-            .unwrap()
-            .display()
-            .to_string();
-        let context = egui::Context::default();
-        context.style_mut_of(egui::Theme::Dark, |style| {
-            style.interaction.tooltip_delay = 0.
-        });
-        frame(&mut editor, &context, vec![]);
-        let output = frame(&mut editor, &context, vec![]);
-        let point = point(&output, "photo-0.ARW");
-        let mut visible = false;
-        for _ in 0..4 {
-            let output = frame(&mut editor, &context, vec![Event::PointerMoved(point)]);
-            for shape in &output.shapes {
-                if let egui::Shape::Text(text) = &shape.shape
-                    && text.galley.job.text.starts_with(&path)
-                {
-                    assert_eq!(text.galley.job.text, path);
-                    visible = true;
+        let editor = crate::editor::tests::fixture();
+        crate::application::test_support::with_application(editor, |app| {
+            app.enter(|editor, cx| {
+                *editor.document = super::tests::fixture();
+                editor.document.project.order.truncate(1);
+                editor.current_source = Some(editor.document.project.order[0]);
+                editor.busy = disabled;
+                let path = editor
+                    .document
+                    .source_path(editor.current_source.unwrap())
+                    .unwrap()
+                    .display()
+                    .to_string();
+                let context = egui::Context::default();
+                context.style_mut_of(egui::Theme::Dark, |style| {
+                    style.interaction.tooltip_delay = 0.
+                });
+                frame(editor, &context, vec![], cx);
+                let output = frame(editor, &context, vec![], cx);
+                let point = point(&output, "photo-0.ARW");
+                let mut visible = false;
+                for _ in 0..4 {
+                    let output = frame(editor, &context, vec![Event::PointerMoved(point)], cx);
+                    for shape in &output.shapes {
+                        if let egui::Shape::Text(text) = &shape.shape
+                            && text.galley.job.text.starts_with(&path)
+                        {
+                            assert_eq!(text.galley.job.text, path);
+                            visible = true;
+                        }
+                    }
                 }
-            }
-        }
-        assert!(visible, "full source path must remain available on hover");
+                assert!(visible, "full source path must remain available on hover");
+            });
+        });
     }
 }
 
 #[test]
 fn disabled_cards_keep_actionable_error_tooltips() {
-    let mut editor = crate::editor::tests::fixture();
+    let editor = crate::editor::tests::fixture();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
     *editor.document = super::tests::fixture();
     editor.document.project.order.truncate(1);
     editor.current_source = Some(editor.document.project.order[0]);
@@ -342,185 +367,202 @@ fn disabled_cards_keep_actionable_error_tooltips() {
     context.style_mut_of(egui::Theme::Dark, |style| {
         style.interaction.tooltip_delay = 0.
     });
-    frame(&mut editor, &context, vec![]);
-    let output = frame(&mut editor, &context, vec![]);
+    frame(editor, &context, vec![], cx);
+    let output = frame(editor, &context, vec![], cx);
     let point = point(&output, "photo-0.ARW");
     let mut visible = false;
     for _ in 0..4 {
-        let output = frame(&mut editor, &context, vec![Event::PointerMoved(point)]);
+        let output = frame(editor, &context, vec![Event::PointerMoved(point)], cx);
         visible |= output.shapes.iter().any(|shape| matches!(&shape.shape,
             egui::Shape::Text(text) if text.galley.job.text == "Source unavailable: actionable detail"));
     }
     assert!(visible, "disabled selection must not hide error detail");
+
+});
+    });
 }
 
 #[test]
 fn enabled_reference_cards_keep_ordered_roll_sampling_and_working_photo_return_context() {
     for pick in [Pick::Dmin, Pick::Dmax] {
-        let mut editor = crate::editor::tests::fixture();
-        *editor.document = super::tests::fixture();
-        editor.document.project.order.truncate(2);
-        crate::editor::tests::add_ready_fixture(&mut editor);
-        editor.selected = 2;
-        editor.sync_document();
-        let before = editor.document.project.clone();
-        let working = editor.document.visit.ready.as_ref().unwrap().path.clone();
-        editor.begin_pick(pick);
-        let view = editor.document.pick_view.unwrap();
-        let context = egui::Context::default();
-        frame(&mut editor, &context, vec![]);
-        let output = frame(&mut editor, &context, vec![]);
-        assert!(!node(&output, "photo-0.ARW").1.is_disabled());
-        let point = point(&output, "photo-0.ARW");
-        frame(&mut editor, &context, pointer(point, true));
-        frame(&mut editor, &context, pointer(point, false));
-        assert!(
-            editor
-                .document
-                .visit
-                .source
-                .request
-                .as_ref()
-                .unwrap()
-                .path
-                .ends_with("photo-0.ARW")
-        );
-        assert_eq!(
-            editor.current_source,
-            Some(editor.document.project.order[0])
-        );
-        assert_eq!(editor.pick, Some(pick));
-        assert_eq!(editor.selected, 0);
-        assert_eq!(editor.document.pick_return.as_ref().unwrap().selected, 2);
-        assert_eq!(editor.document.pick_return.as_ref().unwrap().path, working);
-        assert_eq!(editor.document.pick_view.unwrap().viewport, view.viewport);
-        assert_eq!(editor.document.pick_view.unwrap().source, view.source);
-        assert_eq!(editor.document.project, before);
-        editor.source_result(editor.id, Err("sample source unavailable".into()));
-        editor.finish_pick();
-        assert_eq!(
-            editor.document.visit.source.request.as_ref().unwrap().path,
-            working
-        );
-        assert_eq!(editor.selected, 2);
-        assert_eq!(editor.viewport, view.viewport);
-        assert_eq!(editor.source, view.source);
-        assert!(editor.pick.is_none());
-        assert_eq!(editor.document.project, before);
+        let editor = crate::editor::tests::fixture();
+        crate::application::test_support::with_application(editor, |app| {
+            app.enter(|editor, cx| {
+                *editor.document = super::tests::fixture();
+                editor.document.project.order.truncate(2);
+                crate::editor::tests::add_ready_fixture(editor);
+                editor.selected = 2;
+                editor.sync_document();
+                let before = editor.document.project.clone();
+                let working = editor.document.visit.ready.as_ref().unwrap().path.clone();
+                editor.begin_pick(pick, cx);
+                let view = editor.document.pick_view.unwrap();
+                let context = egui::Context::default();
+                frame(editor, &context, vec![], cx);
+                let output = frame(editor, &context, vec![], cx);
+                assert!(!node(&output, "photo-0.ARW").1.is_disabled());
+                let point = point(&output, "photo-0.ARW");
+                frame(editor, &context, pointer(point, true), cx);
+                frame(editor, &context, pointer(point, false), cx);
+                assert!(
+                    editor
+                        .document
+                        .source_path(editor.current_source.unwrap())
+                        .unwrap()
+                        .ends_with("photo-0.ARW")
+                );
+                assert_eq!(
+                    editor.current_source,
+                    Some(editor.document.project.order[0])
+                );
+                assert_eq!(editor.pick, Some(pick));
+                assert_eq!(editor.selected, 0);
+                assert_eq!(editor.document.pick_return.as_ref().unwrap().selected, 2);
+                assert_eq!(editor.document.pick_return.as_ref().unwrap().path, working);
+                assert_eq!(editor.document.pick_view.unwrap().viewport, view.viewport);
+                assert_eq!(editor.document.pick_view.unwrap().source, view.source);
+                assert_eq!(editor.document.project, before);
+                editor.source_result(editor.id, Err("sample source unavailable".into()));
+                editor.finish_pick(cx);
+                assert!(editor.document.visit.source.pending());
+                assert!(document::same_path(
+                    &editor
+                        .document
+                        .source_path(editor.current_source.unwrap())
+                        .unwrap(),
+                    &working
+                ));
+                assert_eq!(editor.selected, 2);
+                assert_eq!(editor.viewport, view.viewport);
+                assert_eq!(editor.source, view.source);
+                assert!(editor.pick.is_none());
+                assert_eq!(editor.document.project, before);
+            });
+        });
     }
 }
 
 #[test]
 fn pending_photo_loading_accepts_mouse_and_keyboard_replacement_and_ignores_old_ready() {
     for keyboard in [false, true] {
-        let mut editor = crate::editor::tests::fixture();
-        *editor.document = super::tests::fixture();
-        editor.document.project.order.truncate(2);
-        let first = editor.document.project.order[0];
-        let second = editor.document.project.order[1];
-        editor.load(editor.document.source_path(first).unwrap());
-        let original = editor.id;
-        assert!(editor.document.visit.source.request.is_some());
-        let context = egui::Context::default();
-        frame(&mut editor, &context, vec![]);
-        let output = frame(&mut editor, &context, vec![]);
-        let target = node(&output, "photo-1.ARW").0;
-        assert!(!node(&output, "photo-1.ARW").1.is_disabled());
-        if keyboard {
-            let mut focused = false;
-            for _ in 0..12 {
-                frame(&mut editor, &context, key(Key::Tab));
-                if context.memory(|m| m.focused()).map(|id| id.accesskit_id()) == Some(target) {
-                    focused = true;
-                    break;
+        let editor = crate::editor::tests::fixture();
+        crate::application::test_support::with_application(editor, |app| {
+            app.enter(|editor, cx| {
+                *editor.document = super::tests::fixture();
+                editor.document.project.order.truncate(2);
+                let first = editor.document.project.order[0];
+                let second = editor.document.project.order[1];
+                editor.load(editor.document.source_path(first).unwrap(), cx);
+                let original = editor.id;
+                assert!(editor.document.visit.source.pending());
+                let context = egui::Context::default();
+                frame(editor, &context, vec![], cx);
+                let output = frame(editor, &context, vec![], cx);
+                let target = node(&output, "photo-1.ARW").0;
+                assert!(!node(&output, "photo-1.ARW").1.is_disabled());
+                if keyboard {
+                    let mut focused = false;
+                    for _ in 0..12 {
+                        frame(editor, &context, key(Key::Tab), cx);
+                        if context.memory(|m| m.focused()).map(|id| id.accesskit_id())
+                            == Some(target)
+                        {
+                            focused = true;
+                            break;
+                        }
+                    }
+                    assert!(focused);
+                    frame(editor, &context, key(Key::Space), cx);
+                } else {
+                    let point = point(&output, "photo-1.ARW");
+                    frame(editor, &context, pointer(point, true), cx);
+                    frame(editor, &context, pointer(point, false), cx);
                 }
-            }
-            assert!(focused);
-            frame(&mut editor, &context, key(Key::Space));
-        } else {
-            let point = point(&output, "photo-1.ARW");
-            frame(&mut editor, &context, pointer(point, true));
-            frame(&mut editor, &context, pointer(point, false));
-        }
-        assert_eq!(editor.current_source, Some(second));
-        assert_eq!(editor.selected, 1);
-        assert!(editor.busy && editor.document.visit.ready.is_none());
-        assert!(editor.id > original);
-        assert!(editor.document.visit.source.request.is_some());
-        editor.source_result(original, Err("obsolete failure".into()));
-        assert!(editor.busy && editor.current_source == Some(second));
-        assert_ne!(editor.status, "obsolete failure");
-        editor.begin_pick(Pick::Dmin);
-        editor.begin_crop();
-        assert!(editor.pick.is_none() && editor.document.visit.crop_edit.is_none());
+                assert_eq!(editor.current_source, Some(second));
+                assert_eq!(editor.selected, 1);
+                assert!(editor.busy && editor.document.visit.ready.is_none());
+                assert!(editor.id > original);
+                assert!(editor.document.visit.source.pending());
+                editor.source_result(original, Err("obsolete failure".into()));
+                assert!(editor.busy && editor.current_source == Some(second));
+                assert_ne!(editor.status, "obsolete failure");
+                editor.begin_pick(Pick::Dmin, cx);
+                editor.begin_crop();
+                assert!(editor.pick.is_none() && editor.document.visit.crop_edit.is_none());
+            });
+        });
     }
 }
 
 #[test]
 fn modifier_clicks_expose_selection_separately_from_the_active_photo() {
-    let mut editor = crate::editor::tests::fixture();
-    *editor.document = super::tests::fixture();
-    editor.document.project.order.truncate(3);
-    editor.current_source = Some(editor.document.project.order[0]);
-    let context = egui::Context::default();
-    frame(&mut editor, &context, vec![]);
-    let output = frame(&mut editor, &context, vec![]);
-    let click = |editor: &mut Editor, index: usize, modifiers| {
-        let point = point(&output, &format!("photo-{index}.ARW"));
-        for pressed in [true, false] {
-            let mut events = pointer(point, pressed);
-            if let Event::PointerButton {
-                modifiers: event_modifiers,
-                ..
-            } = &mut events[1]
-            {
-                *event_modifiers = modifiers;
+    let editor = crate::editor::tests::fixture();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            *editor.document = super::tests::fixture();
+            editor.document.project.order.truncate(3);
+            editor.current_source = Some(editor.document.project.order[0]);
+            let context = egui::Context::default();
+            frame(editor, &context, vec![], cx);
+            let output = frame(editor, &context, vec![], cx);
+            let click = |editor: &mut Editor, index: usize, modifiers| {
+                let point = point(&output, &format!("photo-{index}.ARW"));
+                for pressed in [true, false] {
+                    let mut events = pointer(point, pressed);
+                    if let Event::PointerButton {
+                        modifiers: event_modifiers,
+                        ..
+                    } = &mut events[1]
+                    {
+                        *event_modifiers = modifiers;
+                    }
+                    frame_with_modifiers(editor, &context, events, modifiers, cx);
+                }
+            };
+            click(editor, 2, Modifiers::COMMAND);
+            assert!(
+                !editor.document.visit.source.pending(),
+                "extending selection does not load a RAW"
+            );
+            let result = frame(editor, &context, vec![], cx);
+            for index in 0..3 {
+                let name = format!("photo-{index}.ARW");
+                let (_, node) = node(&result, &name);
+                if index != 1 {
+                    selected_outline(&result, point(&result, &name), index == 0);
+                }
+                assert_eq!(
+                    node.toggled(),
+                    Some(if index == 1 {
+                        egui::accesskit::Toggled::False
+                    } else {
+                        egui::accesskit::Toggled::True
+                    })
+                );
+                assert_eq!(
+                    node.description()
+                        .is_some_and(|description| description.contains("Active photo")),
+                    index == 0
+                );
             }
-            frame_with_modifiers(editor, &context, events, modifiers);
-        }
-    };
-    click(&mut editor, 2, Modifiers::COMMAND);
-    assert!(
-        !editor.document.visit.source.pending(),
-        "extending selection does not load a RAW"
-    );
-    let result = frame(&mut editor, &context, vec![]);
-    for index in 0..3 {
-        let name = format!("photo-{index}.ARW");
-        let (_, node) = node(&result, &name);
-        if index != 1 {
-            selected_outline(&result, point(&result, &name), index == 0);
-        }
-        assert_eq!(
-            node.toggled(),
-            Some(if index == 1 {
-                egui::accesskit::Toggled::False
-            } else {
-                egui::accesskit::Toggled::True
-            })
-        );
-        assert_eq!(
-            node.description()
-                .is_some_and(|description| description.contains("Active photo")),
-            index == 0
-        );
-    }
-    click(&mut editor, 0, Modifiers::COMMAND);
-    assert!(editor.document.visit.source.request.is_some());
-    assert_eq!(
-        editor.current_source,
-        Some(editor.document.project.order[2])
-    );
-    editor.source_result(editor.id, Err("fixture unavailable".into()));
-    click(&mut editor, 2, Modifiers::COMMAND);
-    assert!(
-        !editor.document.visit.source.pending(),
-        "sole selected card is a no-op"
-    );
-    click(&mut editor, 1, Modifiers::NONE);
-    assert!(editor.document.visit.source.request.is_some());
-    assert_eq!(
-        editor.current_source,
-        Some(editor.document.project.order[1])
-    );
+            click(editor, 0, Modifiers::COMMAND);
+            assert!(editor.document.visit.source.pending());
+            assert_eq!(
+                editor.current_source,
+                Some(editor.document.project.order[2])
+            );
+            editor.source_result(editor.id, Err("fixture unavailable".into()));
+            click(editor, 2, Modifiers::COMMAND);
+            assert!(
+                !editor.document.visit.source.pending(),
+                "sole selected card is a no-op"
+            );
+            click(editor, 1, Modifiers::NONE);
+            assert!(editor.document.visit.source.pending());
+            assert_eq!(
+                editor.current_source,
+                Some(editor.document.project.order[1])
+            );
+        });
+    });
 }

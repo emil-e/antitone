@@ -47,7 +47,7 @@ fn card_frames_and_captions_fit_compact_and_normal_strips_without_changing_prefe
                         screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
                         ..Default::default()
                     },
-                    |ui| editor.filmstrip(ui),
+                    |ui| editor.filmstrip(ui, &crate::application::UiContext::render_only()),
                 );
                 output.textures_delta.clear();
                 let cards = cards(&output);
@@ -122,7 +122,7 @@ fn hover_is_neutral_and_distinct_from_selection_without_changing_cell_geometry()
                 events: pointer.into_iter().map(egui::Event::PointerMoved).collect(),
                 ..Default::default()
             },
-            |ui| editor.filmstrip(ui),
+            |ui| editor.filmstrip(ui, &crate::application::UiContext::render_only()),
         );
         output.textures_delta.clear();
         output

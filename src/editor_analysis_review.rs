@@ -136,31 +136,11 @@ fn prepare_with_measurements(
 }
 
 impl Editor {
-    pub(super) fn prepare_analysis_review(&mut self, mut request: analysis::Request) {
-        if self.document.visit.mask_edit.is_some()
-            || self.document.auto_crop_edit.is_some()
-            || self.document.visit.adjustments.confirming()
-        {
-            return;
-        }
-        request.revision = self
-            .document
-            .analysis_generation
-            .fetch_add(1, Ordering::Relaxed)
-            + 1;
-        let id = self.request_id();
-        self.thumbnails.cancel();
-        self.tasks.begin(Task::AnalysisAreas(id));
-        self.document.analysis_preparing =
-            Some(super::analysis_workflow::Pending::new(id, request));
-        self.busy = true;
-        self.status = "Preparing per-photo analysis areas…".into();
-    }
-
     pub(super) fn analysis_areas_result(
         &mut self,
         id: u64,
         result: Result<Option<Approved>, String>,
+        cx: &UiContext<'_, Self>,
     ) {
         if !self
             .document
@@ -213,7 +193,7 @@ impl Editor {
                 self.tab = 0;
                 // Positive-only scopes have no data in the source sampling tool.
                 self.scopes.visible = false;
-                self.begin_pick(Pick::Analysis);
+                self.begin_pick(Pick::Analysis, cx);
                 self.refresh_review_region();
                 self.viewport.fit();
                 self.status = "Review sampling areas".into();
@@ -300,28 +280,28 @@ impl Editor {
         self.pick_drag = None;
     }
 
-    pub(super) fn browse_analysis_review(&mut self, id: SourceId) {
+    pub(super) fn browse_analysis_review(&mut self, id: SourceId, cx: &UiContext<'_, Self>) {
         if self.document.analysis_review.is_none() || self.document.analysis_pending.is_some() {
             return;
         }
         self.stash_review_region();
-        self.pick_roll_source(id);
+        self.pick_roll_source(id, cx);
         self.document.analysis_review.as_mut().unwrap().loaded = self.id;
         self.refresh_review_region();
     }
 
-    pub(super) fn end_analysis_review(&mut self) {
+    pub(super) fn end_analysis_review(&mut self, cx: &UiContext<'_, Self>) {
         let Some(review) = self.document.analysis_review.take() else {
             return;
         };
         self.tab = review.return_tab;
         self.scopes.visible = review.return_scopes_visible;
         let notice = self.status.clone();
-        self.finish_pick();
+        self.finish_pick(cx);
         self.status = notice;
     }
 
-    pub(super) fn confirm_analysis_review(&mut self) {
+    pub(super) fn confirm_analysis_review(&mut self, cx: &UiContext<'_, Self>) {
         if self.busy
             || self.document.visit.ready.is_none()
             || self.document.analysis_pending.is_some()
@@ -344,7 +324,7 @@ impl Editor {
             || self.document.analysis_generation.load(Ordering::Relaxed) != review.request.revision
         {
             self.status = "Analysis review discarded: document or settings changed".into();
-            self.end_analysis_review();
+            self.end_analysis_review(cx);
             return;
         }
         let mut request = review.request.clone();
@@ -355,7 +335,7 @@ impl Editor {
             self.status = format!("Cannot analyze: {error}. Grade unchanged.");
             return;
         }
-        self.start_analysis(request);
+        self.start_analysis(request, cx);
     }
 
     pub(super) fn review_area_at(

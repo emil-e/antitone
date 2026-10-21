@@ -16,7 +16,7 @@ fn frame(editor: &mut impl crate::editor::tests::UiFixture, context: &egui::Cont
 
 #[test]
 fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation() {
-    let mut editor = super::super::tests::fixture();
+    let mut editor = super::super::tests::with_document_services(super::super::tests::fixture());
     let context = egui::Context::default();
     frame(&mut editor, &context);
     frame(&mut editor, &context);
@@ -29,44 +29,39 @@ fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation(
     assert!(!state.enabled(Action::Redo));
     host::App::native_menu_installed(&mut editor);
     host::App::menu_action(&mut editor, Action::Undo);
-    frame(&mut editor, &context);
-    let request = editor.document_pending.unwrap();
-    let work = editor.candidate_operation.request.take().unwrap();
-    let Preparation::History(document, selected, history::Direction::Undo) = work.work else {
-        panic!("history candidate")
-    };
-    assert_eq!(document.project, before);
-    assert_eq!(
-        editor.roll.exposure, 0.5,
-        "preparation must not replace accepted state"
-    );
-    assert!(!editor.application_menu_state().enabled(Action::Undo));
-    editor.document_prepared(
-        request,
-        Ok(Box::new(Prepared {
-            document,
-            selected,
-            ready: None,
-            reuse_ready: false,
-            correction: None,
-            preserve_view: true,
-        })),
-    );
-    frame(&mut editor, &context);
-    assert_eq!(editor.roll.exposure, 0.);
-    let state = editor.application_menu_state();
-    assert_eq!(state.label(Action::Undo), "Undo");
-    assert_eq!(state.label(Action::Redo), "Redo Roll exposure");
-    assert!(!state.enabled(Action::Undo));
-    assert!(state.enabled(Action::Redo));
-    editor.pick = Some(Pick::Dmin);
-    host::App::menu_action(&mut editor, Action::Redo);
-    frame(&mut editor, &context);
-    assert!(
-        editor.candidate_operation.request.is_none(),
-        "a queued native command must not bypass a draft"
-    );
-    assert_eq!(editor.roll.exposure, 0.);
+    crate::application::test_support::with_application(editor, |app| {
+        frame(app, &context);
+        app.read(|e| {
+            assert!(e.document_pending.is_some());
+            assert_eq!(
+                e.roll.exposure, 0.5,
+                "preparation must not replace accepted state"
+            );
+            assert!(!e.application_menu_state().enabled(Action::Undo));
+        });
+        app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
+        app.read(|e| {
+            assert_eq!(e.document.project, before, "{}", e.status);
+            assert_eq!(e.roll.exposure, 0.);
+            let state = e.application_menu_state();
+            assert_eq!(state.label(Action::Undo), "Undo");
+            assert_eq!(state.label(Action::Redo), "Redo Roll exposure");
+            assert!(!state.enabled(Action::Undo));
+            assert!(state.enabled(Action::Redo));
+        });
+        app.update(|e| {
+            e.pick = Some(Pick::Dmin);
+            host::App::menu_action(e, Action::Redo);
+        });
+        frame(app, &context);
+        app.read(|e| {
+            assert!(
+                e.document_pending.is_none(),
+                "a queued native command must not bypass a draft"
+            );
+            assert_eq!(e.roll.exposure, 0.);
+        });
+    });
 }
 
 #[test]
@@ -91,7 +86,7 @@ fn queued_native_history_checks_current_pointer_input_before_the_menu_state_catc
             modifiers: egui::Modifiers::NONE,
         }],
     );
-    assert!(editor.candidate_operation.request.is_none());
+    assert!(editor.document_pending.is_none());
     assert_eq!(editor.roll.exposure, 0.5);
     assert!(!editor.application_menu_state().enabled(Action::Undo));
 }
@@ -116,7 +111,7 @@ fn native_undo_and_redo_target_text_without_surrendering_document_history() {
             if modifiers.command && modifiers.shift == (action == Action::Redo))
         );
         assert_eq!(editor.document.project, accepted);
-        assert!(editor.candidate_operation.request.is_none());
+        assert!(editor.document_pending.is_none());
     }
     editor.menus.text_focused = false;
     assert_eq!(
@@ -136,11 +131,7 @@ fn native_quit_and_close_wait_for_the_document_decision() {
         frame(&mut editor, &context);
         assert_eq!(editor.transition, Some(Transition::Close));
         assert!(!editor.allow_close);
-        assert!(
-            editor.candidate_operation.request.is_none()
-                && editor.document.write.request.is_none()
-                && editor.export_operation.request.is_none()
-        );
+        assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
     }
 }
 
@@ -160,11 +151,7 @@ fn queued_native_actions_revalidate_tool_and_modal_availability() {
         assert!(!editor.application_menu_state().enabled(action));
         host::App::menu_action(&mut editor, action);
         frame(&mut editor, &context);
-        assert!(
-            editor.candidate_operation.request.is_none()
-                && editor.document.write.request.is_none()
-                && editor.export_operation.request.is_none()
-        );
+        assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
         assert!(editor.transition.is_none());
     }
     assert_eq!(editor.pick, Some(Pick::Dmin));
@@ -199,11 +186,7 @@ fn closing_settings_preserves_the_document_and_quit_still_uses_its_guard() {
     assert!(editor.menus.panel.is_none());
     assert_eq!(editor.transition, Some(Transition::Close));
     assert!(!editor.allow_close);
-    assert!(
-        editor.candidate_operation.request.is_none()
-            && editor.document.write.request.is_none()
-            && editor.export_operation.request.is_none()
-    );
+    assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
 }
 
 #[test]

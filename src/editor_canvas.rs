@@ -119,7 +119,11 @@ impl Editor {
         (geometry, panning)
     }
 
-    fn canvas_parameters(&mut self, ui: &mut egui::Ui) -> Option<ProcessingInput> {
+    fn canvas_parameters(
+        &mut self,
+        ui: &mut egui::Ui,
+        cx: &UiContext<'_, Self>,
+    ) -> Option<ProcessingInput> {
         let mut parameters = if self.source {
             let source_parameters = self.source_parameters(self.source_exposure);
             match source_parameters {
@@ -151,7 +155,7 @@ impl Editor {
         }
         if !self.source && self.flat_edit.is_none() && self.document.pick_return.is_none() {
             if let Some(signature) = self.dust_signature() {
-                self.schedule_dust(signature);
+                self.schedule_dust(signature, cx);
             }
             match self.dust_gpu_snapshot(parameters.grade().map(|grade| grade.snapshot())) {
                 Ok(repairs) => parameters.repairs = repairs,
@@ -165,14 +169,15 @@ impl Editor {
         &mut self,
         ui: &mut egui::Ui,
         geometry: CanvasLayout,
-        area: Rect,
         proxy: crate::viewer::GpuProxy,
         pending: bool,
         cropping: bool,
+        cx: &UiContext<'_, Self>,
     ) -> Option<(egui::Rect, ImagePaint)> {
         let pixels_per_point = ui.ctx().pixels_per_point();
         let canvas = geometry.canvas;
         let active_pick = self.pick;
+        let area = geometry.area;
         let composition = geometry.composition;
         let rect = geometry.image.intersect(canvas);
         // An editing frame may be offscreen at explicit zoom; no refinement raster is requested.
@@ -205,14 +210,14 @@ impl Editor {
                 frame: (!composition.is_exact()).then(|| geometry.frame_raster(pixels_per_point)),
             })
         };
-        let parameters = self.canvas_parameters(ui)?;
+        let parameters = self.canvas_parameters(ui, cx)?;
         self.observe_grade(&parameters);
         if working
             && self
                 .working
                 .observe(self.id, physical_frame, parameters.signature(), self.target)
         {
-            self.original.discard();
+            self.discard_original();
         }
         let purpose = if normal && !self.source && self.working.compare {
             Some(OriginalPurpose::Reference)
@@ -224,14 +229,10 @@ impl Editor {
                     || self.document.pick_return.is_some()))
             .then_some(OriginalPurpose::Tool)
         };
-        if let Some(purpose) = purpose {
-            self.original.observe(
-                purpose,
-                (parameters.signature(), self.target, view, composition),
-            );
-        } else {
-            self.original.leave();
-        }
+        self.observe_original(
+            purpose,
+            (parameters.signature(), self.target, view, composition),
+        );
         let reference_allowed = if working {
             self.admit_view_reference(physical_frame)
         } else {
@@ -239,7 +240,7 @@ impl Editor {
             true
         };
         let revision = self.original.revision();
-        let rendered = match self.working_view(physical_frame, &parameters, ui.ctx()) {
+        let rendered = match self.working_view(physical_frame, &parameters, ui.ctx(), cx) {
             Ok(view) => view,
             Err(error) => {
                 self.working.error = Some(error.to_string());
@@ -252,13 +253,7 @@ impl Editor {
             && (!working || self.working.support_ready())
             && let Some(source) = self.source_context()
         {
-            self.original.schedule(
-                &parameters,
-                self.target,
-                &mut self.document.visit.grade,
-                ui.ctx(),
-                source,
-            );
+            self.request_original(&parameters, self.target, ui.ctx(), source, cx);
         }
         let draw = if cropping {
             canvas
@@ -377,6 +372,7 @@ impl Editor {
         ui: &mut egui::Ui,
         zoom_action: Option<f32>,
         fullscreen: bool,
+        cx: &UiContext<'_, Self>,
     ) {
         let available = ui
             .available_rect_before_wrap()
@@ -411,7 +407,7 @@ impl Editor {
             self.canvas_layout(canvas, composition, pixels_per_point, zoom_action, cropping);
         let (geometry, panning) =
             self.canvas_navigation(ui, &response, geometry, canvas_input, cropping, fullscreen);
-        let Some((draw, paint)) = self.canvas_image(ui, geometry, area, proxy, pending, cropping)
+        let Some((draw, paint)) = self.canvas_image(ui, geometry, proxy, pending, cropping, cx)
         else {
             return;
         };

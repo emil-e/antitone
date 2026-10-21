@@ -192,7 +192,7 @@ impl WorkingView {
         self.wanted.as_ref().map(|wanted| wanted.frame)
     }
 
-    fn request(&mut self, spec: ViewSourceSpec, input: source::Context) {
+    pub(super) fn request(&mut self, spec: ViewSourceSpec, input: source::Context) {
         if self
             .wanted
             .as_ref()
@@ -703,7 +703,7 @@ impl Editor {
             bytes.saturating_mul(*dimension as usize)
         });
         if self.source {
-            self.original.discard();
+            self.discard_original();
             self.thumbnails.reserve_view(0);
             return false;
         }
@@ -723,7 +723,7 @@ impl Editor {
             false
         };
         if !allowed {
-            self.original.discard();
+            self.discard_original();
             self.working.reference = None;
         }
 
@@ -735,6 +735,7 @@ impl Editor {
         frame: FrameRaster,
         input: &ProcessingInput,
         context: &egui::Context,
+        cx: &UiContext<'_, Self>,
     ) -> Result<Option<Arc<RenderedView>>, Error> {
         let previous = self.working.displayed.take();
         if self
@@ -809,7 +810,7 @@ impl Editor {
                     .as_ref()
                     .map(|correction| correction.gpu.field().clone()),
             )?;
-            self.working.request(spec, source_input);
+            self.request_working(spec, source_input, cx);
             self.working
                 .render_inspection(input, self.target, context)?;
             self.working.reference = None;
@@ -850,7 +851,7 @@ impl Editor {
                 .map(|correction| correction.gpu.field().clone()),
         )?
         .with_repairs(input.repairs.clone());
-        self.working.request(spec.clone(), source_input);
+        self.request_working(spec.clone(), source_input, cx);
         self.working.render(
             calibration,
             self.roll,
