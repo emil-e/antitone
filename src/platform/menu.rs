@@ -12,9 +12,7 @@ pub enum Action {
     Close,
     Save,
     SaveAs,
-    ExportTiff,
-    ExportExrHalf,
-    ExportExrFull,
+    Export,
     Undo,
     Redo,
     Cut,
@@ -44,9 +42,7 @@ impl Action {
             Self::Close => "Close Window",
             Self::Save => "Save",
             Self::SaveAs => "Save As…",
-            Self::ExportTiff => "TIFF…",
-            Self::ExportExrHalf => "EXR Half Float…",
-            Self::ExportExrFull => "EXR Full Float…",
+            Self::Export => "Export…",
             Self::Undo => "Undo",
             Self::Redo => "Redo",
             Self::Cut => "Cut",
@@ -102,7 +98,7 @@ pub enum Entry {
 }
 
 use Action::*;
-use Entry::{Action as Item, Separator as Sep, Submenu};
+use Entry::{Action as Item, Separator as Sep};
 
 pub const MENUS: &[(&str, &[Entry])] = &[
     (
@@ -121,10 +117,7 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             Item(Save),
             Item(SaveAs),
             Sep,
-            Submenu(
-                "Export",
-                &[Item(ExportTiff), Item(ExportExrHalf), Item(ExportExrFull)],
-            ),
+            Item(Export),
         ],
     ),
     (

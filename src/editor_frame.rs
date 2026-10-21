@@ -4,7 +4,7 @@ use crate::platform::menu::{Action as MenuAction, State as MenuState};
 pub(super) struct Actions {
     pub(super) menu: Option<MenuAction>,
     pub(super) file: Option<FileAction>,
-    pub(super) export: Option<OutputFormat>,
+    pub(super) export: bool,
     text_input_pending: bool,
     state: MenuState,
 }
@@ -88,7 +88,7 @@ impl Editor {
         }
         Actions {
             file: menu.and_then(|action| self.menu_file_action(action)),
-            export: menu.and_then(|action| self.menu_export(action)),
+            export: menu == Some(MenuAction::Export),
             menu,
             text_input_pending,
             state,
@@ -172,7 +172,7 @@ impl Editor {
             && self.removal_pending.is_none()
             && !self.document.visit.adjustments.confirming()
             && !(text_was_focused && ui.input(|input| input.key_pressed(egui::Key::Escape)))
-            && self.overwrite.is_none()
+            && !self.export_modal()
             && self.transition.is_none()
             && self.project_overwrite.is_none()
             && !ui.ctx().egui_wants_keyboard_input()
@@ -299,8 +299,9 @@ impl Editor {
 
     pub(super) fn disable_blocked_workspace(&self, ui: &mut egui::Ui) {
         if self.menus.panel.is_some()
+            || self.tasks.blocks_workspace()
             || self.failure.is_some()
-            || self.overwrite.is_some()
+            || self.export_modal()
             || self.document_pending.is_some()
             || self.transition.is_some()
             || self.project_overwrite.is_some()
@@ -334,7 +335,7 @@ impl Editor {
                         } else {
                             actions.menu = Some(action);
                             actions.file = self.menu_file_action(action);
-                            actions.export = self.menu_export(action);
+                            actions.export = action == MenuAction::Export;
                         }
                     }
                 }
@@ -491,9 +492,9 @@ impl Editor {
             } else {
                 self.status = "Apply or cancel the mask before a file action".into();
             }
-        } else if let Some(format) = actions.export {
+        } else if actions.export {
             if self.document.visit.mask_edit.is_none() {
-                self.export_dialog(format, cx);
+                self.open_export_dialog();
             } else {
                 self.status = "Apply or cancel the mask before exporting".into();
             }
@@ -527,32 +528,13 @@ impl Editor {
         self.document_dialogs(ui.ctx(), dialog_escape_available, cx);
         self.removal_dialog(ui.ctx(), dialog_escape_available, cx);
         self.adjustment_dialog(ui.ctx(), dialog_escape_available);
-        if let Some((path, format)) = self.overwrite.clone() {
-            let detail = path.display().to_string();
-            let choice = presentation::DecisionDialog::new(
-                "Replace this exported file?",
-                "A file already exists at this location. Exporting will overwrite it. The project and RAW files are not changed.",
-                "Replace file",
-            )
-            .warning()
-            .detail(&detail)
-            .show(
-                ui.ctx(),
-                egui::Id::new("Replace existing output?"),
-                dialog_escape_available,
-            );
-            match choice {
-                Some(presentation::DialogChoice::Cancel) => self.overwrite = None,
-                Some(presentation::DialogChoice::Confirm) => {
-                    self.overwrite = None;
-                    self.export(path, format, Overwrite::Confirmed, cx);
-                }
-                _ => {}
-            }
-        }
-        if self.failure.is_none() {
-            self.tasks
-                .modal(ui.ctx(), egui::Id::new("working-document"));
+        self.export_dialogs(ui.ctx(), dialog_escape_available, cx);
+        if self.failure.is_none()
+            && let Some(request) = self
+                .tasks
+                .modal(ui.ctx(), egui::Id::new("working-document"))
+        {
+            self.cancel_task(request);
         }
         if self.failure.is_some() {
             // A decision action can fail after this frame's feedback check.

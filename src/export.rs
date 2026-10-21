@@ -45,7 +45,7 @@ impl ImageSize {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExrPrecision {
     Half,
     Full,
@@ -143,7 +143,12 @@ fn exclusive_rename(from: &Path, to: &Path) -> Result<()> {
     let to = CString::new(to.as_os_str().as_bytes()).map_err(failure)?;
     // Same-directory temporary output; RENAME_EXCL atomically refuses a competing destination.
     if unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) } != 0 {
-        return Err(failure(std::io::Error::last_os_error()));
+        let error = std::io::Error::last_os_error();
+        return Err(if error.kind() == std::io::ErrorKind::AlreadyExists {
+            Error::DestinationExists
+        } else {
+            failure(error)
+        });
     }
     Ok(())
 }

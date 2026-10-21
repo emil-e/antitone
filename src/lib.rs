@@ -4,6 +4,8 @@ pub mod application;
 pub mod auto_crop;
 #[cfg(feature = "editor")]
 mod blocking_jobs;
+#[cfg(feature = "editor")]
+mod cancellation;
 pub mod color;
 pub mod coverage;
 pub mod crop;
@@ -110,6 +112,8 @@ pub enum Error {
     Gpu(String),
     Rendering(String),
     Export(String),
+    DestinationExists,
+    Cancelled,
     Project(String),
 }
 
@@ -127,6 +131,8 @@ impl std::fmt::Display for Error {
             Self::Gpu(message) => write!(f, "GPU processing: {message}"),
             Self::Rendering(message) => write!(f, "Output rendering: {message}"),
             Self::Export(message) => write!(f, "Export: {message}"),
+            Self::DestinationExists => write!(f, "Export destination already exists"),
+            Self::Cancelled => write!(f, "Operation cancelled"),
             Self::Project(message) => write!(f, "Project: {message}"),
         }
     }

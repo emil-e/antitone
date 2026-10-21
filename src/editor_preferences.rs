@@ -13,6 +13,8 @@ pub(super) struct Preferences {
     pub(super) filmstrip_height: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) cache_limits: Option<super::cache_limits::CacheLimits>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) export_folder: Option<PathBuf>,
 }
 
 impl Default for Preferences {
@@ -24,6 +26,7 @@ impl Default for Preferences {
             scope_height_ratio: 0.85,
             filmstrip_height: 140.,
             cache_limits: None,
+            export_folder: None,
         }
     }
 }

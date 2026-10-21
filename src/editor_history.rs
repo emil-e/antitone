@@ -237,7 +237,7 @@ impl Editor {
             && self.document.analysis_review.is_none()
             && self.document.analysis_preparing.is_none()
             && self.document.analysis_pending.is_none()
-            && self.overwrite.is_none()
+            && !self.export_modal()
             && self.transition.is_none()
             && self.after_save.is_none()
             && !self.allow_close

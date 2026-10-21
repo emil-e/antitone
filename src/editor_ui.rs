@@ -7,7 +7,7 @@ pub(super) use cards::ContactSheetLayout;
 
 #[path = "editor_ui_dialogs.rs"]
 mod dialogs;
-pub(super) use dialogs::{DecisionDialog, DialogChoice};
+pub(super) use dialogs::{DecisionDialog, DialogChoice, escape_requested, focus_default, modal};
 
 #[path = "editor_ui_feedback.rs"]
 mod feedback;

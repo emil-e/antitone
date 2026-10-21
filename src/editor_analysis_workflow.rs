@@ -46,13 +46,6 @@ impl Drop for Pending {
     }
 }
 
-struct Retire(Cancellation);
-impl Drop for Retire {
-    fn drop(&mut self) {
-        self.0.cancel();
-    }
-}
-
 #[derive(Default)]
 struct Progress {
     latest: Mutex<Option<(usize, usize)>>,
@@ -114,7 +107,7 @@ impl Editor {
         let services = self.source_services.as_ref().map(Services::from);
         let progress = Arc::new(Progress::default());
         let produced = progress.clone();
-        let retire = Retire(cancelled.clone());
+        let retire = cancelled.cancel_on_drop();
         let Some(task) = cx.spawn(move |cx| async move {
             let _retire = retire;
             let result = match services {
@@ -173,7 +166,7 @@ impl Editor {
         let services = self.source_services.as_ref().map(Services::from);
         let progress = Arc::new(Progress::default());
         let produced = progress.clone();
-        let retire = Retire(cancelled.clone());
+        let retire = cancelled.cancel_on_drop();
         let Some(task) = cx.spawn(move |cx| async move {
             let _retire = retire;
             let result = match services {

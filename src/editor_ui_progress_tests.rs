@@ -175,7 +175,12 @@ fn measured_progress_uses_supplied_file_counts() {
             .unwrap()
             .nodes
             .iter()
-            .any(|(_, node)| node.label() == Some("3 of 12") && node.numeric_value() == Some(25.))
+            .any(
+                |(_, node)| node.role() == egui::accesskit::Role::ProgressIndicator
+                    && node.label() == Some("Importing RAWs…")
+                    && node.value() == Some("3 of 12")
+                    && node.numeric_value() == Some(25.)
+            )
     );
 }
 

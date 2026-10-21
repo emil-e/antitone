@@ -63,12 +63,19 @@ impl Task {
     fn counts(self) -> bool {
         matches!(
             self,
-            Self::Import(_) | Self::Open(_) | Self::Analyze(_) | Self::AnalysisAreas(_)
+            Self::Import(_)
+                | Self::Open(_)
+                | Self::Analyze(_)
+                | Self::AnalysisAreas(_)
+                | Self::Export(_)
         )
     }
 
     fn modal(self) -> bool {
-        matches!(self.request(), TaskRequest::Document(_))
+        matches!(
+            self.request(),
+            TaskRequest::Document(_) | TaskRequest::Export(_)
+        )
     }
 
     fn cancel_action(self) -> Option<TaskCancel> {
@@ -76,6 +83,10 @@ impl Task {
             Self::Analyze(_) | Self::AnalysisAreas(_) => Some(TaskCancel {
                 request: self.request(),
                 label: "Cancel analysis",
+            }),
+            Self::Export(_) => Some(TaskCancel {
+                request: self.request(),
+                label: "Cancel export",
             }),
             Self::Look(_) => Some(TaskCancel {
                 request: self.request(),
@@ -143,6 +154,7 @@ pub(super) struct TaskView {
     pub title: String,
     pub measured: Option<(f32, String)>,
     pub cancel: Option<TaskCancel>,
+    modal: bool,
 }
 
 impl TaskView {
@@ -163,6 +175,10 @@ impl TaskView {
 
 impl TaskView {
     pub fn compact(&self, ui: &mut egui::Ui) -> Option<TaskRequest> {
+        if self.modal {
+            ui.add(egui::Label::new(&self.title).truncate());
+            return None;
+        }
         if self.presentation().compact(ui) {
             self.cancel.map(|action| action.request)
         } else {
@@ -172,7 +188,7 @@ impl TaskView {
 
     pub fn inline(&self, ui: &mut egui::Ui) {
         let mut content = self.presentation();
-        // Cancellation belongs to the global activity strip, independent of the selected stage.
+        // Cancellation belongs to the task's global surface, not a stage-local copy.
         content.cancel = None;
         content.inline(ui);
     }
@@ -237,10 +253,10 @@ impl TaskActivity {
         let active = self.active.as_ref()?;
         let (title, measured, cancel) = match active.state {
             TaskState::Cancelling => (
-                if matches!(active.task, Task::Look(_)) {
-                    "Cancelling look preparation…"
-                } else {
-                    "Cancelling analysis…"
+                match active.task {
+                    Task::Look(_) => "Cancelling look preparation…",
+                    Task::Export(_) => "Cancelling export…",
+                    _ => "Cancelling analysis…",
                 }
                 .into(),
                 None,
@@ -262,17 +278,28 @@ impl TaskActivity {
             title,
             measured,
             cancel,
+            modal: active.task.modal(),
         })
     }
 
-    pub fn modal(&self, context: &egui::Context, id: egui::Id) {
-        if self.active.as_ref().is_some_and(|active| {
-            active.task.modal() && active.started.elapsed() >= PROMINENCE_DELAY
-        }) {
-            self.view()
-                .expect("active task has presentation")
-                .presentation()
-                .modal(context, id);
+    pub fn blocks_workspace(&self) -> bool {
+        self.active
+            .as_ref()
+            .is_some_and(|active| active.task.modal())
+    }
+
+    pub fn modal(&self, context: &egui::Context, id: egui::Id) -> Option<TaskRequest> {
+        let active = self.active.as_ref().filter(|active| active.task.modal())?;
+        let remaining = PROMINENCE_DELAY.saturating_sub(active.started.elapsed());
+        if !remaining.is_zero() {
+            context.request_repaint_after(remaining);
+            return None;
+        }
+        let view = self.view().expect("active task has presentation");
+        if view.presentation().modal(context, id) {
+            view.cancel.map(|action| action.request)
+        } else {
+            None
         }
     }
 
@@ -286,6 +313,10 @@ impl TaskActivity {
 
 impl Editor {
     pub(super) fn cancel_task(&mut self, request: TaskRequest) {
+        if let TaskRequest::Export(id) = request {
+            self.cancel_export(id);
+            return;
+        }
         if let TaskRequest::Look(id) = request {
             if self.document.look.as_ref().is_some_and(|p| p.id == id) {
                 self.cancel_look();

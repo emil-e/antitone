@@ -18,6 +18,21 @@ pub struct ProgressContent<'a> {
     pub cancel: Option<&'a str>,
 }
 
+fn indeterminate_segment(track: egui::Rect, time: f64) -> egui::Rect {
+    // Keep a horizontal capsule inside the track, including at either turn.
+    // Rectangular scissoring alone cannot mask the track's rounded end caps.
+    let width = (track.width() * 0.25)
+        .max(track.height())
+        .min(track.width());
+    let phase = (time * 0.8).rem_euclid(1.) as f32;
+    let position = 1. - (2. * phase - 1.).abs();
+    let left = egui::lerp(track.left()..=(track.right() - width), position);
+    egui::Rect::from_min_size(
+        egui::pos2(left, track.top()),
+        egui::vec2(width, track.height()),
+    )
+}
+
 impl ProgressContent<'_> {
     fn spinner(&self, ui: &mut Ui, size: f32) -> egui::Response {
         let response = ui.add(egui::Spinner::new().size(size));
@@ -34,7 +49,17 @@ impl ProgressContent<'_> {
     fn bar(&self, ui: &mut Ui) {
         match self.progress {
             Progress::Measured { fraction, label } => {
-                ui.add(egui::ProgressBar::new(fraction).text(label));
+                let response = ui.add(egui::ProgressBar::new(fraction).text(label));
+                response.widget_info(|| {
+                    let mut info = egui::WidgetInfo::labeled(
+                        egui::WidgetType::ProgressIndicator,
+                        ui.is_enabled(),
+                        self.title,
+                    );
+                    info.value = Some(f64::from(fraction) * 100.);
+                    info.current_text_value = Some(label.into());
+                    info
+                });
             }
             Progress::Indeterminate => {
                 let (rect, response) = ui.allocate_exact_size(
@@ -51,13 +76,7 @@ impl ProgressContent<'_> {
                 if ui.is_rect_visible(rect) {
                     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
                     painter.rect_filled(rect, 9., ui.visuals().extreme_bg_color);
-                    let width = rect.width() * 0.25;
-                    let phase = (ui.input(|input| input.time) * 0.8).fract() as f32;
-                    let left = egui::lerp((rect.left() - width)..=rect.right(), phase);
-                    let segment = egui::Rect::from_min_size(
-                        egui::pos2(left, rect.top()),
-                        egui::vec2(width, rect.height()),
-                    );
+                    let segment = indeterminate_segment(rect, ui.input(|input| input.time));
                     painter.rect_filled(segment, 9., ui.visuals().selection.bg_fill);
                     ui.ctx()
                         .request_repaint_after(std::time::Duration::from_millis(50));
@@ -142,7 +161,13 @@ impl ProgressContent<'_> {
         dialogs::modal(context, id, |ui| {
             ui.heading(egui::RichText::new(self.title).strong());
             self.bar(ui);
-            self.cancel(ui)
+            if let Some(label) = self.cancel {
+                let cancel = TextAction::new(label).show(ui);
+                dialogs::focus_default(ui, &cancel);
+                cancel.clicked()
+            } else {
+                false
+            }
         })
         .inner
     }

@@ -2,7 +2,7 @@
 
 The editor connects photographic settings, image tools and asynchronous work. Its central rule is simple: **a view may be temporary, but accepted photographic state must remain coherent**.
 
-Roll, Photo and Rendering are editing scopes, not separate pipelines. Roll owns shared scan setup and grading; Photo owns individual grading and composition; Rendering owns the project-wide creative look and common preview/TIFF target. Changing tabs changes available controls, not the image's processing. [Architecture](architecture.md) describes how these scopes are owned and disposed.
+Roll, Photo and Rendering are editing scopes, not separate pipelines. Roll owns shared scan setup and grading; Photo owns individual grading and composition; Rendering owns the project-wide creative look and preview target, which also initializes rendered export. Changing tabs changes available controls, not the image's processing. [Architecture](architecture.md) describes how these scopes are owned and disposed.
 
 The editor uses a neutral dark workspace with amber identity and active-state accents. The shared application header presents the film-edge wordmark and project identity without making the wordmark an interactive control. [Branding assets](../assets/branding/README.md) explain the artwork and regeneration.
 
@@ -75,13 +75,21 @@ Working feedback answers two questions: **what is happening, and what can I stil
 | Work | Presentation and retained use |
 | --- | --- |
 | RAW import, project Open/New/Save, correction, undo/redo | A centred working modal after a brief delay; the transaction already blocks the workspace |
-| Export | Quiet status-bar activity; canvas inspection, stage switching and preferences stay usable |
+| Export | A delayed working modal with finished-photo counts and Cancel; workspace, inspection and application panels stay blocked until completion or cancellation acknowledgement |
 | Selected RAW preparation | A spinner on the empty canvas; cached pending previews stay visible but never become the processing source |
 | Reference preparation, picker measurement | Local tool/viewer feedback; no extra global dialog |
 | Analyze preparation and estimation | Counted work, then indeterminate validation, in the activity strip with genuine Cancel |
 | Thumbnails, camera previews, scopes | Existing in-place image/card/scope feedback |
 
 [Task activity](../src/editor_activity.rs) is the foreground integration point: begin a typed task on the controller's request ID, report counted or indeterminate progress, and finish the matching request on success, failure or send-failure. Request keys are scoped by operation, so a photo-load result cannot finish an export that happens to share a number; stale reports are ignored. Cancellation has two responsibilities — signal the real worker, then mark the task `cancelling`, which drops measured progress and Cancel until matching completion. [Working presentation](../src/editor_ui_progress.rs) renders these views across modal/inline/compact surfaces.
+
+## Export photographs
+
+File → **Export…** writes Selected photos or All photos in filmstrip order; non-filmstrip source/reference records are excluded. Choose an existing destination folder, TIFF or EXR, and format-specific output settings. TIFF offers sRGB/Display P3 with 16-bit RGB and lossless Deflate; EXR has fixed scene-linear AP0 and half/full float precision. [Colour and output](colour-and-output.md#tiff-and-exr-serve-different-purposes) explains the different rendering semantics.
+
+Filenames use the source stem with an optional suffix. Keep both is the non-destructive default, Skip leaves existing files alone, and Replace requires explicit batch confirmation. The last accepted folder is an application preference. Export choices and target overrides do not edit the project or dirty state.
+
+The batch captures accepted crops and adjustments at full resolution, then processes one photo at a time without visiting it. Cancel stops subsequent work and may stop the current photo at existing safe checkpoints; an in-flight native/encoder call can finish before acknowledgement. The modal retains cancelling feedback, and Escape/outside clicks do not dismiss running work. Completion summarizes exported, skipped, failed and remaining photos, with diagnostics and Show in Finder for completed output. Individual failures leave other photos exportable; published files are never rolled back as a batch.
 
 ## Source inspection is a view
 

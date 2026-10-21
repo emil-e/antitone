@@ -88,9 +88,11 @@ impl Editor {
 
     fn application_modal(&self) -> bool {
         self.allow_close
+            || self.tasks.blocks_workspace()
             || self.failure.is_some()
             || self.document_pending.is_some()
-            || self.overwrite.is_some()
+            || self.export_dialog.is_some()
+            || self.export_summary.is_some()
             || self.transition.is_some()
             || self.project_overwrite.is_some()
             || self.removal_pending.is_some()
@@ -147,9 +149,7 @@ impl Editor {
                 .enabled
                 .extend([New, Open, AddScans, Close, Save, SaveAs]);
             if self.calibration().is_some() && self.document.visit.ready.is_some() {
-                state
-                    .enabled
-                    .extend([ExportTiff, ExportExrHalf, ExportExrFull]);
+                state.enabled.insert(Export);
             }
         }
         if self.document.visit.ready.is_some()
@@ -215,15 +215,6 @@ impl Editor {
             Action::SaveAs => FileAction::SaveAs,
             _ => return None,
         })
-    }
-
-    pub(super) fn menu_export(&self, action: Action) -> Option<OutputFormat> {
-        match action {
-            Action::ExportTiff => Some(OutputFormat::Tiff(self.target)),
-            Action::ExportExrHalf => Some(OutputFormat::Exr(ExrPrecision::Half)),
-            Action::ExportExrFull => Some(OutputFormat::Exr(ExrPrecision::Full)),
-            _ => None,
-        }
     }
 
     pub(super) fn menu_input(&mut self, clipboard: Option<String>) -> Vec<egui::Event> {

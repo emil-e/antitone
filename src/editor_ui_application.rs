@@ -192,7 +192,7 @@ fn help_contents(ui: &mut egui::Ui) {
     ui.strong("Develop your photographs");
     ui.label("Use Roll to set calibration and scan orientation. Analyze proposes sampling areas for review before applying a starting grade. Use Photo for individual grading, cropping and cleanup; Rendering chooses the preview and TIFF colour space.");
     ui.strong("Save and export");
-    ui.label("Save stores your settings and source references in an .antitone project. Keep the original scans available. File → Export writes the current photo as TIFF or EXR; finish any active draft first.");
+    ui.label("Save stores your settings and source references in an .antitone project. Keep the original scans available. File → Export writes selected photos or the whole roll as TIFF or EXR; finish any active draft first.");
     ui.label("Dust repairs are saved in the project, but TIFF/EXR exports and filmstrip thumbnails do not yet include them.");
     ui.strong("Inspect the image");
     ui.label("Use the viewer controls to fit, zoom and compare the developed source. F enters photo-only inspection; F or Escape returns. This covers the current display without opening a macOS fullscreen Space.");

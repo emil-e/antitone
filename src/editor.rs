@@ -4,7 +4,7 @@ use crate::{
     color::Balance,
     coverage::Coverage,
     crop::Crop,
-    export::{ExrPrecision, Overwrite},
+    export::ExrPrecision,
     geometry::{Composition, PhotoOrientation, RollOrientation},
     gpu::{ProcessingInput, ProcessingParameters, ProcessingSignature},
     local_adjustments::PhotoGradeSnapshot,
@@ -136,6 +136,10 @@ mod document_services;
 #[path = "editor_document_workflow.rs"]
 mod document_workflow;
 use document_services::{Preparation, Prepared, Request as DocumentRequest};
+#[path = "editor_export_batch.rs"]
+mod export_batch;
+#[path = "editor_export_dialog.rs"]
+mod export_dialog;
 #[path = "editor_export_services.rs"]
 mod export_services;
 #[cfg(test)]
@@ -162,6 +166,8 @@ mod source_workflow;
 use measurement::Measurement;
 #[path = "editor_navigation.rs"]
 mod navigation;
+#[cfg(test)]
+use crate::export::Overwrite;
 #[path = "editor_roll_selection.rs"]
 mod roll_selection;
 #[cfg(test)]
@@ -359,7 +365,8 @@ pub struct Editor {
     selected: usize,
     roll_selection: RollSelection,
     removal_pending: Option<Vec<SourceId>>,
-    overwrite: Option<(PathBuf, OutputFormat)>,
+    export_dialog: Option<export_batch::Draft>,
+    export_summary: Option<export_batch::Summary>,
     correction: Option<Arc<Correction>>,
     flat_edit: Option<FlatEdit>,
     developments: Option<development::Scheduler>,
@@ -417,6 +424,10 @@ impl Editor {
             queue,
             submissions,
             screening,
+            editor
+                .source_services
+                .clone()
+                .expect("source services initialized"),
         ));
         editor.developments = Some(developments);
         editor.source_epoch = source_epoch;
@@ -517,7 +528,8 @@ impl Editor {
             selected: 0,
             roll_selection: RollSelection::default(),
             removal_pending: None,
-            overwrite: None,
+            export_dialog: None,
+            export_summary: None,
             correction: None,
             flat_edit: None,
         }
@@ -1200,35 +1212,6 @@ impl Editor {
         // Render outgoing numeric controls once to commit focus loss before switching stages.
         self.tab = next_tab;
         (scope_slot, analyze)
-    }
-
-    fn export_dialog(&mut self, format: OutputFormat, cx: &UiContext<'_, Self>) {
-        let Some(ready) = &self.document.visit.ready else {
-            return;
-        };
-        let extension = if matches!(format, OutputFormat::Tiff(_)) {
-            "tif"
-        } else {
-            "exr"
-        };
-        let filename = format!(
-            "{}.{}",
-            ready.path.file_stem().unwrap_or_default().to_string_lossy(),
-            extension
-        );
-        if let Some(path) = crate::platform::menu::with_native_dialog(|| {
-            rfd::FileDialog::new()
-                .set_title("Export Photo")
-                .set_file_name(filename)
-                .add_filter("Output", &[extension])
-                .save_file()
-        }) {
-            if path.exists() {
-                self.overwrite = Some((path, format));
-            } else {
-                self.export(path, format, Overwrite::Refuse, cx);
-            }
-        }
     }
 }
 

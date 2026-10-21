@@ -87,21 +87,29 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
             {
                 harness.update(|editor| held_activity(editor, Task::Export(id)));
                 render_case(&mut harness, &format!("export-{layout}"));
+                let title = harness.read(|editor| editor.tasks.view().unwrap().title);
                 let progress = harness
-                    .get_by_role_and_label(egui::accesskit::Role::ProgressIndicator, "Exporting…")
+                    .get_by_role_and_label(egui::accesskit::Role::ProgressIndicator, &title)
                     .rect();
                 assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(progress));
                 assert!(
-                    !harness
+                    harness
                         .get_by_role_and_label(egui::accesskit::Role::Tab, "Photo")
                         .accesskit_node()
                         .is_disabled()
                 );
+                assert!(
+                    !harness
+                        .get_by_label("Cancel export")
+                        .accesskit_node()
+                        .is_disabled()
+                );
+                let old_tab = harness.read(|editor| editor.tab);
                 harness
                     .get_by_role_and_label(egui::accesskit::Role::Tab, "Photo")
                     .click();
                 harness.step();
-                harness.read(|editor| assert_eq!(editor.tab, 1));
+                harness.read(|editor| assert_eq!(editor.tab, old_tab));
                 let old_view = harness.read(|editor| editor.viewport);
                 let geometry = harness.read(|editor| editor.last_layout.unwrap().0);
                 let point = geometry.image.center_bottom() - egui::vec2(0., 10.);
@@ -115,7 +123,10 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                     });
                     harness.step();
                 }
-                harness.read(|editor| assert_ne!(editor.viewport, old_view));
+                harness.read(|editor| assert_eq!(editor.viewport, old_view));
+                harness.key_press(egui::Key::Escape);
+                harness.step();
+                harness.read(|editor| assert!(editor.tasks.blocks_workspace()));
                 harness.update(|editor| editor.tasks.finish(TaskRequest::Export(id)));
                 harness.update(|editor| editor.busy = false);
                 harness.step();

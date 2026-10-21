@@ -229,6 +229,7 @@ fn workload(
         queue.clone(),
         editor.submissions.clone(),
         screening,
+        editor.source_services.clone().unwrap(),
     ));
     let exercise = crate::application::test_support::with_application(editor, |app| {
         let exercise = (|| -> Result<()> {

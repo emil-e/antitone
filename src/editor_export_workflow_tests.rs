@@ -31,6 +31,26 @@ fn hold_first_submission(editor: &Editor) -> (mpsc::Receiver<()>, mpsc::Sender<(
     (starts, release)
 }
 
+fn wait_for_submission(
+    app: &mut crate::application::test_support::TestApplication<'_, Editor>,
+    starts: &mpsc::Receiver<()>,
+) {
+    let start = Instant::now();
+    loop {
+        // A batch has multiple service awaits before GPU work. Drive those
+        // continuations while waiting for the actual submitted-work gate.
+        app.pump();
+        if starts.try_recv().is_ok() {
+            return;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(30),
+            "export did not submit GPU work"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
 fn fixture() -> Editor {
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -132,8 +152,7 @@ fn superseded_export_keeps_physical_admission_until_its_submitted_gpu_work_retir
                 access,
             );
         });
-        app.pump();
-        starts.recv_timeout(Duration::from_secs(30)).unwrap();
+        wait_for_submission(app, &starts);
         let (id, cancelled) = app.read(|editor| {
             (
                 editor.export_operation.pending.unwrap(),
@@ -149,7 +168,7 @@ fn superseded_export_keeps_physical_admission_until_its_submitted_gpu_work_retir
             );
         });
         app.pump();
-        assert!(cancelled.load(Ordering::Relaxed));
+        assert!(cancelled.is_cancelled());
         app.read(|editor| {
             assert_ne!(editor.export_operation.pending, Some(id));
             assert!(!editor.workflow_jobs.idle());
@@ -189,11 +208,10 @@ fn application_retirement_signals_stop_but_retains_the_admitted_export_source_un
                 access,
             );
         });
-        app.pump();
-        starts.recv_timeout(Duration::from_secs(30)).unwrap();
+        wait_for_submission(app, &starts);
         let cancelled = app.read(|editor| editor.export_operation.cancelled.clone().unwrap());
         app.close_execution();
-        assert!(cancelled.load(Ordering::Relaxed));
+        assert!(cancelled.is_cancelled());
         app.update(|editor| editor.document = Document::default().into());
         assert!(source.upgrade().is_some());
         assert!(!jobs.idle());
@@ -228,8 +246,7 @@ fn a_stop_after_publication_acknowledges_the_committed_file_without_rewriting_su
                 access,
             );
         });
-        app.pump();
-        starts.recv_timeout(Duration::from_secs(30)).unwrap();
+        wait_for_submission(app, &starts);
         release.send(()).unwrap();
         // The worker can publish while UI continuation delivery remains unpolled.
         let start = Instant::now();
@@ -242,12 +259,7 @@ fn a_stop_after_publication_acknowledges_the_committed_file_without_rewriting_su
         }
         app.read(|editor| {
             assert!(editor.export_operation.pending.is_some());
-            editor
-                .export_operation
-                .cancelled
-                .as_ref()
-                .unwrap()
-                .store(true, Ordering::Relaxed);
+            editor.export_operation.cancelled.as_ref().unwrap().cancel();
         });
         app.run_until(Duration::from_secs(30), |editor| {
             editor.export_operation.pending.is_none()

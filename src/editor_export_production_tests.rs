@@ -145,12 +145,7 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
                     Overwrite::Confirmed,
                     cx,
                 );
-                editor
-                    .export_operation
-                    .cancelled
-                    .as_ref()
-                    .unwrap()
-                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                editor.export_operation.cancelled.as_ref().unwrap().cancel();
             });
         });
         assert!(editor.status.contains("cancel"), "{}", editor.status);

@@ -32,6 +32,8 @@ Editor state is nested scopes rather than one flat struct ([`editor_document_sco
 
 Navigation creates fresh visits. Retiring one discards its transient tools without accepting geometry or changing source-owned adjustments; a rejected navigation or failed candidate preserves the current visit. A captured document is a data snapshot, not a cloned owner or history: retiring the owner closes publication even while snapshots and pixel leases stay alive. Accepted state, drafts and durable preferences are separated in [editor](editor.md#accepted-state-and-drafts).
 
+Export instead owns an application-level batch: fixed recipes, resolved paths, correction and service handles. It acquires one original at a time without preparing viewer resources. Document caches supply optional reuse, not execution authority; closing one cannot retire the batch. Blocking workspace interaction during export is a separate UI choice.
+
 ## Services, workers and admission
 
 Workflows never block; services run the work off the UI thread and workflows await typed results:
@@ -47,7 +49,11 @@ Presentation follows the same separation: [`editor_activity.rs`](../src/editor_a
 
 Every awaited result carries request IDs, generations and input snapshots. Validate a complete result against current state before promoting anything: stale or superseded results are discarded, and successful candidates promote atomically — the UI installs Analyze's support and grade together, or not at all.
 
-Cancellation is cooperative. Dropping a task handle cancels its UI continuation, not synchronous computation already running; captured leases and physical admission survive until that computation returns, and shutdown closes admission while waking waiters. This is why cancelling cannot promise to interrupt a LibRaw call or already-submitted GPU work.
+### Cooperative cancellation
+
+Use the shared [cancellation signal](../src/cancellation.rs) for new cancellable workflows. Each operation gets a fresh, one-way signal with polling and async wakeup; capture its cancel-on-drop guard in the continuation so retirement before the first poll also signals stop. Analysis and export use this pattern.
+
+User Cancel keeps the continuation and cancelling feedback until acknowledgement. Owner retirement drops continuation rights while running work retains its inputs and physical admission through cleanup. Queued work can use `BlockingJobs::run_admitted_cancellable`; running work chooses its own safe checkpoints. Return cancellation distinctly from failure, never by parsing diagnostic text, and preserve already-committed side effects as successes. [Development checks](development.md#cancellation-checks) exercise these boundaries.
 
 ## Native and GPU ownership
 

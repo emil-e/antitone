@@ -48,7 +48,7 @@ impl Editor {
             && self.transition.is_none()
             && self.project_overwrite.is_none()
             && !self.allow_close
-            && self.overwrite.is_none()
+            && !self.export_modal()
             && !self.document.visit.adjustments.confirming()
     }
 

@@ -163,9 +163,25 @@ cargo test --locked --features raw,gpu,export,project,ocio-reference \
 cargo build --locked --release --features editor --bin antitone
 ```
 
-Check captured service output separately from UI decisions/activity, and distinguish numerical correspondence from exact serialization: GPU/scalar comparisons allow justified rounding differences, while encoder tests require exact supplied-sample serialization. Check reconstruction and reopened files as well as intermediate arithmetic. The [output guide](colour-and-output.md#tiff-and-exr-serve-different-purposes) owns processing and resource boundaries.
+Check captured service output separately from UI decisions/activity, and distinguish numerical correspondence from exact serialization: GPU/scalar comparisons allow justified rounding differences, while encoder tests require exact supplied-sample serialization. Check reconstruction and reopened files as well as intermediate arithmetic. The [output guide](colour-and-output.md#tiff-and-exr-serve-different-purposes) owns processing and resource boundaries. For batches, check source-specific pixels/grades, cold acquisition after cache closure, per-photo failure continuation, prior-output protection and publication races. Composed checks cover scope/target isolation, numeric commits, modal cancellation and reachable narrow-layout actions:
+
+```sh
+ANTITONE_UI_CAPTURE="$PWD/.cache/ui-captures" \
+  cargo test --locked --features ui-tests --lib -- \
+  editor::kittest_tests::export:: editor::kittest_tests::progress:: --test-threads=1
+```
 
 The opt-in [ImageIO export check](diagnostics.md#export) independently reopens TIFF storage/profiles; it needs no private files.
+
+## Cancellation checks
+
+Exercise the [shared cancellation pattern](architecture.md#cooperative-cancellation) before the first poll, with parked waiters, queued admission and admitted work. Observe actual wake/submission boundaries, retain cancelling feedback until acknowledgement, and verify physical resources survive owner retirement through cleanup. A stop after publication must preserve success; export can finish its current photo before stopping.
+
+```sh
+cargo test --locked --features editor --lib -- \
+  cancellation:: editor::analysis_workflow::acknowledgement_tests:: \
+  editor::export_workflow:: editor::export_batch:: --test-threads=1
+```
 
 ## Roll analysis
 

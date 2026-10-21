@@ -17,6 +17,8 @@ mod auto_crop;
 mod correction;
 #[path = "editor_kittest_dust.rs"]
 mod dust;
+#[path = "editor_kittest_export.rs"]
+mod export;
 #[path = "editor_kittest_fullscreen.rs"]
 mod fullscreen;
 #[path = "editor_kittest_history.rs"]
@@ -27,6 +29,8 @@ mod looks;
 mod masks;
 #[path = "editor_kittest_menus.rs"]
 mod menus;
+#[path = "editor_kittest_progress.rs"]
+mod progress;
 #[path = "editor_kittest_project.rs"]
 mod project;
 #[path = "editor_kittest_roll_selection.rs"]
@@ -459,7 +463,7 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
         for (decision, name, confirm) in [
             (0, "save", "Save changes"),
             (1, "project-replace", "Replace project"),
-            (2, "output-replace", "Replace file"),
+            (2, "output-replace", "Replace and export"),
         ] {
             harness.update(|editor| match decision {
                 0 => editor.transition = Some(Transition::New),
@@ -470,10 +474,13 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
                     ))
                 }
                 2 => {
-                    editor.overwrite = Some((
-                        PathBuf::from("/exports/Scans/照片-long-exported-filename.tiff"),
-                        OutputFormat::Tiff(OutputTarget::Srgb),
-                    ))
+                    let mut draft = export_batch::Draft::new(
+                        OutputTarget::Srgb,
+                        PathBuf::from("/exports/Scans/照片-long-export-folder"),
+                    );
+                    draft.collision = export_batch::Collision::Replace;
+                    draft.confirming_replace = true;
+                    editor.export_dialog = Some(draft);
                 }
                 _ => unreachable!(),
             });
@@ -501,11 +508,18 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
             }
             harness.get_by_label("Cancel").click();
             harness.run();
+            if decision == 2 {
+                harness.read(|editor| {
+                    assert!(!editor.export_dialog.as_ref().unwrap().confirming_replace)
+                });
+                harness.get_by_label("Cancel").click();
+                harness.run();
+            }
             harness.read(|editor| {
                 assert!(
                     editor.transition.is_none()
                         && editor.project_overwrite.is_none()
-                        && editor.overwrite.is_none()
+                        && editor.export_dialog.is_none()
                 )
             });
             harness.read(|editor| assert!(!editor.busy));

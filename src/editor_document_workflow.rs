@@ -253,7 +253,8 @@ impl Editor {
                 self.region = None;
                 self.pick_drag = None;
                 self.return_notice = None;
-                self.overwrite = None;
+                self.export_dialog = None;
+                self.export_summary = None;
                 self.invalidate_original();
                 if let Some(context) = flat_context {
                     self.viewport = context.viewport;

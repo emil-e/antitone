@@ -22,7 +22,7 @@ pub(crate) fn write(
     let mut check = || {
         check()?;
         if cancelled() {
-            return Err(Error::Export("export cancelled".into()));
+            return Err(Error::Cancelled);
         }
         Ok(())
     };
@@ -32,7 +32,7 @@ pub(crate) fn write(
         SourcePrepare,
         crate::repair_source::resolve_output_with(job.scan, job.recipe, execution)
     )?
-    .ok_or_else(|| Error::Export("export repair preparation cancelled".into()))?;
+    .ok_or(Error::Cancelled)?;
     check()?;
     let request = Request {
         scan: job.scan,

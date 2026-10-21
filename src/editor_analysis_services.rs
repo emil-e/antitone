@@ -1,35 +1,7 @@
 use super::{Error, Scan, analysis, development, source};
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
 
-#[derive(Clone, Default)]
-pub(super) struct Cancellation(Arc<Stop>);
-
-#[derive(Default)]
-struct Stop {
-    requested: AtomicBool,
-    changed: event_listener::Event,
-}
-
-impl Cancellation {
-    pub fn cancel(&self) {
-        self.0.requested.store(true, Ordering::Relaxed);
-        self.0.changed.notify(usize::MAX);
-    }
-
-    pub fn is_cancelled(&self) -> bool {
-        self.0.requested.load(Ordering::Relaxed)
-    }
-
-    pub async fn wait(&self) {
-        let changed = self.0.changed.listen();
-        if !self.is_cancelled() {
-            changed.await;
-        }
-    }
-}
+pub(super) use crate::cancellation::Cancellation;
 
 #[derive(Clone)]
 pub(super) struct Services {

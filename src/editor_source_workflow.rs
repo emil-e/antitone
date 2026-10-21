@@ -119,7 +119,8 @@ impl Editor {
         self.last_layout = None;
         self.invalidate_original();
         self.viewport.fit();
-        self.overwrite = None;
+        self.export_dialog = None;
+        self.export_summary = None;
         self.return_notice = None;
         self.document.pick_view = None;
         self.document.pick_return = None;

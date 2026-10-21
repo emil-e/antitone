@@ -61,7 +61,7 @@ fn branded_header_preserves_composed_menu_availability_and_processing_state() {
                     availability.enabled(crate::platform::menu::Action::AddScans),
                     !busy
                 );
-                assert!(!availability.enabled(crate::platform::menu::Action::ExportTiff));
+                assert!(!availability.enabled(crate::platform::menu::Action::Export));
                 assert_eq!((editor.roll, editor.photo, editor.document.dirty()), before);
                 assert!(editor.pick.is_none());
                 assert!(editor.document.visit.crop_edit.is_none());

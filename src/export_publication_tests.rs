@@ -2,6 +2,21 @@ use super::*;
 use std::cell::Cell;
 
 #[test]
+fn competing_publication_has_a_typed_collision_and_never_replaces_the_winner() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("competing.tif");
+    let result = atomic_file(
+        &path,
+        Overwrite::Refuse,
+        |file| file.write_all(b"our output").map_err(failure),
+        || fs::write(&path, b"competing output").map_err(failure),
+    );
+    assert_eq!(result, Err(Error::DestinationExists));
+    assert_eq!(fs::read(&path).unwrap(), b"competing output");
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+}
+
+#[test]
 fn final_stop_after_all_pixels_preserves_existing_destination_and_retires_temporary_files() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("existing");

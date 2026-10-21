@@ -131,12 +131,44 @@ impl Services {
         request: Request,
         cancelled: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<Ready, String> {
+        let developed = self
+            .clone()
+            .develop(request, cancelled.clone(), false)
+            .await?;
+        self.jobs
+            .run(move || {
+                developed.prepare_gpu(&self.renderers, &self.device, &self.queue, &|| {
+                    cancelled.load(std::sync::atomic::Ordering::Relaxed)
+                })
+            })
+            .await
+            .map_err(|_| "Source preparation worker panicked".to_owned())?
+            .map_err(|error| error.to_string())
+    }
+
+    /// Export demand owns its lifetime; document caches supply optional reuse only.
+    pub async fn acquire(
+        self,
+        request: Request,
+        cancelled: crate::cancellation::Cancellation,
+    ) -> Result<Context, String> {
+        self.develop(request, cancelled.flag(), true)
+            .await
+            .map(|value| value.context)
+    }
+
+    async fn develop(
+        self,
+        request: Request,
+        cancelled: Arc<std::sync::atomic::AtomicBool>,
+        independent: bool,
+    ) -> Result<Developed, String> {
         let scheduler = self.developments.clone();
         let retired = cancelled.clone();
         let acquisition = self
             .jobs
             .run_admitted(move |admission| {
-                request.begin(&scheduler, admission, &|| {
+                request.begin(&scheduler, admission, independent, &|| {
                     retired.load(std::sync::atomic::Ordering::Relaxed)
                 })
             })
@@ -157,12 +189,7 @@ impl Services {
         self.jobs
             .run(move || {
                 let retired = || cancelled.load(std::sync::atomic::Ordering::Relaxed);
-                request.accept(source, file, &retired, timing)?.prepare_gpu(
-                    &self.renderers,
-                    &self.device,
-                    &self.queue,
-                    &retired,
-                )
+                request.accept(source, file, &retired, timing)
             })
             .await
             .map_err(|_| "Source preparation worker panicked".to_owned())?
@@ -221,16 +248,22 @@ impl Request {
     }
 
     fn begin(
-        self,
+        mut self,
         developments: &development::Scheduler,
         admission: crate::blocking_jobs::Admission,
+        independent: bool,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Acquisition, Error> {
+        let retained = self.retained();
+        if independent {
+            // The cache may close while native work is queued. Do not use its
+            // publication lifetime as authority for an accepted file operation.
+            self.cache = None;
+        }
         self.require_live(cancelled)?;
         let demand = self.demand()?;
         let file = demand.file.clone();
         let started = std::time::Instant::now();
-        let retained = self.retained();
         let native_hit = retained.is_some();
         let supply = match retained {
             Some(source) => Supply::Retained(source),

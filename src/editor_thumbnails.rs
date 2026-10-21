@@ -914,7 +914,7 @@ impl Editor {
             && self.document_pending.is_none()
             && self.transition.is_none()
             && self.project_overwrite.is_none()
-            && self.overwrite.is_none()
+            && !self.export_modal()
             && self.removal_pending.is_none()
     }
 

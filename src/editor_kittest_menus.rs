@@ -201,9 +201,11 @@ fn fallback_file_menu_keeps_unavailable_commands_discoverable() {
                 .accesskit_node()
                 .is_disabled()
         );
-        harness.get_by_label("Export").click();
-        harness.step();
-        harness.step();
-        assert!(harness.get_by_label("TIFF…").accesskit_node().is_disabled());
+        assert!(
+            harness
+                .get_by_label("Export…")
+                .accesskit_node()
+                .is_disabled()
+        );
     });
 }

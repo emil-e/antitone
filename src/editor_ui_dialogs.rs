@@ -136,17 +136,30 @@ impl<'a> DecisionDialog<'a> {
     }
 }
 
-pub(super) fn modal<R>(
+pub(in crate::editor) fn modal<R>(
     context: &Context,
     id: Id,
     contents: impl FnOnce(&mut Ui) -> R,
 ) -> egui::ModalResponse<R> {
-    egui::Modal::new(id)
+    let response = egui::Modal::new(id)
         .frame(frame(context))
         .show(context, |ui| {
             body(ui);
             contents(ui)
-        })
+        });
+    // Centered areas place the next pass from their measured size. Scrollable
+    // forms can need more than the initial sizing pass before input bounds settle.
+    let size = response.response.rect.size();
+    let changed = context.data_mut(|data| {
+        let key = id.with("measured-size");
+        let previous = data.get_temp::<egui::Vec2>(key);
+        data.insert_temp(key, size);
+        previous != Some(size)
+    });
+    if changed {
+        context.request_repaint();
+    }
+    response
 }
 
 pub(super) fn frame(context: &Context) -> egui::Frame {
@@ -160,7 +173,7 @@ pub(super) fn body(ui: &mut Ui) {
     ui.spacing_mut().item_spacing = egui::vec2(ITEM_GAP, ITEM_GAP);
 }
 
-pub(super) fn focus_default(ui: &Ui, action: &egui::Response) {
+pub(in crate::editor) fn focus_default(ui: &Ui, action: &egui::Response) {
     let focused = ui.memory(|memory| memory.focused());
     let focused_here = focused
         .and_then(|id| ui.ctx().read_response(id))
@@ -170,7 +183,10 @@ pub(super) fn focus_default(ui: &Ui, action: &egui::Response) {
     }
 }
 
-pub(super) fn escape_requested<R>(response: &egui::ModalResponse<R>, available: bool) -> bool {
+pub(in crate::editor) fn escape_requested<R>(
+    response: &egui::ModalResponse<R>,
+    available: bool,
+) -> bool {
     // Modal::should_close also accepts backdrop clicks; these messages need explicit dismissal.
     available
         && response.is_top_modal

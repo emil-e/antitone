@@ -48,7 +48,12 @@ fn typed_lifecycle_scopes_ids_and_rejects_stale_progress_and_cleanup() {
 #[test]
 fn progress_and_cancellation_states_keep_unknown_duration_honest() {
     let mut tasks = TaskActivity::default();
-    for task in [Task::Import(1), Task::Open(1), Task::Analyze(1)] {
+    for task in [
+        Task::Import(1),
+        Task::Open(1),
+        Task::Analyze(1),
+        Task::Export(1),
+    ] {
         tasks.begin(task);
         tasks.report(
             task.request(),
@@ -66,6 +71,7 @@ fn progress_and_cancellation_states_keep_unknown_duration_honest() {
         }
         assert!(tasks.view().is_some());
     }
+    tasks.begin(Task::Analyze(1));
     tasks.report(
         TaskRequest::Analyze(1),
         TaskProgress::Counted {
@@ -97,7 +103,6 @@ fn progress_and_cancellation_states_keep_unknown_duration_honest() {
         Task::Photo(1),
         Task::Reference(1),
         Task::Measurement(1, Pick::Dmin),
-        Task::Export(1),
     ] {
         tasks.begin(task);
         tasks.report(
@@ -365,6 +370,45 @@ fn feedback_prominence_is_delayed_without_changing_document_availability() {
                     .is_some()
             );
             assert!(editor.busy && editor.document_pending.is_some());
+        });
+    });
+}
+
+#[test]
+fn export_blocks_the_workspace_before_its_progress_modal_becomes_prominent() {
+    let mut editor = fixture();
+    add_ready_fixture(&mut editor);
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.export(
+                "delayed.exr".into(),
+                OutputFormat::Exr(ExrPrecision::Full),
+                Overwrite::Refuse,
+                cx,
+            );
+            assert!(editor.tasks.blocks_workspace());
+            assert!(
+                !editor
+                    .application_menu_state()
+                    .enabled(crate::platform::menu::Action::Settings)
+            );
+            assert!(!editor.fullscreen_available());
+            let context = egui::Context::default();
+            app_frame(editor, &context, vec![]);
+            assert!(
+                context
+                    .memory(|memory| memory.area_rect(egui::Id::new("working-document")))
+                    .is_none()
+            );
+            editor.tasks.elapse(Duration::from_secs(1));
+            app_frame(editor, &context, vec![]);
+            app_frame(editor, &context, vec![]);
+            assert!(
+                context
+                    .memory(|memory| memory.area_rect(egui::Id::new("working-document")))
+                    .is_some()
+            );
+            assert!(editor.busy && editor.export_operation.pending.is_some());
         });
     });
 }

@@ -15,12 +15,13 @@ pub(super) struct FullscreenView {
 impl Editor {
     fn fullscreen_blocked(&self) -> bool {
         self.menus.panel.is_some()
+            || self.tasks.blocks_workspace()
             || self.failure.is_some()
             || self.document_pending.is_some()
             || self.transition.is_some()
             || self.project_overwrite.is_some()
             || self.allow_close
-            || self.overwrite.is_some()
+            || self.export_modal()
             || self.removal_pending.is_some()
             || self.document.visit.adjustments.confirming()
     }

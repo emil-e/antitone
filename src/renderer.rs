@@ -231,6 +231,14 @@ impl GpuRenderer {
             .map_err(Clone::clone)
     }
 
+    #[cfg(all(test, feature = "editor"))]
+    pub(crate) fn fail_export_initialization(&self, error: Error) {
+        assert!(
+            self.export.set(Err(error)).is_ok(),
+            "fixture requires an uninitialized export cache"
+        );
+    }
+
     #[cfg(all(test, feature = "raw", feature = "export"))]
     pub(crate) fn export_initialized(&self) -> bool {
         self.export.get().is_some()

@@ -2194,16 +2194,16 @@ fn contextual_crop_reset_preserves_orientation_grade_and_accepted_state_until_ap
 }
 
 #[test]
-fn navigation_invalidates_pending_overwrite() {
+fn navigation_invalidates_pending_export_dialog() {
     let editor = fixture();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.overwrite = Some((
-                "existing.tif".into(),
-                OutputFormat::Tiff(OutputTarget::DisplayP3),
+            editor.export_dialog = Some(export_batch::Draft::new(
+                OutputTarget::DisplayP3,
+                PathBuf::new(),
             ));
             editor.load("another.arw".into(), cx);
-            assert!(editor.overwrite.is_none());
+            assert!(editor.export_dialog.is_none());
             assert!(editor.document.visit.source.pending());
         });
     });

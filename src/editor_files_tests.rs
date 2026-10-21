@@ -397,7 +397,12 @@ fn document_and_export_decisions_ignore_outside_clicks_and_cancel_without_dispat
             match decision {
                 0 => editor.transition = Some(Transition::Close),
                 1 => editor.project_overwrite = Some((path.clone(), Some(Transition::New))),
-                _ => editor.overwrite = Some((path.clone(), OutputFormat::Exr(ExrPrecision::Half))),
+                _ => {
+                    editor.export_dialog = Some(export_batch::Draft::new(
+                        OutputTarget::Srgb,
+                        directory.path().to_owned(),
+                    ))
+                }
             }
             let context = egui::Context::default();
             ui_frame(&mut editor, &context, vec![]);
@@ -406,14 +411,14 @@ fn document_and_export_decisions_ignore_outside_clicks_and_cancel_without_dispat
             assert!(
                 editor.transition.is_some()
                     || editor.project_overwrite.is_some()
-                    || editor.overwrite.is_some()
+                    || editor.export_dialog.is_some()
             );
             assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
             ui_frame(&mut editor, &context, key(cancel_key));
             assert!(
                 editor.transition.is_none()
                     && editor.project_overwrite.is_none()
-                    && editor.overwrite.is_none()
+                    && editor.export_dialog.is_none()
             );
             assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
             assert!(!editor.allow_close && !editor.busy);
@@ -530,7 +535,13 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
         }));
         editor.sync_document();
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("existing-output");
+        let path = directory
+            .path()
+            .join(if matches!(format, OutputFormat::Tiff(_)) {
+                "patches.tif"
+            } else {
+                "patches.exr"
+            });
         let reference = directory.path().join("reference-output");
         std::fs::write(&path, b"existing destination").unwrap();
         let expected = editor
@@ -549,7 +560,17 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
         assert_eq!(expected.recipe.grade.global(), editor.photo);
         assert_eq!(expected.recipe.composition.crop(), editor.crop.unwrap());
         let services = editor.export_services.as_ref().unwrap().clone();
-        editor.overwrite = Some((path.clone(), format));
+        let mut draft = export_batch::Draft::new(OutputTarget::Srgb, directory.path().to_owned());
+        match format {
+            OutputFormat::Tiff(target) => draft.target = target,
+            OutputFormat::Exr(precision) => {
+                draft.kind = export_batch::Kind::Exr;
+                draft.precision = precision;
+            }
+        }
+        draft.collision = export_batch::Collision::Replace;
+        draft.confirming_replace = true;
+        editor.export_dialog = Some(draft);
         let before = editor.document.project.clone();
         let context = egui::Context::default();
         with_application(editor, |app| {
@@ -557,12 +578,14 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
             let labels = ui_frame(app, &context, vec![]);
             let point = labels
                 .iter()
-                .find(|(label, _)| label == "Replace file")
+                .find(|(label, _)| label == "Replace and export")
                 .unwrap()
                 .1
                 .center();
             click(app, &context, point);
-            app.read(|e| assert!(e.overwrite.is_none() && e.export_operation.pending.is_some()));
+            app.read(|e| {
+                assert!(e.export_dialog.is_none() && e.export_operation.pending.is_some())
+            });
             app.run_until(Duration::from_secs(30), |e| {
                 e.export_operation.pending.is_none()
             });
