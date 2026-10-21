@@ -69,10 +69,12 @@ pub(super) enum Action {
 
 impl Editor {
     pub(super) fn adjustment_target(&self) -> Target {
-        if !self.adjustments.open {
+        if !self.document.visit.adjustments.open {
             return Target::Global;
         }
-        self.adjustments
+        self.document
+            .visit
+            .adjustments
             .selected
             .filter(|(source, id)| {
                 Some(*source) == self.current_source
@@ -90,7 +92,7 @@ impl Editor {
     }
 
     pub(super) fn select_adjustment(&mut self, target: Target) {
-        self.adjustments.selected = match target {
+        self.document.visit.adjustments.selected = match target {
             Target::Global => None,
             Target::Local(id) => self
                 .current_source
@@ -103,18 +105,18 @@ impl Editor {
                 })
                 .map(|source| (source, id)),
         };
-        if self.adjustments.selected.is_some() {
-            self.adjustments.open = true;
+        if self.document.visit.adjustments.selected.is_some() {
+            self.document.visit.adjustments.open = true;
         } else {
             self.close_adjustments();
         }
-        self.adjustments.rename = None;
+        self.document.visit.adjustments.rename = None;
     }
 
     pub(super) fn open_adjustments(&mut self) {
-        self.adjustments.open = true;
+        self.document.visit.adjustments.open = true;
         if self.adjustment_target() == Target::Global {
-            self.adjustments.selected = self.current_source.and_then(|source| {
+            self.document.visit.adjustments.selected = self.current_source.and_then(|source| {
                 self.document
                     .project
                     .source(source)
@@ -126,18 +128,18 @@ impl Editor {
                     .map(|record| (source, record.id))
             });
         }
-        self.adjustments.reveal_drawer = true;
-        self.adjustments.target_visible = false;
+        self.document.visit.adjustments.reveal_drawer = true;
+        self.document.visit.adjustments.target_visible = false;
     }
 
     pub(super) fn close_adjustments(&mut self) {
         self.finish_mask(false);
-        self.adjustments.close_drawer();
-        self.adjustments.order_drag = None;
-        self.adjustments.creation = None;
-        self.adjustments.deletion = None;
-        self.adjustments.reveal_controls = false;
-        if let Some(context) = &mut self.pick_return
+        self.document.visit.adjustments.close_drawer();
+        self.document.visit.adjustments.order_drag = None;
+        self.document.visit.adjustments.creation = None;
+        self.document.visit.adjustments.deletion = None;
+        self.document.visit.adjustments.reveal_controls = false;
+        if let Some(context) = &mut self.document.pick_return
             && let Some((_, target)) = &mut context.adjustment
         {
             *target = Target::Global;
@@ -146,15 +148,15 @@ impl Editor {
 
     fn adjustment_actions_available(&self) -> bool {
         !self.busy
-            && self.ready.is_some()
+            && self.document.visit.ready.is_some()
             && self.calibration().is_some()
             && self.pick.is_none()
-            && self.crop_edit.is_none()
-            && self.auto_crop_edit.is_none()
+            && self.document.visit.crop_edit.is_none()
+            && self.document.auto_crop_edit.is_none()
             && self.flat_edit.is_none()
-            && self.mask_edit.is_none()
-            && self.analysis_review.is_none()
-            && !self.adjustments.confirming()
+            && self.document.visit.mask_edit.is_none()
+            && self.document.analysis_review.is_none()
+            && !self.document.visit.adjustments.confirming()
     }
 
     pub(super) fn edit_adjustments(
@@ -192,12 +194,14 @@ impl Editor {
     ) {
         if let Some(id) = start {
             match self.order_drag(id) {
-                Ok(drag) => self.adjustments.order_drag = Some(drag),
+                Ok(drag) => self.document.visit.adjustments.order_drag = Some(drag),
                 Err(error) => self.status = format!("Adjustment drag rejected: {error}"),
             }
         }
         if let Some((key, slot)) = drop
             && let Some(drag) = self
+                .document
+                .visit
                 .adjustments
                 .order_drag
                 .take()
@@ -206,7 +210,7 @@ impl Editor {
             self.apply_adjustment_action(Action::Reorder(drag, slot));
         }
         if finish {
-            self.adjustments.order_drag = None;
+            self.document.visit.adjustments.order_drag = None;
         }
     }
 
@@ -262,7 +266,7 @@ impl Editor {
     }
 
     pub(super) fn apply_adjustment_action(&mut self, action: Action) {
-        if !self.adjustment_actions_available() || !self.adjustments.open {
+        if !self.adjustment_actions_available() || !self.document.visit.adjustments.open {
             return;
         }
         let Some(source) = self.current_source else {
@@ -274,13 +278,13 @@ impl Editor {
                 Ok(())
             }
             Action::Overlay(show) => {
-                self.adjustments.show_coverage = show;
+                self.document.visit.adjustments.show_coverage = show;
                 Ok(())
             }
             Action::RenameStart(id) => {
                 self.select_adjustment(Target::Local(id));
-                self.adjustments.rename_focus = true;
-                self.adjustments.rename = self
+                self.document.visit.adjustments.rename_focus = true;
+                self.document.visit.adjustments.rename = self
                     .document
                     .project
                     .source(source)
@@ -291,11 +295,11 @@ impl Editor {
                 Ok(())
             }
             Action::RenameCancel => {
-                self.adjustments.rename = None;
+                self.document.visit.adjustments.rename = None;
                 Ok(())
             }
             Action::Delete(id) => {
-                self.adjustments.deletion = self
+                self.document.visit.adjustments.deletion = self
                     .document
                     .project
                     .source(source)
@@ -314,7 +318,7 @@ impl Editor {
                     Ok(())
                 });
                 if result.is_ok() {
-                    self.adjustments.rename = None;
+                    self.document.visit.adjustments.rename = None;
                 }
                 result
             }
@@ -325,34 +329,41 @@ impl Editor {
     }
 
     pub(super) fn sync_adjustment_drag(&mut self, ctx: &egui::Context) {
-        if self.adjustments.order_drag.as_ref().is_some_and(|drag| {
-            drag.key.loaded != self.id
-                || Some(drag.key.source) != self.current_source
-                || self.tab != 1
-                || self.fullscreen.is_some()
-                || !self.adjustments.open
-                || self.busy
-                || !egui::DragAndDrop::has_payload_of_type::<OrderKey>(ctx)
-        }) {
-            self.adjustments.order_drag = None;
+        if self
+            .document
+            .visit
+            .adjustments
+            .order_drag
+            .as_ref()
+            .is_some_and(|drag| {
+                drag.key.loaded != self.id
+                    || Some(drag.key.source) != self.current_source
+                    || self.tab != 1
+                    || self.fullscreen.is_some()
+                    || !self.document.visit.adjustments.open
+                    || self.busy
+                    || !egui::DragAndDrop::has_payload_of_type::<OrderKey>(ctx)
+            })
+        {
+            self.document.visit.adjustments.order_drag = None;
             egui::DragAndDrop::take_payload::<OrderKey>(ctx);
         }
     }
 
     pub(super) fn adjustment_owns_delete(&self) -> bool {
         self.tab == 1
-            && !self.dust.cleanup
+            && !self.document.dust.cleanup
             && self.pick.is_none()
-            && self.crop_edit.is_none()
-            && self.auto_crop_edit.is_none()
+            && self.document.visit.crop_edit.is_none()
+            && self.document.auto_crop_edit.is_none()
             && self.flat_edit.is_none()
-            && self.mask_edit.is_none()
-            && self.analysis_review.is_none()
-            && self.adjustments.open
+            && self.document.visit.mask_edit.is_none()
+            && self.document.analysis_review.is_none()
+            && self.document.visit.adjustments.open
     }
 
     pub(super) fn delete_selected_adjustment(&mut self) {
-        if !self.adjustments.dragging()
+        if !self.document.visit.adjustments.dragging()
             && let Target::Local(id) = self.adjustment_target()
         {
             self.apply_adjustment_action(Action::Delete(id));
@@ -360,7 +371,8 @@ impl Editor {
     }
 
     pub(super) fn adjustment_target_label(&self, ui: &mut egui::Ui) {
-        if self.mask_edit.is_some() || self.adjustments.target_visible {
+        if self.document.visit.mask_edit.is_some() || self.document.visit.adjustments.target_visible
+        {
             return;
         }
         let record = match self.adjustment_target() {
@@ -394,20 +406,25 @@ impl Editor {
             icons::Icon::LinearGradient,
             "Adjustments",
             "Edit local adjustments",
-            self.adjustments.open,
+            self.document.visit.adjustments.open,
         )
         .enabled(
             enabled
-                || self.adjustments.open
+                || self.document.visit.adjustments.open
                     && !self.busy
-                    && !self.adjustments.dragging()
-                    && !self.mask_edit.as_ref().is_some_and(MaskEdit::dragging),
+                    && !self.document.visit.adjustments.dragging()
+                    && !self
+                        .document
+                        .visit
+                        .mask_edit
+                        .as_ref()
+                        .is_some_and(MaskEdit::dragging),
         )
         .changed(changed)
         .show(ui)
         .clicked()
         {
-            self.adjustments.toggle = true;
+            self.document.visit.adjustments.toggle = true;
         }
     }
 
@@ -432,7 +449,7 @@ impl Editor {
         let mut photo = selected.map_or(self.photo, |record| record.adjustment.photo);
         let before = (photo, adjustment);
         let available =
-            self.adjustment_actions_available() && !self.dust.cleanup && ui.is_enabled();
+            self.adjustment_actions_available() && !self.document.dust.cleanup && ui.is_enabled();
         let mut action = None;
         let mut rename_finish = None;
         let mut invert_action = None;
@@ -441,10 +458,10 @@ impl Editor {
         let mut drop = None;
         // Keep one stable child even when closed: hiding the drawer must not reset grading inputs.
         ui.push_id("adjustment-drawer", |ui| {
-            if !self.adjustments.open {
+            if !self.document.visit.adjustments.open {
                 return;
             }
-            if std::mem::take(&mut self.adjustments.reveal_drawer) {
+            if std::mem::take(&mut self.document.visit.adjustments.reveal_drawer) {
                 ui.scroll_to_cursor(Some(egui::Align::Min));
             }
             let identity = presentation::ToolIdentity {
@@ -458,7 +475,7 @@ impl Editor {
                         let mut overlay = None;
                         let mut creation = None;
                         if selected.is_some() {
-                            let mut show = self.adjustments.show_coverage;
+                            let mut show = self.document.visit.adjustments.show_coverage;
                             if ui
                                 .add_enabled_ui(available, |ui| {
                                     icons::toggle(
@@ -504,7 +521,7 @@ impl Editor {
                         action = overlay;
                     }
                     if creation.is_some() {
-                        self.adjustments.creation = creation;
+                        self.document.visit.adjustments.creation = creation;
                     }
                     ui.add_enabled_ui(available, |ui| {
                         if records.is_empty() {
@@ -512,7 +529,8 @@ impl Editor {
                         }
                         for (index, record) in records.iter().enumerate() {
                             ui.push_id(record.id, |ui| {
-                                if let Some((source, id, text)) = &mut self.adjustments.rename
+                                if let Some((source, id, text)) =
+                                    &mut self.document.visit.adjustments.rename
                                     && Some(*source) == self.current_source
                                     && *id == record.id
                                 {
@@ -542,7 +560,9 @@ impl Editor {
                                         target_visible =
                                             ui.clip_rect().contains_rect(response.rect);
                                     }
-                                    if std::mem::take(&mut self.adjustments.rename_focus) {
+                                    if std::mem::take(
+                                        &mut self.document.visit.adjustments.rename_focus,
+                                    ) {
                                         response.request_focus();
                                     }
                                     if cancel {
@@ -647,14 +667,14 @@ impl Editor {
                 },
             );
         });
-        if self.adjustments.target_visible != target_visible {
+        if self.document.visit.adjustments.target_visible != target_visible {
             ui.ctx().request_repaint();
         }
-        self.adjustments.target_visible = target_visible;
+        self.document.visit.adjustments.target_visible = target_visible;
         if action.is_some()
             || rename_finish.is_some()
-            || self.adjustments.creation.is_some()
-            || self.adjustments.toggle
+            || self.document.visit.adjustments.creation.is_some()
+            || self.document.visit.adjustments.toggle
             || start_drag.is_some()
         {
             ui.ctx().memory_mut(|memory| {
@@ -663,7 +683,13 @@ impl Editor {
                 }
             });
         }
-        if let Some(error) = self.mask_edit.as_ref().and_then(MaskEdit::error) {
+        if let Some(error) = self
+            .document
+            .visit
+            .mask_edit
+            .as_ref()
+            .and_then(MaskEdit::error)
+        {
             ui.weak(format!(
                 "Mask not accepted: {error}. Draw again or Escape to cancel."
             ));
@@ -672,9 +698,9 @@ impl Editor {
             ui.weak("Disabled · changes have no effect");
         }
         let editable = editable
-            && (!self.adjustments.open || selected.is_some())
+            && (!self.document.visit.adjustments.open || selected.is_some())
             && (target == Target::Global || self.adjustment_actions_available());
-        let reveal = std::mem::take(&mut self.adjustments.reveal_controls);
+        let reveal = std::mem::take(&mut self.document.visit.adjustments.reveal_controls);
         let pick = ui
             .push_id(("photo-input", self.current_source, target), |ui| {
                 ui.add_enabled_ui(editable, |ui| {
@@ -716,10 +742,13 @@ impl Editor {
             self.control_command(editing::Command::Adjustment(action));
             ui.ctx().request_repaint();
         }
-        let drop = drop.filter(|_| !self.adjustments.toggle);
+        let drop = drop.filter(|_| !self.document.visit.adjustments.toggle);
         let finish = ui.input(|input| input.pointer.any_released())
             || !egui::DragAndDrop::has_payload_of_type::<OrderKey>(ui.ctx());
-        if start_drag.is_some() || drop.is_some() || finish && self.adjustments.dragging() {
+        if start_drag.is_some()
+            || drop.is_some()
+            || finish && self.document.visit.adjustments.dragging()
+        {
             self.control_command(editing::Command::OrderInput {
                 start: start_drag,
                 drop,
@@ -727,11 +756,11 @@ impl Editor {
             });
             ui.ctx().request_repaint();
         }
-        if std::mem::take(&mut self.adjustments.toggle) {
+        if std::mem::take(&mut self.document.visit.adjustments.toggle) {
             self.control_command(editing::Command::ToggleAdjustments);
             ui.ctx().request_repaint();
         }
-        if let Some(radial) = self.adjustments.creation.take() {
+        if let Some(radial) = self.document.visit.adjustments.creation.take() {
             self.control_command(editing::Command::CreateMask(radial));
             ui.ctx().request_repaint();
         }
@@ -739,7 +768,7 @@ impl Editor {
     }
 
     pub(super) fn adjustment_dialog(&mut self, context: &egui::Context, escape_available: bool) {
-        let Some((source, id)) = self.adjustments.deletion.clone() else {
+        let Some((source, id)) = self.document.visit.adjustments.deletion.clone() else {
             return;
         };
         let Some(record) = source
@@ -747,7 +776,7 @@ impl Editor {
             .as_ref()
             .and_then(|locals| locals.adjustments.iter().find(|record| record.id == id))
         else {
-            self.adjustments.deletion = None;
+            self.document.visit.adjustments.deletion = None;
             return;
         };
         let title = format!("Delete {}?", record.name);
@@ -763,9 +792,9 @@ impl Editor {
             escape_available,
         );
         if choice == Some(presentation::DialogChoice::Cancel) {
-            self.adjustments.deletion = None;
+            self.document.visit.adjustments.deletion = None;
         } else if choice == Some(presentation::DialogChoice::Confirm) {
-            self.adjustments.deletion = None;
+            self.document.visit.adjustments.deletion = None;
             if self.current_source != Some(source.id)
                 || self.document.project.source(source.id).ok() != Some(&source)
             {
@@ -775,12 +804,12 @@ impl Editor {
             match self.edit_adjustments(|locals| locals.remove(id)) {
                 Ok(()) => {
                     if self.adjustment_target() == Target::Global {
-                        self.adjustments.selected = None;
-                        if self.adjustments.open {
+                        self.document.visit.adjustments.selected = None;
+                        if self.document.visit.adjustments.open {
                             self.open_adjustments();
                         }
                     }
-                    self.adjustments.rename = None;
+                    self.document.visit.adjustments.rename = None;
                 }
                 Err(error) => self.status = format!("Adjustment deletion rejected: {error}"),
             }

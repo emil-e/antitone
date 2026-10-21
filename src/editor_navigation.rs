@@ -14,13 +14,21 @@ impl Editor {
         }
         let mask_pointer =
             ui.input(|input| input.pointer.press_origin().or(input.pointer.hover_pos()));
-        let masking = self.tab == 1 && self.mask_edit.is_some() && self.fullscreen.is_none()
-            || mask_pointer.is_some_and(|point| self.mask_pointer_interest(geometry, point));
-        let captured_mask = masking && self.mask_edit.as_ref().is_some_and(MaskEdit::dragging);
+        let masking =
+            self.tab == 1 && self.document.visit.mask_edit.is_some() && self.fullscreen.is_none()
+                || mask_pointer.is_some_and(|point| self.mask_pointer_interest(geometry, point));
+        let captured_mask = masking
+            && self
+                .document
+                .visit
+                .mask_edit
+                .as_ref()
+                .is_some_and(MaskEdit::dragging);
         let picking = (self.pick.is_some() || masking) && self.fullscreen.is_none();
-        let dusting = self.dust.cleanup && self.tab == 1 && self.fullscreen.is_none();
-        let canvas_tool =
-            picking || dusting || (self.auto_crop_edit.is_some() && self.fullscreen.is_none());
+        let dusting = self.document.dust.cleanup && self.tab == 1 && self.fullscreen.is_none();
+        let canvas_tool = picking
+            || dusting
+            || (self.document.auto_crop_edit.is_some() && self.fullscreen.is_none());
         let (zoom, translation, touch, pointer, space) = ui.input(|input| {
             (
                 input.zoom_delta(),
@@ -108,7 +116,7 @@ impl Editor {
             } else if picking && !self.busy {
                 pointer
                     .map(|point| {
-                        let region = if self.analysis_review.is_some()
+                        let region = if self.document.analysis_review.is_some()
                             && !response.dragged_by(egui::PointerButton::Primary)
                         {
                             self.review_area_at(geometry, point).and_then(|picture| {

@@ -68,7 +68,7 @@ fn linear_gestures_inverse_map_composition_and_allow_off_image_geometry() {
 #[test]
 fn linear_paint_reverses_effective_endpoints_and_arrow_with_invert_and_coverage_is_ui_only() {
     pollster::block_on(async {
-        let (mut editor, _, _, _, _) = processing::tests::fixture().await;
+        let (mut editor, _, _) = processing::tests::fixture().await;
         editor.tab = 1;
         let id = editor
             .document
@@ -128,7 +128,7 @@ fn linear_paint_reverses_effective_endpoints_and_arrow_with_invert_and_coverage_
         let input = editor
             .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
             .unwrap();
-        editor.adjustments.show_coverage = true;
+        editor.document.visit.adjustments.show_coverage = true;
         let mut output = context.run_ui(Default::default(), |ui| editor.paint_mask(ui, layout));
         output.textures_delta.clear();
         assert!(
@@ -150,7 +150,7 @@ fn linear_paint_reverses_effective_endpoints_and_arrow_with_invert_and_coverage_
 #[test]
 fn closing_the_tool_cancels_preview_and_hides_handles_and_coverage_without_resetting_grades() {
     pollster::block_on(async {
-        let (mut editor, _, _, _, _) = processing::tests::fixture().await;
+        let (mut editor, _, _) = processing::tests::fixture().await;
         editor.tab = 1;
         let id = editor
             .document
@@ -163,23 +163,31 @@ fn closing_the_tool_cancels_preview_and_hides_handles_and_coverage_without_reset
             .adjustments[0]
             .id;
         editor.select_adjustment(adjustments::Target::Local(id));
-        editor.adjustments.show_coverage = true;
+        editor.document.visit.adjustments.show_coverage = true;
         editor.working.compare = true;
         let before = editor.document.project.clone();
         let input = editor
             .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
             .unwrap();
         editor.begin_linear_mask(Some(id));
-        editor.mask_edit.as_mut().unwrap().mask = Some(GradientMask::Linear {
+        editor.document.visit.mask_edit.as_mut().unwrap().mask = Some(GradientMask::Linear {
             start: SourcePoint([122., 75.]),
             end: SourcePoint([140., 88.]),
         });
-        let candidate = editor.mask_edit.as_ref().unwrap().candidate().unwrap().0;
+        let candidate = editor
+            .document
+            .visit
+            .mask_edit
+            .as_ref()
+            .unwrap()
+            .candidate()
+            .unwrap()
+            .0;
         editor.validate_source_candidate(&candidate).unwrap();
-        editor.mask_edit.as_mut().unwrap().preview = Some(candidate);
+        editor.document.visit.mask_edit.as_mut().unwrap().preview = Some(candidate);
         assert!(editor.mask_preview_source().is_some());
         editor.close_adjustments();
-        assert!(editor.mask_edit.is_none());
+        assert!(editor.document.visit.mask_edit.is_none());
         assert!(editor.working.compare);
         assert_eq!(editor.adjustment_target(), adjustments::Target::Global);
         assert!(!editor.mask_handles_available());
@@ -230,36 +238,54 @@ fn inverse_mapping_keeps_subpixel_precision_at_large_source_origins() {
 #[test]
 fn creation_promotes_one_accepted_id_and_gesture_cancel_keeps_navigation() {
     pollster::block_on(async {
-        let (mut editor, _, _, _, _) = processing::tests::fixture().await;
+        let (mut editor, _, _) = processing::tests::fixture().await;
         let before = editor.document.project.clone();
         let mut viewport = editor.viewport;
         viewport.zoom = Some(3.);
         editor.working.compare = true;
         editor.begin_linear_mask(None);
         assert!(!editor.working.compare);
-        assert!(editor.mask_edit.is_some());
-        assert!(!editor.mask_edit.as_ref().unwrap().valid());
-        editor.mask_edit.as_mut().unwrap().mask = Some(GradientMask::Linear {
+        assert!(editor.document.visit.mask_edit.is_some());
+        assert!(!editor.document.visit.mask_edit.as_ref().unwrap().valid());
+        editor.document.visit.mask_edit.as_mut().unwrap().mask = Some(GradientMask::Linear {
             start: SourcePoint([121., 74.]),
             end: SourcePoint([141., 90.]),
         });
-        let (_, first) = editor.mask_edit.as_ref().unwrap().candidate().unwrap();
-        let (_, repeated) = editor.mask_edit.as_ref().unwrap().candidate().unwrap();
+        let (_, first) = editor
+            .document
+            .visit
+            .mask_edit
+            .as_ref()
+            .unwrap()
+            .candidate()
+            .unwrap();
+        let (_, repeated) = editor
+            .document
+            .visit
+            .mask_edit
+            .as_ref()
+            .unwrap()
+            .candidate()
+            .unwrap();
         assert_eq!(first, repeated);
         assert_eq!(editor.document.project, before);
         editor.viewport.zoom = Some(3.);
         editor.finish_mask(false);
-        assert!(editor.mask_edit.is_none());
+        assert!(editor.document.visit.mask_edit.is_none());
         assert_eq!(editor.viewport, viewport);
         assert!(editor.working.compare);
         assert_eq!(editor.document.project, before);
         editor.begin_linear_mask(None);
-        editor.mask_edit.as_mut().unwrap().mask = Some(GradientMask::Linear {
+        editor.document.visit.mask_edit.as_mut().unwrap().mask = Some(GradientMask::Linear {
             start: SourcePoint([121., 74.]),
             end: SourcePoint([141., 90.]),
         });
         editor.finish_mask(true);
-        assert!(editor.mask_edit.is_none(), "{}", editor.status);
+        assert!(
+            editor.document.visit.mask_edit.is_none(),
+            "{}",
+            editor.status
+        );
         let source = editor
             .document
             .project
@@ -288,7 +314,7 @@ fn creation_promotes_one_accepted_id_and_gesture_cancel_keeps_navigation() {
 #[test]
 fn accepted_mask_edit_retains_ids_numeric_controls_and_immutable_snapshots() {
     pollster::block_on(async {
-        let (mut editor, _, _, _, _) = processing::tests::fixture().await;
+        let (mut editor, _, _) = processing::tests::fixture().await;
         let source = editor.current_source.unwrap();
         let records = editor
             .document
@@ -305,23 +331,23 @@ fn accepted_mask_edit_retains_ids_numeric_controls_and_immutable_snapshots() {
             .unwrap();
         let snapshot = input.grade().unwrap().snapshot().clone();
         editor.begin_linear_mask(Some(id));
-        assert!(editor.mask_edit.is_some());
+        assert!(editor.document.visit.mask_edit.is_some());
         editor.begin_crop();
         editor.begin_pick(Pick::Wb);
         editor.request_analysis();
         assert!(
-            editor.crop_edit.is_none()
+            editor.document.visit.crop_edit.is_none()
                 && editor.pick.is_none()
-                && editor.analysis_pending.is_none()
+                && editor.document.analysis_pending.is_none()
         );
         assert!(!editor.roll_edit_available());
         let mask = GradientMask::Linear {
             start: SourcePoint([100., 70.]),
             end: SourcePoint([149., 99.]),
         };
-        editor.mask_edit.as_mut().unwrap().mask = Some(mask);
+        editor.document.visit.mask_edit.as_mut().unwrap().mask = Some(mask);
         editor.finish_mask(true);
-        assert!(editor.mask_edit.is_none());
+        assert!(editor.document.visit.mask_edit.is_none());
         let accepted = editor
             .document
             .project
@@ -341,13 +367,13 @@ fn accepted_mask_edit_retains_ids_numeric_controls_and_immutable_snapshots() {
         assert_eq!(input.grade().unwrap().snapshot(), &snapshot);
         let before = editor.document.project.clone();
         editor.begin_linear_mask(Some(id));
-        editor.mask_edit.as_mut().unwrap().mask = Some(GradientMask::Linear {
+        editor.document.visit.mask_edit.as_mut().unwrap().mask = Some(GradientMask::Linear {
             start: SourcePoint([0., 0.]),
             end: SourcePoint([0., 0.]),
         });
         editor.finish_mask(true);
         assert!(
-            editor.mask_edit.is_none(),
+            editor.document.visit.mask_edit.is_none(),
             "rejected refinements return to the accepted selected mask"
         );
         assert_eq!(editor.document.project, before);
@@ -359,7 +385,7 @@ fn accepted_mask_edit_retains_ids_numeric_controls_and_immutable_snapshots() {
         editor.roll.exposure += 0.1;
         editor.finish_mask(true);
         assert!(
-            editor.mask_edit.is_none(),
+            editor.document.visit.mask_edit.is_none(),
             "changed processing cannot accept a stale mask draft"
         );
         assert!(

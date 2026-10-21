@@ -1,6 +1,6 @@
 use super::*;
 use egui_kittest::{
-    Harness, TestRenderer,
+    Harness as EguiHarness, TestRenderer,
     kittest::{NodeT, Queryable},
 };
 use std::{cell::RefCell, rc::Rc, time::Instant};
@@ -40,7 +40,7 @@ mod workflow;
 
 #[test]
 fn parameter_reset_click_respects_disabled_state() {
-    let mut harness = Harness::builder().with_max_steps(12).build_ui_state(
+    let mut harness = EguiHarness::builder().with_max_steps(12).build_ui_state(
         |ui, state: &mut (f64, bool)| {
             ui.add_enabled_ui(state.1, |ui| {
                 controls::parameter(ui, controls::Parameter::Contrast, &mut state.0);
@@ -84,6 +84,133 @@ fn parameter_reset_click_respects_disabled_state() {
     harness.get_by_label("Reset Contrast").click();
     harness.run();
     assert_eq!(harness.state().0, 1.4);
+}
+
+const UI_MAX_STEPS: u64 = 240;
+const UI_STEP_DT: f32 = 1. / 60.;
+
+struct Harness<'a, T> {
+    inner: EguiHarness<'a, crate::application::UiAccess<'a, T>>,
+    application: crate::application::test_support::TestApplication<'a, T>,
+    state: &'a RefCell<Option<T>>,
+}
+
+impl<T> Harness<'_, T> {
+    fn read<R>(&self, read: impl FnOnce(&T) -> R) -> R {
+        self.application.read(read)
+    }
+
+    fn update<R>(&self, update: impl FnOnce(&mut T) -> R) -> R {
+        self.application.update(update)
+    }
+
+    fn run_until(&mut self, timeout: Duration, done: impl Fn(&T) -> bool) {
+        self.application.run_until(timeout, done);
+    }
+
+    fn step(&mut self) {
+        self.application.pump();
+        self.inner.step();
+    }
+
+    fn run_steps(&mut self, steps: usize) {
+        for _ in 0..steps {
+            self.step();
+        }
+    }
+
+    fn run(&mut self) -> u64 {
+        self.run_ui(false).unwrap()
+    }
+
+    fn try_run_realtime(&mut self) -> Result<u64, egui_kittest::ExceededMaxStepsError> {
+        self.run_ui(true)
+    }
+
+    fn run_ui(&mut self, realtime: bool) -> Result<u64, egui_kittest::ExceededMaxStepsError> {
+        // Keep kittest's settling/timeout semantics, delivering executor events
+        // outside Context::run_ui rather than from the application callback.
+        let mut steps = 0;
+        loop {
+            steps += 1;
+            self.step();
+            let images = self.ctx.has_pending_images();
+            if self.inner.output().viewport_output[&egui::ViewportId::ROOT].repaint_delay
+                != Duration::ZERO
+                && !images
+            {
+                return Ok(steps);
+            }
+            if realtime || images {
+                std::thread::sleep(Duration::from_secs_f32(UI_STEP_DT));
+            }
+            if steps > UI_MAX_STEPS {
+                return Err(egui_kittest::ExceededMaxStepsError {
+                    max_steps: UI_MAX_STEPS,
+                    repaint_causes: self.ctx.repaint_causes(),
+                });
+            }
+        }
+    }
+}
+
+impl<'a, T> std::ops::Deref for Harness<'a, T> {
+    type Target = EguiHarness<'a, crate::application::UiAccess<'a, T>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<T> std::ops::DerefMut for Harness<'_, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+impl<T> Drop for Harness<'_, T> {
+    fn drop(&mut self) {
+        self.application.close_execution();
+        drop(self.state.borrow_mut().take());
+    }
+}
+
+fn app_harness<'scope>(
+    state: &'scope RefCell<Option<Editor>>,
+    editor: Editor,
+    renderer: FloatRenderer,
+) -> Harness<'scope, Editor> {
+    use std::sync::OnceLock;
+    let context = Arc::new(OnceLock::<egui::Context>::new());
+    let repaint = context.clone();
+    *state.borrow_mut() = Some(editor);
+    let application = crate::application::test_support::TestApplication::new(state, move || {
+        if let Some(context) = repaint.get() {
+            context.request_repaint();
+        }
+    });
+    let access = application.access();
+    let inner = EguiHarness::builder()
+        .with_size(egui::vec2(1100., 800.))
+        .with_max_steps(UI_MAX_STEPS)
+        .with_step_dt(UI_STEP_DT)
+        .renderer(renderer)
+        .build_ui_state(
+            move |ui, editor| {
+                let _ = context.set(ui.ctx().clone());
+                let input = editor.with_mut(|state| host::App::menu_input(state, None));
+                ui.input_mut(|state| {
+                    state.events.splice(0..0, input);
+                });
+                editor.with_mut(|state| host::App::ui(state, ui, editor));
+            },
+            access,
+        );
+    Harness {
+        inner,
+        application,
+        state,
+    }
 }
 
 #[derive(Default)]
@@ -284,42 +411,38 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
         host::App::submission_gate(&editor).clone(),
         capture,
     );
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(1100., 800.))
-        .with_max_steps(240)
-        .with_step_dt(1. / 60.)
-        .renderer(renderer)
-        .build_ui_state(|ui, editor| host::App::ui(editor, ui), editor);
-    harness.state_mut().add_raws(vec![
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
-    ]);
+    let state = RefCell::new(None);
+    let mut harness = app_harness(&state, editor, renderer);
+    harness.update(|editor| {
+        editor.add_raws(vec![
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
+        ])
+    });
     wait_for(&mut harness, |editor| {
         !editor.busy && editor.document_pending.is_none()
     });
-    assert!(
-        harness.state().ready.is_some(),
-        "{}",
-        harness.state().status
-    );
-    harness.state_mut().photo.exposure = 1.25;
-    harness.state_mut().sync_document();
-    let before = harness.state().document.project.clone();
-    let selected = harness.state().current_source;
+    harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
+    harness.update(|editor| editor.photo.exposure = 1.25);
+    harness.update(|editor| editor.sync_document());
+    let before = harness.read(|editor| editor.document.project.clone());
+    let selected = harness.read(|editor| editor.current_source);
     harness.get_by_label("Viewer help").click();
     harness.run();
     assert!(egui::Popup::is_any_open(&harness.ctx));
-    harness.state_mut().transition = Some(Transition::New);
+    harness.update(|editor| editor.transition = Some(Transition::New));
     harness.run();
     harness.event(super::presentation::tests::key(egui::Key::Escape).remove(0));
     harness.step();
     assert!(!egui::Popup::is_any_open(&harness.ctx));
-    assert!(
-        harness.state().transition.is_some(),
-        "popover Escape also cancelled the decision"
-    );
+    harness.read(|editor| {
+        assert!(
+            editor.transition.is_some(),
+            "popover Escape also cancelled the decision"
+        )
+    });
     harness.event(super::presentation::tests::key(egui::Key::Escape).remove(0));
     harness.step();
-    assert!(harness.state().transition.is_none());
+    harness.read(|editor| assert!(editor.transition.is_none()));
     for (layout, size) in [
         ("normal", egui::vec2(1100., 800.)),
         ("narrow", egui::vec2(800., 600.)),
@@ -330,22 +453,22 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
             (1, "project-replace", "Replace project"),
             (2, "output-replace", "Replace file"),
         ] {
-            match decision {
-                0 => harness.state_mut().transition = Some(Transition::New),
+            harness.update(|editor| match decision {
+                0 => editor.transition = Some(Transition::New),
                 1 => {
-                    harness.state_mut().project_overwrite = Some((
+                    editor.project_overwrite = Some((
                         PathBuf::from("/projects/Scans/照片-long-project-name.antitone.json"),
                         Some(Transition::New),
                     ))
                 }
                 2 => {
-                    harness.state_mut().overwrite = Some((
+                    editor.overwrite = Some((
                         PathBuf::from("/exports/Scans/照片-long-exported-filename.tiff"),
                         OutputFormat::Tiff(OutputTarget::Srgb),
                     ))
                 }
                 _ => unreachable!(),
-            }
+            });
             harness.hover_at(egui::pos2(10., size.y - 10.));
             harness.run();
             assert_eq!(harness.query_by_label("Warning").is_some(), decision != 0);
@@ -370,14 +493,16 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
             }
             harness.get_by_label("Cancel").click();
             harness.run();
-            assert!(
-                harness.state().transition.is_none()
-                    && harness.state().project_overwrite.is_none()
-                    && harness.state().overwrite.is_none()
-            );
-            assert!(!harness.state().busy);
-            assert_eq!(harness.state().document.project, before);
-            assert_eq!(harness.state().current_source, selected);
+            harness.read(|editor| {
+                assert!(
+                    editor.transition.is_none()
+                        && editor.project_overwrite.is_none()
+                        && editor.overwrite.is_none()
+                )
+            });
+            harness.read(|editor| assert!(!editor.busy));
+            harness.read(|editor| assert_eq!(editor.document.project, before));
+            harness.read(|editor| assert_eq!(editor.current_source, selected));
         }
     }
 }
@@ -403,36 +528,30 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
         host::App::submission_gate(&editor).clone(),
         Rc::new(RefCell::new(FloatCapture::default())),
     );
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(1100., 800.))
-        .with_max_steps(240)
-        .with_step_dt(1. / 60.)
-        .renderer(renderer)
-        .build_ui_state(|ui, editor| host::App::ui(editor, ui), editor);
+    let state = RefCell::new(None);
+    let mut harness = app_harness(&state, editor, renderer);
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
-    harness.state_mut().add_raws(vec![fixture.clone()]);
+    harness.update(|editor| editor.add_raws(vec![fixture.clone()]));
     wait_for(&mut harness, |editor| {
         !editor.busy && editor.document_pending.is_none()
     });
-    assert!(
-        harness.state().ready.is_some(),
-        "{}",
-        harness.state().status
-    );
-    harness.state_mut().photo.exposure = 1.25;
-    harness.state_mut().sync_document();
+    harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
+    harness.update(|editor| editor.photo.exposure = 1.25);
+    harness.update(|editor| editor.sync_document());
     let directory = tempfile::tempdir().unwrap();
     let project_path = directory.path().join("project.json");
-    harness.state_mut().document = harness
-        .state()
-        .document
-        .save(&project_path, crate::project::Save::New)
-        .unwrap();
+    let saved = harness.read(|editor| {
+        editor
+            .document
+            .save(&project_path, crate::project::Save::New)
+            .unwrap()
+    });
+    harness.update(|editor| *editor.document = saved);
     let saved_bytes = std::fs::read(&project_path).unwrap();
-    harness.state_mut().photo.exposure = 2.;
-    harness.state_mut().sync_document();
-    let before = harness.state().document.project.clone();
-    let selected = harness.state().current_source;
+    harness.update(|editor| editor.photo.exposure = 2.);
+    harness.update(|editor| editor.sync_document());
+    let before = harness.read(|editor| editor.document.project.clone());
+    let selected = harness.read(|editor| editor.current_source);
     for (layout, size) in [
         ("normal", egui::vec2(1100., 800.)),
         ("narrow", egui::vec2(800., 600.)),
@@ -448,58 +567,69 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
             FailureKind::LookRendering,
         ] {
             match kind {
-                FailureKind::FlatReference => harness
-                    .state_mut()
-                    .begin_flat_edit(directory.path().join("missing-reference.dng"), None),
+                FailureKind::FlatReference => harness.update(|editor| {
+                    editor.begin_flat_edit(directory.path().join("missing-reference.dng"), None)
+                }),
                 FailureKind::FlatSupport | FailureKind::FlatCorrection => {
-                    harness.state_mut().begin_flat_edit(fixture.clone(), None);
+                    harness.update(|editor| editor.begin_flat_edit(fixture.clone(), None));
                     wait_for(&mut harness, |editor| !editor.busy);
-                    assert!(harness.state().flat_edit.is_some());
-                    let area = harness.state().ready.as_ref().unwrap().area;
-                    harness.state_mut().region = Some(if kind == FailureKind::FlatSupport {
-                        let x = f64::from(area.x) + 0.25;
-                        let y = f64::from(area.y);
-                        Coverage::new(
-                            [[x, y], [x + 2., y], [x + 2., y + 2.], [x, y + 2.]]
-                                .map(crate::geometry::SourcePoint),
-                        )
-                        .unwrap()
-                    } else {
-                        Coverage::rectangle(Rect {
-                            x: area.x,
-                            y: area.y,
-                            width: 2,
-                            height: 2,
+                    harness.read(|editor| assert!(editor.flat_edit.is_some()));
+                    let area =
+                        harness.read(|editor| editor.document.visit.ready.as_ref().unwrap().area);
+                    harness.update(|editor| {
+                        editor.region = Some(if kind == FailureKind::FlatSupport {
+                            let x = f64::from(area.x) + 0.25;
+                            let y = f64::from(area.y);
+                            Coverage::new(
+                                [[x, y], [x + 2., y], [x + 2., y + 2.], [x, y + 2.]]
+                                    .map(crate::geometry::SourcePoint),
+                            )
+                            .unwrap()
+                        } else {
+                            Coverage::rectangle(Rect {
+                                x: area.x,
+                                y: area.y,
+                                width: 2,
+                                height: 2,
+                            })
                         })
                     });
-                    harness.state_mut().apply_flat_edit();
+                    harness.update(|editor| editor.apply_flat_edit());
                 }
-                FailureKind::Look => harness.state_mut().begin_look(look_ui::Source::Imported(
-                    directory.path().join("missing-look.cube"),
-                )),
-                FailureKind::LookRendering => harness.state_mut().report_failure(
-                    FailureKind::LookRendering,
-                    "The selected look encountered a nonfinite scene-linear value.".into(),
-                ),
-                FailureKind::Save => harness.state_mut().queue_save(
-                    directory.path().join("missing-parent/project.json"),
-                    crate::project::Save::New,
-                    Some(Transition::Close),
-                ),
+                FailureKind::Look => harness.update(|editor| {
+                    editor.begin_look(look_ui::Source::Imported(
+                        directory.path().join("missing-look.cube"),
+                    ))
+                }),
+                FailureKind::LookRendering => harness.update(|editor| {
+                    editor.report_failure(
+                        FailureKind::LookRendering,
+                        "The selected look encountered a nonfinite scene-linear value.".into(),
+                    )
+                }),
+                FailureKind::Save => harness.update(|editor| {
+                    editor.queue_save(
+                        directory.path().join("missing-parent/project.json"),
+                        crate::project::Save::New,
+                        Some(Transition::Close),
+                    )
+                }),
                 FailureKind::Export => {
-                    let path = harness.state().document.path.clone().unwrap();
-                    harness.state_mut().export(
-                        path,
-                        OutputFormat::Exr(ExrPrecision::Full),
-                        Overwrite::Confirmed,
-                    );
+                    let path = harness.read(|editor| editor.document.path.clone().unwrap());
+                    harness.update(|editor| {
+                        editor.export(
+                            path,
+                            OutputFormat::Exr(ExrPrecision::Full),
+                            Overwrite::Confirmed,
+                        )
+                    });
                 }
             }
             wait_for(&mut harness, |editor| {
                 !editor.busy && editor.failure.is_some()
             });
-            assert_eq!(harness.state().failure.as_ref().unwrap().kind, kind);
-            assert_eq!(harness.state().document.project, before);
+            harness.read(|editor| assert_eq!(editor.failure.as_ref().unwrap().kind, kind));
+            harness.read(|editor| assert_eq!(editor.document.project, before));
             harness.hover_at(egui::pos2(10., size.y - 10.));
             harness.run();
             assert!(!harness.get_by_label("OK").accesskit_node().is_disabled());
@@ -552,23 +682,23 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
             }
             harness.get_by_label("OK").click();
             harness.run();
-            assert!(harness.state().failure.is_none());
+            harness.read(|editor| assert!(editor.failure.is_none()));
             if kind == FailureKind::Save {
-                assert_eq!(harness.state().transition, Some(Transition::Close));
+                harness.read(|editor| assert_eq!(editor.transition, Some(Transition::Close)));
                 harness.get_by_label("Cancel").click();
                 harness.run();
-                assert!(!harness.state().allow_close);
+                harness.read(|editor| assert!(!editor.allow_close));
             }
             if kind == FailureKind::FlatSupport {
-                assert!(harness.state().flat_edit.is_some());
+                harness.read(|editor| assert!(editor.flat_edit.is_some()));
                 harness.get_by_label("Cancel").click();
                 harness.run();
             }
-            assert_eq!(harness.state().document.project, before);
-            assert_eq!(harness.state().current_source, selected);
-            assert!(harness.state().flat_edit.is_none());
-            assert_eq!(harness.state().document.path.as_ref(), Some(&project_path));
-            assert!(harness.state().document.dirty());
+            harness.read(|editor| assert_eq!(editor.document.project, before));
+            harness.read(|editor| assert_eq!(editor.current_source, selected));
+            harness.read(|editor| assert!(editor.flat_edit.is_none()));
+            harness.read(|editor| assert_eq!(editor.document.path.as_ref(), Some(&project_path)));
+            harness.read(|editor| assert!(editor.document.dirty()));
             assert_eq!(std::fs::read(&project_path).unwrap(), saved_bytes);
         }
     }
@@ -585,12 +715,14 @@ fn wait_for_with_timeout(
 ) {
     let deadline = Instant::now() + timeout;
     loop {
-        assert!(
-            Instant::now() < deadline,
-            "Editor wait timed out: {}",
-            harness.state().status
-        );
-        if done(harness.state()) {
+        harness.read(|editor| {
+            assert!(
+                Instant::now() < deadline,
+                "Editor wait timed out: {}",
+                editor.status
+            )
+        });
+        if harness.read(&done) {
             break;
         }
         harness.step();
@@ -599,25 +731,21 @@ fn wait_for_with_timeout(
     harness.step();
 }
 
-fn editor_harness() -> (Harness<'static, Editor>, Rc<RefCell<FloatCapture>>) {
-    editor_harness_with_thumbnails(false)
+fn editor_harness<R>(test: impl FnOnce(Harness<'_, Editor>, Rc<RefCell<FloatCapture>>) -> R) -> R {
+    editor_harness_with_thumbnails(false, test)
 }
 
-fn editor_harness_with_thumbnails(
+fn editor_harness_with_thumbnails<R>(
     thumbnails: bool,
-) -> (Harness<'static, Editor>, Rc<RefCell<FloatCapture>>) {
-    let (harness, capture, _, _) = editor_harness_with_gpu(thumbnails);
-    (harness, capture)
+    test: impl FnOnce(Harness<'_, Editor>, Rc<RefCell<FloatCapture>>) -> R,
+) -> R {
+    editor_harness_with_gpu(thumbnails, |harness, capture, _, _| test(harness, capture))
 }
 
-fn editor_harness_with_gpu(
+fn editor_harness_with_gpu<R>(
     thumbnails: bool,
-) -> (
-    Harness<'static, Editor>,
-    Rc<RefCell<FloatCapture>>,
-    wgpu::Device,
-    wgpu::Queue,
-) {
+    test: impl FnOnce(Harness<'_, Editor>, Rc<RefCell<FloatCapture>>, wgpu::Device, wgpu::Queue) -> R,
+) -> R {
     let (device, queue) = pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,
@@ -644,119 +772,118 @@ fn editor_harness_with_gpu(
         host::App::submission_gate(&editor).clone(),
         capture.clone(),
     );
-    let harness = Harness::builder()
-        .with_size(egui::vec2(1100., 800.))
-        .with_max_steps(240)
-        .with_step_dt(1. / 60.)
-        .renderer(renderer)
-        .build_ui_state(
-            |ui, editor| {
-                // Match the host's pre-frame text delivery without reading the system clipboard.
-                let input = host::App::menu_input(editor, None);
-                ui.input_mut(|state| {
-                    state.events.splice(0..0, input);
-                });
-                host::App::ui(editor, ui);
-            },
-            editor,
-        );
-    (harness, capture, device, queue)
+    let owner = RefCell::new(None);
+    let harness = app_harness(&owner, editor, renderer);
+    test(harness, capture, device, queue)
 }
 
 #[test]
 fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
-    let (mut harness, capture) = editor_harness();
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
-    harness.state_mut().add_raws(vec![fixture.clone()]);
-    wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-    assert!(
-        harness.state().ready.is_some(),
-        "{}",
-        harness.state().status
-    );
-    assert!(harness.state().dmin.is_none());
-    let project = harness.state().document.project.clone();
-    harness.get_by_label("Pick Dmin (film base)").scroll_to_me();
-    harness.try_run_realtime().unwrap();
-    harness.get_by_label("Pick Dmin (film base)").click();
-    harness.step();
-    assert_eq!(harness.state().pick, Some(Pick::Dmin));
-    assert!(harness.get_by_label("Apply").accesskit_node().is_disabled());
-    harness.get_by_label("Cancel").click();
-    harness.step();
-    assert!(harness.state().pick.is_none());
-    assert_eq!(harness.state().document.project, project);
-    harness.get_by_label("Pick Dmin (film base)").click();
-    harness.step();
-    assert_eq!(harness.state().pick, Some(Pick::Dmin));
-    let point = harness
-        .state()
-        .last_layout
-        .unwrap()
-        .0
-        .screen_point(egui::pos2(32., 32.));
-    harness.hover_at(point);
-    for pressed in [true, false] {
-        harness.event(egui::Event::PointerButton {
-            pos: point,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::NONE,
+    editor_harness(|mut harness, capture| {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
+        harness.update(|editor| editor.add_raws(vec![fixture.clone()]));
+        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        harness.read(|editor| {
+            assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
+            assert!(editor.dmin.is_none());
         });
-    }
-    harness.step();
-    assert!(harness.state().region.is_some());
-    harness.get_by_label("Apply").click();
-    harness.step();
-    assert!(harness.state().busy);
-    wait_for(&mut harness, |e| !e.busy);
-    assert!(harness.state().pick.is_none());
-    assert_eq!(harness.state().status, "Dmin measured");
-    let measured = harness.state().dmin.unwrap();
-    assert!((measured - DVec3::splat(3000. / 4031.)).abs().max_element() <= 2. / 65535.);
-    assert_eq!(harness.state().roll, project.roll);
-    let mut expected_project = project;
-    expected_project.dmin = Some(measured.to_array());
-    assert_eq!(harness.state().document.project, expected_project);
-    assert!(harness.state().preference_store.is_none());
-    let timing = Arc::new(SelectionTiming::new(harness.state().id, Instant::now()));
-    harness.state_mut().selection_timing = Some(timing.clone());
-    harness.step();
-    let png = harness.render().unwrap();
-    assert!(
-        timing.ready_was_painted(),
-        "production selected-image callback did not paint"
-    );
-    let geometry = harness.state().last_layout.unwrap().0;
-    let output = capture.borrow();
-    assert_eq!(png.dimensions(), (output.size[0], output.size[1]));
-    assert!(harness.state().source);
-    assert_eq!(harness.state().source_exposure, 0.);
-    let metadata = crate::raw::RawFile::open(&fixture).unwrap().metadata;
-    let target = harness.state().target;
-    let cpu = crate::rendering::CpuRenderer::new(target).unwrap();
-    for (source, code) in [(egui::pos2(32., 32.), 3000.), (egui::pos2(96., 32.), 128.)] {
-        let position = geometry.screen_point(source);
-        let pixel = output.pixels
-            [position.y.floor() as usize * output.size[0] as usize + position.x.floor() as usize];
-        // Source inspection bypasses inversion, not ACES or managed presentation encoding.
-        let working = metadata.camera_to_ap1().unwrap() * DVec3::splat(2. * code / 4031.);
-        let linear = target.linear_to_srgb() * cpu.render(&[working]).unwrap()[0].as_dvec3();
-        for c in 0..3 {
-            let value = linear[c].abs();
-            let expected = linear[c].signum()
-                * if value <= 0.0031308 {
-                    value * 12.92
-                } else {
-                    1.055 * value.powf(1. / 2.4) - 0.055
-                };
-            assert!(
-                (f64::from(pixel[c]) - expected).abs() <= 0.001,
-                "{pixel:?} vs {expected}"
-            );
+        let project = harness.read(|editor| editor.document.project.clone());
+        harness.get_by_label("Pick Dmin (film base)").scroll_to_me();
+        harness.try_run_realtime().unwrap();
+        harness.get_by_label("Pick Dmin (film base)").click();
+        harness.step();
+        assert_eq!(harness.read(|editor| editor.pick), Some(Pick::Dmin));
+        assert!(harness.get_by_label("Apply").accesskit_node().is_disabled());
+        harness.get_by_label("Cancel").click();
+        harness.step();
+        harness.read(|editor| {
+            assert!(editor.pick.is_none());
+            assert_eq!(editor.document.project, project);
+        });
+        harness.get_by_label("Pick Dmin (film base)").click();
+        harness.step();
+        assert_eq!(harness.read(|editor| editor.pick), Some(Pick::Dmin));
+        let point = harness.read(|editor| {
+            editor
+                .last_layout
+                .unwrap()
+                .0
+                .screen_point(egui::pos2(32., 32.))
+        });
+        harness.hover_at(point);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
         }
-    }
-    save_capture(&png, "authored-dmin-offscreen");
+        harness.step();
+        assert!(harness.read(|editor| editor.region.is_some()));
+        harness.get_by_label("Apply").click();
+        harness.step();
+        assert!(harness.read(|editor| editor.busy));
+        // This fixture delivers completion without another UI pass.
+        harness.run_until(Duration::from_secs(5), |editor| !editor.busy);
+        harness.read(|editor| {
+            assert!(editor.pick.is_none());
+            assert_eq!(editor.status, "Dmin measured");
+        });
+        let measured = harness.read(|editor| editor.dmin.unwrap());
+        assert!((measured - DVec3::splat(3000. / 4031.)).abs().max_element() <= 2. / 65535.);
+        assert_eq!(harness.read(|editor| editor.roll), project.roll);
+        let mut expected_project = project;
+        expected_project.dmin = Some(measured.to_array());
+        harness.read(|editor| {
+            assert_eq!(editor.document.project, expected_project);
+            assert!(editor.preference_store.is_none());
+        });
+        let timing = Arc::new(SelectionTiming::new(
+            harness.read(|editor| editor.id),
+            Instant::now(),
+        ));
+        harness.update(|editor| editor.selection_timing = Some(timing.clone()));
+        harness.step();
+        let png = harness.render().unwrap();
+        assert!(
+            timing.ready_was_painted(),
+            "production selected-image callback did not paint"
+        );
+        let geometry = harness.read(|editor| editor.last_layout.unwrap().0);
+        let output = capture.borrow();
+        assert_eq!(png.dimensions(), (output.size[0], output.size[1]));
+        harness.read(|editor| {
+            assert!(editor.source);
+            assert_eq!(editor.source_exposure, 0.);
+        });
+        let metadata = crate::raw::RawFile::open(&fixture).unwrap().metadata;
+        let target = harness.read(|editor| editor.target);
+        let cpu = crate::rendering::CpuRenderer::new(target).unwrap();
+        for (source, code) in [(egui::pos2(32., 32.), 3000.), (egui::pos2(96., 32.), 128.)] {
+            let position = geometry.screen_point(source);
+            let pixel = output.pixels[position.y.floor() as usize * output.size[0] as usize
+                + position.x.floor() as usize];
+            // Source inspection bypasses inversion, not ACES or managed presentation encoding.
+            let working = metadata.camera_to_ap1().unwrap() * DVec3::splat(2. * code / 4031.);
+            let linear = target.linear_to_srgb() * cpu.render(&[working]).unwrap()[0].as_dvec3();
+            for c in 0..3 {
+                let value = linear[c].abs();
+                let expected = linear[c].signum()
+                    * if value <= 0.0031308 {
+                        value * 12.92
+                    } else {
+                        1.055 * value.powf(1. / 2.4) - 0.055
+                    };
+                assert!(
+                    (f64::from(pixel[c]) - expected).abs() <= 0.001,
+                    "{pixel:?} vs {expected}"
+                );
+            }
+        }
+        save_capture(&png, "authored-dmin-offscreen");
+    });
 }
 
 fn fixture(name: &str) -> PathBuf {
@@ -774,7 +901,7 @@ fn stage(harness: &mut Harness<'_, Editor>, name: &str) {
 }
 
 fn select_target(harness: &mut Harness<'_, Editor>, target: OutputTarget) {
-    let current = if harness.state().target == OutputTarget::DisplayP3 {
+    let current = if harness.read(|editor| editor.target == OutputTarget::DisplayP3) {
         "Display P3"
     } else {
         "sRGB"
@@ -795,7 +922,7 @@ fn select_target(harness: &mut Harness<'_, Editor>, target: OutputTarget) {
         })
         .click();
     harness.step();
-    assert_eq!(harness.state().target, target);
+    harness.read(|editor| assert_eq!(editor.target, target));
 }
 
 fn drag(harness: &mut Harness<'_, Editor>, start: egui::Pos2, end: egui::Pos2) {
@@ -840,35 +967,26 @@ fn file_menu(harness: &mut Harness<'_, Editor>, action: &str) {
 }
 
 fn save_existing_project(harness: &mut Harness<'_, Editor>) {
-    let path = harness
-        .state()
-        .document
-        .path
-        .clone()
-        .expect("fixture save destination");
-    let project = harness.state().document.project.clone();
-    let request = harness.state().next_request;
+    let path = harness.read(|editor| {
+        editor
+            .document
+            .path
+            .clone()
+            .expect("fixture save destination")
+    });
+    let project = harness.read(|editor| editor.document.project.clone());
+    let request = harness.read(|editor| editor.next_request);
     file_menu(harness, "Save");
-    assert!(
-        harness.state().next_request > request,
-        "Save did not dispatch"
-    );
+    harness.read(|editor| assert!(editor.next_request > request, "Save did not dispatch"));
     wait_for(harness, |e| !e.busy && e.document_pending.is_none());
-    assert!(
-        !harness.state().document.dirty(),
-        "{}",
-        harness.state().status
-    );
-    assert_eq!(harness.state().document.project, project);
+    harness.read(|editor| assert!(!editor.document.dirty(), "{}", editor.status));
+    harness.read(|editor| assert_eq!(editor.document.project, project));
     assert_eq!(crate::project::Project::load(&path).unwrap(), project);
 }
 
 // Supply the native chooser's result; exercise the real transition guard and worker.
 fn open_project(harness: &mut Harness<'_, Editor>, path: PathBuf) {
-    let context = harness.ctx.clone();
-    harness
-        .state_mut()
-        .guard_transition(files::Transition::Open(path), &context);
+    harness.update(|editor| editor.guard_transition(files::Transition::Open(path)));
     harness.step();
     harness.step();
 }
@@ -876,8 +994,8 @@ fn open_project(harness: &mut Harness<'_, Editor>, path: PathBuf) {
 fn draw_region(harness: &mut Harness<'_, Editor>, area: Rect) {
     harness.get_by_label("Fit").click();
     harness.step();
-    let geometry = harness.state().last_layout.unwrap().0;
-    assert!(harness.state().region.is_none());
+    let geometry = harness.read(|editor| editor.last_layout.unwrap().0);
+    harness.read(|editor| assert!(editor.region.is_none()));
     drag(
         harness,
         geometry.screen_point(egui::pos2(area.x as f32, area.y as f32)),
@@ -886,14 +1004,15 @@ fn draw_region(harness: &mut Harness<'_, Editor>, area: Rect) {
             (area.y + area.height) as f32,
         )),
     );
-    assert_eq!(
-        harness
-            .state()
-            .region
-            .unwrap()
-            .exact_rectangle(harness.state().ready.as_ref().unwrap().area),
-        Some(area)
-    );
+    harness.read(|editor| {
+        assert_eq!(
+            editor
+                .region
+                .unwrap()
+                .exact_rectangle(editor.document.visit.ready.as_ref().unwrap().area),
+            Some(area)
+        )
+    });
 }
 
 fn save_capture(png: &image::RgbaImage, name: &str) {
@@ -907,106 +1026,105 @@ fn save_capture(png: &image::RgbaImage, name: &str) {
 #[test]
 #[should_panic(expected = "Editor wait timed out")]
 fn unfinished_editor_operation_fails_at_wait_deadline() {
-    let (mut harness, _) = editor_harness();
-    harness.state_mut().busy = true;
-    wait_for_with_timeout(&mut harness, Duration::ZERO, |e| !e.busy);
+    editor_harness(|mut harness, _| {
+        harness.update(|editor| editor.busy = true);
+        wait_for_with_timeout(&mut harness, Duration::ZERO, |e| !e.busy);
+    });
 }
 
 #[test]
 fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
-    let (mut harness, _capture) = editor_harness();
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
-    harness.state_mut().add_raws(vec![fixture]);
-    wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-    assert!(
-        harness.state().ready.is_some(),
-        "{}",
-        harness.state().status
-    );
-    {
-        let editor = harness.state_mut();
-        editor.dmin = Some(DVec3::splat(3000. / 4031.));
-        editor.dmax = Some(DVec3::splat(128. / 4031.));
-        editor.roll.gamma = 0.75;
-        editor.photo.exposure = 0.5;
-        editor.photo.wb = Balance {
-            warmth: 0.1,
-            tint: -0.05,
-        };
-        editor.source = false;
-        editor.sync_document();
-    }
-    let project = harness.state().document.project.clone();
-    let source = harness.state().current_source;
-    for (layout, size, width) in [
-        ("normal", egui::vec2(1100., 800.), 315.),
-        ("narrow", egui::vec2(800., 600.), 270.),
-    ] {
-        set_layout(&mut harness, size, width);
-        for (index, stage, heading, absent) in [
-            (0, "Roll", "Reset scan orientation", "Crop & straighten"),
-            (1, "Photo", "Crop & straighten", "Target"),
-            (2, "Rendering", "Target", "Reset scan orientation"),
+    editor_harness(|mut harness, _capture| {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
+        harness.update(|editor| editor.add_raws(vec![fixture]));
+        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
+        harness.update(|editor| {
+            editor.dmin = Some(DVec3::splat(3000. / 4031.));
+            editor.dmax = Some(DVec3::splat(128. / 4031.));
+            editor.roll.gamma = 0.75;
+            editor.photo.exposure = 0.5;
+            editor.photo.wb = Balance {
+                warmth: 0.1,
+                tint: -0.05,
+            };
+            editor.source = false;
+            editor.sync_document();
+        });
+        let project = harness.read(|editor| editor.document.project.clone());
+        let source = harness.read(|editor| editor.current_source);
+        for (layout, size, width) in [
+            ("normal", egui::vec2(1100., 800.), 315.),
+            ("narrow", egui::vec2(800., 600.), 270.),
         ] {
-            harness
-                .get_by_role_and_label(egui::accesskit::Role::Tab, stage)
-                .click();
-            harness.step();
-            harness.try_run_realtime().unwrap();
-            assert_eq!(harness.state().tab, index);
-            for name in ["Roll", "Photo", "Rendering"] {
-                let tab = harness.get_by_role_and_label(egui::accesskit::Role::Tab, name);
-                assert_eq!(tab.accesskit_node().is_selected(), Some(name == stage));
-                let rect = tab.rect();
-                assert!(
-                    rect.left() >= size.x - width && rect.right() <= size.x,
-                    "{layout}/{stage}: {name} {rect:?}"
+            set_layout(&mut harness, size, width);
+            for (index, stage, heading, absent) in [
+                (0, "Roll", "Reset scan orientation", "Crop & straighten"),
+                (1, "Photo", "Crop & straighten", "Target"),
+                (2, "Rendering", "Target", "Reset scan orientation"),
+            ] {
+                harness
+                    .get_by_role_and_label(egui::accesskit::Role::Tab, stage)
+                    .click();
+                harness.step();
+                harness.try_run_realtime().unwrap();
+                harness.read(|editor| assert_eq!(editor.tab, index));
+                for name in ["Roll", "Photo", "Rendering"] {
+                    let tab = harness.get_by_role_and_label(egui::accesskit::Role::Tab, name);
+                    assert_eq!(tab.accesskit_node().is_selected(), Some(name == stage));
+                    let rect = tab.rect();
+                    assert!(
+                        rect.left() >= size.x - width && rect.right() <= size.x,
+                        "{layout}/{stage}: {name} {rect:?}"
+                    );
+                    assert!(rect.top() >= 0. && rect.bottom() <= size.y);
+                }
+                let header = harness
+                    .get_by_role_and_label(egui::accesskit::Role::Button, heading)
+                    .rect();
+                let tabs = harness
+                    .get_by_role_and_label(egui::accesskit::Role::Tab, stage)
+                    .rect();
+                assert!(header.top() >= tabs.bottom());
+                assert!(header.left() >= size.x - width && header.right() <= size.x);
+                assert!(harness.query_by_label(absent).is_none());
+                harness.read(|editor| assert_eq!(editor.document.project, project));
+                harness.read(|editor| assert_eq!(editor.current_source, source));
+                harness.read(|editor| assert!(editor.preference_store.is_none()));
+                workflow::wait_settled(&mut harness);
+                harness.render().unwrap();
+                wait_for(&mut harness, |e| {
+                    let gpu = e.scopes.gpu.as_ref().expect("scope GPU resources");
+                    let input = e.scope_request().unwrap();
+                    let frame = input.frame();
+                    let settings = crate::scopes::Settings {
+                        target: e.target,
+                        plot: crate::scopes::Plot::Vector,
+                        amplification: 1,
+                    };
+                    let Some(counts) = input.status(gpu, settings) else {
+                        return false;
+                    };
+                    let counts = counts.expect("scope diagnostics");
+                    assert_eq!(counts.invalid, 0);
+                    assert_eq!(counts.valid, frame.output[0] * frame.output[1]);
+                    true
+                });
+                let timing = harness
+                    .read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
+                harness.update(|editor| editor.selection_timing = Some(timing.clone()));
+                harness.step();
+                let png = harness.render().unwrap();
+                assert_eq!(png.dimensions(), (size.x as u32, size.y as u32));
+                assert!(timing.ready_was_painted());
+                save_capture(
+                    &png,
+                    &format!("{}-{layout}-offscreen", stage.to_lowercase()),
                 );
-                assert!(rect.top() >= 0. && rect.bottom() <= size.y);
             }
-            let header = harness
-                .get_by_role_and_label(egui::accesskit::Role::Button, heading)
-                .rect();
-            let tabs = harness
-                .get_by_role_and_label(egui::accesskit::Role::Tab, stage)
-                .rect();
-            assert!(header.top() >= tabs.bottom());
-            assert!(header.left() >= size.x - width && header.right() <= size.x);
-            assert!(harness.query_by_label(absent).is_none());
-            assert_eq!(harness.state().document.project, project);
-            assert_eq!(harness.state().current_source, source);
-            assert!(harness.state().preference_store.is_none());
-            workflow::wait_settled(&mut harness);
-            harness.render().unwrap();
-            wait_for(&mut harness, |e| {
-                let gpu = e.scopes.gpu.as_ref().expect("scope GPU resources");
-                let input = e.scope_request().unwrap();
-                let frame = input.frame();
-                let settings = crate::scopes::Settings {
-                    target: e.target,
-                    plot: crate::scopes::Plot::Vector,
-                    amplification: 1,
-                };
-                let Some(counts) = input.status(gpu, settings) else {
-                    return false;
-                };
-                let counts = counts.expect("scope diagnostics");
-                assert_eq!(counts.invalid, 0);
-                assert_eq!(counts.valid, frame.output[0] * frame.output[1]);
-                true
-            });
-            let timing = Arc::new(SelectionTiming::new(harness.state().id, Instant::now()));
-            harness.state_mut().selection_timing = Some(timing.clone());
-            harness.step();
-            let png = harness.render().unwrap();
-            assert_eq!(png.dimensions(), (size.x as u32, size.y as u32));
-            assert!(timing.ready_was_painted());
-            save_capture(
-                &png,
-                &format!("{}-{layout}-offscreen", stage.to_lowercase()),
-            );
         }
-    }
-    assert_eq!(harness.state().document.project, project);
-    assert_eq!(harness.state().current_source, source);
+        harness.read(|editor| assert_eq!(editor.document.project, project));
+        harness.read(|editor| assert_eq!(editor.current_source, source));
+    });
 }

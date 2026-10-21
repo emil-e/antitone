@@ -169,11 +169,11 @@ fn shared_outline_shades_outside_but_not_inside_rotated_and_reflected_frames() {
 
 #[test]
 fn context_changes_only_the_view_and_margin_changes_reuse_the_uncropped_image_authority() {
-    let (mut editor, _directory, _commands) = super::super::tests::fixture();
+    let (mut editor, _directory) = super::super::tests::fixture();
     let project = editor.document.project.clone();
     editor.auto_crop(Target::Roll);
     assert!(editor.auto_crop_context());
-    let area = editor.ready.as_ref().unwrap().area;
+    let area = editor.document.visit.ready.as_ref().unwrap().area;
     let composition =
         Composition::new(area, editor.roll_orientation, editor.photo_orientation).unwrap();
     let layout = editor.viewport.layout_composition(
@@ -194,14 +194,19 @@ fn context_changes_only_the_view_and_margin_changes_reuse_the_uncropped_image_au
         "the full-scan reference remains valid when only an overlay moves"
     );
     assert!(editor.last_layout.is_some());
-    editor.auto_crop_edit.as_mut().unwrap().show_outline = false;
+    editor
+        .document
+        .auto_crop_edit
+        .as_mut()
+        .unwrap()
+        .show_outline = false;
     assert!(
         editor.auto_crop_context(),
         "artwork visibility is not a second tool lifecycle"
     );
     assert_eq!(editor.original.revision(), revision);
     editor.begin_crop();
-    assert!(editor.crop_edit.is_none() && editor.auto_crop_context());
+    assert!(editor.document.visit.crop_edit.is_none() && editor.auto_crop_context());
     editor.finish_auto_crop(false);
     assert!(!editor.auto_crop_context());
     assert_eq!(editor.document.project, project);
@@ -211,7 +216,7 @@ fn context_changes_only_the_view_and_margin_changes_reuse_the_uncropped_image_au
         "leaving the tool changes the view domain"
     );
     editor.begin_crop();
-    assert!(editor.crop_edit.is_some());
+    assert!(editor.document.visit.crop_edit.is_some());
     editor.finish_crop(false);
     assert_eq!(editor.document.project, project);
 }

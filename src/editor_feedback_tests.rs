@@ -4,7 +4,7 @@ use super::*;
 
 #[test]
 fn save_failure_survives_status_updates_and_acknowledgement_preserves_the_pending_decision() {
-    let (mut editor, send, receiver) = fixture();
+    let mut editor = fixture();
     editor.sync_document();
     let before = editor.document.project.clone();
     editor.queue_save(
@@ -12,20 +12,16 @@ fn save_failure_survives_status_updates_and_acknowledgement_preserves_the_pendin
         crate::project::Save::New,
         Some(Transition::Close),
     );
-    receiver.recv().unwrap();
+    assert!(editor.document.write.request.is_some());
     let id = editor.document_pending.unwrap();
-    send.send(Message::Saved(id, Err("permission denied".into())))
-        .unwrap();
-    editor.receive();
+    editor.save_result(id, Err("permission denied".into()));
     assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Save);
     assert_eq!(editor.transition, Some(Transition::Close));
     assert_eq!(editor.document.project, before);
     assert!(editor.document.dirty());
     assert!(editor.document_failure.is_none());
     editor.status = "Unrelated progress or success".into();
-    send.send(Message::Saved(id, Err("stale error".into())))
-        .unwrap();
-    editor.receive();
+    editor.save_result(id, Err("stale error".into()));
     assert_eq!(
         editor.failure.as_ref().unwrap().details,
         "permission denied"
@@ -40,7 +36,7 @@ fn save_failure_survives_status_updates_and_acknowledgement_preserves_the_pendin
     );
     assert!(!labels.iter().any(|(label, _)| label == "Save changes"));
     app_frame(&mut editor, &context, key(egui::Key::ArrowRight));
-    assert!(receiver.try_recv().is_err());
+    assert!(editor.candidate_operation.request.is_none());
     app_frame(&mut editor, &context, key(egui::Key::Enter));
     assert!(editor.failure.is_none());
     assert_eq!(editor.transition, Some(Transition::Close));
@@ -48,192 +44,166 @@ fn save_failure_survives_status_updates_and_acknowledgement_preserves_the_pendin
     assert_eq!(editor.document.project, before);
     let labels = app_frame(&mut editor, &context, vec![]);
     assert!(labels.iter().any(|(label, _)| label == "Save changes"));
-    assert!(receiver.try_recv().is_err());
+    assert!(editor.candidate_operation.request.is_none());
 }
 
 #[test]
-fn stopped_worker_reports_only_targeted_operations_and_keeps_accepted_state() {
-    for kind in [
-        FailureKind::FlatReference,
-        FailureKind::FlatCorrection,
-        FailureKind::Save,
-        FailureKind::Export,
-    ] {
-        let (mut editor, _send, receiver) = fixture();
-        add_ready_fixture(&mut editor);
-        editor.sync_document();
-        let before = editor.document.project.clone();
-        let source = editor.current_source;
-        let view = (editor.viewport, editor.source);
-        drop(receiver);
-        match kind {
-            FailureKind::FlatReference => {
-                editor.begin_flat_edit("missing-reference.ARW".into(), None)
-            }
-            FailureKind::FlatCorrection => {
-                editor.start_document(DocumentWork::Correction(editor.document.clone(), source))
-            }
-            FailureKind::Save => editor.queue_save(
-                "project.json".into(),
-                crate::project::Save::New,
-                Some(Transition::New),
-            ),
-            FailureKind::Export => editor.export(
-                "output.exr".into(),
-                OutputFormat::Exr(ExrPrecision::Full),
-                Overwrite::Refuse,
-            ),
-            _ => unreachable!(),
-        }
-        assert_eq!(editor.failure.as_ref().unwrap().kind, kind);
-        assert_eq!(
-            editor.failure.as_ref().unwrap().details,
-            "RAW worker stopped"
-        );
-        assert!(
-            !editor.busy && editor.document_pending.is_none() && editor.document_failure.is_none()
-        );
-        assert!(editor.flat_edit.is_none());
-        assert_eq!(editor.document.project, before);
-        assert_eq!(editor.current_source, source);
-        assert_eq!(editor.source, view.1);
-        assert_eq!(editor.viewport.zoom, view.0.zoom);
-        if kind == FailureKind::Save {
-            assert_eq!(editor.transition, Some(Transition::New));
-        }
-    }
+fn unavailable_export_services_report_failure_and_keep_accepted_state() {
+    let mut editor = fixture();
+    add_ready_fixture(&mut editor);
+    editor.sync_document();
+    let before = editor.document.project.clone();
+    let source = editor.current_source;
+    let view = (editor.viewport, editor.source);
+    editor.export(
+        "output.exr".into(),
+        OutputFormat::Exr(ExrPrecision::Full),
+        Overwrite::Refuse,
+    );
+    assert!(editor.export_operation.request.is_some());
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, access| editor.start_export_workflow(access));
+        app.read(|editor| {
+            assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Export);
+            assert_eq!(
+                editor.failure.as_ref().unwrap().details,
+                "Export services unavailable"
+            );
+            assert!(
+                !editor.busy
+                    && editor.document_pending.is_none()
+                    && editor.document_failure.is_none()
+            );
+            assert!(editor.flat_edit.is_none());
+            assert_eq!(editor.document.project, before);
+            assert_eq!(editor.current_source, source);
+            assert_eq!(editor.source, view.1);
+            assert_eq!(editor.viewport.zoom, view.0.zoom);
+        });
+    });
 }
 
 #[test]
-fn stopped_worker_during_flat_acceptance_restores_working_context_and_ignores_late_completion() {
-    let (mut editor, send, receiver) = fixture();
+fn unavailable_reference_services_restore_working_context_and_ignore_late_acceptance() {
+    let mut editor = fixture();
     add_ready_fixture(&mut editor);
     editor.source = false;
     editor.sync_document();
     let before = editor.document.project.clone();
-    let id = editor.id;
-    let path = editor.ready.as_ref().unwrap().path.clone();
+    let visit = editor.document.visit.view;
+    let path = editor.document.visit.ready.as_ref().unwrap().path.clone();
     editor.begin_flat_edit("reference.ARW".into(), None);
-    receiver.recv().unwrap();
     let request = editor.id;
-    let (mut reference, _, _) = fixture();
+    let mut reference = fixture();
     add_ready_fixture(&mut reference);
-    send.send(Message::FlatPreview(
+    editor.reference_previewed(
         request,
-        Ok(Box::new(FlatPreview {
-            ready: reference.ready.take().unwrap(),
+        Ok(FlatPreview {
+            ready: reference.document.visit.ready.take().unwrap(),
             region: Some(Rect {
                 x: 20,
                 y: 20,
                 width: 100,
                 height: 80,
             }),
-        })),
-    ))
-    .unwrap();
-    editor.receive();
-    drop(receiver);
+        }),
+    );
     editor.apply_flat_edit();
+    let mut editor =
+        crate::editor::tests::complete_reference_operation(editor, Duration::from_secs(5));
     assert_eq!(
         editor.failure.as_ref().unwrap().kind,
         FailureKind::FlatCorrection
     );
     assert!(!editor.busy && editor.document_pending.is_none() && editor.document_failure.is_none());
     assert!(editor.flat_edit.is_none() && editor.pick.is_none());
-    assert_eq!(editor.id, id);
-    assert_eq!(editor.ready.as_ref().unwrap().path, path);
+    assert_ne!(editor.document.visit.view, visit);
+    assert_eq!(editor.document.visit.ready.as_ref().unwrap().path, path);
     assert!(!editor.source);
     assert_eq!(editor.document.project, before);
-    send.send(Message::Prepared(request, Err("late completion".into())))
-        .unwrap();
-    editor.receive();
+    editor.document_prepared(request, Err("late completion".into()));
     assert_eq!(
         editor.failure.as_ref().unwrap().details,
-        "RAW worker stopped"
+        "Reference services unavailable"
     );
 }
 
 #[test]
 fn matching_save_success_resolves_the_failure_but_starting_a_retry_does_not() {
-    let (mut editor, send, receiver) = fixture();
+    let mut editor = fixture();
     editor.report_failure(FailureKind::Save, "destination unavailable".into());
     editor.queue_save(
         "project.json".into(),
         crate::project::Save::New,
         Some(Transition::Close),
     );
-    receiver.recv().unwrap();
+    assert!(editor.document.write.request.is_some());
     assert!(editor.failure.is_some());
     let id = editor.document_pending.unwrap();
-    send.send(Message::Saved(id, Ok(Box::new(editor.document.clone()))))
-        .unwrap();
-    editor.receive();
+    editor.save_result(id, Ok(Box::new(editor.document.capture())));
     assert!(editor.failure.is_none());
-    assert_eq!(editor.resume_transition, Some(Transition::Close));
-    assert!(!editor.allow_close);
+    assert!(editor.allow_close);
+    assert_eq!(editor.application_quit_state(), host::QuitState::Approved);
 }
 
 #[test]
 fn stale_and_unrelated_results_do_not_retire_classified_correction_failures() {
-    let (mut editor, send, receiver) = fixture();
+    let mut editor = fixture();
     let before = editor.document.project.clone();
-    editor.start_document(DocumentWork::Correction(
-        editor.document.clone(),
+    editor.start_document(Preparation::Correction(
+        editor.document.capture(),
         editor.current_source,
     ));
-    receiver.recv().unwrap();
+    assert!(editor.candidate_operation.request.is_some());
     let id = editor.document_pending.unwrap();
-    send.send(Message::Prepared(id + 1, Err("stale correction".into())))
-        .unwrap();
-    editor.receive();
+    editor.document_prepared(id + 1, Err("stale correction".into()));
     assert!(editor.failure.is_none() && editor.busy);
-    send.send(Message::Prepared(id, Err("unsupported GPU range".into())))
-        .unwrap();
-    editor.receive();
+    editor.document_prepared(id, Err("unsupported GPU range".into()));
     assert_eq!(
         editor.failure.as_ref().unwrap().kind,
         FailureKind::FlatCorrection
     );
     assert_eq!(editor.document.project, before);
     assert!(!editor.busy);
-    send.send(Message::Exported(
-        editor.id,
-        Ok("unrelated-success.tiff".into()),
-    ))
-    .unwrap();
-    editor.receive();
+    editor.export_result(editor.id, Ok("unrelated-success.tiff".into()));
     assert_eq!(
         editor.failure.as_ref().unwrap().details,
         "unsupported GPU range"
     );
-    editor.start_document(DocumentWork::Correction(
-        editor.document.clone(),
+    editor.start_document(Preparation::Correction(
+        editor.document.capture(),
         editor.current_source,
     ));
-    receiver.recv().unwrap();
+    assert!(editor.candidate_operation.request.is_some());
     let id = editor.document_pending.unwrap();
-    send.send(Message::Prepared(
+    editor.document_prepared(
         id,
         Ok(Box::new(Prepared {
-            document: editor.document.clone(),
-            ready: None,
+            document: editor.document.capture(),
+            ready: editor.document.visit.ready.clone(),
             selected: editor.current_source,
             reuse_ready: true,
             correction: None,
             preserve_view: true,
         })),
-    ))
-    .unwrap();
-    editor.receive();
+    );
     assert!(editor.failure.is_none());
     assert_eq!(editor.document.project, before);
 }
 
 #[test]
 fn rejected_support_preserves_region_and_grade_until_matching_resolution() {
-    let (mut editor, _send, receiver) = fixture();
+    let mut editor = fixture();
     add_ready_fixture(&mut editor);
-    editor.pick = Some(Pick::Flat);
+    let reference = editor.document.visit.ready.as_ref().unwrap().clone();
+    editor.begin_flat_edit("reference.ARW".into(), None);
+    editor.reference_previewed(
+        editor.id,
+        Ok(FlatPreview {
+            ready: reference,
+            region: None,
+        }),
+    );
     editor.region = Some(
         Coverage::new(
             [[20.25, 20.], [40.25, 20.], [40.25, 40.], [20.25, 40.]]
@@ -251,7 +221,10 @@ fn rejected_support_preserves_region_and_grade_until_matching_resolution() {
     assert_eq!(editor.region, region);
     assert_eq!(editor.document.project, before);
     assert!(!editor.busy && editor.document_pending.is_none());
-    assert!(receiver.try_recv().is_err());
+    assert!(
+        editor.flat_edit.as_ref().unwrap().request.is_none()
+            && editor.candidate_operation.request.is_none()
+    );
     editor.resolve_failure(FailureKind::Export);
     assert!(editor.failure.is_some());
     editor.resolve_failure(FailureKind::FlatCorrection);
@@ -260,7 +233,7 @@ fn rejected_support_preserves_region_and_grade_until_matching_resolution() {
 
 #[test]
 fn export_failure_is_persistent_stale_results_cannot_replace_it_and_matching_success_resolves_it() {
-    let (mut editor, send, receiver) = fixture();
+    let mut editor = fixture();
     add_ready_fixture(&mut editor);
     editor.sync_document();
     let before = editor.document.project.clone();
@@ -269,27 +242,15 @@ fn export_failure_is_persistent_stale_results_cannot_replace_it_and_matching_suc
         OutputFormat::Exr(ExrPrecision::Half),
         Overwrite::Refuse,
     );
-    receiver.recv().unwrap();
-    let request = editor.export_pending.unwrap();
-    send.send(Message::Exported(request + 1, Err("stale".into())))
-        .unwrap();
-    editor.receive();
+    assert!(editor.export_operation.request.is_some());
+    let request = editor.export_operation.pending.unwrap();
+    editor.export_result(request + 1, Err("stale".into()));
     assert!(editor.failure.is_none() && editor.busy);
-    send.send(Message::Exported(
-        request,
-        Err("choose full-float EXR".into()),
-    ))
-    .unwrap();
-    editor.receive();
+    editor.export_result(request, Err("choose full-float EXR".into()));
     assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Export);
     assert!(!editor.busy);
     editor.status = "Other status".into();
-    send.send(Message::Exported(
-        request + 1,
-        Err("another stale error".into()),
-    ))
-    .unwrap();
-    editor.receive();
+    editor.export_result(request + 1, Err("another stale error".into()));
     assert_eq!(
         editor.failure.as_ref().unwrap().details,
         "choose full-float EXR"
@@ -299,27 +260,23 @@ fn export_failure_is_persistent_stale_results_cannot_replace_it_and_matching_suc
         OutputFormat::Exr(ExrPrecision::Full),
         Overwrite::Refuse,
     );
-    receiver.recv().unwrap();
+    assert!(editor.export_operation.request.is_some());
     assert!(editor.failure.is_some());
-    let pending = editor.export_pending;
-    send.send(Message::Exported(request, Ok("old-output.exr".into())))
-        .unwrap();
-    editor.receive();
+    let pending = editor.export_operation.pending;
+    editor.export_result(request, Ok("old-output.exr".into()));
     assert!(editor.busy && editor.failure.is_some());
-    assert_eq!(editor.export_pending, pending);
-    send.send(Message::Exported(
-        editor.export_pending.unwrap(),
+    assert_eq!(editor.export_operation.pending, pending);
+    editor.export_result(
+        editor.export_operation.pending.unwrap(),
         Ok("output.exr".into()),
-    ))
-    .unwrap();
-    editor.receive();
+    );
     assert!(editor.failure.is_none());
     assert_eq!(editor.document.project, before);
 }
 
 #[test]
 fn feedback_blocks_background_file_actions_and_dismissal_only_retires_the_message() {
-    let (mut editor, _send, receiver) = fixture();
+    let mut editor = fixture();
     add_ready_fixture(&mut editor);
     editor.sync_document();
     let before = editor.document.project.clone();
@@ -346,7 +303,11 @@ fn feedback_blocks_background_file_actions_and_dismissal_only_retires_the_messag
         );
     }
     assert!(editor.failure.is_some());
-    assert!(receiver.try_recv().is_err());
+    assert!(
+        editor.candidate_operation.request.is_none()
+            && editor.document.write.request.is_none()
+            && editor.export_operation.request.is_none()
+    );
     let point = labels
         .iter()
         .find(|(label, _)| label == "OK")
@@ -358,5 +319,9 @@ fn feedback_blocks_background_file_actions_and_dismissal_only_retires_the_messag
     }
     assert!(editor.failure.is_none());
     assert_eq!(editor.document.project, before);
-    assert!(receiver.try_recv().is_err());
+    assert!(
+        editor.candidate_operation.request.is_none()
+            && editor.document.write.request.is_none()
+            && editor.export_operation.request.is_none()
+    );
 }

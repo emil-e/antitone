@@ -19,17 +19,17 @@ impl Editor {
             || self.document_pending.is_some()
             || self.transition.is_some()
             || self.project_overwrite.is_some()
-            || self.resume_transition.is_some()
+            || self.allow_close
             || self.overwrite.is_some()
             || self.removal_pending.is_some()
-            || self.adjustments.confirming()
+            || self.document.visit.adjustments.confirming()
     }
 
     pub(super) fn fullscreen_available(&self) -> bool {
         !self.fullscreen_blocked()
-            && self.analysis_review.is_none()
+            && self.document.analysis_review.is_none()
             && (self.fullscreen.is_some()
-                || (self.ready.is_some() || self.pending_preview.is_some())
+                || (self.document.visit.ready.is_some() || self.pending_preview.is_some())
                     && !(self.busy && (self.pick.is_some() || self.flat_edit.is_some())))
     }
 
@@ -56,6 +56,8 @@ impl Editor {
             });
             if self.viewport.zoom.is_some()
                 && let Some((layout, density)) = self
+                    .document
+                    .visit
                     .crop_edit
                     .as_ref()
                     .and_then(|edit| {

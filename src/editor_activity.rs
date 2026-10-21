@@ -287,17 +287,23 @@ impl TaskActivity {
 impl Editor {
     pub(super) fn cancel_task(&mut self, request: TaskRequest) {
         if let TaskRequest::Look(id) = request {
-            if self.look_pending.as_ref().is_some_and(|p| p.id == id) {
+            if self.document.look.as_ref().is_some_and(|p| p.id == id) {
                 self.cancel_look();
             }
             return;
         }
         if let TaskRequest::Analyze(id) = request
             && self
+                .document
                 .analysis_pending
                 .as_ref()
-                .or(self.analysis_preparing.as_ref())
-                .is_some_and(|pending| pending.id == id)
+                .map(|pending| pending.id)
+                .or(self
+                    .document
+                    .analysis_preparing
+                    .as_ref()
+                    .map(|pending| pending.id))
+                == Some(id)
         {
             self.cancel_analysis();
         }

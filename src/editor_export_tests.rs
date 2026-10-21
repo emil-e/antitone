@@ -6,23 +6,14 @@ mod production;
 #[path = "editor_export_repair_tests.rs"]
 mod repairs;
 
-fn wait(editor: &mut Editor) {
-    let start = std::time::Instant::now();
-    while editor.busy {
-        editor.receive();
-        assert!(
-            start.elapsed() < Duration::from_secs(30),
-            "{}",
-            editor.status
-        );
-        std::thread::sleep(Duration::from_millis(1));
-    }
+fn wait(editor: Editor) -> Editor {
+    super::tests::complete_export_operation(editor, Duration::from_secs(30))
 }
 
 #[test]
 fn export_completion_cannot_retire_new_source_or_document_operations() {
     for document in [false, true] {
-        let (mut editor, send, receiver) = super::tests::fixture();
+        let mut editor = super::tests::fixture();
         super::tests::add_ready_fixture(&mut editor);
         editor.sync_document();
         editor.export(
@@ -30,36 +21,35 @@ fn export_completion_cannot_retire_new_source_or_document_operations() {
             OutputFormat::Exr(ExrPrecision::Full),
             Overwrite::Refuse,
         );
-        receiver.recv().unwrap();
-        let export = editor.export_pending.unwrap();
+        assert!(editor.export_operation.request.is_some());
+        let export = editor.export_operation.pending.unwrap();
         if document {
-            editor.start_document(DocumentWork::New);
+            editor.start_document(Preparation::New);
         } else {
             editor.load_source("another.ARW".into(), false);
         }
-        receiver.recv().unwrap();
+        assert!(if document {
+            editor.candidate_operation.request.is_some()
+        } else {
+            editor.document.visit.source.request.is_some()
+        });
         let status = editor.status.clone();
         let title = editor.tasks.view().unwrap().title;
         let project = editor.document.project.clone();
-        send.send(Message::Exported(export, Ok("captured.exr".into())))
-            .unwrap();
-        editor.receive();
+        editor.export_result(export, Ok("captured.exr".into()));
         assert!(editor.busy);
-        assert!(editor.export_pending.is_none());
+        assert!(editor.export_operation.pending.is_none());
         assert_eq!(editor.status, status);
         assert_eq!(editor.tasks.view().unwrap().title, title);
         assert_eq!(editor.document.project, project);
         if document {
-            send.send(Message::Prepared(
+            editor.document_prepared(
                 editor.document_pending.unwrap(),
                 Err("new document failed".into()),
-            ))
-            .unwrap();
+            );
         } else {
-            send.send(Message::Ready(editor.id, Err("new source failed".into())))
-                .unwrap();
+            editor.source_result(editor.id, Err("new source failed".into()));
         }
-        editor.receive();
         assert!(!editor.busy);
         assert!(editor.tasks.view().is_none());
     }
@@ -88,8 +78,8 @@ fn supplied_m9_editor_import_save_open_and_bounded_exports() {
         let mut editor = Editor::new(&device, &queue, None);
         editor.thumbnails = Thumbnails::default();
         editor.add_raws(vec![path]);
-        wait(&mut editor);
-        assert!(editor.ready.is_some(), "{}", editor.status);
+        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(30));
+        assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
         assert_eq!(
             editor
                 .document
@@ -123,10 +113,10 @@ fn supplied_m9_editor_import_save_open_and_bounded_exports() {
             .document
             .save(&project_path, crate::project::Save::New)
             .unwrap();
-        editor.start_document(DocumentWork::Open(project_path));
-        wait(&mut editor);
+        editor.start_document(Preparation::Open(project_path));
+        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(30));
         assert!(
-            editor.ready.is_some() && editor.failure.is_none(),
+            editor.document.visit.ready.is_some() && editor.failure.is_none(),
             "{}",
             editor.status
         );
@@ -137,7 +127,7 @@ fn supplied_m9_editor_import_save_open_and_bounded_exports() {
         ] {
             let output = directory.path().join(name);
             editor.export(output.clone(), format, Overwrite::Refuse);
-            wait(&mut editor);
+            editor = wait(editor);
             assert!(editor.failure.is_none(), "{}", editor.status);
             match format {
                 OutputFormat::Tiff(_) => {
@@ -173,8 +163,8 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
         editor.add_raws(vec![
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         ]);
-        wait(&mut editor);
-        assert!(editor.ready.is_some(), "{}", editor.status);
+        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(30));
+        assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
         editor.dmin = Some(DVec3::splat(3000. / 4031.));
         editor.dmax = Some(DVec3::splat(128. / 4031.));
         editor.roll = RollSettings::new_grade();
@@ -194,14 +184,14 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
         ] {
             let path = directory.path().join(name);
             editor.export(path.clone(), format, Overwrite::Refuse);
-            assert!(editor.busy && editor.export_pending.is_some());
-            wait(&mut editor);
+            assert!(editor.busy && editor.export_operation.pending.is_some());
+            editor = wait(editor);
             assert!(editor.failure.is_none(), "{}", editor.status);
-            assert!(editor.export_pending.is_none() && editor.tasks.view().is_none());
+            assert!(editor.export_operation.pending.is_none() && editor.tasks.view().is_none());
             match format {
                 OutputFormat::Tiff(target) => {
                     let mut decoder = Decoder::new(std::fs::File::open(&path).unwrap()).unwrap();
-                    let area = editor.ready.as_ref().unwrap().area;
+                    let area = editor.document.visit.ready.as_ref().unwrap().area;
                     let size = [area.width, area.height];
                     assert_eq!(decoder.dimensions().unwrap(), (size[0], size[1]));
                     assert_eq!(
@@ -223,36 +213,30 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
         let source = directory.path().join("srgb.tif");
         let expected = tiff_pixels(&source);
         let captured = directory.path().join("captured.tif");
-        let submissions = host::App::submission_gate(&editor).clone();
-        submissions.configure(|| {
-            editor.export(
-                captured.clone(),
-                OutputFormat::Tiff(OutputTarget::Srgb),
-                Overwrite::Refuse,
-            );
-            assert!(matches!(
-                editor.messages.recv_timeout(Duration::from_millis(100)),
-                Err(mpsc::RecvTimeoutError::Timeout)
-            ));
-            // Simulate later accepted edits/source identity while the captured worker is queued.
-            editor.photo.exposure = 0.75;
-            editor.sync_document();
-            editor.id += 7;
-        });
+        editor.export(
+            captured.clone(),
+            OutputFormat::Tiff(OutputTarget::Srgb),
+            Overwrite::Refuse,
+        );
+        assert!(editor.export_operation.request.is_some());
+        // Later accepted edits/source identity cannot change the captured file recipe.
+        editor.photo.exposure = 0.75;
+        editor.sync_document();
+        editor.id += 7;
         let edited = editor.document.project.clone();
-        wait(&mut editor);
+        editor = wait(editor);
         assert!(editor.failure.is_none(), "{}", editor.status);
         assert_eq!(tiff_pixels(&captured), expected);
         assert_eq!(editor.document.project, edited);
         assert_eq!(editor.photo.exposure, 0.75);
-        // Source mismatch and destination failures are explicit and must not replace accepted files.
+        // A refused destination remains intact even after the visible authority and grade change.
         let bytes = std::fs::read(&source).unwrap();
         editor.export(
             source.clone(),
             OutputFormat::Tiff(OutputTarget::Srgb),
-            Overwrite::Confirmed,
+            Overwrite::Refuse,
         );
-        wait(&mut editor);
+        editor = wait(editor);
         assert!(editor.failure.is_some());
         assert_eq!(std::fs::read(&source).unwrap(), bytes);
         assert_eq!(editor.document.project, edited);

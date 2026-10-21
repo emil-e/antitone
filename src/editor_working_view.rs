@@ -9,12 +9,14 @@ use std::sync::Mutex;
 #[cfg(test)]
 #[path = "editor_working_view_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "editor_working_workflow_tests.rs"]
+mod workflow_tests;
 
 #[derive(Default)]
 struct MailboxState {
     wanted: Option<ViewSourceSpec>,
-    awake: bool,
-    completed: Option<(ViewSourceSpec, Result<Arc<ViewSource>, String>)>,
+    input: Option<source::Context>,
     underlay: Option<Arc<ViewSource>>,
     neutral_detail: Option<Arc<ViewSource>>,
     neutral_underlay: Option<Arc<ViewSource>>,
@@ -22,7 +24,17 @@ struct MailboxState {
 }
 
 #[derive(Default)]
-pub(super) struct Mailbox(Mutex<MailboxState>);
+pub(super) struct Mailbox(Mutex<MailboxState>, pub event_listener::Event);
+
+pub(super) struct Completion {
+    spec: ViewSourceSpec,
+    result: Result<Arc<ViewSource>, String>,
+}
+
+pub(super) struct Acquisition {
+    pub mailbox: Arc<Mailbox>,
+    pub kernels: Arc<Mutex<Option<Arc<ViewKernels>>>>,
+}
 
 #[derive(Default)]
 pub(super) struct WorkingView {
@@ -31,6 +43,7 @@ pub(super) struct WorkingView {
     revision: u64,
     changed_at: Option<std::time::Instant>,
     mailbox: Arc<Mailbox>,
+    kernels: Arc<Mutex<Option<Arc<ViewKernels>>>>,
     source: Option<Arc<ViewSource>>,
     underlay: Option<Arc<ViewSource>>,
     underlay_rendered: Option<Arc<RenderedView>>,
@@ -137,8 +150,8 @@ impl WorkingView {
 
     fn retire_support(&mut self) {
         let mut mailbox = self.mailbox.0.lock().unwrap();
+        let retired = mailbox.input.take();
         mailbox.wanted = None;
-        mailbox.completed = None;
         mailbox.underlay = None;
         mailbox.neutral_detail = None;
         mailbox.neutral_underlay = None;
@@ -154,6 +167,8 @@ impl WorkingView {
         self.displayed = None;
         self.updating = false;
         self.error = None;
+        drop(mailbox);
+        drop(retired);
     }
 
     #[cfg(all(test, feature = "ui-tests"))]
@@ -177,12 +192,7 @@ impl WorkingView {
         self.wanted.as_ref().map(|wanted| wanted.frame)
     }
 
-    fn request(
-        &mut self,
-        spec: ViewSourceSpec,
-        commands: &mpsc::Sender<Command>,
-        context: &egui::Context,
-    ) {
+    fn request(&mut self, spec: ViewSourceSpec, input: source::Context) {
         if self
             .wanted
             .as_ref()
@@ -197,22 +207,6 @@ impl WorkingView {
             self.error = None;
         }
 
-        if let Some((completed, result)) = mailbox.completed.take()
-            && completed == spec
-        {
-            match result {
-                Ok(source) => {
-                    self.source = Some(source);
-                    self.failed = None;
-                    self.error = None;
-                }
-                Err(error) => {
-                    self.failed = Some(spec.clone());
-                    self.error = Some(error);
-                }
-            }
-        }
-
         if mailbox.underlay.as_ref().is_some_and(|underlay| {
             !underlay.spec.same_source(&spec)
                 || underlay.spec.frame.composition != spec.frame.composition
@@ -220,26 +214,58 @@ impl WorkingView {
             mailbox.underlay = None;
         }
         self.underlay = mailbox.underlay.clone();
+        let retired = mailbox.input.replace(input);
         mailbox.wanted = Some(spec.clone());
 
-        if self
-            .source
-            .as_ref()
-            .is_none_or(|source| source.spec != spec)
-            && self.failed.as_ref() != Some(&spec)
-            && !mailbox.awake
+        self.wanted = Some(spec);
+        drop(mailbox);
+        drop(retired);
+    }
+
+    pub(super) fn acquisition(&self, authority: u64) -> Option<Acquisition> {
+        let state = self.mailbox.0.lock().unwrap();
+        let wanted = state.wanted.as_ref()?;
+        (wanted.authority == authority
+            && state.input.is_some()
+            && self
+                .source
+                .as_ref()
+                .is_none_or(|source| source.spec != *wanted)
+            && self.failed.as_ref() != Some(wanted))
+        .then(|| Acquisition {
+            mailbox: self.mailbox.clone(),
+            kernels: self.kernels.clone(),
+        })
+    }
+
+    pub(super) fn acquired(&mut self, completion: Completion) {
+        let Completion { spec, result } = completion;
+        if self.wanted.as_ref() != Some(&spec)
+            || self.mailbox.0.lock().unwrap().wanted.as_ref() != Some(&spec)
         {
-            mailbox.awake = true;
-            if commands
-                .send(Command::ViewSource(self.mailbox.clone(), context.clone()))
-                .is_err()
-            {
-                mailbox.awake = false;
-                self.failed = Some(spec.clone());
-                self.error = Some("RAW worker stopped".into());
+            return;
+        }
+        match result {
+            Ok(source) => {
+                self.source = Some(source);
+                self.failed = None;
+                self.error = None;
+            }
+            Err(error) => {
+                self.failed = Some(spec);
+                self.error = Some(error);
             }
         }
-        self.wanted = Some(spec);
+        self.refresh_support();
+    }
+
+    pub(super) fn acquisition_failed(&mut self, error: String) {
+        self.failed = self.wanted.clone();
+        self.error = Some(error);
+    }
+
+    pub(super) fn refresh_support(&mut self) {
+        self.underlay = self.mailbox.0.lock().unwrap().underlay.clone();
     }
 
     fn render(
@@ -425,52 +451,62 @@ impl WorkingView {
 impl Drop for WorkingView {
     fn drop(&mut self) {
         let mut mailbox = self.mailbox.0.lock().unwrap();
+        let retired = mailbox.input.take();
         mailbox.wanted = None;
-        mailbox.completed = None;
         mailbox.underlay = None;
         mailbox.neutral_detail = None;
         mailbox.neutral_underlay = None;
         mailbox.repaired_detail = None;
+        drop(mailbox);
+        drop(retired);
     }
 }
 
-// Runs on the command worker, borrowing its authoritative developed-source lease.
+// Physical acquisition follows the latest captured demand while retaining one admission.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn acquire(
     mailbox: &Mailbox,
-    context: &egui::Context,
-    source: &Option<(u64, Scan)>,
-    correction: Option<&Arc<Correction>>,
     renderers: &crate::renderer::RendererCache,
     kernels: &mut Option<Arc<ViewKernels>>,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     submissions: &crate::gpu::SubmissionGate,
     source_epoch: &std::sync::atomic::AtomicU64,
-) {
+    retired: &std::sync::atomic::AtomicBool,
+) -> Option<Completion> {
+    use std::sync::atomic::Ordering;
     loop {
-        let spec = {
-            let mut state = mailbox.0.lock().unwrap();
-            let Some(spec) = state.wanted.clone() else {
-                state.awake = false;
-                return;
-            };
-            spec
+        if retired.load(Ordering::Relaxed) {
+            return None;
+        }
+        let (spec, input) = {
+            let state = mailbox.0.lock().unwrap();
+            let demand = state.wanted.as_ref().zip(state.input.as_ref())?;
+            (demand.0.clone(), demand.1.clone())
         };
 
-        let Some((_, scan)) = source.as_ref().filter(|(id, _)| {
-            *id == spec.authority && source_epoch.load(std::sync::atomic::Ordering::Relaxed) == *id
-        }) else {
-            let mut state = mailbox.0.lock().unwrap();
+        if source_epoch.load(Ordering::Relaxed) != spec.authority {
+            let state = mailbox.0.lock().unwrap();
             if state.wanted.as_ref() != Some(&spec) {
                 continue;
             }
-            state.awake = false;
-            drop(state);
-            context.request_repaint();
-            return;
-        };
+            return None;
+        }
 
+        let scan = match input.scan() {
+            Ok(scan) => scan,
+            Err(error) => {
+                let state = mailbox.0.lock().unwrap();
+                if state.wanted.as_ref() != Some(&spec) {
+                    continue;
+                }
+                return Some(Completion {
+                    spec,
+                    result: Err(error.to_string()),
+                });
+            }
+        };
+        let correction = input.correction.as_ref();
         let needs_underlay = mailbox
             .0
             .lock()
@@ -483,7 +519,8 @@ pub(super) fn acquire(
                     || underlay.spec.repairs != spec.repairs
             });
         let cancelled = || {
-            source_epoch.load(std::sync::atomic::Ordering::Relaxed) != spec.authority
+            retired.load(Ordering::Relaxed)
+                || source_epoch.load(std::sync::atomic::Ordering::Relaxed) != spec.authority
                 || mailbox
                     .0
                     .lock()
@@ -501,113 +538,120 @@ pub(super) fn acquire(
                     })
         };
 
-        let result = (|| {
-            let renderer = renderers.get(device, queue)?;
-            if kernels.is_none() {
-                *kernels = Some(pollster::block_on(ViewKernels::new(device))?);
-            }
-
-            let specs = if needs_underlay {
-                vec![spec.clone(), spec.underlay()?]
-            } else {
-                vec![spec.clone()]
-            };
-            let mut neutral_sources = Vec::new();
-            let mut missing_specs = Vec::new();
-            {
-                let state = mailbox.0.lock().unwrap();
-                for wanted in &specs {
-                    let neutral = wanted.clone().with_repairs(Default::default());
-                    let cached = [&state.neutral_detail, &state.neutral_underlay]
-                        .into_iter()
-                        .flatten()
-                        .find(|source| source.spec == neutral)
-                        .cloned();
-                    if cached.is_none() {
-                        missing_specs.push(neutral);
-                    }
-                    neutral_sources.push(cached);
+        let result =
+            (|| {
+                let renderer = renderers.get(device, queue)?;
+                if kernels.is_none() {
+                    *kernels = Some(pollster::block_on(ViewKernels::new(device))?);
                 }
-            }
 
-            if !missing_specs.is_empty() {
-                let Some(acquired) = ViewSource::acquire_many(
-                    device,
-                    queue,
-                    submissions,
-                    renderer,
-                    kernels.as_ref().unwrap().clone(),
-                    scan,
-                    correction.map(|correction| correction.gpu.clone()),
-                    missing_specs,
-                    || {
-                        source_epoch.load(std::sync::atomic::Ordering::Relaxed) != spec.authority
-                            || mailbox
-                                .0
-                                .lock()
-                                .unwrap()
-                                .wanted
-                                .as_ref()
-                                .is_none_or(|wanted| {
-                                    !wanted.same_source(&spec)
-                                        || wanted.frame.composition != spec.frame.composition
-                                })
-                    },
-                )?
-                else {
-                    return Ok(None);
+                let specs = if needs_underlay {
+                    vec![spec.clone(), spec.underlay()?]
+                } else {
+                    vec![spec.clone()]
                 };
-
-                let mut acquired = acquired.into_iter();
-                for neutral_source in &mut neutral_sources {
-                    if neutral_source.is_none() {
-                        *neutral_source = acquired.next();
-                    }
-                }
-
-                let mut state = mailbox.0.lock().unwrap();
-                if state.wanted.as_ref().is_some_and(|wanted| {
-                    wanted.same_source(&spec) && wanted.frame.composition == spec.frame.composition
-                }) {
-                    state.neutral_detail = neutral_sources[0].clone();
-                    if needs_underlay {
-                        state.neutral_underlay = neutral_sources[1].clone();
-                    }
-                }
-            }
-
-            let mut views = Vec::new();
-            for (index, (wanted, neutral_source)) in
-                specs.into_iter().zip(neutral_sources).enumerate()
-            {
-                let previous = {
+                let mut neutral_sources = Vec::new();
+                let mut missing_specs = Vec::new();
+                {
                     let state = mailbox.0.lock().unwrap();
-                    if index == 0 {
-                        state.repaired_detail.clone()
-                    } else {
-                        state.underlay.clone()
+                    for wanted in &specs {
+                        let neutral = wanted.clone().with_repairs(Default::default());
+                        let cached = [&state.neutral_detail, &state.neutral_underlay]
+                            .into_iter()
+                            .flatten()
+                            .find(|source| source.spec == neutral)
+                            .cloned();
+                        if cached.is_none() {
+                            missing_specs.push(neutral);
+                        }
+                        neutral_sources.push(cached);
                     }
-                };
-                let Some(view) = ViewSource::reconstruct_repairs(
-                    device,
-                    queue,
-                    submissions,
-                    scan,
-                    correction.map(|correction| correction.gpu.clone()),
-                    neutral_source.expect("acquired neutral physical view"),
-                    wanted.repairs,
-                    previous,
-                    cancelled,
-                )?
-                else {
-                    return Ok(None);
-                };
-                views.push(view);
-            }
-            Ok(Some(views))
-        })()
-        .map_err(|error: Error| error.to_string());
+                }
 
+                if !missing_specs.is_empty() {
+                    let Some(acquired) =
+                        ViewSource::acquire_many(
+                            device,
+                            queue,
+                            submissions,
+                            renderer,
+                            kernels.as_ref().unwrap().clone(),
+                            &scan,
+                            correction.map(|correction| correction.gpu.clone()),
+                            missing_specs,
+                            || {
+                                retired.load(Ordering::Relaxed)
+                                    || source_epoch.load(std::sync::atomic::Ordering::Relaxed)
+                                        != spec.authority
+                                    || mailbox.0.lock().unwrap().wanted.as_ref().is_none_or(
+                                        |wanted| {
+                                            !wanted.same_source(&spec)
+                                                || wanted.frame.composition
+                                                    != spec.frame.composition
+                                        },
+                                    )
+                            },
+                        )?
+                    else {
+                        return Ok(None);
+                    };
+
+                    let mut acquired = acquired.into_iter();
+                    for neutral_source in &mut neutral_sources {
+                        if neutral_source.is_none() {
+                            *neutral_source = acquired.next();
+                        }
+                    }
+
+                    let mut state = mailbox.0.lock().unwrap();
+                    if !retired.load(Ordering::Relaxed)
+                        && state.wanted.as_ref().is_some_and(|wanted| {
+                            wanted.same_source(&spec)
+                                && wanted.frame.composition == spec.frame.composition
+                        })
+                    {
+                        state.neutral_detail = neutral_sources[0].clone();
+                        if needs_underlay {
+                            state.neutral_underlay = neutral_sources[1].clone();
+                        }
+                    }
+                }
+
+                let mut views = Vec::new();
+                for (index, (wanted, neutral_source)) in
+                    specs.into_iter().zip(neutral_sources).enumerate()
+                {
+                    let previous = {
+                        let state = mailbox.0.lock().unwrap();
+                        if index == 0 {
+                            state.repaired_detail.clone()
+                        } else {
+                            state.underlay.clone()
+                        }
+                    };
+                    let Some(view) = ViewSource::reconstruct_repairs(
+                        device,
+                        queue,
+                        submissions,
+                        &scan,
+                        correction.map(|correction| correction.gpu.clone()),
+                        neutral_source.expect("acquired neutral physical view"),
+                        wanted.repairs,
+                        previous,
+                        cancelled,
+                    )?
+                    else {
+                        return Ok(None);
+                    };
+                    views.push(view);
+                }
+                Ok(Some(views))
+            })()
+            .map_err(|error: Error| error.to_string());
+
+        if retired.load(Ordering::Relaxed) {
+            return None;
+        }
         let mut state = mailbox.0.lock().unwrap();
         let result = result.map(|views| {
             views.map(|mut views| {
@@ -633,21 +677,22 @@ pub(super) fn acquire(
         });
 
         if state.wanted.as_ref() == Some(&spec) {
-            if let Some(result) = match result {
-                Ok(Some(view)) => Some(Ok(view)),
-                Ok(None) => None,
-                Err(error) => Some(Err(error)),
-            } {
-                state.completed = Some((spec, result));
-            }
-            state.awake = false;
             drop(state);
-            context.request_repaint();
-            return;
+            return match result {
+                Ok(Some(view)) => Some(Completion {
+                    spec,
+                    result: Ok(view),
+                }),
+                Ok(None) => None,
+                Err(error) => Some(Completion {
+                    spec,
+                    result: Err(error),
+                }),
+            };
         }
 
         drop(state);
-        context.request_repaint();
+        mailbox.1.notify(usize::MAX);
         // A changed view replaces the pending request, never queues another acquisition worker.
     }
 }
@@ -707,12 +752,11 @@ impl Editor {
         if self.busy
             && self.document_pending.is_none()
             && self.pick.is_none()
-            && self.crop_edit.is_none()
+            && self.document.visit.crop_edit.is_none()
             && self.flat_edit.is_none()
         {
             let mut mailbox = self.working.mailbox.0.lock().unwrap();
             mailbox.wanted = None;
-            mailbox.completed = None;
             drop(mailbox);
 
             if self.source && self.working.wanted.is_some() {
@@ -741,19 +785,20 @@ impl Editor {
 
         if self.pending_preview.is_some()
             || self.pick.is_some()
-            || self.pick_return.is_some()
-            || self.crop_edit.is_some()
+            || self.document.pick_return.is_some()
+            || self.document.visit.crop_edit.is_some()
             || self.flat_edit.is_some()
         {
             self.working.clear();
             return Ok(None);
         }
 
-        let Some(ready) = &self.ready else {
+        let Some(ready) = &self.document.visit.ready else {
             self.working.clear();
             return Ok(None);
         };
 
+        let source_input = self.source_context().expect("ready working source");
         if self.source {
             let matrix = glam::DMat3::from_cols_array_2d(&ready.record.development.camera_to_ap1);
             let spec = ViewSourceSpec::inspection(
@@ -764,7 +809,7 @@ impl Editor {
                     .as_ref()
                     .map(|correction| correction.gpu.field().clone()),
             )?;
-            self.working.request(spec, &self.commands, context);
+            self.working.request(spec, source_input);
             self.working
                 .render_inspection(input, self.target, context)?;
             self.working.reference = None;
@@ -805,7 +850,7 @@ impl Editor {
                 .map(|correction| correction.gpu.field().clone()),
         )?
         .with_repairs(input.repairs.clone());
-        self.working.request(spec.clone(), &self.commands, context);
+        self.working.request(spec.clone(), source_input);
         self.working.render(
             calibration,
             self.roll,

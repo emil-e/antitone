@@ -394,7 +394,7 @@ fn rebase_relative(path: &Path, old_parent: &Path, new_parent: &Path) -> Result<
     Ok(relative)
 }
 
-fn metadata_development(metadata: &Metadata) -> Result<SourceDevelopment> {
+pub(super) fn metadata_development(metadata: &Metadata) -> Result<SourceDevelopment> {
     let matrix = metadata.camera_to_ap1()?;
     let area = metadata.image_area()?;
     Ok(SourceDevelopment {

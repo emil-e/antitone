@@ -390,8 +390,7 @@ pub(super) fn worker(
     device: wgpu::Device,
     queue: wgpu::Queue,
     renderers: Arc<crate::renderer::RendererCache>,
-    commands: mpsc::Receiver<Job>,
-    messages: mpsc::Sender<Outcome>,
+    commands: mpsc::Receiver<workflow::Submission>,
     generation: Arc<std::sync::atomic::AtomicU64>,
     disk: Option<disk::DiskCache>,
     repaint: Arc<std::sync::OnceLock<egui::Context>>,
@@ -407,15 +406,15 @@ pub(super) fn worker(
         developments,
         kernels: Default::default(),
     };
-    let mut pending: Vec<Work> = Vec::new();
+    let mut pending: Vec<(Work, futures_channel::oneshot::Sender<Outcome>)> = Vec::new();
     let mut connected = true;
     loop {
         // Do not block thumbnail admission behind an eager native waiter. Newly visible
         // misses enter the same native queue while older CPU/disk demand stays owned.
-        while let Ok(job) = commands.try_recv() {
-            pending.push(worker.begin(job));
+        while let Ok(submission) = commands.try_recv() {
+            pending.push((worker.begin(submission.job), submission.reply));
         }
-        for work in &mut pending {
+        for (work, _) in &mut pending {
             if let Ok(Input::Native(ticket)) = &work.input {
                 match ticket.result() {
                     Ok(None) => {}
@@ -430,17 +429,14 @@ pub(super) fn worker(
         if let Some(index) = pending
             .iter()
             .enumerate()
-            .filter(|(_, work)| !matches!(work.input, Ok(Input::Native(_))))
-            .min_by_key(|(_, work)| work.job.priority)
+            .filter(|(_, (work, _))| !matches!(work.input, Ok(Input::Native(_))))
+            .min_by_key(|(_, (work, _))| work.job.priority)
             .map(|(index, _)| index)
         {
-            let outcome = worker.finish(pending.remove(index));
-            if messages.send(outcome).is_err() {
-                break;
-            }
-            if let Some(context) = worker.repaint.get() {
-                context.request_repaint();
-            }
+            let (work, reply) = pending.remove(index);
+            let outcome = worker.finish(work);
+            // Retiring one document's waiter does not stop the shared resource worker.
+            let _ = reply.send(outcome);
             continue;
         }
         if !connected {
@@ -454,7 +450,7 @@ pub(super) fn worker(
             commands.recv_timeout(Duration::from_millis(20))
         };
         match received {
-            Ok(job) => pending.push(worker.begin(job)),
+            Ok(submission) => pending.push((worker.begin(submission.job), submission.reply)),
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => connected = false,
         }

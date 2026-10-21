@@ -1,6 +1,6 @@
 use super::*;
 use crate::roll_analysis::{self, FrameSamples, MAX_SAMPLES_PER_FRAME};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 
 #[cfg(all(test, feature = "ocio-reference"))]
 #[path = "editor_analysis_diagnostics.rs"]
@@ -33,10 +33,8 @@ pub(super) struct Request {
     pub areas: Option<analysis_review::Approved>,
 }
 
-pub(super) struct Pending {
-    pub id: u64,
-    pub request: Request,
-}
+#[path = "editor_analysis_fit.rs"]
+pub(super) mod fit;
 // Resolve the 0.5% picture tail and 1.5% film band with more than singleton ranks.
 const MIN_PICTURE_SAMPLES: usize = 512;
 const MIN_ROLL_FILM_SAMPLES: usize = 2048;
@@ -130,208 +128,6 @@ fn picture_area(explicit: Option<Rect>, support: Option<Rect>) -> Result<Rect, E
         ))
 }
 
-pub(super) fn run(
-    device: &wgpu::Device,
-    request: &Request,
-    generation: &AtomicU64,
-    correction: Option<&Arc<Correction>>,
-    developments: &development::Scheduler,
-    mut progress: impl FnMut(usize, usize),
-) -> Result<Option<Outcome>, Error> {
-    let cancelled = || generation.load(Ordering::Relaxed) != request.revision;
-    if cancelled() {
-        return Ok(None);
-    }
-    request.document.validate_for_device(device)?;
-    analysis_review::verify(request)?;
-    let project = &request.document.project;
-    if project.order.is_empty() || !project.order.contains(&request.selected) {
-        return Err(Error::UnusableSample("no selected roll photo"));
-    }
-    if project.active_flat_field() != correction.map(|c| &c.settings) {
-        return Err(Error::UnusableSample(
-            "analysis correction snapshot changed",
-        ));
-    }
-    let wb = project
-        .development
-        .as_ref()
-        .ok_or(Error::UnusableSample("no roll development"))?
-        .fixed_wb;
-    let matrix = glam::DMat3::from_cols_array_2d(
-        &project
-            .camera_basis
-            .as_ref()
-            .ok_or(Error::UnusableSample("no roll camera basis"))?
-            .camera_to_ap1,
-    );
-    let mut support = request.film;
-    if request.areas.is_none() && support.is_none() {
-        progress(0, project.order.len());
-        for id in &project.order {
-            if cancelled() {
-                return Ok(None);
-            }
-            let expected = project.source(*id)?;
-            let path = request.document.source_path(*id)?;
-            let Some(scan) = develop_scan(
-                developments,
-                &request.document,
-                expected,
-                &path,
-                wb,
-                cancelled,
-            )?
-            else {
-                return Ok(None);
-            };
-            let actual = document::source_metadata(&path, &scan.source().metadata())?;
-            document::verify_source(expected, &actual)?;
-            document::verify_scan(&actual, &scan)?;
-            if let Some(area) = scan.propose_flat_field_area()? {
-                support = Some(area);
-                break;
-            }
-        }
-    }
-    let picture = if request.areas.is_some() {
-        None
-    } else {
-        Some(picture_area(request.picture, support)?)
-    };
-    // Explicit picture geometry can still be used without a local illumination hint.
-    // Never invent whole-camera geometry for dense-tail/balance/exposure statistics.
-    let film = support.unwrap_or_else(|| {
-        rect(
-            project
-                .source(request.selected)
-                .expect("selected roll source")
-                .development
-                .active_area,
-        )
-    });
-    let mut owned = Vec::with_capacity(project.order.len());
-    for (index, id) in project.order.iter().enumerate() {
-        if cancelled() {
-            return Ok(None);
-        }
-        progress(index, project.order.len());
-        let expected = project.source(*id)?;
-        let path = request.document.source_path(*id)?;
-        let Some(mut scan) = develop_scan(
-            developments,
-            &request.document,
-            expected,
-            &path,
-            wb,
-            cancelled,
-        )?
-        else {
-            return Ok(None);
-        };
-        let actual = document::source_metadata(&path, &scan.source().metadata())?;
-        document::verify_source(expected, &actual)?;
-        document::verify_scan(&actual, &scan)?;
-        project.require_camera_basis(&actual.development)?;
-        if let Some(correction) = correction {
-            correction.settings.require_source(&actual.development)?;
-            scan.set_flat_field(Some(correction.settings.map.clone()))?;
-        }
-        let active = scan.area;
-        let frame_areas = request.areas.as_ref().map(|a| &a.entries[index].areas);
-        let film_samples = match frame_areas {
-            Some(areas) => scan.analysis_samples_in(
-                active,
-                MAX_SAMPLES_PER_FRAME,
-                |f| areas.contains_footprint(f, active, false),
-                cancelled,
-            )?,
-            None => scan.analysis_samples(film, MAX_SAMPLES_PER_FRAME, cancelled)?,
-        };
-        let Some(film) = film_samples else {
-            return Ok(None);
-        };
-        let picture_samples = match frame_areas {
-            Some(areas) => scan.analysis_samples_in(
-                active,
-                MAX_SAMPLES_PER_FRAME,
-                |f| areas.contains_footprint(f, active, true),
-                cancelled,
-            )?,
-            None => scan.analysis_samples(
-                picture.expect("legacy picture geometry"),
-                MAX_SAMPLES_PER_FRAME,
-                cancelled,
-            )?,
-        };
-        let Some(picture) = picture_samples else {
-            return Ok(None);
-        };
-        require_picture(&picture)?;
-        owned.push(FrameMeasurements {
-            floor: scan.effective_floor(),
-            film,
-            picture,
-        });
-        // Each temporary RAW is released here; only bounded statistics survive.
-    }
-    progress(project.order.len(), project.order.len());
-    let floor = restrict_to_common_floor(&mut owned)?;
-    let frames: Vec<_> = owned
-        .iter()
-        .map(|frame| FrameSamples {
-            film: &frame.film.pixels,
-            picture: &frame.picture.pixels,
-        })
-        .collect();
-    let Some(proposal) = roll_analysis::estimate(&frames, floor, matrix, project.roll, cancelled)?
-    else {
-        return Ok(None);
-    };
-    require_statistics(
-        owned.iter().map(|frame| frame.film.pixels.len()).sum(),
-        &proposal.frames,
-    )?;
-    let mut candidate = proposed_document(&request.document, proposal, picture)?;
-    if let Some(approved) = &request.areas {
-        candidate
-            .project
-            .analysis_regions
-            .retain(|e| !project.order.contains(&e.source));
-        candidate
-            .project
-            .analysis_regions
-            .extend(approved.entries.clone());
-    }
-    analysis_review::verify(request)?;
-    candidate.validate_for_device(device)?;
-    for id in &project.order {
-        if cancelled() {
-            return Ok(None);
-        }
-        let record = project.source(*id)?;
-        let mut input = if record.development.lens_correction.is_some() {
-            crate::gpu::ProcessingSource::new_continuous(device, &[[0.; 4]], matrix)?
-        } else {
-            crate::gpu::ProcessingSource::new(device, &[[0; 4]], matrix)?
-        };
-        if let Some(correction) = correction {
-            input.set_flat_field(
-                Some(correction.gpu.clone()),
-                crate::gpu::SourceGeometry::new(record.development.active_area, [1, 1])?,
-            )?;
-        }
-    }
-    if cancelled() {
-        return Ok(None);
-    }
-    Ok(Some(Outcome {
-        document: candidate,
-        frames: frames.len(),
-        support: film,
-    }))
-}
-
 fn proposed_document(
     document: &Document,
     proposal: roll_analysis::Proposal,
@@ -357,6 +153,7 @@ fn proposed_document(
     Ok(candidate)
 }
 
+#[cfg(test)]
 pub(super) fn develop_scan(
     developments: &development::Scheduler,
     document: &Document,
@@ -393,7 +190,9 @@ impl Editor {
             .as_ref()
             .map(|c| rect(c.settings.map.area()))
             .or_else(|| {
-                self.ready
+                self.document
+                    .visit
+                    .ready
                     .as_ref()
                     .and_then(|r| r.analysis_support.flatten())
             })
@@ -411,22 +210,21 @@ impl Editor {
         self.region = self.analysis_picture().map(Coverage::rectangle);
         if self.region.is_some()
             || self
+                .document
+                .visit
                 .ready
                 .as_ref()
                 .is_none_or(|ready| ready.analysis_support.is_some())
         {
             return;
         }
+        let input = self.source_context().expect("ready support source");
         let request = self.request_id();
-        if self
-            .commands
-            .send(Command::AnalysisSupport(request, self.id))
-            .is_ok()
-        {
-            self.analysis_area_pending = Some(request);
-        } else {
-            self.status = "RAW worker stopped".into();
-        }
+        self.document.visit.support.pending = Some(super::support_workflow::Pending {
+            id: request,
+            loaded: self.id,
+            input: Some(input),
+        });
     }
 
     pub(super) fn analysis_support_result(
@@ -435,15 +233,22 @@ impl Editor {
         loaded: u64,
         result: Result<Option<Rect>, String>,
     ) {
-        if self.analysis_area_pending != Some(request)
+        if self
+            .document
+            .visit
+            .support
+            .pending
+            .as_ref()
+            .map(|pending| pending.id)
+            != Some(request)
             || loaded != self.id
             || self.pick != Some(Pick::Analysis)
             || self.document_pending.is_some()
         {
             return;
         }
-        self.analysis_area_pending = None;
-        let Some(ready) = &mut self.ready else {
+        self.document.visit.support = Default::default();
+        let Some(ready) = &mut self.document.visit.ready else {
             return;
         };
         match result {
@@ -474,15 +279,15 @@ impl Editor {
     pub(super) fn roll_tool_shelf(&mut self, ui: &mut egui::Ui) -> bool {
         use icons::Icon;
         use presentation::{ToolButton, ToolShelf};
-        let reviewing = self.analysis_review.is_some();
+        let reviewing = self.document.analysis_review.is_some();
         let commands = !self.busy
-            && self.ready.is_some()
+            && self.document.visit.ready.is_some()
             && self.pick.is_none()
-            && self.crop_edit.is_none()
-            && self.auto_crop_edit.is_none()
+            && self.document.visit.crop_edit.is_none()
+            && self.document.auto_crop_edit.is_none()
             && self.flat_edit.is_none()
-            && self.mask_edit.is_none()
-            && !self.adjustments.confirming()
+            && self.document.visit.mask_edit.is_none()
+            && !self.document.visit.adjustments.confirming()
             && !reviewing
             && self.removal_pending.is_none();
         let mut analyze = false;
@@ -549,7 +354,7 @@ impl Editor {
                     analyze = true;
                 }
             }
-            let cropping = self.auto_crop_edit.is_some();
+            let cropping = self.document.auto_crop_edit.is_some();
             if ToolButton::tool(
                 Icon::Crop,
                 "Auto-crop roll",
@@ -573,11 +378,11 @@ impl Editor {
     fn analysis_request(&mut self) -> Option<Request> {
         if self.busy
             || self.pick.is_some()
-            || self.crop_edit.is_some()
-            || self.auto_crop_edit.is_some()
-            || self.mask_edit.is_some()
-            || self.adjustments.confirming()
-            || self.ready.is_none()
+            || self.document.visit.crop_edit.is_some()
+            || self.document.auto_crop_edit.is_some()
+            || self.document.visit.mask_edit.is_some()
+            || self.document.visit.adjustments.confirming()
+            || self.document.visit.ready.is_none()
             || self.document.project.order.is_empty()
         {
             return None;
@@ -585,11 +390,13 @@ impl Editor {
         self.sync_document();
         Some(Request {
             loaded: self.id,
-            revision: self.analysis_generation.load(Ordering::Relaxed),
-            document: self.document.clone(),
+            revision: self.document.analysis_generation.load(Ordering::Relaxed),
+            document: self.document.capture(),
             selected: self.current_source?,
             film: self.analysis_support(),
             local_support: self
+                .document
+                .visit
                 .ready
                 .as_ref()
                 .is_some_and(|ready| ready.analysis_support.is_none()),
@@ -614,7 +421,14 @@ impl Editor {
     }
 
     pub(super) fn start_analysis(&mut self, mut request: Request) {
-        request.revision = self.analysis_generation.fetch_add(1, Ordering::Relaxed) + 1;
+        let Some(input) = self.source_context() else {
+            return;
+        };
+        request.revision = self
+            .document
+            .analysis_generation
+            .fetch_add(1, Ordering::Relaxed)
+            + 1;
         let id = self.request_id();
         self.thumbnails.cancel();
         self.original.cancel_pending();
@@ -626,33 +440,32 @@ impl Editor {
                 total: request.document.project.order.len(),
             },
         );
-        self.analysis_pending = Some(Pending {
-            id,
-            request: request.clone(),
-        });
+        self.document.analysis_pending =
+            Some(analysis_workflow::Pending::fitting(id, request, input));
         self.busy = true;
         self.status = "Analyzing roll…".into();
-        if self
-            .commands
-            .send(Command::Analyze(id, Box::new(request)))
-            .is_err()
-        {
-            self.analysis_pending = None;
-            self.tasks.finish(TaskRequest::Analyze(id));
-            self.busy = false;
-            self.status = "RAW worker stopped".into();
-            self.end_analysis_review();
-        }
     }
 
     pub(super) fn cancel_analysis(&mut self) {
-        self.analysis_generation.fetch_add(1, Ordering::Relaxed);
-        if let Some(pending) = self
+        self.document
+            .analysis_generation
+            .fetch_add(1, Ordering::Relaxed);
+        let id = self
+            .document
             .analysis_pending
             .as_ref()
-            .or(self.analysis_preparing.as_ref())
-        {
-            self.tasks.cancelling(TaskRequest::Analyze(pending.id));
+            .map(|pending| {
+                pending.cancel();
+                pending.id
+            })
+            .or_else(|| {
+                self.document.analysis_preparing.as_ref().map(|pending| {
+                    pending.cancel();
+                    pending.id
+                })
+            });
+        if let Some(id) = id {
+            self.tasks.cancelling(TaskRequest::Analyze(id));
         }
         self.status = "Cancelling analysis…".into();
     }
@@ -662,15 +475,20 @@ impl Editor {
         id: u64,
         result: Result<Option<Box<Outcome>>, String>,
     ) {
-        if !self.analysis_pending.as_ref().is_some_and(|p| p.id == id) {
+        if !self
+            .document
+            .analysis_pending
+            .as_ref()
+            .is_some_and(|p| p.id == id)
+        {
             return;
         }
-        let pending = self.analysis_pending.take().unwrap();
+        let pending = self.document.analysis_pending.take().unwrap();
         self.tasks.finish(TaskRequest::Analyze(id));
         self.busy = false;
         self.sync_document();
         let snapshot = &pending.request;
-        if self.analysis_generation.load(Ordering::Relaxed) != snapshot.revision {
+        if self.document.analysis_generation.load(Ordering::Relaxed) != snapshot.revision {
             self.status = "Analysis cancelled".into();
             self.end_analysis_review();
             return;
@@ -708,13 +526,13 @@ impl Editor {
                     }
                 };
                 if snapshot.areas.is_none()
-                    && let Some(ready) = &mut self.ready
+                    && let Some(ready) = &mut self.document.visit.ready
                 {
                     ready.analysis_support = Some(Some(outcome.support));
                 }
                 let before = self.history_snapshot();
-                self.document = outcome.document;
-                self.adjustments = Adjustments::default();
+                self.document.install(outcome.document);
+                self.document.visit.adjustments = Adjustments::default();
                 self.grades.clear();
                 self.dmin = self.document.project.dmin.map(DVec3::from_array);
                 self.dmax = self.document.project.dmax.map(DVec3::from_array);
@@ -749,12 +567,12 @@ impl Editor {
             return;
         };
         self.sync_document();
-        let mut candidate = self.document.clone();
+        let mut candidate = self.document.capture();
         candidate.project.analysis_area = Some(array(area));
         match self.validate_document_candidate(&candidate) {
             Ok(()) => {
                 let before = self.history_snapshot();
-                self.document = candidate;
+                self.document.install(candidate);
                 self.record_edit(before, "Picture statistics area", None);
                 self.status = "Picture statistics area updated; processing unchanged".into();
                 self.finish_pick();

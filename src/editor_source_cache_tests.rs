@@ -239,11 +239,7 @@ fn cpu_only_proper_work_persists_disk_at_zero_limits_then_materializes_on_demand
         );
         thumbnails.release_selected();
         thumbnails.request_mode(image_key.clone(), path.clone(), source.clone(), None, false);
-        let deadline = std::time::Instant::now() + Duration::from_secs(20);
-        while thumbnails.pending.is_some() && std::time::Instant::now() < deadline {
-            thumbnails.receive(&document);
-            std::thread::sleep(Duration::from_millis(1));
-        }
+        tests::complete_service_request(&mut thumbnails, &document);
         assert!(thumbnails.pending.is_none());
         assert!(thumbnails.attempted_sources.contains(&image_key.source));
         assert!(thumbnails.cache.entries.is_empty());
@@ -254,11 +250,7 @@ fn cpu_only_proper_work_persists_disk_at_zero_limits_then_materializes_on_demand
         thumbnails.cache.protect(vec![image_key.clone()]);
         document.cache().protect_proxies(vec![key(&document)]);
         thumbnails.request(image_key.clone(), path, source.clone(), None);
-        let deadline = std::time::Instant::now() + Duration::from_secs(20);
-        while thumbnails.pending.is_some() && std::time::Instant::now() < deadline {
-            thumbnails.receive(&document);
-            std::thread::sleep(Duration::from_millis(1));
-        }
+        tests::complete_service_request(&mut thumbnails, &document);
         assert!(thumbnails.pending.is_none());
         assert!(thumbnails.cache.get(&image_key).unwrap().is_ok());
         assert_eq!(document.cache().charges().retained, 0);
@@ -334,12 +326,7 @@ fn background_native_by_product_is_a_foreground_hit_under_the_shared_cpu_limit()
         };
         // Exercise the same serial worker and publication path used by filmstrip demand.
         thumbnails.request(image_key, path, source.clone(), None);
-        let outcome = thumbnails
-            .messages
-            .as_ref()
-            .unwrap()
-            .recv_timeout(std::time::Duration::from_secs(20))
-            .unwrap();
+        let outcome = tests::run_service_request(&mut thumbnails).unwrap();
         assert!(outcome.image.unwrap().is_some());
         let native = document.cache().get(&key(&document)).unwrap();
         assert!(document.cache().get_proxy(&key(&document)).is_some());
@@ -410,44 +397,44 @@ fn cancelled_gpu_ticket_keeps_proper_disk_demand_and_shares_foreground_handoff()
             projection: None,
         };
         thumbnails.request_mode(key.clone(), path.clone(), expected.clone(), None, true);
-        starts.recv_timeout(Duration::from_secs(5)).unwrap();
-        thumbnails.cancel();
-        let cache = LoadCache::new(&path, Some(expected), wb(&document), &document);
-        std::thread::scope(|scope| {
-            let foreground = scope.spawn(|| {
-                prepare_source_scheduled(
-                    &renderers,
-                    &device,
-                    &queue,
-                    path.clone(),
-                    wb(&document),
-                    Some(expected),
-                    None,
-                    document.project.camera_basis.as_ref(),
-                    Some(&cache),
-                    &developments,
-                    &|| false,
-                )
+        crate::application::test_support::with_application(Vec::new(), |app| {
+            let _task = tests::start_service_request(&mut thumbnails, &app.access());
+            app.pump();
+            starts.recv_timeout(Duration::from_secs(5)).unwrap();
+            thumbnails.cancel();
+            let cache = LoadCache::new(&path, Some(expected), wb(&document), &document);
+            std::thread::scope(|scope| {
+                let foreground = scope.spawn(|| {
+                    prepare_source_scheduled(
+                        &renderers,
+                        &device,
+                        &queue,
+                        path.clone(),
+                        wb(&document),
+                        Some(expected),
+                        None,
+                        document.project.camera_basis.as_ref(),
+                        Some(&cache),
+                        &developments,
+                        &|| false,
+                    )
+                });
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                while developments.waiter_count() != 2 {
+                    assert!(std::time::Instant::now() < deadline);
+                    std::thread::yield_now();
+                }
+                release.send(()).unwrap();
+                let (_, scan) = foreground.join().unwrap().unwrap();
+                assert!(Arc::ptr_eq(scan.source(), &native));
+                app.run_until(Duration::from_secs(5), |results| !results.is_empty());
+                let completed = app.update(|results| results.pop().unwrap()).unwrap();
+                assert!(completed.proper);
+                assert!(completed.image.unwrap().is_none());
+                assert!(disk.load(&key.source).unwrap().is_some());
+                assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+                assert_eq!(document.cache().charges().retained, 0);
             });
-            let deadline = std::time::Instant::now() + Duration::from_secs(5);
-            while developments.waiter_count() != 2 {
-                assert!(std::time::Instant::now() < deadline);
-                std::thread::yield_now();
-            }
-            release.send(()).unwrap();
-            let (_, scan) = foreground.join().unwrap().unwrap();
-            assert!(Arc::ptr_eq(scan.source(), &native));
-            let completed = thumbnails
-                .messages
-                .as_ref()
-                .unwrap()
-                .recv_timeout(Duration::from_secs(5))
-                .unwrap();
-            assert!(completed.proper);
-            assert!(completed.image.unwrap().is_none());
-            assert!(disk.load(&key.source).unwrap().is_some());
-            assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
-            assert_eq!(document.cache().charges().retained, 0);
         });
     });
 }
@@ -542,32 +529,43 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
             None,
             false,
         );
-        starts.recv_timeout(Duration::from_secs(5)).unwrap();
-        thumbnails.cancel();
-        thumbnails.request_mode(
-            image_key(1),
-            path_b.clone(),
-            document
-                .project
-                .source(document.project.order[1])
-                .unwrap()
-                .clone(),
-            None,
-            true,
-        );
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while developments.waiter_count() != 2 {
-            assert!(std::time::Instant::now() < deadline);
-            std::thread::yield_now();
-        }
-        release.send(()).unwrap();
-        let messages = thumbnails.messages.as_ref().unwrap();
-        let visible = messages.recv_timeout(Duration::from_secs(5)).unwrap();
-        let eager = messages.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert_eq!(visible.key, image_key(1));
-        assert!(visible.proper && visible.image.unwrap().is_some());
-        assert_eq!(eager.key, image_key(0));
-        assert!(eager.proper && eager.image.unwrap().is_none());
+        crate::application::test_support::with_application(Vec::new(), |app| {
+            let _eager = tests::start_service_request(&mut thumbnails, &app.access());
+            app.pump();
+            starts.recv_timeout(Duration::from_secs(5)).unwrap();
+            thumbnails.cancel();
+            thumbnails.request_mode(
+                image_key(1),
+                path_b.clone(),
+                document
+                    .project
+                    .source(document.project.order[1])
+                    .unwrap()
+                    .clone(),
+                None,
+                true,
+            );
+            let _visible = tests::start_service_request(&mut thumbnails, &app.access());
+            app.pump();
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while developments.waiter_count() != 2 {
+                assert!(std::time::Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            release.send(()).unwrap();
+            app.run_until(Duration::from_secs(5), |results| results.len() == 2);
+            let mut outcomes = app.update(std::mem::take);
+            let index = outcomes
+                .iter()
+                .position(|outcome| outcome.as_ref().unwrap().key == image_key(1))
+                .unwrap();
+            let visible = outcomes.swap_remove(index).unwrap();
+            let eager = outcomes.pop().unwrap().unwrap();
+            assert_eq!(visible.key, image_key(1));
+            assert!(visible.proper && visible.image.unwrap().is_some());
+            assert_eq!(eager.key, image_key(0));
+            assert!(eager.proper && eager.image.unwrap().is_none());
+        });
         assert_eq!(
             *trace.lock().unwrap(),
             [
@@ -584,15 +582,18 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
 fn registered_flat_reference_carries_its_document_native_reuse_key() {
     let file = raw_fixture::bayer_dng();
     let document = document(file.path());
-    let (commands, received) = mpsc::channel();
-    let (_, messages) = mpsc::channel();
-    let mut editor = Editor::state(commands, messages, Arc::default());
+    let mut editor = Editor::state();
     let expected_key = key(&document);
-    editor.document = document;
+    *editor.document = document;
     editor.begin_flat_edit(file.path().to_owned(), None);
-    let Command::FlatPreview(_, _, _, _, _, Some(cache)) = received.recv().unwrap() else {
-        panic!("registered reference needs a scoped native key");
+    let Some(reference_services::Operation::Preview(request)) =
+        editor.flat_edit.as_mut().unwrap().request.take()
+    else {
+        panic!("expected captured reference request");
     };
+    let cache = request
+        .cache
+        .expect("registered reference needs a scoped native key");
     assert_eq!(cache.key.unwrap(), expected_key);
     assert!(Arc::ptr_eq(&cache.store, editor.document.cache()));
 }

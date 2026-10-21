@@ -37,19 +37,19 @@ impl Editor {
     }
 
     fn roll_navigation_available(&self) -> bool {
-        (!self.busy || self.ready.is_none() && self.selection_timing.is_some())
+        (!self.busy || self.document.visit.ready.is_none() && self.selection_timing.is_some())
             && self.fullscreen.is_none()
             && self.pick.is_none()
             && self.flat_edit.is_none()
-            && self.crop_edit.is_none()
-            && self.mask_edit.is_none()
+            && self.document.visit.crop_edit.is_none()
+            && self.document.visit.mask_edit.is_none()
             && self.failure.is_none()
             && self.document_pending.is_none()
             && self.transition.is_none()
             && self.project_overwrite.is_none()
-            && self.resume_transition.is_none()
+            && !self.allow_close
             && self.overwrite.is_none()
-            && !self.adjustments.confirming()
+            && !self.document.visit.adjustments.confirming()
     }
 
     pub(super) fn select_roll_photo(&mut self, index: usize, modifiers: egui::Modifiers) {
@@ -102,7 +102,7 @@ impl Editor {
             self.roll_selection.anchor = Some(id);
             id
         };
-        let retry = active == id && self.ready.is_none();
+        let retry = active == id && self.document.visit.ready.is_none();
         if self.current_source != Some(active) || retry {
             self.selected = self
                 .document
@@ -149,7 +149,7 @@ impl Editor {
 
     pub(super) fn request_removal(&mut self) {
         if !self.roll_edit_available()
-            || self.auto_crop_edit.is_some()
+            || self.document.auto_crop_edit.is_some()
             || self.removal_pending.is_some()
         {
             return;
@@ -200,14 +200,15 @@ impl Editor {
             self.original.invalidate();
             self.working.clear();
             self.id = self.request_id();
+            self.replace_photo_scope(self.id);
             self.source_epoch
                 .store(self.id, std::sync::atomic::Ordering::Relaxed);
-            self.analysis_area_pending = None;
+            self.document.visit.support = Default::default();
             self.thumbnails.release_selected();
             self.thumbnails.refresh_hidden_memory();
             self.current_source = None;
             self.selected = 0;
-            self.ready = None;
+            self.document.visit.ready = None;
             self.pending_preview = None;
             self.selection_timing = None;
             self.last_layout = None;
@@ -216,9 +217,6 @@ impl Editor {
             self.photo_orientation = PhotoOrientation::default();
             self.crop = None;
             self.status = "No photos in this roll. Add scans to continue.".into();
-            if self.commands.send(Command::Unload).is_err() {
-                self.status = "RAW worker stopped".into();
-            }
         }
     }
 

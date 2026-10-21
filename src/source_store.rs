@@ -249,11 +249,15 @@ impl State {
 /// retaining a full native source is always optional, even while a consumer leases it.
 pub struct SourceStore {
     state: Mutex<State>,
+    #[cfg(feature = "editor")]
+    closed: event_listener::Event,
 }
 
 impl SourceStore {
     pub fn new(budget: u64) -> Self {
         Self {
+            #[cfg(feature = "editor")]
+            closed: event_listener::Event::new(),
             state: Mutex::new(State {
                 entries: VecDeque::new(),
                 protected: Vec::new(),
@@ -564,6 +568,11 @@ impl SourceStore {
         self.state.lock().unwrap().protected_bytes()
     }
 
+    #[cfg(feature = "editor")]
+    pub(crate) fn listen_for_close(&self) -> event_listener::EventListener {
+        self.closed.listen()
+    }
+
     pub fn close(&self) {
         let mut removed = Vec::new();
         {
@@ -573,6 +582,8 @@ impl SourceStore {
             state.budget = 0;
             state.trim(&mut removed);
         }
+        #[cfg(feature = "editor")]
+        self.closed.notify(usize::MAX);
         drop(removed);
     }
 }

@@ -113,6 +113,28 @@ cargo test --locked --features editor,ocio-reference --test dng_integration
 # Authored DNG plumbing; native libraries, no private photographs or desktop.
 cargo test --locked --features raw,export,project,ocio-reference --test raw_dng --test raw_flat_field --test raw_roll
 
+# Document-owned look selection, cancellation acknowledgement and physical bake/cache retirement.
+cargo test --locked --features editor --lib editor::look_workflow:: -- --test-threads=1
+
+# Reference-session and lazy-support completion, retirement and correction transactions without painting.
+cargo test --locked --features editor --lib -- \
+  editor::reference_workflow:: editor::support_workflow:: \
+  --test-threads=1
+
+# Effective grade ownership, physical support and purpose-bound reconstruction without painting.
+cargo test --locked --features editor --lib -- \
+  editor::grade_scope:: editor::original_workflow:: editor::working_view::workflow_tests:: \
+  --test-threads=1
+
+# Candidate preparation/promotion, history and physical retirement without painting.
+cargo test --locked --features editor --lib editor::document_workflow:: -- --test-threads=1
+
+# Captured writes, baseline/history/visit preservation and guarded continuation retirement.
+cargo test --locked --features editor --lib editor::save:: -- --test-threads=1
+
+# Visit-owned source workflow and native physical admission, including pending candidates.
+cargo test --locked --features editor --lib editor::source_workflow:: -- --test-threads=1
+
 # Authored import/correction/Analyze/JPEG/cache workers; native setup and Metal, no desktop window.
 cargo test --locked --features editor --lib authored_ -- --test-threads=1
 
@@ -137,7 +159,7 @@ cargo clippy --locked --all-features --all-targets -- -D warnings
 ## Export checks
 
 ```sh
-# Production worker, immutable snapshots/operation identity, encoders and destination safety; no OCIO.
+# Production services/workflows, immutable snapshots/operation identity, encoders and destination safety; no OCIO.
 cargo test --locked --features editor --lib export -- --test-threads=1
 # Independent original-sample processing/reconstruction and reopened files, including correction/locals.
 cargo test --locked --features raw,gpu,export,project,ocio-reference \
@@ -147,7 +169,7 @@ cargo test --locked --features raw,gpu,export,project,ocio-reference \
 cargo build --locked --release --features editor --bin antitone
 ```
 
-Distinguish numerical correspondence from exact serialization: GPU/scalar processing comparisons allow justified rounding differences, while encoder tests require exact supplied-sample serialization. Check reconstruction and reopened files as well as intermediate arithmetic. The [output guide](colour-and-output.md#tiff-and-exr-serve-different-purposes) owns processing and resource boundaries; per-job bounds are not an aggregate memory-pressure guarantee.
+Check captured service output separately from UI decisions/activity: no-paint completion, document/grade independence, stale results, supersession, admitted-work retention after application retirement, and stops before versus after publication. Controlled submitted-GPU gates must observe actual submission, not merely a busy flag or occupied permit. Distinguish numerical correspondence from exact serialization: GPU/scalar processing comparisons allow justified rounding differences, while encoder tests require exact supplied-sample serialization. Check reconstruction and reopened files as well as intermediate arithmetic. The [output guide](colour-and-output.md#tiff-and-exr-serve-different-purposes) owns processing and resource boundaries; per-job bounds are not an aggregate memory-pressure guarantee.
 
 The opt-in [ImageIO export check](diagnostics.md#export) independently reopens TIFF storage/profiles using a native checker compiled into temporary storage. It needs no private files or prebuilt helper.
 
@@ -158,8 +180,9 @@ The opt-in [ImageIO export check](diagnostics.md#export) independently reopens T
 ```sh
 cargo test --locked --no-default-features --test roll_analysis --test roll_sampling
 cargo test --locked --lib roll_analysis::
-cargo test --locked --features editor --lib editor::analysis::tests -- --test-threads=1
+cargo test --locked --features editor --lib editor::analysis:: -- --test-threads=1
 cargo test --locked --features editor --lib editor::analysis_review:: -- --test-threads=1
+cargo test --locked --features editor --lib editor::analysis_workflow:: -- --test-threads=1
 ```
 
 Core checks use synthetic populations. Editor checks exercise preparation and transactional installation; changes to inference scratch must preserve exact outputs and source freshness across reuse and reacquisition.
@@ -180,7 +203,7 @@ cargo test --locked --features ui-tests --lib editor::kittest_tests::auto_crop -
 cargo test --locked --release --features ui-tests --lib editor::kittest_tests::auto_crop -- --test-threads=1
 ```
 
-Check both proposal geometry and the composed Apply/Cancel workflow described in [the editor guide](editor.md#auto-crop-is-an-explicit-accepted-edit). `ANTITONE_UI_CAPTURE` enables `auto-crop-` inspection images. Software checks do not establish photographic border accuracy or physical interaction; [remaining acceptance](plans/region-detection.md) covers those boundaries.
+Check both proposal geometry and the composed Apply/Cancel workflow described in [the editor guide](editor.md#auto-crop-is-an-explicit-accepted-edit). Visit retirement must discard manual Crop and local-tool state without changing accepted geometry, adjustments or history. Batch proposals must survive browsing without retargeting; picker return restores only a still-existing local target, while failed document preparation preserves the accepted visit's local context. `ANTITONE_UI_CAPTURE` enables `auto-crop-` inspection images. Software checks do not establish photographic border accuracy or physical interaction; [remaining acceptance](plans/region-detection.md) covers those boundaries.
 
 ## Creative-look checks
 
@@ -252,6 +275,8 @@ cargo test --locked --features editor --lib recipe_tests -- --test-threads=1
 cargo test --locked --features editor,ocio-reference \
   --lib editor::thumbnails::recipe_tests::pixel_tests -- --test-threads=1
 cargo test --locked --features ui-tests --lib dust -- --test-threads=1
+# Captured evaluation, physical retirement, source/grade lifetime and shared GPU cache.
+cargo test --locked --features editor --lib editor::dust_workflow:: -- --test-threads=1
 cargo test --locked --features ui-tests --lib editor::document::tests -- --test-threads=1
 cargo test --locked --release --features ui-tests --lib editor::kittest_tests::dust -- --test-threads=1
 ```
@@ -273,6 +298,16 @@ cargo test --locked --features editor --lib editor::tests::workspace
 cargo test --locked --features editor --lib editor::thumbnails
 cargo clippy --locked --features editor --lib --tests -- -D warnings
 ```
+
+For scoped execution, admission, source demand and measurement:
+
+```sh
+for module in application:: blocking_jobs:: editor::development:: editor::measurement:: editor::photo_scope::; do
+  cargo test --locked --features editor --lib "$module" -- --test-threads=1 || break
+done
+```
+
+The [live application fixture](../src/application_test_support.rs) exposes short state transactions, explicit workflow entry and bounded wake pumping without painting. Control incomplete work with a dependency/computation gate, not a disabled executor. The composed harness uses closure-scoped construction and the same driver outside egui callbacks; short read/update transactions do not expose borrow guards. The Dmin case awaits completion without another paint. Controller-only cases draw state and inspect captured requests without entering workflows; they do not construct a disabled executor or establish asynchronous completion. Source/measurement consistency checks do not replace independent photographic/numerical oracles. Embedded-preview checks include no-paint visible sequencing, document/application retirement, worker closure, cancelled-not-missing retry and the composed Editor consuming actual completed camera textures. Controlled private producer handoffs prove reply/admission ownership, not a native call's cancellation timing; authored extraction/decoder cases separately exercise real metadata/JPEG work. Proper-thumbnail checks distinguish independent service output from live document-owned continuation behavior: visible/eager and hidden completion without paint, zero-budget disk persistence, GPU retirement preserving CPU completion, source freshness, producer closure and document/application teardown. Native phase traces protect scheduling order; local-future delivery order is not its oracle.
 
 For feature transactions, filter the owning module: for example `editor::analysis::tests`, `editor::flat::tests`, `editor::files::tests`, `editor::navigation::tests`, `editor::preferences::tests`, `editor::feedback::tests` or `editor::scopes::tests`. Use [layout/GPU diagnostics](diagnostics.md#editor-and-layout-checks) when painting changes. For wordmark/icon changes, also [regenerate the branding assets](../assets/branding/README.md#regenerate) and inspect the generated artwork and local bundle.
 
@@ -309,6 +344,9 @@ The [native-host executable](../tests/native_host.rs) uses the production host. 
 ```sh
 cargo test --locked --features ui --test native_host -- --run lifecycle
 cargo test --locked --release --features ui --test native_host -- --run lifecycle
+# Idle local continuation, nested native-loop deferral, retirement and late wake.
+cargo test --locked --features ui --test native_executor -- --run
+cargo test --locked --release --features ui --test native_executor -- --run
 # Current-Space full-display entry/paint/return/paint; requires an unlocked desktop.
 cargo test --locked --features ui --test native_host -- --run fullscreen
 # Native menu installation/state/accelerators/event wakeup and file-panel Edit restoration.

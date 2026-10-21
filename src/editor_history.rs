@@ -218,32 +218,34 @@ impl Editor {
             return;
         }
         let after = self.clone_history_project();
-        self.history.record(before, after, label, photo, None);
+        self.document
+            .history
+            .record(before, after, label, photo, None);
     }
 
     pub(super) fn history_available(&self) -> bool {
         !self.busy
             && self.failure.is_none()
             && self.menus.panel.is_none()
-            && self.look_pending.is_none()
+            && self.document.look.is_none()
             && self.document_pending.is_none()
             && self.pick.is_none()
             && self.flat_edit.is_none()
-            && self.crop_edit.is_none()
-            && self.auto_crop_edit.is_none()
-            && self.mask_edit.is_none()
-            && self.analysis_review.is_none()
-            && self.analysis_preparing.is_none()
-            && self.analysis_pending.is_none()
+            && self.document.visit.crop_edit.is_none()
+            && self.document.auto_crop_edit.is_none()
+            && self.document.visit.mask_edit.is_none()
+            && self.document.analysis_review.is_none()
+            && self.document.analysis_preparing.is_none()
+            && self.document.analysis_pending.is_none()
             && self.overwrite.is_none()
             && self.transition.is_none()
             && self.after_save.is_none()
-            && self.resume_transition.is_none()
+            && !self.allow_close
             && self.project_overwrite.is_none()
             && self.removal_pending.is_none()
-            && !self.adjustments.confirming()
-            && !self.adjustments.dragging()
-            && !self.dust.history_draft()
+            && !self.document.visit.adjustments.confirming()
+            && !self.document.visit.adjustments.dragging()
+            && !self.document.dust.history_draft()
     }
 
     pub(super) fn restore_history(&mut self, direction: Direction) {
@@ -251,8 +253,8 @@ impl Editor {
             return;
         }
         self.sync_document();
-        self.history.finish_group();
-        let Some(entry) = self.history.entry(direction) else {
+        self.document.history.finish_group();
+        let Some(entry) = self.document.history.entry(direction) else {
             return;
         };
         let project = match direction {
@@ -269,14 +271,14 @@ impl Editor {
                     .get(self.selected.min(project.order.len().saturating_sub(1)))
                     .copied()
             });
-        let mut candidate = self.document.clone();
+        let mut candidate = self.document.capture();
         candidate.project = project;
-        self.start_document(DocumentWork::History(candidate, selected, direction));
+        self.start_document(Preparation::History(candidate, selected, direction));
     }
 
     pub(super) fn history_prepared(&mut self, pending: Option<Pending>) {
         match pending {
-            Some(Pending::Reset) => self.history = History::default(),
+            Some(Pending::Reset) => self.document.history = History::default(),
             Some(Pending::Edit {
                 before,
                 label,
@@ -284,16 +286,18 @@ impl Editor {
             }) => self.record_edit(*before, label, photo),
             Some(Pending::Restore { direction, cleanup }) => {
                 let label = self
+                    .document
                     .history
                     .entry(direction)
                     .expect("pending history entry")
                     .label;
-                self.history.complete(direction);
+                self.document.history.complete(direction);
                 self.working.clear();
                 self.source = self.calibration().is_none();
-                self.dust.cleanup = cleanup.is_some() && !self.source && self.ready.is_some();
+                self.document.dust.cleanup =
+                    cleanup.is_some() && !self.source && self.document.visit.ready.is_some();
                 if let Some(show_masks) = cleanup {
-                    self.dust.show_masks = show_masks;
+                    self.document.dust.show_masks = show_masks;
                 }
                 self.status = format!("{} {label}", direction.verb());
             }
@@ -307,13 +311,16 @@ impl Editor {
             ..
         }) = pending
         {
-            self.dust.cleanup = true;
-            self.dust.show_masks = show_masks;
+            self.document.dust.cleanup = true;
+            self.document.dust.show_masks = show_masks;
         }
     }
 
     pub(super) fn history_label(&self, direction: Direction) -> Option<&'static str> {
-        self.history.entry(direction).map(|entry| entry.label)
+        self.document
+            .history
+            .entry(direction)
+            .map(|entry| entry.label)
     }
 
     pub(super) fn record_controls(&mut self, photo: Option<SourceId>, ui: &egui::Ui) {
@@ -333,12 +340,13 @@ impl Editor {
             self.sync_document();
             if before != self.document.project {
                 let after = self.clone_history_project();
-                self.history
+                self.document
+                    .history
                     .record(before, after, controls.label, photo, group);
             }
         }
         if !ui.input(|input| input.pointer.any_down()) {
-            self.history.finish_group();
+            self.document.history.finish_group();
         }
     }
 }

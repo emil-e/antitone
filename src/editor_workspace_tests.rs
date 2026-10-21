@@ -5,7 +5,7 @@ fn branded_header_preserves_composed_menu_availability_and_processing_state() {
     for scale in [1., 2.] {
         for width in [720., 1100.] {
             for busy in [false, true] {
-                let (mut editor, _send, _receiver) = fixture();
+                let mut editor = fixture();
                 editor.busy = busy;
                 let before = (editor.roll, editor.photo, editor.document.dirty());
                 let context = egui::Context::default();
@@ -22,7 +22,9 @@ fn branded_header_preserves_composed_menu_availability_and_processing_state() {
                     .get_mut(&egui::ViewportId::ROOT)
                     .unwrap()
                     .native_pixels_per_point = Some(scale);
-                let mut output = context.run_ui(input, |ui| host::App::ui(&mut editor, ui));
+                let mut output = context.run_ui(input, |ui| {
+                    crate::editor::tests::paint_controller(&mut editor, ui)
+                });
                 assert_eq!(context.pixels_per_point(), scale);
                 output.textures_delta.clear();
                 let nodes = &output
@@ -62,7 +64,7 @@ fn branded_header_preserves_composed_menu_availability_and_processing_state() {
                 assert!(!availability.enabled(crate::platform::menu::Action::ExportTiff));
                 assert_eq!((editor.roll, editor.photo, editor.document.dirty()), before);
                 assert!(editor.pick.is_none());
-                assert!(editor.crop_edit.is_none());
+                assert!(editor.document.visit.crop_edit.is_none());
                 assert!(editor.document_pending.is_none());
             }
         }
@@ -161,7 +163,7 @@ fn pointer(point: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
 #[test]
 fn successful_new_from_photo_or_rendering_selects_roll_and_opens_calibration_only() {
     for tab in [1, 2] {
-        let (mut editor, send, receiver) = fixture();
+        let mut editor = fixture();
         editor.tab = tab;
         editor
             .preferences
@@ -176,19 +178,18 @@ fn successful_new_from_photo_or_rendering_selects_roll_and_opens_calibration_onl
             .sections
             .insert("roll-gamma-balance".into(), false);
         let before = editor.preferences.clone();
-        editor.start_document(DocumentWork::New);
+        editor.start_document(Preparation::New);
         let id = editor.document_pending.unwrap();
         assert_eq!(editor.tab, tab);
-        assert!(
-            matches!(receiver.recv().unwrap(), Command::Document(_, work) if matches!(*work, DocumentWork::New))
-        );
-        send.send(Message::Prepared(id + 1, Err("stale".into())))
-            .unwrap();
-        editor.receive();
+        assert!(matches!(
+            editor.candidate_operation.request.as_ref().unwrap().work,
+            Preparation::New
+        ));
+        editor.document_prepared(id + 1, Err("stale".into()));
         assert_eq!(editor.tab, tab);
         assert_eq!(editor.document_pending, Some(id));
         assert!(editor.new_project_pending);
-        send.send(Message::Prepared(
+        editor.document_prepared(
             id,
             Ok(Box::new(Prepared {
                 document: Document::default(),
@@ -198,9 +199,7 @@ fn successful_new_from_photo_or_rendering_selects_roll_and_opens_calibration_onl
                 correction: None,
                 preserve_view: false,
             })),
-        ))
-        .unwrap();
-        editor.receive();
+        );
         assert_eq!(editor.tab, 0);
         assert!(!editor.new_project_pending);
         assert!(editor.preferences.sections["roll-calibration"]);
@@ -214,12 +213,12 @@ fn successful_new_from_photo_or_rendering_selects_roll_and_opens_calibration_onl
 
 #[test]
 fn cancelling_guarded_new_from_rendering_preserves_tab_document_and_preferences() {
-    let (mut editor, _send, receiver) = fixture();
+    let mut editor = fixture();
     editor.tab = 2;
     editor.sync_document();
     let project = editor.document.project.clone();
     let context = egui::Context::default();
-    editor.file_action(FileAction::New, &context);
+    editor.file_action(FileAction::New);
     assert_eq!(editor.transition, Some(Transition::New));
     assert_eq!(editor.tab, 2);
     for _ in 0..3 {
@@ -241,30 +240,29 @@ fn cancelling_guarded_new_from_rendering_preserves_tab_document_and_preferences(
     assert_eq!(editor.tab, 2);
     assert_eq!(editor.document.project, project);
     assert_eq!(editor.preferences, preferences);
-    assert!(receiver.try_recv().is_err());
+    assert!(
+        editor.candidate_operation.request.is_none()
+            && editor.document.write.request.is_none()
+            && editor.export_operation.request.is_none()
+    );
 }
 
 #[test]
 fn failed_new_and_open_or_import_do_not_reset_the_selected_tab() {
-    let (mut editor, send, _receiver) = fixture();
+    let mut editor = fixture();
     editor.tab = 2;
     let before = editor.document.project.clone();
-    editor.start_document(DocumentWork::New);
-    send.send(Message::Prepared(
-        editor.document_pending.unwrap(),
-        Err("failed".into()),
-    ))
-    .unwrap();
-    editor.receive();
+    editor.start_document(Preparation::New);
+    editor.document_prepared(editor.document_pending.unwrap(), Err("failed".into()));
     assert_eq!(editor.tab, 2);
     assert_eq!(editor.document.project, before);
     assert!(!editor.new_project_pending);
     for work in [
-        DocumentWork::Open("project.json".into()),
-        DocumentWork::Import(Document::default(), vec![], None),
+        Preparation::Open("project.json".into()),
+        Preparation::Import(Document::default(), vec![], None),
     ] {
         editor.start_document(work);
-        send.send(Message::Prepared(
+        editor.document_prepared(
             editor.document_pending.unwrap(),
             Ok(Box::new(Prepared {
                 document: Document::default(),
@@ -274,9 +272,7 @@ fn failed_new_and_open_or_import_do_not_reset_the_selected_tab() {
                 correction: None,
                 preserve_view: false,
             })),
-        ))
-        .unwrap();
-        editor.receive();
+        );
         assert_eq!(editor.tab, 2);
     }
 }
@@ -285,10 +281,10 @@ fn failed_new_and_open_or_import_do_not_reset_the_selected_tab() {
 fn section_scope_and_filmstrip_preferences_restore_in_a_fresh_context_without_project_changes() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("ui-preferences.json");
-    let (mut editor, _send, _receiver) = fixture();
+    let mut editor = fixture();
     editor.roll.exposure = 1.23456789;
     editor.sync_document();
-    editor.document = editor
+    *editor.document = editor
         .document
         .save(
             &directory.path().join("project.json"),
@@ -316,7 +312,7 @@ fn section_scope_and_filmstrip_preferences_restore_in_a_fresh_context_without_pr
     host::App::on_exit(&mut editor);
     let (store, restored) = preferences::Store::open(path).unwrap();
     assert_eq!(restored, editor.preferences);
-    let (mut reopened, _send, _receiver) = fixture();
+    let mut reopened = fixture();
     reopened.apply_preferences(restored);
     reopened.preference_store = Some(store);
     let fresh = egui::Context::default();
@@ -379,7 +375,7 @@ fn all_three_stage_controls_are_reachable_at_normal_and_narrow_inspector_sizes()
             ),
             (2, vec!["Look", "None", "Target", "Display P3"]),
         ] {
-            let (mut editor, _send, _receiver) = fixture();
+            let mut editor = fixture();
             editor.tab = tab;
             for name in [
                 "roll-orientation",
@@ -440,11 +436,11 @@ fn all_three_stage_controls_are_reachable_at_normal_and_narrow_inspector_sizes()
 
 #[test]
 fn crop_inspector_keeps_the_shared_tool_shelf_without_owning_transaction_controls() {
-    let (mut editor, _send, _receiver) = fixture();
+    let mut editor = fixture();
     add_ready_fixture(&mut editor);
     editor.tab = 1;
     editor.begin_crop();
-    let draft = editor.crop_edit.as_ref().unwrap().draft;
+    let draft = editor.document.visit.crop_edit.as_ref().unwrap().draft;
     for (width, height) in [(315., 800.), (270., 600.)] {
         let context = egui::Context::default();
         let labels = controls_frame_sized(&mut editor, &context, width, height, vec![]);
@@ -459,13 +455,16 @@ fn crop_inspector_keeps_the_shared_tool_shelf_without_owning_transaction_control
             assert!(labels.iter().any(|(s, _)| s == action));
         }
         assert!(!labels.iter().any(|(s, _)| s == "Apply" || s == "Cancel"));
-        assert_eq!(editor.crop_edit.as_ref().unwrap().draft, draft);
+        assert_eq!(
+            editor.document.visit.crop_edit.as_ref().unwrap().draft,
+            draft
+        );
     }
 }
 
 #[test]
 fn rendering_target_selector_and_reset_retain_grade_and_draft_guards() {
-    let (mut editor, _send, _receiver) = fixture();
+    let mut editor = fixture();
     editor.tab = 2;
     let grade = (
         editor.roll,
@@ -511,10 +510,13 @@ fn rendering_target_selector_and_reset_retain_grade_and_draft_guards() {
     editor.target = OutputTarget::Srgb;
     add_ready_fixture(&mut editor);
     editor.begin_crop();
-    let draft = editor.crop_edit.as_ref().unwrap().draft;
+    let draft = editor.document.visit.crop_edit.as_ref().unwrap().draft;
     click_section_reset(&mut editor, &context, "Target");
     assert_eq!(editor.target, OutputTarget::Srgb);
-    assert_eq!(editor.crop_edit.as_ref().unwrap().draft, draft);
+    assert_eq!(
+        editor.document.visit.crop_edit.as_ref().unwrap().draft,
+        draft
+    );
     editor.finish_crop(false);
     editor.tab = 1;
     let context = egui::Context::default();

@@ -50,23 +50,22 @@ fn project_save_name(path: Option<&std::path::Path>) -> String {
 }
 
 impl Editor {
-    pub(super) fn perform_transition(&mut self, transition: Transition, context: &egui::Context) {
+    pub(super) fn perform_transition(&mut self, transition: Transition) {
         match transition {
-            Transition::New => self.start_document(DocumentWork::New),
-            Transition::Open(path) => self.start_document(DocumentWork::Open(path)),
+            Transition::New => self.start_document(Preparation::New),
+            Transition::Open(path) => self.start_document(Preparation::Open(path)),
             Transition::Close => {
                 self.allow_close = true;
-                context.send_viewport_cmd(egui::ViewportCommand::Close);
             }
         }
     }
 
-    pub(super) fn guard_transition(&mut self, transition: Transition, context: &egui::Context) {
+    pub(super) fn guard_transition(&mut self, transition: Transition) {
         self.sync_document();
         if self.document.dirty() {
             self.transition = Some(transition);
         } else {
-            self.perform_transition(transition, context);
+            self.perform_transition(transition);
         }
     }
 
@@ -78,7 +77,11 @@ impl Editor {
     ) {
         self.sync_document();
         self.after_save = after;
-        self.start_document(DocumentWork::Save(self.document.clone(), path, policy));
+        self.start_save(document_services::Write {
+            document: self.document.capture(),
+            path,
+            policy,
+        });
         if self.document_pending.is_none() {
             self.transition = self.after_save.take();
         }
@@ -111,15 +114,15 @@ impl Editor {
         }
     }
 
-    pub(super) fn file_action(&mut self, action: FileAction, context: &egui::Context) {
-        if self.crop_edit.is_some() || self.auto_crop_edit.is_some() {
+    pub(super) fn file_action(&mut self, action: FileAction) {
+        if self.document.visit.crop_edit.is_some() || self.document.auto_crop_edit.is_some() {
             self.status =
                 "Apply or cancel the crop tool before changing or saving the document".into();
             return;
         }
         match action {
-            FileAction::New => self.guard_transition(Transition::New, context),
-            FileAction::Close => self.guard_transition(Transition::Close, context),
+            FileAction::New => self.guard_transition(Transition::New),
+            FileAction::Close => self.guard_transition(Transition::Close),
             FileAction::Open => {
                 if let Some(path) = crate::platform::menu::with_native_dialog(|| {
                     rfd::FileDialog::new()
@@ -127,7 +130,7 @@ impl Editor {
                         .add_filter("Antitone project", &["antitone", "json"])
                         .pick_file()
                 }) {
-                    self.guard_transition(Transition::Open(path), context);
+                    self.guard_transition(Transition::Open(path));
                 }
             }
             FileAction::Add => {
@@ -172,7 +175,7 @@ impl Editor {
                 Some(DialogChoice::Cancel) => self.transition = None,
                 Some(DialogChoice::Alternative) => {
                     self.transition = None;
-                    self.perform_transition(transition, context);
+                    self.perform_transition(transition);
                 }
                 Some(DialogChoice::Confirm) => {
                     self.transition = None;

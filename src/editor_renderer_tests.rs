@@ -277,17 +277,12 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
             pixels_per_point: 1.,
         };
         let mut resources = egui_wgpu::CallbackResources::default();
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
         seeded.request(key.clone(), paths[2].clone(), source.clone(), None);
         let mut encoder = device.create_command_encoder(&Default::default());
         scope.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
         assert!(!image.prepare(&device, &mut encoder, parameters));
         queue.submit([encoder.finish()]);
-        while seeded.pending.is_some() {
-            seeded.receive(&document);
-            assert!(std::time::Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(1));
-        }
+        tests::complete_service_request(&mut seeded, &document);
         assert_eq!(seeded.ready_count(&document, OutputTarget::DisplayP3), 1);
         wait(&device, &queue);
         let counts = gpu
@@ -307,11 +302,7 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
             Some(disk::DiskCache::at(directory.path().into())),
         );
         restarted.request(key, paths[2].clone(), source.clone(), None);
-        while restarted.pending.is_some() {
-            restarted.receive(&document);
-            assert!(std::time::Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(1));
-        }
+        tests::complete_service_request(&mut restarted, &document);
         assert_eq!(restarted.ready_count(&document, OutputTarget::DisplayP3), 1);
         let mut encoder = device.create_command_encoder(&Default::default());
         scope.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
@@ -372,12 +363,7 @@ fn authored_project_relative_locator_develops_a_cold_thumbnail() {
             field: None,
         };
         thumbnails.request(key, document.source_path(id).unwrap(), source, None);
-        let deadline = std::time::Instant::now() + Duration::from_secs(15);
-        while thumbnails.pending.is_some() {
-            thumbnails.receive(&document);
-            assert!(std::time::Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(1));
-        }
+        tests::complete_service_request(&mut thumbnails, &document);
         assert_eq!(
             thumbnails.ready_count(&document, OutputTarget::DisplayP3),
             1

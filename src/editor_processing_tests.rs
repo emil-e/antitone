@@ -6,20 +6,14 @@ use crate::{
     project::{LocalAdjustments, SourceDevelopment},
 };
 
-pub(in crate::editor) async fn fixture() -> (
-    Editor,
-    mpsc::Sender<Message>,
-    mpsc::Receiver<Command>,
-    wgpu::Device,
-    wgpu::Queue,
-) {
+pub(in crate::editor) async fn fixture() -> (Editor, wgpu::Device, wgpu::Queue) {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::METAL,
         ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
     let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-    let (mut editor, send, receiver) = super::super::tests::fixture();
+    let mut editor = super::super::tests::fixture();
     editor.grades = Grades::new(device.clone());
     let record = Source {
         id: SourceId(0),
@@ -59,7 +53,8 @@ pub(in crate::editor) async fn fixture() -> (
         SourceGeometry::new(record.development.active_area, [7, 5]).unwrap(),
     )
     .unwrap();
-    editor.ready = Some(Ready {
+    editor.document.visit.ready = Some(Ready {
+        developed: crate::editor::tests::developed_fixture(),
         file: thumbnails::FileKey::new(&record.path),
         thumbnail: None,
         path: record.path.clone(),
@@ -103,13 +98,13 @@ pub(in crate::editor) async fn fixture() -> (
     editor.last_layout = Some((
         editor.viewport.layout(
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.)),
-            editor.ready.as_ref().unwrap().area,
+            editor.document.visit.ready.as_ref().unwrap().area,
             1.,
         ),
         1.,
     ));
     editor.sync_document();
-    (editor, send, receiver, device, queue)
+    (editor, device, queue)
 }
 
 fn local(exposure: f64) -> LocalAdjustment {
@@ -134,7 +129,7 @@ fn positive(editor: &Editor) -> ProcessingInput {
         .unwrap()
 }
 
-fn frame(editor: &mut Editor, context: &egui::Context) {
+fn frame(editor: &mut impl crate::editor::tests::UiFixture, context: &egui::Context) {
     let mut output = context.run_ui(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -143,7 +138,7 @@ fn frame(editor: &mut Editor, context: &egui::Context) {
             )),
             ..Default::default()
         },
-        |ui| host::App::ui(editor, ui),
+        |ui| editor.ui(ui),
     );
     output.textures_delta.clear();
 }
@@ -151,7 +146,7 @@ fn frame(editor: &mut Editor, context: &egui::Context) {
 #[test]
 fn cached_grades_follow_processing_not_names_allocator_or_view_state() {
     pollster::block_on(async {
-        let (mut editor, _, _, _, _) = fixture().await;
+        let (mut editor, _, _) = fixture().await;
         let id = editor.current_source.unwrap();
         let first = positive(&editor);
         let unchanged = positive(&editor);
@@ -210,6 +205,8 @@ fn cached_grades_follow_processing_not_names_allocator_or_view_state() {
             roll_graded.grade().unwrap().snapshot()
         );
         let revision = editor
+            .document
+            .visit
             .ready
             .as_ref()
             .unwrap()
@@ -222,6 +219,8 @@ fn cached_grades_follow_processing_not_names_allocator_or_view_state() {
         assert_eq!(first.grade().unwrap().snapshot(), &old_snapshot);
         assert_eq!(
             editor
+                .document
+                .visit
                 .ready
                 .as_ref()
                 .unwrap()
@@ -237,7 +236,7 @@ fn cached_grades_follow_processing_not_names_allocator_or_view_state() {
 #[test]
 fn developed_floors_are_source_specific_in_editor_preparation_and_offscreen_admission() {
     pollster::block_on(async {
-        let (mut editor, _, _, device, _) = fixture().await;
+        let (mut editor, device, _) = fixture().await;
         let first = editor.current_source.unwrap();
         editor
             .document
@@ -329,11 +328,11 @@ fn developed_floors_are_source_specific_in_editor_preparation_and_offscreen_admi
 #[test]
 fn correction_changes_grade_preparation_but_empty_stacks_release_local_resources() {
     pollster::block_on(async {
-        let (mut editor, _, _, device, _) = fixture().await;
+        let (mut editor, device, _) = fixture().await;
         let first = positive(&editor);
         let id = editor.current_source.unwrap();
         editor.sync_document();
-        let mut candidate = editor.document.clone();
+        let mut candidate = editor.document.capture();
         candidate.project.source_mut(id).unwrap().local_adjustments = None;
         let source = candidate.project.source(id).unwrap();
         let field = Arc::new(
@@ -395,7 +394,7 @@ fn correction_changes_grade_preparation_but_empty_stacks_release_local_resources
 #[test]
 fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacing_state() {
     pollster::block_on(async {
-        let (mut editor, send, _, device, _) = fixture().await;
+        let (mut editor, device, _) = fixture().await;
         let accepted = positive(&editor);
         let id = editor.current_source.unwrap();
         let mut other = editor.document.project.source(id).unwrap().clone();
@@ -457,16 +456,14 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
                 .is_err()
         );
         editor.pick = Some(Pick::Gamma);
-        send.send(Message::Picked(
-            editor.id,
+        editor.measurement_result(
+            editor.document.visit.view,
             Pick::Gamma,
             Ok(Measurement::Balance(Balance {
                 warmth: 0.1,
                 tint: -0.1,
             })),
-        ))
-        .unwrap();
-        editor.receive();
+        );
         assert!(editor.status.contains("Pick rejected"));
         assert_eq!(
             (
@@ -503,7 +500,7 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
 #[test]
 fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_stale_results() {
     pollster::block_on(async {
-        let (mut editor, send, receiver, device, _) = fixture().await;
+        let (mut editor, device, _) = fixture().await;
         editor.working.compare = true;
         editor.scopes = Scopes::new(&device);
         let id = editor.current_source.unwrap();
@@ -514,14 +511,9 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
         assert_eq!(scope.signature(), accepted.signature());
         editor.original.last_edit = std::time::Instant::now() - Duration::from_secs(1);
         frame(&mut editor, &context);
-        let (revision, captured, view) = match receiver.try_recv().unwrap() {
-            Command::Refine(source, revision, input, target, view) => {
-                assert_eq!(source, editor.id);
-                assert_eq!(target, editor.target);
-                (revision, *input, view)
-            }
-            _ => panic!("expected refinement command"),
-        };
+        let request = editor.document.visit.grade.request.take().unwrap();
+        assert_eq!(request.target, editor.target);
+        let (revision, captured, view) = (request.revision, request.input, request.view);
         assert_eq!(captured.signature(), accepted.signature());
         editor
             .document
@@ -539,10 +531,12 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
         assert!(editor.original.revision() > revision);
         let (_, scope, _) = editor.scope_input().unwrap();
         assert_eq!(scope.signature(), positive(&editor).signature());
-        send.send(Message::Refined(
+        editor.original_result(
             revision,
             Ok(Some(
                 editor
+                    .document
+                    .visit
                     .ready
                     .as_ref()
                     .unwrap()
@@ -550,9 +544,7 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
                     .image(editor.target)
                     .unwrap(),
             )),
-        ))
-        .unwrap();
-        editor.receive();
+        );
         assert!(editor.original.settled.is_none());
         assert!(editor.original.refining.is_none());
         assert_eq!(
@@ -588,18 +580,18 @@ fn live_grade_buffers(grades: &[(std::sync::Weak<GpuPhotoGrade>, u64)]) -> (usiz
 }
 
 #[test]
-fn blocked_original_comparison_retains_one_job_and_consumers_release_superseded_grade_buffers() {
+fn original_demand_coalesces_and_consumers_release_superseded_grade_buffers() {
     use crate::gpu_scopes::{GpuScopes, ScopePaint};
     use egui_wgpu::CallbackTrait;
     use std::time::Instant;
     pollster::block_on(async {
-        let (mut editor, send, receiver, device, queue) = fixture().await;
+        let (mut editor, device, queue) = fixture().await;
         editor.working.compare = true;
         let id = editor.current_source.unwrap();
         let accepted = positive(&editor);
         let mut tracked = vec![tracked_grade(&editor, id)];
         let bytes = tracked[0].1;
-        let proxy = editor.ready.as_ref().unwrap().proxy.clone();
+        let proxy = editor.document.visit.ready.as_ref().unwrap().proxy.clone();
         let images = [
             proxy.image(OutputTarget::Srgb).unwrap(),
             proxy.image(OutputTarget::DisplayP3).unwrap(),
@@ -647,7 +639,9 @@ fn blocked_original_comparison_retains_one_job_and_consumers_release_superseded_
         frame(&mut editor, &context);
         editor.original.last_edit = Instant::now() - Duration::from_secs(1);
         frame(&mut editor, &context);
-        let (revision, _) = editor.original.refining.unwrap();
+        // Retain a captured consumer independently of newer UI demand. Actual
+        // running-job admission is covered by the live workflow tests.
+        let held = editor.document.visit.grade.request.take().unwrap();
         for i in 1..=40 {
             editor.photo.exposure = f64::from(i) / 100.;
             frame(&mut editor, &context);
@@ -655,9 +649,17 @@ fn blocked_original_comparison_retains_one_job_and_consumers_release_superseded_
             editor.original.last_edit = Instant::now() - Duration::from_secs(1);
             frame(&mut editor, &context);
             assert_eq!(
-                editor.original.refining.unwrap().0,
-                revision,
-                "edits cancel results, not the outstanding-job admission token"
+                editor
+                    .document
+                    .visit
+                    .grade
+                    .request
+                    .as_ref()
+                    .unwrap()
+                    .input
+                    .signature(),
+                positive(&editor).signature(),
+                "only the latest unstarted input remains in the demand slot"
             );
             assert_eq!(
                 live_grade_buffers(&tracked),
@@ -665,27 +667,15 @@ fn blocked_original_comparison_retains_one_job_and_consumers_release_superseded_
                 "only the held grade and latest version remain Arc-owned"
             );
         }
-        let queued: Vec<_> = receiver.try_iter().collect();
-        assert_eq!(
-            queued.len(),
-            1,
-            "a blocked RAW worker must not accumulate refinement snapshots during grading edits"
-        );
-        assert!(matches!(queued[0], Command::Refine(_, running, _, _, _) if running == revision));
-        send.send(Message::Refined(revision, Ok(None))).unwrap();
-        editor.receive();
-        assert!(editor.original.refining.is_none());
+        let newest = editor.document.visit.grade.request.take().unwrap();
+        assert!(newest.revision > held.revision);
+        editor.original_result(held.revision, Ok(None));
         assert!(editor.original.settled.is_none());
-        drop(queued);
-        frame(&mut editor, &context);
-        let newest = receiver.try_recv().unwrap();
-        assert!(
-            matches!(&newest, Command::Refine(_, running, input, _, _) if *running > revision && input.signature() == positive(&editor).signature())
-        );
-        assert!(receiver.try_recv().is_err());
+        drop(held);
 
         editor.grades.clear();
         editor.original.signature = None;
+        editor.document.visit.grade = Default::default();
         assert_eq!(live_grade_buffers(&tracked), (2, 2 * bytes));
         drop(newest);
         assert_eq!(live_grade_buffers(&tracked), (1, bytes));
@@ -710,7 +700,7 @@ fn blocked_original_comparison_retains_one_job_and_consumers_release_superseded_
         queue.submit([encoder.finish()]);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         println!(
-            "local_grade_retention edits=40 queued_refinements=1 peak_arc_owned_grade_bytes={} released_arc_owned_grade_bytes={} excludes=driver_cpu_snapshot_image_storage",
+            "local_grade_retention edits=40 pending_original_demand=1 peak_arc_owned_grade_bytes={} released_arc_owned_grade_bytes={} excludes=driver_cpu_snapshot_image_storage",
             2 * bytes,
             2 * bytes
         );
@@ -720,7 +710,7 @@ fn blocked_original_comparison_retains_one_job_and_consumers_release_superseded_
 #[test]
 fn selected_visible_grade_eviction_releases_unreferenced_roll_resources() {
     pollster::block_on(async {
-        let (editor, _, _, _, _) = fixture().await;
+        let (editor, _, _) = fixture().await;
         let calibration = editor.calibration().unwrap();
         let record = editor
             .document

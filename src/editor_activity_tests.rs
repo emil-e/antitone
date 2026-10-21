@@ -119,7 +119,7 @@ fn progress_and_cancellation_states_keep_unknown_duration_honest() {
 #[test]
 fn document_activity_is_typed_and_only_the_matching_terminal_reply_retires_it() {
     for save in [false, true] {
-        let (mut editor, send, receiver) = fixture();
+        let mut editor = fixture();
         editor.sync_document();
         let before = editor.document.project.clone();
         if save {
@@ -131,24 +131,23 @@ fn document_activity_is_typed_and_only_the_matching_terminal_reply_retires_it() 
         } else {
             editor.add_raws(vec!["one.ARW".into(), "two.ARW".into()]);
         }
-        receiver.recv().unwrap();
+        if save {
+            assert!(editor.document.write.request.is_some());
+        } else {
+            assert!(editor.candidate_operation.request.is_some());
+        }
         let id = editor.document_pending.unwrap();
         let title = editor.tasks.view().unwrap().title;
         editor.status = "Unrelated status".into();
-        send.send(Message::Prepared(id + 1, Err("stale".into())))
-            .unwrap();
-        editor.receive();
+        editor.document_prepared(id + 1, Err("stale".into()));
         assert_eq!(editor.tasks.view().unwrap().title, title);
         assert!(editor.busy);
         assert_eq!(editor.document.project, before);
         if save {
-            send.send(Message::Saved(id, Err("cannot save".into())))
-                .unwrap();
+            editor.save_result(id, Err("cannot save".into()));
         } else {
-            send.send(Message::Prepared(id, Err("cannot import".into())))
-                .unwrap();
+            editor.document_prepared(id, Err("cannot import".into()));
         }
-        editor.receive();
         assert!(editor.tasks.view().is_none() && !editor.busy);
         assert_eq!(editor.document.project, before);
     }
@@ -157,75 +156,72 @@ fn document_activity_is_typed_and_only_the_matching_terminal_reply_retires_it() 
 #[test]
 fn file_progress_is_request_owned_and_returns_to_indeterminate_before_promotion() {
     for open in [false, true] {
-        let (mut editor, send, receiver) = fixture();
+        let mut editor = fixture();
         editor.sync_document();
         let before = editor.document.project.clone();
         if open {
-            editor.start_document(DocumentWork::Open("project.json".into()));
+            editor.start_document(Preparation::Open("project.json".into()));
         } else {
             editor.add_raws(vec!["one.ARW".into(), "two.ARW".into()]);
         }
-        receiver.recv().unwrap();
+        assert!(editor.candidate_operation.request.is_some());
         let id = editor.document_pending.unwrap();
-        send.send(Message::DocumentProgress(id + 1, 1, 2)).unwrap();
-        editor.receive();
+        editor.document_progress(id + 1, 1, 2);
         assert!(editor.tasks.view().unwrap().measured.is_none());
-        send.send(Message::DocumentProgress(id, 1, 2)).unwrap();
-        editor.receive();
+        editor.document_progress(id, 1, 2);
         assert_eq!(
             editor.tasks.view().unwrap().measured,
             Some((0.5, "1 of 2".into()))
         );
         assert_eq!(editor.document.project, before);
-        send.send(Message::DocumentProgress(id, 2, 2)).unwrap();
-        editor.receive();
+        editor.document_progress(id, 2, 2);
         assert!(editor.tasks.view().unwrap().measured.is_none());
         assert!(editor.busy && editor.document_pending == Some(id));
-        send.send(Message::Prepared(id, Err("preparation failed".into())))
-            .unwrap();
-        send.send(Message::DocumentProgress(id, 1, 2)).unwrap();
-        editor.receive();
+        editor.document_prepared(id, Err("preparation failed".into()));
+        editor.document_progress(id, 1, 2);
         assert!(editor.tasks.view().is_none() && !editor.busy);
         assert_eq!(editor.document.project, before);
     }
-    let (mut editor, send, receiver) = fixture();
+    let mut editor = fixture();
     editor.queue_save("project.json".into(), crate::project::Save::New, None);
-    receiver.recv().unwrap();
-    send.send(Message::DocumentProgress(
-        editor.document_pending.unwrap(),
-        1,
-        2,
-    ))
-    .unwrap();
-    editor.receive();
+    assert!(editor.document.write.request.is_some());
+    editor.document_progress(editor.document_pending.unwrap(), 1, 2);
     assert!(editor.tasks.view().unwrap().measured.is_none());
 }
 
 #[test]
-fn send_failures_leave_no_working_feedback() {
-    for operation in 0..6 {
-        let (mut editor, _send, receiver) = fixture();
+fn unavailable_export_and_analysis_services_leave_no_working_feedback() {
+    for export in [true, false] {
+        let mut editor = fixture();
         add_ready_fixture(&mut editor);
-        drop(receiver);
-        match operation {
-            0 => editor.add_raws(vec!["one.ARW".into()]),
-            1 => editor.load("one.ARW".into()),
-            2 => editor.begin_flat_edit("reference.ARW".into(), None),
-            3 => editor.queue_save("project.json".into(), crate::project::Save::New, None),
-            4 => editor.export(
-                "output.tiff".into(),
-                OutputFormat::Tiff(OutputTarget::Srgb),
-                Overwrite::Refuse,
-            ),
-            _ => editor.begin_analysis(),
-        }
-        assert!(editor.tasks.view().is_none() && !editor.busy);
+        editor.sync_document();
+        let before = editor.document.project.clone();
+        crate::application::test_support::with_application(editor, |app| {
+            app.enter(|editor, access| {
+                if export {
+                    editor.export(
+                        "output.tiff".into(),
+                        OutputFormat::Tiff(OutputTarget::Srgb),
+                        Overwrite::Refuse,
+                    );
+                    assert!(editor.export_operation.request.is_some());
+                    editor.start_export_workflow(access);
+                } else {
+                    editor.begin_analysis();
+                    editor.start_analysis_workflow(access);
+                }
+            });
+            app.read(|editor| {
+                assert!(editor.tasks.view().is_none() && !editor.busy);
+                assert_eq!(editor.document.project, before);
+            });
+        });
     }
 }
 
 #[test]
 fn export_activity_preserves_identity_and_closes_before_failure_feedback() {
-    let (mut editor, send, receiver) = fixture();
+    let mut editor = fixture();
     add_ready_fixture(&mut editor);
     editor.sync_document();
     let before = editor.document.project.clone();
@@ -234,17 +230,13 @@ fn export_activity_preserves_identity_and_closes_before_failure_feedback() {
         OutputFormat::Exr(ExrPrecision::Full),
         Overwrite::Refuse,
     );
-    receiver.recv().unwrap();
-    let id = editor.export_pending.unwrap();
+    assert!(editor.export_operation.request.is_some());
+    let id = editor.export_operation.pending.unwrap();
     editor.status = "Settled preview failed: unrelated".into();
     assert_eq!(editor.tasks.view().unwrap().title, "Exporting…");
-    send.send(Message::Exported(id + 1, Err("stale".into())))
-        .unwrap();
-    editor.receive();
+    editor.export_result(id + 1, Err("stale".into()));
     assert!(editor.tasks.view().is_some());
-    send.send(Message::Exported(id, Err("destination unavailable".into())))
-        .unwrap();
-    editor.receive();
+    editor.export_result(id, Err("destination unavailable".into()));
     assert!(editor.tasks.view().is_none());
     assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Export);
     assert_eq!(editor.document.project, before);
@@ -253,12 +245,12 @@ fn export_activity_preserves_identity_and_closes_before_failure_feedback() {
 #[test]
 fn analysis_cancellation_is_reachable_from_every_stage_and_stays_pending_until_reply() {
     for tab in 0..3 {
-        let (mut editor, send, receiver) = fixture();
+        let mut editor = fixture();
         add_ready_fixture(&mut editor);
         editor.begin_analysis();
-        let Command::Analyze(id, request) = receiver.recv().unwrap() else {
-            panic!()
-        };
+        let pending = editor.document.analysis_pending.as_ref().unwrap();
+        let id = pending.id;
+        let request = pending.request.clone();
         editor.tab = tab;
         let context = egui::Context::default();
         app_frame(&mut editor, &context, vec![]);
@@ -272,22 +264,21 @@ fn analysis_cancellation_is_reachable_from_every_stage_and_stays_pending_until_r
         for pressed in [true, false] {
             app_frame(&mut editor, &context, pointer(cancel, pressed));
         }
-        assert!(editor.busy && editor.analysis_pending.is_some());
+        assert!(editor.busy && editor.document.analysis_pending.is_some());
         assert_ne!(
             editor
+                .document
                 .analysis_generation
                 .load(std::sync::atomic::Ordering::Relaxed),
             request.revision
         );
-        send.send(Message::AnalysisProgress(id, 1, 2)).unwrap();
-        editor.receive();
+        editor.analysis_progress(id, 1, 2);
         let view = editor.tasks.view().unwrap();
         assert_eq!(view.title, "Cancelling analysis…");
         assert!(view.cancel.is_none() && view.measured.is_none());
         app_frame(&mut editor, &context, key(egui::Key::Escape));
-        assert!(editor.analysis_pending.is_some());
-        send.send(Message::Analyzed(id, Ok(None))).unwrap();
-        editor.receive();
+        assert!(editor.document.analysis_pending.is_some());
+        editor.analysis_result(id, Ok(None));
         assert!(!editor.busy && editor.tasks.view().is_none());
         assert_eq!(editor.status, "Analysis cancelled");
     }
@@ -295,43 +286,45 @@ fn analysis_cancellation_is_reachable_from_every_stage_and_stays_pending_until_r
 
 #[test]
 fn superseded_analysis_updates_and_cancel_actions_cannot_touch_the_new_task() {
-    let (mut editor, send, receiver) = fixture();
+    let mut editor = fixture();
     add_ready_fixture(&mut editor);
     editor.begin_analysis();
-    let Command::Analyze(id, request) = receiver.recv().unwrap() else {
-        panic!()
-    };
+    let pending = editor.document.analysis_pending.as_ref().unwrap();
+    let id = pending.id;
+    let request = pending.request.clone();
     let action = editor.tasks.view().unwrap().cancel.unwrap();
     editor.load("next.ARW".into());
-    assert!(editor.analysis_pending.is_none());
+    assert!(editor.document.analysis_pending.is_none());
     assert_ne!(
         editor
+            .document
             .analysis_generation
             .load(std::sync::atomic::Ordering::Relaxed),
         request.revision
     );
     let revision = editor
+        .document
         .analysis_generation
         .load(std::sync::atomic::Ordering::Relaxed);
     editor.cancel_task(action.request);
     assert_eq!(
         editor
+            .document
             .analysis_generation
             .load(std::sync::atomic::Ordering::Relaxed),
         revision
     );
-    send.send(Message::AnalysisProgress(id, 1, 2)).unwrap();
-    send.send(Message::Analyzed(id, Ok(None))).unwrap();
-    editor.receive();
+    editor.analysis_progress(id, 1, 2);
+    editor.analysis_result(id, Ok(None));
     assert_eq!(editor.tasks.view().unwrap().title, "Loading photo…");
     assert!(editor.busy);
 }
 
 #[test]
 fn feedback_prominence_is_delayed_without_changing_document_availability() {
-    let (mut editor, _send, receiver) = fixture();
-    editor.start_document(DocumentWork::Open("project.json".into()));
-    receiver.recv().unwrap();
+    let mut editor = fixture();
+    editor.start_document(Preparation::Open("project.json".into()));
+    assert!(editor.candidate_operation.request.is_some());
     let context = egui::Context::default();
     app_frame(&mut editor, &context, vec![]);
     assert!(
@@ -353,99 +346,107 @@ fn feedback_prominence_is_delayed_without_changing_document_availability() {
 #[test]
 fn matching_success_retires_source_save_measurement_and_export_activity() {
     for operation in 0..4 {
-        let (mut editor, send, receiver) = fixture();
+        let mut editor = fixture();
         add_ready_fixture(&mut editor);
-        match operation {
-            0 => {
-                let ready = editor.ready.take().unwrap();
-                editor.load("current.ARW".into());
-                receiver.recv().unwrap();
-                send.send(Message::Ready(editor.id, Ok(Box::new(ready))))
-                    .unwrap();
+        let hold = crate::editor::tests::hold_blocking_work(&editor.workflow_jobs);
+        crate::application::test_support::with_application(editor, |app| {
+            let mut source_completion = None;
+            let mut save_completion = None;
+            let mut export_completion = None;
+            app.enter(|editor, access| match operation {
+                0 => {
+                    let ready = editor.document.visit.ready.take().unwrap();
+                    editor.load("current.ARW".into());
+                    assert!(editor.document.visit.source.request.is_some());
+                    source_completion = Some((editor.document.visit.view, ready));
+                }
+                1 => {
+                    editor.queue_save("project.json".into(), crate::project::Save::New, None);
+                    assert!(editor.document.write.request.is_some());
+                    save_completion =
+                        Some((editor.document_pending.unwrap(), editor.document.capture()));
+                }
+                2 => {
+                    editor.begin_pick(Pick::Dmin);
+                    let source = editor
+                        .document
+                        .visit
+                        .ready
+                        .as_ref()
+                        .unwrap()
+                        .developed
+                        .clone();
+                    let area = Scan::from_source(source).area;
+                    // The synthetic SDK source marks its repeated borders ineligible.
+                    // This scenario needs a successful pick, not a rejected capture.
+                    editor.region = Some(Coverage::rectangle(Rect {
+                        x: area.x + 8,
+                        y: area.y + 8,
+                        width: area.width - 16,
+                        height: area.height - 16,
+                    }));
+                    editor.apply_pick();
+                    editor.start_measurement_workflow(access);
+                    assert!(editor.document.visit.measurement.is_some());
+                }
+                _ => {
+                    editor.export(
+                        "output.exr".into(),
+                        OutputFormat::Exr(ExrPrecision::Full),
+                        Overwrite::Refuse,
+                    );
+                    assert!(editor.export_operation.request.is_some());
+                    export_completion = editor.export_operation.pending;
+                }
+            });
+            assert!(app.read(|editor| editor.tasks.view().is_some()));
+            if let Some((id, saved)) = save_completion {
+                app.update(|e| e.save_result(id, Ok(Box::new(saved))));
             }
-            1 => {
-                editor.queue_save("project.json".into(), crate::project::Save::New, None);
-                receiver.recv().unwrap();
-                send.send(Message::Saved(
-                    editor.document_pending.unwrap(),
-                    Ok(Box::new(editor.document.clone())),
-                ))
-                .unwrap();
+            if let Some((view, ready)) = source_completion {
+                app.update(|e| e.source_result(view, Ok(Box::new(ready))));
             }
-            2 => {
-                editor.begin_pick(Pick::Dmin);
-                editor.region = Some(Coverage::rectangle(Rect {
-                    x: 12,
-                    y: 7,
-                    width: 30,
-                    height: 20,
-                }));
-                editor.apply_pick();
-                let Command::Pick(id, kind, ..) = receiver.recv().unwrap() else {
-                    panic!()
-                };
-                send.send(Message::Picked(
-                    id,
-                    kind,
-                    Ok(Measurement::Reference(editor.dmin.unwrap())),
-                ))
-                .unwrap();
+            if let Some(id) = export_completion {
+                app.update(|e| e.export_result(id, Ok("output.exr".into())));
             }
-            _ => {
-                editor.export(
-                    "output.exr".into(),
-                    OutputFormat::Exr(ExrPrecision::Full),
-                    Overwrite::Refuse,
+            app.pump();
+            drop(hold);
+            if operation == 2 {
+                app.run_until(Duration::from_secs(5), |editor| !editor.busy);
+                assert_eq!(
+                    app.read(|editor| editor.history_label(crate::editor::history::Direction::Undo)),
+                    Some("Calibration pick"),
+                    "{}",
+                    app.read(|editor| editor.status.clone())
                 );
-                receiver.recv().unwrap();
-                send.send(Message::Exported(
-                    editor.export_pending.unwrap(),
-                    Ok("output.exr".into()),
-                ))
-                .unwrap();
             }
-        }
-        assert!(editor.tasks.view().is_some());
-        editor.receive();
-        assert!(editor.tasks.view().is_none() && !editor.busy);
+            assert!(app.read(|editor| editor.tasks.view().is_none() && !editor.busy));
+        });
     }
 }
 
 #[test]
 fn reference_failure_retires_only_the_matched_preparation_and_restores_the_view() {
-    let (mut editor, send, receiver) = fixture();
+    let mut editor = fixture();
     add_ready_fixture(&mut editor);
-    let before = (
-        editor.id,
-        editor.current_source,
-        editor.viewport,
-        editor.source,
-    );
+    let previous_visit = editor.document.visit.view;
+    let before = (editor.current_source, editor.viewport, editor.source);
     editor.begin_flat_edit("reference.ARW".into(), None);
-    receiver.recv().unwrap();
     let id = editor.id;
-    send.send(Message::FlatPreview(id + 1, Err("stale".into())))
-        .unwrap();
-    editor.receive();
+    editor.reference_previewed(id + 1, Err("stale".into()));
     assert!(editor.tasks.view().is_some() && editor.busy);
-    send.send(Message::FlatPreview(id, Err("cannot prepare".into())))
-        .unwrap();
-    editor.receive();
+    editor.reference_previewed(id, Err("cannot prepare".into()));
     assert!(editor.tasks.view().is_none() && !editor.busy);
+    assert_ne!(editor.document.visit.view, previous_visit);
     assert_eq!(
-        (
-            editor.id,
-            editor.current_source,
-            editor.viewport,
-            editor.source
-        ),
+        (editor.current_source, editor.viewport, editor.source),
         before
     );
 }
 
 #[test]
 fn activity_keeps_viewer_geometry_stable_and_never_covers_an_acknowledged_failure() {
-    let (mut editor, _send, _receiver) = fixture();
+    let mut editor = fixture();
     add_ready_fixture(&mut editor);
     let context = egui::Context::default();
     app_frame(&mut editor, &context, vec![]);
@@ -458,7 +459,7 @@ fn activity_keeps_viewer_geometry_stable_and_never_covers_an_acknowledged_failur
     editor.begin_analysis();
     app_frame(&mut editor, &context, vec![]);
     assert_eq!(editor.last_layout.unwrap().0.canvas, canvas);
-    editor.analysis_pending = None;
+    editor.document.analysis_pending = None;
     editor.tasks.begin(Task::Save(editor.id));
     editor.tasks.elapse(Duration::from_secs(1));
     editor.report_failure(FailureKind::Save, "previous failure".into());

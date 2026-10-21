@@ -32,7 +32,7 @@ fn raw_picker_offers_common_camera_formats_not_only_arw() {
 }
 
 fn ui_frame(
-    editor: &mut Editor,
+    editor: &mut impl crate::editor::tests::UiFixture,
     context: &egui::Context,
     events: Vec<egui::Event>,
 ) -> Vec<(String, egui::Rect)> {
@@ -46,7 +46,7 @@ fn ui_frame(
             ..Default::default()
         },
         |ui| {
-            egui::CentralPanel::default().show(ui, |ui| host::App::ui(editor, ui));
+            egui::CentralPanel::default().show(ui, |ui| editor.ui(ui));
         },
     );
     output.textures_delta.clear();
@@ -66,7 +66,11 @@ fn ui_frame(
         .collect()
 }
 
-fn click(editor: &mut Editor, context: &egui::Context, point: egui::Pos2) {
+fn click(
+    editor: &mut impl crate::editor::tests::UiFixture,
+    context: &egui::Context,
+    point: egui::Pos2,
+) {
     for pressed in [true, false] {
         ui_frame(
             editor,
@@ -86,10 +90,10 @@ fn click(editor: &mut Editor, context: &egui::Context, point: egui::Pos2) {
 
 #[test]
 fn cancel_preserves_the_document_and_discard_dispatches_the_guarded_transition() {
-    let (mut editor, _send, receiver) = fixture();
+    let mut editor = fixture();
     let context = egui::Context::default();
     ui_frame(&mut editor, &context, vec![]);
-    editor.guard_transition(Transition::New, &context);
+    editor.guard_transition(Transition::New);
     ui_frame(&mut editor, &context, vec![]);
     let modal = ui_frame(&mut editor, &context, vec![]);
     let cancel = modal
@@ -100,8 +104,12 @@ fn cancel_preserves_the_document_and_discard_dispatches_the_guarded_transition()
         .center();
     click(&mut editor, &context, cancel);
     assert!(editor.transition.is_none());
-    assert!(receiver.try_recv().is_err());
-    editor.guard_transition(Transition::New, &context);
+    assert!(
+        editor.candidate_operation.request.is_none()
+            && editor.document.write.request.is_none()
+            && editor.export_operation.request.is_none()
+    );
+    editor.guard_transition(Transition::New);
     ui_frame(&mut editor, &context, vec![]);
     let modal = ui_frame(&mut editor, &context, vec![]);
     let discard = modal
@@ -111,10 +119,8 @@ fn cancel_preserves_the_document_and_discard_dispatches_the_guarded_transition()
         .1
         .center();
     click(&mut editor, &context, discard);
-    let Command::Document(_, work) = receiver.try_recv().unwrap() else {
-        panic!()
-    };
-    assert!(matches!(*work, DocumentWork::New));
+    let work = editor.candidate_operation.request.take().unwrap();
+    assert!(matches!(work.work, Preparation::New));
 }
 
 #[test]
@@ -133,7 +139,7 @@ fn save_transition_prompts_are_neutral_and_make_edit_loss_conditional_on_not_sav
             "Closing Antitone without saving will discard unsaved edits in this project.",
         ),
     ] {
-        let (mut editor, _send, _receiver) = fixture();
+        let mut editor = fixture();
         let context = egui::Context::default();
         editor.transition = Some(transition);
         ui_frame(&mut editor, &context, vec![]);
@@ -181,12 +187,12 @@ enum SaveInput {
 }
 
 fn numeric_save(route: SaveInput) {
-    let (mut editor, _send, receiver) = fixture();
+    let mut editor = fixture();
     if !matches!(route, SaveInput::Shortcut) {
         host::App::native_menu_installed(&mut editor);
     }
     let directory = tempfile::tempdir().unwrap();
-    editor.document = editor
+    *editor.document = editor
         .document
         .save(
             &directory.path().join("numeric.antitone"),
@@ -265,10 +271,6 @@ fn numeric_save(route: SaveInput) {
     };
     ui_frame(&mut editor, &context, events);
     if !matches!(route, SaveInput::NativeMenu) {
-        assert!(
-            receiver.try_recv().is_err(),
-            "input must be processed before committing focus"
-        );
         ui_frame(&mut editor, &context, vec![]);
     }
     if matches!(route, SaveInput::PasteThenSystemQuit) {
@@ -287,12 +289,9 @@ fn numeric_save(route: SaveInput) {
             .center();
         click(&mut editor, &context, save);
     }
-    let Command::Document(_, work) = receiver.try_recv().unwrap() else {
-        panic!()
-    };
-    let DocumentWork::Save(snapshot, _, _) = *work else {
-        panic!()
-    };
+    let crate::editor::document_services::Write {
+        document: snapshot, ..
+    } = editor.document.write.request.take().unwrap();
     assert_eq!(
         snapshot
             .project
@@ -306,7 +305,7 @@ fn numeric_save(route: SaveInput) {
 
 #[test]
 fn viewport_close_is_vetoed_until_the_dirty_document_decision() {
-    let (mut editor, _send, receiver) = fixture();
+    let mut editor = fixture();
     let context = egui::Context::default();
     ui_frame(&mut editor, &context, vec![]);
     let mut input = egui::RawInput {
@@ -323,7 +322,9 @@ fn viewport_close_is_vetoed_until_the_dirty_document_decision() {
         .events
         .push(egui::ViewportEvent::Close);
     let mut output = context.run_ui(input.clone(), |ui| {
-        egui::CentralPanel::default().show(ui, |ui| host::App::ui(&mut editor, ui));
+        egui::CentralPanel::default().show(ui, |ui| {
+            crate::editor::tests::paint_controller(&mut editor, ui)
+        });
     });
     output.textures_delta.clear();
     assert!(
@@ -333,9 +334,15 @@ fn viewport_close_is_vetoed_until_the_dirty_document_decision() {
     );
     assert_eq!(editor.transition, Some(Transition::Close));
     assert!(!editor.allow_close);
-    assert!(receiver.try_recv().is_err());
+    assert!(
+        editor.candidate_operation.request.is_none()
+            && editor.document.write.request.is_none()
+            && editor.export_operation.request.is_none()
+    );
     let mut output = context.run_ui(input, |ui| {
-        egui::CentralPanel::default().show(ui, |ui| host::App::ui(&mut editor, ui));
+        egui::CentralPanel::default().show(ui, |ui| {
+            crate::editor::tests::paint_controller(&mut editor, ui)
+        });
     });
     output.textures_delta.clear();
     assert!(
@@ -345,15 +352,19 @@ fn viewport_close_is_vetoed_until_the_dirty_document_decision() {
     );
     assert_eq!(editor.transition, Some(Transition::Close));
     assert!(!editor.allow_close);
-    assert!(receiver.try_recv().is_err());
+    assert!(
+        editor.candidate_operation.request.is_none()
+            && editor.document.write.request.is_none()
+            && editor.export_operation.request.is_none()
+    );
 }
 
 #[test]
 fn export_cannot_replace_the_open_project_document() {
-    let (mut editor, _send, receiver) = fixture();
+    let mut editor = fixture();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("project.antitone.json");
-    editor.document = editor
+    *editor.document = editor
         .document
         .save(&path, crate::project::Save::New)
         .unwrap();
@@ -363,7 +374,7 @@ fn export_cannot_replace_the_open_project_document() {
         OutputFormat::Tiff(OutputTarget::Srgb),
         Overwrite::Confirmed,
     );
-    assert!(receiver.try_recv().is_err());
+    assert!(editor.export_operation.pending.is_none());
     assert_eq!(std::fs::read(path).unwrap(), before);
     assert!(!editor.busy);
     assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Export);
@@ -374,7 +385,7 @@ fn document_and_export_decisions_ignore_outside_clicks_and_cancel_without_dispat
     use super::super::presentation::tests::key;
     for decision in 0..3 {
         for cancel_key in [egui::Key::Escape, egui::Key::Enter] {
-            let (mut editor, _send, receiver) = fixture();
+            let mut editor = fixture();
             let directory = tempfile::tempdir().unwrap();
             let path = directory.path().join("existing-file");
             std::fs::write(&path, b"unchanged destination").unwrap();
@@ -393,14 +404,22 @@ fn document_and_export_decisions_ignore_outside_clicks_and_cancel_without_dispat
                     || editor.project_overwrite.is_some()
                     || editor.overwrite.is_some()
             );
-            assert!(receiver.try_recv().is_err());
+            assert!(
+                editor.candidate_operation.request.is_none()
+                    && editor.document.write.request.is_none()
+                    && editor.export_operation.request.is_none()
+            );
             ui_frame(&mut editor, &context, key(cancel_key));
             assert!(
                 editor.transition.is_none()
                     && editor.project_overwrite.is_none()
                     && editor.overwrite.is_none()
             );
-            assert!(receiver.try_recv().is_err());
+            assert!(
+                editor.candidate_operation.request.is_none()
+                    && editor.document.write.request.is_none()
+                    && editor.export_operation.request.is_none()
+            );
             assert!(!editor.allow_close && !editor.busy);
             assert_eq!(editor.document.project, before);
             assert_eq!(std::fs::read(path).unwrap(), b"unchanged destination");
@@ -410,16 +429,16 @@ fn document_and_export_decisions_ignore_outside_clicks_and_cancel_without_dispat
 
 #[test]
 fn save_decision_queues_the_snapshot_with_its_original_continuation() {
-    let (mut editor, _send, receiver) = fixture();
+    let mut editor = fixture();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("project.antitone");
-    editor.document = editor
+    *editor.document = editor
         .document
         .save(&path, crate::project::Save::New)
         .unwrap();
     editor.photo.exposure = 1.25;
     let context = egui::Context::default();
-    editor.guard_transition(Transition::Close, &context);
+    editor.guard_transition(Transition::Close);
     ui_frame(&mut editor, &context, vec![]);
     let labels = ui_frame(&mut editor, &context, vec![]);
     let point = labels
@@ -432,12 +451,12 @@ fn save_decision_queues_the_snapshot_with_its_original_continuation() {
     assert!(editor.transition.is_none());
     assert_eq!(editor.after_save, Some(Transition::Close));
     assert!(!editor.allow_close);
-    let Command::Document(_, work) = receiver.try_recv().unwrap() else {
-        panic!()
-    };
-    let DocumentWork::Save(snapshot, destination, policy) = *work else {
-        panic!()
-    };
+    let crate::editor::document_services::Write {
+        document: snapshot,
+        path: destination,
+        policy,
+        ..
+    } = editor.document.write.request.take().unwrap();
     assert_eq!(destination, path);
     assert!(matches!(policy, crate::project::Save::Replace));
     assert_eq!(snapshot.project, editor.document.project);
@@ -450,12 +469,11 @@ fn save_decision_queues_the_snapshot_with_its_original_continuation() {
             .exposure,
         1.25
     );
-    assert!(receiver.try_recv().is_err());
 }
 
 #[test]
 fn project_replace_decision_preserves_destination_snapshot_and_continuation() {
-    let (mut editor, _send, receiver) = fixture();
+    let mut editor = fixture();
     let path = PathBuf::from("existing.antitone.json");
     editor.project_overwrite = Some((path.clone(), Some(Transition::New)));
     let context = egui::Context::default();
@@ -470,16 +488,15 @@ fn project_replace_decision_preserves_destination_snapshot_and_continuation() {
     click(&mut editor, &context, point);
     assert!(editor.project_overwrite.is_none());
     assert_eq!(editor.after_save, Some(Transition::New));
-    let Command::Document(_, work) = receiver.try_recv().unwrap() else {
-        panic!()
-    };
-    let DocumentWork::Save(snapshot, destination, policy) = *work else {
-        panic!()
-    };
+    let crate::editor::document_services::Write {
+        document: snapshot,
+        path: destination,
+        policy,
+        ..
+    } = editor.document.write.request.take().unwrap();
     assert_eq!(destination, path);
     assert_eq!(snapshot.project, editor.document.project);
     assert!(matches!(policy, crate::project::Save::Replace));
-    assert!(receiver.try_recv().is_err());
 }
 
 #[test]
@@ -490,7 +507,7 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
         OutputFormat::Exr(ExrPrecision::Half),
         OutputFormat::Exr(ExrPrecision::Full),
     ] {
-        let (mut editor, _send, receiver) = super::super::tests::fixture();
+        let mut editor = super::super::tests::fixture();
         super::super::tests::add_ready_fixture(&mut editor);
         editor.crop = Some(Crop::from_region(Rect {
             x: 20,
@@ -513,13 +530,18 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
             .center();
         click(&mut editor, &context, point);
         assert!(editor.overwrite.is_none());
-        let Command::Export(id, destination, dispatched, recipe, policy) =
-            receiver.try_recv().unwrap()
-        else {
-            panic!()
-        };
-        assert_eq!(id.source, editor.id);
-        assert_eq!(Some(id.request), editor.export_pending);
+        let export_services::Request {
+            input,
+            path: destination,
+            format: dispatched,
+            recipe,
+            overwrite: policy,
+        } = editor.export_operation.request.take().unwrap();
+        assert!(Arc::ptr_eq(
+            &input.source,
+            &editor.document.visit.ready.as_ref().unwrap().developed
+        ));
+        assert!(editor.export_operation.pending.is_some());
         assert_eq!(destination, path);
         match (dispatched, format) {
             (OutputFormat::Tiff(a), OutputFormat::Tiff(b)) => assert_eq!(a, b),
@@ -533,18 +555,11 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
         assert_eq!(recipe.composition.crop(), editor.crop.unwrap());
         assert!(matches!(policy, Overwrite::Confirmed));
         assert_eq!(editor.document.project, before);
-        assert!(receiver.try_recv().is_err());
     }
 }
 
-fn fixture() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
-    let (commands, receiver) = mpsc::channel();
-    let (send, messages) = mpsc::channel();
-    let mut editor = Editor::state(
-        commands,
-        messages,
-        Arc::new(std::sync::atomic::AtomicU64::new(0)),
-    );
+fn fixture() -> Editor {
+    let mut editor = Editor::state();
     editor
         .document
         .register(
@@ -575,12 +590,12 @@ fn fixture() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
     editor.dmin = Some(DVec3::new(0.2, 0.15, 0.1));
     editor.dmax = Some(DVec3::new(0.008, 0.005, 0.002));
     editor.sync_document();
-    (editor, send, receiver)
+    editor
 }
 
 #[test]
 fn orientation_is_source_owned_and_restored_without_changing_grade_on_load() {
-    let (mut editor, _send, receiver) = fixture();
+    let mut editor = fixture();
     let id = editor.current_source.unwrap();
     editor.photo = PhotoSettings {
         contrast: 0.4,
@@ -637,30 +652,22 @@ fn orientation_is_source_owned_and_restored_without_changing_grade_on_load() {
     assert_eq!(editor.crop, crop);
     assert_eq!((editor.roll, editor.photo, editor.dmin, editor.dmax), grade);
     assert_eq!(editor.roll_orientation, editor.document.project.orientation);
-    assert!(matches!(receiver.try_recv().unwrap(), Command::Load(..)));
+    assert!(editor.document.visit.source.request.is_some());
 }
 
 #[test]
 fn failed_and_stale_document_results_preserve_state_and_active_request() {
-    let (mut editor, send, receiver) = fixture();
+    let mut editor = fixture();
     editor.photo.exposure = 7.123456789012345;
     editor.sync_document();
     let before = editor.document.project.clone();
     let active = editor.id;
-    editor.start_document(DocumentWork::Open("candidate.json".into()));
+    editor.start_document(Preparation::Open("candidate.json".into()));
     let id = editor.document_pending.unwrap();
-    assert!(matches!(receiver.recv().unwrap(), Command::Document(_, _)));
-    send.send(Message::Prepared(id + 1, Err("stale candidate".into())))
-        .unwrap();
-    send.send(Message::Picked(
-        active,
-        Pick::Dmin,
-        Ok(Measurement::Reference(DVec3::ONE)),
-    ))
-    .unwrap();
-    send.send(Message::Ready(active, Err("old load".into())))
-        .unwrap();
-    editor.receive();
+    assert!(editor.candidate_operation.request.is_some());
+    editor.document_prepared(id + 1, Err("stale candidate".into()));
+    editor.measurement_result(active, Pick::Dmin, Ok(Measurement::Reference(DVec3::ONE)));
+    editor.source_result(active, Err("old load".into()));
     assert_eq!(editor.document_pending, Some(id));
     assert_eq!(
         editor
@@ -670,9 +677,7 @@ fn failed_and_stale_document_results_preserve_state_and_active_request() {
     );
     assert!(editor.busy);
     assert_eq!(editor.document.project, before);
-    send.send(Message::Prepared(id, Err("changed RAW".into())))
-        .unwrap();
-    editor.receive();
+    editor.document_prepared(id, Err("changed RAW".into()));
     assert!(!editor.busy);
     assert_eq!(editor.document.project, before);
     assert_eq!(editor.id, active);
@@ -688,7 +693,7 @@ fn failed_and_stale_document_results_preserve_state_and_active_request() {
 
 #[test]
 fn save_failure_preserves_dirty_state_and_does_not_continue_transition() {
-    let (mut editor, send, receiver) = fixture();
+    let mut editor = fixture();
     let before = editor.document.project.clone();
     editor.queue_save(
         "candidate.json".into(),
@@ -696,26 +701,24 @@ fn save_failure_preserves_dirty_state_and_does_not_continue_transition() {
         Some(Transition::New),
     );
     let id = editor.document_pending.unwrap();
-    assert!(matches!(receiver.recv().unwrap(), Command::Document(_, _)));
-    send.send(Message::Saved(id, Err("write failed".into())))
-        .unwrap();
-    editor.receive();
+    assert!(editor.document.write.request.is_some());
+    editor.save_result(id, Err("write failed".into()));
     assert_eq!(editor.document.project, before);
     assert!(editor.document.dirty());
     assert_eq!(editor.transition, Some(Transition::New));
-    assert!(editor.resume_transition.is_none());
+    assert!(editor.candidate_operation.request.is_none());
     assert_eq!(
         editor
             .source_epoch
             .load(std::sync::atomic::Ordering::Relaxed),
         editor.id
     );
-    assert!(receiver.try_recv().is_err());
+    assert!(editor.candidate_operation.request.is_none());
 }
 
 #[test]
 fn save_snapshot_flushes_current_photo_and_retains_other_source_settings() {
-    let (mut editor, _send, receiver) = fixture();
+    let mut editor = fixture();
     let one = editor.current_source.unwrap();
     let mut other = editor.document.project.source(one).unwrap().clone();
     other.path = "unvisited.ARW".into();
@@ -731,12 +734,9 @@ fn save_snapshot_flushes_current_photo_and_retains_other_source_settings() {
     };
     editor.roll.exposure = -0.23456789012345678;
     editor.queue_save("candidate.json".into(), crate::project::Save::New, None);
-    let Command::Document(_, work) = receiver.recv().unwrap() else {
-        panic!()
-    };
-    let DocumentWork::Save(snapshot, _, _) = *work else {
-        panic!()
-    };
+    let crate::editor::document_services::Write {
+        document: snapshot, ..
+    } = editor.document.write.request.take().unwrap();
     assert_eq!(snapshot.project.source(one).unwrap().photo, editor.photo);
     assert_eq!(
         snapshot.project.source(two).unwrap().photo,
@@ -751,11 +751,11 @@ fn save_snapshot_flushes_current_photo_and_retains_other_source_settings() {
 
 #[test]
 fn new_resets_development_and_rejects_previous_document_messages() {
-    let (mut editor, send, _receiver) = fixture();
+    let mut editor = fixture();
     let previous = editor.id;
-    editor.start_document(DocumentWork::New);
+    editor.start_document(Preparation::New);
     let id = editor.document_pending.unwrap();
-    send.send(Message::Prepared(
+    editor.document_prepared(
         id,
         Ok(Box::new(Prepared {
             document: Document::default(),
@@ -765,31 +765,23 @@ fn new_resets_development_and_rejects_previous_document_messages() {
             correction: None,
             preserve_view: false,
         })),
-    ))
-    .unwrap();
-    editor.receive();
+    );
     assert_eq!(editor.document.project, crate::project::Project::default());
     assert!(editor.document.project.development.is_none());
     assert!(editor.current_source.is_none());
     assert_eq!(editor.floor, 0.);
     assert!(!editor.document.dirty());
-    send.send(Message::Picked(
-        previous,
-        Pick::Dmin,
-        Ok(Measurement::Reference(DVec3::ONE)),
-    ))
-    .unwrap();
-    editor.receive();
+    editor.measurement_result(previous, Pick::Dmin, Ok(Measurement::Reference(DVec3::ONE)));
     assert!(editor.dmin.is_none());
     assert!(editor.id > previous);
 }
 
 #[test]
 fn navigation_and_view_state_do_not_dirty_a_saved_document() {
-    let (mut editor, _send, receiver) = fixture();
+    let mut editor = fixture();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("project.antitone.json");
-    editor.document = editor
+    *editor.document = editor
         .document
         .save(&path, crate::project::Save::New)
         .unwrap();
@@ -807,9 +799,9 @@ fn navigation_and_view_state_do_not_dirty_a_saved_document() {
         .source_path(editor.current_source.unwrap())
         .unwrap();
     editor.load(source_path);
-    let Command::Load(_, _, wb, expected, _, _, _) = receiver.recv().unwrap() else {
-        panic!()
-    };
+    let request = editor.document.visit.source.request.as_ref().unwrap();
+    let wb = request.wb;
+    let expected = &request.expected;
     assert_eq!(
         wb,
         editor
@@ -827,16 +819,19 @@ fn navigation_and_view_state_do_not_dirty_a_saved_document() {
 
 #[test]
 fn dirty_open_new_and_close_are_guarded_without_dispatching_or_allowing_close() {
-    let (mut editor, _send, receiver) = fixture();
-    let context = egui::Context::default();
+    let mut editor = fixture();
     for transition in [
         Transition::New,
         Transition::Open("candidate.json".into()),
         Transition::Close,
     ] {
-        editor.guard_transition(transition.clone(), &context);
+        editor.guard_transition(transition.clone());
         assert_eq!(editor.transition, Some(transition));
-        assert!(receiver.try_recv().is_err());
+        assert!(
+            editor.candidate_operation.request.is_none()
+                && editor.document.write.request.is_none()
+                && editor.export_operation.request.is_none()
+        );
         assert!(!editor.allow_close);
         editor.transition = None;
     }
@@ -844,9 +839,9 @@ fn dirty_open_new_and_close_are_guarded_without_dispatching_or_allowing_close() 
 
 #[test]
 fn command_save_uses_the_current_document_after_control_processing() {
-    let (mut editor, _send, receiver) = fixture();
+    let mut editor = fixture();
     let directory = tempfile::tempdir().unwrap();
-    editor.document = editor
+    *editor.document = editor
         .document
         .save(
             &directory.path().join("project.antitone.json"),
@@ -882,16 +877,15 @@ fn command_save_uses_the_current_document_after_control_processing() {
             ..Default::default()
         },
         |ui| {
-            egui::CentralPanel::default().show(ui, |ui| host::App::ui(&mut editor, ui));
+            egui::CentralPanel::default().show(ui, |ui| {
+                crate::editor::tests::paint_controller(&mut editor, ui)
+            });
         },
     );
     output.textures_delta.clear();
-    let Command::Document(_, work) = receiver.try_recv().unwrap() else {
-        panic!()
-    };
-    let DocumentWork::Save(snapshot, _, _) = *work else {
-        panic!()
-    };
+    let crate::editor::document_services::Write {
+        document: snapshot, ..
+    } = editor.document.write.request.take().unwrap();
     assert_eq!(
         snapshot
             .project

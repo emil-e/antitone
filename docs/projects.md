@@ -64,11 +64,13 @@ Missing or incompatible **ordered** sources reject Open. Unavailable nonordered 
 
 ## Prepare before replacing
 
-Open validates the candidate, checks sources and prepares the first photo before replacing the live document. Candidate preparation holds the accepted working view rather than clearing its support; only accepted replacement retires that source authority. Failure retains the previous document and display—even if the user had agreed to discard its unsaved changes.
+The accepted document owner retains data, history and cache publication authority independently of captured write/candidate snapshots. Preparing a candidate does not change worker-global source state: there is no active-source slot. Successful replacement retires the old owner/visit; failure preserves them. Same-document processing preparation can retain a compatible visit, and Save rebases its history/baseline without replacing it.
 
-New/Open/Close use Save/Discard/Cancel protection. Pending numeric edits are processed before file actions. A cancelled or failed Save prevents the requested transition, and stale worker replies cannot complete a different document's operation.
+Open validates the candidate, checks sources and prepares the first photo before replacing the live document. New/Open/Import/history/correction preparation is an owned application workflow, independent of the accepted document's lifetime; source development is awaited without a blocking worker. Progress and typed completion wake outside painting, while acceptance remains a short UI transaction. Candidate preparation holds the accepted working view rather than clearing its support; only accepted replacement retires that source authority. Failure retains the previous document and display—even if the user had agreed to discard its unsaved changes.
 
-Save validates before writing a same-directory temporary and installing it with no-clobber or explicit replacement semantics. The saved baseline changes only after success. This protects an existing file from ordinary operation failures, not every crash or power-loss scenario.
+New/Open/Close use Save/Discard/Cancel protection. Pending numeric edits are processed before file actions. A cancelled or failed Save prevents the requested transition, and retired continuations or stale results cannot complete a different document's operation.
+
+Save captures accepted choices and validates them before writing a same-directory temporary and installing it with no-clobber or explicit replacement semantics. Its document-owned continuation accepts the written baseline without waiting for another paint; later edits and compatible visit/history state remain live. The close/new/open continuation is a separate guarded decision, not permission granted by starting the write. A running synchronous write retains its inputs/admission even if its UI waiter is retired. The saved baseline changes only after success. This protects an existing file from ordinary operation failures, not every crash or power-loss scenario.
 
 ## Working on this area
 

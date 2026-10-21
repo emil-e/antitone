@@ -58,7 +58,10 @@ fn add_source(editor: &mut Editor, path: PathBuf) -> SourceId {
     id
 }
 
-fn frame(editor: &mut Editor, context: &egui::Context) -> egui::FullOutput {
+fn frame(
+    editor: &mut impl crate::editor::tests::UiFixture,
+    context: &egui::Context,
+) -> egui::FullOutput {
     context.run_ui(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -67,7 +70,7 @@ fn frame(editor: &mut Editor, context: &egui::Context) -> egui::FullOutput {
             )),
             ..Default::default()
         },
-        |ui| host::App::ui(editor, ui),
+        |ui| editor.ui(ui),
     )
 }
 
@@ -130,7 +133,7 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
     pollster::block_on(async {
         let (device, queue) = gpu().await;
         let directory = tempfile::tempdir().unwrap();
-        let (mut editor, _send, commands) = super::super::tests::fixture();
+        let mut editor = super::super::tests::fixture();
         editor.thumbnails =
             Thumbnails::with_disk(device.clone(), queue.clone(), Arc::default(), None);
         let path = directory.path().join("selected.ARW");
@@ -152,8 +155,8 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
         let before = editor.document.project.clone();
 
         editor.load(path);
-        assert!(matches!(commands.try_recv().unwrap(), Command::Load(..)));
-        assert!(editor.ready.is_none());
+        assert!(editor.document.visit.source.request.is_some());
+        assert!(editor.document.visit.ready.is_none());
         assert!(editor.pending_preview.is_some());
         assert!(editor.busy);
         assert!(editor.scope_input().is_err());
@@ -166,8 +169,14 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
             Overwrite::Refuse,
         );
         assert!(editor.pick.is_none());
-        assert!(editor.crop_edit.is_none());
-        assert!(commands.try_recv().is_err());
+        assert!(editor.document.visit.crop_edit.is_none());
+        assert!(editor.export_operation.pending.is_none());
+        assert!(
+            editor.original.refining.is_none()
+                && editor.document.visit.grade.request.is_none()
+                && editor.document.visit.measurement.is_none()
+                && editor.export_operation.request.is_none()
+        );
 
         let context = egui::Context::default();
         let mut renderer = egui_wgpu::Renderer::new(
@@ -188,7 +197,7 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                     }
                     _ => false,
                 });
-                assert!(editor.ready.is_none());
+                assert!(editor.document.visit.ready.is_none());
                 assert!(editor.pending_preview.is_some());
                 assert_eq!(editor.last_layout.unwrap().0.composition.size(), [400, 600]);
                 draw(&device, &queue, &context, &mut renderer, output);
@@ -214,7 +223,10 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                 let mut encoder = device.create_command_encoder(&Default::default());
                 assert!(!image.prepare(&device, &mut encoder, expected));
                 assert!(
-                    commands.try_recv().is_err(),
+                    editor.original.refining.is_none()
+                        && editor.document.visit.grade.request.is_none()
+                        && editor.document.visit.measurement.is_none()
+                        && editor.export_operation.request.is_none(),
                     "pending preview scheduled authoritative work"
                 );
             }
@@ -231,7 +243,7 @@ fn cached_selected_images_do_not_alias_filmstrip_processing() {
     pollster::block_on(async {
         let (device, queue) = gpu().await;
         let directory = tempfile::tempdir().unwrap();
-        let (mut editor, _, _commands) = super::super::tests::fixture();
+        let mut editor = super::super::tests::fixture();
         let renderers = Arc::new(crate::renderer::RendererCache::default());
         editor.thumbnails =
             Thumbnails::with_disk(device.clone(), queue.clone(), renderers.clone(), None);
@@ -276,7 +288,7 @@ fn pending_replacements_ignore_old_ready_and_clear_on_failure_or_document_work()
     pollster::block_on(async {
         let (device, queue) = gpu().await;
         let directory = tempfile::tempdir().unwrap();
-        let (mut editor, messages, commands) = super::super::tests::fixture();
+        let mut editor = super::super::tests::fixture();
         editor.thumbnails = Thumbnails::with_disk(device, queue, Arc::default(), None);
         let a = directory.path().join("a.ARW");
         let b = directory.path().join("b.ARW");
@@ -287,29 +299,27 @@ fn pending_replacements_ignore_old_ready_and_clear_on_failure_or_document_work()
         let first = editor.id;
         editor.load(b.clone());
         let second = editor.id;
-        messages
-            .send(Message::Ready(first, Err("obsolete".into())))
-            .unwrap();
-        editor.receive();
+        editor.source_result(first, Err("obsolete".into()));
         assert_eq!(editor.current_source, Some(b_id));
         assert!(editor.busy);
         assert!(editor.pending_preview.is_some());
-        assert!(editor.ready.is_none());
+        assert!(editor.document.visit.ready.is_none());
 
-        messages
-            .send(Message::Ready(second, Err("current load failed".into())))
-            .unwrap();
-        editor.receive();
+        editor.source_result(second, Err("current load failed".into()));
         assert!(!editor.busy);
         assert!(editor.pending_preview.is_none());
         assert!(editor.selection_timing.is_none());
         assert_eq!(editor.status, "current load failed");
 
-        editor.load(b);
+        editor.load(b.clone());
         assert!(editor.pending_preview.is_some());
-        editor.start_document(DocumentWork::New);
+        assert_eq!(
+            editor.document.visit.source.request.as_ref().unwrap().path,
+            b
+        );
+        editor.start_document(Preparation::New);
         assert!(editor.pending_preview.is_none() && editor.selection_timing.is_none());
-        assert_eq!(commands.try_iter().count(), 4);
+        assert!(editor.candidate_operation.request.is_some());
     });
 }
 
@@ -318,7 +328,7 @@ fn unavailable_changed_or_incompatible_cached_sources_keep_the_loading_placehold
     pollster::block_on(async {
         let (device, queue) = gpu().await;
         let directory = tempfile::tempdir().unwrap();
-        let (mut editor, _, commands) = super::super::tests::fixture();
+        let mut editor = super::super::tests::fixture();
         editor.thumbnails = Thumbnails::with_disk(device, queue, Arc::default(), None);
         let path = directory.path().join("selected.ARW");
         let id = add_source(&mut editor, path.clone());
@@ -329,7 +339,7 @@ fn unavailable_changed_or_incompatible_cached_sources_keep_the_loading_placehold
         assert!(editor.pending_preview.is_none());
         editor.load(path.clone());
         assert!(editor.pending_preview.is_none());
-        assert!(editor.ready.is_none());
+        assert!(editor.document.visit.ready.is_none());
         assert!(editor.busy);
         let development = editor.document.project.development.clone().unwrap();
         editor.thumbnails.seed(
@@ -350,7 +360,20 @@ fn unavailable_changed_or_incompatible_cached_sources_keep_the_loading_placehold
         std::fs::remove_file(&path).unwrap();
         editor.load(path);
         assert!(editor.pending_preview.is_none());
-        assert_eq!(commands.try_iter().count(), 4);
+        assert_eq!(
+            editor
+                .document
+                .visit
+                .source
+                .request
+                .as_ref()
+                .unwrap()
+                .expected
+                .as_ref()
+                .unwrap()
+                .id,
+            id
+        );
     });
 }
 
@@ -359,7 +382,7 @@ fn correction_is_preview_owned_and_change_invalidates_only_pending_display() {
     pollster::block_on(async {
         let (device, queue) = gpu().await;
         let directory = tempfile::tempdir().unwrap();
-        let (mut editor, _, commands) = super::super::tests::fixture();
+        let mut editor = super::super::tests::fixture();
         editor.thumbnails = Thumbnails::with_disk(device.clone(), queue, Arc::default(), None);
         let path = directory.path().join("corrected.ARW");
         let id = add_source(&mut editor, path.clone());
@@ -392,9 +415,8 @@ fn correction_is_preview_owned_and_change_invalidates_only_pending_display() {
         editor.validate_pending_preview();
         assert!(editor.pending_preview.is_none());
         assert!(editor.busy);
-        assert!(editor.ready.is_none());
-        assert!(matches!(commands.try_recv().unwrap(), Command::Load(..)));
-        assert!(commands.try_recv().is_err());
+        assert!(editor.document.visit.ready.is_none());
+        assert!(editor.document.visit.source.request.is_some());
     });
 }
 
@@ -403,7 +425,7 @@ fn authoritative_ready_replaces_pending_and_active_proxy_survives_optional_press
     pollster::block_on(async {
         let (device, queue) = gpu().await;
         let directory = tempfile::tempdir().unwrap();
-        let (mut editor, messages, _commands) = super::super::tests::fixture();
+        let mut editor = super::super::tests::fixture();
         editor.thumbnails = Thumbnails::with_disk(device, queue, Arc::default(), None);
         let path = directory.path().join("selected.ARW");
         let id = add_source(&mut editor, path.clone());
@@ -418,6 +440,7 @@ fn authoritative_ready_replaces_pending_and_active_proxy_survives_optional_press
         editor.validate_pending_preview();
         assert!(editor.pending_preview.is_some());
         let ready = Ready {
+            developed: crate::editor::tests::developed_fixture(),
             file: thumbnails::FileKey::new(&path),
             thumbnail: None,
             path,
@@ -428,11 +451,8 @@ fn authoritative_ready_replaces_pending_and_active_proxy_survives_optional_press
             record: editor.document.project.source(id).unwrap().clone(),
             development: editor.document.project.development.clone().unwrap(),
         };
-        messages
-            .send(Message::Ready(editor.id, Ok(Box::new(ready))))
-            .unwrap();
-        editor.receive();
-        assert!(editor.ready.is_some());
+        editor.source_result(editor.id, Ok(Box::new(ready)));
+        assert!(editor.document.visit.ready.is_some());
         assert!(editor.pending_preview.is_none());
         assert!(!editor.busy);
         assert!(!editor.selected_view().unwrap().2);
@@ -441,7 +461,7 @@ fn authoritative_ready_replaces_pending_and_active_proxy_survives_optional_press
         editor.last_layout = Some((
             editor.viewport.layout(
                 egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.)),
-                editor.ready.as_ref().unwrap().area,
+                editor.document.visit.ready.as_ref().unwrap().area,
                 1.,
             ),
             1.,
@@ -460,7 +480,7 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
     pollster::block_on(async {
         let (device, queue) = gpu().await;
         let directory = tempfile::tempdir().unwrap();
-        let (mut editor, _, commands) = super::super::tests::fixture();
+        let mut editor = super::super::tests::fixture();
         let renderers = Arc::new(crate::renderer::RendererCache::default());
         editor.thumbnails =
             Thumbnails::with_disk(device.clone(), queue.clone(), renderers.clone(), None);
@@ -506,10 +526,10 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
             .local_adjustments = Some(locals);
 
         editor.load(path.clone());
-        assert!(matches!(commands.try_recv().unwrap(), Command::Load(..)));
+        assert!(editor.document.visit.source.request.is_some());
         assert!(editor.pending_preview.is_some());
         assert!(editor.busy);
-        assert!(editor.ready.is_none());
+        assert!(editor.document.visit.ready.is_none());
         let captured = editor
             .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
             .unwrap();
@@ -557,7 +577,8 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                 );
                 queue.submit([encoder.finish()]);
                 assert!(
-                    commands.try_recv().is_err(),
+                    editor.original.refining.is_none()
+                        && editor.document.visit.grade.request.is_none(),
                     "cached preview must not schedule full-source work"
                 );
             }
@@ -624,16 +645,16 @@ fn roll_sampling_load_does_not_admit_pending_working_preview() {
     pollster::block_on(async {
         let (device, queue) = gpu().await;
         let directory = tempfile::tempdir().unwrap();
-        let (mut editor, _, commands) = super::super::tests::fixture();
+        let mut editor = super::super::tests::fixture();
         editor.thumbnails = Thumbnails::with_disk(device, queue, Arc::default(), None);
         let path = directory.path().join("reference.ARW");
         let id = add_source(&mut editor, path);
         editor.pick = Some(Pick::Dmin);
         editor.pick_roll_source(id);
         assert!(editor.pending_preview.is_none() && editor.selection_timing.is_none());
-        assert!(editor.ready.is_none());
+        assert!(editor.document.visit.ready.is_none());
         assert!(editor.busy);
         assert_eq!(editor.pick, Some(Pick::Dmin));
-        assert!(matches!(commands.try_recv().unwrap(), Command::Load(..)));
+        assert!(editor.document.visit.source.request.is_some());
     });
 }

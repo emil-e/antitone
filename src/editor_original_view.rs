@@ -10,6 +10,15 @@ pub(super) enum OriginalPurpose {
     Reference,
     Tool,
 }
+pub(super) struct Request {
+    pub revision: u64,
+    pub generation: Arc<AtomicU64>,
+    pub input: ProcessingInput,
+    pub target: OutputTarget,
+    pub view: ViewRequest,
+    pub source: source::Context,
+}
+
 type Signature = (
     ProcessingSignature,
     OutputTarget,
@@ -50,7 +59,8 @@ impl OriginalView {
         self.purpose = None;
         self.settled = None;
         self.refinement_error = None;
-        // Keep the admission token until this job reports completion, even after cancellation.
+        self.refining = None;
+        // Physical admission belongs to the running service, not this logical demand.
     }
 
     pub fn discard(&mut self) {
@@ -102,42 +112,38 @@ impl OriginalView {
 
     pub fn schedule(
         &mut self,
-        id: u64,
         input: &ProcessingInput,
         target: OutputTarget,
-        commands: &mpsc::Sender<Command>,
+        scope: &mut super::grade_scope::GradeScope,
         context: &egui::Context,
-    ) -> Option<&'static str> {
+        source: source::Context,
+    ) {
+        let Some(signature) = &self.signature else {
+            return;
+        };
         let revision = self.revision();
-        let view = self.signature.as_ref()?.2;
+        let view = signature.2;
         if self.refining.is_none()
             && self.settled.is_none()
             && self.refinement_error != Some(revision)
             && self.last_edit.elapsed() >= Duration::from_millis(250)
             && let Some(view) = view
         {
-            if commands
-                .send(Command::Refine(
-                    id,
-                    revision,
-                    Box::new(input.clone()),
-                    target,
-                    view,
-                ))
-                .is_ok()
-            {
-                self.refining = Some((revision, view));
-            } else {
-                self.refinement_error = Some(revision);
-                return Some("RAW worker stopped");
-            }
+            scope.request = Some(Request {
+                revision,
+                generation: self.generation.clone(),
+                input: input.clone(),
+                target,
+                view,
+                source,
+            });
+            self.refining = Some((revision, view));
         }
         if self.refining.is_some()
             || self.settled.is_none() && self.refinement_error != Some(revision)
         {
             context.request_repaint_after(Duration::from_millis(50));
         }
-        None
     }
 
     pub fn receive(

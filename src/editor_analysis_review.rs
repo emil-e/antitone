@@ -4,16 +4,20 @@ use crate::{
     project::SourceAnalysis,
     scan_regions::{Areas, Capture, Evidence, RollModel},
 };
-use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(test)]
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 
 #[path = "editor_region_measurements.rs"]
 mod measurements;
 #[cfg(all(test, target_os = "macos"))]
 #[path = "editor_region_performance.rs"]
 mod performance;
+#[path = "editor_analysis_preparation.rs"]
+pub(super) mod preparation;
 #[cfg(all(test, target_os = "macos"))]
 #[path = "editor_region_preparation_tests.rs"]
-mod preparation_tests;
+pub(super) mod preparation_tests;
 
 #[derive(Clone)]
 pub(super) struct Approved {
@@ -94,6 +98,7 @@ fn fine_measurement(scan: &Scan, code_scale: f64) -> Result<([u32; 2], Vec<[u16;
     Ok(([w, h], rgb))
 }
 
+#[cfg(test)]
 pub(super) fn prepare(
     request: &analysis::Request,
     generation: &AtomicU64,
@@ -101,294 +106,55 @@ pub(super) fn prepare(
     device: &wgpu::Device,
     progress: impl FnMut(usize, usize),
 ) -> Result<Option<Approved>, Error> {
-    prepare_with_measurements(
+    preparation::prepare_with_measurements(
         request,
         generation,
         developments,
         device,
         progress,
-        &mut measurements::Measurements::default(),
+        measurements::Measurements::default(),
     )
 }
 
+#[cfg(test)]
 fn prepare_with_measurements(
     request: &analysis::Request,
     generation: &AtomicU64,
     developments: &development::Scheduler,
     device: &wgpu::Device,
-    mut progress: impl FnMut(usize, usize),
+    progress: impl FnMut(usize, usize),
     measurements: &mut measurements::Measurements,
 ) -> Result<Option<Approved>, Error> {
-    let cancelled = || generation.load(Ordering::Relaxed) != request.revision;
-    if cancelled() {
-        return Ok(None);
-    }
-    request.document.validate_for_device(device)?;
-    let project = &request.document.project;
-    let wb = project
-        .development
-        .as_ref()
-        .ok_or(Error::UnusableSample("no roll development"))?
-        .fixed_wb;
-    // One shared scale preserves cross-frame appearance while fitting shading headroom into evidence.
-    let code_scale = project.order.iter().try_fold(1f64, |scale, id| {
-        Ok::<_, Error>(scale.max(
-            project.source(*id)?.development.input_floor / crate::processing::CAMERA_INPUT_FLOOR,
-        ))
-    })?;
-    let files = project
-        .order
-        .iter()
-        .map(|id| {
-            request
-                .document
-                .source_path(*id)
-                .map(|p| thumbnails::FileKey::new(&p))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut entries: Vec<_> = project
-        .order
-        .iter()
-        .map(|id| {
-            project
-                .analysis_regions
-                .iter()
-                .find(|v| v.source == *id)
-                .cloned()
-                .unwrap_or(SourceAnalysis {
-                    source: *id,
-                    areas: Areas::default(),
-                })
-        })
-        .collect();
-    let need_model = entries
-        .iter()
-        .any(|v| !v.areas.ready() || !v.areas.opening_edited && !v.areas.opening_shared);
-    let mut captures = vec![];
-    let mut saved: Vec<_> = (0..project.order.len()).map(|_| None).collect();
-    for (index, id) in project.order.iter().enumerate() {
-        if cancelled() {
-            return Ok(None);
-        }
-        progress(index, project.order.len() * 2);
-        if cancelled() {
-            return Ok(None);
-        }
-        if need_model {
-            let expected = project.source(*id)?;
-            let path = request.document.source_path(*id)?;
-            let Some(scan) = timed!(
-                "coarse_acquire",
-                id.0,
-                analysis::develop_scan(
-                    developments,
-                    &request.document,
-                    expected,
-                    &path,
-                    wb,
-                    cancelled,
-                )
-            )?
-            else {
-                return Ok(None);
-            };
-            let actual = document::source_metadata(&path, &scan.source().metadata())?;
-            document::verify_source(expected, &actual)?;
-            document::verify_scan(&actual, &scan)?;
-            project.require_camera_basis(&actual.development)?;
-            let (w, h, rgb) = timed!("coarse_preview", scan.measurement_preview(768, code_scale))?;
-            let rgb: Vec<_> = timed!(
-                "coarse_pack",
-                rgb.into_iter().map(|p| [p[0], p[1], p[2]]).collect()
-            );
-            let evidence = timed!("native_lines", Evidence::observe([w, h], &rgb))?;
-            captures.push(timed!(
-                "candidate_grouping",
-                Capture::new(scan.area, [w, h], rgb, evidence)
-            )?);
-            if cancelled() {
-                return Ok(None);
-            }
-            if !(entries[index].areas.opening_edited && entries[index].areas.picture_edited) {
-                let (w, h) = scan.preview_dimensions(3072)?;
-                if measurements.can_store([w, h]) {
-                    let (size, rgb) = fine_measurement(&scan, code_scale)?;
-                    saved[index] = timed!("measurement_write", measurements.store(size, &rgb));
-                }
-            }
-        }
-        if thumbnails::FileKey::new(&request.document.source_path(*id)?) != files[index] {
-            return Err(Error::UnusableSample(
-                "source changed while preparing analysis areas",
-            ));
-        }
-    }
-    // Fit appearance in stable locator order; browsing and filmstrip order cannot select geometry.
-    let groups = timed!("source_grouping", {
-        let mut groups: Vec<Vec<usize>> = vec![];
-        for (i, c) in captures.iter().enumerate() {
-            if let Some(group) = groups
-                .iter_mut()
-                .find(|g| captures[g[0]].area == c.area && captures[g[0]].size == c.size)
-            {
-                group.push(i);
-            } else {
-                groups.push(vec![i]);
-            }
-        }
-        for group in &mut groups {
-            group.sort_by_key(|&i| {
-                request
-                    .document
-                    .source_path(project.order[i])
-                    .expect("verified locator")
-            });
-        }
-        groups
-    });
-    // Captures are bounded RGB16 rasters, never leases for an entire roll of full RAWs.
-    let mut models = vec![];
-    for group in &groups {
-        let refs: Vec<_> = group.iter().map(|&i| &captures[i]).collect();
-        models.push(timed!("roll_fit", RollModel::fit_refs(&refs))?);
-    }
-    for (index, id) in project.order.iter().enumerate() {
-        if cancelled() {
-            return Ok(None);
-        }
-        progress(project.order.len() + index, project.order.len() * 2);
-        if cancelled() {
-            return Ok(None);
-        }
-        if need_model
-            && !(entries[index].areas.opening_edited && entries[index].areas.picture_edited)
-        {
-            let group = groups
-                .iter()
-                .position(|g| g.contains(&index))
-                .expect("capture group");
-            let within = groups[group].iter().position(|&i| i == index).unwrap();
-            let expected = project.source(*id)?;
-            let path = request.document.source_path(*id)?;
-            if thumbnails::FileKey::new(&path) != files[index] {
-                return Err(Error::UnusableSample(
-                    "source changed while preparing analysis areas",
-                ));
-            }
-            let cached = saved[index]
-                .take()
-                .and_then(|key| timed!("measurement_read", measurements.load(key)));
-            let ([w, h], rgb) = if let Some(measurement) = cached {
-                measurement
-            } else {
-                let Some(scan) = timed!(
-                    "fine_acquire",
-                    id.0,
-                    analysis::develop_scan(
-                        developments,
-                        &request.document,
-                        expected,
-                        &path,
-                        wb,
-                        cancelled,
-                    )
-                )?
-                else {
-                    return Ok(None);
-                };
-                let actual = document::source_metadata(&path, &scan.source().metadata())?;
-                document::verify_source(expected, &actual)?;
-                document::verify_scan(&actual, &scan)?;
-                fine_measurement(&scan, code_scale)?
-            };
-            let previous = &entries[index].areas;
-            let mut suggested = timed!(
-                "fine_areas",
-                models[group].areas(within, &captures[index], [w, h], &rgb)
-            )?;
-            if previous.opening_edited
-                && let Some(q) = previous.opening
-            {
-                suggested.edit_opening(Areas::coverage(q)?);
-                suggested.refit_picture(captures[index].area);
-            }
-            if previous.picture_edited
-                && let Some(q) = previous.picture
-            {
-                suggested.edit_picture(Areas::coverage(q)?);
-            }
-            entries[index].areas = suggested;
-            if entries[index].areas.opening.is_none()
-                && let Some(field) = project.active_flat_field()
-            {
-                entries[index].areas.opening = Some(
-                    Coverage::rectangle(analysis::rect(field.map.area()))
-                        .corners()
-                        .map(|p| p.0),
-                );
-            }
-        }
-        if let Some(explicit) = project.analysis_area {
-            let areas = &mut entries[index].areas;
-            areas.edit_picture(Coverage::rectangle(analysis::rect(explicit)));
-            if areas.opening.is_none() {
-                areas.opening = Some(
-                    Coverage::rectangle(project.source(*id)?.development.active_area.into())
-                        .corners()
-                        .map(|p| p.0),
-                );
-            }
-        }
-        if thumbnails::FileKey::new(&request.document.source_path(*id)?) != files[index] {
-            return Err(Error::UnusableSample(
-                "source changed while preparing analysis areas",
-            ));
-        }
-    }
-    if need_model {
-        for (group, model) in groups.iter().zip(&models) {
-            let mut areas: Vec<_> = group.iter().map(|&i| entries[i].areas.clone()).collect();
-            timed!("shared_refine", model.refine_areas(&mut areas))?;
-            for (&index, areas) in group.iter().zip(areas) {
-                entries[index].areas = areas;
-            }
-        }
-    }
-    progress(project.order.len() * 2, project.order.len() * 2);
-    if cancelled() {
-        return Ok(None);
-    }
-    Ok(Some(Approved { entries, files }))
+    preparation::prepare_with_measurements(
+        request,
+        generation,
+        developments,
+        device,
+        progress,
+        std::mem::take(measurements),
+    )
 }
 
 impl Editor {
     pub(super) fn prepare_analysis_review(&mut self, mut request: analysis::Request) {
-        if self.mask_edit.is_some()
-            || self.auto_crop_edit.is_some()
-            || self.adjustments.confirming()
+        if self.document.visit.mask_edit.is_some()
+            || self.document.auto_crop_edit.is_some()
+            || self.document.visit.adjustments.confirming()
         {
             return;
         }
-        request.revision = self.analysis_generation.fetch_add(1, Ordering::Relaxed) + 1;
+        request.revision = self
+            .document
+            .analysis_generation
+            .fetch_add(1, Ordering::Relaxed)
+            + 1;
         let id = self.request_id();
         self.thumbnails.cancel();
         self.tasks.begin(Task::AnalysisAreas(id));
-        self.analysis_preparing = Some(analysis::Pending {
-            id,
-            request: request.clone(),
-        });
+        self.document.analysis_preparing =
+            Some(super::analysis_workflow::Pending::new(id, request));
         self.busy = true;
         self.status = "Preparing per-photo analysis areas…".into();
-        if self
-            .commands
-            .send(Command::AnalysisAreas(id, Box::new(request)))
-            .is_err()
-        {
-            self.analysis_preparing = None;
-            self.tasks.finish(TaskRequest::Analyze(id));
-            self.busy = false;
-            self.status = "RAW worker stopped; grade unchanged".into();
-        }
     }
 
     pub(super) fn analysis_areas_result(
@@ -396,23 +162,28 @@ impl Editor {
         id: u64,
         result: Result<Option<Approved>, String>,
     ) {
-        if !self.analysis_preparing.as_ref().is_some_and(|p| p.id == id) {
+        if !self
+            .document
+            .analysis_preparing
+            .as_ref()
+            .is_some_and(|p| p.id == id)
+        {
             return;
         }
-        let pending = self.analysis_preparing.take().unwrap();
+        let pending = self.document.analysis_preparing.take().unwrap();
         self.tasks.finish(TaskRequest::Analyze(id));
         self.busy = false;
         self.sync_document();
-        let request = pending.request;
-        if self.analysis_generation.load(Ordering::Relaxed) != request.revision {
+        let request = pending.request.clone();
+        if self.document.analysis_generation.load(Ordering::Relaxed) != request.revision {
             self.status = "Analysis-area preparation cancelled; grade unchanged".into();
             return;
         }
         if self.id != request.loaded
             || self.pick.is_some()
-            || self.crop_edit.is_some()
-            || self.auto_crop_edit.is_some()
-            || self.mask_edit.is_some()
+            || self.document.visit.crop_edit.is_some()
+            || self.document.auto_crop_edit.is_some()
+            || self.document.visit.mask_edit.is_some()
             || self.current_source != Some(request.selected)
             || self.document.project != request.document.project
             || self.document.path != request.document.path
@@ -430,7 +201,7 @@ impl Editor {
                                 .is_some_and(|locals| !locals.adjustments.is_empty())
                     })
                 });
-                self.analysis_review = Some(Review {
+                self.document.analysis_review = Some(Review {
                     request,
                     approved,
                     picture: false,
@@ -455,7 +226,8 @@ impl Editor {
     }
 
     pub(super) fn review_areas(&self, id: SourceId) -> Option<&Areas> {
-        self.analysis_review
+        self.document
+            .analysis_review
             .as_ref()?
             .approved
             .entries
@@ -465,10 +237,10 @@ impl Editor {
     }
 
     pub(super) fn stash_review_region(&mut self) {
-        if self.analysis_pending.is_some() {
+        if self.document.analysis_pending.is_some() {
             return;
         }
-        let Some(review) = &mut self.analysis_review else {
+        let Some(review) = &mut self.document.analysis_review else {
             return;
         };
         let Some(entry) = review
@@ -510,6 +282,7 @@ impl Editor {
 
     pub(super) fn refresh_review_region(&mut self) {
         self.region = self
+            .document
             .analysis_review
             .as_ref()
             .and_then(|r| {
@@ -528,17 +301,17 @@ impl Editor {
     }
 
     pub(super) fn browse_analysis_review(&mut self, id: SourceId) {
-        if self.analysis_review.is_none() || self.analysis_pending.is_some() {
+        if self.document.analysis_review.is_none() || self.document.analysis_pending.is_some() {
             return;
         }
         self.stash_review_region();
         self.pick_roll_source(id);
-        self.analysis_review.as_mut().unwrap().loaded = self.id;
+        self.document.analysis_review.as_mut().unwrap().loaded = self.id;
         self.refresh_review_region();
     }
 
     pub(super) fn end_analysis_review(&mut self) {
-        let Some(review) = self.analysis_review.take() else {
+        let Some(review) = self.document.analysis_review.take() else {
             return;
         };
         self.tab = review.return_tab;
@@ -549,23 +322,26 @@ impl Editor {
     }
 
     pub(super) fn confirm_analysis_review(&mut self) {
-        if self.busy || self.ready.is_none() || self.analysis_pending.is_some() {
+        if self.busy
+            || self.document.visit.ready.is_none()
+            || self.document.analysis_pending.is_some()
+        {
             return;
         }
         self.stash_review_region();
         self.sync_document();
-        let Some(review) = &self.analysis_review else {
+        let Some(review) = &self.document.analysis_review else {
             return;
         };
         if self.pick != Some(Pick::Analysis)
-            || self.crop_edit.is_some()
-            || self.auto_crop_edit.is_some()
-            || self.mask_edit.is_some()
+            || self.document.visit.crop_edit.is_some()
+            || self.document.auto_crop_edit.is_some()
+            || self.document.visit.mask_edit.is_some()
             || self.id != review.loaded
             || self.current_source != self.document.project.order.get(self.selected).copied()
             || self.document.project != review.request.document.project
             || self.document.path != review.request.document.path
-            || self.analysis_generation.load(Ordering::Relaxed) != review.request.revision
+            || self.document.analysis_generation.load(Ordering::Relaxed) != review.request.revision
         {
             self.status = "Analysis review discarded: document or settings changed".into();
             self.end_analysis_review();
@@ -587,7 +363,7 @@ impl Editor {
         geometry: crate::viewport::CanvasLayout,
         point: egui::Pos2,
     ) -> Option<bool> {
-        let review = self.analysis_review.as_ref()?;
+        let review = self.document.analysis_review.as_ref()?;
         let areas = self.review_areas(self.current_source?)?;
         for (picture, quad) in [(false, areas.opening), (true, areas.picture)] {
             if let Some(quad) = quad
@@ -659,11 +435,12 @@ impl Editor {
         self.stash_review_region();
         if let Some(picture) = self.review_area_at(geometry, point)
             && self
+                .document
                 .analysis_review
                 .as_ref()
                 .is_some_and(|r| r.picture != picture)
         {
-            self.analysis_review.as_mut().unwrap().picture = picture;
+            self.document.analysis_review.as_mut().unwrap().picture = picture;
             self.refresh_review_region();
         }
     }
@@ -674,7 +451,7 @@ impl Editor {
         geometry: crate::viewport::CanvasLayout,
         canvas: egui::Rect,
     ) {
-        let Some(review) = &self.analysis_review else {
+        let Some(review) = &self.document.analysis_review else {
             return;
         };
         let other = self

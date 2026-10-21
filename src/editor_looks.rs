@@ -21,6 +21,14 @@ pub(super) enum Source {
 pub(super) struct Pending {
     pub id: u64,
     pub cancel: Arc<AtomicBool>,
+    pub source: Option<Source>,
+    pub task: Option<async_executor::Task<()>>,
+}
+
+impl Drop for Pending {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
 }
 
 fn source_note(builtin: Builtin) -> String {
@@ -164,8 +172,8 @@ impl Editor {
         if self.source
             || self.pick.is_some()
             || self.flat_edit.is_some()
-            || self.pick_return.is_some()
-            || self.analysis_review.is_some()
+            || self.document.pick_return.is_some()
+            || self.document.analysis_review.is_some()
         {
             return None;
         }
@@ -186,43 +194,33 @@ impl Editor {
     }
 
     pub(super) fn begin_look(&mut self, source: Source) {
-        if self.busy && self.look_pending.is_none() {
+        if self.busy && self.document.look.is_none() {
             return;
         }
-        if let Some(old) = self.look_pending.take() {
-            old.cancel.store(true, Ordering::Relaxed);
-        }
+        self.document.look = None;
         let id = self.request_id();
         let cancel = Arc::new(AtomicBool::new(false));
-        self.look_pending = Some(Pending {
+        self.document.look = Some(Pending {
             id,
-            cancel: cancel.clone(),
+            cancel,
+            source: Some(source),
+            task: None,
         });
         self.busy = true;
         self.tasks.begin(Task::Look(id));
-        if self
-            .commands
-            .send(Command::Look(id, source, cancel))
-            .is_err()
-        {
-            self.look_pending = None;
-            self.busy = false;
-            self.tasks.finish(TaskRequest::Look(id));
-            self.report_failure(FailureKind::Look, "Look worker stopped".into());
-        }
     }
 
     pub(super) fn cancel_look(&mut self) {
-        if let Some(pending) = &self.look_pending {
+        if let Some(pending) = &self.document.look {
             pending.cancel.store(true, Ordering::Relaxed);
             self.tasks.cancelling(TaskRequest::Look(pending.id));
         }
     }
 
     pub(super) fn retire_look(&mut self) {
-        if let Some(pending) = self.look_pending.take() {
-            pending.cancel.store(true, Ordering::Relaxed);
-            self.tasks.finish(TaskRequest::Look(pending.id));
+        if let Some(pending) = self.document.look.take()
+            && self.tasks.finish(TaskRequest::Look(pending.id))
+        {
             self.busy = false;
         }
     }
@@ -240,12 +238,13 @@ impl Editor {
     }
 
     pub(super) fn receive_look(&mut self, id: u64, result: Result<Option<Arc<LookAsset>>, String>) {
-        if self.look_pending.as_ref().is_none_or(|p| p.id != id) {
+        if self.document.look.as_ref().is_none_or(|p| p.id != id) {
             return;
         }
-        let pending = self.look_pending.take().unwrap();
-        self.tasks.finish(TaskRequest::Look(id));
-        self.busy = false;
+        let pending = self.document.look.take().unwrap();
+        if self.tasks.finish(TaskRequest::Look(id)) {
+            self.busy = false;
+        }
         if pending.cancel.load(Ordering::Relaxed) {
             self.status = "Look preparation cancelled".into();
             return;
@@ -266,12 +265,12 @@ impl Editor {
     }
 
     pub(super) fn look_controls(&mut self, ui: &mut egui::Ui) {
-        let allowed = (!self.busy || self.look_pending.is_some())
-            && self.crop_edit.is_none()
-            && self.auto_crop_edit.is_none()
+        let allowed = (!self.busy || self.document.look.is_some())
+            && self.document.visit.crop_edit.is_none()
+            && self.document.auto_crop_edit.is_none()
             && self.flat_edit.is_none()
-            && self.analysis_review.is_none()
-            && self.mask_edit.is_none();
+            && self.document.analysis_review.is_none()
+            && self.document.visit.mask_edit.is_none();
         let loaded_names = loaded_names(&self.loaded_looks);
         let name = self.document.project.output.look.as_ref().map_or_else(
             || "None".into(),

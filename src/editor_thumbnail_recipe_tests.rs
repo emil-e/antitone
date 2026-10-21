@@ -40,12 +40,7 @@ fn complete(
         document.project.source(id).unwrap().clone(),
         None,
     );
-    let started = std::time::Instant::now();
-    while thumbnails.pending.is_some() {
-        thumbnails.receive(document);
-        assert!(started.elapsed() < Duration::from_secs(30));
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    tests::complete_service_request(thumbnails, document);
     thumbnails.cache.get(&key).expect("current result").clone()
 }
 

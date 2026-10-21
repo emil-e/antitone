@@ -11,24 +11,16 @@ struct Harness {
     context: egui::Context,
     time: f64,
     enabled: bool,
-    _receiver: mpsc::Receiver<Command>,
 }
 
 impl Harness {
     fn new() -> Self {
-        let (commands, receiver) = mpsc::channel();
-        let (_send, messages) = mpsc::channel();
-        let editor = Editor::state(
-            commands,
-            messages,
-            Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        );
+        let editor = Editor::state();
         Self {
             editor,
             context: egui::Context::default(),
             time: 0.,
             enabled: true,
-            _receiver: receiver,
         }
     }
 
@@ -341,7 +333,7 @@ fn z_fits_without_text_focus_but_does_not_intercept_numeric_text() {
             events: vec![key()],
             ..Default::default()
         },
-        |ui| host::App::ui(&mut h.editor, ui),
+        |ui| crate::editor::tests::paint_controller(&mut h.editor, ui),
     );
     output.textures_delta.clear();
     assert!(h.editor.viewport.zoom.is_none());
@@ -356,7 +348,7 @@ fn z_fits_without_text_focus_but_does_not_intercept_numeric_text() {
         },
         |ui| {
             ui.add(egui::TextEdit::singleline(&mut text).id(focus));
-            host::App::ui(&mut h.editor, ui);
+            crate::editor::tests::paint_controller(&mut h.editor, ui);
         },
     );
     output.textures_delta.clear();

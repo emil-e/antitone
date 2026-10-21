@@ -12,6 +12,11 @@ mod lru;
 use lru::Cache;
 #[path = "editor_embedded_preview.rs"]
 mod embedded;
+pub(super) use embedded::Pending as EmbeddedWork;
+#[path = "editor_thumbnail_workflow.rs"]
+mod workflow;
+pub(super) use workflow::State as ThumbnailWork;
+use workflow::{Demand, Services};
 const SOURCE_SIZE: u32 = Proxy::MAX_EDGE;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -283,8 +288,9 @@ pub(super) struct Thumbnails {
         wgpu::Queue,
         Arc<crate::renderer::RendererCache>,
     )>,
-    commands: Option<mpsc::Sender<Job>>,
-    messages: Option<mpsc::Receiver<Outcome>>,
+    services: Option<Services>,
+    request: Option<Job>,
+    demand: Demand,
     generation: Arc<std::sync::atomic::AtomicU64>,
     pending: Option<(u64, ImageKey)>,
     pending_render: bool,
@@ -319,8 +325,9 @@ impl Default for Thumbnails {
             repaint: Arc::default(),
             embedded: Default::default(),
             gpu: None,
-            commands: None,
-            messages: None,
+            services: None,
+            request: None,
+            demand: Demand::None,
             generation: Arc::default(),
             pending: None,
             pending_render: false,
@@ -453,6 +460,8 @@ impl Thumbnails {
     pub(super) fn bind_sources(&mut self, sources: Arc<SourceStore>) {
         if !Arc::ptr_eq(&self.sources, &sources) {
             self.cancel();
+            self.embedded.reset_demand();
+            self.demand = Demand::None;
             self.selected_key = None;
             self.visible_keys.clear();
             self.attempted_sources.clear();
@@ -526,15 +535,6 @@ impl Thumbnails {
         self.cache.protect(wanted);
     }
 
-    fn cancel_offscreen(&mut self, wanted: &[ImageKey]) {
-        if let Some((ticket, key)) = &self.pending
-            && self.generation.load(std::sync::atomic::Ordering::Relaxed) == *ticket
-            && !wanted.contains(key)
-        {
-            self.cancel();
-        }
-    }
-
     pub fn new(
         device: wgpu::Device,
         queue: wgpu::Queue,
@@ -586,15 +586,13 @@ impl Thumbnails {
         developments: development::Scheduler,
     ) -> Self {
         let (commands, receiver) = mpsc::channel();
-        let (send, messages) = mpsc::channel();
         let mut state = Self {
             gpu: Some((device.clone(), queue.clone(), renderers.clone())),
-            commands: Some(commands),
-            messages: Some(messages),
+            services: Some(Services { commands }),
             ..Default::default()
         };
         state.set_limits(state.default_limits());
-        state.embedded = embedded::EmbeddedPreviews::new(state.repaint.clone());
+        state.embedded = embedded::EmbeddedPreviews::new();
         let generation = state.generation.clone();
         let repaint = state.repaint.clone();
         std::thread::spawn(move || {
@@ -603,7 +601,6 @@ impl Thumbnails {
                 queue,
                 renderers,
                 receiver,
-                send,
                 generation,
                 disk,
                 repaint,
@@ -666,6 +663,7 @@ impl Thumbnails {
     }
 
     pub fn cancel(&mut self) {
+        self.request = None;
         self.pending = None;
         self.pending_render = false;
         self.embedded.cancel();
@@ -673,59 +671,62 @@ impl Thumbnails {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
-    pub fn receive(&mut self, document: &Document) {
-        loop {
-            let outcome = match self.messages.as_ref().map(|messages| messages.try_recv()) {
-                Some(Ok(outcome)) => outcome,
-                Some(Err(mpsc::TryRecvError::Disconnected)) => {
-                    if let Some((_, key)) = self.pending.take() {
-                        self.cache
-                            .insert(key, Err("Thumbnail worker stopped".into()));
-                    }
-                    self.commands = None;
-                    self.messages = None;
-                    break;
-                }
-                _ => break,
-            };
-            if self
-                .pending
-                .as_ref()
-                .is_some_and(|(ticket, _)| *ticket == outcome.ticket)
-            {
-                self.pending = None;
-                let current = document
-                    .project
-                    .source(outcome.key.source.id)
-                    .ok()
-                    .zip(document.project.development.as_ref())
-                    .is_some_and(|(source, development)| {
-                        SourceKey::new(
-                            source,
-                            development,
-                            FileKey::new(
-                                &document.source_path(source.id).expect("thumbnail locator"),
-                            ),
-                        ) == outcome.key.source
-                            && outcome.key.current_recipe(document)
-                            && outcome.key.field.as_ref().map(|f| &f.0)
-                                == document.project.active_flat_field().map(|f| &f.map)
-                    });
-                if self.generation.load(std::sync::atomic::Ordering::Relaxed) == outcome.ticket
-                    && current
-                {
-                    if (outcome.proper || outcome.image.is_err())
-                        && !self.attempted_sources.contains(&outcome.key.source)
-                    {
-                        self.attempted_sources.push(outcome.key.source.clone());
-                    }
-                    match outcome.image {
-                        Ok(Some(image)) => self.cache.insert(outcome.key, Ok(image)),
-                        Err(error) => self.cache.insert(outcome.key, Err(error)),
-                        Ok(None) => {}
-                    }
-                }
+    fn complete(&mut self, outcome: Outcome, document: &Document) {
+        let matching = self
+            .pending
+            .as_ref()
+            .is_some_and(|(ticket, _)| *ticket == outcome.ticket);
+        if matching {
+            self.pending = None;
+            self.pending_render = false;
+        }
+        let source_current = !document.cache().is_closed()
+            && document
+                .project
+                .source(outcome.key.source.id)
+                .ok()
+                .zip(document.project.development.as_ref())
+                .is_some_and(|(source, development)| {
+                    SourceKey::new(
+                        source,
+                        development,
+                        FileKey::new(&document.source_path(source.id).expect("thumbnail locator")),
+                    ) == outcome.key.source
+                });
+        // CPU/disk completion belongs to the document even when its GPU ticket retired.
+        if source_current
+            && (outcome.proper || (matching && outcome.image.is_err()))
+            && !self.attempted_sources.contains(&outcome.key.source)
+        {
+            self.attempted_sources.push(outcome.key.source.clone());
+        }
+        if matching
+            && source_current
+            && self.generation.load(std::sync::atomic::Ordering::Relaxed) == outcome.ticket
+            && outcome.key.current_recipe(document)
+            && outcome.key.field.as_ref().map(|f| &f.0)
+                == document.project.active_flat_field().map(|f| &f.map)
+        {
+            match outcome.image {
+                Ok(Some(image)) => self.cache.insert(outcome.key, Ok(image)),
+                Err(error) => self.cache.insert(outcome.key, Err(error)),
+                Ok(None) => {}
             }
+        }
+    }
+
+    fn stopped(&mut self, ticket: u64, key: ImageKey) {
+        self.services = None;
+        self.request = None;
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|(pending, _)| *pending == ticket)
+        {
+            self.pending = None;
+            self.pending_render = false;
+            self.cache
+                .insert(key, Err("Thumbnail worker stopped".into()));
         }
     }
 
@@ -775,7 +776,7 @@ impl Thumbnails {
         if self.pending.is_some() || self.cache.get(&key).is_some() {
             return;
         }
-        let Some(commands) = &self.commands else {
+        if self.services.is_none() {
             if self.gpu.is_some() {
                 self.cache
                     .insert(key, Err("Thumbnail worker stopped".into()));
@@ -799,26 +800,19 @@ impl Thumbnails {
                     })
             })
             .flatten();
-        if commands
-            .send(Job {
-                ticket,
-                key: key.clone(),
-                path,
-                source,
-                correction,
-                store: self.sources.clone(),
-                render,
-                priority,
-                previous,
-            })
-            .is_ok()
-        {
-            self.pending_render = render;
-            self.pending = Some((ticket, key));
-        } else {
-            self.cache
-                .insert(key, Err("Thumbnail worker stopped".into()));
-        }
+        self.request = Some(Job {
+            ticket,
+            key: key.clone(),
+            path,
+            source,
+            correction,
+            store: self.sources.clone(),
+            render,
+            priority,
+            previous,
+        });
+        self.pending_render = render;
+        self.pending = Some((ticket, key));
     }
 }
 #[path = "editor_thumbnail_worker.rs"]
@@ -868,6 +862,36 @@ fn make_image(
 }
 
 impl Editor {
+    fn thumbnail_key(
+        &self,
+        source: &Source,
+        path: &std::path::Path,
+        projected: bool,
+    ) -> Option<ImageKey> {
+        let development = self.document.project.development.as_ref()?;
+        let recipe = self.thumbnail_recipe(source.id);
+        let projection = if projected {
+            let composition = self.thumbnail_composition(source);
+            recipe
+                .as_ref()
+                .ok()
+                .and_then(Option::as_ref)
+                .and_then(|recipe| (recipe.composition != composition).then_some(composition))
+        } else {
+            None
+        };
+        Some(ImageKey {
+            source: SourceKey::new(source, development, FileKey::new(path)),
+            recipe,
+            projection,
+            target: self.target,
+            field: self
+                .correction
+                .as_ref()
+                .map(|c| FieldKey(c.settings.map.clone())),
+        })
+    }
+
     fn thumbnail_composition(&self, source: &Source) -> Composition {
         let photo_orientation = if self.current_source == Some(source.id) {
             self.photo_orientation
@@ -881,7 +905,7 @@ impl Editor {
                 source.crop
             }
         });
-        if self.analysis_review.is_some() {
+        if self.document.analysis_review.is_some() {
             Composition::new(
                 source.development.active_area.into(),
                 RollOrientation::default(),
@@ -902,7 +926,7 @@ impl Editor {
         &self,
         id: SourceId,
     ) -> Result<Option<Arc<crate::image_recipe::ImageRecipe>>, String> {
-        if self.analysis_review.is_some()
+        if self.document.analysis_review.is_some()
             || self
                 .document
                 .project
@@ -921,7 +945,7 @@ impl Editor {
     }
 
     fn thumbnail_parameters(&self, source: &Source) -> Result<ProcessingInput, Error> {
-        if self.analysis_review.is_some() {
+        if self.document.analysis_review.is_some() {
             return self.source_parameters(0.).map(Into::into);
         }
         let photo = if self.current_source == Some(source.id) {
@@ -940,9 +964,9 @@ impl Editor {
     fn thumbnail_work_allowed(&self) -> bool {
         !self.busy
             && self.thumbnails.budgets.pressure != memory::Pressure::Critical
-            && (self.pick.is_none() || self.analysis_review.is_some())
-            && self.crop_edit.is_none()
-            && self.mask_edit.is_none()
+            && (self.pick.is_none() || self.document.analysis_review.is_some())
+            && self.document.visit.crop_edit.is_none()
+            && self.document.visit.mask_edit.is_none()
             && self.document_pending.is_none()
             && self.transition.is_none()
             && self.project_overwrite.is_none()
@@ -951,41 +975,10 @@ impl Editor {
     }
 
     pub(super) fn hidden_filmstrip(&mut self, ui: &egui::Ui) {
+        self.thumbnails.embedded.cancel();
         self.thumbnails.refresh_hidden_memory();
-        if !self.thumbnail_work_allowed()
-            || self.thumbnails.budgets.pressure != memory::Pressure::Normal
-        {
-            return;
-        }
-        if let Some(development) = &self.document.project.development {
-            for id in &self.document.project.order {
-                let source = self.document.project.source(*id).expect("roll source");
-                let path = self.document.source_path(*id).expect("roll locator");
-                let key = ImageKey {
-                    projection: None,
-                    recipe: self.thumbnail_recipe(source.id),
-                    source: SourceKey::new(source, development, FileKey::new(&path)),
-                    target: self.target,
-                    field: self
-                        .correction
-                        .as_ref()
-                        .map(|c| FieldKey(c.settings.map.clone())),
-                };
-                if !self.thumbnails.attempted_sources.contains(&key.source)
-                    && !self.thumbnails.cache.contains(&key)
-                {
-                    self.thumbnails.request_prioritized(
-                        key,
-                        path,
-                        source.clone(),
-                        self.correction.clone(),
-                        false,
-                        development::Priority::Eager,
-                    );
-                    break;
-                }
-            }
-        }
+        self.thumbnails.demand = Demand::Hidden;
+        self.advance_thumbnail_demand();
         if self.thumbnails.pending.is_some() {
             ui.ctx().request_repaint_after(Duration::from_millis(50));
         }
@@ -1002,7 +995,10 @@ impl Editor {
     }
 
     fn filmstrip_with_budgets(&mut self, ui: &mut egui::Ui, budgets: memory::CacheBudgets) {
-        if self.ready.is_none() && self.pending_preview.is_none() && self.flat_edit.is_none() {
+        if self.document.visit.ready.is_none()
+            && self.pending_preview.is_none()
+            && self.flat_edit.is_none()
+        {
             self.thumbnails.release_selected();
         }
         let field = self
@@ -1011,31 +1007,29 @@ impl Editor {
             .map(|c| FieldKey(c.settings.map.clone()));
         self.thumbnails.cache.retain(|key, _| key.field == field);
         self.thumbnails.apply_budgets(budgets);
-        self.thumbnails.embedded.receive(&self.document, ui.ctx());
         let visible_allowed = self.thumbnail_work_allowed();
-        let idle = visible_allowed
-            && self.original.refining.is_none()
-            && if self.working.revision().is_some() {
-                self.working.idle()
-            } else {
-                self.original.idle()
-            };
+        let physical_idle = self.workflow_jobs.idle();
+        if !physical_idle {
+            // A retired foreground waiter no longer supplies UI wakes. Revisit
+            // background eligibility until its physical work releases admission.
+            ui.ctx().request_repaint_after(Duration::from_millis(50));
+        }
         let max_height = (ui.ctx().content_rect().height() * 0.35).clamp(52., 240.);
         let mut protected = Vec::new();
-        let mut wanted = Vec::new();
         let mut camera_wanted = Vec::new();
         let mut visible = Vec::new();
         let mut select = None;
         let mut remove = false;
-        let selected_loading = self.ready.is_none()
+        let selected_loading = self.document.visit.ready.is_none()
             && self.selection_timing.is_some()
             && self.document_pending.is_none()
             && self.pick.is_none();
-        let reviewing = self.analysis_review.is_some() && self.analysis_pending.is_none();
+        let reviewing =
+            self.document.analysis_review.is_some() && self.document.analysis_pending.is_none();
         let selection_enabled = (!self.busy || selected_loading || reviewing)
             && self.flat_edit.is_none()
-            && self.crop_edit.is_none()
-            && self.mask_edit.is_none()
+            && self.document.visit.crop_edit.is_none()
+            && self.document.visit.mask_edit.is_none()
             && (self.pick.is_none()
                 || matches!(self.pick, Some(Pick::Dmin | Pick::Dmax))
                 || reviewing)
@@ -1095,32 +1089,7 @@ impl Editor {
                         selection_enabled,
                     );
                     let image_rect = card.image_rect;
-                    let key = self
-                        .document
-                        .project
-                        .development
-                        .as_ref()
-                        .map(|development| {
-                            let recipe = self.thumbnail_recipe(source.id);
-                            let composition = self.thumbnail_composition(source);
-                            let projection = recipe
-                                .as_ref()
-                                .ok()
-                                .and_then(Option::as_ref)
-                                .and_then(|recipe| {
-                                    (recipe.composition != composition).then_some(composition)
-                                });
-                            ImageKey {
-                                source: SourceKey::new(source, development, FileKey::new(&path)),
-                                recipe,
-                                projection,
-                                target: self.target,
-                                field: self
-                                    .correction
-                                    .as_ref()
-                                    .map(|c| FieldKey(c.settings.map.clone())),
-                            }
-                        });
+                    let key = self.thumbnail_key(source, &path, true);
                     if let Some(key) = &key {
                         protected.push(key.clone());
                     }
@@ -1195,8 +1164,11 @@ impl Editor {
                                 }
                             }
                             if let Some(areas) = self.review_areas(id) {
-                                let picture =
-                                    self.analysis_review.as_ref().is_some_and(|r| r.picture);
+                                let picture = self
+                                    .document
+                                    .analysis_review
+                                    .as_ref()
+                                    .is_some_and(|r| r.picture);
                                 if let Some(q) = if picture {
                                     areas.picture
                                 } else {
@@ -1265,7 +1237,6 @@ impl Editor {
                                         source.clone(),
                                     ));
                                 }
-                                wanted.push((index, key, path.clone(), source.clone()));
                             }
                         }
                     }
@@ -1330,7 +1301,7 @@ impl Editor {
                         if ui
                             .add_enabled(
                                 self.roll_edit_available()
-                                    && self.auto_crop_edit.is_none()
+                                    && self.document.auto_crop_edit.is_none()
                                     && selected,
                                 egui::Button::new("Remove selected photos…"),
                             )
@@ -1361,54 +1332,16 @@ impl Editor {
         if remove {
             self.request_removal();
         }
-        let mut eligible = protected.clone();
-        // Finish each source even at zero optional GPU retention. Offscreen GPU work
-        // needs spare space and no foreground refinement demand; CPU/disk work does not.
-        let eager_allowed =
-            visible_allowed && self.thumbnails.budgets.pressure == memory::Pressure::Normal;
-        if eager_allowed
-            && let Some(development) = &self.document.project.development
-            && let (Some(first), Some(last)) = (visible.first().copied(), visible.last().copied())
-        {
-            let count = self.document.project.order.len();
-            for index in (0..count).filter(|index| *index < first || *index > last) {
-                let source = self
-                    .document
-                    .project
-                    .source(self.document.project.order[index])
-                    .expect("prefetch source");
-                let path = self
-                    .document
-                    .source_path(source.id)
-                    .expect("prefetch locator");
-                let key = ImageKey {
-                    projection: None,
-                    recipe: self.thumbnail_recipe(source.id),
-                    source: SourceKey::new(source, development, FileKey::new(&path)),
-                    target: self.target,
-                    field: self
-                        .correction
-                        .as_ref()
-                        .map(|c| FieldKey(c.settings.map.clone())),
-                };
-                eligible.push(key.clone());
-                if !self.thumbnails.attempted_sources.contains(&key.source)
-                    && !self.thumbnails.cache.contains(&key)
-                {
-                    wanted.push((index, key, path, source.clone()));
-                }
-            }
-        }
-        if !eager_allowed
-            || (!idle && self.thumbnails.pending_render)
-            || wanted
-                .iter()
-                .any(|(index, _, _, _)| visible.contains(index))
-        {
-            self.thumbnails.cancel_offscreen(&protected);
+        self.thumbnails.demand = if select.is_none() && !remove {
+            Demand::Visible(
+                visible
+                    .iter()
+                    .map(|index| self.document.project.order[*index])
+                    .collect(),
+            )
         } else {
-            self.thumbnails.cancel_offscreen(&eligible);
-        }
+            Demand::None
+        };
         self.thumbnails.visible_keys = protected
             .iter()
             .filter_map(|key| key.source.store_key())
@@ -1420,44 +1353,15 @@ impl Editor {
             visible_allowed && select.is_none() && !remove,
         );
         if let Some((index, modifiers)) = select {
-            if self.analysis_review.is_some() {
+            if self.document.analysis_review.is_some() {
                 self.browse_analysis_review(self.document.project.order[index]);
             } else if matches!(self.pick, Some(Pick::Dmin | Pick::Dmax)) {
                 self.pick_roll_source(self.document.project.order[index]);
             } else {
                 self.select_roll_photo(index, modifiers);
             }
-        } else if visible_allowed && !remove {
-            wanted.sort_by_key(|(index, _, _, _)| {
-                let distance = visible
-                    .iter()
-                    .map(|visible| index.abs_diff(*visible))
-                    .min()
-                    .unwrap_or(0);
-                (
-                    !visible.contains(index),
-                    distance,
-                    index.abs_diff(self.selected),
-                )
-            });
-            if let Some((index, key, path, source)) = wanted.into_iter().next() {
-                let render_offscreen = idle
-                    && key
-                        .estimated_product_bytes()
-                        .is_some_and(|bytes| self.thumbnails.cache.can_retain(bytes));
-                self.thumbnails.request_prioritized(
-                    key,
-                    path,
-                    source,
-                    self.correction.clone(),
-                    visible.contains(&index) || render_offscreen,
-                    if visible.contains(&index) {
-                        development::Priority::Visible
-                    } else {
-                        development::Priority::Eager
-                    },
-                );
-            }
+        } else if !remove {
+            self.advance_thumbnail_demand();
         }
         if self.thumbnails.pending.is_some() || self.thumbnails.embedded.pending() {
             ui.ctx().request_repaint_after(Duration::from_millis(50));

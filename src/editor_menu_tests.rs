@@ -1,6 +1,6 @@
 use super::*;
 
-fn frame(editor: &mut Editor, context: &egui::Context) {
+fn frame(editor: &mut impl crate::editor::tests::UiFixture, context: &egui::Context) {
     let mut output = context.run_ui(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -9,14 +9,14 @@ fn frame(editor: &mut Editor, context: &egui::Context) {
             )),
             ..Default::default()
         },
-        |ui| host::App::ui(editor, ui),
+        |ui| editor.ui(ui),
     );
     output.textures_delta.clear();
 }
 
 #[test]
 fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation() {
-    let (mut editor, send, receiver) = super::super::tests::fixture();
+    let mut editor = super::super::tests::fixture();
     let context = egui::Context::default();
     frame(&mut editor, &context);
     frame(&mut editor, &context);
@@ -30,10 +30,9 @@ fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation(
     host::App::native_menu_installed(&mut editor);
     host::App::menu_action(&mut editor, Action::Undo);
     frame(&mut editor, &context);
-    let Command::Document(request, work) = receiver.try_recv().unwrap() else {
-        panic!("history dispatch")
-    };
-    let DocumentWork::History(document, selected, history::Direction::Undo) = *work else {
+    let request = editor.document_pending.unwrap();
+    let work = editor.candidate_operation.request.take().unwrap();
+    let Preparation::History(document, selected, history::Direction::Undo) = work.work else {
         panic!("history candidate")
     };
     assert_eq!(document.project, before);
@@ -42,7 +41,7 @@ fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation(
         "preparation must not replace accepted state"
     );
     assert!(!editor.application_menu_state().enabled(Action::Undo));
-    send.send(Message::Prepared(
+    editor.document_prepared(
         request,
         Ok(Box::new(Prepared {
             document,
@@ -52,8 +51,7 @@ fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation(
             correction: None,
             preserve_view: true,
         })),
-    ))
-    .unwrap();
+    );
     frame(&mut editor, &context);
     assert_eq!(editor.roll.exposure, 0.);
     let state = editor.application_menu_state();
@@ -65,7 +63,7 @@ fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation(
     host::App::menu_action(&mut editor, Action::Redo);
     frame(&mut editor, &context);
     assert!(
-        receiver.try_recv().is_err(),
+        editor.candidate_operation.request.is_none(),
         "a queued native command must not bypass a draft"
     );
     assert_eq!(editor.roll.exposure, 0.);
@@ -73,7 +71,7 @@ fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation(
 
 #[test]
 fn queued_native_history_checks_current_pointer_input_before_the_menu_state_catches_up() {
-    let (mut editor, _, receiver) = super::super::tests::fixture();
+    let mut editor = super::super::tests::fixture();
     let context = egui::Context::default();
     frame(&mut editor, &context);
     frame(&mut editor, &context);
@@ -93,14 +91,14 @@ fn queued_native_history_checks_current_pointer_input_before_the_menu_state_catc
             modifiers: egui::Modifiers::NONE,
         }],
     );
-    assert!(receiver.try_recv().is_err());
+    assert!(editor.candidate_operation.request.is_none());
     assert_eq!(editor.roll.exposure, 0.5);
     assert!(!editor.application_menu_state().enabled(Action::Undo));
 }
 
 #[test]
 fn native_undo_and_redo_target_text_without_surrendering_document_history() {
-    let (mut editor, _, receiver) = super::super::tests::fixture();
+    let mut editor = super::super::tests::fixture();
     let before = editor.history_snapshot();
     editor.roll.exposure = 0.5;
     editor.record_edit(before, "Roll exposure", None);
@@ -118,7 +116,7 @@ fn native_undo_and_redo_target_text_without_surrendering_document_history() {
             if modifiers.command && modifiers.shift == (action == Action::Redo))
         );
         assert_eq!(editor.document.project, accepted);
-        assert!(receiver.try_recv().is_err());
+        assert!(editor.candidate_operation.request.is_none());
     }
     editor.menus.text_focused = false;
     assert_eq!(
@@ -130,7 +128,7 @@ fn native_undo_and_redo_target_text_without_surrendering_document_history() {
 #[test]
 fn native_quit_and_close_wait_for_the_document_decision() {
     for action in [Action::Quit, Action::Close] {
-        let (mut editor, _send, receiver) = super::super::tests::fixture();
+        let mut editor = super::super::tests::fixture();
         let context = egui::Context::default();
         frame(&mut editor, &context);
         host::App::native_menu_installed(&mut editor);
@@ -138,13 +136,17 @@ fn native_quit_and_close_wait_for_the_document_decision() {
         frame(&mut editor, &context);
         assert_eq!(editor.transition, Some(Transition::Close));
         assert!(!editor.allow_close);
-        assert!(receiver.try_recv().is_err());
+        assert!(
+            editor.candidate_operation.request.is_none()
+                && editor.document.write.request.is_none()
+                && editor.export_operation.request.is_none()
+        );
     }
 }
 
 #[test]
 fn queued_native_actions_revalidate_tool_and_modal_availability() {
-    let (mut editor, _send, receiver) = super::super::tests::fixture();
+    let mut editor = super::super::tests::fixture();
     let context = egui::Context::default();
     frame(&mut editor, &context);
     editor.pick = Some(Pick::Dmin);
@@ -158,7 +160,11 @@ fn queued_native_actions_revalidate_tool_and_modal_availability() {
         assert!(!editor.application_menu_state().enabled(action));
         host::App::menu_action(&mut editor, action);
         frame(&mut editor, &context);
-        assert!(receiver.try_recv().is_err());
+        assert!(
+            editor.candidate_operation.request.is_none()
+                && editor.document.write.request.is_none()
+                && editor.export_operation.request.is_none()
+        );
         assert!(editor.transition.is_none());
     }
     assert_eq!(editor.pick, Some(Pick::Dmin));
@@ -172,7 +178,7 @@ fn queued_native_actions_revalidate_tool_and_modal_availability() {
 
 #[test]
 fn closing_settings_preserves_the_document_and_quit_still_uses_its_guard() {
-    let (mut editor, _send, receiver) = super::super::tests::fixture();
+    let mut editor = super::super::tests::fixture();
     let context = egui::Context::default();
     frame(&mut editor, &context);
     frame(&mut editor, &context);
@@ -193,12 +199,16 @@ fn closing_settings_preserves_the_document_and_quit_still_uses_its_guard() {
     assert!(editor.menus.panel.is_none());
     assert_eq!(editor.transition, Some(Transition::Close));
     assert!(!editor.allow_close);
-    assert!(receiver.try_recv().is_err());
+    assert!(
+        editor.candidate_operation.request.is_none()
+            && editor.document.write.request.is_none()
+            && editor.export_operation.request.is_none()
+    );
 }
 
 #[test]
 fn scopes_menu_updates_the_same_preference_without_dirtying_the_project() {
-    let (mut editor, _send, _receiver) = super::super::tests::fixture();
+    let mut editor = super::super::tests::fixture();
     let context = egui::Context::default();
     frame(&mut editor, &context);
     frame(&mut editor, &context);

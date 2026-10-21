@@ -40,66 +40,83 @@ pub(super) fn fixture_project(directory: &Path) -> host::Result<PathBuf> {
     Ok(path)
 }
 
-pub(super) struct EditorApp {
-    pub editor: Editor,
+pub(super) struct EditorApp<'owner> {
+    pub editor: &'owner std::cell::RefCell<Option<Editor>>,
     pub report: Arc<Mutex<Report>>,
     pub start: Instant,
     pub requested: bool,
     pub index: usize,
 }
 
-impl host::App for EditorApp {
+impl EditorApp<'_> {
+    fn read<R>(&self, read: impl FnOnce(&Editor) -> R) -> R {
+        read(self.editor.borrow().as_ref().unwrap())
+    }
+
+    fn update<R>(&self, update: impl FnOnce(&mut Editor) -> R) -> R {
+        update(self.editor.borrow_mut().as_mut().unwrap())
+    }
+}
+
+impl Drop for EditorApp<'_> {
+    fn drop(&mut self) {
+        drop(self.editor.borrow_mut().take());
+    }
+}
+
+impl host::App for EditorApp<'_> {
     fn menu_state(&self) -> Option<antitone::platform::menu::State> {
-        self.editor.menu_state()
+        self.read(host::App::menu_state)
     }
 
     fn menu_action(&mut self, action: antitone::platform::menu::Action) {
-        self.editor.menu_action(action);
+        self.update(|editor| editor.menu_action(action));
     }
 
     fn menu_paste_requested(&self) -> bool {
-        self.editor.menu_paste_requested()
+        self.read(host::App::menu_paste_requested)
     }
 
     fn menu_input(&mut self, clipboard: Option<String>) -> Vec<egui::Event> {
-        host::App::menu_input(&mut self.editor, clipboard)
+        self.update(|editor| editor.menu_input(clipboard))
     }
 
     fn native_menu_installed(&mut self) {
-        self.editor.native_menu_installed();
+        self.update(host::App::native_menu_installed);
     }
 
     fn quit_state(&self) -> Option<host::QuitState> {
-        self.editor.quit_state()
+        self.read(host::App::quit_state)
     }
 
     fn request_quit(&mut self) {
-        self.editor.request_quit();
+        self.update(host::App::request_quit);
     }
 
-    fn submission_gate(&self) -> &SubmissionGate {
-        self.editor.submission_gate()
+    fn submission_gate(&self) -> SubmissionGate {
+        self.read(host::App::submission_gate)
     }
 
     fn processing_revision(&self) -> Option<(u64, u64)> {
-        host::App::processing_revision(&self.editor)
+        self.read(host::App::processing_revision)
     }
 
     fn photo_fullscreen(&self) -> bool {
-        self.editor.photo_fullscreen()
+        self.read(host::App::photo_fullscreen)
     }
 
     fn photo_fullscreen_changed(&mut self, active: bool) {
-        self.editor.photo_fullscreen_changed(active);
+        self.update(|editor| editor.photo_fullscreen_changed(active));
     }
 
     fn on_exit(&mut self) {
-        self.editor.on_exit();
+        self.update(host::App::on_exit);
         self.report.lock().unwrap().exited = true;
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui) {
-        self.editor.ui(ui);
+    fn ui(&mut self, ui: &mut egui::Ui, access: &antitone::application::UiAccess<'_, Self>) {
+        let editor_access = access.for_state(self.editor);
+        self.update(|editor| editor.ui(ui, &editor_access));
         if ui.input(|input| input.viewport().close_requested()) {
             return;
         }

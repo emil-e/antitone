@@ -1,7 +1,7 @@
 use super::*;
 
 fn frame(
-    editor: &mut Editor,
+    editor: &mut impl crate::editor::tests::UiFixture,
     context: &egui::Context,
     native: Option<bool>,
     events: Vec<egui::Event>,
@@ -10,7 +10,7 @@ fn frame(
 }
 
 fn frame_with_size(
-    editor: &mut Editor,
+    editor: &mut impl crate::editor::tests::UiFixture,
     context: &egui::Context,
     native: Option<bool>,
     size: egui::Vec2,
@@ -26,7 +26,7 @@ fn frame_with_size(
     let viewport = input.viewports.get_mut(&egui::ViewportId::ROOT).unwrap();
     viewport.fullscreen = native;
     viewport.inner_rect = Some(rect);
-    let mut output = context.run_ui(input, |ui| host::App::ui(editor, ui));
+    let mut output = context.run_ui(input, |ui| editor.ui(ui));
     output.textures_delta.clear();
     output
 }
@@ -41,15 +41,15 @@ fn key(key: egui::Key) -> Vec<egui::Event> {
     }]
 }
 
-fn ready() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
-    let (mut editor, sender, receiver) = super::super::tests::fixture();
+fn ready() -> Editor {
+    let mut editor = super::super::tests::fixture();
     super::super::tests::add_ready_fixture(&mut editor);
-    (editor, sender, receiver)
+    editor
 }
 
 #[test]
 fn fullscreen_hides_workspace_and_restores_view_after_window_return() {
-    let (mut editor, _send, _receive) = ready();
+    let mut editor = ready();
     let context = egui::Context::default();
     frame(&mut editor, &context, Some(false), vec![]);
     frame(&mut editor, &context, Some(false), vec![]);
@@ -105,7 +105,7 @@ fn fullscreen_hides_workspace_and_restores_view_after_window_return() {
 
 #[test]
 fn requested_exit_waits_for_host_acknowledgement_and_accepts_os_adjusted_bounds() {
-    let (mut editor, _send, _receive) = ready();
+    let mut editor = ready();
     let context = egui::Context::default();
     frame(&mut editor, &context, Some(false), vec![]);
     let viewport = editor.viewport;
@@ -147,7 +147,7 @@ fn requested_exit_waits_for_host_acknowledgement_and_accepts_os_adjusted_bounds(
 #[test]
 fn fullscreen_suspends_crop_and_picker_without_escape_cancelling_them() {
     for crop in [false, true] {
-        let (mut editor, _send, _receive) = ready();
+        let mut editor = ready();
         let context = egui::Context::default();
         frame(&mut editor, &context, Some(false), vec![]);
         if crop {
@@ -158,19 +158,40 @@ fn fullscreen_suspends_crop_and_picker_without_escape_cancelling_them() {
         frame(&mut editor, &context, Some(false), vec![]);
         let viewport = editor.viewport;
         let project = editor.document.project.clone();
-        let draft = editor.crop_edit.as_ref().map(|edit| edit.draft);
+        let draft = editor
+            .document
+            .visit
+            .crop_edit
+            .as_ref()
+            .map(|edit| edit.draft);
         let pick = editor.pick;
         frame(&mut editor, &context, Some(false), key(egui::Key::F));
         frame(&mut editor, &context, Some(true), vec![]);
         frame(&mut editor, &context, Some(true), key(egui::Key::Enter));
-        assert_eq!(editor.crop_edit.as_ref().map(|edit| edit.draft), draft);
+        assert_eq!(
+            editor
+                .document
+                .visit
+                .crop_edit
+                .as_ref()
+                .map(|edit| edit.draft),
+            draft
+        );
         assert_eq!(editor.pick, pick);
         frame(&mut editor, &context, Some(true), key(egui::Key::Escape));
         editor.fullscreen_changed(false);
         frame(&mut editor, &context, Some(false), vec![]);
         assert!(editor.fullscreen.is_none());
         assert_eq!(editor.viewport, viewport);
-        assert_eq!(editor.crop_edit.as_ref().map(|edit| edit.draft), draft);
+        assert_eq!(
+            editor
+                .document
+                .visit
+                .crop_edit
+                .as_ref()
+                .map(|edit| edit.draft),
+            draft
+        );
         assert_eq!(editor.pick, pick);
         assert_eq!(editor.document.project, project);
     }
@@ -179,7 +200,7 @@ fn fullscreen_suspends_crop_and_picker_without_escape_cancelling_them() {
 #[test]
 fn preexisting_native_fullscreen_is_not_changed_by_photo_only_viewing() {
     for native_before in [false, true] {
-        let (mut editor, _send, _receive) = ready();
+        let mut editor = ready();
         let context = egui::Context::default();
         frame(&mut editor, &context, Some(native_before), vec![]);
         let viewport = editor.viewport;
@@ -211,7 +232,7 @@ fn preexisting_native_fullscreen_is_not_changed_by_photo_only_viewing() {
 
 #[test]
 fn a_changed_source_retires_fullscreen_without_restoring_the_old_source_view() {
-    let (mut editor, _send, _receive) = ready();
+    let mut editor = ready();
     let context = egui::Context::default();
     frame(&mut editor, &context, Some(false), vec![]);
     frame(&mut editor, &context, Some(false), key(egui::Key::F));
@@ -227,7 +248,7 @@ fn a_changed_source_retires_fullscreen_without_restoring_the_old_source_view() {
 
 #[test]
 fn unavailable_images_and_blocking_transactions_cannot_enter_fullscreen() {
-    let (mut editor, _send, _receive) = super::super::tests::fixture();
+    let mut editor = super::super::tests::fixture();
     let context = egui::Context::default();
     frame(&mut editor, &context, Some(false), vec![]);
     frame(&mut editor, &context, Some(false), key(egui::Key::F));

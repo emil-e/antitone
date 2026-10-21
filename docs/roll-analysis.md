@@ -118,8 +118,9 @@ The [acceptance plan](plans/roll-assistance.md) tracks remaining photographic an
 
 - [Sampler](../src/scan.rs) and [Dmin estimator](../src/sampling.rs): eligible original pixels and endpoint statistics.
 - [Estimator](../src/roll_analysis.rs) and [curve fitter](../src/roll_analysis_gamma.rs): the numerical proposal.
-- [Spatial hypotheses](../src/scan_regions.rs) and [review controller](../src/editor_analysis_review.rs): source-owned support, drafts and review lifecycle.
-- [Editor analysis](../src/editor_analysis.rs): adequacy, cancellation and atomic installation.
+- [Spatial hypotheses](../src/scan_regions.rs), [staged preparation](../src/editor_analysis_preparation.rs), [source services](../src/editor_analysis_services.rs) and [review controller](../src/editor_analysis_review.rs): source-owned support, bounded scratch/fallback, drafts and review lifecycle.
+- [Captured sampling/fitting](../src/editor_analysis_fit.rs) and [workflow](../src/editor_analysis_workflow.rs): awaited source acquisition, bounded statistics, cancellation and direct typed completion.
+- [Editor analysis](../src/editor_analysis.rs): adequacy and atomic installation of reviewed areas with grade.
 - [Scalar tests](../tests/roll_analysis.rs), [sampling tests](../tests/roll_sampling.rs) and [editor tests](../src/editor_analysis_tests.rs): synthetic recovery, invariance and transaction behavior.
 
 Use [development checks](development.md#roll-analysis) for changes and [diagnostics](diagnostics.md#analyze-roll) for real-RAW exercises. Passing those checks does not establish calibrated colour or universal photographic success.

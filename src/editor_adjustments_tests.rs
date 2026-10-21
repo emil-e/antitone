@@ -19,7 +19,7 @@ fn ids(editor: &Editor) -> Vec<AdjustmentId> {
 #[test]
 fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_resources() {
     pollster::block_on(async {
-        let (mut editor, _, _, _, _) = processing::tests::fixture().await;
+        let (mut editor, _, _) = processing::tests::fixture().await;
         let id = editor.current_source.unwrap();
         let order = ids(&editor);
         editor.open_adjustments();
@@ -88,7 +88,7 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
 #[test]
 fn deferred_drag_captures_locals_after_an_outgoing_rename_commits() {
     pollster::block_on(async {
-        let (mut editor, _, _, _, _) = processing::tests::fixture().await;
+        let (mut editor, _, _) = processing::tests::fixture().await;
         editor.open_adjustments();
         let order = ids(&editor);
         let key = OrderKey {
@@ -120,14 +120,14 @@ fn deferred_drag_captures_locals_after_an_outgoing_rename_commits() {
             .as_ref()
             .unwrap();
         assert_eq!(locals.adjustments[1].name, "Renamed");
-        assert!(!editor.adjustments.dragging());
+        assert!(!editor.document.visit.adjustments.dragging());
     });
 }
 
 #[test]
 fn drop_positions_insert_without_swapping_neighbours_or_consuming_ids() {
     pollster::block_on(async {
-        let (mut editor, _, _, _, _) = processing::tests::fixture().await;
+        let (mut editor, _, _) = processing::tests::fixture().await;
         editor
             .edit_adjustments(|locals| {
                 let mut adjustment = locals.adjustments[0].adjustment;
@@ -180,7 +180,7 @@ fn drop_positions_insert_without_swapping_neighbours_or_consuming_ids() {
 fn stale_drops_reject_changed_records_and_source_generations_atomically() {
     pollster::block_on(async {
         for changed_records in [false, true] {
-            let (mut editor, _, _, _, _) = processing::tests::fixture().await;
+            let (mut editor, _, _) = processing::tests::fixture().await;
             let id = ids(&editor)[0];
             editor.select_adjustment(Target::Local(id));
             let drag = editor.order_drag(id).unwrap();
@@ -217,7 +217,7 @@ fn stale_drops_reject_changed_records_and_source_generations_atomically() {
 #[test]
 fn drawer_visibility_routes_global_and_reopening_validates_source_owned_selection() {
     pollster::block_on(async {
-        let (mut editor, _, _, _, _) = processing::tests::fixture().await;
+        let (mut editor, _, _) = processing::tests::fixture().await;
         let source = editor.current_source.unwrap();
         let order = ids(&editor);
         editor.select_adjustment(Target::Local(order[1]));
@@ -227,7 +227,7 @@ fn drawer_visibility_routes_global_and_reopening_validates_source_owned_selectio
             .unwrap();
         editor.close_adjustments();
         assert_eq!(editor.adjustment_target(), Target::Global);
-        assert!(!editor.adjustments.drawer_open());
+        assert!(!editor.document.visit.adjustments.drawer_open());
         assert!(!editor.mask_handles_available());
         assert_eq!(editor.document.project, before);
         assert_eq!(
@@ -253,15 +253,39 @@ fn drawer_visibility_routes_global_and_reopening_validates_source_owned_selectio
         editor.current_source = Some(other);
         let before = editor.document.project.clone();
         editor.open_adjustments();
-        assert_eq!(editor.adjustments.selected, Some((other, order[0])));
+        assert_eq!(
+            editor.document.visit.adjustments.selected,
+            Some((other, order[0]))
+        );
         assert_eq!(editor.document.project, before);
+    });
+}
+
+#[test]
+fn failed_document_candidate_preserves_the_visit_and_its_local_tool_context() {
+    pollster::block_on(async {
+        let (mut editor, _, _) = processing::tests::fixture().await;
+        let id = ids(&editor)[1];
+        editor.select_adjustment(Target::Local(id));
+        editor.document.visit.adjustments.show_coverage = true;
+        editor.sync_document();
+        let accepted = editor.document.project.clone();
+        let visit = editor.document.visit.view;
+        editor.start_document(Preparation::Open("unavailable.antitone".into()));
+        let request = editor.document_pending.unwrap();
+        editor.document_prepared(request, Err("candidate rejected".into()));
+        assert_eq!(editor.document.visit.view, visit);
+        assert_eq!(editor.adjustment_target(), Target::Local(id));
+        assert!(editor.document.visit.adjustments.drawer_open());
+        assert!(editor.document.visit.adjustments.show_coverage);
+        assert_eq!(editor.document.project, accepted);
     });
 }
 
 #[test]
 fn late_local_actions_cannot_mutate_the_stack_after_the_tool_closes() {
     pollster::block_on(async {
-        let (mut editor, _, _, _, _) = processing::tests::fixture().await;
+        let (mut editor, _, _) = processing::tests::fixture().await;
         let id = ids(&editor)[0];
         editor.select_adjustment(Target::Local(id));
         let drag = editor.order_drag(id).unwrap();
@@ -271,8 +295,8 @@ fn late_local_actions_cannot_mutate_the_stack_after_the_tool_closes() {
         editor.apply_adjustment_action(Action::Reorder(drag, 2));
         editor.apply_adjustment_action(Action::Delete(id));
         editor.apply_adjustment_action(Action::Select(Target::Local(id)));
-        assert!(!editor.adjustments.confirming());
-        assert!(!editor.adjustments.drawer_open());
+        assert!(!editor.document.visit.adjustments.confirming());
+        assert!(!editor.document.visit.adjustments.drawer_open());
         assert_eq!(editor.document.project, before);
         assert_eq!(editor.adjustment_target(), Target::Global);
     });
@@ -281,16 +305,16 @@ fn late_local_actions_cannot_mutate_the_stack_after_the_tool_closes() {
 #[test]
 fn explicitly_closing_during_a_roll_pick_prevents_its_return_context_reopening_locals() {
     pollster::block_on(async {
-        let (mut editor, _, _, _, _) = processing::tests::fixture().await;
+        let (mut editor, _, _) = processing::tests::fixture().await;
         let id = ids(&editor)[0];
         editor.select_adjustment(Target::Local(id));
         editor.begin_pick(Pick::Dmin);
-        assert!(editor.pick_return.is_some());
+        assert!(editor.document.pick_return.is_some());
         let before = editor.document.project.clone();
         editor.close_adjustments();
         editor.finish_pick();
         assert_eq!(editor.adjustment_target(), Target::Global);
-        assert!(!editor.adjustments.drawer_open());
+        assert!(!editor.document.visit.adjustments.drawer_open());
         assert_eq!(editor.document.project, before);
     });
 }
@@ -298,7 +322,7 @@ fn explicitly_closing_during_a_roll_pick_prevents_its_return_context_reopening_l
 #[test]
 fn unsupported_local_edit_preserves_grade_view_revision_and_allocator() {
     pollster::block_on(async {
-        let (mut editor, _, _, _, _) = processing::tests::fixture().await;
+        let (mut editor, _, _) = processing::tests::fixture().await;
         let accepted = editor
             .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
             .unwrap();
@@ -333,7 +357,7 @@ fn unsupported_local_edit_preserves_grade_view_revision_and_allocator() {
 fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view() {
     pollster::block_on(async {
         for reorder in [false, true] {
-            let (mut editor, _, _, _, _) = processing::tests::fixture().await;
+            let (mut editor, _, _) = processing::tests::fixture().await;
             editor.roll = RollSettings::new_grade();
             editor.photo = PhotoSettings::default();
             assert_eq!(editor.roll.gamma, 0.6);
@@ -421,7 +445,7 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
 fn temporary_roll_picking_restores_only_an_existing_source_owned_target() {
     pollster::block_on(async {
         for removed in [false, true] {
-            let (mut editor, send, receiver, _, _) = processing::tests::fixture().await;
+            let (mut editor, _, _) = processing::tests::fixture().await;
             let original = editor.current_source.unwrap();
             let target = ids(&editor)[0];
             let mut other = editor.document.project.source(original).unwrap().clone();
@@ -431,20 +455,22 @@ fn temporary_roll_picking_restores_only_an_existing_source_owned_target() {
             editor.sync_document();
             editor.select_adjustment(Target::Local(target));
             editor.begin_pick(Pick::Dmin);
-            let mut ready = editor.ready.take().unwrap();
+            let mut ready = editor.document.visit.ready.take().unwrap();
             editor.pick_roll_source(other);
             assert_eq!(editor.current_source, Some(other));
             assert_eq!(editor.adjustment_target(), Target::Global);
-            assert!(matches!(receiver.try_recv().unwrap(), Command::Load(..)));
+            assert!(editor.document.visit.source.request.is_some());
             // Both fixture sources use identical pixels/metadata; deliver the other owner's Ready.
             ready.path = editor.document.source_path(other).unwrap();
             ready.record = editor.document.project.source(other).unwrap().clone();
             ready.record.id = SourceId(0);
             ready.record.path = ready.path.clone();
-            send.send(Message::Ready(editor.id, Ok(Box::new(ready))))
-                .unwrap();
-            editor.receive();
-            assert!(editor.ready.is_some() && !editor.busy, "{}", editor.status);
+            editor.source_result(editor.id, Ok(Box::new(ready)));
+            assert!(
+                editor.document.visit.ready.is_some() && !editor.busy,
+                "{}",
+                editor.status
+            );
             if removed {
                 editor
                     .document
@@ -459,7 +485,7 @@ fn temporary_roll_picking_restores_only_an_existing_source_owned_target() {
             }
             editor.finish_pick();
             assert_eq!(editor.current_source, Some(original));
-            assert!(editor.pick_return.is_none());
+            assert!(editor.document.pick_return.is_none());
             assert_eq!(
                 editor.adjustment_target(),
                 if removed {
@@ -468,7 +494,7 @@ fn temporary_roll_picking_restores_only_an_existing_source_owned_target() {
                     Target::Local(target)
                 }
             );
-            assert!(matches!(receiver.try_recv().unwrap(), Command::Load(..)));
+            assert!(editor.document.visit.source.request.is_some());
         }
     });
 }
@@ -476,7 +502,7 @@ fn temporary_roll_picking_restores_only_an_existing_source_owned_target() {
 #[test]
 fn disabling_and_editing_an_inactive_record_does_not_drop_its_mask_or_controls() {
     pollster::block_on(async {
-        let (mut editor, _, _, _, _) = processing::tests::fixture().await;
+        let (mut editor, _, _) = processing::tests::fixture().await;
         let id = ids(&editor)[0];
         let mask = editor
             .document

@@ -20,13 +20,13 @@ impl Editor {
     }
 
     fn viewer_tool(&self) -> Option<(icons::Icon, &'static str)> {
-        if self.analysis_review.is_some() {
+        if self.document.analysis_review.is_some() {
             return Some((icons::Icon::Analyze, "Analyze"));
         }
-        if self.crop_edit.is_some() {
+        if self.document.visit.crop_edit.is_some() {
             return Some((icons::Icon::Crop, "Crop"));
         }
-        if self.auto_crop_edit.is_some() {
+        if self.document.auto_crop_edit.is_some() {
             return Some((icons::Icon::Crop, "Auto-crop"));
         }
         self.pick.map(|pick| match pick {
@@ -41,11 +41,11 @@ impl Editor {
     }
 
     pub(super) fn source_tool_warning(&self, id: SourceId) -> Option<&str> {
-        if self.auto_crop_edit.is_some() {
+        if self.document.auto_crop_edit.is_some() {
             return self.auto_crop_problem(id);
         }
         if self.current_source == Some(id)
-            && let Some(edit) = &self.crop_edit
+            && let Some(edit) = &self.document.visit.crop_edit
         {
             return edit.auto_problem.as_deref();
         }
@@ -60,7 +60,7 @@ impl Editor {
         if warning.is_none() {
             warning = self.auto_crop_batch_warning().map(str::to_owned);
         }
-        if let Some(review) = &self.analysis_review {
+        if let Some(review) = &self.document.analysis_review {
             let missing = review
                 .approved
                 .entries
@@ -93,10 +93,16 @@ impl Editor {
 
         let mut zoom_action = None;
         let fullscreen = self.fullscreen.is_some();
-        let cropping = !fullscreen && self.crop_edit.is_some();
-        let masking = !fullscreen && self.mask_edit.is_some();
-        let creating = !fullscreen && self.mask_edit.as_ref().is_some_and(MaskEdit::creating);
-        let dust_session = !fullscreen && self.dust.cleanup && !self.source;
+        let cropping = !fullscreen && self.document.visit.crop_edit.is_some();
+        let masking = !fullscreen && self.document.visit.mask_edit.is_some();
+        let creating = !fullscreen
+            && self
+                .document
+                .visit
+                .mask_edit
+                .as_ref()
+                .is_some_and(MaskEdit::creating);
+        let dust_session = !fullscreen && self.document.dust.cleanup && !self.source;
         let tool = (!fullscreen && !dust_session)
             .then(|| self.viewer_tool())
             .flatten();
@@ -121,12 +127,17 @@ impl Editor {
             self.source = true;
         }
 
-        let navigating = self.ready.is_some()
+        let navigating = self.document.visit.ready.is_some()
             && !self.busy
-            && !self.mask_edit.as_ref().is_some_and(MaskEdit::dragging);
-        let reviewing = self.analysis_review.is_some();
+            && !self
+                .document
+                .visit
+                .mask_edit
+                .as_ref()
+                .is_some_and(MaskEdit::dragging);
+        let reviewing = self.document.analysis_review.is_some();
         let apply_label = if reviewing { "Analyze roll" } else { "Apply" };
-        let review_ready = self.analysis_review.as_ref().is_none_or(|review| {
+        let review_ready = self.document.analysis_review.as_ref().is_none_or(|review| {
             review
                 .approved
                 .entries
@@ -136,8 +147,8 @@ impl Editor {
         let tool_group = tool.map(|(icon, title)| ToolGroup {
             identity: ToolIdentity { icon, title },
             busy: self.busy,
-            cancel_enabled: !self.busy || reviewing && self.analysis_pending.is_none(),
-            apply_enabled: if self.auto_crop_edit.is_some() {
+            cancel_enabled: !self.busy || reviewing && self.document.analysis_pending.is_none(),
+            apply_enabled: if self.document.auto_crop_edit.is_some() {
                 self.auto_crop_editable()
             } else {
                 navigating && review_ready && (cropping || self.region.is_some())
@@ -169,7 +180,7 @@ impl Editor {
                 };
                 let quality = if self.pending_preview.is_some() {
                     " · Cached preview"
-                } else if self.source || self.ready.is_none() {
+                } else if self.source || self.document.visit.ready.is_none() {
                     ""
                 } else if self.working.enabled() && tool.is_none() {
                     if look_error.is_some() {
@@ -241,7 +252,7 @@ impl Editor {
                     self.viewport.fit();
                 }
                 let layout = if cropping {
-                    self.crop_edit.as_ref().and_then(|edit| edit.layout)
+                    self.document.visit.crop_edit.as_ref().and_then(|edit| edit.layout)
                 } else {
                     None
                 }
@@ -414,7 +425,7 @@ impl Editor {
                                 "Crop: drag inside to move the image, edges/corners to resize, outside to straighten.",
                             );
                             ui.small("Enter applies · Escape cancels");
-                        } else if !fullscreen && self.auto_crop_edit.is_some() {
+                        } else if !fullscreen && self.document.auto_crop_edit.is_some() {
                             ui.separator();
                             ui.small(
                                 "Auto-crop: drag an edge or corner for the shared inward margin; Space-drag / middle-drag pans.",
@@ -434,7 +445,7 @@ impl Editor {
                             ui.small(
                                 "Drag the source outline to move it · release commits changes · H hides outlines.",
                             );
-                        } else if !fullscreen && self.analysis_review.is_some() {
+                        } else if !fullscreen && self.document.analysis_review.is_some() {
                             ui.separator();
                             ui.small(
                                 "Drag either area's corners to resize, or its interior to move. Click a label when outlines coincide.",
@@ -475,7 +486,7 @@ impl Editor {
                     } else if creating {
                         cancel = TextAction::new("Cancel drawing").show(ui).clicked();
                         ui.add(
-                            egui::Label::new(self.mask_edit.as_ref().unwrap().creation_label())
+                            egui::Label::new(self.document.visit.mask_edit.as_ref().unwrap().creation_label())
                                 .truncate(),
                         );
                     } else {
@@ -491,7 +502,7 @@ impl Editor {
             self.finish_dust_cleanup();
             ui.ctx().request_repaint();
         } else if cancel {
-            if self.auto_crop_edit.is_some() {
+            if self.document.auto_crop_edit.is_some() {
                 self.finish_auto_crop(false);
             } else if masking {
                 self.finish_mask(false);
@@ -502,7 +513,7 @@ impl Editor {
             }
             ui.ctx().request_repaint();
         } else if apply {
-            if self.auto_crop_edit.is_some() {
+            if self.document.auto_crop_edit.is_some() {
                 self.finish_auto_crop(true);
             } else if cropping {
                 self.finish_crop(true);
@@ -516,7 +527,7 @@ impl Editor {
 
     pub(super) fn canvas_input_allowed(&self, ui: &egui::Ui, canvas: egui::Rect) -> bool {
         if self.menus.panel.is_some()
-            || self.adjustments.confirming()
+            || self.document.visit.adjustments.confirming()
             || egui::Popup::is_any_open(ui.ctx())
         {
             return false;

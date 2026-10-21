@@ -22,7 +22,7 @@ fn main() -> ProbeResult<()> {
         let report = result.clone();
         let presented = host::run(
             "Antitone — managed presentation probe",
-            move |device, queue| {
+            move |device, queue, _application| {
                 pollster::block_on(validate_transfer(
                     device,
                     queue,
@@ -155,8 +155,8 @@ struct Probe {
 
 #[cfg(target_os = "macos")]
 impl host::App for Probe {
-    fn submission_gate(&self) -> &antitone::platform::SubmissionGate {
-        &self.submissions
+    fn submission_gate(&self) -> antitone::platform::SubmissionGate {
+        self.submissions.clone()
     }
 
     fn on_exit(&mut self) {
@@ -165,7 +165,7 @@ impl host::App for Probe {
         }
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui) {
+    fn ui(&mut self, ui: &mut egui::Ui, _access: &antitone::application::UiAccess<'_, Self>) {
         self.frame += 1;
         if let Some(size) = ui.input(|input| input.viewport().inner_rect.map(|rect| rect.size())) {
             if self.last_size.is_some_and(|previous| previous != size) {

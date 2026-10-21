@@ -1,5 +1,12 @@
 use super::*;
 
+fn source_input() -> source::Context {
+    source::Context {
+        source: crate::editor::tests::developed_fixture(),
+        correction: None,
+    }
+}
+
 fn request(ev: f64) -> (Signature, ProcessingInput) {
     let input = ProcessingInput::from(ProcessingParameters::source_inspection(ev).unwrap());
     let area = Rect {
@@ -25,61 +32,37 @@ fn request(ev: f64) -> (Signature, ProcessingInput) {
 }
 
 #[test]
-fn original_jobs_are_purpose_bound_and_cancelled_work_keeps_admission_until_completion() {
+fn original_demand_captures_purpose_and_latest_input_and_rejects_stale_completion() {
     let mut owner = OriginalView::new(Arc::default());
-    let (commands, jobs) = mpsc::channel();
+    let mut scope = super::super::grade_scope::GradeScope::default();
     let context = egui::Context::default();
-    let (signature, input) = request(0.);
-    owner.observe(OriginalPurpose::Tool, signature);
-    owner.last_edit = std::time::Instant::now() - Duration::from_secs(1);
-    assert!(
-        owner
-            .schedule(1, &input, OutputTarget::Srgb, &commands, &context)
-            .is_none()
-    );
-    let running = owner.revision();
-    assert!(
-        matches!(jobs.try_recv().unwrap(),Command::Refine(_,revision,..) if revision == running)
-    );
-    for i in 1..=40 {
+    let mut retired = None;
+    for i in 0..40 {
         let (signature, input) = request(i as f64 / 10.);
         owner.observe(OriginalPurpose::Tool, signature);
         owner.last_edit = std::time::Instant::now() - Duration::from_secs(1);
-        assert!(
-            owner
-                .schedule(1, &input, OutputTarget::Srgb, &commands, &context)
-                .is_none()
+        owner.schedule(
+            &input,
+            OutputTarget::Srgb,
+            &mut scope,
+            &context,
+            source_input(),
         );
-        assert_eq!(owner.refining.unwrap().0, running);
+        let captured = scope.request.as_ref().unwrap();
+        assert_eq!(captured.input.signature(), input.signature());
+        assert_eq!(owner.refining.unwrap().0, captured.revision);
+        retired.get_or_insert(captured.revision);
     }
-    assert!(jobs.try_recv().is_err());
-    assert!(owner.receive(owner.revision(), Ok(None)).is_none());
-    assert!(
-        owner.refining.is_some(),
-        "unmatched current-generation completion cannot steal the old admission token"
-    );
-    assert!(owner.receive(running, Ok(None)).is_none());
-    assert!(owner.refining.is_none());
-    let (_, input) = request(4.);
-    assert!(
-        owner
-            .schedule(1, &input, OutputTarget::Srgb, &commands, &context)
-            .is_none()
-    );
-    assert!(
-        matches!(jobs.try_recv().unwrap(),Command::Refine(_,revision,..) if revision > running)
-    );
+    let running = owner.refining.unwrap();
+    assert!(owner.receive(retired.unwrap(), Ok(None)).is_none());
+    assert_eq!(owner.refining, Some(running));
     owner.leave();
-    assert!(owner.signature.is_none());
-    assert!(
-        owner.refining.is_some(),
-        "leaving a tool cancels, but completion releases admission"
-    );
+    assert!(owner.signature.is_none() && owner.refining.is_none());
 }
 
 #[test]
 fn ordinary_views_without_working_device_never_become_original_tool_requests() {
-    let (mut editor, _, commands) = super::super::tests::fixture();
+    let mut editor = super::super::tests::fixture();
     super::super::tests::add_ready_fixture(&mut editor);
     let context = egui::Context::default();
     assert!(!editor.working.enabled());
@@ -91,12 +74,8 @@ fn ordinary_views_without_working_device_never_become_original_tool_requests() {
         }
         assert!(editor.original.signature.is_none());
         assert!(editor.original.refining.is_none());
+        assert!(editor.document.visit.grade.request.is_none());
     }
-    assert!(
-        !commands
-            .try_iter()
-            .any(|c| matches!(c, Command::Refine(..)))
-    );
 }
 
 #[test]
@@ -115,23 +94,35 @@ fn leaving_unbuilt_reference_releases_idle_authority_without_revision_churn() {
 }
 
 #[test]
-fn original_worker_failure_latches_once_and_rejects_unrequested_completions() {
+fn original_failure_latches_once_and_rejects_unrequested_completions() {
     let mut owner = OriginalView::new(Arc::default());
-    let (commands, jobs) = mpsc::channel();
-    drop(jobs);
+    let mut scope = super::super::grade_scope::GradeScope::default();
     let (signature, input) = request(0.);
     owner.observe(OriginalPurpose::Tool, signature);
     owner.last_edit = std::time::Instant::now() - Duration::from_secs(1);
     let context = egui::Context::default();
+    owner.schedule(
+        &input,
+        OutputTarget::Srgb,
+        &mut scope,
+        &context,
+        source_input(),
+    );
+    let revision = scope.request.take().unwrap().revision;
     assert_eq!(
-        owner.schedule(1, &input, OutputTarget::Srgb, &commands, &context),
-        Some("RAW worker stopped")
-    );
-    assert!(
         owner
-            .schedule(1, &input, OutputTarget::Srgb, &commands, &context)
-            .is_none()
+            .receive(revision, Err("source unavailable".into()))
+            .as_deref(),
+        Some("Original view failed: source unavailable")
     );
-    assert!(owner.receive(owner.revision(), Ok(None)).is_none());
-    assert_eq!(owner.refinement_error, Some(owner.revision()));
+    owner.schedule(
+        &input,
+        OutputTarget::Srgb,
+        &mut scope,
+        &context,
+        source_input(),
+    );
+    assert!(scope.request.is_none());
+    assert!(owner.receive(revision, Ok(None)).is_none());
+    assert_eq!(owner.refinement_error, Some(revision));
 }

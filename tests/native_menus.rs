@@ -70,8 +70,8 @@ struct MenuApp {
 }
 
 impl host::App for MenuApp {
-    fn submission_gate(&self) -> &SubmissionGate {
-        &self.submissions
+    fn submission_gate(&self) -> SubmissionGate {
+        self.submissions.clone()
     }
     fn menu_state(&self) -> Option<menu::State> {
         Some(self.state.clone())
@@ -117,7 +117,7 @@ impl host::App for MenuApp {
             _ => {}
         }
     }
-    fn ui(&mut self, ui: &mut egui::Ui) {
+    fn ui(&mut self, ui: &mut egui::Ui, _access: &antitone::application::UiAccess<'_, Self>) {
         ui.heading("Native menu integration check");
         assert!(self.installed);
         if self.waiting {
@@ -308,7 +308,7 @@ fn main() -> host::Result<()> {
         }
     });
     let report = completed.clone();
-    let presented = host::run("Antitone menu check", move |_, _| {
+    let presented = host::run("Antitone menu check", move |_, _, _application| {
         let mut state = menu::State::default();
         state
             .enabled

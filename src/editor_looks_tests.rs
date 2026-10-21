@@ -19,6 +19,15 @@ fn asset() -> Arc<LookAsset> {
         .unwrap(),
     )
 }
+fn request(editor: &mut Editor) -> (u64, Source, Arc<AtomicBool>) {
+    let pending = editor.document.look.as_mut().unwrap();
+    (
+        pending.id,
+        pending.source.take().unwrap(),
+        pending.cancel.clone(),
+    )
+}
+
 #[test]
 fn historic_builtin_sources_use_catalog_labels_but_imports_keep_their_names() {
     let data = asset();
@@ -74,7 +83,7 @@ fn historic_builtin_sources_use_catalog_labels_but_imports_keep_their_names() {
 }
 #[test]
 fn loaded_luts_remain_available_after_switching_and_duplicate_loads_reuse_one_entry() {
-    let (mut editor, _, commands) = super::super::tests::fixture();
+    let mut editor = super::super::tests::fixture();
     let first = asset();
     let mut nodes = first.lut().nodes().to_vec();
     nodes[0][0] += 0.01;
@@ -88,9 +97,7 @@ fn loaded_luts_remain_available_after_switching_and_duplicate_loads_reuse_one_en
     );
     for chosen in [first.clone(), second.clone(), first.clone()] {
         editor.begin_look(Source::Loaded(chosen.clone()));
-        let Command::Look(id, _, _) = commands.try_recv().unwrap() else {
-            panic!()
-        };
+        let (id, _, _) = request(&mut editor);
         editor.receive_look(id, Ok(Some(chosen)));
     }
     assert_eq!(editor.loaded_looks.len(), 2);
@@ -116,9 +123,7 @@ fn loaded_luts_remain_available_after_switching_and_duplicate_loads_reuse_one_en
     );
     for rejected in [false, true] {
         editor.begin_look(Source::Loaded(novel.clone()));
-        let Command::Look(id, _, _) = commands.try_recv().unwrap() else {
-            panic!()
-        };
+        let (id, _, _) = request(&mut editor);
         if rejected {
             editor.receive_look(id, Err("invalid LUT".into()));
         } else {
@@ -146,18 +151,14 @@ fn loaded_luts_remain_available_after_switching_and_duplicate_loads_reuse_one_en
 }
 #[test]
 fn current_success_installs_one_project_wide_embedded_asset_and_stale_replies_do_not() {
-    let (mut editor, _, commands) = super::super::tests::fixture();
+    let mut editor = super::super::tests::fixture();
     let original = editor.document.project.clone();
     editor.begin_look(Source::Builtin(Builtin::PortraEndura));
-    let Command::Look(old, _, cancel) = commands.try_recv().unwrap() else {
-        panic!()
-    };
+    let (old, _, cancel) = request(&mut editor);
     assert!(editor.busy);
     assert_eq!(editor.document.project, original);
     editor.begin_look(Source::Builtin(Builtin::Kodak2383));
-    let Command::Look(current, _, _) = commands.try_recv().unwrap() else {
-        panic!()
-    };
+    let (current, _, _) = request(&mut editor);
     assert!(cancel.load(Ordering::Relaxed));
     editor.receive_look(old, Ok(Some(asset())));
     assert!(editor.busy);
@@ -167,7 +168,7 @@ fn current_success_installs_one_project_wide_embedded_asset_and_stale_replies_do
     editor.receive_look(current, Ok(Some(chosen.clone())));
     assert!(!editor.busy);
     assert_eq!(editor.document.project.output.look, Some(chosen));
-    assert!(editor.look_pending.is_none());
+    assert!(editor.document.look.is_none());
     assert_eq!(editor.loaded_looks.len(), 1);
     let document = serde_json::to_vec(&editor.document.project).unwrap();
     let reopened: crate::project::Project = serde_json::from_slice(&document).unwrap();
@@ -175,22 +176,18 @@ fn current_success_installs_one_project_wide_embedded_asset_and_stale_replies_do
 }
 #[test]
 fn failure_cancel_and_document_retirement_preserve_prior_appearance() {
-    let (mut editor, _, commands) = super::super::tests::fixture();
+    let mut editor = super::super::tests::fixture();
     editor.document.project.output.look = Some(asset());
     let original = editor.document.project.clone();
     editor.begin_look(Source::Imported("missing.cube".into()));
-    let Command::Look(id, _, _) = commands.try_recv().unwrap() else {
-        panic!()
-    };
+    let (id, _, _) = request(&mut editor);
     editor.receive_look(id, Err("invalid LUT".into()));
     assert_eq!(editor.document.project, original);
     assert!(!editor.busy);
     assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Look);
     editor.failure = None;
     editor.begin_look(Source::Builtin(Builtin::ProImageII));
-    let Command::Look(id, _, cancel) = commands.try_recv().unwrap() else {
-        panic!()
-    };
+    let (id, _, cancel) = request(&mut editor);
     editor.cancel_task(TaskRequest::Look(id));
     assert!(cancel.load(Ordering::Relaxed));
     assert!(editor.busy);
@@ -198,9 +195,7 @@ fn failure_cancel_and_document_retirement_preserve_prior_appearance() {
     assert_eq!(editor.document.project, original);
     assert!(!editor.busy);
     editor.begin_look(Source::Builtin(Builtin::IlfordFilter2));
-    let Command::Look(id, _, cancel) = commands.try_recv().unwrap() else {
-        panic!()
-    };
+    let (id, _, cancel) = request(&mut editor);
     editor.retire_look();
     assert!(cancel.load(Ordering::Relaxed));
     editor.receive_look(id, Ok(Some(asset())));

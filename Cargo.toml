@@ -29,6 +29,12 @@ blake3 = { version = "=1.8.7", optional = true }
 base64 = { version = "=0.22.1", optional = true }
 flate2 = { version = "=1.1.10", optional = true, default-features = false, features = ["rust_backend"] }
 image = { version = "=0.25.10", optional = true, default-features = false, features = ["jpeg", "png"] }
+async-executor = { version = "=1.13.1", optional = true }
+async-lock = { version = "=3.4.0", optional = true }
+event-listener = { version = "=5.4.0", optional = true }
+futures-lite = { version = "=2.6.1", optional = true }
+futures-channel = { version = "=0.3.32", optional = true, default-features = false, features = ["std"] }
+blocking = { version = "=1.6.1", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "=0.21.2", optional = true, default-features = false }
@@ -42,9 +48,9 @@ objc2-quartz-core = { version = "=0.3.2", optional = true, default-features = fa
 
 [features]
 ui-tests = ["editor", "ocio-reference", "dep:egui_kittest", "image/png"]
-editor = ["ui", "raw", "dng-sdk", "export", "project", "dep:rfd", "dep:blake3", "dep:image"]
+editor = ["ui", "raw", "dng-sdk", "export", "project", "dep:rfd", "dep:blake3", "dep:image", "dep:async-lock", "dep:event-listener", "dep:futures-lite", "dep:blocking"]
 project = ["dep:serde", "dep:serde_json", "dep:tempfile", "dep:blake3", "dep:base64", "dep:flate2", "glam/serde"]
-ui = ["gpu", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:winit", "dep:half", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-core-foundation", "dep:objc2-core-graphics", "dep:objc2-quartz-core", "dep:objc2-foundation", "dep:muda"]
+ui = ["gpu", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:winit", "dep:half", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-core-foundation", "dep:objc2-core-graphics", "dep:objc2-quartz-core", "dep:objc2-foundation", "dep:muda", "dep:async-executor", "dep:futures-channel"]
 raw = ["dep:cc", "dep:libc", "dep:blake3"]
 # Direct SDK remains separately usable without LibRaw or the desktop stack.
 dng-sdk = ["dep:cc", "dep:blake3", "dep:tempfile"]
@@ -102,6 +108,12 @@ required-features = ["ui"]
 [[test]]
 name = "native_host"
 path = "tests/native_host.rs"
+harness = false
+required-features = ["ui"]
+
+[[test]]
+name = "native_executor"
+path = "tests/native_executor.rs"
 harness = false
 required-features = ["ui"]
 

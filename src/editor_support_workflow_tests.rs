@@ -1,0 +1,195 @@
+use super::*;
+use crate::{
+    application::test_support::{TestApplication, with_application},
+    editor::{Pick, Preparation, Thumbnails, tests::hold_blocking_work},
+};
+use std::{path::PathBuf, time::Duration};
+
+fn editor() -> Editor {
+    let (device, queue) = pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        instance
+            .request_adapter(&Default::default())
+            .await
+            .unwrap()
+            .request_device(&Default::default())
+            .await
+            .unwrap()
+    });
+    let mut e = Editor::new(&device, &queue, None);
+    e.thumbnails = Thumbnails::default();
+    e
+}
+
+fn imported(app: &mut TestApplication<'_, Editor>) {
+    app.enter(|e, access| {
+        e.add_raws(vec![
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/raw/illuminated-patches.dng"),
+        ]);
+        e.start_document_workflow(access);
+    });
+    app.run_until(Duration::from_secs(20), |e| !e.busy);
+    app.read(|e| assert!(e.document.visit.ready.is_some(), "{}", e.status));
+}
+
+#[test]
+fn lazy_support_progresses_without_paint_and_does_not_accept_a_picture_or_change_processing() {
+    let e = editor();
+    let scheduler = e.developments.as_ref().unwrap().clone();
+    with_application(e, |app| {
+        imported(app);
+        let (before, expected) = app.update(|e| {
+            assert!(
+                e.document
+                    .visit
+                    .ready
+                    .as_ref()
+                    .unwrap()
+                    .analysis_support
+                    .is_none()
+            );
+            (
+                e.history_snapshot(),
+                e.source_context()
+                    .unwrap()
+                    .scan()
+                    .unwrap()
+                    .propose_flat_field_area()
+                    .unwrap(),
+            )
+        });
+        app.enter(|e, access| {
+            e.begin_pick(Pick::Analysis);
+            e.start_support_workflow(access);
+        });
+        app.run_until(Duration::from_secs(20), |e| {
+            e.document.visit.support.pending.is_none()
+        });
+        app.read(|e| {
+            assert_eq!(
+                e.document.visit.ready.as_ref().unwrap().analysis_support,
+                Some(expected)
+            );
+            assert_eq!(e.document.project, before);
+            assert!(!e.busy);
+        });
+        app.enter(|e, access| {
+            e.finish_pick();
+            e.begin_pick(Pick::Analysis);
+            e.start_support_workflow(access);
+        });
+        app.read(|e| {
+            assert!(
+                e.document.visit.support.pending.is_none(),
+                "known support, including absence, is cached on readiness"
+            )
+        });
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn queued_support_respects_drawn_geometry_and_reopened_picker_identity() {
+    for reopen in [false, true] {
+        let e = editor();
+        let scheduler = e.developments.as_ref().unwrap().clone();
+        with_application(e, |app| {
+            imported(app);
+            let hold = app.read(|e| hold_blocking_work(&e.workflow_jobs));
+            let old = app.enter(|e, access| {
+                e.begin_pick(Pick::Analysis);
+                let id = e.document.visit.support.pending.as_ref().unwrap().id;
+                e.start_support_workflow(access);
+                id
+            });
+            app.pump();
+            let drawn = crate::coverage::Coverage::rectangle(Rect {
+                x: 30,
+                y: 30,
+                width: 40,
+                height: 40,
+            });
+            app.enter(|e, access| {
+                if reopen {
+                    e.finish_pick();
+                    e.begin_pick(Pick::Analysis);
+                    e.start_support_workflow(access);
+                }
+                e.region = Some(drawn);
+            });
+            if reopen {
+                app.read(|e| {
+                    assert_ne!(e.document.visit.support.pending.as_ref().unwrap().id, old)
+                });
+            }
+            drop(hold);
+            app.run_until(Duration::from_secs(20), |e| {
+                e.document.visit.support.pending.is_none()
+            });
+            app.update(|e| e.analysis_support_result(old, e.id, Err("stale".into())));
+            app.read(|e| {
+                assert_eq!(e.region, Some(drawn));
+                assert!(
+                    e.document
+                        .visit
+                        .ready
+                        .as_ref()
+                        .unwrap()
+                        .analysis_support
+                        .is_some()
+                );
+                assert_ne!(e.status, "stale");
+            });
+        });
+        scheduler.close_and_wait().unwrap();
+    }
+}
+
+#[test]
+fn document_replacement_retires_support_without_waiting_for_a_paint_or_accepting_stale_geometry() {
+    let e = editor();
+    let scheduler = e.developments.as_ref().unwrap().clone();
+    with_application(e, |app| {
+        imported(app);
+        let hold = app.read(|e| hold_blocking_work(&e.workflow_jobs));
+        let (old, loaded) = app.enter(|e, access| {
+            e.begin_pick(Pick::Analysis);
+            let pending = e.document.visit.support.pending.as_ref().unwrap();
+            let id = (pending.id, pending.loaded);
+            e.start_support_workflow(access);
+            id
+        });
+        app.pump();
+        app.enter(|e, access| {
+            e.finish_pick();
+            e.start_document(Preparation::New);
+            e.start_document_workflow(access);
+        });
+        app.update(|e| {
+            e.analysis_support_result(
+                old,
+                loaded,
+                Ok(Some(Rect {
+                    x: 30,
+                    y: 30,
+                    width: 40,
+                    height: 40,
+                })),
+            )
+        });
+        app.read(|e| {
+            assert!(e.document.visit.support.pending.is_none());
+            assert!(e.region.is_none());
+        });
+        drop(hold);
+        app.run_until(Duration::from_secs(20), |e| !e.busy);
+        app.read(|e| {
+            assert!(e.document.project.order.is_empty() && e.document.visit.ready.is_none())
+        });
+    });
+    scheduler.close_and_wait().unwrap();
+}

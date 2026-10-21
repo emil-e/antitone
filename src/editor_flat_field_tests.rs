@@ -44,14 +44,8 @@ fn reference_registration_does_not_add_a_photo_or_hide_an_existing_one() {
 }
 
 #[test]
-fn flat_preview_cancel_failure_and_stale_messages_preserve_document_and_working_context() {
-    let (commands, receiver) = mpsc::channel();
-    let (send, messages) = mpsc::channel();
-    let mut editor = Editor::state(
-        commands,
-        messages,
-        Arc::new(std::sync::atomic::AtomicU64::new(0)),
-    );
+fn flat_preview_cancel_failure_and_stale_products_preserve_document_and_working_context() {
+    let mut editor = Editor::state();
     editor.id = 12;
     editor.next_request = 12;
     editor.source = false;
@@ -63,15 +57,14 @@ fn flat_preview_cancel_failure_and_stale_messages_preserve_document_and_working_
     let roll = editor.roll;
     editor.begin_flat_edit("light.ARW".into(), None);
     let request = editor.id;
-    assert!(matches!(receiver.recv().unwrap(), Command::FlatPreview(..)));
+    assert!(matches!(
+        editor.flat_edit.as_ref().unwrap().request,
+        Some(reference_services::Operation::Preview(_))
+    ));
     assert_eq!(editor.document.project, original);
-    send.send(Message::FlatPreview(
-        request,
-        Err("reference unavailable".into()),
-    ))
-    .unwrap();
-    editor.receive();
-    assert_eq!(editor.id, 12);
+    editor.reference_previewed(request, Err("reference unavailable".into()));
+    assert!(editor.id > request);
+    assert_eq!(editor.document.visit.view, editor.id);
     assert!(!editor.source);
     assert!(editor.pick.is_none());
     assert!(editor.flat_edit.is_none());
@@ -84,13 +77,10 @@ fn flat_preview_cancel_failure_and_stale_messages_preserve_document_and_working_
         editor.failure.as_ref().unwrap().details,
         "reference unavailable"
     );
-    receiver.recv().unwrap();
+    assert!(editor.flat_edit.is_none());
     editor.begin_flat_edit("other.ARW".into(), None);
     let current = editor.id;
-    receiver.recv().unwrap();
-    send.send(Message::FlatPreview(request, Err("stale".into())))
-        .unwrap();
-    editor.receive();
+    editor.reference_previewed(request, Err("stale".into()));
     assert!(editor.busy);
     assert_eq!(editor.id, current);
     assert_eq!(
@@ -99,7 +89,8 @@ fn flat_preview_cancel_failure_and_stale_messages_preserve_document_and_working_
     );
     editor.busy = false;
     editor.finish_pick();
-    assert_eq!(editor.id, 12);
+    assert!(editor.id > current);
+    assert_eq!(editor.document.visit.view, editor.id);
     assert_eq!(editor.roll, roll);
     assert_eq!(editor.document.project, original);
     assert_eq!(
@@ -110,20 +101,21 @@ fn flat_preview_cancel_failure_and_stale_messages_preserve_document_and_working_
 
 #[test]
 fn failed_map_acceptance_restores_transient_edit_without_accepting_document_changes() {
-    let (commands, receiver) = mpsc::channel();
-    let (send, messages) = mpsc::channel();
-    let mut editor = Editor::state(
-        commands,
-        messages,
-        Arc::new(std::sync::atomic::AtomicU64::new(0)),
-    );
+    let mut editor = Editor::state();
     editor.begin_flat_edit("light.ARW".into(), None);
-    receiver.recv().unwrap();
     editor.busy = false;
     editor.floor = crate::processing::CAMERA_INPUT_FLOOR;
     editor.document.project.development =
         Some(Development::new(crate::raw::version(), [2., 1., 1.5, 1.]));
     super::super::tests::add_ready_fixture(&mut editor);
+    let ready = editor.document.visit.ready.take().unwrap();
+    editor.reference_previewed(
+        editor.id,
+        Ok(FlatPreview {
+            ready,
+            region: None,
+        }),
+    );
     let original = editor.document.project.clone();
     editor.region = Some(Coverage::rectangle(Rect {
         x: 12,
@@ -133,10 +125,11 @@ fn failed_map_acceptance_restores_transient_edit_without_accepting_document_chan
     }));
     editor.apply_pick();
     let request = editor.id;
-    assert!(matches!(receiver.recv().unwrap(), Command::FlatAccept(..)));
-    send.send(Message::Prepared(request, Err("invalid correction".into())))
-        .unwrap();
-    editor.receive();
+    assert!(matches!(
+        editor.flat_edit.as_ref().unwrap().request,
+        Some(reference_services::Operation::Accept(_))
+    ));
+    editor.document_prepared(request, Err("invalid correction".into()));
     assert!(editor.flat_edit.is_none());
     assert!(editor.pick.is_none());
     assert!(!editor.busy);
@@ -153,13 +146,7 @@ fn failed_map_acceptance_restores_transient_edit_without_accepting_document_chan
 
 #[test]
 fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
-    let (commands, receiver) = mpsc::channel();
-    let (send, messages) = mpsc::channel();
-    let mut editor = Editor::state(
-        commands,
-        messages,
-        Arc::new(std::sync::atomic::AtomicU64::new(0)),
-    );
+    let mut editor = Editor::state();
     editor.floor = crate::processing::CAMERA_INPUT_FLOOR;
     editor.document.project.development =
         Some(Development::new(crate::raw::version(), [2., 1., 1.5, 1.]));
@@ -178,7 +165,7 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
     });
     editor.viewport.zoom = Some(1.375);
     let composition = Composition::with_crop(
-        editor.ready.as_ref().unwrap().area,
+        editor.document.visit.ready.as_ref().unwrap().area,
         editor.roll_orientation,
         editor.photo_orientation,
         editor.crop,
@@ -194,12 +181,13 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
     editor.sync_document();
     let original = editor.document.project.clone();
     let viewport = editor.viewport;
-    let ready = editor.ready.as_ref().unwrap();
+    let ready = editor.document.visit.ready.as_ref().unwrap();
     let area = ready.area;
     let mut record = ready.record.clone();
     record.path = "light.ARW".into();
     record.reference_only = true;
     let reference = Ready {
+        developed: ready.developed.clone(),
         file: thumbnails::FileKey::new(&record.path),
         thumbnail: None,
         path: record.path.clone(),
@@ -217,16 +205,17 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
         height: 320,
     };
     editor.begin_flat_edit(reference.path.clone(), Some(region));
-    assert!(matches!(receiver.recv().unwrap(), Command::FlatPreview(..)));
-    send.send(Message::FlatPreview(
+    assert!(matches!(
+        editor.flat_edit.as_ref().unwrap().request,
+        Some(reference_services::Operation::Preview(_))
+    ));
+    editor.reference_previewed(
         editor.id,
-        Ok(Box::new(FlatPreview {
+        Ok(FlatPreview {
             ready: reference,
             region: None,
-        })),
-    ))
-    .unwrap();
-    editor.receive();
+        }),
+    );
     let context = egui::Context::default();
     let mut output = context.run_ui(
         egui::RawInput {
@@ -236,7 +225,7 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
             )),
             ..Default::default()
         },
-        |ui| host::App::ui(&mut editor, ui),
+        |ui| crate::editor::tests::paint_controller(&mut editor, ui),
     );
     output.textures_delta.clear();
     let layout = editor.last_layout.unwrap().0;
@@ -260,19 +249,30 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
     editor.region = Some(editor.crop.unwrap().coverage().unwrap());
     editor.apply_flat_edit();
     assert!(!editor.busy);
-    assert!(receiver.try_recv().is_err());
+    assert!(
+        editor
+            .flat_edit
+            .as_ref()
+            .is_none_or(|edit| edit.request.is_none())
+    );
     assert_eq!(editor.document.project, original);
     editor.region = Some(Coverage::rectangle(region));
     editor.apply_flat_edit();
-    let Command::FlatAccept(request, support, document, selected) = receiver.recv().unwrap() else {
+    let request = editor.id;
+    let Some(reference_services::Operation::Accept(input)) =
+        editor.flat_edit.as_mut().unwrap().request.take()
+    else {
         panic!("expected source support acceptance")
     };
-    assert_eq!(support, region);
-    assert_eq!(document.project, original);
-    assert_eq!(selected, editor.current_source);
-    send.send(Message::Prepared(request, Err("invalid correction".into())))
-        .unwrap();
-    editor.receive();
+    assert_eq!(input.region, region);
+    assert!(Arc::ptr_eq(
+        &input.source.source,
+        &editor.document.visit.ready.as_ref().unwrap().developed
+    ));
+    assert!(input.source.correction.is_none());
+    assert_eq!(input.document.project, original);
+    assert_eq!(input.selected, editor.current_source);
+    editor.document_prepared(request, Err("invalid correction".into()));
     assert_eq!(editor.document.project, original);
     assert_eq!(
         editor.crop,
@@ -285,14 +285,24 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
     assert_eq!(editor.viewport, viewport);
     assert!(!editor.source);
     assert!(editor.last_layout.is_none());
-    assert!(matches!(receiver.recv().unwrap(), Command::CancelFlat(..)));
+    assert!(
+        editor
+            .flat_edit
+            .as_ref()
+            .is_none_or(|edit| edit.request.is_none())
+    );
     editor.begin_crop();
     let request = editor.id;
     editor.begin_flat_edit("another-light.ARW".into(), None);
     assert_eq!(editor.id, request);
-    assert!(editor.crop_edit.is_some());
+    assert!(editor.document.visit.crop_edit.is_some());
     assert!(editor.flat_edit.is_none());
-    assert!(receiver.try_recv().is_err());
+    assert!(
+        editor
+            .flat_edit
+            .as_ref()
+            .is_none_or(|edit| edit.request.is_none())
+    );
 }
 
 #[test]
@@ -312,8 +322,8 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
         // Thumbnail scheduling is separate and must not write the user's disk cache.
         editor.thumbnails = Thumbnails::default();
         editor.add_raws(vec![root.join("illuminated-patches.dng")]);
-        wait_with_limit(&mut editor, Duration::from_secs(60));
-        assert!(editor.ready.is_some(), "{}", editor.status);
+        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(60));
+        assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
         let selected = editor.current_source;
         let mut scan = Scan::open(&root.join("illuminated-patches.dng"), None).unwrap();
         editor.dmin = Some(
@@ -338,16 +348,19 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
         let rgb = (editor.dmin, editor.dmax);
         let original = editor.document.project.clone();
         editor.begin_flat_edit(root.join("bare-light.dng"), None);
-        wait_with_limit(&mut editor, Duration::from_secs(60));
+        editor =
+            crate::editor::tests::complete_reference_operation(editor, Duration::from_secs(60));
         assert_eq!(editor.pick, Some(Pick::Flat));
         assert!(editor.region.is_some());
         editor.finish_pick();
         assert_eq!(editor.document.project, original);
         assert_eq!(editor.current_source, selected);
         editor.begin_flat_edit(root.join("bare-light.dng"), None);
-        wait_with_limit(&mut editor, Duration::from_secs(60));
+        editor =
+            crate::editor::tests::complete_reference_operation(editor, Duration::from_secs(60));
         editor.apply_pick();
-        wait_with_limit(&mut editor, Duration::from_secs(60));
+        editor =
+            crate::editor::tests::complete_reference_operation(editor, Duration::from_secs(60));
         assert!(editor.correction.is_some(), "{}", editor.status);
         assert_eq!(editor.document.project.order, original.order);
         assert_eq!((editor.dmin, editor.dmax), rgb);
@@ -364,11 +377,11 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
         let directory = tempfile::tempdir().unwrap();
         let accepted = editor.document.project.clone();
         editor.restore_history(history::Direction::Undo);
-        wait_with_limit(&mut editor, Duration::from_secs(60));
+        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(60));
         assert_eq!(editor.document.project, original, "{}", editor.status);
         assert!(editor.correction.is_none());
         editor.restore_history(history::Direction::Redo);
-        wait_with_limit(&mut editor, Duration::from_secs(60));
+        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(60));
         assert_eq!(editor.document.project, accepted, "{}", editor.status);
         assert_eq!(
             editor.correction.as_ref().unwrap().settings.map,
@@ -377,7 +390,8 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
         editor.begin_flat_edit(directory.path().join("missing.dng"), None);
         assert!(editor.busy);
         assert!(editor.flat_edit.is_some());
-        wait_with_limit(&mut editor, Duration::from_secs(60));
+        editor =
+            crate::editor::tests::complete_reference_operation(editor, Duration::from_secs(60));
         assert!(editor.status.contains("open"), "{}", editor.status);
         assert!(!editor.busy);
         assert!(editor.flat_edit.is_none());
@@ -385,13 +399,13 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
         assert!(editor.document_pending.is_none());
         assert_eq!(editor.document.project, accepted);
         assert_eq!(editor.current_source, selected);
-        assert!(editor.ready.is_some());
+        assert!(editor.document.visit.ready.is_some());
         let path = directory.path().join("authored-correction.antitone.json");
         editor.queue_save(path.clone(), crate::project::Save::New, None);
-        wait_with_limit(&mut editor, Duration::from_secs(60));
+        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(60));
         assert!(!editor.document.dirty(), "{}", editor.status);
-        editor.start_document(DocumentWork::Open(path));
-        wait_with_limit(&mut editor, Duration::from_secs(60));
+        editor.start_document(Preparation::Open(path));
+        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(60));
         assert_eq!(editor.document.project, accepted);
         assert_eq!(
             editor.correction.as_ref().unwrap().settings.map,
@@ -402,22 +416,13 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
             directory.path().join("unavailable.dng");
         let path = directory.path().join("missing-reference.antitone.json");
         missing.save(&path, crate::project::Save::New).unwrap();
-        editor.start_document(DocumentWork::Open(path));
-        wait_with_limit(&mut editor, Duration::from_secs(60));
+        editor.start_document(Preparation::Open(path));
+        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(60));
         assert_eq!(editor.document.project, missing);
         assert_eq!(
             editor.correction.as_ref().unwrap().settings.map,
             settings.map
         );
-        assert!(editor.ready.is_some(), "{}", editor.status);
+        assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
     });
-}
-
-fn wait_with_limit(editor: &mut Editor, limit: Duration) {
-    let start = std::time::Instant::now();
-    while editor.busy {
-        editor.receive();
-        assert!(start.elapsed() < limit, "{}", editor.status);
-        std::thread::sleep(Duration::from_millis(10));
-    }
 }

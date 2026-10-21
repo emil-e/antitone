@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::{cell::RefCell, sync::Arc};
 
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -9,6 +9,7 @@ use winit::window::{Window, WindowId};
 use super::{
     SubmissionGate, fullscreen::PhotoFullscreen, latency::Trace, macos, menu, termination,
 };
+use crate::application::{Application, UiAccess};
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -22,10 +23,10 @@ pub enum QuitState {
     Approved,
 }
 
-pub trait App {
+pub trait App: Sized {
     /// The same gate used by every background submitter on this host's queue.
-    fn submission_gate(&self) -> &SubmissionGate;
-    fn ui(&mut self, ui: &mut egui::Ui);
+    fn submission_gate(&self) -> SubmissionGate;
+    fn ui(&mut self, ui: &mut egui::Ui, access: &UiAccess<'_, Self>);
     fn menu_state(&self) -> Option<menu::State> {
         None
     }
@@ -57,9 +58,9 @@ pub trait App {
     fn on_exit(&mut self) {}
 }
 
-pub fn run<A: App + 'static>(
+pub fn run<A: App>(
     title: &str,
-    create: impl FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<A> + 'static,
+    create: impl for<'scope> FnOnce(&wgpu::Device, &wgpu::Queue, UiAccess<'scope, A>) -> Result<A>,
 ) -> Result<u64> {
     let event_loop = EventLoop::<HostEvent>::with_user_event().build()?;
     let context = egui::Context::default();
@@ -77,24 +78,37 @@ pub fn run<A: App + 'static>(
             let _ = proxy.send_event(HostEvent::Repaint(when));
         }
     });
+    let task_proxy = quit_proxy.clone();
+    let repaint = context.clone();
+    // This owner outlives the borrowing executor and every callback/task.
+    let app = RefCell::new(None);
+    let application = Application::new(
+        move || {
+            let _ = task_proxy.send_event(HostEvent::ExecutorWake);
+        },
+        move || repaint.request_repaint(),
+    );
     let mut host = Host {
         title: title.to_owned(),
         create: Some(create),
         context,
         proxy: quit_proxy,
+        application,
+        app: &app,
         state: None,
         finishing: None,
         next_repaint: None,
         error: None,
     };
     let outcome = event_loop.run_app(&mut host);
+    host.application.close();
     let trace_outcome = if let Some(state) = &mut host.state {
         state.cleanup()
     } else {
         Ok(())
     };
     outcome?;
-    if let Some(error) = host.error {
+    if let Some(error) = host.error.take() {
         return Err(error);
     }
     trace_outcome?;
@@ -103,7 +117,7 @@ pub fn run<A: App + 'static>(
         || host
             .state
             .as_ref()
-            .is_some_and(|state| state.app.quit_state() == Some(QuitState::Approved));
+            .is_some_and(|state| state.app.read(App::quit_state) == Some(QuitState::Approved));
     let termination = host
         .state
         .as_mut()
@@ -119,23 +133,36 @@ pub fn run<A: App + 'static>(
 }
 
 enum HostEvent {
+    ExecutorWake,
     Repaint(Instant),
     Menu(muda::MenuId),
     Quit,
 }
 
-struct Host<A, F> {
+struct Host<'scope, A, F> {
     title: String,
     create: Option<F>,
     context: egui::Context,
     proxy: EventLoopProxy<HostEvent>,
-    state: Option<State<A>>,
+    application: Application<'scope>,
+    app: &'scope RefCell<Option<A>>,
+    state: Option<State<'scope, A>>,
     finishing: Option<termination::Guard>,
     next_repaint: Option<Instant>,
     error: Option<Box<dyn std::error::Error>>,
 }
 
-impl<A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<A>> Host<A, F> {
+impl<A, F> Drop for Host<'_, A, F> {
+    fn drop(&mut self) {
+        // Cover unwinding and partially initialized hosts as well as normal exit.
+        self.application.close();
+        drop(self.app.borrow_mut().take());
+    }
+}
+
+impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiAccess<'scope, A>) -> Result<A>>
+    Host<'scope, A, F>
+{
     fn fail(&mut self, event_loop: &ActiveEventLoop, error: Box<dyn std::error::Error>) {
         if let Some(guard) = self
             .state
@@ -155,7 +182,9 @@ impl<A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<A>> Host<A, F> {
             .termination
             .take()
             .expect("active native termination guard");
+        self.application.close();
         let outcome = state.cleanup();
+        drop(self.app.borrow_mut().take());
         drop(state);
         match outcome {
             Ok(()) => {
@@ -170,15 +199,15 @@ impl<A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<A>> Host<A, F> {
     }
 }
 
-impl<A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<A>> ApplicationHandler<HostEvent>
-    for Host<A, F>
+impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiAccess<'scope, A>) -> Result<A>>
+    ApplicationHandler<HostEvent> for Host<'scope, A, F>
 {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let _native_unwind = termination::cancel_on_unwind();
         if self.state.is_some() || self.finishing.is_some() {
             return;
         }
-        let mut initialize = || -> Result<State<A>> {
+        let mut initialize = || -> Result<State<'scope, A>> {
             let window = Arc::new(
                 event_loop.create_window(
                     Window::default_attributes()
@@ -187,22 +216,39 @@ impl<A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<A>> ApplicationHan
                 )?,
             );
             let gpu = pollster::block_on(Gpu::new(window.clone()))?;
-            let mut app = self.create.take().expect("initialize once")(&gpu.device, &gpu.queue)?;
-            let termination = if app.quit_state().is_some() {
-                let proxy = self.proxy.clone();
-                Some(termination::Guard::install(move || {
-                    proxy.send_event(HostEvent::Quit).is_ok()
-                })?)
-            } else {
-                None
+            let access = self.application.access(self.app);
+            let prepared = (|| -> Result<_> {
+                let app = self.create.take().expect("initialize once")(
+                    &gpu.device,
+                    &gpu.queue,
+                    access.clone(),
+                )?;
+                *self.app.borrow_mut() = Some(app);
+                let termination = if access.read(App::quit_state).is_some() {
+                    let proxy = self.proxy.clone();
+                    Some(termination::Guard::install(move || {
+                        proxy.send_event(HostEvent::Quit).is_ok()
+                    })?)
+                } else {
+                    None
+                };
+                let menus = access
+                    .read(App::menu_state)
+                    .map(|state| menu::native::NativeMenu::new(&state))
+                    .transpose()?;
+                if menus.is_some() {
+                    access.with_mut(App::native_menu_installed);
+                }
+                Ok((termination, menus))
+            })();
+            let (termination, menus) = match prepared {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    self.application.close();
+                    drop(self.app.borrow_mut().take());
+                    return Err(error);
+                }
             };
-            let menus = app
-                .menu_state()
-                .map(|state| menu::native::NativeMenu::new(&state))
-                .transpose()?;
-            if menus.is_some() {
-                app.native_menu_installed();
-            }
             let input = egui_winit::State::new(
                 self.context.clone(),
                 egui::ViewportId::ROOT,
@@ -216,7 +262,7 @@ impl<A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<A>> ApplicationHan
             window.request_redraw();
             Ok(State {
                 gpu,
-                app,
+                app: access,
                 input,
                 viewport,
                 fullscreen: PhotoFullscreen::default(),
@@ -233,6 +279,7 @@ impl<A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<A>> ApplicationHan
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: HostEvent) {
         let _native_unwind = termination::cancel_on_unwind();
         match event {
+            HostEvent::ExecutorWake => self.application.drive(),
             HostEvent::Repaint(when) => {
                 self.next_repaint = Some(self.next_repaint.map_or(when, |old| old.min(when)));
             }
@@ -241,7 +288,7 @@ impl<A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<A>> ApplicationHan
                     && let Some(action) = state.menus.as_ref().and_then(|menus| menus.action(&id))
                 {
                     state.reveal();
-                    state.app.menu_action(action);
+                    state.app.with_mut(|app| app.menu_action(action));
                 }
             }
             HostEvent::Quit => {
@@ -252,7 +299,7 @@ impl<A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<A>> ApplicationHan
                         .is_some_and(|guard| guard.delivered())
                 {
                     state.reveal();
-                    state.app.request_quit();
+                    state.app.with_mut(App::request_quit);
                 }
             }
         }
@@ -333,7 +380,7 @@ impl<A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<A>> ApplicationHan
             wake = None;
         }
         if let Some(state) = &self.state {
-            let pending = state.app.submission_gate().pending();
+            let pending = state.app.read(App::submission_gate).pending();
             if (pending || state.gpu.trace.as_ref().is_some_and(|t| t.pending()))
                 && let Err(error) = state.gpu.device.poll(wgpu::PollType::Poll)
             {
@@ -355,9 +402,9 @@ impl<A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<A>> ApplicationHan
     }
 }
 
-struct State<A> {
+struct State<'scope, A> {
     gpu: Gpu,
-    app: A,
+    app: UiAccess<'scope, A>,
     input: egui_winit::State,
     viewport: egui::ViewportInfo,
     fullscreen: PhotoFullscreen,
@@ -365,17 +412,17 @@ struct State<A> {
     termination: Option<termination::Guard>,
 }
 
-impl<A: App> State<A> {
+impl<A: App> State<'_, A> {
     fn native_quit_approved(&self) -> bool {
         self.termination
             .as_ref()
             .is_some_and(|guard| guard.awaiting_decision())
-            && self.app.quit_state() == Some(QuitState::Approved)
+            && self.app.read(App::quit_state) == Some(QuitState::Approved)
     }
 
     fn cleanup(&mut self) -> Result<()> {
         let restoration = self.fullscreen.update(&self.gpu.window, false);
-        self.app.on_exit();
+        self.app.with_mut(App::on_exit);
         restoration?;
         self.gpu.drain_trace()
     }
@@ -400,7 +447,7 @@ impl<A: App> State<A> {
                 || size.width != self.gpu.config.width
                 || size.height != self.gpu.config.height
             {
-                self.gpu.configure(self.app.submission_gate())?;
+                self.gpu.configure(self.app.read(App::submission_gate))?;
             }
             if let Some(timing) = &mut timing {
                 timing.acquire_start = Some(Instant::now());
@@ -425,13 +472,13 @@ impl<A: App> State<A> {
                     Some(frame)
                 }
                 wgpu::CurrentSurfaceTexture::Outdated => {
-                    self.gpu.configure(self.app.submission_gate())?;
+                    self.gpu.configure(self.app.read(App::submission_gate))?;
                     self.gpu.window.request_redraw();
                     None
                 }
                 wgpu::CurrentSurfaceTexture::Lost => {
                     self.gpu.surface = self.gpu.instance.create_surface(self.gpu.window.clone())?;
-                    self.gpu.configure(self.app.submission_gate())?;
+                    self.gpu.configure(self.app.read(App::submission_gate))?;
                     self.gpu.window.request_redraw();
                     None
                 }
@@ -449,10 +496,10 @@ impl<A: App> State<A> {
         egui_winit::update_viewport_info(&mut self.viewport, context, &self.gpu.window, false);
         let clipboard = self
             .app
-            .menu_paste_requested()
+            .read(App::menu_paste_requested)
             .then(|| self.input.clipboard_text())
             .flatten();
-        let menu_input = self.app.menu_input(clipboard);
+        let menu_input = self.app.with_mut(|app| app.menu_input(clipboard));
         let mut raw = self.input.take_egui_input(&self.gpu.window);
         raw.events.splice(0..0, menu_input);
         raw.viewports
@@ -460,8 +507,8 @@ impl<A: App> State<A> {
         if let Some(timing) = &mut timing {
             timing.ui_start = Some(Instant::now());
         }
-        let mut output = context.run_ui(raw, |ui| self.app.ui(ui));
-        if let (Some(menus), Some(state)) = (&mut self.menus, self.app.menu_state()) {
+        let mut output = context.run_ui(raw, |ui| self.app.with_mut(|app| app.ui(ui, &self.app)));
+        if let (Some(menus), Some(state)) = (&mut self.menus, self.app.read(App::menu_state)) {
             menus.update(&state);
         }
         if let Some(timing) = &mut timing {
@@ -518,14 +565,16 @@ impl<A: App> State<A> {
             let commands = commands.into_iter().chain([encoder.finish()]);
             if let (Some(trace), Some(timing)) = (&mut self.gpu.trace, &mut timing) {
                 trace.submitting(timing);
-                self.app.submission_gate().submit_with_completion(
+                self.app.read(App::submission_gate).submit_with_completion(
                     &self.gpu.queue,
                     commands,
                     trace.completion(timing),
                 );
                 timing.submit_end = Some(Instant::now());
             } else {
-                self.app.submission_gate().submit(&self.gpu.queue, commands);
+                self.app
+                    .read(App::submission_gate)
+                    .submit(&self.gpu.queue, commands);
             }
             self.gpu.window.pre_present_notify();
             self.gpu.queue.present(frame);
@@ -535,7 +584,11 @@ impl<A: App> State<A> {
             self.gpu.presented += 1;
         }
         if let (Some(trace), Some(timing)) = (&mut self.gpu.trace, timing) {
-            trace.finish(timing, self.app.processing_revision(), &self.gpu.device);
+            trace.finish(
+                timing,
+                self.app.read(App::processing_revision),
+                &self.gpu.device,
+            );
         }
         for id in output.textures_delta.free.drain() {
             self.gpu.renderer.free_texture(&id);
@@ -574,14 +627,15 @@ impl<A: App> State<A> {
         }
         if let Some(active) = self
             .fullscreen
-            .update(&self.gpu.window, self.app.photo_fullscreen())?
+            .update(&self.gpu.window, self.app.read(App::photo_fullscreen))?
         {
-            self.app.photo_fullscreen_changed(active);
+            self.app
+                .with_mut(|app| app.photo_fullscreen_changed(active));
         }
         if let Some(termination) = &self.termination
             && termination.awaiting_decision()
         {
-            match self.app.quit_state() {
+            match self.app.read(App::quit_state) {
                 Some(QuitState::Pending | QuitState::Approved) => {}
                 Some(QuitState::Running) | None => termination.reply(false),
             }
@@ -658,7 +712,7 @@ impl Gpu {
             trace: Trace::from_env(),
         };
         // No application or background submitters exist during initial configuration.
-        gpu.configure(&SubmissionGate::default())?;
+        gpu.configure(SubmissionGate::default())?;
         println!(
             "presentation adapter={:?} target={:?}",
             gpu.adapter.get_info(),
@@ -680,7 +734,7 @@ impl Gpu {
         Ok(())
     }
 
-    fn configure(&mut self, submissions: &SubmissionGate) -> Result<()> {
+    fn configure(&mut self, submissions: SubmissionGate) -> Result<()> {
         let trace_start = self.trace.as_ref().map(|_| Instant::now());
         if !self
             .surface

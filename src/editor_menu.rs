@@ -46,7 +46,6 @@ impl Editor {
         if self.menus.pending.contains(&Action::Quit)
             || closing(&self.transition)
             || closing(&self.after_save)
-            || closing(&self.resume_transition)
             || self
                 .project_overwrite
                 .as_ref()
@@ -82,20 +81,20 @@ impl Editor {
         !self.busy
             && !self.application_modal()
             && self.pick.is_none()
-            && self.auto_crop_edit.is_none()
-            && self.crop_edit.is_none()
-            && self.mask_edit.is_none()
+            && self.document.auto_crop_edit.is_none()
+            && self.document.visit.crop_edit.is_none()
+            && self.document.visit.mask_edit.is_none()
     }
 
     fn application_modal(&self) -> bool {
-        self.failure.is_some()
+        self.allow_close
+            || self.failure.is_some()
             || self.document_pending.is_some()
             || self.overwrite.is_some()
             || self.transition.is_some()
             || self.project_overwrite.is_some()
-            || self.resume_transition.is_some()
             || self.removal_pending.is_some()
-            || self.adjustments.confirming()
+            || self.document.visit.adjustments.confirming()
     }
 
     pub(super) fn application_menu_state(&self) -> State {
@@ -140,29 +139,37 @@ impl Editor {
                 state.enabled.insert(Redo);
             }
         }
-        if !self.busy || self.export_pending.is_some() {
+        if !self.busy || self.export_operation.pending.is_some() {
             state.enabled.extend([About, Settings, Help]);
         }
         if self.file_available() {
             state
                 .enabled
                 .extend([New, Open, AddScans, Close, Save, SaveAs]);
-            if self.calibration().is_some() && self.ready.is_some() {
+            if self.calibration().is_some() && self.document.visit.ready.is_some() {
                 state
                     .enabled
                     .extend([ExportTiff, ExportExrHalf, ExportExrFull]);
             }
         }
-        if self.ready.is_some()
+        if self.document.visit.ready.is_some()
             && !self.busy
-            && !self.mask_edit.as_ref().is_some_and(MaskEdit::dragging)
+            && !self
+                .document
+                .visit
+                .mask_edit
+                .as_ref()
+                .is_some_and(MaskEdit::dragging)
         {
             state.enabled.extend([Fit, ActualSize, ZoomIn, ZoomOut]);
         }
         if self.fullscreen_available() {
             state.enabled.insert(PhotoInspection);
         }
-        if self.fullscreen.is_none() && self.pick.is_none() && self.analysis_review.is_none() {
+        if self.fullscreen.is_none()
+            && self.pick.is_none()
+            && self.document.analysis_review.is_none()
+        {
             state.enabled.insert(Scopes);
         }
         state

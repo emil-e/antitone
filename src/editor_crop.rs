@@ -111,17 +111,17 @@ impl Editor {
         self.finish_dust_cleanup();
         if self.busy
             || self.pick.is_some()
-            || self.crop_edit.is_some()
-            || self.auto_crop_edit.is_some()
-            || self.mask_edit.is_some()
+            || self.document.visit.crop_edit.is_some()
+            || self.document.auto_crop_edit.is_some()
+            || self.document.visit.mask_edit.is_some()
         {
             return;
         }
-        let Some(area) = self.ready.as_ref().map(|ready| ready.area) else {
+        let Some(area) = self.document.visit.ready.as_ref().map(|ready| ready.area) else {
             return;
         };
         self.close_adjustments();
-        self.crop_edit = Some(CropEdit {
+        self.document.visit.crop_edit = Some(CropEdit {
             draft: self.crop.unwrap_or(Crop::from_region(area)),
             viewport: self.viewport,
             ratio: None,
@@ -139,6 +139,8 @@ impl Editor {
 
     pub(super) fn initialize_crop_frame(&mut self, crop: Crop) {
         let edit = self
+            .document
+            .visit
             .crop_edit
             .as_mut()
             .expect("crop initialization retains its tool");
@@ -151,12 +153,18 @@ impl Editor {
     }
 
     pub(super) fn finish_crop(&mut self, apply: bool) {
-        let Some(edit) = self.crop_edit.take() else {
+        let Some(edit) = self.document.visit.crop_edit.take() else {
             return;
         };
         if apply {
             let before = self.history_snapshot();
-            let active = self.ready.as_ref().expect("crop retains its source").area;
+            let active = self
+                .document
+                .visit
+                .ready
+                .as_ref()
+                .expect("crop retains its source")
+                .area;
             edit.draft
                 .region(active)
                 .expect("crop draft is constrained");
@@ -176,15 +184,15 @@ impl Editor {
         use icons::Icon;
         use presentation::{ToolButton, ToolShelf};
 
-        let cropping = self.crop_edit.is_some();
-        let dusting = self.dust.cleanup;
-        let auto_cropping = self.auto_crop_edit.is_some();
+        let cropping = self.document.visit.crop_edit.is_some();
+        let dusting = self.document.dust.cleanup;
+        let auto_cropping = self.document.auto_crop_edit.is_some();
         let tool_active = cropping
             || dusting
             || auto_cropping
             || self.flat_edit.is_some()
-            || self.mask_edit.is_some();
-        let ready = !self.busy && self.ready.is_some();
+            || self.document.visit.mask_edit.is_some();
+        let ready = !self.busy && self.document.visit.ready.is_some();
         let commands_enabled = ready && !tool_active && self.pick.is_none();
         let crop_enabled =
             cropping || auto_cropping || ready && self.pick.is_none() && !tool_active;
@@ -296,16 +304,16 @@ impl Editor {
             ToolAction::FlipHorizontal => self.photo_orientation.flips.horizontal ^= true,
             ToolAction::FlipVertical => self.photo_orientation.flips.vertical ^= true,
             ToolAction::Crop => {
-                if self.auto_crop_edit.is_some() {
+                if self.document.auto_crop_edit.is_some() {
                     self.finish_auto_crop(false);
-                } else if self.crop_edit.is_some() {
+                } else if self.document.visit.crop_edit.is_some() {
                     self.finish_crop(false);
                 } else {
                     self.begin_crop();
                 }
             }
             ToolAction::Dust => {
-                if self.dust.cleanup {
+                if self.document.dust.cleanup {
                     self.finish_dust_cleanup();
                 } else {
                     self.begin_dust_cleanup();
@@ -319,7 +327,7 @@ impl Editor {
     }
 
     pub(super) fn crop_controls(&mut self, ui: &mut egui::Ui) {
-        if let Some(edit) = &mut self.crop_edit {
+        if let Some(edit) = &mut self.document.visit.crop_edit {
             if std::mem::take(&mut edit.reveal_controls) {
                 ui.scroll_to_cursor(Some(egui::Align::Min));
             }
@@ -340,8 +348,14 @@ impl Editor {
 
     pub(super) fn crop_tool_controls(&mut self, ui: &mut egui::Ui, reset: bool) {
         use icons::Icon;
-        let edit = self.crop_edit.as_mut().unwrap();
-        let area = self.ready.as_ref().expect("crop retains its source").area;
+        let edit = self.document.visit.crop_edit.as_mut().unwrap();
+        let area = self
+            .document
+            .visit
+            .ready
+            .as_ref()
+            .expect("crop retains its source")
+            .area;
         let full = Composition::new(area, self.roll_orientation, self.photo_orientation).unwrap();
         let composition = Composition::with_crop(
             area,
@@ -484,7 +498,7 @@ impl Editor {
         response: &egui::Response,
         mut layout: CanvasLayout,
     ) -> CanvasLayout {
-        let Some(edit) = &mut self.crop_edit else {
+        let Some(edit) = &mut self.document.visit.crop_edit else {
             return layout;
         };
         if !ui.is_enabled() {
@@ -685,7 +699,7 @@ impl Editor {
         if !ui.is_enabled() || !response.enabled() {
             return;
         }
-        let Some(edit) = &self.crop_edit else {
+        let Some(edit) = &self.document.visit.crop_edit else {
             return;
         };
         let position = match edit.drag {
@@ -721,7 +735,11 @@ impl Editor {
                 layout.image.max,
                 layout.image.left_bottom(),
             ],
-            self.crop_edit.as_ref().is_some_and(|e| e.guides),
+            self.document
+                .visit
+                .crop_edit
+                .as_ref()
+                .is_some_and(|e| e.guides),
             160,
         );
     }

@@ -15,11 +15,11 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
         editor.add_raws(vec![
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         ]);
-        wait(&mut editor);
+        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(30));
         editor.dmin = Some(DVec3::splat(0.8));
         editor.dmax = Some(DVec3::splat(0.02));
         editor.roll = RollSettings::new_grade();
-        let area = editor.ready.as_ref().unwrap().area;
+        let area = editor.document.visit.ready.as_ref().unwrap().area;
         editor.crop = Some(Crop {
             center: [
                 f64::from(area.x) + f64::from(area.width) / 2.,
@@ -79,6 +79,7 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
             let path = directory.path().join(format!("look-{with_look}.tif"));
             assert!(
                 !editor
+                    .document
                     .dust
                     .has_evaluation(id, crate::dust_repair::RepairId(1))
             );
@@ -89,7 +90,7 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
             );
             // Change live state after capture; neither file may follow this newer value.
             editor.document.project.output.look = (!with_look).then(|| look.clone());
-            wait(&mut editor);
+            editor = wait(editor);
             assert!(editor.failure.is_none(), "{}", editor.status);
             editor.document.project.output.look = Some(look.clone());
             let pixels = tiff_pixels(&path);
@@ -117,6 +118,7 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
             );
             assert!(
                 !editor
+                    .document
                     .dust
                     .has_evaluation(id, crate::dust_repair::RepairId(1))
             );
@@ -131,12 +133,13 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
                 Overwrite::Confirmed,
             );
             editor
-                .export_cancel
+                .export_operation
+                .cancelled
                 .as_ref()
                 .unwrap()
                 .store(true, std::sync::atomic::Ordering::Relaxed);
         });
-        wait(&mut editor);
+        editor = wait(editor);
         assert!(editor.status.contains("cancel"), "{}", editor.status);
         assert_eq!(std::fs::read(&path).unwrap(), b"existing destination");
         assert_eq!(
@@ -144,6 +147,6 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
             3,
             "cancelled job leaves no temporary file"
         );
-        assert!(editor.export_cancel.is_none());
+        assert!(editor.export_operation.cancelled.is_none());
     });
 }

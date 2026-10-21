@@ -205,7 +205,7 @@ impl Editor {
             Command::Roll(action) => self.apply_roll_orientation(action),
             Command::Adjustment(action) => self.apply_adjustment_action(action),
             Command::ToggleAdjustments => {
-                if self.adjustments.drawer_open() {
+                if self.document.visit.adjustments.drawer_open() {
                     self.close_adjustments();
                 } else {
                     self.open_adjustments();
@@ -221,7 +221,7 @@ impl Editor {
             Command::Pick(kind) => self.begin_pick(kind),
             Command::ResetRepairs(source) => self.reset_dust_repairs(source),
             Command::Correction(enabled) => {
-                let mut candidate = self.document.clone();
+                let mut candidate = self.document.capture();
                 if let Some(enabled) = enabled {
                     candidate
                         .project
@@ -232,7 +232,7 @@ impl Editor {
                 } else {
                     candidate.project.flat_field = None;
                 }
-                self.start_document(DocumentWork::Correction(candidate, self.current_source));
+                self.start_document(Preparation::Correction(candidate, self.current_source));
             }
             Command::FlatEdit(path, region) => self.begin_flat_edit(path, region),
         }

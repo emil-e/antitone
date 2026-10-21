@@ -64,7 +64,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
         editor.add_raws(vec![
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         ]);
-        wait(&mut editor);
+        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(30));
         editor.dmin = Some(DVec3::splat(0.8));
         editor.dmax = Some(DVec3::splat(0.02));
         editor.sync_document();
@@ -106,10 +106,10 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             .project
             .save(&saved, crate::project::Save::New)
             .unwrap();
-        editor.start_document(DocumentWork::New);
-        wait(&mut editor);
-        editor.start_document(DocumentWork::Open(saved));
-        wait(&mut editor);
+        editor.start_document(Preparation::New);
+        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(30));
+        editor.start_document(Preparation::Open(saved));
+        editor = crate::editor::tests::complete_document_operation(editor, Duration::from_secs(30));
         let id = editor.current_source.unwrap();
         let dirty = editor.document.dirty();
         let recipe = editor.document.project.image_recipe(id).unwrap();
@@ -157,6 +157,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
         ] {
             assert!(
                 !editor
+                    .document
                     .dust
                     .has_evaluation(id, crate::dust_repair::RepairId(1)),
                 "export must not require or warm the viewer cache"
@@ -164,7 +165,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             let path = directory.path().join(name);
             editor.export(path.clone(), format, Overwrite::Refuse);
             editor.document.project.output.look = None;
-            wait(&mut editor);
+            editor = wait(editor);
             editor.document.project.output.look = Some(look.clone());
             assert!(editor.failure.is_none(), "{}", editor.status);
             assert!(path.exists());
@@ -206,7 +207,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             }
         }
         assert_eq!(editor.document.dirty(), dirty);
-        let area = editor.ready.as_ref().unwrap().area;
+        let area = editor.document.visit.ready.as_ref().unwrap().area;
         let border = editor
             .document
             .project
@@ -247,7 +248,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             OutputFormat::Tiff(OutputTarget::Srgb),
             Overwrite::Refuse,
         );
-        wait(&mut editor);
+        editor = wait(editor);
         assert!(editor.failure.is_none(), "{}", editor.status);
         assert_eq!(tiff_pixels(&cropped).len(), 32 * 32 * 3);
         editor
@@ -274,7 +275,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             OutputFormat::Tiff(OutputTarget::Srgb),
             Overwrite::Refuse,
         );
-        wait(&mut editor);
+        editor = wait(editor);
         assert!(editor.failure.is_none(), "{}", editor.status);
         assert_ne!(
             tiff_pixels(&plain),
@@ -288,7 +289,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
                 OutputFormat::Exr(precision),
                 Overwrite::Refuse,
             );
-            wait(&mut editor);
+            editor = wait(editor);
             assert!(editor.failure.is_none(), "{}", editor.status);
             let repaired = exr_pixels(
                 &directory.path().join(format!("repaired-{name}.exr")),
@@ -304,7 +305,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
         }
         let before = directory.path().join("repaired.tif");
         let bytes = std::fs::read(&before).unwrap();
-        let area = editor.ready.as_ref().unwrap().area;
+        let area = editor.document.visit.ready.as_ref().unwrap().area;
         let repairs = &mut editor.document.project.source_mut(id).unwrap().repairs;
         repairs.clear();
         repairs
@@ -319,7 +320,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             OutputFormat::Tiff(OutputTarget::Srgb),
             Overwrite::Confirmed,
         );
-        wait(&mut editor);
+        editor = wait(editor);
         assert!(editor.failure.is_some());
         assert!(
             editor.status.contains("repair") && editor.status.contains("donor"),

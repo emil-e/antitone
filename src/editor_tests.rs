@@ -4,14 +4,8 @@ mod viewer;
 #[path = "editor_workspace_tests.rs"]
 mod workspace;
 
-pub(super) fn fixture() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
-    let (commands, receiver) = mpsc::channel();
-    let (send, messages) = mpsc::channel();
-    let mut editor = Editor::state(
-        commands,
-        messages,
-        Arc::new(std::sync::atomic::AtomicU64::new(0)),
-    );
+pub(super) fn fixture() -> Editor {
+    let mut editor = Editor::state();
     editor.dmin = Some(DVec3::new(0.2, 0.15, 0.1));
     editor.dmax = Some(DVec3::new(0.008, 0.005, 0.002));
     editor.floor = crate::processing::CAMERA_INPUT_FLOOR;
@@ -21,12 +15,117 @@ pub(super) fn fixture() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Comman
         camera_model: "test-camera".into(),
         camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
     });
-    (editor, send, receiver)
+    editor
+}
+
+// Worker integration cases transfer owned state into a live application for the
+// document operation, then recover it after its continuation has retired.
+pub(super) fn complete_document_operation(editor: Editor, timeout: Duration) -> Editor {
+    assert!(
+        editor.document.write.request.is_some() || editor.candidate_operation.request.is_some()
+    );
+    assert!(editor.document.visit.measurement.is_none());
+    assert!(!editor.document.visit.source.pending());
+    let owner = std::cell::RefCell::new(Some(editor));
+    {
+        let mut app = crate::application::test_support::TestApplication::new(&owner, || {});
+        app.enter(|editor, access| {
+            editor.start_save_workflow(access);
+            editor.start_document_workflow(access);
+        });
+        app.run_until(timeout, |editor| editor.document_pending.is_none());
+        app.close_execution();
+    }
+    owner.into_inner().unwrap()
+}
+
+pub(super) fn complete_export_operation(editor: Editor, timeout: Duration) -> Editor {
+    assert!(editor.export_operation.request.is_some());
+    let owner = std::cell::RefCell::new(Some(editor));
+    {
+        let mut app = crate::application::test_support::TestApplication::new(&owner, || {});
+        app.enter(|editor, access| editor.start_export_workflow(access));
+        app.run_until(timeout, |editor| editor.export_operation.pending.is_none());
+        app.close_execution();
+    }
+    owner.into_inner().unwrap()
+}
+
+pub(super) fn complete_reference_operation(editor: Editor, timeout: Duration) -> Editor {
+    assert!(editor.flat_edit.as_ref().unwrap().request.is_some());
+    assert!(editor.document.visit.measurement.is_none());
+    let owner = std::cell::RefCell::new(Some(editor));
+    {
+        let mut app = crate::application::test_support::TestApplication::new(&owner, || {});
+        app.enter(|editor, access| editor.start_reference_workflow(access));
+        app.run_until(timeout, |editor| {
+            !editor.busy && editor.document_pending.is_none()
+        });
+        app.close_execution();
+    }
+    owner.into_inner().unwrap()
+}
+
+pub(super) fn complete_analysis_preparation(editor: Editor, timeout: Duration) -> Editor {
+    assert!(editor.document.analysis_preparing.is_some());
+    complete_analysis_operation(editor, timeout)
+}
+
+pub(super) fn complete_analysis_operation(editor: Editor, timeout: Duration) -> Editor {
+    assert!(
+        editor.document.analysis_preparing.is_some()
+            || editor.document.analysis_pending.is_some()
+            || editor.document.visit.source.pending()
+    );
+    let owner = std::cell::RefCell::new(Some(editor));
+    {
+        let mut app = crate::application::test_support::TestApplication::new(&owner, || {});
+        app.enter(|editor, access| {
+            editor.start_analysis_preparation(access);
+            editor.start_analysis_workflow(access);
+            editor.start_source_workflow(access);
+        });
+        app.run_until(timeout, |editor| {
+            editor.document.analysis_preparing.is_none()
+                && editor.document.analysis_pending.is_none()
+                && !editor.document.visit.source.pending()
+                && !editor.busy
+        });
+        app.close_execution();
+    }
+    owner.into_inner().unwrap()
+}
+
+// Controller fixtures draw and inspect captured intent without starting workflows.
+// Live fixtures enter the production UI and run its owning application between frames.
+pub(in crate::editor) trait UiFixture {
+    fn before_frame(&mut self) {}
+    fn ui(&mut self, ui: &mut egui::Ui);
+}
+
+impl UiFixture for Editor {
+    fn ui(&mut self, ui: &mut egui::Ui) {
+        self.draw_ui(ui);
+    }
+}
+
+pub(in crate::editor) fn paint_controller(editor: &mut impl UiFixture, ui: &mut egui::Ui) {
+    editor.ui(ui);
+}
+
+impl UiFixture for crate::application::test_support::TestApplication<'_, Editor> {
+    fn before_frame(&mut self) {
+        self.pump();
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui) {
+        self.enter(|editor, access| host::App::ui(editor, ui, access));
+    }
 }
 
 #[test]
 fn sdk_source_inspection_does_not_repeat_libraw_wb_headroom_compensation() {
-    let (mut editor, _, _) = fixture();
+    let mut editor = fixture();
     editor.document.project.development = Some(Development::dng([4., 1., 3., 1.]));
     let sdk = editor.source_parameters(0.).unwrap();
     let baseline = ProcessingParameters::source_preview(None, 0.).unwrap();
@@ -56,50 +155,45 @@ fn refinement_worker_uses_the_submission_gate_supplied_to_the_host() {
         editor.add_raws(vec![
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/roll-0.dng"),
         ]);
-        let started = std::time::Instant::now();
-        while editor.busy || editor.ready.is_none() {
-            editor.receive();
-            assert!(
-                started.elapsed() < Duration::from_secs(15),
-                "{}",
-                editor.status
-            );
-            std::thread::sleep(Duration::from_millis(1));
-        }
+        editor = complete_document_operation(editor, Duration::from_secs(15));
+        assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
         let view = ViewRequest {
-            area: editor.ready.as_ref().unwrap().area,
+            area: editor.document.visit.ready.as_ref().unwrap().area,
             output: [16, 16],
             frame: None,
         };
         let revision = editor.original.revision();
         let submissions = host::App::submission_gate(&editor).clone();
-        submissions.configure(|| {
-            editor
-                .commands
-                .send(Command::Refine(
-                    editor.id,
-                    revision,
-                    Box::new(ProcessingParameters::source().into()),
-                    OutputTarget::Srgb,
-                    view,
-                ))
-                .unwrap();
+        let request = original_view::Request {
+            revision,
+            generation: editor.original.generation.clone(),
+            input: ProcessingParameters::source().into(),
+            target: OutputTarget::Srgb,
+            view,
+            source: editor.source_context().unwrap(),
+        };
+        let services = editor.source_services.clone().unwrap();
+        let gate = submissions.clone();
+        let (completed, result) = mpsc::channel();
+        let worker = submissions.configure(|| {
+            let worker = std::thread::spawn(move || {
+                completed
+                    .send(pollster::block_on(request.prepare(services, gate)))
+                    .unwrap();
+            });
             assert!(matches!(
-                editor.messages.recv_timeout(Duration::from_millis(100)),
+                result.recv_timeout(Duration::from_millis(100)),
                 Err(mpsc::RecvTimeoutError::Timeout)
             ));
+            worker
         });
-        match editor
-            .messages
+        let image = result
             .recv_timeout(Duration::from_secs(15))
             .unwrap()
-        {
-            Message::Refined(received, Ok(Some(image))) => {
-                assert_eq!(received, revision);
-                assert_eq!(image.processing_byte_len(), (0, 0));
-            }
-            _ => panic!("worker failed to finish refinement after surface configuration"),
-        }
+            .unwrap()
+            .expect("completed reconstruction");
+        assert_eq!(image.processing_byte_len(), (0, 0));
+        worker.join().unwrap();
     });
 }
 
@@ -133,7 +227,7 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
         };
         for (width, height, ppp) in [(1100., 800., 1.), (800., 600., 2.)] {
             for kind in [Pick::Flat, Pick::Dmin] {
-                let (mut editor, _send, _receiver) = fixture();
+                let mut editor = fixture();
                 editor.dmin = None;
                 editor.dmax = None;
                 editor.source = true;
@@ -148,7 +242,8 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                     "/Users/example/{}/reference-with-a-long-filename.ARW",
                     "a-long-scanning-session-directory/".repeat(12)
                 ));
-                editor.ready = Some(Ready {
+                editor.document.visit.ready = Some(Ready {
+                    developed: developed_fixture(),
                     file: thumbnails::FileKey::new(&path),
                     thumbnail: None,
                     path: path.clone(),
@@ -208,7 +303,7 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                             events,
                             ..Default::default()
                         },
-                        |ui| host::App::ui(&mut editor, ui),
+                        |ui| editor.ui(ui),
                     );
                     output.textures_delta.clear();
                     let labels = ui_labels(output.clone());
@@ -279,8 +374,9 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
 }
 
 #[test]
-fn source_inspection_is_transient_and_pick_commands_never_receive_its_gain() {
-    let (mut editor, send, receiver) = fixture();
+fn source_inspection_is_transient_and_measurement_inputs_exclude_its_gain() {
+    let mut editor = fixture();
+    add_ready_fixture(&mut editor);
     editor.sync_document();
     let project = editor.document.project.clone();
     let expected_dmin = editor.dmin;
@@ -295,20 +391,14 @@ fn source_inspection_is_transient_and_pick_commands_never_receive_its_gain() {
 
     editor.begin_pick(Pick::Dmin);
     editor.region = Some(patch());
-    editor.apply_pick();
-    let Command::Pick(id, kind, _, _, roll, photo) = receiver.try_recv().unwrap() else {
-        panic!()
-    };
-    assert_eq!(roll, expected_roll);
-    assert_eq!(photo, expected_photo);
-
-    send.send(Message::Picked(
-        id,
-        kind,
+    let input = editor.measurement_input(Pick::Dmin, patch()).unwrap();
+    assert_eq!(input.roll, expected_roll);
+    assert_eq!(input.photo, expected_photo);
+    editor.measurement_result(
+        editor.document.visit.view,
+        Pick::Dmin,
         Ok(Measurement::Reference(expected_dmin.unwrap())),
-    ))
-    .unwrap();
-    editor.receive();
+    );
     assert_eq!(editor.dmin, expected_dmin);
     assert_eq!(editor.dmax, expected_dmax);
     assert_eq!(editor.roll, expected_roll);
@@ -320,7 +410,7 @@ fn source_inspection_is_transient_and_pick_commands_never_receive_its_gain() {
 
 #[test]
 fn every_picker_preserves_precise_edge_navigation_and_orientation_on_entry() {
-    let (mut editor, _send, _receiver) = fixture();
+    let mut editor = fixture();
     editor.roll_orientation.horizontal = true;
     editor.photo_orientation.turn_clockwise();
     let area = Rect {
@@ -355,21 +445,18 @@ fn every_picker_preserves_precise_edge_navigation_and_orientation_on_entry() {
 
 #[test]
 fn rejected_reference_and_cancel_restore_view_without_changing_processing() {
-    let (mut editor, send, _receiver) = fixture();
+    let mut editor = fixture();
     editor.source = false;
     let original = (editor.dmin, editor.dmax, editor.roll, editor.photo);
     for (kind, invalid) in [(Pick::Dmin, 0.001), (Pick::Dmax, 1.)] {
         editor.begin_pick(kind);
         assert!(editor.source);
         editor.region = Some(patch());
-        editor.apply_pick();
-        send.send(Message::Picked(
-            editor.id,
+        editor.measurement_result(
+            editor.document.visit.view,
             kind,
             Ok(Measurement::Reference(DVec3::splat(invalid))),
-        ))
-        .unwrap();
-        editor.receive();
+        );
         assert!(!editor.source);
         assert!(!editor.busy);
         assert!(editor.pick.is_none());
@@ -397,7 +484,7 @@ fn rejected_reference_and_cancel_restore_view_without_changing_processing() {
 fn completing_initial_calibration_leaves_forced_source_view_but_preserves_explicit_inspection() {
     for order in [[Pick::Dmin, Pick::Dmax], [Pick::Dmax, Pick::Dmin]] {
         for initial_source in [None, Some(false), Some(true)] {
-            let (mut editor, send, commands) = fixture();
+            let mut editor = fixture();
             if initial_source.is_none() {
                 editor.dmin = None;
                 editor.dmax = None;
@@ -408,15 +495,12 @@ fn completing_initial_calibration_leaves_forced_source_view_but_preserves_explic
                 editor.begin_pick(kind);
                 assert!(editor.source);
                 editor.region = Some(patch());
-                editor.apply_pick();
-                let Command::Pick(id, picked, ..) = commands.try_recv().unwrap() else {
-                    panic!()
-                };
-                assert_eq!(picked, kind);
                 let value = DVec3::splat(if kind == Pick::Dmin { 0.2 } else { 0.005 });
-                send.send(Message::Picked(id, kind, Ok(Measurement::Reference(value))))
-                    .unwrap();
-                editor.receive();
+                editor.measurement_result(
+                    editor.document.visit.view,
+                    kind,
+                    Ok(Measurement::Reference(value)),
+                );
                 let expected = initial_source.unwrap_or(index == 0);
                 assert_eq!(
                     editor.source, expected,
@@ -436,7 +520,7 @@ fn completing_initial_calibration_leaves_forced_source_view_but_preserves_explic
 #[test]
 fn failed_or_cancelled_initial_reference_picks_keep_forced_source_view_and_calibration() {
     for kind in [Pick::Dmin, Pick::Dmax] {
-        let (mut editor, send, commands) = fixture();
+        let mut editor = fixture();
         if kind == Pick::Dmin {
             editor.dmin = None;
         } else {
@@ -461,12 +545,7 @@ fn failed_or_cancelled_initial_reference_picks_keep_forced_source_view_and_calib
         ] {
             editor.begin_pick(kind);
             editor.region = Some(patch());
-            editor.apply_pick();
-            let Command::Pick(id, ..) = commands.try_recv().unwrap() else {
-                panic!()
-            };
-            send.send(Message::Picked(id, kind, result)).unwrap();
-            editor.receive();
+            editor.measurement_result(editor.document.visit.view, kind, result);
             assert!(editor.source);
             assert!(editor.pick.is_none() && !editor.busy && editor.calibration().is_none());
             assert_eq!(
@@ -485,7 +564,7 @@ fn failed_or_cancelled_initial_reference_picks_keep_forced_source_view_and_calib
 
 #[test]
 fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
-    let (mut editor, send, _receiver) = fixture();
+    let mut editor = fixture();
     let id = editor
         .document
         .project
@@ -532,25 +611,21 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
         tint: -0.1,
     };
     editor.begin_pick(Pick::Gamma);
-    send.send(Message::Picked(
-        editor.id,
+    editor.measurement_result(
+        editor.document.visit.view,
         Pick::Gamma,
         Ok(Measurement::Balance(balance)),
-    ))
-    .unwrap();
-    editor.receive();
+    );
     assert_eq!(editor.roll.balance, balance);
     assert_eq!(editor.roll.gamma, gamma);
     assert_eq!(editor.roll.exposure, exposure);
     assert_eq!(editor.photo, photo);
     editor.begin_pick(Pick::RollWb);
-    send.send(Message::Picked(
-        editor.id,
+    editor.measurement_result(
+        editor.document.visit.view,
         Pick::RollWb,
         Ok(Measurement::Balance(balance)),
-    ))
-    .unwrap();
-    editor.receive();
+    );
     assert_eq!(editor.roll.wb, balance);
     assert_eq!(editor.roll.balance, balance);
     assert_eq!(editor.roll.gamma, gamma);
@@ -558,13 +633,11 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
     assert_eq!(editor.photo, photo);
     let roll = editor.roll;
     editor.begin_pick(Pick::Wb);
-    send.send(Message::Picked(
-        editor.id,
+    editor.measurement_result(
+        editor.document.visit.view,
         Pick::Wb,
         Ok(Measurement::Balance(balance)),
-    ))
-    .unwrap();
-    editor.receive();
+    );
     assert_eq!(editor.roll, roll);
     assert_eq!(
         editor.photo,
@@ -576,44 +649,87 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
     editor.roll.gamma = 0.1;
     let old = editor.roll.balance;
     editor.begin_pick(Pick::Gamma);
-    send.send(Message::Picked(
-        editor.id,
+    editor.measurement_result(
+        editor.document.visit.view,
         Pick::Gamma,
         Ok(Measurement::Balance(Balance {
             warmth: 1.,
             tint: 1.,
         })),
-    ))
-    .unwrap();
-    editor.receive();
+    );
     assert_eq!(editor.roll.balance, old);
     assert!(editor.status.contains("rejected"));
     assert!(!editor.source);
 }
 
 #[test]
-fn stopped_pick_worker_clears_busy_and_stale_samples_do_not_apply() {
-    let (mut editor, send, receiver) = fixture();
+fn closed_application_clears_pick_busy_and_stale_samples_do_not_apply() {
+    let mut editor = fixture();
+    add_ready_fixture(&mut editor);
     editor.source = false;
-    drop(receiver);
-    editor.begin_pick(Pick::Dmin);
-    editor.region = Some(patch());
-    editor.apply_pick();
-    assert!(!editor.busy);
-    assert!(editor.status.contains("worker stopped"));
-    assert!(!editor.source);
-    let old = editor.photo;
-    send.send(Message::Picked(
-        editor.id + 1,
-        Pick::Wb,
-        Ok(Measurement::Balance(Balance {
-            warmth: 0.4,
-            tint: 0.4,
-        })),
-    ))
-    .unwrap();
-    editor.receive();
-    assert_eq!(editor.photo, old);
+    crate::application::test_support::with_application(editor, |app| {
+        app.close_execution();
+        app.enter(|editor, access| {
+            editor.begin_pick(Pick::Dmin);
+            editor.region = Some(patch());
+            editor.apply_pick();
+            editor.start_measurement_workflow(access);
+            assert!(!editor.busy);
+            assert!(editor.status.contains("stopped"));
+            assert!(!editor.source);
+            let old = editor.photo;
+            let stale = editor.id + 1;
+            editor.measurement_result(
+                stale,
+                Pick::Wb,
+                Ok(Measurement::Balance(Balance {
+                    warmth: 0.4,
+                    tint: 0.4,
+                })),
+            );
+            assert_eq!(editor.photo, old);
+        });
+    });
+}
+
+pub(super) struct ExecutionHold {
+    release: mpsc::Sender<()>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for ExecutionHold {
+    fn drop(&mut self) {
+        let _ = self.release.send(());
+        self.worker.take().unwrap().join().unwrap();
+    }
+}
+
+pub(super) fn hold_blocking_work(jobs: &crate::blocking_jobs::BlockingJobs) -> ExecutionHold {
+    let jobs = jobs.clone();
+    let (started, starts) = mpsc::channel();
+    let (release, released) = mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        futures_lite::future::block_on(jobs.run(move || {
+            started.send(()).unwrap();
+            let _ = released.recv();
+        }))
+        .unwrap();
+    });
+    starts.recv_timeout(Duration::from_secs(5)).unwrap();
+    ExecutionHold {
+        release,
+        worker: Some(worker),
+    }
+}
+
+// Geometry/presentation fixtures use authored native ownership but synthetic display geometry.
+// Numerical measurement checks instead load coherent authored sources through production paths.
+pub(super) fn developed_fixture() -> Arc<crate::scan::DevelopedSource> {
+    let file = crate::raw::fixture::bayer_dng();
+    Scan::open(file.path(), Some([1.; 4]))
+        .unwrap()
+        .source()
+        .clone()
 }
 
 pub(super) fn add_ready_fixture(editor: &mut Editor) {
@@ -660,7 +776,9 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
             .register(record.clone(), development.clone())
             .unwrap(),
     );
-    editor.ready = Some(Ready {
+    editor.document.visit.view = editor.id;
+    editor.document.visit.ready = Some(Ready {
+        developed: developed_fixture(),
         file: thumbnails::FileKey::new(&record.path),
         thumbnail: None,
         path: record.path.clone(),
@@ -674,30 +792,22 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
 }
 
 #[test]
-fn startup_defers_worker_results_until_the_font_initialization_pass_finishes() {
-    let (mut editor, send, _commands) = fixture();
+fn startup_typography_preserves_an_already_completed_source_failure() {
+    let mut editor = fixture();
     let context = egui::Context::default();
     context.options_mut(|options| options.max_passes = std::num::NonZeroUsize::new(1).unwrap());
     editor.busy = true;
     editor.status = "Loading source".into();
-    send.send(Message::Ready(editor.id, Err("Source unavailable".into())))
-        .unwrap();
+    editor.source_result(editor.id, Err("Source unavailable".into()));
 
     for initializing in [true, false] {
         let mut output = context.run_ui(egui::RawInput::default(), |ui| {
-            host::App::ui(&mut editor, ui);
+            editor.ui(ui);
         });
         output.textures_delta.clear();
         assert!(editor.started);
-        assert_eq!(editor.busy, initializing);
-        assert_eq!(
-            editor.status,
-            if initializing {
-                "Loading source"
-            } else {
-                "Source unavailable"
-            }
-        );
+        assert!(!editor.busy);
+        assert_eq!(editor.status, "Source unavailable");
         if initializing {
             assert!(
                 output.viewport_output[&egui::ViewportId::ROOT]
@@ -710,10 +820,11 @@ fn startup_defers_worker_results_until_the_font_initialization_pass_finishes() {
 }
 
 pub(super) fn app_frame(
-    editor: &mut Editor,
+    editor: &mut impl UiFixture,
     context: &egui::Context,
     events: Vec<egui::Event>,
 ) -> Vec<(String, egui::Rect)> {
+    editor.before_frame();
     presentation::configure_fonts(context);
     context.enable_accesskit();
     let mut output = context.run_ui(
@@ -726,7 +837,7 @@ pub(super) fn app_frame(
             ..Default::default()
         },
         |ui| {
-            egui::CentralPanel::default().show(ui, |ui| host::App::ui(editor, ui));
+            egui::CentralPanel::default().show(ui, |ui| editor.ui(ui));
         },
     );
     output.textures_delta.clear();
@@ -770,7 +881,7 @@ pub(super) fn ui_labels(output: egui::FullOutput) -> Vec<(String, egui::Rect)> {
 
 #[test]
 fn crop_inspector_settings_remain_photo_only_without_transaction_buttons() {
-    let (mut editor, _send, _receiver) = fixture();
+    let mut editor = fixture();
     add_ready_fixture(&mut editor);
     let saved = (
         editor.roll,
@@ -780,7 +891,7 @@ fn crop_inspector_settings_remain_photo_only_without_transaction_buttons() {
         editor.photo_orientation,
     );
     editor.begin_crop();
-    let draft = editor.crop_edit.as_ref().unwrap().draft;
+    let draft = editor.document.visit.crop_edit.as_ref().unwrap().draft;
     for width in [270., 315.] {
         let context = egui::Context::default();
         for tab in [0, 1] {
@@ -839,7 +950,10 @@ fn crop_inspector_settings_remain_photo_only_without_transaction_buttons() {
             );
         }
     }
-    assert_eq!(editor.crop_edit.as_ref().unwrap().draft, draft);
+    assert_eq!(
+        editor.document.visit.crop_edit.as_ref().unwrap().draft,
+        draft
+    );
     assert_eq!(
         (
             editor.roll,
@@ -854,7 +968,7 @@ fn crop_inspector_settings_remain_photo_only_without_transaction_buttons() {
 
 #[test]
 fn tab_clicks_show_only_the_selected_scope_without_changing_view_or_crop_draft() {
-    let (mut editor, _send, _receiver) = fixture();
+    let mut editor = fixture();
     add_ready_fixture(&mut editor);
     editor.started = true;
     editor.tab = 1;
@@ -888,9 +1002,22 @@ fn tab_clicks_show_only_the_selected_scope_without_changing_view_or_crop_draft()
         );
         let viewport = editor.viewport;
         let signature = editor.original.signature.clone();
-        let draft = editor.crop_edit.as_ref().map(|edit| edit.draft);
+        let draft = editor
+            .document
+            .visit
+            .crop_edit
+            .as_ref()
+            .map(|edit| edit.draft);
         let image = if editing {
-            editor.crop_edit.as_ref().unwrap().layout.unwrap().image
+            editor
+                .document
+                .visit
+                .crop_edit
+                .as_ref()
+                .unwrap()
+                .layout
+                .unwrap()
+                .image
         } else {
             editor.last_layout.unwrap().0.image
         };
@@ -936,9 +1063,25 @@ fn tab_clicks_show_only_the_selected_scope_without_changing_view_or_crop_draft()
             );
             assert_eq!(editor.viewport, viewport);
             assert_eq!(editor.original.signature, signature);
-            assert_eq!(editor.crop_edit.as_ref().map(|edit| edit.draft), draft);
+            assert_eq!(
+                editor
+                    .document
+                    .visit
+                    .crop_edit
+                    .as_ref()
+                    .map(|edit| edit.draft),
+                draft
+            );
             let next_image = if editing {
-                editor.crop_edit.as_ref().unwrap().layout.unwrap().image
+                editor
+                    .document
+                    .visit
+                    .crop_edit
+                    .as_ref()
+                    .unwrap()
+                    .layout
+                    .unwrap()
+                    .image
             } else {
                 editor.last_layout.unwrap().0.image
             };
@@ -949,7 +1092,7 @@ fn tab_clicks_show_only_the_selected_scope_without_changing_view_or_crop_draft()
 
 #[test]
 fn crop_explicit_zoom_can_leave_the_frame_offscreen_without_requesting_refinement() {
-    let (mut editor, _send, receiver) = fixture();
+    let mut editor = fixture();
     editor.crop = Some(Crop::from_region(Rect {
         x: 20,
         y: 15,
@@ -963,7 +1106,14 @@ fn crop_explicit_zoom_can_leave_the_frame_offscreen_without_requesting_refinemen
     for _ in 0..3 {
         app_frame(&mut editor, &context, vec![]);
     }
-    let layout = editor.crop_edit.as_ref().unwrap().layout.unwrap();
+    let layout = editor
+        .document
+        .visit
+        .crop_edit
+        .as_ref()
+        .unwrap()
+        .layout
+        .unwrap();
     assert!(
         layout
             .canvas
@@ -992,11 +1142,18 @@ fn crop_explicit_zoom_can_leave_the_frame_offscreen_without_requesting_refinemen
         editor.original.last_edit = std::time::Instant::now() - Duration::from_secs(1);
         app_frame(&mut editor, &context, vec![]);
     }
-    let explicit = editor.crop_edit.as_ref().unwrap().layout.unwrap();
+    let explicit = editor
+        .document
+        .visit
+        .crop_edit
+        .as_ref()
+        .unwrap()
+        .layout
+        .unwrap();
     assert!(!explicit.image.intersects(explicit.canvas));
     assert_eq!(explicit.scale * context.pixels_per_point(), 1.);
     assert!(editor.original.refining.is_none());
-    assert!(receiver.try_recv().is_err());
+    assert!(editor.document.visit.grade.request.is_none());
     let text = app_frame(&mut editor, &context, vec![]);
     let fit = text
         .iter()
@@ -1019,7 +1176,14 @@ fn crop_explicit_zoom_can_leave_the_frame_offscreen_without_requesting_refinemen
             ],
         );
     }
-    let fitted = editor.crop_edit.as_ref().unwrap().layout.unwrap();
+    let fitted = editor
+        .document
+        .visit
+        .crop_edit
+        .as_ref()
+        .unwrap()
+        .layout
+        .unwrap();
     assert!(
         (fitted.scale * context.pixels_per_point() - zoom).abs() < 1e-6,
         "crop Fit changed: {layout:?} -> {fitted:?}; zoom={zoom}; widths={:?} heights={:?}",
@@ -1036,7 +1200,7 @@ fn crop_explicit_zoom_can_leave_the_frame_offscreen_without_requesting_refinemen
 
 #[test]
 fn crop_button_and_enter_escape_keys_apply_or_restore_the_starting_view() {
-    let (mut editor, _send, _receiver) = fixture();
+    let mut editor = fixture();
     add_ready_fixture(&mut editor);
     editor.started = true;
     editor.tab = 1;
@@ -1084,14 +1248,14 @@ fn crop_button_and_enter_escape_keys_apply_or_restore_the_starting_view() {
                 ],
             );
         }
-        assert!(editor.crop_edit.is_some());
+        assert!(editor.document.visit.crop_edit.is_some());
         let draft = Crop::from_region(Rect {
             x: 100,
             y: 70,
             width: 301,
             height: 203,
         });
-        editor.crop_edit.as_mut().unwrap().draft = draft;
+        editor.document.visit.crop_edit.as_mut().unwrap().draft = draft;
         app_frame(
             &mut editor,
             &context,
@@ -1107,7 +1271,7 @@ fn crop_button_and_enter_escape_keys_apply_or_restore_the_starting_view() {
                 modifiers: egui::Modifiers::NONE,
             }],
         );
-        assert!(editor.crop_edit.is_none());
+        assert!(editor.document.visit.crop_edit.is_none());
         if apply {
             assert_eq!(editor.crop, Some(draft));
             assert!(editor.viewport.zoom.is_none());
@@ -1124,7 +1288,7 @@ fn crop_button_and_enter_escape_keys_apply_or_restore_the_starting_view() {
 
 #[test]
 fn picker_toolbar_layout_does_not_rescale_a_fitted_composition() {
-    let (mut editor, _send, _receiver) = fixture();
+    let mut editor = fixture();
     editor.crop = Some(Crop::from_region(Rect {
         x: 150,
         y: 100,
@@ -1166,7 +1330,7 @@ fn picker_toolbar_layout_does_not_rescale_a_fitted_composition() {
 
 #[test]
 fn neutral_picker_exit_preserves_deliberate_navigation_not_its_initial_fit() {
-    let (mut editor, _send, _receiver) = fixture();
+    let mut editor = fixture();
     editor.crop = Some(Crop::from_region(Rect {
         x: 150,
         y: 100,
@@ -1201,7 +1365,7 @@ fn neutral_picker_exit_preserves_deliberate_navigation_not_its_initial_fit() {
 
 #[test]
 fn crop_draft_cancel_and_apply_are_transactional_and_source_owned() {
-    let (mut editor, _send, receiver) = fixture();
+    let mut editor = fixture();
     editor.crop = Some(Crop::from_region(Rect {
         x: 150,
         y: 100,
@@ -1211,7 +1375,7 @@ fn crop_draft_cancel_and_apply_are_transactional_and_source_owned() {
     add_ready_fixture(&mut editor);
     editor.sync_document();
     let directory = tempfile::tempdir().unwrap();
-    editor.document = editor
+    *editor.document = editor
         .document
         .save(
             &directory.path().join("crop.json"),
@@ -1230,12 +1394,12 @@ fn crop_draft_cancel_and_apply_are_transactional_and_source_owned() {
         width: 400,
         height: 220,
     });
-    editor.crop_edit.as_mut().unwrap().draft = draft;
+    editor.document.visit.crop_edit.as_mut().unwrap().draft = draft;
     editor.sync_document();
     assert_eq!(editor.document.project, project);
     assert!(!editor.document.dirty());
-    editor.file_action(files::FileAction::Save, &egui::Context::default());
-    assert!(receiver.try_recv().is_err());
+    editor.file_action(files::FileAction::Save);
+    assert!(editor.document.write.request.is_none());
     editor.finish_crop(false);
     assert_eq!(editor.viewport, viewport);
     assert_eq!(editor.crop, crop);
@@ -1243,7 +1407,7 @@ fn crop_draft_cancel_and_apply_are_transactional_and_source_owned() {
     assert_eq!(editor.document.project, project);
     assert!(!editor.document.dirty());
     editor.begin_crop();
-    editor.crop_edit.as_mut().unwrap().draft = draft;
+    editor.document.visit.crop_edit.as_mut().unwrap().draft = draft;
     editor.finish_crop(true);
     editor.sync_document();
     assert_eq!(editor.crop, Some(draft));
@@ -1259,15 +1423,15 @@ fn crop_draft_cancel_and_apply_are_transactional_and_source_owned() {
     assert!(editor.document.dirty());
     assert_eq!((editor.roll, editor.photo, editor.dmin, editor.dmax), grade);
     editor.begin_crop();
-    editor.crop_edit.as_mut().unwrap().draft =
-        Crop::from_region(editor.ready.as_ref().unwrap().area);
+    editor.document.visit.crop_edit.as_mut().unwrap().draft =
+        Crop::from_region(editor.document.visit.ready.as_ref().unwrap().area);
     editor.finish_crop(true);
     assert!(editor.crop.is_none());
 }
 
 #[test]
 fn straightened_drafts_and_picks_are_transactional_and_measure_canvas_coverage() {
-    let (mut editor, _send, receiver) = fixture();
+    let mut editor = fixture();
     let crop = Crop {
         center: [230.25, 170.75],
         size: [127, 79],
@@ -1279,13 +1443,14 @@ fn straightened_drafts_and_picks_are_transactional_and_measure_canvas_coverage()
     add_ready_fixture(&mut editor);
     let grade = (editor.roll, editor.photo, editor.dmin, editor.dmax);
     editor.begin_crop();
-    let area = editor.ready.as_ref().unwrap().area;
-    editor.crop_edit.as_mut().unwrap().draft = crop.straightened(area, -0.19).unwrap();
+    let area = editor.document.visit.ready.as_ref().unwrap().area;
+    editor.document.visit.crop_edit.as_mut().unwrap().draft =
+        crop.straightened(area, -0.19).unwrap();
     editor.finish_crop(false);
     assert_eq!(editor.crop, Some(crop));
     editor.begin_crop();
     let draft = crop.straightened(area, -0.19).unwrap();
-    editor.crop_edit.as_mut().unwrap().draft = draft;
+    editor.document.visit.crop_edit.as_mut().unwrap().draft = draft;
     editor.finish_crop(true);
     assert_eq!(editor.crop, Some(draft));
     editor.sync_document();
@@ -1328,17 +1493,14 @@ fn straightened_drafts_and_picks_are_transactional_and_measure_canvas_coverage()
     assert!(bounds.width * bounds.height > 32 * 32);
     assert!((coverage.pixels(area).unwrap().map(|(_, w)| w).sum::<f64>() - 1024.).abs() < 1e-8);
     editor.region = Some(coverage);
-    editor.apply_pick();
-    let Command::Pick(_, Pick::Wb, measured, _, roll, photo) = receiver.try_recv().unwrap() else {
-        panic!()
-    };
-    assert_eq!(measured, coverage);
-    assert_eq!((roll, photo), (editor.roll, editor.photo));
+    let input = editor.measurement_input(Pick::Wb, coverage).unwrap();
+    assert_eq!(input.region, coverage);
+    assert_eq!((input.roll, input.photo), (editor.roll, editor.photo));
 }
 
 #[test]
 fn cropped_picker_views_preserve_source_anchor_and_restore_exact_working_view() {
-    let (mut editor, _send, _receiver) = fixture();
+    let mut editor = fixture();
     editor.crop = Some(Crop::from_region(Rect {
         x: 12,
         y: 7,
@@ -1349,7 +1511,7 @@ fn cropped_picker_views_preserve_source_anchor_and_restore_exact_working_view() 
     editor.roll_orientation.horizontal = true;
     add_ready_fixture(&mut editor);
     editor.source = false;
-    let area = editor.ready.as_ref().unwrap().area;
+    let area = editor.document.visit.ready.as_ref().unwrap().area;
     let composition = Composition::with_crop(
         area,
         editor.roll_orientation,
@@ -1403,7 +1565,7 @@ fn cropped_picker_views_preserve_source_anchor_and_restore_exact_working_view() 
 
 #[test]
 fn cropped_export_snapshot_survives_later_crop_and_orientation_edits() {
-    let (mut editor, _send, receiver) = fixture();
+    let mut editor = fixture();
     editor.crop = Some(Crop::from_region(Rect {
         x: 200,
         y: 140,
@@ -1418,9 +1580,7 @@ fn cropped_export_snapshot_survives_later_crop_and_orientation_edits() {
         OutputFormat::Tiff(OutputTarget::Srgb),
         Overwrite::Refuse,
     );
-    let Command::Export(_, _, _, recipe, _) = receiver.try_recv().unwrap() else {
-        panic!()
-    };
+    let recipe = editor.export_operation.request.take().unwrap().recipe;
     let (roll, photo, composition) = (recipe.roll, recipe.grade, recipe.composition);
     assert_eq!(composition.size(), [79, 127]);
     assert_eq!(composition.source_pixel([0, 0]).unwrap(), [326, 218]);
@@ -1433,14 +1593,14 @@ fn cropped_export_snapshot_survives_later_crop_and_orientation_edits() {
 
 #[test]
 fn roll_reference_source_restores_working_orientation_and_precise_viewport() {
-    let (mut editor, _send, receiver) = fixture();
+    let mut editor = fixture();
     editor.photo_orientation.turn_clockwise();
     editor.roll_orientation.horizontal = true;
     editor.roll_orientation.turn_clockwise();
     add_ready_fixture(&mut editor);
     let roll_orientation = editor.roll_orientation;
     let composition = Composition::new(
-        editor.ready.as_ref().unwrap().area,
+        editor.document.visit.ready.as_ref().unwrap().area,
         editor.roll_orientation,
         editor.photo_orientation,
     )
@@ -1454,19 +1614,26 @@ fn roll_reference_source_restores_working_orientation_and_precise_viewport() {
     let source_id = editor.current_source;
     editor.begin_pick(Pick::Dmin);
     assert_eq!(editor.viewport, viewport);
-    let mut reference = editor.ready.as_ref().unwrap().record.clone();
+    let mut reference = editor.document.visit.ready.as_ref().unwrap().record.clone();
     reference.path = "reference.ARW".into();
     reference.orientation = PhotoOrientation::default();
-    let development = editor.ready.as_ref().unwrap().development.clone();
+    let development = editor
+        .document
+        .visit
+        .ready
+        .as_ref()
+        .unwrap()
+        .development
+        .clone();
     let reference_id = editor.document.register(reference, development).unwrap();
     editor.pick_roll_source(reference_id);
     assert_eq!(editor.selected, 1);
     assert_eq!(editor.current_source, Some(reference_id));
     assert_eq!(editor.photo_orientation, PhotoOrientation::default());
     assert_eq!(editor.roll_orientation, roll_orientation);
-    assert!(matches!(receiver.try_recv().unwrap(), Command::Load(..)));
+    assert!(editor.document.visit.source.request.is_some());
     editor.finish_pick();
-    assert!(matches!(receiver.try_recv().unwrap(), Command::Load(..)));
+    assert!(editor.document.visit.source.request.is_some());
     assert_eq!(editor.current_source, source_id);
     assert_eq!(editor.selected, 0);
     assert_eq!(editor.document.project.order.len(), 2);
@@ -1482,7 +1649,7 @@ fn export_owns_the_accepted_photo_snapshot_and_rejects_unpreviewable_locals() {
         local_adjustments::{GradientMask, LocalAdjustment},
         project::LocalAdjustments,
     };
-    let (mut editor, _send, receiver) = fixture();
+    let mut editor = fixture();
     editor.photo.exposure = 1.25;
     add_ready_fixture(&mut editor);
     editor.export(
@@ -1490,9 +1657,7 @@ fn export_owns_the_accepted_photo_snapshot_and_rejects_unpreviewable_locals() {
         OutputFormat::Tiff(OutputTarget::Srgb),
         Overwrite::Refuse,
     );
-    let Command::Export(_, _, _, recipe, _) = receiver.try_recv().unwrap() else {
-        panic!()
-    };
+    let recipe = editor.export_operation.request.take().unwrap().recipe;
     let grade = recipe.grade;
     editor.photo.exposure = 7.;
     editor.sync_document();
@@ -1527,14 +1692,14 @@ fn export_owns_the_accepted_photo_snapshot_and_rejects_unpreviewable_locals() {
         OutputFormat::Tiff(OutputTarget::Srgb),
         Overwrite::Refuse,
     );
-    assert!(receiver.try_recv().is_err());
+    assert!(editor.export_operation.request.is_none());
     assert!(!editor.busy);
     assert!(editor.status.contains("local adjustments"));
 }
 
 #[test]
 fn export_holds_the_accepted_orientation_snapshot() {
-    let (mut editor, _send, receiver) = fixture();
+    let mut editor = fixture();
     editor.photo_orientation.turn_clockwise();
     editor.roll_orientation.horizontal = true;
     add_ready_fixture(&mut editor);
@@ -1543,9 +1708,7 @@ fn export_holds_the_accepted_orientation_snapshot() {
         OutputFormat::Tiff(OutputTarget::Srgb),
         Overwrite::Refuse,
     );
-    let Command::Export(_, _, _, recipe, _) = receiver.try_recv().unwrap() else {
-        panic!()
-    };
+    let recipe = editor.export_operation.request.take().unwrap().recipe;
     let (roll, photo, composition) = (recipe.roll, recipe.grade, recipe.composition);
     assert_eq!(composition.size(), [576, 864]);
     assert_eq!(composition.source_pixel([0, 0]).unwrap(), [875, 582]);
@@ -1558,7 +1721,7 @@ fn export_holds_the_accepted_orientation_snapshot() {
 
 #[test]
 fn orientation_buttons_transform_displayed_photo_and_preserve_crop_and_other_scopes() {
-    let (mut editor, _send, _receiver) = fixture();
+    let mut editor = fixture();
     add_ready_fixture(&mut editor);
     editor.crop = Some(Crop::from_region(Rect {
         x: 200,
@@ -1584,7 +1747,7 @@ fn orientation_buttons_transform_displayed_photo_and_preserve_crop_and_other_sco
         "Turn left",
     ] {
         let before = Composition::with_crop(
-            editor.ready.as_ref().unwrap().area,
+            editor.document.visit.ready.as_ref().unwrap().area,
             editor.roll_orientation,
             editor.photo_orientation,
             editor.crop,
@@ -1594,7 +1757,7 @@ fn orientation_buttons_transform_displayed_photo_and_preserve_crop_and_other_sco
         click_section_button(&mut editor, &context, "Composition", label);
         assert!(editor.viewport.zoom.is_none());
         let after = Composition::with_crop(
-            editor.ready.as_ref().unwrap().area,
+            editor.document.visit.ready.as_ref().unwrap().area,
             editor.roll_orientation,
             editor.photo_orientation,
             editor.crop,
@@ -1648,7 +1811,7 @@ fn orientation_buttons_transform_displayed_photo_and_preserve_crop_and_other_sco
 #[test]
 fn flip_buttons_are_repeatable_scoped_actions_and_disabled_when_busy_or_picking() {
     for section in ["Composition", "Scan orientation"] {
-        let (mut editor, _send, _receiver) = fixture();
+        let mut editor = fixture();
         add_ready_fixture(&mut editor);
         editor.tab = if section == "Composition" { 1 } else { 0 };
         editor.crop = Some(Crop::from_region(Rect {
@@ -1724,7 +1887,7 @@ fn flip_buttons_are_repeatable_scoped_actions_and_disabled_when_busy_or_picking(
 #[test]
 fn roll_turn_controls_preserve_photo_crop_and_grade_and_are_disabled_during_picking() {
     use crate::geometry::QuarterTurns;
-    let (mut editor, _send, _receiver) = fixture();
+    let mut editor = fixture();
     editor.roll_orientation.horizontal = true;
     editor.photo_orientation.turn_counterclockwise();
     editor.crop = Some(Crop::from_region(Rect {
@@ -1843,18 +2006,19 @@ fn roll_turn_controls_preserve_photo_crop_and_grade_and_are_disabled_during_pick
 
 #[test]
 fn shared_roll_turns_apply_to_new_photos_and_export_snapshots() {
-    let (mut editor, send, receiver) = fixture();
+    let mut editor = fixture();
     editor.roll_orientation.turn_clockwise();
     add_ready_fixture(&mut editor);
-    let ready = editor.ready.take().unwrap();
+    let ready = editor.document.visit.ready.take().unwrap();
     editor.load("new.ARW".into());
-    assert!(matches!(receiver.try_recv().unwrap(), Command::Load(..)));
+    assert!(editor.document.visit.source.request.is_some());
     let mut record = ready.record;
     record.id = SourceId(0);
     record.path = "new.ARW".into();
-    send.send(Message::Ready(
+    editor.source_result(
         editor.id,
         Ok(Box::new(Ready {
+            developed: ready.developed,
             file: thumbnails::FileKey::new(&record.path),
             thumbnail: None,
             path: record.path.clone(),
@@ -1865,9 +2029,7 @@ fn shared_roll_turns_apply_to_new_photos_and_export_snapshots() {
             record,
             development: ready.development,
         })),
-    ))
-    .unwrap();
-    editor.receive();
+    );
     assert_eq!(editor.document.project.sources.len(), 2);
     assert!(editor.photo_orientation.is_identity());
     assert_eq!(
@@ -1879,9 +2041,7 @@ fn shared_roll_turns_apply_to_new_photos_and_export_snapshots() {
         OutputFormat::Tiff(OutputTarget::Srgb),
         Overwrite::Refuse,
     );
-    let Command::Export(_, _, _, recipe, _) = receiver.try_recv().unwrap() else {
-        panic!()
-    };
+    let recipe = editor.export_operation.request.take().unwrap().recipe;
     let composition = recipe.composition;
     assert_eq!(composition.size(), [576, 864]);
     assert_eq!(composition.source_pixel([0, 0]).unwrap(), [12, 582]);
@@ -1892,7 +2052,7 @@ fn shared_roll_turns_apply_to_new_photos_and_export_snapshots() {
 
 #[test]
 fn contextual_crop_reset_preserves_orientation_grade_and_accepted_state_until_apply() {
-    let (mut editor, _send, _receiver) = fixture();
+    let mut editor = fixture();
     editor.crop = Some(Crop::from_region(Rect {
         x: 100,
         y: 70,
@@ -1920,17 +2080,14 @@ fn contextual_crop_reset_preserves_orientation_grade_and_accepted_state_until_ap
 
 #[test]
 fn navigation_invalidates_pending_overwrite() {
-    let (mut editor, _send, receiver) = fixture();
+    let mut editor = fixture();
     editor.overwrite = Some((
         "existing.tif".into(),
         OutputFormat::Tiff(OutputTarget::DisplayP3),
     ));
     editor.load("another.arw".into());
     assert!(editor.overwrite.is_none());
-    assert!(matches!(
-        receiver.recv().unwrap(),
-        Command::Load(1, _, _, _, _, _, _)
-    ));
+    assert!(editor.document.visit.source.request.is_some());
 }
 
 fn patch() -> Coverage {
@@ -1944,7 +2101,7 @@ fn patch() -> Coverage {
 
 #[test]
 fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
-    let (mut editor, send, receiver) = fixture();
+    let mut editor = fixture();
     for path in ["previous.arw", "current.arw"] {
         editor
             .document
@@ -1978,21 +2135,19 @@ fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
     editor.begin_pick(Pick::Dmin);
     assert_eq!(editor.selected, 1);
     assert!(editor.region.is_none());
-    assert!(receiver.try_recv().is_err());
+    assert!(editor.document.visit.measurement.is_none());
     let value = DVec3::new(0.3, 0.2, 0.15);
-    send.send(Message::Picked(
-        editor.id,
+    editor.measurement_result(
+        editor.document.visit.view,
         Pick::Dmin,
         Ok(Measurement::Reference(value)),
-    ))
-    .unwrap();
-    editor.receive();
+    );
     assert_eq!(editor.dmin, Some(value));
     editor.document.project.order.clear();
     assert!(editor.calibration().is_some());
     editor.begin_pick(Pick::Dmax);
     assert!(editor.region.is_none());
-    assert!(receiver.try_recv().is_err());
+    assert!(editor.document.visit.measurement.is_none());
 }
 
 #[test]
@@ -2214,7 +2369,7 @@ fn click_section_reset(editor: &mut Editor, context: &egui::Context, name: &str)
 fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
     for width in [270., 315.] {
         let context = egui::Context::default();
-        let (mut editor, _send, _receiver) = fixture();
+        let mut editor = fixture();
         for tab in [0, 1, 2] {
             editor.tab = tab;
             let text = controls_frame(&mut editor, &context, width, vec![]);
@@ -2305,7 +2460,7 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
 #[test]
 fn section_expansion_is_scope_specific_and_does_not_change_project_state() {
     let context = egui::Context::default();
-    let (mut editor, _send, _receiver) = fixture();
+    let mut editor = fixture();
     editor.roll.exposure = 1.23456789;
     editor.photo.exposure = -2.3456789;
     editor.sync_document();
@@ -2344,7 +2499,7 @@ fn section_expansion_is_scope_specific_and_does_not_change_project_state() {
 #[test]
 fn collapsed_calibration_keeps_missing_measurements_visible() {
     let context = egui::Context::default();
-    let (mut editor, _send, _receiver) = fixture();
+    let mut editor = fixture();
     editor.dmin = None;
     editor.dmax = None;
     click_section_header(&mut editor, &context, "Calibration");
@@ -2363,7 +2518,7 @@ fn collapsed_calibration_keeps_missing_measurements_visible() {
 #[test]
 fn crop_draft_controls_expand_below_the_fixed_photo_tool_shelf() {
     let context = egui::Context::default();
-    let (mut editor, _send, _receiver) = fixture();
+    let mut editor = fixture();
     add_ready_fixture(&mut editor);
     editor.tab = 1;
     assert!(
@@ -2408,7 +2563,7 @@ fn crop_draft_controls_expand_below_the_fixed_photo_tool_shelf() {
 #[test]
 fn section_and_color_resets_preserve_calibration_and_other_edit_scopes() {
     let context = egui::Context::default();
-    let (mut editor, _send, _receiver) = fixture();
+    let mut editor = fixture();
     editor.roll.gamma = 1.1;
     editor.roll.balance = Balance {
         warmth: 0.3,
@@ -2473,7 +2628,7 @@ fn section_and_color_resets_preserve_calibration_and_other_edit_scopes() {
 #[test]
 fn photographic_section_resets_are_scoped_and_disabled_while_busy() {
     let context = egui::Context::default();
-    let (mut editor, _send, _receiver) = fixture();
+    let mut editor = fixture();
     editor.tab = 1;
     for section in ["photo-composition", "photo-white-balance", "photo-exposure"] {
         editor.preferences.sections.insert(section.into(), false);
@@ -2525,7 +2680,7 @@ fn photographic_section_resets_are_scoped_and_disabled_while_busy() {
 fn response_section_is_reachable_by_scrolling_while_stage_tabs_stay_fixed() {
     for (width, height) in [(315., 800.), (270., 600.)] {
         let context = egui::Context::default();
-        let (mut editor, _send, _receiver) = fixture();
+        let mut editor = fixture();
         click_section_header(&mut editor, &context, "Toe & shoulder");
         for _ in 0..3 {
             controls_frame_sized(&mut editor, &context, width, height, vec![]);
@@ -2583,7 +2738,7 @@ fn response_section_is_reachable_by_scrolling_while_stage_tabs_stay_fixed() {
 #[test]
 fn original_grade_requires_explicit_response_opt_in_and_drawing_never_regrades_it() {
     let context = egui::Context::default();
-    let (mut editor, _send, _receiver) = fixture();
+    let mut editor = fixture();
     editor.roll.response = crate::processing::Response::Original;
     editor.roll.gamma = 0.73;
     editor.roll.exposure = 2.345;

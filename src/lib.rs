@@ -1,5 +1,9 @@
+#[cfg(feature = "ui")]
+pub mod application;
 #[cfg(feature = "project")]
 pub mod auto_crop;
+#[cfg(feature = "editor")]
+mod blocking_jobs;
 pub mod color;
 pub mod coverage;
 pub mod crop;

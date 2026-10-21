@@ -184,8 +184,8 @@ struct NativeApp {
 }
 
 impl host::App for NativeApp {
-    fn submission_gate(&self) -> &SubmissionGate {
-        &self.submissions
+    fn submission_gate(&self) -> SubmissionGate {
+        self.submissions.clone()
     }
     fn quit_state(&self) -> Option<QuitState> {
         Some(self.state)
@@ -235,7 +235,7 @@ impl host::App for NativeApp {
             panic!("fixture panic before native termination approval");
         }
     }
-    fn ui(&mut self, ui: &mut egui::Ui) {
+    fn ui(&mut self, ui: &mut egui::Ui, _access: &antitone::application::UiAccess<'_, Self>) {
         assert_eq!(
             delegate_identity(),
             self.identity,
@@ -343,7 +343,7 @@ fn child(mode: Mode, marker: PathBuf) -> host::Result<()> {
     let result = marker.clone();
     let entry = Arc::new(AtomicUsize::new(0));
     let original = entry.clone();
-    let outcome = host::run("Antitone termination check", move |_, _| {
+    let outcome = host::run("Antitone termination check", move |_, _, _application| {
         original.store(termination_entry(), Ordering::SeqCst);
         if mode == Mode::ExistingHandler {
             install_existing_handler();

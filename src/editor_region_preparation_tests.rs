@@ -2,7 +2,7 @@ use super::*;
 use crate::region_timing;
 use std::sync::{Arc, atomic::AtomicUsize};
 
-fn request() -> (analysis::Request, tempfile::TempDir, wgpu::Device) {
+pub(in crate::editor) fn request() -> (analysis::Request, tempfile::TempDir, wgpu::Device) {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::METAL,
         ..wgpu::InstanceDescriptor::new_without_display_handle()
@@ -38,7 +38,7 @@ fn request() -> (analysis::Request, tempfile::TempDir, wgpu::Device) {
     )
 }
 
-fn observed() -> (development::Scheduler, Arc<AtomicUsize>) {
+pub(in crate::editor) fn observed() -> (development::Scheduler, Arc<AtomicUsize>) {
     let count = Arc::new(AtomicUsize::new(0));
     let observed = count.clone();
     (

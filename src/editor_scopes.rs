@@ -264,16 +264,16 @@ impl Editor {
     }
 
     fn scope_basis(&self) -> Result<(&Ready, ProcessingInput, Composition), &'static str> {
-        if self.source || self.pick_return.is_some() || self.flat_edit.is_some() {
+        if self.source || self.document.pick_return.is_some() || self.flat_edit.is_some() {
             return Err("Positive grade only");
         }
         if self.busy || self.document_pending.is_some() {
             return Err("Waiting for image");
         }
-        if self.crop_edit.is_some() {
+        if self.document.visit.crop_edit.is_some() {
             return Err("Apply crop to update scopes");
         }
-        let ready = self.ready.as_ref().ok_or("No image")?;
+        let ready = self.document.visit.ready.as_ref().ok_or("No image")?;
         let calibration = self.calibration().ok_or("Calibration required")?;
         let parameters = self
             .view_processing(calibration, self.roll, self.photo)

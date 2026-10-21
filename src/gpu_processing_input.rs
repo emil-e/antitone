@@ -80,6 +80,11 @@ impl ProcessingInput {
     all(feature = "raw", feature = "export")
 ))]
 impl ProcessingInput {
+    #[cfg(feature = "editor")]
+    pub(crate) fn is_positive(&self) -> bool {
+        self.parameters.gamma_mode.w > 0.5
+    }
+
     pub(crate) fn parameters(&self) -> ProcessingParameters {
         self.parameters
     }

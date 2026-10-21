@@ -248,10 +248,12 @@ impl Editor {
     }
 
     pub(super) fn mask_help(&self) -> Option<&'static str> {
-        if !self.adjustments.drawer_open() {
+        if !self.document.visit.adjustments.drawer_open() {
             return None;
         }
-        self.mask_edit
+        self.document
+            .visit
+            .mask_edit
             .as_ref()
             .map(|edit| edit.kind)
             .or_else(|| {
@@ -265,26 +267,26 @@ impl Editor {
     }
 
     pub(super) fn mask_handles_available(&self) -> bool {
-        self.adjustments.drawer_open()
-            && !self.adjustments.dragging()
+        self.document.visit.adjustments.drawer_open()
+            && !self.document.visit.adjustments.dragging()
             && self.tab == 1
             && !self.busy
-            && self.ready.is_some()
+            && self.document.visit.ready.is_some()
             && self.calibration().is_some()
             && !self.source
             && self.pick.is_none()
-            && self.crop_edit.is_none()
-            && self.auto_crop_edit.is_none()
+            && self.document.visit.crop_edit.is_none()
+            && self.document.auto_crop_edit.is_none()
             && self.flat_edit.is_none()
-            && self.analysis_review.is_none()
-            && !self.dust.cleanup
-            && !self.adjustments.confirming()
+            && self.document.analysis_review.is_none()
+            && !self.document.dust.cleanup
+            && !self.document.visit.adjustments.confirming()
             && self.fullscreen.is_none()
     }
 
     pub(super) fn mask_pointer_interest(&self, layout: CanvasLayout, point: egui::Pos2) -> bool {
         self.mask_handles_available()
-            && (self.mask_edit.is_some()
+            && (self.document.visit.mask_edit.is_some()
                 || self
                     .selected_mask()
                     .is_some_and(|adjustment| hits(adjustment.mask, layout, point)))
@@ -300,15 +302,15 @@ impl Editor {
 
     fn begin_mask(&mut self, kind: Kind, id: Option<AdjustmentId>) {
         if self.busy
-            || self.ready.is_none()
+            || self.document.visit.ready.is_none()
             || self.source
             || self.pick.is_some()
-            || self.crop_edit.is_some()
-            || self.auto_crop_edit.is_some()
+            || self.document.visit.crop_edit.is_some()
+            || self.document.auto_crop_edit.is_some()
             || self.flat_edit.is_some()
-            || self.mask_edit.is_some()
-            || self.adjustments.confirming()
-            || self.analysis_review.is_some()
+            || self.document.visit.mask_edit.is_some()
+            || self.document.visit.adjustments.confirming()
+            || self.document.analysis_review.is_some()
             || self.fullscreen.is_some()
         {
             return;
@@ -336,13 +338,13 @@ impl Editor {
         })();
         match result {
             Ok((source, mask)) => {
-                if !self.adjustments.drawer_open() {
+                if !self.document.visit.adjustments.drawer_open() {
                     self.open_adjustments();
                 }
                 if let Some(id) = id {
                     self.select_adjustment(adjustments::Target::Local(id));
                 }
-                self.mask_edit = Some(MaskEdit {
+                self.document.visit.mask_edit = Some(MaskEdit {
                     loaded: self.id,
                     source,
                     roll: self.roll,
@@ -374,11 +376,11 @@ impl Editor {
     }
 
     pub(super) fn finish_mask(&mut self, accept: bool) {
-        let Some(mut edit) = self.mask_edit.take() else {
+        let Some(mut edit) = self.document.visit.mask_edit.take() else {
             return;
         };
         self.working.compare = edit.compare;
-        if !accept || !self.adjustments.drawer_open() {
+        if !accept || !self.document.visit.adjustments.drawer_open() {
             self.status = "Mask gesture cancelled".into();
             return;
         }
@@ -401,7 +403,7 @@ impl Editor {
                 let created = edit.creating();
                 self.select_adjustment(adjustments::Target::Local(id));
                 if created {
-                    self.adjustments.reveal_controls = true;
+                    self.document.visit.adjustments.reveal_controls = true;
                 }
                 self.status = format!("{} selected", edit.kind.title());
             }
@@ -413,17 +415,22 @@ impl Editor {
                     edit.drag = None;
                     edit.error = Some(error.to_string());
                     self.working.compare = false;
-                    self.mask_edit = Some(edit);
+                    self.document.visit.mask_edit = Some(edit);
                 }
             }
         }
     }
 
     pub(super) fn mask_preview_source(&self) -> Option<&Source> {
-        if self.fullscreen.is_some() || self.tab != 1 || !self.adjustments.drawer_open() {
+        if self.fullscreen.is_some()
+            || self.tab != 1
+            || !self.document.visit.adjustments.drawer_open()
+        {
             return None;
         }
-        self.mask_edit
+        self.document
+            .visit
+            .mask_edit
             .as_ref()
             .filter(|edit| edit.id.is_some() && self.mask_is_current(edit))
             .and_then(|edit| edit.preview.as_ref())
@@ -461,12 +468,27 @@ impl Editor {
             )
         });
         if !allowed || !ui.is_enabled() || self.busy || self.fullscreen.is_some() || self.tab != 1 {
-            if released && self.mask_edit.as_ref().is_some_and(MaskEdit::dragging) {
+            if released
+                && self
+                    .document
+                    .visit
+                    .mask_edit
+                    .as_ref()
+                    .is_some_and(MaskEdit::dragging)
+            {
                 self.finish_mask(false);
             }
             return;
         }
-        if !down && !released && self.mask_edit.as_ref().is_some_and(MaskEdit::dragging) {
+        if !down
+            && !released
+            && self
+                .document
+                .visit
+                .mask_edit
+                .as_ref()
+                .is_some_and(MaskEdit::dragging)
+        {
             self.finish_mask(false);
             return;
         }
@@ -476,7 +498,8 @@ impl Editor {
             && !panning
             && let Some(origin) = origin.filter(|point| layout.canvas.contains(*point))
         {
-            if self.mask_edit.is_none() && self.mask_pointer_interest(layout, origin) {
+            if self.document.visit.mask_edit.is_none() && self.mask_pointer_interest(layout, origin)
+            {
                 let Some(adjustment) = self.selected_mask() else {
                     return;
                 };
@@ -488,7 +511,7 @@ impl Editor {
                     GradientMask::Radial { .. } => self.begin_radial_mask(Some(id)),
                 }
             }
-            if let Some(edit) = &mut self.mask_edit {
+            if let Some(edit) = &mut self.document.visit.mask_edit {
                 edit.drag = Some(match edit.kind {
                     Kind::Linear => MaskDrag::Linear(LinearDrag {
                         handle: if edit.creating() {
@@ -511,7 +534,7 @@ impl Editor {
         }
         if !panning
             && let Some(point) = point
-            && let Some(mut edit) = self.mask_edit.take()
+            && let Some(mut edit) = self.document.visit.mask_edit.take()
         {
             if let Some(drag) = &edit.drag {
                 edit.mask = Some(drag.update(point));
@@ -533,7 +556,7 @@ impl Editor {
                 };
                 ui.ctx().request_repaint();
             }
-            self.mask_edit = Some(edit);
+            self.document.visit.mask_edit = Some(edit);
         }
         if response.hovered()
             && let Some(point) = point
@@ -545,26 +568,33 @@ impl Editor {
                 egui::CursorIcon::Crosshair
             });
         }
-        if released && self.mask_edit.as_ref().is_some_and(MaskEdit::dragging) {
+        if released
+            && self
+                .document
+                .visit
+                .mask_edit
+                .as_ref()
+                .is_some_and(MaskEdit::dragging)
+        {
             self.finish_mask(true);
             ui.ctx().request_repaint();
         }
     }
 
     pub(super) fn paint_mask(&self, ui: &egui::Ui, layout: CanvasLayout) {
-        if !self.adjustments.drawer_open()
+        if !self.document.visit.adjustments.drawer_open()
             || self.fullscreen.is_some()
-            || self.analysis_review.is_some()
+            || self.document.analysis_review.is_some()
             || self.pick.is_some()
-            || self.crop_edit.is_some()
+            || self.document.visit.crop_edit.is_some()
             || self.source
             || self.tab != 1
-            || self.dust.cleanup
+            || self.document.dust.cleanup
         {
             return;
         }
         let selected = self.selected_mask();
-        let mask = match &self.mask_edit {
+        let mask = match &self.document.visit.mask_edit {
             Some(edit) => edit.mask,
             None => selected.map(|adjustment| adjustment.mask),
         };
@@ -572,9 +602,14 @@ impl Editor {
             return;
         };
         let invert = selected.is_some_and(|adjustment| adjustment.invert)
-            && !self.mask_edit.as_ref().is_some_and(MaskEdit::creating);
+            && !self
+                .document
+                .visit
+                .mask_edit
+                .as_ref()
+                .is_some_and(MaskEdit::creating);
         let painter = ui.painter().with_clip_rect(layout.canvas);
-        if self.adjustments.show_coverage {
+        if self.document.visit.adjustments.show_coverage {
             paint_coverage(
                 &painter,
                 layout,
@@ -632,7 +667,12 @@ impl Editor {
                 },
                 stroke,
             );
-            if self.mask_edit.as_ref().is_some_and(MaskEdit::dragging)
+            if self
+                .document
+                .visit
+                .mask_edit
+                .as_ref()
+                .is_some_and(MaskEdit::dragging)
                 || hover.is_some_and(|hover| hover.distance(point) < 15.)
             {
                 let text = if full { "100%" } else { "0%" };

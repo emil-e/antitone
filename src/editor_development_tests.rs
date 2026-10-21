@@ -41,6 +41,113 @@ fn until(scheduler: &Scheduler, condition: impl Fn(&State) -> bool) {
     }
 }
 
+struct Notify {
+    id: u8,
+    send: mpsc::Sender<u8>,
+}
+
+impl std::task::Wake for Notify {
+    fn wake(self: Arc<Self>) {
+        let _ = self.send.send(self.id);
+    }
+}
+
+fn poll_ticket(
+    ticket: &mut Ticket,
+    id: u8,
+    send: &mpsc::Sender<u8>,
+) -> Poll<Result<Arc<DevelopedSource>, Error>> {
+    let waker = Waker::from(Arc::new(Notify {
+        id,
+        send: send.clone(),
+    }));
+    Pin::new(ticket).poll(&mut Context::from_waker(&waker))
+}
+
+#[test]
+fn async_joined_consumers_wake_independently_and_keep_zero_budget_native_ownership() {
+    let file = fixture::bayer_dng();
+    let source = Scan::open(file.path(), Some([1.; 4]))
+        .unwrap()
+        .source()
+        .clone();
+    let expected = source.clone();
+    let store = Arc::new(SourceStore::new(0));
+    let (entered, starts) = mpsc::channel();
+    let (release, resume) = mpsc::channel();
+    let scheduler = Scheduler::start(move |shared| {
+        run(shared, |_| {
+            entered.send(()).unwrap();
+            resume.recv().unwrap();
+            Ok(Some(source.clone()))
+        })
+    });
+    let job = request(file.path(), store.clone());
+    let mut abandoned = scheduler.submit(job.clone(), Priority::Eager).unwrap();
+    starts.recv_timeout(Duration::from_secs(5)).unwrap();
+    let mut foreground = scheduler.submit(job, Priority::Foreground).unwrap();
+    let (wake, wakes) = mpsc::channel();
+    assert!(poll_ticket(&mut abandoned, 1, &wake).is_pending());
+    assert!(poll_ticket(&mut foreground, 2, &wake).is_pending());
+    drop(abandoned);
+    assert_eq!(scheduler.waiter_count(), 1);
+    release.send(()).unwrap();
+    assert_eq!(wakes.recv_timeout(Duration::from_secs(5)).unwrap(), 2);
+    let Poll::Ready(Ok(source)) = poll_ticket(&mut foreground, 2, &wake) else {
+        panic!("completion was not published before wake")
+    };
+    assert!(Arc::ptr_eq(&source, &expected));
+    assert_eq!(store.charges().retained, 0);
+    assert!(wakes.try_recv().is_err());
+}
+
+#[test]
+fn async_native_waiters_observe_store_or_scheduler_closure_without_waiting_for_native_return() {
+    for close_store in [false, true] {
+        let file = fixture::bayer_dng();
+        let store = Arc::new(SourceStore::new(0));
+        let (entered, starts) = mpsc::channel();
+        let (release, resume) = mpsc::channel();
+        let scheduler = Scheduler::start(move |shared| {
+            run(shared, |_| {
+                entered.send(()).unwrap();
+                resume.recv().unwrap();
+                Err("retired native call".into())
+            })
+        });
+        let mut ticket = scheduler
+            .submit(request(file.path(), store.clone()), Priority::Foreground)
+            .unwrap();
+        starts.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (wake, wakes) = mpsc::channel();
+        assert!(poll_ticket(&mut ticket, 1, &wake).is_pending());
+        if close_store {
+            store.close();
+        } else {
+            scheduler.close();
+        }
+        wakes.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(matches!(
+            poll_ticket(&mut ticket, 1, &wake),
+            Poll::Ready(Err(_))
+        ));
+        release.send(()).unwrap();
+    }
+}
+
+#[test]
+fn native_ticket_can_be_awaited_when_completion_precedes_its_first_poll() {
+    let file = fixture::bayer_dng();
+    let scheduler = Scheduler::new();
+    let store = Arc::new(SourceStore::new(0));
+    let ticket = scheduler
+        .submit(request(file.path(), store), Priority::Foreground)
+        .unwrap();
+    let completed = ticket.wait(|| false).unwrap();
+    let awaited = futures_lite::future::block_on(ticket).unwrap();
+    assert!(Arc::ptr_eq(&completed, &awaited));
+}
+
 #[test]
 fn foreground_runs_before_the_next_background_native_phase_on_one_thread() {
     let a = fixture::bayer_dng();

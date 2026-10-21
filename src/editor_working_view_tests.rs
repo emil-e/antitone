@@ -53,6 +53,10 @@ fn navigation_reuses_underlay_until_basis_change_clear_or_drop() {
             None,
         )
         .unwrap();
+        let input = source::Context {
+            source: scan.source().clone(),
+            correction: None,
+        };
         let composition =
             Composition::new(scan.area, Default::default(), Default::default()).unwrap();
         let dimensions = composition.size();
@@ -91,18 +95,14 @@ fn navigation_reuses_underlay_until_basis_change_clear_or_drop() {
             let mut working = WorkingView::default();
             let mailbox = working.mailbox.clone();
             mailbox.0.lock().unwrap().underlay = Some(underlay);
-            let (send, receive) = mpsc::channel();
-            let context = egui::Context::default();
-
-            working.request(first.clone(), &send, &context);
+            working.request(first.clone(), input.clone());
             let mut navigated = first.clone();
             navigated.frame.min.0[0] += 10.;
             navigated.frame.max.0[0] += 10.;
-            working.request(navigated, &send, &context);
+            working.request(navigated, input.clone());
 
             assert!(working.underlay.is_some());
             assert!(weak_underlay.upgrade().is_some());
-            assert_eq!(receive.try_iter().count(), 1);
 
             match retirement {
                 "basis" => working.request(
@@ -115,8 +115,7 @@ fn navigation_reuses_underlay_until_basis_change_clear_or_drop() {
                         None,
                     )
                     .unwrap(),
-                    &send,
-                    &context,
+                    input.clone(),
                 ),
                 "clear" => working.clear(),
                 _ => drop(working),
@@ -166,11 +165,14 @@ fn spec(roll: RollSettings, offset: f64) -> ViewSourceSpec {
 }
 
 #[test]
-fn mailbox_coalesces_navigation_and_ignores_grade_only_edits() {
-    let (send, receive) = mpsc::channel();
-    let context = egui::Context::default();
+fn demand_coalesces_navigation_ignores_grade_only_edits_and_rejects_stale_products() {
     let mut working = WorkingView::default();
     let roll = RollSettings::new_grade();
+    // These requests exercise mailbox coalescing, not acquisition of the synthetic view geometry.
+    let input = source::Context {
+        source: crate::editor::tests::developed_fixture(),
+        correction: None,
+    };
     let first = spec(roll, 0.);
 
     for n in 0..40 {
@@ -186,41 +188,35 @@ fn mailbox_coalesces_navigation_and_ignores_grade_only_edits() {
             0.,
         );
         assert!(grade_only_spec == first);
-        working.request(grade_only_spec, &send, &context);
+        working.request(grade_only_spec, input.clone());
+        assert!(working.wanted.as_ref() == Some(&first));
     }
-    assert_eq!(receive.try_iter().count(), 1);
 
     for n in 1..40 {
-        working.request(spec(roll, f64::from(n)), &send, &context);
+        working.request(spec(roll, f64::from(n)), input.clone());
     }
-    assert_eq!(
-        receive.try_iter().count(),
-        0,
-        "one admitted wake, not one per view/edit"
-    );
     let last = spec(roll, 39.);
     assert!(working.mailbox.0.lock().unwrap().wanted.as_ref() == Some(&last));
 
-    {
-        let mut mailbox = working.mailbox.0.lock().unwrap();
-        mailbox.awake = false;
-        mailbox.completed = Some((first, Err("obsolete failure".into())));
-    }
-    working.request(last.clone(), &send, &context);
+    working.acquired(Completion {
+        spec: first,
+        result: Err("obsolete failure".into()),
+    });
+    working.request(last.clone(), input.clone());
     assert!(working.error.is_none());
     assert!(working.failed.is_none());
-    assert_eq!(receive.try_iter().count(), 1);
-
-    {
-        let mut mailbox = working.mailbox.0.lock().unwrap();
-        mailbox.awake = false;
-        mailbox.completed = Some((last.clone(), Err("current failure".into())));
-    }
+    working.acquired(Completion {
+        spec: last.clone(),
+        result: Err("current failure".into()),
+    });
     for _ in 0..5 {
-        working.request(last.clone(), &send, &context);
+        working.request(last.clone(), input.clone());
     }
     assert_eq!(working.error.as_deref(), Some("current failure"));
-    assert_eq!(receive.try_iter().count(), 0);
+    assert!(
+        working.acquisition(7).is_none(),
+        "unchanged failure does not spin retries"
+    );
 
     working.clear();
     assert!(working.mailbox.0.lock().unwrap().wanted.is_none());
@@ -229,7 +225,7 @@ fn mailbox_coalesces_navigation_and_ignores_grade_only_edits() {
 
 #[test]
 fn reference_admission_respects_budget_inspection_and_explicit_comparison() {
-    let (mut editor, _, _) = super::super::tests::fixture();
+    let mut editor = super::super::tests::fixture();
     editor.thumbnails.set_limits(cache_limits::CacheLimits {
         cpu_bytes: 0,
         gpu_bytes: 0,

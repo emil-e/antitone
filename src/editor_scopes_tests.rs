@@ -267,7 +267,7 @@ fn scope_divider_drag_release_reset_and_width_scaling_are_stable_at_both_dpis() 
 
 #[test]
 fn source_and_reference_views_suspend_scopes_without_dirtying_projects() {
-    let (mut editor, _sender, _receiver) = super::super::tests::fixture();
+    let mut editor = super::super::tests::fixture();
     editor.sync_document();
     let project = editor.document.project.clone();
     for source in [true, false] {
@@ -489,6 +489,7 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
         };
         let path = PathBuf::from("scope-fixture.ARW");
         let ready = Ready {
+            developed: crate::editor::tests::developed_fixture(),
             file: thumbnails::FileKey::new(&path),
             thumbnail: None,
             path: path.clone(),
@@ -526,8 +527,8 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
             },
             development: Development::new(crate::raw::version(), [2., 1., 1.5, 1.]),
         };
-        let (mut editor, _send, _receiver) = super::super::tests::fixture();
-        editor.ready = Some(ready);
+        let mut editor = super::super::tests::fixture();
+        editor.document.visit.ready = Some(ready);
         editor
             .document
             .project
@@ -562,7 +563,7 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
                     ..Default::default()
                 },
-                |ui| host::App::ui(editor, ui),
+                |ui| crate::editor::tests::paint_controller(editor, ui),
             );
             output.textures_delta.clear();
             output
@@ -606,6 +607,8 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
             assert!(Arc::ptr_eq(
                 &input,
                 &editor
+                    .document
+                    .visit
                     .ready
                     .as_ref()
                     .unwrap()

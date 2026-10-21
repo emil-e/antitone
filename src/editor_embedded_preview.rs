@@ -1,9 +1,13 @@
 use super::*;
 use image::{ImageDecoder, metadata::Orientation};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(test)]
 #[path = "editor_embedded_preview_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "editor_embedded_preview_workflow_tests.rs"]
+mod workflow_tests;
 
 struct Request {
     ticket: u64,
@@ -12,115 +16,194 @@ struct Request {
     source: Source,
 }
 
-struct ResultMessage {
-    ticket: u64,
-    key: SourceKey,
-    image: Result<Option<egui::ColorImage>, String>,
+enum Completion {
+    Image(Result<Option<egui::ColorImage>, String>),
+    Stopped,
 }
 
-#[derive(Default)]
-pub(super) struct EmbeddedPreviews {
-    entries: Vec<(SourceKey, Option<egui::TextureHandle>)>,
-    commands: Option<mpsc::Sender<Request>>,
-    messages: Option<mpsc::Receiver<ResultMessage>>,
-    generation: Arc<std::sync::atomic::AtomicU64>,
-    pending: Option<(u64, SourceKey)>,
+struct Work {
+    request: Request,
+    cancelled: Arc<AtomicBool>,
+    reply: futures_channel::oneshot::Sender<Result<Option<egui::ColorImage>, String>>,
+    // Last to drop: producer admission includes native/decode and captured-payload cleanup.
+    _admission: async_lock::SemaphoreGuardArc,
 }
 
-impl EmbeddedPreviews {
-    pub(super) fn new(repaint: Arc<std::sync::OnceLock<egui::Context>>) -> Self {
-        let (commands, receiver) = mpsc::channel();
-        let (send, messages) = mpsc::channel();
-        let state = Self {
-            commands: Some(commands),
-            messages: Some(messages),
-            ..Default::default()
-        };
-        let generation = state.generation.clone();
+#[derive(Clone)]
+struct Services {
+    commands: mpsc::Sender<Work>,
+    admission: Arc<async_lock::Semaphore>,
+}
+
+impl Services {
+    fn new() -> Self {
+        let (commands, receiver) = mpsc::channel::<Work>();
         std::thread::spawn(move || {
-            while let Ok(request) = receiver.recv() {
+            while let Ok(work) = receiver.recv() {
                 let started = std::time::Instant::now();
-                let active =
-                    || generation.load(std::sync::atomic::Ordering::Relaxed) == request.ticket;
-                let image = load(&request, &active);
+                let active = || !work.cancelled.load(Ordering::Relaxed);
+                let image = load(&work.request, &active);
                 println!(
                     "embedded_preview source_id={} available={} failed={} cancelled={} seconds={:.6}",
-                    request.key.id.0,
+                    work.request.key.id.0,
                     matches!(&image, Ok(Some(_))),
                     image.is_err(),
                     !active(),
                     started.elapsed().as_secs_f64()
                 );
-                if send
-                    .send(ResultMessage {
-                        ticket: request.ticket,
-                        key: request.key,
-                        image,
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-                if let Some(context) = repaint.get() {
-                    context.request_repaint();
-                }
-            }
-            if let Some(context) = repaint.get() {
-                context.request_repaint();
+                // A departed waiter cannot stop this shared resource worker.
+                let _ = work.reply.send(image);
             }
         });
-        state
-    }
-
-    pub(super) fn cancel(&self) {
-        self.generation
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    pub(super) fn receive(&mut self, document: &Document, context: &egui::Context) {
-        loop {
-            let message = match self.messages.as_ref().map(|messages| messages.try_recv()) {
-                Some(Ok(message)) => message,
-                Some(Err(mpsc::TryRecvError::Disconnected)) => {
-                    if let Some((_, key)) = self.pending.take() {
-                        self.entries.push((key, None));
-                    }
-                    self.commands = None;
-                    self.messages = None;
-                    break;
-                }
-                _ => break,
-            };
-            if !self
-                .pending
-                .as_ref()
-                .is_some_and(|(ticket, _)| *ticket == message.ticket)
-            {
-                continue;
-            }
-            self.pending = None;
-            if self.generation.load(std::sync::atomic::Ordering::Relaxed) != message.ticket
-                || !current(&message.key, document)
-            {
-                continue;
-            }
-            let texture = match message.image {
-                Ok(Some(image)) => Some(context.load_texture(
-                    "embedded camera preview",
-                    image,
-                    egui::TextureOptions::LINEAR,
-                )),
-                Ok(None) => None,
-                Err(reason) => {
-                    eprintln!(
-                        "embedded_preview unavailable source_id={} reason={reason}",
-                        message.key.id.0
-                    );
-                    None
-                }
-            };
-            self.entries.push((message.key, texture));
+        Self {
+            commands,
+            admission: Arc::new(async_lock::Semaphore::new(1)),
         }
+    }
+
+    async fn load(self, request: Request, cancelled: Arc<AtomicBool>) -> Completion {
+        let admission = self.admission.acquire_arc().await;
+        let (reply, result) = futures_channel::oneshot::channel();
+        if self
+            .commands
+            .send(Work {
+                request,
+                cancelled,
+                reply,
+                _admission: admission,
+            })
+            .is_err()
+        {
+            return Completion::Stopped;
+        }
+        match result.await {
+            Ok(image) => Completion::Image(image),
+            Err(_) => Completion::Stopped,
+        }
+    }
+}
+
+struct Projection {
+    ticket: u64,
+    key: SourceKey,
+    cancelled: Arc<AtomicBool>,
+}
+
+pub(in crate::editor) struct Pending {
+    ticket: u64,
+    cancelled: Arc<AtomicBool>,
+    _task: async_executor::Task<()>,
+}
+
+impl Drop for Pending {
+    fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
+}
+
+struct Retire(Arc<AtomicBool>);
+impl Drop for Retire {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+#[derive(Default)]
+pub(super) struct EmbeddedPreviews {
+    entries: Vec<(SourceKey, Option<egui::TextureHandle>)>,
+    services: Option<Services>,
+    next: u64,
+    pending: Option<Projection>,
+    wanted: Vec<(SourceKey, PathBuf)>,
+    allowed: bool,
+}
+
+impl EmbeddedPreviews {
+    pub(super) fn new() -> Self {
+        Self {
+            services: Some(Services::new()),
+            ..Default::default()
+        }
+    }
+
+    pub(super) fn cancel(&mut self) {
+        self.allowed = false;
+        if let Some(pending) = &self.pending {
+            pending.cancelled.store(true, Ordering::Relaxed);
+        }
+    }
+
+    pub(super) fn reset_demand(&mut self) {
+        self.cancel();
+        self.pending = None;
+        self.wanted.clear();
+    }
+
+    fn begin(&mut self, document: &Document) -> Option<(Request, Arc<AtomicBool>)> {
+        if !self.allowed || self.pending.is_some() || self.services.is_none() {
+            return None;
+        }
+        let (key, path) = self.wanted.iter().find(|(key, _)| {
+            current(key, document) && !self.entries.iter().any(|(candidate, _)| candidate == key)
+        })?;
+        let source = document.project.source(key.id).ok()?.clone();
+        self.next += 1;
+        let ticket = self.next;
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.pending = Some(Projection {
+            ticket,
+            key: key.clone(),
+            cancelled: cancelled.clone(),
+        });
+        Some((
+            Request {
+                ticket,
+                key: key.clone(),
+                path: path.clone(),
+                source,
+            },
+            cancelled,
+        ))
+    }
+
+    fn complete(
+        &mut self,
+        ticket: u64,
+        key: SourceKey,
+        image: Completion,
+        document: &Document,
+        context: &egui::Context,
+    ) {
+        if !self
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.ticket == ticket)
+        {
+            return;
+        }
+        let pending = self.pending.take().unwrap();
+        if matches!(&image, Completion::Stopped) {
+            self.services = None;
+        }
+        if pending.cancelled.load(Ordering::Relaxed) || !current(&key, document) {
+            return;
+        }
+        let texture = match image {
+            Completion::Image(Ok(Some(image))) => Some(context.load_texture(
+                "embedded camera preview",
+                image,
+                egui::TextureOptions::LINEAR,
+            )),
+            Completion::Image(Ok(None)) | Completion::Stopped => None,
+            Completion::Image(Err(reason)) => {
+                eprintln!(
+                    "embedded_preview unavailable source_id={} reason={reason}",
+                    key.id.0
+                );
+                None
+            }
+        };
+        self.entries.push((key, texture));
     }
 
     pub(super) fn get(&self, key: &SourceKey) -> Option<&egui::TextureHandle> {
@@ -135,46 +218,22 @@ impl EmbeddedPreviews {
         wanted: &[(usize, ImageKey, PathBuf, Source)],
         allowed: bool,
     ) {
-        // Retain only missing visible cells, never recent/offscreen JPEGs or a second disk cache.
+        // Keep only visible missing cells; source records are captured one at a time.
         self.entries
             .retain(|(key, _)| wanted.iter().any(|(_, image, _, _)| &image.source == key));
-        if let Some((ticket, key)) = &self.pending
-            && self.generation.load(std::sync::atomic::Ordering::Relaxed) == *ticket
-            && (!allowed || !wanted.iter().any(|(_, image, _, _)| &image.source == key))
+        if let Some(pending) = &self.pending
+            && (!allowed
+                || !wanted
+                    .iter()
+                    .any(|(_, image, _, _)| image.source == pending.key))
         {
-            self.cancel();
+            pending.cancelled.store(true, Ordering::Relaxed);
         }
-        if !allowed || self.pending.is_some() {
-            return;
-        }
-        let Some((_, key, path, source)) = wanted.iter().find(|(_, key, _, _)| {
-            !self
-                .entries
-                .iter()
-                .any(|(candidate, _)| candidate == &key.source)
-        }) else {
-            return;
-        };
-        let Some(commands) = &self.commands else {
-            return;
-        };
-        let ticket = self
-            .generation
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            + 1;
-        if commands
-            .send(Request {
-                ticket,
-                key: key.source.clone(),
-                path: path.clone(),
-                source: source.clone(),
-            })
-            .is_ok()
-        {
-            self.pending = Some((ticket, key.source.clone()));
-        } else {
-            self.entries.push((key.source.clone(), None));
-        }
+        self.allowed = allowed;
+        self.wanted = wanted
+            .iter()
+            .map(|(_, image, path, _)| (image.source.clone(), path.clone()))
+            .collect();
     }
 
     pub(super) fn pending(&self) -> bool {
@@ -182,17 +241,83 @@ impl EmbeddedPreviews {
     }
 }
 
+impl Editor {
+    pub(in crate::editor) fn start_embedded_workflow(
+        &mut self,
+        access: &crate::application::UiAccess<'_, Self>,
+        context: &egui::Context,
+    ) {
+        if self.fullscreen.is_some() || !self.thumbnail_work_allowed() {
+            self.thumbnails.embedded.cancel();
+            return;
+        }
+        if self.document.embedded_preview.is_some() {
+            return;
+        }
+        let Some((request, cancelled)) = self.thumbnails.embedded.begin(&self.document) else {
+            return;
+        };
+        let ticket = request.ticket;
+        let key = request.key.clone();
+        let fallback_key = key.clone();
+        let services = self.thumbnails.embedded.services.clone().unwrap();
+        let retire = Retire(cancelled.clone());
+        let stopped = cancelled.clone();
+        let target = access.clone();
+        let workflow_context = context.clone();
+        let Some(task) = access.spawn(async move {
+            let _retire = retire;
+            let image = services.load(request, stopped).await;
+            target.update(|editor| {
+                if !editor
+                    .document
+                    .embedded_preview
+                    .as_ref()
+                    .is_some_and(|pending| pending.ticket == ticket)
+                {
+                    return;
+                }
+                let pending = editor.document.embedded_preview.take().unwrap();
+                editor.thumbnails.embedded.complete(
+                    ticket,
+                    key,
+                    image,
+                    &editor.document,
+                    &workflow_context,
+                );
+                drop(pending);
+                editor.start_embedded_workflow(&target, &workflow_context);
+            });
+        }) else {
+            self.thumbnails.embedded.complete(
+                ticket,
+                fallback_key,
+                Completion::Stopped,
+                &self.document,
+                context,
+            );
+            return;
+        };
+        self.document.embedded_preview = Some(Pending {
+            ticket,
+            cancelled,
+            _task: task,
+        });
+    }
+}
+
 fn current(key: &SourceKey, document: &Document) -> bool {
-    document
-        .project
-        .source(key.id)
-        .ok()
-        .zip(document.project.development.as_ref())
-        .zip(document.source_path(key.id).ok())
-        .is_some_and(|((source, development), path)| {
-            !source.reference_only
-                && SourceKey::new(source, development, FileKey::new(&path)) == *key
-        })
+    !document.cache().is_closed()
+        && document
+            .project
+            .source(key.id)
+            .ok()
+            .zip(document.project.development.as_ref())
+            .zip(document.source_path(key.id).ok())
+            .is_some_and(|((source, development), path)| {
+                !source.reference_only
+                    && SourceKey::new(source, development, FileKey::new(&path)) == *key
+            })
 }
 
 fn load(request: &Request, active: &impl Fn() -> bool) -> Result<Option<egui::ColorImage>, String> {

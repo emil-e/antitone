@@ -1,7 +1,7 @@
 use super::*;
 
 fn frame(
-    editor: &mut Editor,
+    editor: &mut impl crate::editor::tests::UiFixture,
     context: &egui::Context,
     events: Vec<egui::Event>,
 ) -> egui::FullOutput {
@@ -14,27 +14,22 @@ fn frame(
             events,
             ..Default::default()
         },
-        |ui| host::App::ui(editor, ui),
+        |ui| editor.ui(ui),
     );
     output.textures_delta.clear();
     output
 }
 
-fn initialized() -> (
-    Editor,
-    egui::Context,
-    mpsc::Sender<Message>,
-    mpsc::Receiver<Command>,
-) {
-    let (mut editor, send, receive) = super::super::tests::fixture();
+fn initialized() -> (Editor, egui::Context) {
+    let mut editor = super::super::tests::fixture();
     let context = egui::Context::default();
     for _ in 0..3 {
         frame(&mut editor, &context, vec![]);
     }
-    (editor, context, send, receive)
+    (editor, context)
 }
 
-fn click(editor: &mut Editor, context: &egui::Context, label: &str) {
+fn click(editor: &mut impl crate::editor::tests::UiFixture, context: &egui::Context, label: &str) {
     frame(editor, context, vec![]);
     let output = frame(editor, context, vec![]);
     let point = output
@@ -66,7 +61,7 @@ fn click(editor: &mut Editor, context: &egui::Context, label: &str) {
 
 #[test]
 fn system_quit_joins_one_dirty_decision_and_cancel_retires_it_without_mutation() {
-    let (mut editor, context, _send, receive) = initialized();
+    let (mut editor, context) = initialized();
     let before = editor.document.project.clone();
     assert!(editor.document.dirty());
     for _ in 0..3 {
@@ -99,14 +94,18 @@ fn system_quit_joins_one_dirty_decision_and_cancel_retires_it_without_mutation()
     );
     assert!(!editor.allow_close);
     assert_eq!(editor.document.project, before);
-    assert!(receive.try_recv().is_err());
+    assert!(
+        editor.candidate_operation.request.is_none()
+            && editor.document.write.request.is_none()
+            && editor.export_operation.request.is_none()
+    );
 }
 
 #[test]
 fn a_clean_system_quit_approves_without_saving_again() {
-    let (mut editor, context, _send, receive) = initialized();
+    let (mut editor, context) = initialized();
     let directory = tempfile::tempdir().unwrap();
-    editor.document = editor
+    *editor.document = editor
         .document
         .save(
             &directory.path().join("clean.antitone"),
@@ -120,13 +119,13 @@ fn a_clean_system_quit_approves_without_saving_again() {
         Some(host::QuitState::Approved)
     );
     assert!(editor.allow_close && !editor.document.dirty());
-    assert!(receive.try_recv().is_err());
+    assert!(editor.document.write.request.is_none());
 }
 
 #[test]
 fn blocked_system_quit_never_accepts_a_tool_or_replaces_an_existing_decision() {
     for gate in 0..4 {
-        let (mut editor, context, _send, receive) = initialized();
+        let (mut editor, context) = initialized();
         match gate {
             0 => editor.busy = true,
             1 => editor.pick = Some(Pick::Dmin),
@@ -145,17 +144,21 @@ fn blocked_system_quit_never_accepts_a_tool_or_replaces_an_existing_decision() {
         assert_eq!(editor.document.project, before);
         assert_eq!(editor.pick, (gate == 1).then_some(Pick::Dmin));
         assert_eq!(editor.transition, (gate == 2).then_some(Transition::New));
-        assert!(receive.try_recv().is_err());
+        assert!(
+            editor.candidate_operation.request.is_none()
+                && editor.document.write.request.is_none()
+                && editor.export_operation.request.is_none()
+        );
     }
 }
 
 #[test]
 fn system_quit_waits_for_save_success_and_cannot_approve_a_failed_or_stale_save() {
     for success in [false, true] {
-        let (mut editor, context, send, receive) = initialized();
+        let (mut editor, context) = initialized();
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("saved.antitone");
-        editor.document = editor
+        *editor.document = editor
             .document
             .save(&path, crate::project::Save::New)
             .unwrap();
@@ -170,18 +173,14 @@ fn system_quit_waits_for_save_success_and_cannot_approve_a_failed_or_stale_save(
             Some(host::QuitState::Pending)
         );
         assert!(!editor.allow_close);
-        let Command::Document(request, work) = receive.try_recv().unwrap() else {
-            panic!("save was not dispatched")
-        };
-        let DocumentWork::Save(snapshot, destination, policy) = *work else {
-            panic!("not a save")
-        };
-        send.send(Message::Saved(
-            request + 1,
-            Err("stale save failure".into()),
-        ))
-        .unwrap();
-        editor.receive();
+        let request = editor.document_pending.unwrap();
+        let crate::editor::document_services::Write {
+            document: snapshot,
+            path: destination,
+            policy,
+            ..
+        } = editor.document.write.request.take().unwrap();
+        editor.save_result(request + 1, Err("stale save failure".into()));
         assert_eq!(
             host::App::quit_state(&editor),
             Some(host::QuitState::Pending)
@@ -191,19 +190,20 @@ fn system_quit_waits_for_save_success_and_cannot_approve_a_failed_or_stale_save(
         } else {
             Err("fixture write failure".into())
         };
-        send.send(Message::Saved(request, result)).unwrap();
-        editor.receive();
+        editor.save_result(request, result);
         if success {
-            assert_eq!(
-                host::App::quit_state(&editor),
-                Some(host::QuitState::Pending)
-            );
-            frame(&mut editor, &context, vec![]);
             assert_eq!(
                 host::App::quit_state(&editor),
                 Some(host::QuitState::Approved)
             );
             assert!(!editor.document.dirty());
+            let presented = frame(&mut editor, &context, vec![]);
+            assert!(presented.viewport_output.values().any(|viewport| {
+                viewport
+                    .commands
+                    .iter()
+                    .any(|command| matches!(command, egui::ViewportCommand::Close))
+            }));
         } else {
             assert_eq!(
                 host::App::quit_state(&editor),
@@ -213,13 +213,13 @@ fn system_quit_waits_for_save_success_and_cannot_approve_a_failed_or_stale_save(
             assert_eq!(editor.document.project, before);
             assert!(editor.failure.is_some());
         }
-        assert!(receive.try_recv().is_err());
+        assert!(editor.candidate_operation.request.is_none());
     }
 }
 
 #[test]
 fn cancelling_project_replacement_retires_the_native_close_continuation() {
-    let (mut editor, context, _send, receive) = initialized();
+    let (mut editor, context) = initialized();
     let directory = tempfile::tempdir().unwrap();
     let destination = directory.path().join("existing.antitone");
     std::fs::write(&destination, b"existing project").unwrap();
@@ -235,5 +235,9 @@ fn cancelling_project_replacement_retires_the_native_close_continuation() {
     );
     assert!(!editor.allow_close);
     assert_eq!(std::fs::read(destination).unwrap(), b"existing project");
-    assert!(receive.try_recv().is_err());
+    assert!(
+        editor.candidate_operation.request.is_none()
+            && editor.document.write.request.is_none()
+            && editor.export_operation.request.is_none()
+    );
 }

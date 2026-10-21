@@ -53,7 +53,7 @@ fn proposal(document: &Document) -> roll_analysis::Proposal {
 
 #[test]
 fn photo_initialization_removes_only_analyzed_local_records_and_retains_id_history() {
-    let (mut editor, _, _) = state();
+    let mut editor = state();
     let first = editor.current_source.unwrap();
     editor
         .document
@@ -121,7 +121,7 @@ fn photo_initialization_removes_only_analyzed_local_records_and_retains_id_histo
 #[test]
 fn any_local_record_adds_an_explicit_reset_warning_to_the_area_review() {
     for index in 0..3 {
-        let (mut editor, _, receiver) = ready_state();
+        let mut editor = ready_state();
         let source = editor
             .document
             .project
@@ -133,9 +133,14 @@ fn any_local_record_adds_an_explicit_reset_warning_to_the_area_review() {
         editor.sync_document();
         let before = editor.document.project.clone();
         editor.request_analysis();
-        review_tests::prepared(&mut editor, &receiver);
+        review_tests::prepared(&mut editor);
         assert!(
-            editor.analysis_review.as_ref().unwrap().replaces_photos,
+            editor
+                .document
+                .analysis_review
+                .as_ref()
+                .unwrap()
+                .replaces_photos,
             "record {index}"
         );
         let ctx = egui::Context::default();
@@ -144,17 +149,13 @@ fn any_local_record_adds_an_explicit_reset_warning_to_the_area_review() {
         assert!(labels.iter().any(|(label, _)| label == "Tool warning"));
         editor.end_analysis_review();
         assert_eq!(editor.document.project, before);
-        assert!(
-            !receiver
-                .try_iter()
-                .any(|command| matches!(command, Command::Analyze(..)))
-        );
+        assert!(editor.document.analysis_pending.is_none());
     }
 }
 
 #[test]
 fn retired_local_records_and_empty_allocator_history_do_not_trigger_reset_warning() {
-    let (mut editor, _, receiver) = ready_state();
+    let mut editor = ready_state();
     let mut retired = editor.document.project.sources[0].clone();
     retired.id = SourceId(0);
     retired.path = "retired.ARW".into();
@@ -167,8 +168,15 @@ fn retired_local_records_and_empty_allocator_history_do_not_trigger_reset_warnin
     editor.sync_document();
     let before = editor.document.project.clone();
     editor.request_analysis();
-    review_tests::prepared(&mut editor, &receiver);
-    assert!(!editor.analysis_review.as_ref().unwrap().replaces_photos);
+    review_tests::prepared(&mut editor);
+    assert!(
+        !editor
+            .document
+            .analysis_review
+            .as_ref()
+            .unwrap()
+            .replaces_photos
+    );
     editor.end_analysis_review();
     assert_eq!(editor.document.project, before);
 }
@@ -176,7 +184,7 @@ fn retired_local_records_and_empty_allocator_history_do_not_trigger_reset_warnin
 #[test]
 fn local_removal_is_installed_only_with_a_successful_current_analysis_candidate() {
     for mode in 0..4 {
-        let (mut editor, send, _) = state();
+        let mut editor = state();
         editor
             .document
             .project
@@ -207,8 +215,7 @@ fn local_removal_is_installed_only_with_a_successful_current_analysis_candidate(
                 support: rect([12, 12, 800, 600]),
             })))
         };
-        send.send(Message::Analyzed(id, result)).unwrap();
-        editor.receive();
+        editor.analysis_result(id, result);
         if mode == 3 {
             let source = editor
                 .document

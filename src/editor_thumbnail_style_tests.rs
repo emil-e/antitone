@@ -30,9 +30,9 @@ fn cards(output: &egui::FullOutput) -> Vec<&egui::epaint::RectShape> {
 
 #[test]
 fn card_frames_and_captions_fit_compact_and_normal_strips_without_changing_preferences() {
-    let (mut editor, _, _commands) = crate::editor::tests::fixture();
+    let mut editor = crate::editor::tests::fixture();
     crate::editor::tests::add_ready_fixture(&mut editor);
-    editor.document = super::tests::fixture();
+    *editor.document = super::tests::fixture();
     editor.current_source = Some(editor.document.project.order[0]);
     editor.busy = true;
     let before = editor.document.project.clone();
@@ -105,9 +105,9 @@ fn card_frames_and_captions_fit_compact_and_normal_strips_without_changing_prefe
 
 #[test]
 fn hover_is_neutral_and_distinct_from_selection_without_changing_cell_geometry() {
-    let (mut editor, _, _commands) = crate::editor::tests::fixture();
+    let mut editor = crate::editor::tests::fixture();
     crate::editor::tests::add_ready_fixture(&mut editor);
-    editor.document = super::tests::fixture();
+    *editor.document = super::tests::fixture();
     editor.current_source = Some(editor.document.project.order[0]);
     editor.busy = false;
     let context = egui::Context::default();

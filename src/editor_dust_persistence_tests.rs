@@ -1,15 +1,10 @@
 use super::*;
 
-fn saved_editor() -> (
-    Editor,
-    mpsc::Sender<Message>,
-    mpsc::Receiver<Command>,
-    tempfile::TempDir,
-) {
-    let (mut e, send, commands) = editor();
+fn saved_editor() -> (Editor, tempfile::TempDir) {
+    let mut e = editor();
     e.sync_document();
     let directory = tempfile::tempdir().unwrap();
-    e.document = e
+    *e.document = e
         .document
         .save(
             &directory.path().join("dust.antitone"),
@@ -17,22 +12,28 @@ fn saved_editor() -> (
         )
         .unwrap();
     assert!(!e.document.dirty());
-    (e, send, commands, directory)
+    (e, directory)
 }
 
 #[test]
 fn released_edits_dirty_the_document_but_selection_drafts_and_noops_do_not() {
-    let (mut e, _, _, _directory) = saved_editor();
+    let (mut e, _directory) = saved_editor();
     let source = e.current_source.unwrap();
     let baseline = e.document.project.clone();
-    e.dust.selected.remove(&source);
+    e.document.dust.selected.remove(&source);
     e.select_dust_repair(RepairId(1));
     assert_eq!(e.selected_dust_repair(), Some(RepairId(1)));
     assert_eq!(e.document.project, baseline);
     assert!(!e.document.dirty());
 
     e.begin_dust_mask(Some(RepairId(1)));
-    e.dust.mask_draft.as_mut().unwrap().pixels.insert([54, 50]);
+    e.document
+        .dust
+        .mask_draft
+        .as_mut()
+        .unwrap()
+        .pixels
+        .insert([54, 50]);
     assert_eq!(e.document.project, baseline);
     assert!(!e.document.dirty());
 
@@ -41,16 +42,22 @@ fn released_edits_dirty_the_document_but_selection_drafts_and_noops_do_not() {
     e.commit_dust_mask();
     assert!(!e.document.dirty(), "an unchanged release must not dirty");
     e.begin_dust_mask(Some(RepairId(1)));
-    e.dust.mask_draft.as_mut().unwrap().rejected = true;
+    e.document.dust.mask_draft.as_mut().unwrap().rejected = true;
     e.commit_dust_mask();
     assert!(!e.document.dirty());
 
     e.begin_dust_mask(Some(RepairId(1)));
-    e.dust.mask_draft.as_mut().unwrap().pixels.insert([54, 50]);
+    e.document
+        .dust
+        .mask_draft
+        .as_mut()
+        .unwrap()
+        .pixels
+        .insert([54, 50]);
     e.commit_dust_mask();
     assert!(e.document.dirty());
     let changed = e.document.project.clone();
-    e.document = e
+    *e.document = e
         .document
         .save(
             e.document.path.as_deref().unwrap(),
@@ -77,7 +84,7 @@ fn released_edits_dirty_the_document_but_selection_drafts_and_noops_do_not() {
 
 #[test]
 fn unchanged_edits_preserve_reopened_mask_margins_and_compatible_evaluations() {
-    let (mut e, _, commands, directory) = saved_editor();
+    let (mut e, directory) = saved_editor();
     let source = e.current_source.unwrap();
     let mut bits = vec![false; 7 * 7];
     for y in 2..5 {
@@ -90,16 +97,16 @@ fn unchanged_edits_preserve_reopened_mask_margins_and_compatible_evaluations() {
         .set_support(RepairId(1), support.clone())
         .unwrap();
     let path = directory.path().join("margins.antitone");
-    e.document = e.document.save(&path, crate::project::Save::New).unwrap();
+    *e.document = e.document.save(&path, crate::project::Save::New).unwrap();
     e.document.project = crate::project::Project::load(&path).unwrap();
 
     e.schedule_dust(e.dust_signature().unwrap());
-    let Command::Dust(request) = commands.try_recv().unwrap() else {
-        panic!("expected dust")
-    };
-    let active = e.ready.as_ref().unwrap().area;
+    let request = captured_request(&e);
+    let active = e.document.visit.ready.as_ref().unwrap().area;
     e.receive_dust(request.request, Ok(Some(response(&request, active))));
-    let evaluation = e.dust.cached[&(source, RepairId(1))].evaluated.clone();
+    let evaluation = e.document.dust.cached[&(source, RepairId(1))]
+        .evaluated
+        .clone();
     let reference_revision = e.original.revision();
     e.begin_dust_mask(Some(RepairId(1)));
     assert_eq!(
@@ -116,49 +123,37 @@ fn unchanged_edits_preserve_reopened_mask_margins_and_compatible_evaluations() {
     );
     assert!(Arc::ptr_eq(
         &evaluation,
-        &e.dust.cached[&(source, RepairId(1))].evaluated
+        &e.document.dust.cached[&(source, RepairId(1))].evaluated
     ));
     e.schedule_dust(e.dust_signature().unwrap());
     assert!(
-        commands.try_recv().is_err(),
+        e.document.dust.pending_request().is_none(),
         "unchanged masks must reuse compatible evaluations"
     );
 }
 
 #[test]
 fn saves_during_pending_and_failed_evaluation_keep_instructions_and_compatible_caches() {
-    let (mut e, send, commands, directory) = saved_editor();
+    let (mut e, directory) = saved_editor();
     let source = e.current_source.unwrap();
     let path = directory.path().join("pending.antitone");
     e.schedule_dust(e.dust_signature().unwrap());
-    let Command::Dust(request) = commands.try_recv().unwrap() else {
-        panic!("expected dust")
-    };
-    let active = e.ready.as_ref().unwrap().area;
-    let captured = e.document.clone();
-    e.start_document(DocumentWork::Save(
-        captured.clone(),
-        path.clone(),
-        crate::project::Save::New,
-    ));
+    let request = captured_request(&e);
+    let active = e.document.visit.ready.as_ref().unwrap().area;
+    let captured = e.document.capture();
+    e.start_save(crate::editor::document_services::Write {
+        document: captured.clone(),
+        path: path.clone(),
+        policy: crate::project::Save::New,
+    });
     let save_request = e.document_pending.unwrap();
-    assert!(matches!(
-        commands.try_recv().unwrap(),
-        Command::Document(..)
-    ));
+    assert!(e.document.write.request.is_some());
     let saved = captured.save(&path, crate::project::Save::New).unwrap();
-    send.send(Message::Saved(
-        save_request + 1,
-        Ok(Box::new(saved.clone())),
-    ))
-    .unwrap();
-    e.receive();
+    e.save_result(save_request + 1, Ok(Box::new(saved.clone())));
     assert_eq!(e.document_pending, Some(save_request));
-    send.send(Message::Saved(save_request, Ok(Box::new(saved))))
-        .unwrap();
-    e.receive();
+    e.save_result(save_request, Ok(Box::new(saved)));
     assert!(!e.document.dirty());
-    assert_eq!(e.dust.pending_request(), Some(request.request));
+    assert_eq!(e.document.dust.pending_request(), Some(request.request));
     assert_eq!(
         e.document.project.source(source).unwrap().repairs,
         captured.project.source(source).unwrap().repairs
@@ -166,7 +161,9 @@ fn saves_during_pending_and_failed_evaluation_keep_instructions_and_compatible_c
 
     e.receive_dust(request.request, Ok(Some(response(&request, active))));
     assert!(!e.document.dirty());
-    let evaluation = e.dust.cached[&(source, RepairId(1))].evaluated.clone();
+    let evaluation = e.document.dust.cached[&(source, RepairId(1))]
+        .evaluated
+        .clone();
     let saved = e
         .document
         .save(&path, crate::project::Save::Replace)
@@ -174,14 +171,12 @@ fn saves_during_pending_and_failed_evaluation_keep_instructions_and_compatible_c
     e.document.accept_save(saved);
     assert!(Arc::ptr_eq(
         &evaluation,
-        &e.dust.cached[&(source, RepairId(1))].evaluated
+        &e.document.dust.cached[&(source, RepairId(1))].evaluated
     ));
 
-    e.dust.cached.clear();
+    e.document.dust.cached.clear();
     e.schedule_dust(e.dust_signature().unwrap());
-    let Command::Dust(failed) = commands.try_recv().unwrap() else {
-        panic!("expected dust")
-    };
+    let failed = captured_request(&e);
     e.receive_dust(failed.request, Err("no eligible donor".into()));
     assert_eq!(e.dust_render_state(), "Repair unavailable");
     assert!(!e.document.dirty());
@@ -198,26 +193,24 @@ fn saves_during_pending_and_failed_evaluation_keep_instructions_and_compatible_c
 
 #[test]
 fn save_as_baselines_only_its_snapshot_and_failures_preserve_later_edits_and_existing_bytes() {
-    let (mut e, send, commands, directory) = saved_editor();
+    let (mut e, directory) = saved_editor();
     let source = e.current_source.unwrap();
     let path = directory.path().join("save-as.antitone");
-    let captured = e.document.clone();
-    e.start_document(DocumentWork::Save(
-        captured.clone(),
-        path.clone(),
-        crate::project::Save::New,
-    ));
+    let captured = e.document.capture();
+    e.start_save(crate::editor::document_services::Write {
+        document: captured.clone(),
+        path: path.clone(),
+        policy: crate::project::Save::New,
+    });
     let request = e.document_pending.unwrap();
-    let _ = commands.try_recv().unwrap();
+    assert!(e.document.write.request.is_some());
     let saved = captured.save(&path, crate::project::Save::New).unwrap();
     let bytes = std::fs::read(&path).unwrap();
 
     e.dust_repairs_mut(source)
         .set_enabled(RepairId(1), false)
         .unwrap();
-    send.send(Message::Saved(request, Ok(Box::new(saved))))
-        .unwrap();
-    e.receive();
+    e.save_result(request, Ok(Box::new(saved)));
     assert!(e.document.dirty());
     assert_eq!(e.document.path.as_deref(), Some(path.as_path()));
     assert!(!e.dust_repairs(source).unwrap().repairs()[0].enabled);
@@ -228,17 +221,15 @@ fn save_as_baselines_only_its_snapshot_and_failures_preserve_later_edits_and_exi
 
     e.reset_dust_repairs(source);
     let before = e.document.project.clone();
-    e.start_document(DocumentWork::Save(
-        e.document.clone(),
-        path.clone(),
-        crate::project::Save::New,
-    ));
+    e.start_save(crate::editor::document_services::Write {
+        document: e.document.capture(),
+        path: path.clone(),
+        policy: crate::project::Save::New,
+    });
     let request = e.document_pending.unwrap();
-    let _ = commands.try_recv().unwrap();
+    assert!(e.document.write.request.is_some());
     assert!(e.document.save(&path, crate::project::Save::New).is_err());
-    send.send(Message::Saved(request, Err("destination exists".into())))
-        .unwrap();
-    e.receive();
+    e.save_result(request, Err("destination exists".into()));
     assert_eq!(e.document.project, before);
     assert!(e.document.dirty());
     assert_eq!(std::fs::read(&path).unwrap(), bytes);

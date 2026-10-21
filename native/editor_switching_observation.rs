@@ -43,11 +43,12 @@ impl Paint {
 
     fn frame(
         &mut self,
-        editor: &mut Editor,
+        editor: &mut crate::application::test_support::TestApplication<'_, Editor>,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         events: Vec<egui::Event>,
     ) -> Result<(egui::FullOutput, f64, f64)> {
+        editor.pump();
         let start = Instant::now();
         let mut output = self.context.run_ui(
             egui::RawInput {
@@ -58,7 +59,7 @@ impl Paint {
                 events,
                 ..Default::default()
             },
-            |ui| host::App::ui(editor, ui),
+            |ui| crate::editor::tests::paint_controller(editor, ui),
         );
         let ui_seconds = start.elapsed().as_secs_f64();
         for (id, deltas) in &output.textures_delta.set {
@@ -99,7 +100,7 @@ impl Paint {
                 .render(&mut pass.forget_lifetime(), &jobs, &screen);
         }
         editor
-            .submissions
+            .read(|state| state.submissions.clone())
             .submit(queue, commands.into_iter().chain([encoder.finish()]));
         calibration::wait(device, queue).map_err(|e| e.to_string())?;
         Ok((output, ui_seconds, start.elapsed().as_secs_f64()))
@@ -177,16 +178,9 @@ fn workload(
         );
         Ok(())
     });
-    let (commands, receiver) = mpsc::channel();
-    let (send, messages) = mpsc::channel();
     let renderers = Arc::new(crate::renderer::RendererCache::default());
     let epoch = Arc::new(std::sync::atomic::AtomicU64::new(0));
-    let analysis = Arc::new(std::sync::atomic::AtomicU64::new(0));
-    let mut editor = Editor::state(
-        commands,
-        messages,
-        Arc::new(std::sync::atomic::AtomicU64::new(0)),
-    );
+    let mut editor = Editor::state();
     let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
     editor.thumbnails = thumbnails::Thumbnails::with_developments(
         device.clone(),
@@ -198,10 +192,9 @@ fn workload(
         scheduler.clone(),
     );
     editor.thumbnails.pressure_override = None;
-    editor.document = document;
+    *editor.document = document;
     editor.developments = Some(scheduler.clone());
     editor.source_epoch = epoch.clone();
-    editor.analysis_generation = analysis.clone();
     editor.thumbnails.set_limits(cache_limits::CacheLimits {
         cpu_bytes: 1100 * cache_limits::MIB,
         gpu_bytes: 16 * cache_limits::MIB,
@@ -212,176 +205,188 @@ fn workload(
     editor.dmin = Some(DVec3::new(0.28, 0.20, 0.14));
     editor.dmax = Some(DVec3::new(0.028, 0.020, 0.014));
     editor.sync_document();
-    let worker_renderers = renderers.clone();
-    let worker_device = device.clone();
-    let worker_queue = queue.clone();
     editor.working = WorkingView::new(device.clone());
-    let worker_generation = editor.original.generation.clone();
-    let worker_scheduler = scheduler.clone();
-    let worker_submissions = editor.submissions.clone();
-    let worker = std::thread::spawn(move || {
-        backend(
-            worker_renderers,
-            worker_device,
-            (worker_queue, worker_submissions),
-            receiver,
-            send,
-            worker_generation,
-            analysis,
-            worker_scheduler,
-            epoch,
-        )
+    let jobs = editor.workflow_jobs.clone();
+    editor.source_services = Some(source::Services {
+        developments: scheduler.clone(),
+        jobs: jobs.clone(),
+        renderers: renderers.clone(),
+        device: device.clone(),
+        queue: queue.clone(),
     });
-    let exercise = (|| -> Result<()> {
-        let mut paint = Paint::new(device);
-        editor.selected = 0;
-        editor.load(
-            editor
-                .document
-                .source_path(editor.document.project.order[0])
-                .map_err(|e| e.to_string())?,
-        );
-        let mut all_ui = Vec::new();
-        let mut all_frame = Vec::new();
-        for step in 0..17 {
-            let selected = step % 2;
-            let selection_start = Instant::now();
-            let native_before = count.load(Ordering::Relaxed);
-            if step > 0 {
-                let (output, ui, total) = paint.frame(&mut editor, device, queue, vec![])?;
-                all_ui.push(ui);
-                all_frame.push(total);
-                let (point, disabled) = Paint::card(
-                    &output,
-                    if selected == 0 {
-                        "DSC04378.ARW"
-                    } else {
-                        "DSC04393.ARW"
-                    },
-                )?;
-                if disabled {
-                    return Err("ready source card unexpectedly disabled".into());
-                }
-                let (_, ui, total) =
-                    paint.frame(&mut editor, device, queue, pointer(point, true))?;
-                all_ui.push(ui);
-                all_frame.push(total);
-                let (_, ui, total) =
-                    paint.frame(&mut editor, device, queue, pointer(point, false))?;
-                all_ui.push(ui);
-                all_frame.push(total);
-                if editor.selected != selected || !editor.busy {
-                    return Err("actual source-card input did not start selection".into());
-                }
-            }
-            let mut ready = None;
-            let mut blocked_probe = false;
-            let mut per_ui = Vec::new();
-            let mut per_frame = Vec::new();
-            while editor.busy || !editor.working.idle() {
-                monitor.check()?;
-                if start.elapsed() > Duration::from_secs(90) {
-                    return Err("bounded switching exercise deadline".into());
-                }
-                let (output, ui, total) = paint.frame(&mut editor, device, queue, vec![])?;
-                per_ui.push(ui);
-                per_frame.push(total);
-                all_ui.push(ui);
-                all_frame.push(total);
-                if step == 0 && editor.busy && !blocked_probe {
+    let screening = Arc::new(crate::gpu::dust_screening::Cache::default());
+    editor.dust_services = Some(dust_workflow::Services::new(
+        jobs.clone(),
+        device.clone(),
+        queue.clone(),
+        editor.submissions.clone(),
+        screening.clone(),
+    ));
+    editor.export_services = Some(export_services::Services::new(
+        jobs,
+        renderers.clone(),
+        device.clone(),
+        queue.clone(),
+        editor.submissions.clone(),
+        screening,
+    ));
+    let exercise = crate::application::test_support::with_application(editor, |app| {
+        let exercise = (|| -> Result<()> {
+            let mut paint = Paint::new(device);
+            app.enter(|editor, access| {
+                editor.selected = 0;
+                let path = editor
+                    .document
+                    .source_path(editor.document.project.order[0])
+                    .map_err(|e| e.to_string())?;
+                editor.load(path);
+                editor.start_source_workflow(access);
+                Ok::<_, String>(())
+            })?;
+            let mut all_ui = Vec::new();
+            let mut all_frame = Vec::new();
+            for step in 0..17 {
+                let selected = step % 2;
+                let selection_start = Instant::now();
+                let native_before = count.load(Ordering::Relaxed);
+                if step > 0 {
+                    let (output, ui, total) = paint.frame(app, device, queue, vec![])?;
+                    all_ui.push(ui);
+                    all_frame.push(total);
                     let (point, disabled) = Paint::card(
                         &output,
                         if selected == 0 {
-                            "DSC04393.ARW"
-                        } else {
                             "DSC04378.ARW"
+                        } else {
+                            "DSC04393.ARW"
                         },
                     )?;
-                    let request = editor.id;
-                    let (_, ui, total) =
-                        paint.frame(&mut editor, device, queue, pointer(point, true))?;
-                    all_ui.push(ui);
-                    all_frame.push(total);
-                    let (output, ui, total) =
-                        paint.frame(&mut editor, device, queue, pointer(point, false))?;
-                    all_ui.push(ui);
-                    all_frame.push(total);
-                    let replaced = editor.id;
-                    if disabled || replaced == request || editor.selected != 1 {
-                        return Err("pending selection did not accept replacement".into());
-                    }
-                    let (point, disabled) = Paint::card(&output, "DSC04378.ARW")?;
                     if disabled {
-                        return Err("replacement selection blocked return click".into());
+                        return Err("ready source card unexpectedly disabled".into());
                     }
-                    let (_, ui, total) =
-                        paint.frame(&mut editor, device, queue, pointer(point, true))?;
+                    let (_, ui, total) = paint.frame(app, device, queue, pointer(point, true))?;
                     all_ui.push(ui);
                     all_frame.push(total);
-                    let (_, ui, total) =
-                        paint.frame(&mut editor, device, queue, pointer(point, false))?;
+                    let (_, ui, total) = paint.frame(app, device, queue, pointer(point, false))?;
                     all_ui.push(ui);
                     all_frame.push(total);
-                    if editor.id == replaced || editor.selected != 0 {
-                        return Err("latest selection did not replace pending work".into());
+                    if app.read(|e| e.selected != selected || !e.busy) {
+                        return Err("actual source-card input did not start selection".into());
                     }
-                    println!(
-                        "switch_busy_input step={step} disabled=false request_before={request} replaced={replaced} returned={} native_developments={}",
-                        editor.id,
-                        count.load(Ordering::Relaxed)
-                    );
-                    blocked_probe = true;
                 }
-                if !editor.busy && ready.is_none() {
-                    ready = Some(selection_start.elapsed().as_secs_f64());
+                let mut ready = None;
+                let mut blocked_probe = false;
+                let mut per_ui = Vec::new();
+                let mut per_frame = Vec::new();
+                while app.read(|e| e.busy || !e.working.idle()) {
+                    monitor.check()?;
+                    if start.elapsed() > Duration::from_secs(90) {
+                        return Err("bounded switching exercise deadline".into());
+                    }
+                    let (output, ui, total) = paint.frame(app, device, queue, vec![])?;
+                    per_ui.push(ui);
+                    per_frame.push(total);
+                    all_ui.push(ui);
+                    all_frame.push(total);
+                    if step == 0 && app.read(|e| e.busy) && !blocked_probe {
+                        let (point, disabled) = Paint::card(
+                            &output,
+                            if selected == 0 {
+                                "DSC04393.ARW"
+                            } else {
+                                "DSC04378.ARW"
+                            },
+                        )?;
+                        let request = app.read(|e| e.id);
+                        let (_, ui, total) =
+                            paint.frame(app, device, queue, pointer(point, true))?;
+                        all_ui.push(ui);
+                        all_frame.push(total);
+                        let (output, ui, total) =
+                            paint.frame(app, device, queue, pointer(point, false))?;
+                        all_ui.push(ui);
+                        all_frame.push(total);
+                        let replaced = app.read(|e| e.id);
+                        if disabled || replaced == request || app.read(|e| e.selected != 1) {
+                            return Err("pending selection did not accept replacement".into());
+                        }
+                        let (point, disabled) = Paint::card(&output, "DSC04378.ARW")?;
+                        if disabled {
+                            return Err("replacement selection blocked return click".into());
+                        }
+                        let (_, ui, total) =
+                            paint.frame(app, device, queue, pointer(point, true))?;
+                        all_ui.push(ui);
+                        all_frame.push(total);
+                        let (_, ui, total) =
+                            paint.frame(app, device, queue, pointer(point, false))?;
+                        all_ui.push(ui);
+                        all_frame.push(total);
+                        if app.read(|e| e.id == replaced || e.selected != 0) {
+                            return Err("latest selection did not replace pending work".into());
+                        }
+                        println!(
+                            "switch_busy_input step={step} disabled=false request_before={request} replaced={replaced} returned={} native_developments={}",
+                            app.read(|e| e.id),
+                            count.load(Ordering::Relaxed)
+                        );
+                        blocked_probe = true;
+                    }
+                    if app.read(|e| !e.busy) && ready.is_none() {
+                        ready = Some(selection_start.elapsed().as_secs_f64());
+                    }
+                    if app.read(|e| e.document.visit.ready.is_none() && !e.busy) {
+                        return Err(
+                            app.read(|e| format!("source preparation failed: {}", e.status))
+                        );
+                    }
+                    if app.read(|e| {
+                        e.original.refinement_error.is_some() || e.working.error.is_some()
+                    }) {
+                        return Err(app.read(|e| format!("refinement failed: {}", e.status)));
+                    }
+                    std::thread::sleep(Duration::from_millis(8));
                 }
-                if editor.ready.is_none() && !editor.busy {
-                    return Err(format!("source preparation failed: {}", editor.status));
-                }
-                if editor.original.refinement_error.is_some() || editor.working.error.is_some() {
-                    return Err(format!("refinement failed: {}", editor.status));
-                }
-                std::thread::sleep(Duration::from_millis(8));
+                println!(
+                    "switch_step step={step} selected={selected} ready_seconds={:.6} accepted_view_seconds={:.6} native_before={native_before} native_after={} ui_max_ms={:.6} draw_wait_max_ms={:.6} cpu_optional={} gpu_cached_images={}",
+                    ready.ok_or("ready boundary missing")?,
+                    selection_start.elapsed().as_secs_f64(),
+                    count.load(Ordering::Relaxed),
+                    per_ui.iter().copied().fold(0., f64::max) * 1000.,
+                    per_frame.iter().copied().fold(0., f64::max) * 1000.,
+                    app.read(|e| e.document.cache().charges().retained),
+                    app.read(|e| e.thumbnails.ready_count(&e.document, e.target))
+                );
             }
+            if count.load(Ordering::Relaxed) != 2 {
+                return Err("retained two-source switching redeveloped a source".into());
+            }
+            all_ui.sort_by(f64::total_cmp);
+            all_frame.sort_by(f64::total_cmp);
             println!(
-                "switch_step step={step} selected={selected} ready_seconds={:.6} accepted_view_seconds={:.6} native_before={native_before} native_after={} ui_max_ms={:.6} draw_wait_max_ms={:.6} cpu_optional={} gpu_cached_images={}",
-                ready.ok_or("ready boundary missing")?,
-                selection_start.elapsed().as_secs_f64(),
-                count.load(Ordering::Relaxed),
-                per_ui.iter().copied().fold(0., f64::max) * 1000.,
-                per_frame.iter().copied().fold(0., f64::max) * 1000.,
-                editor.document.cache().charges().retained,
-                editor
-                    .thumbnails
-                    .ready_count(&editor.document, editor.target)
+                "switch_summary settled_selections=17 pending_replacements=2 native_developments=2 frames={} ui_p50_ms={:.6} ui_p95_ms={:.6} ui_max_ms={:.6} draw_wait_p50_ms={:.6} draw_wait_p95_ms={:.6} draw_wait_max_ms={:.6}",
+                all_ui.len(),
+                all_ui[all_ui.len() / 2] * 1000.,
+                all_ui[all_ui.len() * 95 / 100] * 1000.,
+                all_ui.last().unwrap() * 1000.,
+                all_frame[all_frame.len() / 2] * 1000.,
+                all_frame[all_frame.len() * 95 / 100] * 1000.,
+                all_frame.last().unwrap() * 1000.
             );
-        }
-        if count.load(Ordering::Relaxed) != 2 {
-            return Err("retained two-source switching redeveloped a source".into());
-        }
-        all_ui.sort_by(f64::total_cmp);
-        all_frame.sort_by(f64::total_cmp);
-        println!(
-            "switch_summary settled_selections=17 pending_replacements=2 native_developments=2 frames={} ui_p50_ms={:.6} ui_p95_ms={:.6} ui_max_ms={:.6} draw_wait_p50_ms={:.6} draw_wait_p95_ms={:.6} draw_wait_max_ms={:.6}",
-            all_ui.len(),
-            all_ui[all_ui.len() / 2] * 1000.,
-            all_ui[all_ui.len() * 95 / 100] * 1000.,
-            all_ui.last().unwrap() * 1000.,
-            all_frame[all_frame.len() / 2] * 1000.,
-            all_frame[all_frame.len() * 95 / 100] * 1000.,
-            all_frame.last().unwrap() * 1000.
-        );
-        Ok(())
-    })();
-    editor.original.invalidate();
-    editor.working.clear();
-    editor.source_epoch.fetch_add(1, Ordering::Relaxed);
-    editor.document.cache().close();
-    editor.thumbnails.cancel();
-    editor.thumbnails.commands.take();
-    scheduler.close();
-    drop(editor);
-    worker.join().map_err(|_| "editor backend panicked")?;
+            Ok(())
+        })();
+        app.update(|editor| {
+            editor.original.invalidate();
+            editor.working.clear();
+            editor.source_epoch.fetch_add(1, Ordering::Relaxed);
+            editor.document.cache().close();
+            editor.thumbnails.cancel();
+            editor.thumbnails.services.take();
+        });
+        scheduler.close();
+        app.close_execution();
+        exercise
+    });
     scheduler.close_and_wait()?;
     drop(renderers);
     exercise?;

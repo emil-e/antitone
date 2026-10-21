@@ -42,29 +42,41 @@ fn authored_dng_extraction_reaches_the_oriented_display_referred_placeholder_dec
 }
 
 #[test]
-fn authored_dng_preview_worker_installs_and_releases_the_visible_placeholder() {
+fn authored_dng_preview_worker_installs_and_releases_the_visible_placeholder_without_paint() {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/preview.dng");
     let mut document = Document::default();
     document.import(&[path]).unwrap();
-    let context = egui::Context::default();
-    let mut previews = EmbeddedPreviews::new(Arc::new(std::sync::OnceLock::new()));
     let visible = vec![wanted(&document, 0)];
-    previews.request_visible(&visible, true);
-    let started = std::time::Instant::now();
-    while previews.pending() {
-        assert!(
-            started.elapsed() < Duration::from_secs(5),
-            "JPEG worker did not complete"
-        );
-        previews.receive(&document, &context);
-        std::thread::sleep(Duration::from_millis(1));
-    }
-    assert_eq!(previews.get(&visible[0].1.source).unwrap().size(), [8, 16]);
-    // The proper-thumbnail coordinator removes replaced images from this wanted list.
-    previews.request_visible(&[], true);
-    assert!(previews.entries.is_empty());
-    assert!(!previews.pending());
+    let context = egui::Context::default();
+    let mut editor = crate::editor::tests::fixture();
+    editor.document = document.into();
+    editor.thumbnails.embedded = EmbeddedPreviews::new();
+    editor.thumbnails.embedded.request_visible(&visible, true);
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, access| editor.start_embedded_workflow(access, &context));
+        assert!(app.read(|editor| editor.document.embedded_preview.is_some()));
+        app.run_until(Duration::from_secs(5), |editor| {
+            editor.document.embedded_preview.is_none()
+        });
+        app.read(|editor| {
+            assert_eq!(
+                editor
+                    .thumbnails
+                    .embedded
+                    .get(&visible[0].1.source)
+                    .unwrap()
+                    .size(),
+                [8, 16]
+            );
+        });
+        // The proper-thumbnail coordinator removes replaced images from this wanted list.
+        app.update(|editor| editor.thumbnails.embedded.request_visible(&[], true));
+        app.read(|editor| {
+            assert!(editor.thumbnails.embedded.entries.is_empty());
+            assert!(!editor.thumbnails.embedded.pending());
+        });
+    });
 }
 
 #[test]
@@ -120,22 +132,8 @@ fn embedded_icc_and_exif_are_honoured_without_camera_inversion() {
     assert_eq!(image.pixels[0], egui::Color32::from_rgb(127, 127, 127));
 }
 
-fn state() -> (
-    EmbeddedPreviews,
-    mpsc::Receiver<Request>,
-    mpsc::Sender<ResultMessage>,
-) {
-    let (commands, requests) = mpsc::channel();
-    let (send, messages) = mpsc::channel();
-    (
-        EmbeddedPreviews {
-            commands: Some(commands),
-            messages: Some(messages),
-            ..Default::default()
-        },
-        requests,
-        send,
-    )
+fn state() -> EmbeddedPreviews {
+    EmbeddedPreviews::new()
 }
 
 fn wanted(document: &Document, index: usize) -> (usize, ImageKey, PathBuf, Source) {
@@ -148,34 +146,41 @@ fn wanted(document: &Document, index: usize) -> (usize, ImageKey, PathBuf, Sourc
     )
 }
 
-fn complete(request: Request, send: &mpsc::Sender<ResultMessage>, available: bool) {
-    send.send(ResultMessage {
-        ticket: request.ticket,
-        key: request.key,
-        image: Ok(available.then(|| egui::ColorImage::filled([2, 1], egui::Color32::RED))),
-    })
-    .unwrap();
+fn complete(
+    previews: &mut EmbeddedPreviews,
+    request: Request,
+    document: &Document,
+    context: &egui::Context,
+    available: bool,
+) {
+    previews.complete(
+        request.ticket,
+        request.key,
+        Completion::Image(Ok(
+            available.then(|| egui::ColorImage::filled([2, 1], egui::Color32::RED))
+        )),
+        document,
+        context,
+    );
 }
 
 #[test]
 fn visible_jpeg_pass_is_independent_bounded_and_drops_completed_or_offscreen_placeholders() {
     let document = fixture();
     let context = egui::Context::default();
-    let (mut previews, requests, send) = state();
+    let mut previews = state();
     let wanted = vec![wanted(&document, 0), wanted(&document, 1)];
     previews.request_visible(&wanted, true);
-    let first = requests.try_recv().unwrap();
+    let first = previews.begin(&document).unwrap().0;
     previews.request_visible(&wanted, true);
     assert!(
-        requests.try_recv().is_err(),
-        "only one JPEG job, independently of the RAW worker"
+        previews.begin(&document).is_none(),
+        "only one current JPEG demand"
     );
-    complete(first, &send, true);
-    previews.receive(&document, &context);
+    complete(&mut previews, first, &document, &context, true);
     assert!(previews.get(&wanted[0].1.source).is_some());
-    previews.request_visible(&wanted, true);
-    complete(requests.try_recv().unwrap(), &send, true);
-    previews.receive(&document, &context);
+    let second = previews.begin(&document).unwrap().0;
+    complete(&mut previews, second, &document, &context, true);
     assert!(previews.get(&wanted[1].1.source).is_some());
     previews.request_visible(&wanted[1..], true);
     assert!(previews.get(&wanted[0].1.source).is_none());
@@ -187,36 +192,44 @@ fn visible_jpeg_pass_is_independent_bounded_and_drops_completed_or_offscreen_pla
 }
 
 #[test]
-fn unavailable_cancelled_and_disconnected_previews_do_not_retry_or_block_raw_work() {
+fn missing_cancelled_and_stopped_preview_proposals_do_not_retry_or_add_pending_demand() {
     let document = fixture();
     let context = egui::Context::default();
     let wanted = vec![wanted(&document, 0)];
-    let (mut previews, requests, send) = state();
+    let mut previews = state();
     previews.request_visible(&wanted, false);
-    assert!(requests.try_recv().is_err());
+    assert!(previews.begin(&document).is_none());
     previews.request_visible(&wanted, true);
-    complete(requests.try_recv().unwrap(), &send, false);
-    previews.receive(&document, &context);
+    let request = previews.begin(&document).unwrap().0;
+    complete(&mut previews, request, &document, &context, false);
     previews.request_visible(&wanted, true);
     assert!(
-        requests.try_recv().is_err(),
+        previews.begin(&document).is_none(),
         "missing preview does not loop on each frame"
     );
     previews.entries.clear();
-    previews.request_visible(&wanted, true);
-    let request = requests.try_recv().unwrap();
+    let request = previews.begin(&document).unwrap().0;
     previews.request_visible(&wanted, false);
-    assert!(previews.pending(), "cancellation cannot create a backlog");
-    complete(request, &send, true);
-    previews.receive(&document, &context);
+    assert!(previews.pending());
+    assert!(
+        previews.begin(&document).is_none(),
+        "cancellation cannot add another pending demand"
+    );
+    complete(&mut previews, request, &document, &context, true);
     assert!(previews.entries.is_empty());
     previews.request_visible(&wanted, true);
-    let request = requests.try_recv().unwrap();
-    drop(send);
-    previews.receive(&document, &context);
+    let request = previews.begin(&document).unwrap().0;
+    let key = request.key.clone();
+    previews.complete(
+        request.ticket,
+        request.key,
+        Completion::Stopped,
+        &document,
+        &context,
+    );
     assert!(!previews.pending());
-    assert!(previews.commands.is_none());
-    assert_eq!(previews.entries[0].0, request.key);
+    assert!(previews.services.is_none());
+    assert_eq!(previews.entries[0].0, key);
 }
 
 #[test]
@@ -224,7 +237,7 @@ fn critical_pressure_cancels_jpeg_installation_but_preserves_visible_textures() 
     let document = fixture();
     let context = egui::Context::default();
     let wanted = vec![wanted(&document, 0), wanted(&document, 1)];
-    let (previews, requests, send) = state();
+    let previews = state();
     let mut thumbnails = Thumbnails {
         embedded: previews,
         ..Default::default()
@@ -238,24 +251,30 @@ fn critical_pressure_cancels_jpeg_installation_but_preserves_visible_textures() 
         )),
     ));
     thumbnails.embedded.request_visible(&wanted, true);
-    let request = requests.try_recv().unwrap();
+    let request = thumbnails.embedded.begin(&document).unwrap().0;
     thumbnails.apply_budgets(memory::CacheBudgets {
         images: 0,
         sources: 0,
         pressure: memory::Pressure::Critical,
     });
-    complete(request, &send, true);
-    thumbnails.embedded.receive(&document, &context);
+    complete(&mut thumbnails.embedded, request, &document, &context, true);
     thumbnails.embedded.request_visible(&wanted, false);
     assert!(thumbnails.embedded.get(&wanted[0].1.source).is_some());
     assert!(thumbnails.embedded.get(&wanted[1].1.source).is_none());
-    assert!(requests.try_recv().is_err());
+    assert!(thumbnails.embedded.begin(&document).is_none());
 }
 
 #[test]
 fn stale_document_source_stats_and_development_reject_previews() {
     let context = egui::Context::default();
-    for stale in ["document", "source", "revision", "development", "cancel"] {
+    for stale in [
+        "document",
+        "source",
+        "revision",
+        "development",
+        "cancel",
+        "closed",
+    ] {
         let mut document = fixture();
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("photo.ARW");
@@ -263,19 +282,19 @@ fn stale_document_source_stats_and_development_reject_previews() {
         let id = document.project.order[0];
         document.project.source_mut(id).unwrap().path = path.clone();
         let wanted = vec![wanted(&document, 0)];
-        let (mut previews, requests, send) = state();
+        let mut previews = state();
         previews.request_visible(&wanted, true);
-        let request = requests.try_recv().unwrap();
+        let request = previews.begin(&document).unwrap().0;
         match stale {
             "document" => document = Document::default(),
             "source" => document.project.source_mut(id).unwrap().reference_only = true,
             "revision" => std::fs::write(&path, b"changed-bytes").unwrap(),
             "development" => document.project.development.as_mut().unwrap().fixed_wb[0] += 0.5,
             "cancel" => previews.cancel(),
+            "closed" => document.cache().close(),
             _ => unreachable!(),
         }
-        complete(request, &send, true);
-        previews.receive(&document, &context);
+        complete(&mut previews, request, &document, &context, true);
         assert!(!previews.pending());
         assert!(previews.entries.is_empty(), "{stale} must not install");
     }
@@ -287,8 +306,8 @@ fn camera_images_and_badges_fit_polished_wells_and_clip_without_squeezing_or_hid
     for height in [52., 80., 140., 240.] {
         for scale in [1., 2.] {
             for width in [700., 1100.] {
-                let (mut editor, _, _commands) = crate::editor::tests::fixture();
-                editor.document = fixture();
+                let mut editor = crate::editor::tests::fixture();
+                *editor.document = fixture();
                 editor.busy = true;
                 editor.preferences.filmstrip_height = height;
                 let before = editor.document.project.clone();
@@ -448,7 +467,7 @@ fn camera_images_and_badges_fit_polished_wells_and_clip_without_squeezing_or_hid
                 assert_eq!(captions, wells.len());
                 assert_eq!(editor.preferences.filmstrip_height, height);
                 assert_eq!(editor.document.project, before);
-                assert!(editor.ready.is_none() && editor.pending_preview.is_none());
+                assert!(editor.document.visit.ready.is_none() && editor.pending_preview.is_none());
             }
         }
     }
@@ -461,10 +480,8 @@ fn camera_images_and_badges_fit_polished_wells_and_clip_without_squeezing_or_hid
 
 #[test]
 fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_ready() {
-    let (commands, _) = mpsc::channel();
-    let (_, messages) = mpsc::channel();
-    let mut editor = Editor::state(commands, messages, Arc::default());
-    editor.document = fixture();
+    let mut editor = Editor::state();
+    *editor.document = fixture();
     editor.current_source = Some(editor.document.project.order[0]);
     let original = editor.document.project.clone();
     let context = egui::Context::default();
@@ -532,7 +549,7 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
             .iter()
             .any(|label| label == "Camera preview")
     );
-    assert!(editor.ready.is_none() && editor.pending_preview.is_none());
+    assert!(editor.document.visit.ready.is_none() && editor.pending_preview.is_none());
     assert_eq!(editor.thumbnails.sources.proxy_count(), 0);
     assert_eq!(editor.document.project, original);
     editor.floor = editor.document.project.input_floor.unwrap();
@@ -568,7 +585,7 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
             .size(),
         [8, 4]
     );
-    assert!(editor.ready.is_none() && editor.pending_preview.is_none());
+    assert!(editor.document.visit.ready.is_none() && editor.pending_preview.is_none());
     editor
         .thumbnails
         .sources
@@ -617,7 +634,7 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
             .any(|label| label == "Camera preview")
     );
     assert!(editor.thumbnails.embedded.entries.is_empty());
-    assert!(editor.ready.is_none() && editor.pending_preview.is_none());
+    assert!(editor.document.visit.ready.is_none() && editor.pending_preview.is_none());
     editor
         .thumbnails
         .cache

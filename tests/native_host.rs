@@ -99,8 +99,8 @@ struct NativeApp {
 }
 
 impl host::App for NativeApp {
-    fn submission_gate(&self) -> &SubmissionGate {
-        &self.submissions
+    fn submission_gate(&self) -> SubmissionGate {
+        self.submissions.clone()
     }
 
     fn photo_fullscreen(&self) -> bool {
@@ -111,7 +111,7 @@ impl host::App for NativeApp {
         self.report.lock().unwrap().exited = true;
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui) {
+    fn ui(&mut self, ui: &mut egui::Ui, _access: &antitone::application::UiAccess<'_, Self>) {
         ui.heading("Antitone native host test");
         ui.label("Resize/focus forwarding and explicit close completion; no personal state.");
         if ui.input(|input| input.viewport().close_requested()) {
@@ -384,31 +384,41 @@ fn main() -> host::Result<()> {
         #[cfg(feature = "editor")]
         {
             let path = editor_fixture.as_ref().unwrap().1.clone();
-            host::run("Antitone native Editor test", move |device, queue| {
-                Ok(editor::EditorApp {
-                    editor: antitone::editor::Editor::new(device, queue, Some(path)),
-                    report: outcome,
-                    start: Instant::now(),
-                    requested: false,
-                    index: 0,
-                })
-            })
+            let editor_state = std::cell::RefCell::new(None);
+            let owner = &editor_state;
+            host::run(
+                "Antitone native Editor test",
+                move |device, queue, _access| {
+                    *owner.borrow_mut() =
+                        Some(antitone::editor::Editor::new(device, queue, Some(path)));
+                    Ok(editor::EditorApp {
+                        editor: owner,
+                        report: outcome,
+                        start: Instant::now(),
+                        requested: false,
+                        index: 0,
+                    })
+                },
+            )
         }
         #[cfg(not(feature = "editor"))]
         {
             unreachable!("editor feature checked before launch")
         }
     } else {
-        host::run("Antitone native host tests", move |_device, _queue| {
-            Ok(NativeApp {
-                submissions: SubmissionGate::default(),
-                report: outcome,
-                mode,
-                start: Instant::now(),
-                requested: false,
-                index: 0,
-            })
-        })
+        host::run(
+            "Antitone native host tests",
+            move |_device, _queue, _application| {
+                Ok(NativeApp {
+                    submissions: SubmissionGate::default(),
+                    report: outcome,
+                    mode,
+                    start: Instant::now(),
+                    requested: false,
+                    index: 0,
+                })
+            },
+        )
     };
     stop.send(()).unwrap();
     watchdog.join().unwrap();

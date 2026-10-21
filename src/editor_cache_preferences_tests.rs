@@ -3,7 +3,7 @@ use cache_limits::{CacheLimits, MIB};
 
 #[test]
 fn restored_limits_control_caches_without_changing_project_or_recomputing_defaults() {
-    let (mut editor, _send, _receiver) = tests::fixture();
+    let mut editor = tests::fixture();
     let project = serde_json::to_value(&editor.document.project).unwrap();
     let limits = CacheLimits {
         cpu_bytes: 37 * MIB,
@@ -18,7 +18,7 @@ fn restored_limits_control_caches_without_changing_project_or_recomputing_defaul
         editor.thumbnails.update_memory();
     }
     assert_eq!(editor.thumbnails.limits, limits);
-    let (mut reopened, _send, _receiver) = tests::fixture();
+    let mut reopened = tests::fixture();
     reopened.apply_preferences(preferences);
     assert_eq!(reopened.thumbnails.limits, limits);
     assert_eq!(
@@ -29,7 +29,7 @@ fn restored_limits_control_caches_without_changing_project_or_recomputing_defaul
 
 #[test]
 fn cache_controls_are_named_and_reset_persists_without_changing_the_project() {
-    let (mut editor, _send, _receiver) = tests::fixture();
+    let mut editor = tests::fixture();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("preferences.json");
     editor.preference_store = Some(preferences::Store::open(path.clone()).unwrap().0);

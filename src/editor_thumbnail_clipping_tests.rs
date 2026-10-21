@@ -192,8 +192,8 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
         for height in [80., 140., 210.] {
             for contrast in [None, Some(0.4), Some(1.6)] {
                 for scale in [1., 2.] {
-                    let (mut editor, _, _commands) = crate::editor::tests::fixture();
-                    editor.document = super::tests::fixture();
+                    let mut editor = crate::editor::tests::fixture();
+                    *editor.document = super::tests::fixture();
                     if let Some(contrast) = contrast {
                         for source in &mut editor.document.project.sources {
                             source.photo = PhotoSettings {

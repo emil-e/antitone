@@ -25,13 +25,13 @@ impl Editor {
     }
 
     pub(super) fn receive_frame(&mut self) {
-        self.receive();
-        if self.ready.is_none() || self.working.authority().is_some_and(|id| id != self.id) {
+        if self.document.visit.ready.is_none()
+            || self.working.authority().is_some_and(|id| id != self.id)
+        {
             self.working.clear();
         }
         self.stash_review_region();
         self.seed_thumbnail();
-        self.thumbnails.receive(&self.document);
         self.validate_pending_preview();
     }
 
@@ -76,7 +76,7 @@ impl Editor {
         if !self.menus.pending.is_empty() {
             ui.ctx().request_repaint();
         }
-        if self.busy || self.analysis_area_pending.is_some() {
+        if self.busy {
             ui.ctx().request_repaint_after(Duration::from_millis(50));
         }
         if menu.is_some_and(|action| !self.menu_targets_text(action)) {
@@ -119,7 +119,7 @@ impl Editor {
         text_was_focused: bool,
         dialog_escape_available: bool,
     ) {
-        if self.analysis_preparing.is_some()
+        if self.document.analysis_preparing.is_some()
             && dialog_escape_available
             && !text_was_focused
             && !ui.ctx().egui_wants_keyboard_input()
@@ -127,8 +127,8 @@ impl Editor {
         {
             self.cancel_analysis();
         }
-        if self.analysis_review.is_some()
-            && self.analysis_pending.is_none()
+        if self.document.analysis_review.is_some()
+            && self.document.analysis_pending.is_none()
             && dialog_escape_available
             && !text_was_focused
             && !ui.ctx().egui_wants_keyboard_input()
@@ -167,7 +167,7 @@ impl Editor {
             && !fullscreen_was_active
             && self.failure.is_none()
             && self.removal_pending.is_none()
-            && !self.adjustments.confirming()
+            && !self.document.visit.adjustments.confirming()
             && !(text_was_focused && ui.input(|input| input.key_pressed(egui::Key::Escape)))
             && self.overwrite.is_none()
             && self.transition.is_none()
@@ -176,7 +176,12 @@ impl Editor {
             && !egui::Popup::is_any_open(ui.ctx())
         {
             if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Z))
-                && !self.mask_edit.as_ref().is_some_and(MaskEdit::dragging)
+                && !self
+                    .document
+                    .visit
+                    .mask_edit
+                    .as_ref()
+                    .is_some_and(MaskEdit::dragging)
             {
                 self.viewport.fit();
             }
@@ -200,7 +205,7 @@ impl Editor {
         {
             self.apply_pick();
         }
-        if self.crop_edit.is_some() {
+        if self.document.visit.crop_edit.is_some() {
             if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
                 self.finish_crop(false);
             } else if ui
@@ -209,7 +214,7 @@ impl Editor {
                 self.finish_crop(true);
             }
         }
-        if self.auto_crop_edit.is_some() {
+        if self.document.auto_crop_edit.is_some() {
             if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
                 self.finish_auto_crop(false);
             } else if ui
@@ -218,12 +223,12 @@ impl Editor {
                 self.finish_auto_crop(true);
             }
         }
-        if self.mask_edit.is_some()
+        if self.document.visit.mask_edit.is_some()
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             self.finish_mask(false);
         }
-        if self.dust.cleanup
+        if self.document.dust.cleanup
             && ui.input_mut(|input| {
                 input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
                     || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
@@ -231,7 +236,7 @@ impl Editor {
         {
             self.delete_selected_dust_repair();
         }
-        if self.dust.cleanup
+        if self.document.dust.cleanup
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             self.finish_dust_cleanup();
@@ -241,7 +246,7 @@ impl Editor {
     fn selection_shortcuts(&mut self, ui: &mut egui::Ui, file_action: &mut Option<FileAction>) {
         let adjustment_delete = self.adjustment_owns_delete();
         if adjustment_delete
-            && !self.adjustments.dragging()
+            && !self.document.visit.adjustments.dragging()
             && ui.input_mut(|input| {
                 input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
                     || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
@@ -249,10 +254,10 @@ impl Editor {
         {
             self.delete_selected_adjustment();
         }
-        if !self.dust.cleanup
-            && self.auto_crop_edit.is_none()
+        if !self.document.dust.cleanup
+            && self.document.auto_crop_edit.is_none()
             && !adjustment_delete
-            && !self.adjustments.dragging()
+            && !self.document.visit.adjustments.dragging()
             && self.roll_edit_available()
             && ui.input_mut(|input| {
                 input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
@@ -262,9 +267,9 @@ impl Editor {
             *file_action = Some(FileAction::Remove);
         }
         if self.pick.is_none()
-            && self.crop_edit.is_none()
-            && self.mask_edit.is_none()
-            && !self.adjustments.dragging()
+            && self.document.visit.crop_edit.is_none()
+            && self.document.visit.mask_edit.is_none()
+            && !self.document.visit.adjustments.dragging()
             && !self.document.project.order.is_empty()
         {
             let previous = ui
@@ -291,9 +296,8 @@ impl Editor {
             || self.document_pending.is_some()
             || self.transition.is_some()
             || self.project_overwrite.is_some()
-            || self.resume_transition.is_some()
             || self.removal_pending.is_some()
-            || self.adjustments.confirming()
+            || self.document.visit.adjustments.confirming()
         {
             ui.disable();
         }
@@ -466,16 +470,14 @@ impl Editor {
         analyze: bool,
     ) {
         let auto_crop = self.auto_crop_requested.take();
-        if let Some(transition) = self.resume_transition.take() {
-            self.perform_transition(transition, ui.ctx());
-        } else if let Some(action) = actions.file {
-            if self.mask_edit.is_none() {
-                self.file_action(action, ui.ctx());
+        if let Some(action) = actions.file {
+            if self.document.visit.mask_edit.is_none() {
+                self.file_action(action);
             } else {
                 self.status = "Apply or cancel the mask before a file action".into();
             }
         } else if let Some(format) = actions.export {
-            if self.mask_edit.is_none() {
+            if self.document.visit.mask_edit.is_none() {
                 self.export_dialog(format);
             } else {
                 self.status = "Apply or cancel the mask before exporting".into();

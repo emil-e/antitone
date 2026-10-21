@@ -4,8 +4,8 @@ use crate::{geometry::QuarterTurns, processing::Pipeline};
 #[path = "editor_dust_persistence_tests.rs"]
 mod persistence;
 
-fn editor() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
-    let (mut editor, send, commands) = super::super::tests::fixture();
+fn editor() -> Editor {
+    let mut editor = super::super::tests::fixture();
     super::super::tests::add_ready_fixture(&mut editor);
     editor.source = false;
     editor.tab = 1;
@@ -19,7 +19,20 @@ fn editor() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
         )
         .unwrap();
     editor.select_dust_repair(RepairId(1));
-    (editor, send, commands)
+    editor
+}
+
+fn captured_request(e: &Editor) -> Request {
+    e.document
+        .dust
+        .pending
+        .as_ref()
+        .expect("pending evaluation")
+        .job
+        .as_ref()
+        .expect("captured evaluation")
+        .0
+        .clone()
 }
 
 fn response(request: &Request, active: SourceRegion) -> Response {
@@ -36,19 +49,18 @@ fn response(request: &Request, active: SourceRegion) -> Response {
     }
 }
 
-fn gpu_editor() -> (Editor, mpsc::Sender<Message>, mpsc::Receiver<Command>) {
-    let (mut e, send, commands) = editor();
+fn gpu_editor() -> Editor {
+    let mut e = editor();
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
     let (device, _) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
     e.working = WorkingView::new(device);
-    (e, send, commands)
+    e
 }
 
 fn high_response(e: &mut Editor) -> Response {
     let request = Request {
         request: e.request_id(),
-        wake: egui::Context::default(),
         cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         loaded: e.id,
         source: e.current_source.unwrap(),
@@ -58,12 +70,14 @@ fn high_response(e: &mut Editor) -> Response {
         roll: e.roll.inversion_only(),
     };
     let evaluated = Arc::new(
-        crate::dust_repair::evaluate(&request.repair, e.ready.as_ref().unwrap().area, |_| {
-            Ok([1e35; 3])
-        })
+        crate::dust_repair::evaluate(
+            &request.repair,
+            e.document.visit.ready.as_ref().unwrap().area,
+            |_| Ok([1e35; 3]),
+        )
         .unwrap(),
     );
-    e.dust.start(&request);
+    e.document.dust.start(&request);
     Response {
         request: request.request,
         loaded: request.loaded,
@@ -76,11 +90,11 @@ fn high_response(e: &mut Editor) -> Response {
 
 #[test]
 fn held_dust_stroke_keeps_painting_past_512_source_pixels_until_primary_release() {
-    let (mut e, _send, _commands) = editor();
+    let mut e = editor();
     let source = e.current_source.unwrap();
     e.reset_dust_repairs(source);
     e.begin_dust_cleanup();
-    e.dust.brush_size = 8;
+    e.document.dust.brush_size = 8;
     e.preferences.scopes_visible = false;
     let ctx = egui::Context::default();
     for _ in 0..3 {
@@ -107,7 +121,7 @@ fn held_dust_stroke_keeps_painting_past_512_source_pixels_until_primary_release(
         super::super::tests::app_frame(&mut e, &ctx, vec![egui::Event::PointerMoved(point)]);
         assert!(ctx.input(|i| i.pointer.primary_down()));
         assert!(
-            e.dust.mask_draft.is_some(),
+            e.document.dust.mask_draft.is_some(),
             "lost held stroke at source x={x}: {}",
             e.status
         );
@@ -115,7 +129,8 @@ fn held_dust_stroke_keeps_painting_past_512_source_pixels_until_primary_release(
         assert_eq!(e.document.project, project);
     }
     assert!(
-        e.dust
+        e.document
+            .dust
             .mask_draft
             .as_ref()
             .unwrap()
@@ -135,7 +150,7 @@ fn held_dust_stroke_keeps_painting_past_512_source_pixels_until_primary_release(
             modifiers: egui::Modifiers::NONE,
         }],
     );
-    assert!(e.dust.mask_draft.is_none());
+    assert!(e.document.dust.mask_draft.is_none());
     let repairs = e.dust_repairs(source).unwrap().repairs();
     assert_eq!(repairs.len(), 1);
     assert!(repairs[0].support.contains([750, 200]));
@@ -176,13 +191,13 @@ fn mask_aspect_ratio_budget_preserves_original_storage_matching_and_automatic_wo
 #[test]
 fn over_budget_held_strokes_are_visible_and_discarded_without_partial_new_or_existing_repairs() {
     for edit_existing in [false, true] {
-        let (mut e, _send, _commands) = editor();
+        let mut e = editor();
         let source = e.current_source.unwrap();
         if !edit_existing {
             e.reset_dust_repairs(source);
         }
         e.begin_dust_cleanup();
-        e.dust.brush_size = 64;
+        e.document.dust.brush_size = 64;
         e.preferences.scopes_visible = false;
         let before = e
             .dust_repairs(source)
@@ -232,7 +247,8 @@ fn over_budget_held_strokes_are_visible_and_discarded_without_partial_new_or_exi
                     ],
                 );
                 assert!(ctx.input(|i| i.pointer.primary_down()));
-                if e.dust
+                if e.document
+                    .dust
                     .mask_draft
                     .as_ref()
                     .is_some_and(|draft| draft.rejected)
@@ -241,7 +257,7 @@ fn over_budget_held_strokes_are_visible_and_discarded_without_partial_new_or_exi
                 }
             }
         }
-        assert!(e.dust.mask_draft.as_ref().unwrap().rejected);
+        assert!(e.document.dust.mask_draft.as_ref().unwrap().rejected);
         let labels = super::super::tests::app_frame(
             &mut e,
             &ctx,
@@ -264,7 +280,7 @@ fn over_budget_held_strokes_are_visible_and_discarded_without_partial_new_or_exi
                 modifiers,
             }],
         );
-        assert!(e.dust.mask_draft.is_none());
+        assert!(e.document.dust.mask_draft.is_none());
         assert_eq!(
             e.dust_repairs(source)
                 .map(|r| r.repairs().to_vec())
@@ -278,7 +294,7 @@ fn over_budget_held_strokes_are_visible_and_discarded_without_partial_new_or_exi
 
 #[test]
 fn dust_cursor_matches_selection_paint_and_donor_action_precedence() {
-    let (mut e, _send, _commands) = editor();
+    let mut e = editor();
     e.begin_dust_cleanup();
     let source = e.current_source.unwrap();
     let request = Request {
@@ -287,18 +303,20 @@ fn dust_cursor_matches_selection_paint_and_donor_action_precedence() {
         source,
         signature: e.dust_signature().unwrap(),
         repair: e.dust_repairs(source).unwrap().repairs()[0].clone(),
-        wake: egui::Context::default(),
         cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         calibration: e.calibration().unwrap(),
         roll: e.roll.inversion_only(),
     };
-    e.dust.start(&request);
+    e.document.dust.start(&request);
     e.receive_dust(
         1,
-        Ok(Some(response(&request, e.ready.as_ref().unwrap().area))),
+        Ok(Some(response(
+            &request,
+            e.document.visit.ready.as_ref().unwrap().area,
+        ))),
     );
     let composition = Composition::new(
-        e.ready.as_ref().unwrap().area,
+        e.document.visit.ready.as_ref().unwrap().area,
         Default::default(),
         Default::default(),
     )
@@ -367,7 +385,7 @@ fn dust_cursor_matches_selection_paint_and_donor_action_precedence() {
         e.dust_canvas_cursor(geometry, Some(donor), false),
         egui::CursorIcon::PointingHand
     );
-    e.dust.show_masks = false;
+    e.document.dust.show_masks = false;
     assert_eq!(
         e.dust_canvas_cursor(geometry, Some(target), false),
         egui::CursorIcon::Crosshair
@@ -376,7 +394,7 @@ fn dust_cursor_matches_selection_paint_and_donor_action_precedence() {
 
 #[test]
 fn repair_outline_fast_rejection_keeps_exact_hits_under_rotation_and_zoom() {
-    let (mut e, _send, _commands) = editor();
+    let mut e = editor();
     let support = SupportMask::new(
         [50, 50],
         [7, 5],
@@ -392,7 +410,7 @@ fn repair_outline_fast_rejection_keeps_exact_hits_under_rotation_and_zoom() {
         QuarterTurns::Three,
     ] {
         let composition = Composition::with_crop(
-            e.ready.as_ref().unwrap().area,
+            e.document.visit.ready.as_ref().unwrap().area,
             RollOrientation {
                 turns,
                 ..Default::default()
@@ -449,28 +467,28 @@ fn repair_outline_fast_rejection_keeps_exact_hits_under_rotation_and_zoom() {
 
 #[test]
 fn grade_range_rejection_retains_neutral_evaluation_and_readmits_without_rehealing() {
-    let (mut e, _, commands) = gpu_editor();
+    let mut e = gpu_editor();
     e.photo.exposure = 16.;
     let response = high_response(&mut e);
     let evaluated = response.evaluated.clone();
     e.receive_dust(response.request, Ok(Some(response)));
-    assert!(e.dust.failed.is_empty());
+    assert!(e.document.dust.failed.is_empty());
     assert!(e.dust_gpu_snapshot(None).unwrap().0.is_empty());
-    assert!(e.dust.render_error.is_some());
+    assert!(e.document.dust.render_error.is_some());
     e.photo.exposure = 0.;
     e.dust_validate_processing(e.calibration().unwrap(), e.roll, e.photo)
         .unwrap();
     let snapshot = e.dust_gpu_snapshot(None).unwrap();
     assert_eq!(snapshot.0.len(), 1);
     assert!(Arc::ptr_eq(&snapshot.0[0].evaluated, &evaluated));
-    assert!(e.dust.render_error.is_none());
+    assert!(e.document.dust.render_error.is_none());
     e.schedule_dust(e.dust_signature().unwrap());
-    assert!(commands.try_recv().is_err());
+    assert!(e.document.dust.pending_request().is_none());
 }
 
 #[test]
 fn arriving_repairs_are_admitted_against_the_exact_view_grade_without_mutating_the_document() {
-    let (mut e, _, commands) = gpu_editor();
+    let mut e = gpu_editor();
     let before = e.document.project.clone();
     let response = high_response(&mut e);
     let evaluated = response.evaluated.clone();
@@ -484,7 +502,7 @@ fn arriving_repairs_are_admitted_against_the_exact_view_grade_without_mutating_t
     )
     .unwrap();
     assert!(e.dust_gpu_snapshot(Some(&candidate)).unwrap().0.is_empty());
-    assert!(e.dust.render_error.is_some());
+    assert!(e.document.dust.render_error.is_some());
     let accepted = PhotoGradeSnapshot::new(e.photo, Vec::new()).unwrap();
     let snapshot = e.dust_gpu_snapshot(Some(&accepted)).unwrap();
     assert_eq!(snapshot.0.len(), 1);
@@ -500,14 +518,14 @@ fn arriving_repairs_are_admitted_against_the_exact_view_grade_without_mutating_t
     assert_eq!(e.document.project, before);
     e.schedule_dust(e.dust_signature().unwrap());
     assert!(
-        commands.try_recv().is_err(),
+        e.document.dust.pending_request().is_none(),
         "grade changes do not re-evaluate ungraded repairs"
     );
 }
 
 #[test]
 fn photo_widget_rejects_an_unsafe_repaired_value_before_accepting_the_grade() {
-    let (mut e, _, _commands) = gpu_editor();
+    let mut e = gpu_editor();
     let response = high_response(&mut e);
     e.receive_dust(response.request, Ok(Some(response)));
     assert_eq!(e.dust_gpu_snapshot(None).unwrap().0.len(), 1);
@@ -564,7 +582,7 @@ fn photo_widget_rejects_an_unsafe_repaired_value_before_accepting_the_grade() {
 
 #[test]
 fn disconnected_automatic_donors_use_their_own_supports_offsets_and_drag_origin() {
-    let (mut e, _, _) = editor();
+    let mut e = editor();
     let source = e.current_source.unwrap();
     let support = SupportMask::new(
         [50, 50],
@@ -586,7 +604,6 @@ fn disconnected_automatic_donors_use_their_own_supports_offsets_and_drag_origin(
         source,
         signature: e.dust_signature().unwrap(),
         repair: repair.clone(),
-        wake: egui::Context::default(),
         cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         calibration: e.calibration().unwrap(),
         roll: e.roll,
@@ -597,7 +614,7 @@ fn disconnected_automatic_donors_use_their_own_supports_offsets_and_drag_origin(
             donor: DonorChoice::Offset([30, 0]),
             ..repair
         },
-        e.ready.as_ref().unwrap().area,
+        e.document.visit.ready.as_ref().unwrap().area,
         |_| Ok([0.1, 0.2, 2.]),
     )
     .unwrap();
@@ -606,7 +623,7 @@ fn disconnected_automatic_donors_use_their_own_supports_offsets_and_drag_origin(
         matched.source[0] = (matched.target[0] as i32 + offset[0]) as u32;
         matched.source[1] = (matched.target[1] as i32 + offset[1]) as u32;
     }
-    e.dust.start(&request);
+    e.document.dust.start(&request);
     e.receive_dust(
         request.request,
         Ok(Some(Response {
@@ -625,7 +642,7 @@ fn disconnected_automatic_donors_use_their_own_supports_offsets_and_drag_origin(
     assert!(regions[0].support.contains([50, 50]) && !regions[0].support.contains([58, 50]));
     assert!(regions[1].support.contains([58, 50]) && !regions[1].support.contains([50, 50]));
     let composition = Composition::new(
-        e.ready.as_ref().unwrap().area,
+        e.document.visit.ready.as_ref().unwrap().area,
         Default::default(),
         Default::default(),
     )
@@ -639,7 +656,7 @@ fn disconnected_automatic_donors_use_their_own_supports_offsets_and_drag_origin(
     let hit = e.dust_donor_hit(geometry, point).unwrap();
     assert!(hit.support.contains([58, 50]));
     e.begin_dust_donor_drag(geometry, point);
-    assert_eq!(e.dust.donor_draft.unwrap().offset, [-20, 40]);
+    assert_eq!(e.document.dust.donor_draft.unwrap().offset, [-20, 40]);
     e.drag_dust_donor(geometry, screen_source_point(geometry, [40.5, 91.5]));
     e.end_dust_donor_drag();
     assert_eq!(
@@ -697,7 +714,6 @@ fn corrected_repair_evaluation_uses_only_the_ungraded_positive_and_retains_signe
         request: 1,
         loaded: 1,
         source: SourceId(1),
-        wake: egui::Context::default(),
         cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         signature: [0; ProcessingParameters::BYTE_LEN],
         repair,
@@ -756,7 +772,7 @@ fn corrected_repair_evaluation_uses_only_the_ungraded_positive_and_retains_signe
 
 #[test]
 fn repair_identity_excludes_roll_photo_grades_but_tracks_negative_interpretation() {
-    let (mut e, _, _) = editor();
+    let mut e = editor();
     let before = e.dust_signature().unwrap();
     e.roll.exposure = 1.2;
     e.roll.wb = Balance {
@@ -787,12 +803,10 @@ fn repair_identity_excludes_roll_photo_grades_but_tracks_negative_interpretation
 #[test]
 fn obsolete_heal_cancels_without_releasing_admission_or_memoizing_failure() {
     for upstream in [false, true] {
-        let (mut e, _, commands) = editor();
+        let mut e = editor();
         let signature = e.dust_signature().unwrap();
         e.schedule_dust(signature);
-        let Command::Dust(first) = commands.try_recv().unwrap() else {
-            panic!("expected dust")
-        };
+        let first = captured_request(&e);
         if upstream {
             e.roll.gamma = 0.8;
         } else {
@@ -804,15 +818,15 @@ fn obsolete_heal_cancels_without_releasing_admission_or_memoizing_failure() {
         let next_signature = e.dust_signature().unwrap();
         e.schedule_dust(next_signature);
         assert!(first.cancelled.load(std::sync::atomic::Ordering::Relaxed));
-        assert_eq!(e.dust.pending.as_ref().unwrap().request, first.request);
-        assert!(commands.try_recv().is_err());
+        assert_eq!(
+            e.document.dust.pending.as_ref().unwrap().request,
+            first.request
+        );
         // A genuine backend error arriving after retirement is not an unchanged failure.
         e.receive_dust(first.request, Err("obsolete failure".into()));
-        assert!(e.dust.pending.is_none() && e.dust.failed.is_empty());
+        assert!(e.document.dust.pending.is_none() && e.document.dust.failed.is_empty());
         e.schedule_dust(next_signature);
-        let Command::Dust(second) = commands.try_recv().unwrap() else {
-            panic!("expected retry")
-        };
+        let second = captured_request(&e);
         assert!(!second.cancelled.load(std::sync::atomic::Ordering::Relaxed));
         e.reset_dust_repairs(e.current_source.unwrap());
         assert!(second.cancelled.load(std::sync::atomic::Ordering::Relaxed));
@@ -821,81 +835,75 @@ fn obsolete_heal_cancels_without_releasing_admission_or_memoizing_failure() {
 
 #[test]
 fn navigation_and_downstream_grades_do_not_cancel_an_admitted_heal() {
-    let (mut e, _, commands) = editor();
+    let mut e = editor();
     e.schedule_dust(e.dust_signature().unwrap());
-    let Command::Dust(request) = commands.try_recv().unwrap() else {
-        panic!("expected dust")
-    };
+    let request = captured_request(&e);
     e.viewport.zoom = Some(2.);
     e.photo.exposure = 1.;
     e.roll.exposure = 2.;
     e.schedule_dust(e.dust_signature().unwrap());
     assert!(!request.cancelled.load(std::sync::atomic::Ordering::Relaxed));
-    assert_eq!(e.dust.pending.as_ref().unwrap().request, request.request);
-    e.dust = State::default();
+    assert_eq!(
+        e.document.dust.pending.as_ref().unwrap().request,
+        request.request
+    );
+    e.document.dust = State::default();
     assert!(request.cancelled.load(std::sync::atomic::Ordering::Relaxed));
 }
 
 #[test]
 fn cancellation_and_obsolete_replies_neither_fail_current_repairs_nor_steal_admission() {
-    let (mut e, _, commands) = editor();
+    let mut e = editor();
     let signature = e.dust_signature().unwrap();
     let source = e.current_source.unwrap();
     e.schedule_dust(signature);
-    let Command::Dust(first) = commands.try_recv().unwrap() else {
-        panic!("expected dust")
-    };
+    let first = captured_request(&e);
     e.receive_dust(first.request, Ok(None));
-    assert!(e.dust.failed.is_empty());
+    assert!(e.document.dust.failed.is_empty());
     e.schedule_dust(signature);
-    let Command::Dust(second) = commands.try_recv().unwrap() else {
-        panic!("expected dust retry")
-    };
-    let active = e.ready.as_ref().unwrap().area;
+    let second = captured_request(&e);
+    let active = e.document.visit.ready.as_ref().unwrap().area;
     e.receive_dust(first.request, Ok(Some(response(&first, active))));
-    assert_eq!(e.dust.pending.as_ref().unwrap().request, second.request);
-    assert!(e.dust.cached.is_empty());
+    assert_eq!(
+        e.document.dust.pending.as_ref().unwrap().request,
+        second.request
+    );
+    assert!(e.document.dust.cached.is_empty());
     e.roll.gamma = 0.8;
     e.receive_dust(second.request, Ok(Some(response(&second, active))));
-    assert!(e.dust.pending.is_none());
-    assert!(e.dust.cached.is_empty());
-    assert!(e.dust.failed.is_empty());
+    assert!(e.document.dust.pending.is_none());
+    assert!(e.document.dust.cached.is_empty());
+    assert!(e.document.dust.failed.is_empty());
     let signature = e.dust_signature().unwrap();
     e.schedule_dust(signature);
-    let Command::Dust(third) = commands.try_recv().unwrap() else {
-        panic!("expected new upstream state")
-    };
+    let third = captured_request(&e);
     e.receive_dust(third.request, Ok(Some(response(&third, active))));
-    assert!(e.dust.cached.contains_key(&(source, RepairId(1))));
-    assert!(e.dust.pending.is_none());
+    assert!(e.document.dust.cached.contains_key(&(source, RepairId(1))));
+    assert!(e.document.dust.pending.is_none());
 }
 
 #[test]
 fn failed_new_open_preserve_repairs_and_empty_replacements_retire_them_and_late_work() {
     for open in [false, true] {
-        let (mut e, send, commands) = editor();
+        let mut e = editor();
         let source = e.current_source.unwrap();
-        let active = e.ready.as_ref().unwrap().area;
+        let active = e.document.visit.ready.as_ref().unwrap().area;
         e.schedule_dust(e.dust_signature().unwrap());
-        let Command::Dust(request) = commands.try_recv().unwrap() else {
-            panic!("expected dust")
-        };
+        let request = captured_request(&e);
         let work = || {
             if open {
-                DocumentWork::Open("missing.json".into())
+                Preparation::Open("missing.json".into())
             } else {
-                DocumentWork::New
+                Preparation::New
             }
         };
         e.start_document(work());
         let id = e.document_pending.unwrap();
-        send.send(Message::Prepared(id, Err("not prepared".into())))
-            .unwrap();
-        e.receive();
+        e.document_prepared(id, Err("not prepared".into()));
         assert_eq!(e.dust_repairs(source).unwrap().repairs().len(), 1);
         e.start_document(work());
         let id = e.document_pending.unwrap();
-        send.send(Message::Prepared(
+        e.document_prepared(
             id,
             Ok(Box::new(Prepared {
                 document: Document::default(),
@@ -905,12 +913,10 @@ fn failed_new_open_preserve_repairs_and_empty_replacements_retire_them_and_late_
                 correction: None,
                 preserve_view: false,
             })),
-        ))
-        .unwrap();
-        e.receive();
+        );
         assert!(e.dust_repairs(source).is_none());
         e.receive_dust(request.request, Ok(Some(response(&request, active))));
         assert!(e.dust_repairs(source).is_none());
-        assert!(e.dust.cached.is_empty());
+        assert!(e.document.dust.cached.is_empty());
     }
 }

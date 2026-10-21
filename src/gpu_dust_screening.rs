@@ -1,4 +1,7 @@
 //! Job-local integer screening on the hosted queue; no repaired pixels are computed here.
+#[cfg(test)]
+#[path = "gpu_dust_screening_cache_tests.rs"]
+mod cache_tests;
 use crate::{
     Error,
     dust_repair::{ScreenInput, Screener},
@@ -6,6 +9,7 @@ use crate::{
 };
 use std::{
     num::NonZeroU64,
+    sync::Mutex,
     time::{Duration, Instant},
 };
 use wgpu::util::DeviceExt;
@@ -23,6 +27,31 @@ fn working_bytes(frame: usize, context: usize, candidates: usize) -> Option<u64>
         .checked_add((context as u64).checked_mul(8)?)?
         .checked_add((candidates as u64).checked_mul(192)?)?
         .checked_add(64 * 1024)
+}
+
+/// Reusable compiled infrastructure for one hosted device; buffers stay job-local.
+#[derive(Default)]
+pub(crate) struct Cache(Mutex<Option<wgpu::ComputePipeline>>);
+
+impl Cache {
+    pub fn with<T>(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        submissions: &SubmissionGate,
+        run: impl FnOnce(&mut Screening<'_>) -> T,
+    ) -> T {
+        // A panicking job can discard optional infrastructure, not accepted pixels.
+        let mut cached = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut screening = Screening::new(device, queue, submissions);
+        screening.pipeline = cached.take();
+        let result = run(&mut screening);
+        *cached = screening.pipeline.take();
+        result
+    }
 }
 
 pub(crate) struct Screening<'a> {

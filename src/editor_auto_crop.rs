@@ -85,17 +85,17 @@ fn reason(error: Error) -> String {
 
 impl Editor {
     pub(super) fn auto_crop_entry_available(&self) -> bool {
-        self.auto_crop_edit.is_none()
+        self.document.auto_crop_edit.is_none()
             && !self.busy
-            && self.ready.is_some()
+            && self.document.visit.ready.is_some()
             && self.roll_edit_available()
-            && !self.dust.cleanup
-            && self.analysis_review.is_none()
+            && !self.document.dust.cleanup
+            && self.document.analysis_review.is_none()
             && self.removal_pending.is_none()
     }
 
     pub(super) fn auto_crop_valid(&self) -> bool {
-        self.auto_crop_edit.as_ref().is_some_and(|d| {
+        self.document.auto_crop_edit.as_ref().is_some_and(|d| {
             d.belongs_to(self)
                 && !d.entries.is_empty()
                 && d.entries
@@ -108,15 +108,17 @@ impl Editor {
         !self.busy
             && self.fullscreen.is_none()
             && self.pick.is_none()
-            && self.crop_edit.is_none()
+            && self.document.visit.crop_edit.is_none()
             && self.flat_edit.is_none()
-            && !self.dust.cleanup
+            && !self.document.dust.cleanup
             && self.auto_crop_valid()
     }
 
     pub(super) fn auto_crop_action(&mut self, ui: &mut egui::Ui, target: Target, label: &str) {
         let available = if target == Target::Photo {
-            !self.busy && self.crop_edit.is_some() && self.ready.is_some()
+            !self.busy
+                && self.document.visit.crop_edit.is_some()
+                && self.document.visit.ready.is_some()
         } else {
             self.auto_crop_entry_available()
         };
@@ -131,13 +133,13 @@ impl Editor {
     }
 
     pub(super) fn auto_crop_controls(&mut self, ui: &mut egui::Ui) {
-        let Some(edit) = &mut self.auto_crop_edit else {
+        let Some(edit) = &mut self.document.auto_crop_edit else {
             return;
         };
         if std::mem::take(&mut edit.reveal_controls) {
             ui.scroll_to_cursor(Some(egui::Align::Min));
         }
-        let edit = self.auto_crop_edit.as_ref().unwrap();
+        let edit = self.document.auto_crop_edit.as_ref().unwrap();
         let scope = match edit.target {
             Target::Photo => unreachable!("photo proposals belong to manual Crop"),
             Target::Roll => format!(
@@ -175,7 +177,7 @@ impl Editor {
                 }
             },
         );
-        if let Some(edit) = &mut self.auto_crop_edit {
+        if let Some(edit) = &mut self.document.auto_crop_edit {
             edit.show_outline = show;
         }
         if margin != self.auto_crop_margin {
@@ -184,7 +186,7 @@ impl Editor {
     }
 
     fn record_crop_problem(&mut self, source: SourceId, reason: String) {
-        let Some(edit) = &mut self.auto_crop_edit else {
+        let Some(edit) = &mut self.document.auto_crop_edit else {
             return;
         };
         if let Some((_, old)) = edit.problems.iter_mut().find(|(id, _)| *id == source) {
@@ -195,7 +197,7 @@ impl Editor {
     }
 
     pub(super) fn auto_crop_batch_warning(&self) -> Option<&'static str> {
-        let edit = self.auto_crop_edit.as_ref()?;
+        let edit = self.document.auto_crop_edit.as_ref()?;
         if edit.entries.is_empty() {
             Some("No crop proposals are available for this batch")
         } else if !self.auto_crop_valid() {
@@ -206,7 +208,7 @@ impl Editor {
     }
 
     pub(super) fn auto_crop_problem(&self, id: SourceId) -> Option<&str> {
-        let edit = self.auto_crop_edit.as_ref()?;
+        let edit = self.document.auto_crop_edit.as_ref()?;
         let entry = edit.entries.iter().find(|entry| entry.source == id);
         let problem = edit.problems.iter().find(|(source, _)| *source == id);
         if (entry.is_some() || problem.is_some()) && !edit.belongs_to(self) {
@@ -230,7 +232,7 @@ impl Editor {
         if self.current_source != Some(id) {
             return true;
         }
-        self.ready.as_ref().is_some_and(|r| {
+        self.document.visit.ready.as_ref().is_some_and(|r| {
             self.document.project.source(id).is_ok_and(|s| {
                 r.record.development == s.development
                     && r.area == Rect::from(s.development.active_area)
@@ -285,7 +287,7 @@ impl Editor {
     }
 
     fn auto_crop_photo(&mut self) {
-        if self.busy || self.fullscreen.is_some() || self.crop_edit.is_none() {
+        if self.busy || self.fullscreen.is_some() || self.document.visit.crop_edit.is_none() {
             return;
         }
         let Some(id) = self.current_source else {
@@ -299,13 +301,13 @@ impl Editor {
                         .draft
                         .unwrap_or(Crop::from_region(entry.development.active_area.into())),
                 );
-                self.crop_edit.as_mut().unwrap().auto_problem = None;
+                self.document.visit.crop_edit.as_mut().unwrap().auto_problem = None;
                 self.status = "Auto-crop proposed".into();
             }
             Err(error) => {
                 let problem = format!("Automatic crop unavailable: {}", reason(error));
                 self.status = format!("Crop unchanged: {problem}");
-                self.crop_edit.as_mut().unwrap().auto_problem = Some(problem);
+                self.document.visit.crop_edit.as_mut().unwrap().auto_problem = Some(problem);
             }
         }
     }
@@ -348,7 +350,7 @@ impl Editor {
         let skipped = problems.len();
         if attempted > 0 {
             self.close_adjustments();
-            self.auto_crop_edit = Some(Draft {
+            self.document.auto_crop_edit = Some(Draft {
                 document: Arc::downgrade(self.document.cache()),
                 development: self.document.project.development.clone(),
                 order: self.document.project.order.clone(),
@@ -369,14 +371,14 @@ impl Editor {
             self.original.invalidate();
         }
         self.status = format!("Auto-crop: {count} proposed, {skipped} skipped");
-        if let Some(edit) = &mut self.auto_crop_edit {
+        if let Some(edit) = &mut self.document.auto_crop_edit {
             edit.summary = self.status.clone();
         }
     }
 
     /// An explicit presentation-only override. The accepted document and current crop stay untouched.
     pub(super) fn auto_crop_preview(&self, id: SourceId) -> Option<Option<Crop>> {
-        let edit = self.auto_crop_edit.as_ref()?;
+        let edit = self.document.auto_crop_edit.as_ref()?;
         if !edit.belongs_to(self) {
             return None;
         }
@@ -395,7 +397,7 @@ impl Editor {
             self.status = "Auto-crop margin rejected: invalid percentage".into();
             return;
         }
-        let edit = self.auto_crop_edit.as_ref().unwrap();
+        let edit = self.document.auto_crop_edit.as_ref().unwrap();
         let mut failed_source = None;
         let proposals = edit
             .entries
@@ -417,6 +419,7 @@ impl Editor {
         match proposals {
             Ok(proposals) => {
                 for (entry, draft) in self
+                    .document
                     .auto_crop_edit
                     .as_mut()
                     .unwrap()
@@ -445,7 +448,7 @@ impl Editor {
         if apply && self.busy {
             return;
         }
-        let Some(edit) = &self.auto_crop_edit else {
+        let Some(edit) = &self.document.auto_crop_edit else {
             return;
         };
         if apply {
@@ -507,7 +510,7 @@ impl Editor {
         } else {
             self.status = "Auto-crop cancelled; previous crops unchanged".into();
         }
-        let edit = self.auto_crop_edit.take().unwrap();
+        let edit = self.document.auto_crop_edit.take().unwrap();
         self.source = edit.source_view;
         if !apply && self.current_source == edit.origin {
             self.viewport = edit.viewport;

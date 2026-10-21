@@ -17,17 +17,8 @@ struct Case {
     area: Option<[u32; 4]>,
 }
 
-fn wait(editor: &mut Editor) {
-    let start = std::time::Instant::now();
-    while editor.busy {
-        assert!(
-            start.elapsed() < Duration::from_secs(300),
-            "{}",
-            editor.status
-        );
-        std::thread::sleep(Duration::from_millis(10));
-        editor.receive();
-    }
+fn wait(editor: Editor) -> Editor {
+    crate::editor::tests::complete_analysis_operation(editor, Duration::from_secs(300))
 }
 
 fn write_preview(
@@ -165,17 +156,25 @@ fn diagnose_sample_rolls() {
             );
             let directory = output.join(&case.name);
             fs::create_dir(&directory).unwrap();
-            editor.start_document(DocumentWork::New);
-            wait(&mut editor);
+            editor.start_document(Preparation::New);
+            editor =
+                crate::editor::tests::complete_document_operation(editor, Duration::from_secs(300));
             editor.add_raws(case.sources.clone());
-            wait(&mut editor);
-            let mut prepared = editor.ready.is_some();
+            editor =
+                crate::editor::tests::complete_document_operation(editor, Duration::from_secs(300));
+            let mut prepared = editor.document.visit.ready.is_some();
             if prepared && let Some(reference) = &case.reference {
                 editor.begin_flat_edit(reference.clone(), None);
-                wait(&mut editor);
+                editor = crate::editor::tests::complete_reference_operation(
+                    editor,
+                    Duration::from_secs(300),
+                );
                 if editor.region.is_some() {
                     editor.apply_pick();
-                    wait(&mut editor);
+                    editor = crate::editor::tests::complete_reference_operation(
+                        editor,
+                        Duration::from_secs(300),
+                    );
                     prepared = editor.correction.is_some();
                 } else {
                     prepared = false;
@@ -186,7 +185,7 @@ fn diagnose_sample_rolls() {
             let started = std::time::Instant::now();
             if prepared {
                 editor.begin_analysis();
-                wait(&mut editor);
+                editor = wait(editor);
             }
             let installed = editor.status.starts_with("Analyzed ");
             if installed {
