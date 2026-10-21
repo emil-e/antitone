@@ -42,6 +42,10 @@ Loading/import/picker/Analyze failures still use passive status. Broader acknowl
 
 Next: exercise document work, export inspection and Analyze cancellation in the native editor. Preserve accepted-state transactions, stale-result rejection, foreground priority and destination safety. Coordinate optional background presentation with [thumbnail follow-up](visual-feedback.md#triaged-thumbnail-follow-up).
 
+## Verification maintenance
+
+The custom conversion pipeline in [the flat-field GPU test](../../src/gpu_flat_field_tests.rs) omits camera-matrix binding 3 required by `camera_conversion.wgsl`. `corrected_conversion_matches_f64_and_full_pipeline_preserves_flags_and_precision` fails bind-group validation before its numerical assertions in debug and release. Repair the fixture's matrix binding and rerun its existing precision/flag checks; this failure does not establish a numerical mismatch.
+
 ## Export and release work
 
 - Design batch snapshots, reference-only exclusions, collision/per-photo failure handling, metadata and progress/cancellation.
