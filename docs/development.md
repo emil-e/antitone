@@ -317,7 +317,7 @@ done
 
 The [live application fixture](../src/application_test_support.rs) exposes short state transactions, explicit workflow entry and bounded wake pumping without painting. For feature transactions, filter the owning module: for example `editor::analysis::tests`, `editor::flat::tests`, `editor::files::tests`, `editor::navigation::tests`, `editor::preferences::tests`, `editor::feedback::tests` or `editor::scopes::tests`. Use [layout/GPU diagnostics](diagnostics.md#editor-and-layout-checks) when painting changes. For wordmark/icon changes, also [regenerate the branding assets](../assets/branding/README.md#regenerate) and inspect the generated artwork.
 
-Physical pointer/trackpad behavior, VoiceOver, preference relaunch and wheel semantics need real-use checks.
+Physical pointer/trackpad behavior, native folder selection and Finder reveal, VoiceOver, preference relaunch and wheel semantics need real-use checks.
 
 ### Framework UI regressions
 

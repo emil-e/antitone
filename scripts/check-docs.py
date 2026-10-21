@@ -159,7 +159,7 @@ def report_hedges(files):
 
 
 def main():
-    if not os.path.isdir(".git"):
+    if not os.path.exists(".git"):
         fail("run from the repository root")
     files = md_files(".")
     broken = check_links(files)
