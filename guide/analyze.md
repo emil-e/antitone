@@ -36,8 +36,9 @@ restores everything as it was.
 > **What confirming replaces.** Analyze installs a fresh baseline: it replaces the roll
 > calibration and Photo grading, and **removes local adjustments and their masks** from
 > analyzed photographs (a warning in the review counts the affected photos). Orientation
-> and crop are preserved. Analyze is not undoable in the ordinary sense — treat it as the
-> start of grading, and re-run it only when you are willing to lose manual Photo work.
+> and crop are preserved. Confirming is one step in the project's history, so **Undo**
+> returns the previous calibration and grading, masks included — but treat Analyze as the
+> start of grading rather than a step to revisit often.
 
 When it finishes: "Analyzed N frames. Adjust normally; re-pick Dmin if needed."
 
@@ -45,8 +46,8 @@ When it finishes: "Analyzed N frames. Adjust normally; re-pick Dmin if needed."
 
 - Refine each photograph on the **Photo** tab: exposure, white balance, contrast,
   saturation. Everything per-photo starts from here.
-- **Auto-crop** (Photo tab) can use the frame measurements Analyze retained — it
-  straightens and crops to the frame it found.
+- **Auto-crop** (Photo tab) straightens and crops to the film frame it measures itself,
+  reusing areas Analyze accepted where they exist.
 - Re-pick Dmin on the Roll panel if the film base was dirty or unusual.
 
 ## When Analyze can mislead

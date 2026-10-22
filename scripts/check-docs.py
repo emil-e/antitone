@@ -19,10 +19,6 @@ BASE_REF = "HEAD"
 # the upstream sources around it are excluded.
 EXCLUDED_DIRS = {".git", ".worktrees", "node_modules", ".cache", "target", "samples", "vendor"}
 AUTHORED_IN_VENDOR = {os.path.join("vendor", "dng-sdk", "PROVENANCE.md")}
-# Generated documentation screenshots are untracked artifacts of a documented
-# command (assets/docs/README.md); a checkout only contains them after local
-# generation, so only authored text is gated here.
-GENERATED_ASSET_PREFIX = os.path.join("assets", "docs") + os.sep
 HEDGE_PATTERNS = [
     r"\bdoes not establish\b",
     r"\bdoes not (?:imply|mean|guarantee|constitute)\b",
@@ -86,8 +82,6 @@ def check_links(files):
                 continue
             target = os.path.normpath(os.path.join(os.path.dirname(p), path_part))
             if not os.path.exists(target):
-                if target.startswith(GENERATED_ASSET_PREFIX) and target.endswith(".png"):
-                    continue
                 broken.append(f"{p}: missing file: {target_url}")
             elif "#" in target_url and target in anchors:
                 if target_url.split("#", 1)[1] not in anchors[target]:

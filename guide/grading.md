@@ -26,8 +26,8 @@ Sliders take **Shift for finer steps**. Everything on this tab is undoable (⌘Z
 
 Activate **Crop & straighten** from the tool shelf:
 
-- **Auto-crop** proposes a crop straight to the film frame — it uses the frame
-  measurements retained by Analyze, so run Analyze first for best results.
+- **Auto-crop** proposes a crop straight to the film frame. It measures the frame
+  itself, so it works without Analyze; accepted Analyze areas are reused when they exist.
 - **Aspect** — Free, Current, Original, or fixed ratios (1:1, 3:2, 4:3, 5:4, 16:9);
   **Swap portrait / landscape** flips the ratio.
 - **Angle** / **Reset straighten** — straighten by eye; Thirds guides help composition.

@@ -339,6 +339,16 @@ cargo test --locked --offline --release --features editor,ocio-reference --lib \
 
 The opt-in [storage study](../tests/lens_precision.rs) holds development and capture eligibility fixed while comparing retained f32 camera codes with whole-code rounding and an eight-fractional-bit diagnostic alternative (within the native range these correspond to RGB16 and Q16.8). Synthetic cases blend declared integer neighbours; supplied negatives use diagnostic calibration and borrowed Sony warps, because their adapted lens has no usable profile — those warps test resampling/rounding, not physical lens calibration. Storage errors use the f64 scalar pipeline followed by independent pinned OCIO rendering to sRGB; GPU timing arms are checked against their scalar inputs under the existing numerical gate.
 
+On one M5 Pro / 48-GiB distortion/CA-only run, maximum differences expressed in encoded 8-bit-level equivalents were:
+
+| Case | Largest RMS across tested settings | Largest channel difference |
+| --- | ---: | ---: |
+| Ordinary negative, global/detail, including spatial gains | 0.014 | 0.108 |
+| Dense reference negative, including spatial gains | 0.167 | 1.818 |
+| Sony photographs, source inspection | 0.030 | 0.272 |
+
+Within its representable range, RGB16 adds at most half a native code. The dense reference's rare roughly-two-level output changes show rounding is not always negligible after inversion. Q16.8 reduced those differences substantially (dense-case maximum below 0.008 encoded 8-bit levels) but needs custom packing and still requires continuous inversion. The study supports a tradeoff — within-range packed corrected RGB16 could halve retained storage but would need a range/scale design to preserve shading headroom — not a universal source-format requirement, and no production format change follows automatically from it.
+
 ### Direct DNG SDK probe
 
 The `dng-sdk` feature exposes a read-only probe of the vendored SDK backend without the editor or LibRaw. The native library keeps its validation instrumentation; the Adobe validator executable is not built.
@@ -350,16 +360,6 @@ cargo run --locked --features dng-sdk --bin antitone-dng-probe -- 1000000 /path/
 cargo run --locked --release --features dng-sdk --bin antitone-dng-probe -- \
   --threads 8 60000000 /path/to/photo.dng
 ```
-
-On one M5 Pro / 48-GiB distortion/CA-only run, maximum differences expressed in encoded 8-bit-level equivalents were:
-
-| Case | Largest RMS across tested settings | Largest channel difference |
-| --- | ---: | ---: |
-| Ordinary negative, global/detail, including spatial gains | 0.014 | 0.108 |
-| Dense reference negative, including spatial gains | 0.167 | 1.818 |
-| Sony photographs, source inspection | 0.030 | 0.272 |
-
-Within its representable range, RGB16 adds at most half a native code. The dense reference's rare roughly-two-level output changes show rounding is not always negligible after inversion. Q16.8 reduced those differences substantially (dense-case maximum below 0.008 encoded 8-bit levels) but needs custom packing and still requires continuous inversion. The study supports a tradeoff — within-range packed corrected RGB16 could halve retained storage but would need a range/scale design to preserve shading headroom — not a universal source-format requirement, and no production format change follows automatically from it.
 
 ## Rendering, gamut and ICC
 

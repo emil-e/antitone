@@ -27,7 +27,7 @@ for photographers, not developers.
 
 ## Download
 
-Antitone runs on **macOS 14 or later on Apple Silicon**.
+Antitone is built for **Apple Silicon Macs running macOS 14 or later**.
 
 Download `Antitone-macos-arm64.zip` from the [releases page](https://github.com/emil-e/antitone/releases),
 unzip it, and move `Antitone.app` to Applications. The release also publishes
@@ -47,8 +47,8 @@ This is an early public release, and it says so honestly:
   Olympus ORF and Panasonic RW2. Developed JPEG/TIFF/EXR import is not implemented.
 - One project is one roll; there are no catalogs.
 - Dust cleanup is manual and provisional.
-- macOS 14 or later on Apple Silicon only for now; the long-term goal is cross-platform.
-  Broader device testing and macOS 14 acceptance remain open.
+- macOS on Apple Silicon only for now; broader device coverage is still being tested,
+  and the long-term goal is cross-platform.
 
 ## License
 
