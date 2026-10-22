@@ -1000,13 +1000,16 @@ fn save_existing_project(harness: &mut Harness<'_, Editor>) {
             .expect("fixture save destination")
     });
     let project = harness.read(|editor| editor.document.project.clone());
+    let metadata = harness.read(|editor| editor.document.capture().ready_spatial_metadata());
     let request = harness.read(|editor| editor.next_request);
     file_menu(harness, "Save");
     harness.read(|editor| assert!(editor.next_request > request, "Save did not dispatch"));
     wait_for(harness, |e| !e.busy && e.document_pending.is_none());
     harness.read(|editor| assert!(!editor.document.dirty(), "{}", editor.status));
     harness.read(|editor| assert_eq!(editor.document.project, project));
-    assert_eq!(crate::project::Project::load(&path).unwrap(), project);
+    let (accepted, regions) = crate::project::Project::load_with_spatial_metadata(&path).unwrap();
+    assert_eq!(accepted, project);
+    assert_eq!(regions, metadata);
 }
 
 // Supply the native chooser's result; exercise the real transition guard and worker.

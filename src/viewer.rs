@@ -763,6 +763,11 @@ impl ImagePaint {
         })
     }
 
+    #[cfg(all(test, feature = "editor"))]
+    pub(crate) fn texture_mapping(&self) -> TextureMapping {
+        self.uv
+    }
+
     pub fn with_context(mut self, context: egui::Context) -> Self {
         self.context = Some(context);
         self

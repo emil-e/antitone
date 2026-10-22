@@ -47,6 +47,35 @@ fn above_native_white_evidence_preserves_internal_boundaries_instead_of_saturati
 }
 
 #[test]
+fn material_support_excludes_nonfilm_footprints_and_their_inset_without_inventing_camera_edges() {
+    let active = SourceRegion::from([20, 30, 160, 160]);
+    for nonfilm in ['L', 'H', 'U'] {
+        let material = Material {
+            size: [16, 16],
+            xs: vec![2, 6, 10, 14],
+            ys: vec![2, 6, 10, 14],
+            labels: format!("{nonfilm}FFH").repeat(4),
+        };
+        material.validate().unwrap();
+        assert!(!material.contains_footprint([64, 50, 8, 8].into(), active, 0.));
+        assert!(material.contains_footprint([66, 50, 8, 8].into(), active, 0.));
+        assert!(!material.contains_footprint([66, 50, 8, 8].into(), active, 2.));
+        assert!(material.contains_footprint([136, 50, 8, 8].into(), active, 0.));
+        assert!(!material.contains_footprint([136, 50, 8, 8].into(), active, 2.));
+        assert!(!material.contains_footprint([138, 50, 8, 8].into(), active, 0.));
+    }
+    let material = Material {
+        size: [16, 16],
+        xs: vec![2, 6, 10, 14],
+        ys: vec![2, 6, 10, 14],
+        labels: "F".repeat(16),
+    };
+    assert!(material.contains_footprint([20, 30, 8, 8].into(), active, 4.));
+    assert!(material.contains_footprint([172, 182, 8, 8].into(), active, 4.));
+    assert!(!material.contains_footprint([19, 30, 8, 8].into(), active, 0.));
+}
+
+#[test]
 fn authored_opening_and_picture_keep_distinct_full_footprint_membership() {
     let active = SourceRegion {
         x: 12,

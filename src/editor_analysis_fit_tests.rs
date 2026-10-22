@@ -5,6 +5,9 @@ use crate::{
     scan_regions::Areas,
 };
 
+#[path = "editor_analysis_film_edge_tests.rs"]
+mod film_edges;
+
 fn approved(request: &mut Request) {
     let entries = request
         .document

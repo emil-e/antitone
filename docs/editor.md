@@ -28,7 +28,7 @@ Fixed tool shelves sit below the stage tabs. Roll contains shared orientation, A
 
 Photo's **Auto-crop** button proposes the current photo's crop and straightening into the manual Crop draft, then permits ordinary refinement. Roll's **Auto-crop roll** and the filmstrip context menu propose crops for a whole set, independently of browsing or selection.
 
-Complete strong retained-frame evidence is required: missing, weak, off-source or conflicting edges abstain and keep previous crops, and no fallback crop is invented. Photos that merely fall outside the captured selection are not failures; abstentions carry a warning cue with their specific reason. [Geometry](geometry.md#automatic-framing-consumes-measurements-not-sampling-support) explains the evidence boundary and inward margin.
+[Shared preparation](spatial-metadata.md) can infer nominal picture bounds from credible edges and common dimensions. Missing film alone does not veto that frame; unresolved geometry or conflicting picture evidence abstains and keeps previous crops. Photos that merely fall outside the captured selection are not failures; abstentions carry a warning cue with their specific reason. [Geometry](geometry.md#automatic-framing-consumes-measurements-not-sampling-support) explains the evidence boundary and inward margin.
 
 Proposals remain drafts: margin edits do not modify accepted crops or dirty the project, and Apply installs all proposed values atomically after revalidation — a stale target rejects the batch instead of silently shrinking its scope. Only applied crops persist; the margin is reused within this editor instance, not saved as a project setting.
 
@@ -78,8 +78,10 @@ Working feedback answers two questions: **what is happening, and what can I stil
 | Export | A delayed working modal with finished-photo counts and Cancel; workspace, inspection and application panels stay blocked until completion or cancellation acknowledgement |
 | Selected RAW preparation | A spinner on the empty canvas; cached pending previews stay visible but never become the processing source |
 | Reference preparation, picker measurement | Local tool/viewer feedback; no extra global dialog |
-| Analyze preparation and estimation | Counted work, then indeterminate validation, in the activity strip with genuine Cancel |
+| Shared region preparation and running Analyze | A delayed working modal with counted work, then indeterminate validation and genuine Cancel; the intervening sampling-area review remains interactive |
 | Thumbnails, camera previews, scopes | Existing in-place image/card/scope feedback |
+
+Save/Save As remain available through application commands during shared region preparation; they capture ready results without waiting for preparation. A deferred consumer resumes after the write, or after acknowledgement of a failed write.
 
 [Task activity](../src/editor_activity.rs) is the foreground integration point: begin a typed task on the controller's request ID, report counted or indeterminate progress, and finish the matching request on success, failure or send-failure. Request keys are scoped by operation, so a photo-load result cannot finish an export that happens to share a number; stale reports are ignored. Cancellation has two responsibilities — signal the real worker, then mark the task `cancelling`, which drops measured progress and Cancel until matching completion. [Working presentation](../src/editor_ui_progress.rs) renders the task's modal or local surface.
 

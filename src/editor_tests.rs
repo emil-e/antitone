@@ -111,7 +111,7 @@ pub(super) fn complete_analysis_preparation(
 ) -> Editor {
     complete_analysis_operation(editor, timeout, |e, cx| {
         start(e, cx);
-        assert!(e.document.analysis_preparing.is_some());
+        assert!(e.document.spatial_preparing.is_some() || e.document.analysis_preparing.is_some());
     })
 }
 
@@ -127,7 +127,8 @@ pub(super) fn complete_analysis_operation(
             start(editor, cx);
         });
         app.run_until(timeout, |editor| {
-            editor.document.analysis_preparing.is_none()
+            editor.document.spatial_preparing.is_none()
+                && editor.document.analysis_preparing.is_none()
                 && editor.document.analysis_pending.is_none()
                 && !editor.document.visit.source.pending()
                 && !editor.busy

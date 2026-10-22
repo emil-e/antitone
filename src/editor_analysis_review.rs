@@ -83,6 +83,13 @@ fn verify_file(request: &analysis::Request, approved: &Approved) -> Result<(), E
 }
 
 pub(super) fn verify(request: &analysis::Request) -> Result<(), Error> {
+    if !request.document.spatial_metadata.groups.is_empty()
+        && request.document.ready_spatial_metadata() != *request.document.spatial_metadata
+    {
+        return Err(Error::UnusableSample(
+            "supporting spatial inputs changed since analysis preparation",
+        ));
+    }
     if let Some(approved) = &request.areas {
         verify_file(request, approved)?;
     }

@@ -20,6 +20,7 @@ pub(super) enum Task {
     Measurement(u64, Pick),
     Analyze(u64),
     AnalysisAreas(u64),
+    Regions(u64),
     Export(u64),
     Look(u64),
 }
@@ -32,6 +33,7 @@ pub(super) enum TaskRequest {
     Reference(u64),
     Measurement(u64, Pick),
     Analyze(u64),
+    Regions(u64),
     Export(u64),
     Look(u64),
 }
@@ -55,6 +57,7 @@ impl Task {
             Self::Reference(id) => TaskRequest::Reference(id),
             Self::Measurement(id, pick) => TaskRequest::Measurement(id, pick),
             Self::Analyze(id) | Self::AnalysisAreas(id) => TaskRequest::Analyze(id),
+            Self::Regions(id) => TaskRequest::Regions(id),
             Self::Export(id) => TaskRequest::Export(id),
             Self::Look(id) => TaskRequest::Look(id),
         }
@@ -68,13 +71,17 @@ impl Task {
                 | Self::Analyze(_)
                 | Self::AnalysisAreas(_)
                 | Self::Export(_)
+                | Self::Regions(_)
         )
     }
 
     fn modal(self) -> bool {
         matches!(
             self.request(),
-            TaskRequest::Document(_) | TaskRequest::Export(_)
+            TaskRequest::Document(_)
+                | TaskRequest::Export(_)
+                | TaskRequest::Analyze(_)
+                | TaskRequest::Regions(_)
         )
     }
 
@@ -87,6 +94,10 @@ impl Task {
             Self::Export(_) => Some(TaskCancel {
                 request: self.request(),
                 label: "Cancel export",
+            }),
+            Self::Regions(_) => Some(TaskCancel {
+                request: self.request(),
+                label: "Cancel region preparation",
             }),
             Self::Look(_) => Some(TaskCancel {
                 request: self.request(),
@@ -108,6 +119,7 @@ impl Task {
             Self::Reference(_) => "Preparing reference…".into(),
             Self::Analyze(_) => "Analyzing roll…".into(),
             Self::AnalysisAreas(_) => "Preparing analysis areas…".into(),
+            Self::Regions(_) => "Preparing film and picture regions…".into(),
             Self::Export(_) => "Exporting…".into(),
             Self::Look(_) => "Preparing look…".into(),
             Self::Measurement(_, pick) => {
@@ -310,6 +322,17 @@ impl Editor {
             self.cancel_export(id);
             return;
         }
+        if let TaskRequest::Regions(id) = request {
+            if self
+                .document
+                .spatial_preparing
+                .as_ref()
+                .is_some_and(|p| p.id == id)
+            {
+                self.cancel_spatial();
+            }
+            return;
+        }
         if let TaskRequest::Look(id) = request {
             if self.document.look.as_ref().is_some_and(|p| p.id == id) {
                 self.cancel_look();
@@ -337,3 +360,7 @@ impl Editor {
 #[cfg(test)]
 #[path = "editor_activity_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "editor_analysis_modal_tests.rs"]
+mod modal_tests;

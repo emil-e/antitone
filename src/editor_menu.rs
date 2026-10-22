@@ -78,8 +78,15 @@ impl Editor {
     }
 
     pub(super) fn file_available(&self) -> bool {
-        !self.busy
-            && !self.application_modal()
+        !self.busy && self.file_context_available()
+    }
+
+    fn save_available(&self) -> bool {
+        (!self.busy || self.document.spatial_preparing.is_some()) && self.file_context_available()
+    }
+
+    fn file_context_available(&self) -> bool {
+        !self.application_modal()
             && self.pick.is_none()
             && self.document.auto_crop_edit.is_none()
             && self.document.visit.crop_edit.is_none()
@@ -88,7 +95,7 @@ impl Editor {
 
     fn application_modal(&self) -> bool {
         self.allow_close
-            || self.tasks.blocks_workspace()
+            || self.tasks.blocks_workspace() && self.document.spatial_preparing.is_none()
             || self.failure.is_some()
             || self.document_pending.is_some()
             || self.export_dialog.is_some()
@@ -144,10 +151,11 @@ impl Editor {
         if !self.busy {
             state.enabled.extend([About, Settings, Help]);
         }
+        if self.save_available() {
+            state.enabled.extend([Save, SaveAs]);
+        }
         if self.file_available() {
-            state
-                .enabled
-                .extend([New, Open, AddScans, Close, Save, SaveAs]);
+            state.enabled.extend([New, Open, AddScans, Close]);
             if self.calibration().is_some() && self.document.visit.ready.is_some() {
                 state.enabled.insert(Export);
             }

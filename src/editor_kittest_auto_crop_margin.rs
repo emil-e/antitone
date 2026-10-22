@@ -4,14 +4,17 @@ pub(super) fn expected_crop(h: &Harness<'_, Editor>, source: SourceId, percent: 
     h.read(|e| {
         let p = &e.document.project;
         let active = p.source(source).unwrap().development.active_area.into();
-        let areas = &p
-            .analysis_regions
+        // This is the UI/adaptor consistency oracle, not independent border truth. Pure
+        // geometry tests separately check source conversion, containment and rounding.
+        let metadata = e.document.spatial.ready();
+        let regions = metadata
+            .groups
             .iter()
-            .find(|a| a.source == source)
-            .unwrap()
-            .areas;
+            .flat_map(|group| &group.sources)
+            .find(|row| row.input.source == source)
+            .unwrap();
         crate::auto_crop::inward_margin(
-            crate::auto_crop::propose(active, areas).unwrap(),
+            crate::auto_crop::propose_spatial(regions).unwrap(),
             active,
             percent,
         )

@@ -104,6 +104,12 @@ pub(super) fn rect([x, y, width, height]: [u32; 4]) -> Rect {
     }
 }
 
+// Source-scaled statistical inset, rounded inward to whole source pixels. This is
+// sampling policy, not a displacement or an uncertainty claim about physical edges.
+pub(super) fn sampling_inset(active: Rect) -> f64 {
+    (2. * (f64::from(active.width) / 768.).max(f64::from(active.height) / 512.)).ceil()
+}
+
 fn array(r: Rect) -> [u32; 4] {
     [r.x, r.y, r.width, r.height]
 }
@@ -354,7 +360,7 @@ impl Editor {
         analyze
     }
 
-    fn analysis_request(&mut self) -> Option<Request> {
+    pub(super) fn analysis_request(&mut self) -> Option<Request> {
         if self.busy
             || self.pick.is_some()
             || self.document.visit.crop_edit.is_some()
@@ -388,7 +394,7 @@ impl Editor {
         let Some(request) = self.analysis_request() else {
             return;
         };
-        self.prepare_analysis_review(request, cx);
+        self.request_spatial(spatial::Consumer::Analyze(Box::new(request)), cx);
     }
 
     #[cfg(test)]
@@ -400,6 +406,15 @@ impl Editor {
     }
 
     pub(super) fn cancel_analysis(&mut self) {
+        if self
+            .document
+            .spatial_preparing
+            .as_ref()
+            .is_some_and(|pending| pending.analysis_request().is_some())
+        {
+            self.cancel_spatial();
+            return;
+        }
         self.document
             .analysis_generation
             .fetch_add(1, Ordering::Relaxed);

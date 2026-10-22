@@ -43,6 +43,7 @@ impl Editor {
         work: Preparation,
         cx: &crate::application::UiContext<'_, Self>,
     ) {
+        self.cancel_spatial();
         self.cancel_measurement();
         self.document.history.finish_group();
         self.history_pending = match &work {

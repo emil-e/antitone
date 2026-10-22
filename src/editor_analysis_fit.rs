@@ -7,6 +7,23 @@ mod tests;
 
 use super::*;
 
+fn inside_film(footprint: Rect, planes: &[crate::spatial_metadata::Plane], inset: f64) -> bool {
+    let corners = [
+        [f64::from(footprint.x) + 0.5, f64::from(footprint.y) + 0.5],
+        [
+            f64::from(footprint.x + footprint.width) - 0.5,
+            f64::from(footprint.y + footprint.height) - 0.5,
+        ],
+    ];
+    // A linear half-plane reaches its minimum at the corner selected by its normal's signs.
+    // Test the entire pixel-centre footprint, not merely the retained centre sample.
+    planes.iter().all(|&[a, b, c]| {
+        let x = corners[usize::from(a < 0.)][0];
+        let y = corners[usize::from(b < 0.)][1];
+        a * x + b * y >= c + inset
+    })
+}
+
 struct Fit {
     request: Arc<Request>,
     correction: Option<Arc<Correction>>,
@@ -124,35 +141,75 @@ impl Fit {
         }
         let active = scan.area;
         let frame_areas = self.request.areas.as_ref().map(|a| &a.entries[index].areas);
-        let film_samples = match frame_areas {
-            Some(areas) => scan.analysis_samples_in(
-                active,
-                MAX_SAMPLES_PER_FRAME,
-                |f| areas.contains_footprint(f, active, false),
-                &cancelled,
-            )?,
-            None => scan.analysis_samples(
-                self.film.expect("film geometry"),
-                MAX_SAMPLES_PER_FRAME,
-                &cancelled,
-            )?,
+        let regions = self
+            .request
+            .document
+            .spatial_metadata
+            .groups
+            .iter()
+            .flat_map(|group| &group.sources)
+            .find(|row| row.input.source == self.request.document.project.order[index]);
+        let film_planes: Vec<_> = regions
+            .and_then(|row| row.film.as_ref())
+            .into_iter()
+            .flat_map(|film| &film.boundaries)
+            .filter_map(|boundary| match boundary {
+                crate::spatial_metadata::Boundary::Measured { plane } => Some(*plane),
+                _ => None,
+            })
+            .collect();
+        let picture_planes: Vec<_> = regions
+            .and_then(|row| row.picture.as_ref())
+            .into_iter()
+            .flat_map(|picture| &picture.boundaries)
+            .filter_map(crate::spatial_metadata::Boundary::plane)
+            .collect();
+        let holder_planes: Vec<_> = regions
+            .and_then(|row| row.holder_opening.as_ref())
+            .into_iter()
+            .flat_map(|holder| &holder.boundaries)
+            .filter_map(crate::spatial_metadata::Boundary::plane)
+            .collect();
+        let inset = sampling_inset(active);
+        let on_film = |f| {
+            inside_film(f, &film_planes, inset)
+                && inside_film(f, &holder_planes, inset)
+                && regions
+                    .and_then(|row| row.material.as_ref())
+                    .is_none_or(|m| m.contains_footprint(f, active, inset))
         };
+        // Physical film support supplements even authored areas. It must not resize the
+        // canonical grid, alter accepted geometry, or turn unknown/camera limits into edges.
+        let film_samples = scan.analysis_samples_in(
+            if frame_areas.is_some() {
+                active
+            } else {
+                self.film.expect("film geometry")
+            },
+            MAX_SAMPLES_PER_FRAME,
+            |f| {
+                frame_areas.is_none_or(|areas| areas.contains_footprint(f, active, false))
+                    && on_film(f)
+            },
+            &cancelled,
+        )?;
         let Some(film) = film_samples else {
             return Ok(false);
         };
-        let picture_samples = match frame_areas {
-            Some(areas) => scan.analysis_samples_in(
-                active,
-                MAX_SAMPLES_PER_FRAME,
-                |f| areas.contains_footprint(f, active, true),
-                &cancelled,
-            )?,
-            None => scan.analysis_samples(
-                self.picture.expect("legacy picture geometry"),
-                MAX_SAMPLES_PER_FRAME,
-                &cancelled,
-            )?,
-        };
+        let picture_samples = scan.analysis_samples_in(
+            if frame_areas.is_some() {
+                active
+            } else {
+                self.picture.expect("legacy picture geometry")
+            },
+            MAX_SAMPLES_PER_FRAME,
+            |f| {
+                frame_areas.is_none_or(|areas| areas.contains_footprint(f, active, true))
+                    && on_film(f)
+                    && inside_film(f, &picture_planes, 0.)
+            },
+            &cancelled,
+        )?;
         let Some(picture) = picture_samples else {
             return Ok(false);
         };

@@ -1,7 +1,30 @@
-use super::{Error, Scan, analysis, development, source};
+use super::{Document, Error, Scan, SourceId, analysis, development, source};
 use std::sync::Arc;
 
 pub(super) use crate::cancellation::Cancellation;
+
+fn source_input(document: &Document, id: SourceId) -> Result<development::Request, Error> {
+    let project = &document.project;
+    let expected = project.source(id)?;
+    let path = document.source_path(id)?;
+    let wb = project
+        .development
+        .as_ref()
+        .ok_or(Error::UnusableSample("no roll development"))?
+        .fixed_wb;
+    let cache = source::Cache::new(&path, Some(expected), Some(wb), document);
+    Ok(development::Request {
+        path,
+        wb: Some(wb),
+        expected: Some(expected.clone()),
+        basis: project.camera_basis.clone(),
+        file: cache.file,
+        key: cache.key,
+        store: Some(cache.store),
+        parent: cache.parent,
+        retain: false,
+    })
+}
 
 #[derive(Clone)]
 pub(super) struct Services {
@@ -55,6 +78,28 @@ impl Services {
         index: usize,
         cancelled: Cancellation,
     ) -> Result<Option<Scan>, Error> {
+        self.acquire_captured(
+            move || source_input(&request.document, request.document.project.order[index]),
+            cancelled,
+        )
+        .await
+    }
+
+    pub async fn acquire_source(
+        &self,
+        document: Arc<Document>,
+        source: SourceId,
+        cancelled: Cancellation,
+    ) -> Result<Option<Scan>, Error> {
+        self.acquire_captured(move || source_input(&document, source), cancelled)
+            .await
+    }
+
+    async fn acquire_captured(
+        &self,
+        capture: impl FnOnce() -> Result<development::Request, Error> + Send + 'static,
+        cancelled: Cancellation,
+    ) -> Result<Option<Scan>, Error> {
         let scheduler = self.developments.clone();
         let retired = cancelled.clone();
         let result = async {
@@ -64,29 +109,8 @@ impl Services {
                     if retired.is_cancelled() {
                         return Err(Error::UnusableSample("analysis retired"));
                     }
-                    let project = &request.document.project;
-                    let id = project.order[index];
-                    let expected = project.source(id)?;
-                    let path = request.document.source_path(id)?;
-                    let wb = project
-                        .development
-                        .as_ref()
-                        .ok_or(Error::UnusableSample("no roll development"))?
-                        .fixed_wb;
-                    let cache =
-                        source::Cache::new(&path, Some(expected), Some(wb), &request.document);
                     scheduler.submit_admitted(
-                        development::Request {
-                            path,
-                            wb: Some(wb),
-                            expected: Some(expected.clone()),
-                            basis: project.camera_basis.clone(),
-                            file: cache.file,
-                            key: cache.key,
-                            store: Some(cache.store),
-                            parent: cache.parent,
-                            retain: false,
-                        },
+                        capture()?,
                         development::Priority::Foreground,
                         admission,
                     )
