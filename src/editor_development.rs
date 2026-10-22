@@ -96,6 +96,7 @@ struct Task {
     owner: AtomicUsize,
     share: AtomicUsize,
     native_backing: std::sync::atomic::AtomicBool,
+    sdk: std::sync::atomic::AtomicBool,
     admissions: Mutex<Vec<crate::blocking_jobs::Admission>>,
     result: Mutex<Option<Completion>>,
     ready: Condvar,
@@ -112,6 +113,7 @@ impl Task {
             owner: AtomicUsize::new(UNOWNED),
             share: AtomicUsize::new(1),
             native_backing: std::sync::atomic::AtomicBool::new(false),
+            sdk: std::sync::atomic::AtomicBool::new(false),
             admissions: Mutex::new(Vec::new()),
             result: Mutex::new(None),
             ready: Condvar::new(),
@@ -183,6 +185,9 @@ struct State {
     queue: Vec<Arc<Task>>,
     next: u64,
     steps: usize,
+    // In-flight steps that run an SDK transaction, which the bridge serializes
+    // process-wide, so no other native step can make progress beside them.
+    sdk_steps: usize,
     closed: bool,
 }
 
@@ -447,6 +452,9 @@ impl Scheduler {
                     let (record, mut raw) =
                         document::open_source(&task.request.path, task.request.wb)
                             .map_err(|e| e.to_string())?;
+                    // The bridge serializes SDK transactions process-wide, so the
+                    // develop phase must not share native execution with anything.
+                    task.sdk.store(raw.metadata.uses_sdk(), Ordering::Relaxed);
                     if let Some(basis) = &task.request.basis {
                         basis
                             .require_source(&record.development)
@@ -494,6 +502,7 @@ impl Scheduler {
                 queue: Vec::new(),
                 next: 0,
                 steps: 0,
+                sdk_steps: 0,
                 closed: false,
             }),
             changed: Condvar::new(),
@@ -687,6 +696,13 @@ fn eligible(
     slot: usize,
     pressure: crate::resources::MemoryPressure,
 ) -> bool {
+    if task.sdk.load(Ordering::Relaxed) {
+        if state.steps != 0 {
+            return false;
+        }
+    } else if state.sdk_steps != 0 {
+        return false;
+    }
     match task.owner.load(Ordering::Relaxed) {
         UNOWNED => {
             if slot != 0 && !matches!(pressure, crate::resources::MemoryPressure::Normal) {
@@ -703,10 +719,23 @@ fn eligible(
 }
 
 // The in-flight step count feeds each call's thread share at selection.
-struct StepCount<'a>(&'a Shared);
+struct StepCount<'a> {
+    shared: &'a Shared,
+    sdk: bool,
+}
 impl Drop for StepCount<'_> {
     fn drop(&mut self) {
-        self.0.state.lock().unwrap().steps -= 1;
+        {
+            let mut state = self.shared.state.lock().unwrap();
+            state.steps -= 1;
+            if self.sdk {
+                state.sdk_steps -= 1;
+            }
+        }
+        // Eligibility reads these counters, and completion notifies before this
+        // guard runs, so a waiter woken there re-checks against the old count.
+        // Release the capacity here or that waiter sleeps with work queued.
+        self.shared.changed.notify_all();
     }
 }
 
@@ -717,7 +746,7 @@ fn run(
     mut step: impl FnMut(&Arc<Task>) -> Result<Option<Arc<DevelopedSource>>, String>,
 ) {
     loop {
-        let task = {
+        let (task, sdk) = {
             let mut state = shared.state.lock().unwrap();
             loop {
                 if state.closed {
@@ -733,6 +762,9 @@ fn run(
                     .map(|(index, _)| index)
                 {
                     let task = state.queue.remove(index);
+                    // One read decides both the counter and the guard, so the
+                    // increment and decrement cannot disagree.
+                    let sdk = task.sdk.load(Ordering::Relaxed);
                     if task.abandoned() {
                         state.tasks.retain(|entry| !Arc::ptr_eq(entry, &task));
                     } else {
@@ -740,13 +772,19 @@ fn run(
                         task.owner.store(slot, Ordering::Relaxed);
                         task.share.store(state.steps + 1, Ordering::Relaxed);
                     }
+                    if sdk {
+                        state.sdk_steps += 1;
+                    }
                     state.steps += 1;
-                    break task;
+                    break (task, sdk);
                 }
                 state = shared.changed.wait(state).unwrap();
             }
         };
-        let _steps = StepCount(&shared);
+        let _steps = StepCount {
+            shared: &shared,
+            sdk,
+        };
         let _running = Running {
             task: &task,
             shared: &shared,

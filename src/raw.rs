@@ -100,6 +100,18 @@ impl Metadata {
         }
     }
 
+    /// The direct-SDK route, whose transactions the bridge serializes process-wide.
+    pub(crate) fn uses_sdk(&self) -> bool {
+        #[cfg(feature = "dng-sdk")]
+        {
+            self.sdk.is_some()
+        }
+        #[cfg(not(feature = "dng-sdk"))]
+        {
+            false
+        }
+    }
+
     pub fn dng_identity(&self) -> Option<String> {
         #[cfg(feature = "dng-sdk")]
         if let Some(header) = self.sdk {

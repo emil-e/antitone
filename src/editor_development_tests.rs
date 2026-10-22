@@ -830,6 +830,7 @@ fn unowned_starts_yield_to_foreground_demand_and_collapse_under_pressure() {
         queue: vec![foreground.clone(), background.clone()],
         next: 2,
         steps: 0,
+        sdk_steps: 0,
         closed: false,
     };
     let normal = crate::resources::MemoryPressure::Normal;
@@ -869,6 +870,49 @@ fn unowned_starts_yield_to_foreground_demand_and_collapse_under_pressure() {
     assert!(!eligible(&state, &background, 1, normal));
     foreground.owner.store(1, Ordering::Relaxed);
     assert!(!eligible(&state, &foreground, 0, normal));
+}
+
+#[test]
+fn sdk_steps_hold_native_execution_exclusive_so_they_keep_the_full_budget() {
+    let file = fixture::bayer_dng();
+    let sdk = synthetic_task(1, file.path(), Priority::Foreground);
+    sdk.sdk.store(true, Ordering::Relaxed);
+    let raw = synthetic_task(2, file.path(), Priority::Eager);
+    let mut state = State {
+        tasks: vec![sdk.clone(), raw.clone()],
+        queue: vec![sdk.clone(), raw.clone()],
+        next: 2,
+        steps: 0,
+        sdk_steps: 0,
+        closed: false,
+    };
+    let normal = crate::resources::MemoryPressure::Normal;
+    // With nothing in flight both may start; an admitted SDK step therefore
+    // records share 1 and keeps the undivided team the SDK route had alone.
+    assert!(eligible(&state, &sdk, 0, normal));
+    assert!(eligible(&state, &sdk, 1, normal));
+    // Ordinary native work in flight blocks the serialized SDK transaction on
+    // both owners, including the owner it would otherwise be pinned to.
+    state.steps = 1;
+    assert!(!eligible(&state, &sdk, 0, normal));
+    assert!(!eligible(&state, &sdk, 1, normal));
+    sdk.owner.store(1, Ordering::Relaxed);
+    assert!(!eligible(&state, &sdk, 1, normal));
+    // A running SDK transaction blocks every other native step: the second
+    // owner would otherwise block on the bridge's process-wide transaction
+    // mutex while still halving the running call's thread team.
+    sdk.owner.store(0, Ordering::Relaxed);
+    state.tasks.retain(|task| task.id != 1);
+    state.queue.retain(|task| task.id != 1);
+    state.steps = 1;
+    state.sdk_steps = 1;
+    assert!(!eligible(&state, &raw, 0, normal));
+    assert!(!eligible(&state, &raw, 1, normal));
+    // Once it returns, ordinary work resumes.
+    state.steps = 0;
+    state.sdk_steps = 0;
+    assert!(eligible(&state, &raw, 0, normal));
+    assert!(eligible(&state, &raw, 1, normal));
 }
 
 #[test]
@@ -1087,5 +1131,57 @@ fn closing_the_pair_wakes_waiters_and_stops_both_owners() {
     assert!(second.join().unwrap().is_err());
     release.send(()).unwrap();
     release.send(()).unwrap();
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn sdk_development_holds_native_execution_exclusive_end_to_end() {
+    // The direct-SDK route serializes its transactions process-wide in the
+    // bridge, so two owners must never develop through it concurrently: an
+    // overlap would halve the running call's team while the peer blocks.
+    let a = fixture::bayer_dng();
+    let b = fixture::bayer_dng();
+    let (record, raw) = document::open_source(a.path(), Some([1.; 4])).unwrap();
+    assert!(
+        raw.metadata.uses_sdk(),
+        "the fixture must exercise the direct SDK route"
+    );
+    drop(raw);
+    drop(record);
+    let live = Arc::new(AtomicUsize::new(0));
+    let peak = Arc::new(AtomicUsize::new(0));
+    let (counted, observed) = (live.clone(), peak.clone());
+    let scheduler = Scheduler::new_observed_with_pressure(
+        move |_, phase, _| {
+            match phase {
+                NativePhase::DevelopBegin => {
+                    let now = counted.fetch_add(1, Ordering::SeqCst) + 1;
+                    observed.fetch_max(now, Ordering::SeqCst);
+                }
+                NativePhase::DevelopEnd => {
+                    counted.fetch_sub(1, Ordering::SeqCst);
+                }
+                _ => {}
+            }
+            Ok(())
+        },
+        normal_pressure,
+    );
+    let mut waiters = Vec::new();
+    for file in [&a, &b] {
+        let store = Arc::new(SourceStore::new(0));
+        let job = request(file.path(), store);
+        let client = scheduler.clone();
+        waiters.push(std::thread::spawn(move || {
+            client.load(job, Priority::Eager, || false)
+        }));
+    }
+    for waiter in waiters {
+        // A lost wakeup here parks an owner instead of returning, so the join
+        // is bounded by the channel-free scheduler noticing the released step.
+        waiter.join().unwrap().unwrap();
+    }
+    assert_eq!(peak.load(Ordering::SeqCst), 1);
+    assert_eq!(live.load(Ordering::SeqCst), 0);
     scheduler.close_and_wait().unwrap();
 }
