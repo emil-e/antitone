@@ -1662,10 +1662,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "read-only local Canon/Nikon RAW samples; decode, development and eligibility invariants"]
-    fn canon_and_nikon_samples_develop_through_the_accepted_camera_domain() {
-        // Three-colour integer Bayer bodies across both vendors' container variants,
-        // including a 12-bit compressed NEF and actual camera-scanned negatives.
+    #[ignore = "read-only local Canon/Nikon/Olympus/Panasonic RAW samples; decode, development and eligibility invariants"]
+    fn vendor_samples_develop_through_the_accepted_camera_domain() {
+        // Three-colour integer Bayer bodies across four vendors and every accepted
+        // container variant: 12-bit compressed NEF, Olympus hi-res ORF, Panasonic
+        // crop modes and both current RW2 decoders, plus actual camera-scanned negatives.
         let samples = [
             (
                 "samples/raw-downloads/canon/5dmk2-raw.CR2",
@@ -1706,6 +1707,46 @@ mod tests {
             (
                 "samples/raw-downloads/negative-scans/negadoctor-snowy-day-d780.NEF",
                 ("Nikon", "D780", 14),
+            ),
+            (
+                "samples/raw-downloads/olympus/em1-16mp-12bit.ORF",
+                ("Olympus", "E-M1", 12),
+            ),
+            (
+                "samples/raw-downloads/olympus/em1m3-standard-20mp.ORF",
+                ("Olympus", "E-M1MarkIII", 12),
+            ),
+            (
+                "samples/raw-downloads/olympus/em1x-20mp.ORF",
+                ("Olympus", "E-M1X", 12),
+            ),
+            (
+                "samples/raw-downloads/panasonic/gh4-standard-16mp.RW2",
+                ("Panasonic", "DMC-GH4", 12),
+            ),
+            (
+                "samples/raw-downloads/panasonic/g9-standard-20mp.RW2",
+                ("Panasonic", "DC-G9", 12),
+            ),
+            (
+                "samples/raw-downloads/panasonic/gh5-standard-20mp.RW2",
+                ("Panasonic", "DC-GH5", 12),
+            ),
+            (
+                "samples/raw-downloads/panasonic/s5-fullframe.RW2",
+                ("Panasonic", "DC-S5", 14),
+            ),
+            (
+                "samples/raw-downloads/panasonic/gh6-25mp.RW2",
+                ("Panasonic", "DC-GH6", 16),
+            ),
+            (
+                "samples/raw-downloads/panasonic/s5m2-fullframe.RW2",
+                ("Panasonic", "DC-S5M2", 14),
+            ),
+            (
+                "samples/raw-downloads/panasonic/g9m2-25mp.RW2",
+                ("Panasonic", "DC-G9M2", 16),
             ),
         ];
         for (path, (make, model, bps)) in samples {

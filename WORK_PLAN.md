@@ -5,11 +5,12 @@ vendor-neutral lens handling (1), orientation seeding (2, reworked from byte
 rotation to a composition-setting seed per user direction), real-sample
 tests (3), black-pattern widening deferred with no known producer (4), docs
 (5). Independent review returned two low findings, both addressed. Remaining:
-rebase onto main before integration; ORF/RW2 scope question still open.
+rebase onto main before integration.
 
 ## Agreed scope
 
-Accept Canon (CR2, CR3/CRAW) and Nikon (NEF) camera RAWs through the established
+Accept Canon (CR2, CR3/CRAW), Nikon (NEF), Olympus (ORF) and Panasonic (RW2)
+camera RAWs through the established
 LibRaw development path, alongside existing Sony ARW and DNG inputs, with the
 user's acceptance criterion (2026-10-22): "unless it's rare and implementation is
 annoying, it should work" — i.e. common bodies people own must work; rejection is
@@ -162,11 +163,15 @@ peers (darktable, RawTherapee, Adobe) use external measured databases
 
 ## Blockers
 
-None currently. Open: whether ORF/RW2 (single-frame) follow in this task or a
-follow-up once Canon/Nikon land (research says smaller shares; same code path).
+None currently. ORF/RW2 were folded into this task on user direction
+(2026-10-22): ten additional samples (Olympus E-M1/E-M1 Mark III hi-res/E-M1X;
+Panasonic GH4/G9/GH5/S5/S5M2/GH6/G9M2, covering both current RW2 decoders and
+crop modes) all pass the existing gates and develop end-to-end with exact
+repeatability; no gate or code changes were needed.
 
 ## Artifact locations
 
-- Samples: `samples/raw-downloads/` (this worktree, ignored).
+- Samples: `samples/raw-downloads/` (this worktree, ignored): `canon/`, `nikon/`,
+  `olympus/`, `panasonic/`, `negative-scans/`.
 - Disposable inventory probe + logs: `.cache/raw-inventory/` (not maintained).
 - Full probe log: `.cache/raw-inventory/probe-full.log`.
