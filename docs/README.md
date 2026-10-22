@@ -53,8 +53,4 @@ Use the [development guide](development.md) for engineering standards, the norma
 
 The current platform is macOS on Apple Silicon. Local RAWs and generated photographic outputs are private, ignored inputs/products—not contributor prerequisites or repository fixtures to upload.
 
-## Understand the choices and unfinished work
-
-[Feedback](feedback.md) collects unresolved observations. A proposed feature is not implemented behavior.
-
 For the provisional Dust tool, read the [editor workflow](editor.md#provisional-dust-cleanup).
