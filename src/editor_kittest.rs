@@ -192,7 +192,6 @@ fn app_harness<'scope>(
     state: &'scope RefCell<Option<Editor>>,
     editor: Editor,
     renderer: FloatRenderer,
-    pixels_per_point: f32,
 ) -> Harness<'scope, Editor> {
     use std::sync::OnceLock;
     let context = Arc::new(OnceLock::<egui::Context>::new());
@@ -206,7 +205,6 @@ fn app_harness<'scope>(
     let access = application.access();
     let inner = EguiHarness::builder()
         .with_size(egui::vec2(1100., 800.))
-        .with_pixels_per_point(pixels_per_point)
         .with_max_steps(UI_MAX_STEPS)
         .with_step_dt(UI_STEP_DT)
         .renderer(renderer)
@@ -427,7 +425,7 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
         capture,
     );
     let state = RefCell::new(None);
-    let mut harness = app_harness(&state, editor, renderer, 1.);
+    let mut harness = app_harness(&state, editor, renderer);
     harness.enter(|editor, cx| {
         editor.add_raws(
             vec![PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng")],
@@ -555,7 +553,7 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
         Rc::new(RefCell::new(FloatCapture::default())),
     );
     let state = RefCell::new(None);
-    let mut harness = app_harness(&state, editor, renderer, 1.);
+    let mut harness = app_harness(&state, editor, renderer);
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
     harness.enter(|editor, cx| editor.add_raws(vec![fixture.clone()], cx));
     wait_for(&mut harness, |editor| {
@@ -775,14 +773,6 @@ fn editor_harness_with_gpu<R>(
     thumbnails: bool,
     test: impl FnOnce(Harness<'_, Editor>, Rc<RefCell<FloatCapture>>, wgpu::Device, wgpu::Queue) -> R,
 ) -> R {
-    editor_harness_with_gpu_at(thumbnails, 1., test)
-}
-
-fn editor_harness_with_gpu_at<R>(
-    thumbnails: bool,
-    pixels_per_point: f32,
-    test: impl FnOnce(Harness<'_, Editor>, Rc<RefCell<FloatCapture>>, wgpu::Device, wgpu::Queue) -> R,
-) -> R {
     let (device, queue) = pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,
@@ -810,7 +800,7 @@ fn editor_harness_with_gpu_at<R>(
         capture.clone(),
     );
     let owner = RefCell::new(None);
-    let harness = app_harness(&owner, editor, renderer, pixels_per_point);
+    let harness = app_harness(&owner, editor, renderer);
     test(harness, capture, device, queue)
 }
 

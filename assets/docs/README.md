@@ -5,8 +5,8 @@ are committed here. A capture comes from real negatives, so these images are par
 product's first impression and part of the change that alters them.
 
 The PNGs are committed at 1× (1440×900, about 1.6 MB each). GitHub displays them at their
-CSS size, and the smaller set keeps each regeneration an ordinary commit; 2× captures are
-22 MB per regen.
+CSS size, and the smaller set keeps a regeneration an ordinary commit. Capturing at 2×
+would commit 22 MB per refresh, which is why the harness default is used.
 
 ## Regenerate
 
@@ -31,8 +31,18 @@ CSS size, and the smaller set keeps each regeneration an ordinary commit; 2× ca
 
 ## What a correct capture looks like
 
+In every shot:
+
 - **Upright.** The scans are read from the emulsion side, so the capture applies the shared
   baseline's vertical flip before analyzing.
+- **No pointer.** The capture drops the harness pointer before each render; a cursor arrow
+  baked over a control means an older capture.
+- **Native menus.** The capture installs the macOS menus, so the window matches the app
+  people download rather than showing an in-window menu strip.
+
+In the four shots taken after analysis (`getting-started-filmstrip`, `viewer-bar`,
+`export-dialog`, `window-overview`):
+
 - **Neutral.** A cast means the input was not one whole roll — a partial set, or the exposed
   leader and frame-edge frames from the start of a strip, skews Dmin and the shared white
   balance for every photograph.
@@ -40,6 +50,10 @@ CSS size, and the smaller set keeps each regeneration an ordinary commit; 2× ca
   waits for the displayed view to match the current processing.
 - **Developed.** Filmstrip cards show graded positives rather than empty previews.
 - **Consistent.** The export dialog counts match the roll you loaded.
+
+`analyze-review` is the exception: it records the review *before* the roll is graded, so it
+correctly shows the uncropped source negative with its sampling areas, unmeasured
+calibration and undeveloped filmstrip cards.
 
 ## Without real scans
 

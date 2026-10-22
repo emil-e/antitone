@@ -20,6 +20,11 @@ use std::path::Path;
 #[test]
 fn documented_states_render() {
     let scans = doc_scans();
+    assert!(
+        scans.len() >= 2,
+        "the screenshots need at least two scans; ANTITONE_DOC_SCANS holds {}",
+        scans.len()
+    );
     let roll_size = scans.len();
     let first_label = file_label(&scans[0]);
     let second_label = file_label(&scans[1]);
@@ -28,8 +33,12 @@ fn documented_states_render() {
     // 1× keeps the committed screenshots small enough that regenerating them is an
     // ordinary commit; the builder sets density because runtime changes break
     // kittest event mapping.
-    editor_harness_with_gpu_at(true, 1., |mut harness, _, _, _| {
+    editor_harness_with_gpu(true, |mut harness, _, _, _| {
         harness.set_size(egui::vec2(1440., 900.));
+        // The macOS host installs native menus, so the window has no in-window
+        // menu strip; captures show what the downloaded app shows.
+        harness.update(host::App::native_menu_installed);
+        harness.step();
         harness.enter(|editor, cx| editor.add_raws(scans, cx));
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
             !e.busy && e.document_pending.is_none()
@@ -67,7 +76,7 @@ fn documented_states_render() {
             )
         });
         frames(&mut harness);
-        save_capture(&harness.render().unwrap(), "analyze-review");
+        capture(&mut harness, "analyze-review");
 
         // Confirm the review so every later shot shows the analyzed grade, the
         // state the workflow actually leaves the roll in.
@@ -101,14 +110,14 @@ fn documented_states_render() {
             e.thumbnails.ready_count(&e.document, e.target) == roll_size
         });
         settle_view(&mut harness);
-        save_capture(&harness.render().unwrap(), "getting-started-filmstrip");
+        capture(&mut harness, "getting-started-filmstrip");
 
         // The viewer bar with its help popover open.
         harness.get_by_label("Viewer help").click();
         frames(&mut harness);
         assert!(egui::Popup::is_any_open(&harness.ctx));
         settle_view(&mut harness);
-        save_capture(&harness.render().unwrap(), "viewer-bar");
+        capture(&mut harness, "viewer-bar");
         harness.event(escape());
         harness.step();
         assert!(!egui::Popup::is_any_open(&harness.ctx));
@@ -122,7 +131,7 @@ fn documented_states_render() {
         });
         frames(&mut harness);
         settle_view(&mut harness);
-        save_capture(&harness.render().unwrap(), "export-dialog");
+        capture(&mut harness, "export-dialog");
         harness.update(|editor| editor.export_dialog = None);
 
         // The overview last, back on the first photograph: both photographs are
@@ -138,7 +147,7 @@ fn documented_states_render() {
             e.thumbnails.ready_count(&e.document, e.target) == roll_size
         });
         settle_view(&mut harness);
-        save_capture(&harness.render().unwrap(), "window-overview");
+        capture(&mut harness, "window-overview");
     });
     write_capture_sources(&CaptureSources {
         scans: roll_size,
@@ -168,16 +177,9 @@ fn write_capture_sources(sources: &CaptureSources<'_>) {
         .ok()
         .filter(|output| output.status.success())
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned());
-    let modified = std::process::Command::new("git")
-        .args(["status", "--porcelain", "--untracked-files=no"])
-        .output()
-        .ok()
-        .is_some_and(|output| !output.stdout.is_empty());
-    let revision = match revision {
-        Some(revision) if modified => format!("{revision} with uncommitted changes"),
-        Some(revision) => revision,
-        None => "unknown revision".to_owned(),
-    };
+    // Capture precedes the commit that adds the images, so HEAD is normally the parent
+    // of the change they belong to; the record names the tree they came from.
+    let revision = revision.unwrap_or_else(|| "unknown revision".to_owned());
     let input = if sources.real_scans {
         format!(
             "{} real scans, {} to {}",
@@ -251,6 +253,15 @@ fn settle_view(harness: &mut Harness<'_, Editor>) {
             })
     });
     frames(harness);
+}
+
+/// Renders one documented state. The harness paints a pointer triangle at the last
+/// clicked control, so the pointer is dropped first: the images show the window as a
+/// reader sees it.
+fn capture(harness: &mut Harness<'_, Editor>, name: &str) {
+    harness.event(egui::Event::PointerGone);
+    harness.step();
+    save_capture(&harness.render().unwrap(), name);
 }
 
 fn tab(harness: &mut Harness<'_, Editor>, name: &str) {
