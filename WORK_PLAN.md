@@ -1,100 +1,108 @@
 # Canon and Nikon RAW support (broader LibRaw acceptance)
 
-Status: plan drafted from research; awaiting sample acquisition before implementation.
+Status: inventory complete; all sampled Canon/Nikon files pass current gates and
+develop end-to-end. Implementation phases below are re-scoped accordingly.
 
 ## Agreed scope
 
-Accept Canon (CR3, CR2) and Nikon (NEF) camera RAWs through the established LibRaw
-development path, alongside the existing Sony ARW and DNG inputs. This is delegated by
-the user (2026-10-22) after web research into which cameras people actually use for
-film scanning; the deliverable agreed was "a work plan for CR2/CR3 + NEF support (or a
-broader format-acceptance spike)".
+Accept Canon (CR2, CR3/CRAW) and Nikon (NEF) camera RAWs through the established
+LibRaw development path, alongside existing Sony ARW and DNG inputs, with the
+user's acceptance criterion (2026-10-22): "unless it's rare and implementation is
+annoying, it should work" — i.e. common bodies people own must work; rejection is
+justified only for rare formats where support would be disproportionate.
 
-Why these first: community scanning threads (r/analog, Negative Lab Pro setup threads)
-are dominated by Canon (legacy 5D/6D macro donors plus EOS R) and Nikon (D850 is *the*
-repeatedly recommended scanning body), after Sony. Share ranking is inferred from
-thread frequency, not measured. Every peer negative-conversion tool (Negative Lab Pro,
-SmartConvert, Grain2Pixel, VueScan ≥9.8.43, darktable Negadoctor) accepts
-CR2/CR3/NEF/ARW/RAF/ORF/RW2/DNG — this task closes Antitone's gap against that
-baseline.
+Research basis (2026-10-22): community scanning setups are dominated by Canon
+(legacy 5D/6D plus EOS R) and Nikon (D850 the most-recommended scanning body) after
+Sony; every peer negative-conversion tool accepts CR2/CR3/NEF/ARW/RAF/ORF/RW2/DNG.
+Share ranking is inferred from thread frequency, not measured.
 
-### Out of scope (separate future tasks)
+## Design directives from the user (2026-10-22)
 
-- X-Trans RAF (Fuji X): non-Bayer CFA, needs a different demosaic story.
-- Pixel-shift composites (Sony ARQ, Lumix S5 hi-res RW2): community norm is conversion
-  to DNG (PixelShift2DNG), which the DNG path already covers.
-- ORF, RW2 (single-frame), PEF, medium format, floating-point and four-colour
-  sensors. NRW included only if trivial (same code path as NEF and a sample exists).
+- Prefer appropriate abstractions over manufacturer-specific RAW handling; reuse
+  existing code (e.g. lens corrections) where it genuinely applies, not
+  gratuitously.
+- Adapt existing abstractions where they are Sony-shaped but actually generic, so
+  the code reads as if all these formats were always considered. Candidates
+  identified: `RawMetadata.sony_file_type`/`sony_lens` fields on the make-agnostic
+  metadata struct, the `raw_probe`/diagnostic output treating Sony fields as
+  universal (`sony_type=65535` sentinel), and any make-conditional naming in the
+  development path. Sony-specific code that is genuinely Sony-only (embedded Sony
+  lens profiles in `raw_sony.rs`/`raw_lens.rs`) stays clearly scoped to Sony.
 
-## Current state (established from code)
+## Sample set (private, read-only, never committed; stored in this worktree's `samples/raw-downloads/`)
 
-- LibRaw 0.22.0 is already the non-DNG decode/develop engine; the picker already
-  lists CR2/CR3/NEF etc. as hints (`src/editor_files.rs`). The gates live in
-  `native/raw_bridge.cpp`:
-  - `antitone_raw_open`: requires `colors == 3`, non-zero Bayer `filters`
-    (`filters != 9` excludes X-Trans).
-  - `antitone_raw_unpack`: rejects any declared repeated black pattern
-    (`cblack[4] || cblack[5]`), **including 1×1 scalar-equivalent declarations**.
-- The authored DNG fixtures (`tests/fixtures/raw/`) already trigger exactly that
-  1×1 case (`generate-raw-fixture.py` output is rejected by the production bridge) —
-  the deterministic starting case the retired `docs/plans/raw-compatibility.md` plan
-  called for (removed in 91f4152; its goal/scope is preserved here).
-- Sony-specific code (`raw_sony.rs`, `raw_lens.rs`) is embedded lens correction, not a
-  decode gate; other makes should yield `SonyLensDataStatus::Absent` — verify.
-- Roll calibration is per camera basis (`CameraBasis` equality in `src/project.rs`);
-  Canon/Nikon rolls need their own calibration/rolls, as Sony ones already do.
-  Flat-field measurement is camera-agnostic.
+Actual camera-scanned negatives (pixls.us Play Raw threads, CC BY-SA / CC BY-NC-SA):
 
-## Open question that determines the shape of the work
+- `negative-scans/negadoctor-challenge-canondslr.CR2` — Canon EOS 600D (flip=6 portrait)
+- `negative-scans/negadoctor-snowy-day-d780.NEF` — Nikon D780
+- `negative-scans/autumn-scene-a7c.ARW` — Sony ILCE-7C (control)
 
-Which Canon/Nikon files pass the current gates unchanged, and which are rejected only
-by the black-pattern rule? LibRaw normalizes most Canon/Nikon black levels to
-scalar/per-channel values, but per-body behavior must be inventoried, not assumed.
-The work could collapse to "validation + tests + docs" if files already pass, or need
-real black-pattern handling if bodies we care about (e.g. D850/Z-series with per-site
-black data) do not.
+Generic body coverage (raw.pixls.us, CC0): Canon 5D Mark II, 6D, EOS R (RAW + CRAW),
+R6; Nikon D750 (12-bit compressed + 14-bit lossless), D7200, D850, Z 7; plus
+`6d-sraw.CR2` as the excluded-layout control.
 
-## Phases
+## Inventory results (established, `.cache/raw-inventory/` probe + `antitone-raw-probe`)
 
-1. **Sample acquisition (blocked — needs user input).** Real CR3, CR2 and NEF files,
-   ideally actual negative scans from the camera setups in question. Samples are
-   private, read-only, ignored and never committed; downloading samples (e.g. from
-   public raw-sample repositories) needs explicit authorization, and the sandbox
-   blocks network access. Ask the user to supply files or authorize a source, plus
-   which bodies matter (e.g. EOS R / 5D-series / D850 / Z-series).
-2. **Inventory (read-only spike).** For each sample: dump LibRaw `idata`/`rawdata`
-   (`colors`, `filters`, `cblack`, WB, camera matrix, `sizes.flip`, linearization),
-   run the current bridge, and record pass/fail per gate. Map every assumption in
-   `native/raw_bridge.cpp` and `src/raw.rs` (flip, black/white handling, WB basis,
-   green handling, thumbnail selection, `ExifColorSpace`).
-3. **Black-pattern acceptance.** Widen `antitone_raw_unpack` to accept patterns that
-   reduce deterministically to scalar/per-channel levels (1×1 first, then uniform
-   patterns), keeping rejection of genuinely spatial black variation unless the
-   inventory shows a needed body requires more.
-4. **Per-format validation.** Following the old plan's acceptance list: decode,
-   sensor diagnostics, fixed-WB development, calibration, correction, proxy mapping,
-   Save/Open, TIFF/AP0 EXR output; RGB16 agreement across thread policies; rejection
-   of malformed/unsupported variants. Real-sample tests follow the existing
-   `#[ignore]`d Sony pattern (`samples/DSC04378.ARW`); authored fixtures for the
-   widened black-level cases via `scripts/generate-raw-fixture.py` recipes.
-5. **Docs.** Update the supported-boundary text in `docs/processing.md` ("three-colour
-   integer Bayer without repeated black-level patterns"), the README input sentence,
-   and any compatibility notes — following the documentation skill.
+- **All sampled Canon/Nikon files pass both bridge gates** (`colors==3`, Bayer
+  `filters`, integer `raw_image`, no repeated black pattern): CR2
+  (lossless_jpeg), CR3/CRAW (crx), NEF (nikon_load_raw, 12/14-bit,
+  compressed/lossless). No black-pattern widening is needed for these bodies.
+- **End-to-end development works**: all files develop with zero repeat error and
+  LibRaw-sRGB matrix agreement ~1.5e-5 via `antitone-raw-probe`, including
+  full matrix, fixed-WB camera development, sensor diagnostics.
+- **sRAW/mRAW is the first legitimate exclusion**: LibRaw presents it as
+  `filters=0`, non-CFA (pre-demosaiced/decimated). Document as unsupported with a
+  clear reason; users can shoot full RAW.
+- **D780 negative scan**: blue channel sits ~170–460 codes above `black=1008`
+  (verified correct via the same-offset Z 7 normal photo showing ~0 below-black
+  sites). It trips `antitone-raw-probe`'s diagnostic >1%-channel flooring gate,
+  which exists only in the probe; the library path handles near-black pixels via
+  per-pixel eligibility. Legitimately dense LED-panel scan, not a decode defect —
+  but it is a good real-world fixture for low-SNR-blue behavior.
+- **Per-camera variation observed, all handled by existing generic paths**: WB
+  scales (Nikon normalized G=1.0, Canon/Sony 1024-based; `as_shot_wb` already
+  normalizes), `ExifColorSpace` 255 (Nikon) vs 1 (embedded preview path declines
+  safely without an ICC profile), Canon raw margins, `flip=6` portrait.
+
+## Remaining implementation phases
+
+3. **Acceptance & naming.** No gate changes for the sampled classes. Re-scope
+   any Sony-shaped naming per the design directives; keep the rejected-variant
+   errors honest (sRAW/mRAW, X-Trans, spatial black patterns).
+4. **Portrait-orientation verification.** The 600D negative scan (flip=6) is the
+   fixture: verify developed raster geometry, crop/scan regions, auto-crop and
+   flat-field against the rotated embedded preview, so portrait Canon/Nikon
+   scans behave consistently. Sony baseline rarely exercises non-zero flip.
+5. **Real-sample tests.** `#[ignore]`d sample tests mirroring the Sony pattern for
+   at least CR2, CR3/CRAW and NEF (develop, diagnostics, fixed-WB basis, export
+   path where sample-dependent checks exist). Keep the probe's D780 dense-blue
+   case as a documented diagnostic behavior, not an editor rejection.
+6. **Black-pattern scalar case (small, optional).** The 1×1 repeated-black
+   declaration (authored fixtures, some future bodies) still rejects at unpack;
+   accept scalar-equivalent declarations while keeping spatial rejection. This
+   is the old plan's starting case and remains a real defect for DNG-via-LibRaw.
+7. **Docs.** processing.md's accepted-boundary sentence ("three-colour integer
+   Bayer without repeated black-level patterns"), README input sentence, and
+   the editor/docs scanning guidance — following the documentation skill.
 
 ## Acceptance
 
-- Real-sample ignored tests for at least one CR3, one CR2 and one NEF covering the
-  full path in phase 4, mirroring the Sony sample tests.
-- Authored tests proving the widened black-pattern gate accepts 1×1/uniform
-  declarations and still rejects spatial variation.
-- Existing ARW and DNG behavior numerically unchanged (fixed matrices/expected
-  values only touched with justified cause, per the development guide).
+- Real-sample ignored tests for at least one CR2, one CR3 and one NEF across the
+  full develop path; CRAW included; sRAW/mRAW rejection covered by a control
+  fixture assertion.
+- Portrait-scan consistency verified against the 600D fixture.
+- Existing ARW and DNG behavior numerically unchanged.
 - Docs updated; plan kept current in checkpoint commits.
-- Independent review before integration (per AGENTS.md), explicitly covering test
-  quality — including which bodies the samples represent and the
-  fixture/control-discovery assumptions.
+- Independent review before integration, explicitly covering test quality and
+  the make-specific/generic abstraction boundaries.
 
-## Blockers and next action
+## Blockers
 
-**Blocked on samples + body list from the user** (phase 1). Once supplied: phase 2
-inventory, then re-confirm this plan's phase 3 scope before changing the gate.
+None currently. Open: whether ORF/RW2 (single-frame) follow in this task or a
+follow-up once Canon/Nikon land (research says smaller shares; same code path).
+
+## Artifact locations
+
+- Samples: `samples/raw-downloads/` (this worktree, ignored).
+- Disposable inventory probe + logs: `.cache/raw-inventory/` (not maintained).
+- Full probe log: `.cache/raw-inventory/probe-full.log`.
