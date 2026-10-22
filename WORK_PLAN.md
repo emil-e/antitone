@@ -69,10 +69,37 @@ R6; Nikon D750 (12-bit compressed + 14-bit lossless), D7200, D850, Z 7; plus
 3. **Acceptance & naming.** No gate changes for the sampled classes. Re-scope
    any Sony-shaped naming per the design directives; keep the rejected-variant
    errors honest (sRAW/mRAW, X-Trans, spatial black patterns).
-4. **Portrait-orientation verification.** The 600D negative scan (flip=6) is the
-   fixture: verify developed raster geometry, crop/scan regions, auto-crop and
-   flat-field against the rotated embedded preview, so portrait Canon/Nikon
-   scans behave consistently. Sony baseline rarely exercises non-zero flip.
+4. **Portrait-orientation handling.** Justified by the planned digital pipeline
+   (simulating a digital RAW as a negative with grain/halation), where general
+   photography exercises non-zero flip; scans themselves rarely need it (user,
+   2026-10-22). Implement flip handling in the developed-raster path rather than
+   only embedded previews, and verify geometry, crop/scan regions, auto-crop and
+   flat-field consistency with the 600D fixture (`flip=6`), which exercises the
+   path even though it is a scan.
+
+### Lens correction position (user topic, 2026-10-22)
+
+The embedded-correction boundary stays Sony-only, by evidence: Sony is the
+only make with publicly validated makernote corrections (darktable's
+interpretation, which we mirror); Canon CR2/CR3 and Nikon F NEF embed only
+settings (DPP/NX-D apply corrections from vendor databases, Canon DLO from
+   server downloads); LibRaw 0.22 exposes nothing for native RAW makernotes;
+peers (darktable, RawTherapee, Adobe) use external measured databases
+(LensFun/LCP) for Canon/Nikon. Under the "rare and annoying" criterion:
+
+- Canon/Nikon scans are accepted without embedded lens correction. Scanning
+  rigs use macro lenses near 1:1 where distortion is minimal, and illumination
+  is already covered by measured flat-field — the established workflow Sony
+  embedded data merely supplements.
+- The internal profile/geometry math in `lens.rs` is vendor-neutral; only the
+  payload reader is Sony-specific. Per the abstraction directive, phase 1
+  renames Sony-shaped internals (`SonyLensProfile`/`SonyLensGeometry`) so the
+  vendor payload is the swappable part — no second vendor is implemented now.
+- Deferred, tied to the digital-pipeline future work: Nikon Z embedded
+  distortion (makernote `0xc7d5`, ExifTool-documented, vignette semantics
+  unvalidated publicly) and LensFun/LCP-style measured-database support for
+  general lenses. The DNG path already applies vendor corrections via opcodes
+  where converters bake them, which covers DNG-routed digital input.
 5. **Real-sample tests.** `#[ignore]`d sample tests mirroring the Sony pattern for
    at least CR2, CR3/CRAW and NEF (develop, diagnostics, fixed-WB basis, export
    path where sample-dependent checks exist). Keep the probe's D780 dense-blue
