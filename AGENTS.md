@@ -42,7 +42,7 @@ Write `docs/` for human contributors. Keep agent-only execution instructions her
 
 ## Build and deliver
 
-Use the normal [contributor build workflow](README.md#build-and-run), including shared native setup. Do not maintain an agent-only bootstrap or Cargo wrapper.
+Use the normal [contributor build workflow](docs/build-and-run.md#build-and-run), including shared native setup. Do not maintain an agent-only bootstrap or Cargo wrapper.
 
 Use `.cache/` for disposable experiments, dependencies and generated outputs. Maintained tools belong in `scripts/` or `native/`. Do not automatically promote downloaded material into maintained source.
 

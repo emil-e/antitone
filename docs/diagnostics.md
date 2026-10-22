@@ -2,7 +2,7 @@
 
 Use [development checks](development.md) for the ordinary contributor loop. These recipes investigate native, numerical, image or presentation boundaries; they are not prerequisites for every change.
 
-Run from the repository root after [setup](../README.md#build-and-run). Examples use `--offline` with populated caches. Private RAWs are read-only local inputs, not downloadable fixtures. Keep generated products under ignored `.cache/` and use fresh export/report directories.
+Run from the repository root after [setup](build-and-run.md#build-and-run). Examples use `--offline` with populated caches. Private RAWs are read-only local inputs, not downloadable fixtures. Keep generated products under ignored `.cache/` and use fresh export/report directories.
 
 Choose a diagnostic for a concrete question. A command's presence here does not make it a routine gate: numerical agreement, offscreen input, a visible native window and physical photographic acceptance are different evidence, and timings and captures are observations, not acceptance thresholds.
 
@@ -338,6 +338,18 @@ cargo test --locked --offline --release --features editor,ocio-reference --lib \
 ### Sony source storage precision
 
 The opt-in [storage study](../tests/lens_precision.rs) holds development and capture eligibility fixed while comparing retained f32 camera codes with whole-code rounding and an eight-fractional-bit diagnostic alternative (within the native range these correspond to RGB16 and Q16.8). Synthetic cases blend declared integer neighbours; supplied negatives use diagnostic calibration and borrowed Sony warps, because their adapted lens has no usable profile — those warps test resampling/rounding, not physical lens calibration. Storage errors use the f64 scalar pipeline followed by independent pinned OCIO rendering to sRGB; GPU timing arms are checked against their scalar inputs under the existing numerical gate.
+
+### Direct DNG SDK probe
+
+The `dng-sdk` feature exposes a read-only probe of the vendored SDK backend without the editor or LibRaw. The native library keeps its validation instrumentation; the Adobe validator executable is not built.
+
+```sh
+# Explicit main-sensor pixel bound; inputs remain read-only.
+cargo run --locked --features dng-sdk --bin antitone-dng-probe -- 1000000 /path/to/authored.dng
+# Compare bounded execution budgets; reports split timings and pixel/CFA/eligibility digests.
+cargo run --locked --release --features dng-sdk --bin antitone-dng-probe -- \
+  --threads 8 60000000 /path/to/photo.dng
+```
 
 On one M5 Pro / 48-GiB distortion/CA-only run, maximum differences expressed in encoded 8-bit-level equivalents were:
 

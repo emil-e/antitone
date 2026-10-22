@@ -1,6 +1,6 @@
 # Local build and delivery
 
-The [README](../README.md#end-to-end-local-delivery) owns prerequisites and commands. The first delivery workflow targets macOS on Apple Silicon and produces a local `.app` and ZIP. Windows/Linux packaging and GitHub release automation are not implemented yet.
+The [build and run](build-and-run.md) guide owns prerequisites and commands. The first delivery workflow targets macOS on Apple Silicon and produces a local `.app` and ZIP. Windows/Linux packaging and GitHub release automation are not implemented yet.
 
 ## Build ownership
 

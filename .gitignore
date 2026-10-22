@@ -2,6 +2,8 @@
 target/
 /.cache/
 /samples/
+# Generated documentation screenshots (see assets/docs/README.md)
+/assets/docs/*.png
 
 # macOS and Emacs temporary files
 .DS_Store

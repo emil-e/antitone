@@ -1,6 +1,6 @@
 # Making and checking a change
 
-Use [the README](../README.md) to build and run. If you are new to an area, read its [topic guide](README.md#understand-the-system), then follow the code links.
+Use [build and run](build-and-run.md) to build and run. If you are new to an area, read its [topic guide](README.md#understand-the-system), then follow the code links.
 
 ## Engineering standards
 
@@ -34,7 +34,7 @@ Watch for self-comparisons, expectations that mirror implementation calculations
 
 ## Everyday checks
 
-The default build is the numerical core, without native libraries or the desktop stack:
+Core checks need no native libraries or the desktop stack:
 
 ```sh
 cargo build --locked
@@ -82,7 +82,7 @@ Production and reference dependencies are separate:
 | `ocio-reference` | Independent OCIO renderer and scalar composed export oracles |
 | `ui-tests` | Editor interaction checks, including independent OCIO assertions |
 
-Tests that explicitly use the CPU/OCIO oracle require `ocio-reference`; this is not a production fallback. Editor and `--all-features` builds compile the [vendored SDK](../README.md#direct-dng-sdk-development) through CMake/Ninja; no separate SDK acquisition or validator build is needed. Verify the production configuration separately so reference-feature unification cannot hide a runtime dependency.
+Tests that explicitly use the CPU/OCIO oracle require `ocio-reference`; this is not a production fallback. Editor and `--all-features` builds compile the [vendored SDK](build-and-delivery.md#build-ownership) through CMake/Ninja. Verify the production configuration separately so reference-feature unification cannot hide a runtime dependency.
 
 Choose checks for the boundary you changed rather than running every native/sample-dependent exercise:
 
@@ -317,7 +317,7 @@ for module in application:: blocking_jobs:: editor::development:: editor::measur
 done
 ```
 
-The [live application fixture](../src/application_test_support.rs) exposes short state transactions, explicit workflow entry and bounded wake pumping without painting. For feature transactions, filter the owning module: for example `editor::analysis::tests`, `editor::flat::tests`, `editor::files::tests`, `editor::navigation::tests`, `editor::preferences::tests`, `editor::feedback::tests` or `editor::scopes::tests`. Use [layout/GPU diagnostics](diagnostics.md#editor-and-layout-checks) when painting changes. For wordmark/icon changes, also [regenerate the branding assets](../assets/branding/README.md#regenerate) and inspect the generated artwork.
+The [live application fixture](../src/application_test_support.rs) exposes short state transactions, explicit workflow entry and bounded wake pumping without painting. For feature transactions, filter the owning module: for example `editor::analysis::tests`, `editor::flat::tests`, `editor::files::tests`, `editor::navigation::tests`, `editor::preferences::tests`, `editor::feedback::tests` or `editor::scopes::tests`. Use [layout/GPU diagnostics](diagnostics.md#editor-and-layout-checks) when painting changes. For wordmark/icon changes, also [regenerate the branding assets](../assets/branding/README.md#regenerate) and inspect the generated artwork. For user-visible UI changes, [regenerate the guide screenshots](../assets/docs/README.md) and inspect them.
 
 Physical pointer/trackpad behavior, native folder selection and Finder reveal, VoiceOver, preference relaunch and wheel semantics need real-use checks.
 
