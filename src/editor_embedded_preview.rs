@@ -208,7 +208,7 @@ impl EmbeddedPreviews {
         let (key, path) = self.wanted.iter().find(|(key, _)| {
             current(key, document) && !self.entries.iter().any(|(candidate, _)| candidate == key)
         })?;
-        let source = document.project.source(key.id).ok()?.clone();
+        let source = key.metadata_record(path);
         self.next += 1;
         let ticket = self.next;
         let cancelled = Arc::new(AtomicBool::new(false));

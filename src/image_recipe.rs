@@ -100,6 +100,12 @@ impl ImageRecipe {
     }
 }
 
+enum RepairCapture {
+    Accepted,
+    #[cfg(feature = "editor")]
+    Omit,
+}
+
 impl Project {
     /// Capture one source's accepted photograph without acquiring pixels or resolving repairs.
     pub fn image_recipe(&self, id: SourceId) -> Result<ImageRecipe, Error> {
@@ -110,6 +116,22 @@ impl Project {
         self.image_recipe_for_source(source, calibration, self.roll, source.photo)
     }
 
+    /// Navigation thumbnails capture grading and geometry without retaining or evaluating dust.
+    #[cfg(feature = "editor")]
+    pub(crate) fn thumbnail_recipe(&self, id: SourceId) -> Result<ImageRecipe, Error> {
+        let source = self.source(id)?;
+        let calibration = self
+            .calibration()?
+            .ok_or_else(|| Error::Project("positive recipe requires calibration".into()))?;
+        self.capture_recipe(
+            source,
+            calibration,
+            self.roll,
+            source.photo,
+            RepairCapture::Omit,
+        )
+    }
+
     /// Explicit viewer/candidate overlays reuse recipe construction without changing accepted records.
     pub(crate) fn image_recipe_for_source(
         &self,
@@ -118,12 +140,26 @@ impl Project {
         roll: RollSettings,
         photo: PhotoSettings,
     ) -> Result<ImageRecipe, Error> {
+        self.capture_recipe(source, calibration, roll, photo, RepairCapture::Accepted)
+    }
+
+    fn capture_recipe(
+        &self,
+        source: &Source,
+        calibration: Calibration,
+        roll: RollSettings,
+        photo: PhotoSettings,
+        repairs: RepairCapture,
+    ) -> Result<ImageRecipe, Error> {
         let development = self.development.clone().ok_or_else(|| {
             Error::Project("positive recipe requires development identity".into())
         })?;
-        source
-            .repairs
-            .validate(source.development.active_area.into())?;
+        let include_repairs = matches!(repairs, RepairCapture::Accepted);
+        if include_repairs {
+            source
+                .repairs
+                .validate(source.development.active_area.into())?;
+        }
         let composition = Composition::with_crop(
             source.development.active_area.into(),
             self.orientation,
@@ -143,13 +179,17 @@ impl Project {
             grade: PhotoGradeSnapshot::new(photo, source.grade_snapshot()?.locals().to_vec())?,
             composition,
             look: self.output.look.clone(),
-            repairs: source
-                .repairs
-                .repairs()
-                .iter()
-                .filter(|repair| repair.enabled)
-                .cloned()
-                .collect(),
+            repairs: if include_repairs {
+                source
+                    .repairs
+                    .repairs()
+                    .iter()
+                    .filter(|repair| repair.enabled)
+                    .cloned()
+                    .collect()
+            } else {
+                Vec::new()
+            },
         })
     }
 }

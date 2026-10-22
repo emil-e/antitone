@@ -120,6 +120,12 @@ impl RenderBinding {
             .as_ref()
             .map_or(0, |(look, buffer)| look.byte_len() + buffer.size())
     }
+
+    #[cfg(feature = "editor")]
+    pub(crate) fn look_lut(&self) -> Option<Arc<crate::gpu::look::Lut>> {
+        self.looked.as_ref().map(|(look, _)| look.clone())
+    }
+
     pub fn encode_look(
         &self,
         renderer: &GpuRenderer,

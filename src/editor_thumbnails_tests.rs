@@ -136,7 +136,7 @@ pub(super) fn key(document: &Document, id: SourceId) -> ImageKey {
         recipe: if document.project.calibration().unwrap().is_some() {
             document
                 .project
-                .image_recipe(id)
+                .thumbnail_recipe(id)
                 .map(|recipe| Some(Arc::new(recipe)))
                 .map_err(|error| error.to_string())
         } else {
@@ -304,12 +304,14 @@ fn source_cache_key_excludes_grading_but_includes_locator_revision_matrix_wb_and
 }
 
 #[test]
-fn failed_thumbnail_entries_charge_recipe_owned_masks_to_the_optional_cache() {
+fn dust_masks_do_not_change_thumbnail_keys_or_retained_charges() {
     let mut document = fixture();
     document.project.dmin = Some([0.8; 3]);
     document.project.dmax = Some([0.02; 3]);
     document.project.input_floor = Some(crate::processing::CAMERA_INPUT_FLOOR);
     let id = document.project.order[0];
+    let before = key(&document, id);
+    let before_bytes = before.retained_bytes();
     document
         .project
         .source_mut(id)
@@ -326,16 +328,23 @@ fn failed_thumbnail_entries_charge_recipe_owned_masks_to_the_optional_cache() {
             crate::dust_repair::DonorChoice::Automatic,
         )
         .unwrap();
-    let key = key(&document, id);
-    assert!(key.retained_bytes() > 8192);
+    let after = key(&document, id);
+    assert_eq!(before, after);
+    assert_eq!(before_bytes, after.retained_bytes());
+}
+
+#[test]
+fn failed_thumbnail_entries_charge_owned_diagnostics_to_the_optional_cache() {
+    let document = fixture();
     let mut thumbnails = Thumbnails::default();
     thumbnails.cache.set_budget(8192);
-    thumbnails
-        .cache
-        .insert(key, Err("Repair unavailable".into()));
+    thumbnails.cache.insert(
+        key(&document, document.project.order[0]),
+        Err("failure ".repeat(2048)),
+    );
     assert!(
         thumbnails.cache.entries.is_empty(),
-        "failure entries must not retain large uncharged recipe snapshots"
+        "failure payload must be included in retention"
     );
 }
 
@@ -1018,6 +1027,70 @@ fn finish_submission(
 }
 
 #[test]
+fn dust_edits_do_not_retire_inflight_thumbnails_or_capture_repair_payloads() {
+    let mut editor = Editor::state();
+    *editor.document = fixture();
+    editor.document.project.dmin = Some([0.8; 3]);
+    editor.document.project.dmax = Some([0.02; 3]);
+    editor.document.project.input_floor = Some(crate::processing::CAMERA_INPUT_FLOOR);
+    let id = editor.document.project.order[0];
+    let source = editor.document.project.source_mut(id).unwrap();
+    source.photo.exposure = 0.4;
+    source
+        .repairs
+        .insert(
+            crate::dust_repair::SupportMask::new([60, 60], [16, 16], vec![true; 256]).unwrap(),
+            crate::dust_repair::RepairOrigin::Manual,
+            crate::dust_repair::DonorChoice::Automatic,
+        )
+        .unwrap();
+    let (thumbnails, requests) = controlled();
+    editor.thumbnails = thumbnails;
+    editor
+        .thumbnails
+        .bind_sources(editor.document.cache().clone());
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|e, cx| {
+            e.thumbnails.demand = Demand::Visible(vec![id]);
+            e.advance_thumbnail_demand(cx);
+        });
+        let submitted = take_submission(app, &requests);
+        assert!(submitted.job.source.repairs.repairs().is_empty());
+        let recipe = submitted.job.key.recipe.as_ref().unwrap().as_ref().unwrap();
+        assert!(recipe.repairs().is_empty());
+        assert_eq!(
+            recipe.grade.global().exposure,
+            0.4,
+            "metadata-only source capture must not lose the captured grade"
+        );
+        app.enter(|e, cx| {
+            e.document
+                .project
+                .source_mut(id)
+                .unwrap()
+                .repairs
+                .insert(
+                    crate::dust_repair::SupportMask::new([120, 120], [3, 3], vec![true; 9])
+                        .unwrap(),
+                    crate::dust_repair::RepairOrigin::Manual,
+                    crate::dust_repair::DonorChoice::Offset([-32, 0]),
+                )
+                .unwrap();
+            e.advance_thumbnail_demand(cx);
+            assert_eq!(
+                e.thumbnails.pending.as_ref().map(|pending| pending.0),
+                Some(submitted.job.ticket)
+            );
+        });
+        app.pump();
+        assert!(
+            matches!(requests.try_recv(), Err(mpsc::TryRecvError::Empty)),
+            "repair changes must not resubmit navigation work"
+        );
+    });
+}
+
+#[test]
 fn offscreen_positive_demand_stays_cpu_only_without_space_for_its_neutral_and_graded_product() {
     let (mut editor, requests) = idle_prefetch_fixture();
     editor.document.project.dmin = Some([0.8; 3]);
@@ -1048,6 +1121,33 @@ fn offscreen_positive_demand_stays_cpu_only_without_space_for_its_neutral_and_gr
         assert!(
             !submitted.job.render,
             "positive forecast includes neutral and graded ownership"
+        );
+    });
+}
+
+#[test]
+fn idle_prefetch_renders_an_offscreen_card_after_its_cpu_only_pass_finished() {
+    let (mut editor, requests) = idle_prefetch_fixture();
+    let last = *editor.document.project.order.last().unwrap();
+    editor.original.last_edit = std::time::Instant::now();
+    let context = egui::Context::default();
+    let budgets = memory::CacheBudgets::for_memory(48 << 30, memory::Pressure::Normal);
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|e, cx| filmstrip_frame(e, &context, budgets, cx));
+        let cpu = take_submission(app, &requests);
+        assert_eq!(cpu.job.key.source.id, last);
+        assert!(!cpu.job.render);
+        finish_submission(cpu, Ok(None), true);
+        app.pump();
+        app.enter(|e, cx| {
+            e.original.last_edit = std::time::Instant::now() - Duration::from_secs(1);
+            e.advance_thumbnail_demand(cx);
+        });
+        let image = take_submission(app, &requests);
+        assert_eq!(image.job.key.source.id, last);
+        assert!(
+            image.job.render,
+            "CPU completion must not permanently suppress proactive GPU thumbnails"
         );
     });
 }
@@ -1481,7 +1581,7 @@ fn obsolete_scroll_work_is_replaced_once_without_dropping_valid_source_seeds() {
 }
 
 #[test]
-fn disk_worker_reuses_checksummed_pixels_and_changed_stats_miss_instead_of_rejecting_content() {
+fn disk_worker_reuses_camera_pixels_for_source_and_positive_cards_and_rejects_stale_revisions() {
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,
@@ -1526,6 +1626,35 @@ fn disk_worker_reuses_checksummed_pixels_and_changed_stats_miss_instead_of_rejec
         assert_eq!(
             thumbnails.ready_count(&document, OutputTarget::DisplayP3),
             1
+        );
+        document.project.dmin = Some([0.8; 3]);
+        document.project.dmax = Some([0.02; 3]);
+        document.project.input_floor = Some(crate::processing::CAMERA_INPUT_FLOOR);
+        let mut positive = Thumbnails::with_disk(
+            device.clone(),
+            queue.clone(),
+            renderers.clone(),
+            Some(disk::DiskCache::at(directory.path().join("cache"))),
+        );
+        let job = service_job(
+            &positive,
+            key(&document, id),
+            path.clone(),
+            source.clone(),
+            None,
+            true,
+        );
+        complete_service_request(&mut positive, &document, job);
+        assert!(
+            positive
+                .cache
+                .get(&key(&document, id))
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .positive
+                .is_some(),
+            "a fresh session must grade its disk camera proxy without reopening the RAW"
         );
         std::fs::write(&path, b"changed").unwrap();
         let mut restarted = Thumbnails::with_disk(

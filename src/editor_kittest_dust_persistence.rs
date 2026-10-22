@@ -8,7 +8,7 @@ fn exact_values(repair: &crate::dust_repair::EvaluatedRepair) -> Vec<([u32; 2], 
 }
 
 #[test]
-fn proper_thumbnail_pending_and_failed_repairs_use_local_status_and_clear_after_disable() {
+fn dust_evaluation_and_failure_leave_the_navigation_card_ready() {
     tools::calibrated_harness_with_thumbnails(true, |mut h| {
         wait_for(&mut h, |editor| {
             editor
@@ -52,39 +52,52 @@ fn proper_thumbnail_pending_and_failed_repairs_use_local_status_and_clear_after_
                 .unwrap()
         });
         h.step();
+        h.read(|editor| {
+            assert_eq!(
+                editor
+                    .thumbnails
+                    .ready_count(&editor.document, editor.target),
+                1
+            );
+            assert!(
+                !editor.document.thumbnail_work.pending(),
+                "dust must not restart navigation work"
+            );
+        });
         assert!(
             h.query_by_role_and_label(egui::accesskit::Role::Image, "Photo updating")
-                .is_some()
+                .is_none()
         );
-        let started = Instant::now();
-        while h
-            .query_by_role_and_label(egui::accesskit::Role::Image, "Photo error")
-            .is_none()
-        {
-            assert!(
-                started.elapsed() < Duration::from_secs(30),
-                "proper thumbnail did not report its failed repair"
-            );
-            std::thread::sleep(Duration::from_millis(5));
-            h.step();
-        }
+        wait_for(&mut h, |editor| {
+            editor.document.dust.has_failed_evaluation(source, repair)
+        });
         for size in [egui::vec2(1100., 800.), egui::vec2(800., 600.)] {
             h.set_size(size);
             h.step();
-            let marker = h.get_by_role_and_label(egui::accesskit::Role::Image, "Photo error");
-            assert!(h.ctx.content_rect().contains_rect(marker.rect()));
-            let description = marker.accesskit_node().description().unwrap().to_owned();
-            assert!(description.contains("repair 1") && description.contains("donor"));
+            assert!(
+                h.query_by_role_and_label(egui::accesskit::Role::Image, "Photo error")
+                    .is_none()
+            );
+            assert!(
+                h.query_by_role_and_label(egui::accesskit::Role::Image, "Photo updating")
+                    .is_none()
+            );
             h.read(|editor| {
+                assert_eq!(
+                    editor
+                        .thumbnails
+                        .ready_count(&editor.document, editor.target),
+                    1
+                );
                 assert!(
-                    editor.failure.is_none(),
-                    "background card failure must not seize global focus"
-                )
+                    editor.document.dust.has_failed_evaluation(source, repair),
+                    "keeping the navigation card must not clear the viewer's failed evaluation"
+                );
             });
             save_capture(
                 &h.render().unwrap(),
                 &format!(
-                    "repair-thumbnail-failed-{}x{}",
+                    "navigation-thumbnail-with-repair-failure-{}x{}",
                     size.x as u32, size.y as u32
                 ),
             );

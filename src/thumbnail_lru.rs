@@ -5,6 +5,7 @@ pub(super) struct Cache<K, V> {
     budget: usize,
     bytes: usize,
     weight: fn(&K, &V) -> usize,
+    shared_weight: fn(&VecDeque<(K, V)>) -> usize,
     protected: Vec<K>,
 }
 
@@ -15,8 +16,14 @@ impl<K: PartialEq, V> Cache<K, V> {
             budget,
             bytes: 0,
             weight,
+            shared_weight: |_| 0,
             protected: Vec::new(),
         }
+    }
+
+    pub fn with_shared_weight(mut self, weight: fn(&VecDeque<(K, V)>) -> usize) -> Self {
+        self.shared_weight = weight;
+        self
     }
 
     pub fn get(&mut self, key: &K) -> Option<&V> {
@@ -66,10 +73,11 @@ impl<K: PartialEq, V> Cache<K, V> {
         self.trim();
     }
 
-    fn measured_bytes(&self) -> usize {
-        self.entries.iter().fold(0usize, |total, (key, value)| {
-            total.saturating_add((self.weight)(key, value))
-        })
+    pub(super) fn measured_bytes(&self) -> usize {
+        self.entries.iter().fold(
+            (self.shared_weight)(&self.entries),
+            |total, (key, value)| total.saturating_add((self.weight)(key, value)),
+        )
     }
 
     fn trim(&mut self) {
@@ -83,14 +91,49 @@ impl<K: PartialEq, V> Cache<K, V> {
             else {
                 break;
             };
-            let (key, value) = self.entries.remove(index).unwrap();
-            self.bytes -= (self.weight)(&key, &value);
+            self.entries.remove(index);
+            // A shared allocation disappears only with its last retained owner.
+            self.bytes = self.measured_bytes();
         }
     }
 }
 #[cfg(test)]
 mod tests {
     use super::Cache;
+
+    #[test]
+    fn shared_payload_is_charged_once_until_its_last_entry_is_evicted() {
+        use std::rc::Rc;
+        let shared = Rc::new(8usize);
+        let distinct = Rc::new(8usize);
+        let mut cache = Cache::new(12, |_, _: &Rc<usize>| 2).with_shared_weight(|entries| {
+            let mut seen = std::collections::HashSet::new();
+            entries
+                .iter()
+                .filter_map(|(_, value)| seen.insert(Rc::as_ptr(value)).then_some(**value))
+                .sum()
+        });
+        cache.insert(0, shared.clone());
+        cache.insert(1, shared.clone());
+        assert!(cache.contains(&0) && cache.contains(&1));
+        assert!(!cache.can_retain(1));
+        cache.insert(2, shared.clone());
+        assert!(!cache.contains(&0));
+        assert!(cache.contains(&1) && cache.contains(&2));
+        cache.set_budget(10);
+        assert!(cache.contains(&2));
+        assert_eq!(cache.measured_bytes(), 10);
+        cache.set_budget(12);
+        cache.insert(3, distinct);
+        assert!(
+            !cache.contains(&2),
+            "distinct allocations with equal contents are not shared storage"
+        );
+        assert_eq!(cache.measured_bytes(), 10);
+        cache.set_budget(0);
+        assert_eq!(cache.measured_bytes(), 0);
+        assert!(cache.entries.is_empty());
+    }
 
     #[test]
     fn dynamic_image_resources_are_reweighed_before_admission_eviction_and_removal() {

@@ -36,6 +36,21 @@ impl SourceKey {
         self.store_key_at(&self.file.path)
     }
 
+    // Native/JPEG verification consumes development metadata, not photo edits or dust payload.
+    fn metadata_record(&self, path: &std::path::Path) -> Source {
+        Source {
+            id: self.id,
+            path: path.to_path_buf(),
+            development: self.source.clone(),
+            reference_only: false,
+            photo: Default::default(),
+            local_adjustments: None,
+            repairs: Default::default(),
+            orientation: Default::default(),
+            crop: None,
+        }
+    }
+
     fn new(source: &Source, development: &Development, file: FileKey) -> Self {
         Self {
             id: source.id,
@@ -101,6 +116,13 @@ impl Product {
             }
     }
 
+    fn look_lut(&self) -> Option<Arc<crate::gpu::look::Lut>> {
+        self.positive
+            .as_ref()
+            .and_then(|(_, view)| view.look_lut())
+            .or_else(|| self.image.look_lut())
+    }
+
     fn byte_len(&self) -> usize {
         let (source, working) = self.image.processing_byte_len();
         let image =
@@ -114,6 +136,14 @@ impl Product {
 }
 
 impl ImageKey {
+    fn look(&self) -> Option<&Arc<crate::looks::LookAsset>> {
+        self.recipe
+            .as_ref()
+            .ok()
+            .and_then(Option::as_ref)
+            .and_then(|recipe| recipe.look.as_ref())
+    }
+
     fn retained_bytes(&self) -> usize {
         let development = &self.source.development;
         std::mem::size_of::<Self>()
@@ -154,7 +184,7 @@ impl ImageKey {
             && self.target == other.target
             && self.projection == other.projection
             && matches!((&self.recipe, &other.recipe), (Ok(Some(a)), Ok(Some(b)))
-                if a.composition == b.composition && a.repairs() == b.repairs())
+                if a.composition == b.composition)
     }
 
     fn estimated_product_bytes(&self) -> Option<usize> {
@@ -166,12 +196,10 @@ impl ImageKey {
                     (look.lut().nodes().len() * std::mem::size_of::<[f32; 4]>()) as u64,
                 )?;
             }
-            bytes = bytes
-                .checked_add(crate::gpu::repairs::Snapshot::estimate(recipe.repairs())?)?
-                .checked_add(
-                    2 * (crate::gpu::GpuPhotoGrade::byte_len_for(&recipe.grade)
-                        + recipe.grade.retained_bytes() as u64),
-                )?;
+            bytes = bytes.checked_add(
+                2 * (crate::gpu::GpuPhotoGrade::byte_len_for(&recipe.grade)
+                    + recipe.grade.retained_bytes() as u64),
+            )?;
         }
         usize::try_from(bytes)
             .ok()?
@@ -183,11 +211,11 @@ impl ImageKey {
             Ok(None) => true,
             Ok(Some(recipe)) => document
                 .project
-                .image_recipe(self.source.id)
+                .thumbnail_recipe(self.source.id)
                 .is_ok_and(|current| current == **recipe),
             Err(reason) => document
                 .project
-                .image_recipe(self.source.id)
+                .thumbnail_recipe(self.source.id)
                 .is_err_and(|error| error.to_string() == *reason),
         }
     }
@@ -279,12 +307,33 @@ struct Outcome {
     proper: bool,
 }
 
+type CachedProduct = Result<Arc<Product>, String>;
+
+fn shared_look_bytes(entries: &std::collections::VecDeque<(ImageKey, CachedProduct)>) -> usize {
+    let mut cpu = std::collections::HashSet::new();
+    let mut gpu = std::collections::HashSet::new();
+    let mut bytes = 0;
+    for (key, product) in entries {
+        if let Some(look) = key.look()
+            && cpu.insert(look.lut().nodes().as_ptr())
+        {
+            bytes += look.lut().byte_len();
+        }
+        if let Some(look) = product.as_ref().ok().and_then(|product| product.look_lut())
+            && gpu.insert(Arc::as_ptr(&look))
+        {
+            bytes += look.byte_len() as usize;
+        }
+    }
+    bytes
+}
+
 pub(super) struct Thumbnails {
-    cache: Cache<ImageKey, Result<Arc<Product>, String>>,
+    cache: Cache<ImageKey, CachedProduct>,
     pub(super) sources: Arc<SourceStore>,
     selected_key: Option<NativeKey>,
     visible_keys: Vec<NativeKey>,
-    // Demand history, not GPU residency or an availability guarantee.
+    // CPU/disk completion history; an admissible GPU miss still needs rendering.
     attempted_sources: Vec<SourceKey>,
     budgets: memory::CacheBudgets,
     view_reservation: usize,
@@ -315,13 +364,19 @@ impl Default for Thumbnails {
         let pressure = memory::Pressure::Normal;
         let budgets = memory::CacheBudgets::new(limits, pressure);
         Self {
-            cache: Cache::new(budgets.images, |key: &ImageKey, value| {
-                key.retained_bytes()
+            cache: Cache::new(budgets.images, |key: &ImageKey, value: &CachedProduct| {
+                key.retained_bytes() - key.look().map_or(0, |look| look.lut().byte_len())
                     + match value {
-                        Ok(product) => product.byte_len(),
+                        Ok(product) => {
+                            product.byte_len()
+                                - product
+                                    .look_lut()
+                                    .map_or(0, |look| look.byte_len() as usize)
+                        }
                         Err(reason) => 1024 + reason.capacity(),
                     }
-            }),
+            })
+            .with_shared_weight(shared_look_bytes),
             sources: Arc::new(SourceStore::new(budgets.sources as u64)),
             selected_key: None,
             visible_keys: Vec::new(),
@@ -524,6 +579,31 @@ impl Thumbnails {
         self.embedded.set_budget(available.min(16 << 20));
         self.cache
             .set_budget(available.saturating_sub(self.embedded.byte_len()));
+    }
+
+    fn can_retain(&self, key: &ImageKey) -> bool {
+        let Some(mut extra) = key.estimated_product_bytes() else {
+            return false;
+        };
+        if let Some(look) = key.look() {
+            if self.cache.entries.iter().any(|(old, _)| {
+                old.look()
+                    .is_some_and(|old| old.lut().nodes().as_ptr() == look.lut().nodes().as_ptr())
+            }) {
+                extra -= look.lut().byte_len();
+            }
+            if self.cache.entries.iter().any(|(_, product)| {
+                product
+                    .as_ref()
+                    .ok()
+                    .and_then(|product| product.look_lut())
+                    .is_some_and(|old| old.id() == look.lut().id())
+            }) {
+                // The renderer reuses a live immutable GPU LUT by content identity.
+                extra -= look.lut().nodes().len() * std::mem::size_of::<[f32; 4]>();
+            }
+        }
+        self.cache.can_retain(extra)
     }
 
     fn compatible_product(&self, key: &ImageKey) -> Option<(&ImageKey, &Arc<Product>)> {
@@ -768,7 +848,6 @@ struct ThumbnailMetrics {
     disk_hit: bool,
     native_hit: bool,
     neutral_hit: bool,
-    repair_seconds: f64,
     neutral_seconds: f64,
     disk_seconds: f64,
     development_seconds: f64,
@@ -882,7 +961,7 @@ impl Editor {
         } else {
             self.document
                 .project
-                .image_recipe(id)
+                .thumbnail_recipe(id)
                 .map(|recipe| Some(Arc::new(recipe)))
                 .map_err(|error| error.to_string())
         }
@@ -1191,7 +1270,7 @@ impl Editor {
                                     index,
                                     key.clone(),
                                     path.clone(),
-                                    source.clone(),
+                                    key.source.metadata_record(&path),
                                 ));
                             }
                         }

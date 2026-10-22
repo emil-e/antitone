@@ -172,30 +172,6 @@ impl Snapshot {
                 .sum::<u64>()
     }
 
-    #[cfg(feature = "editor")]
-    pub(crate) fn estimate(repairs: &[crate::dust_repair::Repair]) -> Option<u64> {
-        repairs
-            .iter()
-            .try_fold(std::mem::size_of::<Self>() as u64, |total, repair| {
-                let size = repair.support.size();
-                let values = u64::from(size[0])
-                    .checked_mul(u64::from(size[1]))?
-                    .checked_mul(std::mem::size_of::<crate::dust_repair::Ap1>() as u64)?;
-                let donors = (repair.support.marked_pixels().max(4) as u64)
-                    .checked_mul(2)?
-                    .checked_mul(std::mem::size_of::<crate::dust_repair::DonorMatch>() as u64)?;
-                total
-                    .checked_add(values)?
-                    .checked_add(donors)?
-                    .checked_add(repair.support.retained_bytes() as u64)?
-                    .checked_add(
-                        (std::mem::size_of::<EvaluatedRepair>()
-                            + std::mem::size_of::<Patch>()
-                            + 3 * std::mem::size_of::<Arc<Patch>>()) as u64,
-                    )
-            })
-    }
-
     pub fn bound(&self) -> DVec3 {
         self.0
             .iter()

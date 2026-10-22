@@ -67,6 +67,7 @@ fn precise_kernels(device: &wgpu::Device, base: &ViewKernels) -> Arc<ViewKernels
         grade,
         inspection: base.inspection.clone(),
         filter: base.filter.clone(),
+        proxy_coverage: base.proxy_coverage.clone(),
         copy: base.copy.clone(),
         compose: base.compose.clone(),
     })

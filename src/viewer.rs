@@ -292,6 +292,13 @@ impl GpuImage {
         })
     }
 
+    #[cfg(feature = "editor")]
+    pub(crate) fn look_lut(&self) -> Option<Arc<crate::gpu::look::Lut>> {
+        self.processing
+            .as_ref()
+            .and_then(|processing| processing.aces_group.lock().unwrap().1.look_lut())
+    }
+
     pub fn set_geometry(&mut self, geometry: SourceGeometry) -> Result<(), Error> {
         let processing = self
             .processing
