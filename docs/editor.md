@@ -211,4 +211,4 @@ Colour expresses interaction state, not feature ownership. Presentation installs
 
 Start with [editor orchestration](../src/editor.rs), then the feature owner: [viewer](../src/editor_viewer.rs), [crop](../src/editor_crop.rs), [auto-crop](../src/editor_auto_crop.rs), [analysis](../src/editor_analysis.rs), [correction](../src/editor_flat_field.rs), [thumbnails](../src/editor_thumbnails.rs), [pending previews](../src/editor_selected_preview.rs) or [camera placeholders](../src/editor_embedded_preview.rs).
 
-Use both component and composed-event checks from [development](development.md#shared-editor-ui-checks). Unsettled UX choices are collected as [feedback](feedback.md).
+Use both component and composed-event checks from [development](development.md#shared-editor-ui-checks).
