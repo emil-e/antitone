@@ -270,7 +270,9 @@ pub fn estimate(
     }
     Ok(Some(Proposal {
         input: InputSettings::Negative {
-            calibration: negative.calibration,
+            dmin: Some(negative.calibration.dmin),
+            dmax: Some(negative.calibration.dmax),
+            input_floor: negative.calibration.input_floor,
             response: negative.response,
             gamma: negative.gamma,
             balance: negative.balance,

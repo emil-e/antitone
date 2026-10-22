@@ -183,8 +183,11 @@ impl NegativeInput {
 )]
 pub enum InputSettings {
     /// Camera scans of developed negative film: invert between measured anchors.
+    /// Dmin and Dmax are picked one at a time; both are needed to interpret.
     Negative {
-        calibration: Calibration,
+        dmin: Option<DVec3>,
+        dmax: Option<DVec3>,
+        input_floor: f64,
         response: Response,
         gamma: f64,
         balance: Balance,
@@ -197,23 +200,39 @@ impl InputSettings {
     /// A fresh negative interpretation over measured anchors, with the shared response prior.
     pub fn negative(calibration: Calibration) -> Self {
         Self::Negative {
-            calibration,
+            dmin: Some(calibration.dmin),
+            dmax: Some(calibration.dmax),
+            input_floor: calibration.input_floor,
             response: Response::film(),
             gamma: DEFAULT_GAMMA,
             balance: Balance::default(),
         }
     }
 
-    /// The interpretation inputs for the negative stage (absent for Digital).
+    /// The complete calibration once both anchors are measured.
+    pub fn calibration(&self) -> Option<Calibration> {
+        match self {
+            Self::Negative {
+                dmin: Some(dmin),
+                dmax: Some(dmax),
+                input_floor,
+                ..
+            } => Some(Calibration {
+                dmin: *dmin,
+                dmax: *dmax,
+                input_floor: *input_floor,
+            }),
+            _ => None,
+        }
+    }
+
+    /// The complete negative interpretation for processing, once calibrated.
     pub fn negative_input(&self) -> Option<NegativeInput> {
         match self {
             Self::Negative {
-                calibration,
-                response,
-                gamma,
-                balance,
+                response, gamma, balance, ..
             } => Some(NegativeInput {
-                calibration: *calibration,
+                calibration: self.calibration()?,
                 response: *response,
                 gamma: *gamma,
                 balance: *balance,
@@ -443,9 +462,17 @@ impl Pipeline {
     }
 
     fn interpret(input: &InputSettings) -> Result<Interpretation, Error> {
-        match input.negative_input() {
-            Some(negative) => Ok(Interpretation::Negative(Inversion::new(negative)?)),
-            None => Ok(Interpretation::Digital),
+        match input {
+            InputSettings::Digital => Ok(Interpretation::Digital),
+            InputSettings::Negative { .. } => {
+                let negative = input.negative_input().ok_or_else(|| {
+                    Error::InvalidCalibration {
+                        channel: 0,
+                        reason: "measure Dmin and Dmax",
+                    }
+                })?;
+                Ok(Interpretation::Negative(Inversion::new(negative)?))
+            }
         }
     }
 
