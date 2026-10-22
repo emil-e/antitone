@@ -1,8 +1,10 @@
 import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import plistlib
 import subprocess
+import shutil
 import sys
 import tempfile
 import unittest
@@ -116,14 +118,55 @@ class NoticeCollection(unittest.TestCase):
                     "source": "reviewed upstream",
                 }
             ]
-            self.assertEqual(packager.collect_rust_notices(package, root / "out", supplement), [])
+            licenses = root / "licenses"
+            licenses.mkdir()
+            shutil.copy2(packager.ROOT / "licenses/MIT-permission.txt", licenses)
+            self.assertEqual(
+                packager.collect_rust_notices(package, root / "out", supplement, licenses),
+                [],
+            )
             package["version"] = "1"
-            files = packager.collect_rust_notices(package, root / "out", supplement)
+            files = packager.collect_rust_notices(package, root / "out", supplement, licenses)
             self.assertIn("LICENSE-MIT-supplemental.txt", files)
             notice = (root / "out/LICENSE-MIT-supplemental.txt").read_text()
             self.assertIn("Copyright fixture author", notice)
             self.assertIn("Permission is hereby granted", notice)
             self.assertIn("THE SOFTWARE IS PROVIDED", notice)
+            # No MIT template exists in the injected licenses directory yet;
+            # the template is a real repository license file.
+            self.assertTrue((packager.ROOT / "licenses/MIT-permission.txt").is_file())
+
+    def test_text_mode_supplements_pin_upstream_notice_bytes_with_provenance(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = root / "Cargo.toml"
+            manifest.touch()
+            package = {"name": "fixture", "version": "1", "manifest_path": str(manifest)}
+            supplement = [
+                {
+                    "packages": ["fixture@1"],
+                    "mode": "text",
+                    "file": "fixture-LICENSE.md",
+                    "source": "https://example/fixture/blob/deadbeef/LICENSE.md",
+                    "note": "pinned VCS commit rewritten away upstream",
+                }
+            ]
+            notice = root / "licenses" / "fixture-LICENSE.md"
+            notice.parent.mkdir()
+            notice.write_text("upstream pointer notice bytes\n")
+            files = packager.collect_rust_notices(
+                package, root / "out", supplement, root / "licenses"
+            )
+            self.assertIn("fixture-LICENSE.md", files)
+            self.assertEqual((root / "out/fixture-LICENSE.md").read_bytes(), notice.read_bytes())
+            self.assertFalse((root / "out/LICENSE-MIT-supplemental.txt").exists())
+            provenance = json.loads((root / "out/notice-provenance.json").read_text())
+            self.assertEqual(provenance["packages"], ["fixture@1"])
+            self.assertEqual(provenance["mode"], "text")
+            self.assertEqual(
+                provenance["source"], "https://example/fixture/blob/deadbeef/LICENSE.md"
+            )
+            self.assertIn("rewritten away", provenance["note"])
 
 
 class VendoredSource(unittest.TestCase):

@@ -33,5 +33,26 @@
     "packages": ["pulp-wasm-simd-flag@0.1.1"],
     "source": "https://raw.githubusercontent.com/sarah-quinones/pulp/5eb07fd7b68edf0a5e19f71737d315f72a510295/LICENSE",
     "copyright": "Copyright (c) 2021 sarah"
+  },
+  {
+    "packages": ["objc2@0.6.5", "objc2-encode@4.1.0"],
+    "mode": "text",
+    "file": "objc2-LICENSE.md",
+    "source": "https://raw.githubusercontent.com/madsmtm/objc2/d7d2fa23ceaa5e6096c923b081040e5d81b3b9df/LICENSE.md",
+    "note": "At these commits the repository ships only this pointer notice, not full license text. objc2-encode 4.1.0's own commit 8d214f5 ships the same file."
+  },
+  {
+    "packages": ["block2@0.6.2", "dispatch@0.2.0", "dispatch2@0.3.1", "objc2-app-kit@0.3.2", "objc2-core-foundation@0.3.2", "objc2-core-graphics@0.3.2", "objc2-foundation@0.3.2", "objc2-io-surface@0.3.2", "objc2-metal@0.3.2", "objc2-quartz-core@0.3.2"],
+    "mode": "text",
+    "file": "objc2-LICENSE.md",
+    "source": "https://github.com/madsmtm/objc2/blob/main/LICENSE.md",
+    "note": "These crates' own .cargo_vcs_info.json commits were rewritten away by upstream force-pushes and no longer exist; dispatch 0.2.0's pinned tree ships no license file at all. This notice is the repository's current statement."
+  },
+  {
+    "packages": ["zune-inflate@0.2.54"],
+    "mode": "text",
+    "file": "zune-inflate-LICENSE.md",
+    "source": "https://raw.githubusercontent.com/etemesi254/zune-image/69502ce83fdfecdd0beefd677e2abb3781b29d98/LICENSE.md",
+    "note": "The repository ships this SPDX pointer notice and a full LICENSE-ZLIB, but no MIT or Apache full text."
   }
 ]

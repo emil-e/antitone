@@ -1,31 +1,36 @@
-# Continuous integration
+# License completion and release workflow
 
 ## Agreed scope
 
-Run the maintained local pipeline as GitHub Actions on PRs, pushes to main and manual dispatch, using the same commands contributors run locally. Keep coverage claims honest about hosted-hardware limits (Metal). No release publishing, GitHub deployment rules, branch protection automation or Windows/Linux jobs in this milestone; pushing the task branch to run Actions is in scope.
+Two follow-ups from the CI milestone, on `origin/main` at `447921f`:
 
-## Design
+1. **License inventory completion.** The packaging notice collector reports 13+ upstream crate records with no collected notice files (published archives omit them). Resolve each the way the earlier batch was resolved: pin the crate's `.cargo_vcs_info.json` commit, fetch the actual upstream license text at that commit, record provenance in `licenses/rust-notices.json`; crates whose upstream genuinely lacks license text stay explicitly marked unresolved rather than guessed. Keep the packaged `Licenses/` inventory and `NOTICE.md` consistent with what ships.
+2. **Tag-triggered release workflow.** `.github/workflows/release.yml` on `v*` tags: run the maintained `cargo xtask package`/`verify-package` stages, then publish a GitHub Release with the ZIP artifact plus SHA-256 checksums. Validate tag/version agreement with `Cargo.toml`. Publication form (draft vs. published-on-tag) pending the user's answer.
 
-- `.github/workflows/ci.yml`, two jobs on `macos-15` (Apple Silicon): `checks` (formatting, docs gate, script tests, numerical core) and `editor` (vendored native build, DNG adapter tests, editor/all-features clippy, package and relocated verification, ZIP artifact upload).
-- `cargo xtask tools` subcommand: installs only pinned formatters and warms Cargo downloads, so the checks job never builds native dependencies. `setup` = native setup + tools.
-- Actions pinned to commit SHAs; minimal permissions; per-run concurrency cancellation.
-- Cache pinned native dependencies and format tools keyed on the setup scripts, and Cargo downloads keyed on the lockfile.
-- Hosted runners have no Metal device: editor library tests, kittest ui-tests and gpu tests are local/self-hosted coverage and are documented as such.
+No Metal-dependent suites in hosted jobs (no self-hosted runner — user decision: agents/local run the Metal suites manually before merges, as already documented). No clean-machine/macOS-14 acceptance or public visibility flip in this task.
 
-## Results
+## Acceptance
 
-- PR #1 (`build/ci`): CI run #1 failed at Swift formatting — the macos-15 image's default Xcode 16.4 ships a `swift-format` too old for the checked-in `.swift-format` schema. Fixed by selecting Xcode 26.3 via `DEVELOPER_DIR` in the workflow (documented with the re-pin caveat).
-- CI run #2 on `7081a75`: **success**. `format, docs and core` 1m17s (tools install, format/docs gates, 13 script tests incl. real signed-bundle fixtures, numerical core); `native build, editor and package` 8m34s cold (OpenMP/LibRaw/OCIO setup, vendored-SDK DNG adapter tests, editor + all-features clippy, package, relocated ZIP verification, ZIP artifact upload).
-- Caches saved from the green run (native deps + format tools; Cargo registry) so subsequent runs skip the long cold setup.
-- Local gates re-run on the final tree: YAML parse, formatting, docs (28 files, 0 broken links), script tests, xtask check/help.
+- `cargo xtask package` produces a notice inventory with no silently missing records: every dependency either carries collected upstream license files or an explicitly pinned supplemental notice, or is listed as unresolved with a reason.
+- The release workflow is syntactically valid and observed green end-to-end on a hosted runner from a test tag, producing a Release with ZIP + checksum.
+- Docs (`docs/build-and-delivery.md`, `NOTICE.md` as needed) describe the release procedure and its boundaries accurately.
 
 ## Remaining steps
 
-1. User merges PR #2 (docs + delivery guidance) when green; then reset local `main` to the pulled `origin/main` — local `main`'s unpushed `7f28ebc` is patch-identical to the cherry-picked `6f659f0` and drops out as redundant, rewriting nothing shared.
-2. Optional follow-ups: branch protection/rulesets in repo settings; a labelled self-hosted Metal runner; release workflow (out of scope).
+1. ~~Enumerate unresolved notice records~~ — done: the 13 records were the objc2 0.6.x family, dispatch/dispatch2, and zune-inflate.
+2. ~~Extend supplements + tests~~ — done: `text` mode pins upstream notice bytes verbatim (pointer-style `LICENSE.md` files where upstream ships no full text), provenance records the rewritten-away VCS commits; tests cover both modes. Packaging now emits **zero unresolved warnings**.
+3. ~~Write release.yml~~ — done: tag-triggered, validates tag vs crate version, runs hosted verification, publishes Release with ZIP + checksums directly.
+4. Open the PR, watch CI green, hand to the user for merge.
 
-## Current constraints and next action
+## Verification record
 
-- Hosted macOS images give no Metal device; do not add Metal-dependent suites to hosted jobs, and do not present CI green as full local `cargo xtask check` coverage.
-- Action SHAs resolved: checkout v5.1.0 `fbc6f39…`, cache v5.1.0 `caa29612…`, upload-artifact v5.0.0 `330a01c4…` (lightweight tags).
-- Next action: write the xtask subcommand and workflow.
+- All 14 script tests pass; formatting and docs gates pass.
+- Real `cargo xtask package` run: zero unresolved upstream-notice warnings (was 13); every crate directory in `Licenses/Rust/` carries collected files, a supplement, or a verbatim pinned notice with `notice-provenance.json`.
+- `cargo xtask verify-package` passes on the produced ZIP.
+- Release YAML parses; tag-validation snippet exercised locally against `cargo metadata`.
+
+## Current constraints and notes
+
+- Root checkout still carries the other agent's session (27 dirty files); untouched.
+- objc2 family discovery: crates.io-pinned VCS commits `b4167b5`, `8852b42`, `82d6c7`, `7b1abf` no longer exist upstream (force-push); the repo ships only pointer-style `LICENSE.md` at reachable commits. `dispatch` 0.2.0's tree has no license file at all. These facts are recorded in the entries' `note` fields.
+- Before any real `v*` tag: license review and clean-machine acceptance are still on the user (documented in `docs/build-and-delivery.md`).

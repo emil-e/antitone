@@ -85,7 +85,8 @@ def copy_notice(source, destination, name=None):
     shutil.copy2(source, target)
 
 
-def collect_rust_notices(package, destination, supplements):
+def collect_rust_notices(package, destination, supplements, licenses=None):
+    licenses = ROOT / "licenses" if licenses is None else licenses
     directory = Path(package["manifest_path"]).parent
     paths = set()
     for path in directory.rglob("*"):
@@ -117,13 +118,28 @@ def collect_rust_notices(package, destination, supplements):
     key = f"{package['name']}@{package['version']}"
     supplement = next((item for item in supplements if key in item["packages"]), None)
     if supplement:
-        destination.mkdir(parents=True, exist_ok=True)
-        filename = "LICENSE-MIT-supplemental.txt"
-        (destination / filename).write_text(
-            supplement["copyright"] + "\n\n" + (ROOT / "licenses/MIT-permission.txt").read_text()
-        )
-        (destination / "notice-provenance.json").write_text(json.dumps(supplement, indent=2) + "\n")
-        files += [filename, "notice-provenance.json"]
+        mode = supplement.get("mode", "mit")
+        if mode == "text":
+            # Upstream ships a notice file (often a SPDX pointer, not full license
+            # text); preserve its original bytes rather than fabricating a template.
+            source = licenses / supplement["file"]
+            filename = source.name
+            destination.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination / filename)
+            files = sorted(files + [filename])
+        else:
+            destination.mkdir(parents=True, exist_ok=True)
+            filename = "LICENSE-MIT-supplemental.txt"
+            (destination / filename).write_text(
+                supplement["copyright"] + "\n\n" + (licenses / "MIT-permission.txt").read_text()
+            )
+            files = sorted(files + [filename])
+        provenance = {"packages": supplement["packages"], "mode": mode}
+        for field in ("source", "note"):
+            if supplement.get(field):
+                provenance[field] = supplement[field]
+        (destination / "notice-provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
+        files = sorted(files + ["notice-provenance.json"])
     return sorted(files)
 
 
