@@ -72,11 +72,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("vendor=none");
         }
         println!(
-            "decoded={}x{} metadata_area={area:?} flip={} rotation={:?}",
+            "decoded={}x{} metadata_area={area:?} flip={} photo_orientation={:?}",
             metadata.width,
             metadata.height,
             metadata.flip,
-            metadata.rotation()
+            metadata.photo_orientation()?
         );
         println!(
             "as_shot={:?} fixed_roll_wb={wb:?} daylight={:?}",

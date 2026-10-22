@@ -698,102 +698,79 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
     }
 }
 
-/// Oriented sources develop upright: every developed pixel must read the sensor pixel
-/// the rotation maps it to, for the uncorrected, lens-corrected and SDK DNG paths.
+/// Oriented sources seed the composition setting and develop exactly the native raster:
+/// pixels are byte-identical to an unoriented development of the same sensor data.
 #[test]
-fn oriented_sources_develop_upright_across_all_development_paths() {
-    use antitone::raw::Rotation;
-    for (orientation, rotation) in [
-        (6u16, Rotation::Cw90),
-        (8, Rotation::Ccw90),
-        (3, Rotation::Cw180),
+fn oriented_sources_seed_composition_and_keep_native_rasters() {
+    use antitone::geometry::{Flips, PhotoOrientation, QuarterTurns};
+    const MIRROR: Flips = Flips {
+        horizontal: true,
+        vertical: false,
+    };
+    for (orientation, seed) in [
+        (
+            3u16,
+            PhotoOrientation {
+                turns: QuarterTurns::Two,
+                flips: Flips::default(),
+            },
+        ),
+        (
+            5,
+            PhotoOrientation {
+                turns: QuarterTurns::One,
+                flips: MIRROR,
+            },
+        ),
+        (
+            6,
+            PhotoOrientation {
+                turns: QuarterTurns::One,
+                flips: Flips::default(),
+            },
+        ),
+        (
+            7,
+            PhotoOrientation {
+                turns: QuarterTurns::Three,
+                flips: MIRROR,
+            },
+        ),
+        (
+            8,
+            PhotoOrientation {
+                turns: QuarterTurns::Three,
+                flips: Flips::default(),
+            },
+        ),
     ] {
         for dng in [false, true] {
-            let tags = profile_tags(Order::Little);
-            let unrotated = fixture::source(Order::Little, tags.clone(), dng, false);
-            let oriented = fixture::source_oriented(Order::Little, tags, dng, false, orientation);
-            let mut native_raw = RawFile::open(unrotated.path()).unwrap();
+            let native = fixture::source(Order::Little, vec![], dng, false);
+            let oriented = fixture::source_oriented(Order::Little, vec![], dng, false, orientation);
+            let mut unrotated = RawFile::open(native.path()).unwrap();
             assert_eq!(
-                native_raw.metadata.rotation(),
-                Rotation::None,
-                "orientation {orientation}"
+                unrotated.metadata.photo_orientation().unwrap(),
+                PhotoOrientation::default()
             );
-            let native_area = native_raw.metadata.image_area().unwrap();
-            let native = native_raw.develop_camera([1.; 4]).unwrap();
-            let mut oriented_raw = RawFile::open(oriented.path()).unwrap();
+            let mut rotated = RawFile::open(oriented.path()).unwrap();
             assert_eq!(
-                oriented_raw.metadata.rotation(),
-                rotation,
-                "orientation {orientation}"
+                rotated.metadata.photo_orientation().unwrap(),
+                seed,
+                "orientation {orientation} dng={dng}"
             );
-            let upright_area = oriented_raw.metadata.image_area().unwrap();
-            let upright = oriented_raw.develop_camera([1.; 4]).unwrap();
-            assert_eq!(
-                [upright.width, upright.height],
-                rotation.size([native.width, native.height]),
-                "orientation {orientation}"
-            );
-            assert_eq!(
-                upright_area,
-                rotation.rect_native_to_developed(native_area, [native.width, native.height])
-            );
-            let size = [native.width, native.height];
-            for y in 0..upright.height {
-                for x in 0..upright.width {
-                    let [sx, sy] = rotation.point_developed_to_native([x, y], size);
+            let wb = [1.; 4];
+            let plain = unrotated.develop_camera(wb).unwrap();
+            let upright = rotated.develop_camera(wb).unwrap();
+            assert_eq!([plain.width, plain.height], [upright.width, upright.height]);
+            for y in 0..plain.height {
+                for x in 0..plain.width {
                     assert_eq!(
+                        plain.pixel_samples(x, y).unwrap(),
                         upright.pixel_samples(x, y).unwrap(),
-                        native.pixel_samples(sx, sy).unwrap(),
                         "orientation {orientation} dng={dng} at {x},{y}"
                     );
                 }
             }
         }
-    }
-}
-
-/// Capture eligibility takes developed rectangles and reads the mapped native sites.
-#[test]
-fn oriented_capture_eligibility_maps_developed_rectangles_to_native_sites() {
-    use antitone::raw::Rotation;
-    // No embedded lens payload: the uncorrected path maps rectangles to sensor sites.
-    let unrotated = fixture::source(Order::Little, vec![], false, false);
-    let oriented = fixture::source_oriented(Order::Little, vec![], false, false, 6);
-    let mut native = RawFile::open(unrotated.path()).unwrap();
-    native.develop_camera([1.; 4]).unwrap();
-    let mut upright = RawFile::open(oriented.path()).unwrap();
-    upright.develop_camera([1.; 4]).unwrap();
-    let size = [
-        native.metadata.source_dimensions().unwrap()[0],
-        native.metadata.source_dimensions().unwrap()[1],
-    ];
-    let rotation = Rotation::Cw90;
-    for rect in [
-        antitone::raw::Rect {
-            x: 0,
-            y: 0,
-            width: 5,
-            height: 5,
-        },
-        antitone::raw::Rect {
-            x: 7,
-            y: 11,
-            width: 9,
-            height: 4,
-        },
-        antitone::raw::Rect {
-            x: 30,
-            y: 2,
-            width: 2,
-            height: 20,
-        },
-    ] {
-        let mapped = rotation.rect_developed_to_native(rect, size);
-        let native_flags = native.region_sensor_diagnostics(mapped).unwrap();
-        assert_eq!(
-            upright.capture_eligibility(rect).unwrap(),
-            antitone::raw::CaptureFlags::from(native_flags),
-            "rect {rect:?}"
-        );
     }
 }

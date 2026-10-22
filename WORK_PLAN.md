@@ -81,27 +81,29 @@ R6; Nikon D750 (12-bit compressed + 14-bit lossless), D7200, D850, Z 7; plus
    `gpu_log_prefix_tests` Metal-accounting flake reproduces on main), authored
    Sony-payload suites 17/17, and bit-identical `antitone-raw-probe` output on the
    real A7C negative scan including the corrected embedded-lens path.
-2. **Portrait-orientation handling — DONE (2026-10-22 checkpoint).** Justified by
-   the planned digital pipeline (simulating a digital RAW as a negative with
-   grain/halation), where general photography exercises non-zero flip; scans
-   themselves rarely need it (user, 2026-10-22). Implemented:
-   - `Rotation` (None/Cw180/Cw90/Ccw90) as the single orientation source of truth,
-     from LibRaw `sizes.flip` (dcraw table) or DNG TIFF orientation; mirrored
-     layouts rejected at open. Transforms replicate LibRaw's own `flip_index`
-     exactly, pinned by a reference test.
-   - Rotation applied at the end of `develop` on all three backends (native RGB16
-     into an owned upright raster with LibRaw's copy released; embedded-lens
-     corrected f32 + eligibility mask; SDK DNG raster into an owned upright copy).
-     `image_area`/`source_dimensions` publish upright geometry; `capture_eligibility`
-     maps developed rectangles to native sensor sites; `region_sensor_diagnostics`
-     keeps its documented native-coordinate contract.
-   - Verified: oriented authored fixtures (orientation 3/6/8 × LibRaw/DNG-SDK ×
-     corrected/uncorrected) match unrotated developments of identical sensor data
-     pixel-for-pixel; the real 600D portrait scan (`flip=6`, Canon CameraInfo
-     makernote orientation) passes upright-development and eligibility-mapping
-     invariants; full `--features editor` lib suite green except the pre-existing
-     Metal allocation flake. Downstream consumers (crops, scan regions, flat field,
-     working views) all consume developed coordinates and need no changes.
+2. **Portrait-orientation handling — DONE (2026-10-22, reworked to settings).**
+   Justified by the planned digital pipeline (simulating a digital RAW as a
+   negative with grain/halation), where general photography exercises non-zero
+   flip; scans themselves rarely need it (user, 2026-10-22). A first
+   implementation physically rotated developed rasters; per user direction it
+   was fully reverted in favour of initializing the existing per-photo
+   composition setting, which the render paths already project through
+   (`recipe.composition`/`frame_to_source`) — no renderer, cache or byte-layout
+   changes:
+   - `Metadata::photo_orientation()` converts the recorded orientation (LibRaw
+     `sizes.flip` via dcraw's `50132467` table; DNG TIFF orientation) to the
+     existing `PhotoOrientation {turns, flips}`, which represents all eight TIFF
+     orientations — mirrors and transposes included, so nothing is rejected at open.
+   - `source_metadata` seeds each imported source's `orientation` from it;
+     saved projects keep their stored setting unchanged (`verify_source`
+     compares development only).
+   - Pinned by tests: the conversion table for all eight orientations; seeded
+     display mapping matches LibRaw's own `flip_index` exactly for all flips
+     (pixel-exact, mirrored cases included); oriented authored fixtures keep
+     native rasters byte-identical to unoriented ones across LibRaw/DNG-SDK;
+     document imports land the seed in the project source record; the real 600D
+     portrait scan seeds `turns: One`. Full `--features editor` lib suite green
+     except the pre-existing Metal allocation flake.
 
 ### Lens correction position (user topic, 2026-10-22)
 
