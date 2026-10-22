@@ -40,7 +40,7 @@ Re-run after preparation to check that setup/building is repeatable. A separate 
 
 Hosted macOS runners provide no Metal device, so CI deliberately does not run the editor library tests, kittest `ui-tests` or GPU suites; a green CI run is not equivalent to a full local `cargo xtask check`. Missing Metal is a coverage limit to run locally or on a labeled self-hosted runner, not something to silence in the workflow. GitHub's runner images also change over time (Xcode and tool versions drift); the pinned native-dependency cache is keyed on the setup scripts, so force a fresh cache when a runner-image change needs re-verification.
 
-CI uses SHA-pinned actions with `contents: read` permissions and per-run concurrency cancellation. Cached paths are the pinned native dependencies and format tools (keyed on the setup scripts) and Cargo downloads (keyed on the lockfile); `target/` is not cached. The workflow mirrors the documented local commands rather than defining a second build system.
+CI uses SHA-pinned actions with `contents: read` permissions, per-run concurrency cancellation, and selects Xcode 26.3 via `DEVELOPER_DIR` because the image's default Xcode (16.4) ships a `swift-format` too old for the checked-in `.swift-format` schema. A runner-image update may require re-pinning that path. Cached paths are the pinned native dependencies and format tools (keyed on the setup scripts) and Cargo downloads (keyed on the lockfile); `target/` is not cached. The workflow mirrors the documented local commands rather than defining a second build system.
 
 ## Before public distribution
 
