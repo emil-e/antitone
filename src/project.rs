@@ -642,9 +642,7 @@ impl Project {
         }
         temporary.as_file().sync_all().map_err(failure)?;
         match policy {
-            Save::New => {
-                temporary.persist_noclobber(path).map_err(failure)?;
-            }
+            Save::New => install_new(temporary, path)?,
             Save::Replace => {
                 temporary.persist(path).map_err(failure)?;
             }
@@ -652,3 +650,63 @@ impl Project {
         Ok(())
     }
 }
+
+/// Installs the completed temporary as a new project, never overwriting an
+/// existing file.
+///
+/// The preferred publication is a no-replace rename, but filesystems such as
+/// exFAT — the usual SD-card format — implement neither that rename flag nor
+/// the hard links tempfile falls back to, answering `ENOTSUP` instead. Copying
+/// into a `create_new` destination keeps the no-overwrite guarantee there,
+/// trading away the crash atomicity of a rename that those volumes lack
+/// anyway. The `ENOTSUP` answer is the macOS one; on Linux, linkless volumes
+/// fail tempfile's hard-link fallback with `EPERM`, which is deliberately
+/// not matched because that errno also reports legitimate refusals such as
+/// sticky directories.
+fn install_new(temporary: tempfile::NamedTempFile, path: &Path) -> Result<()> {
+    match temporary.persist_noclobber(path) {
+        Ok(_) => Ok(()),
+        Err(error) if publication_unsupported(&error.error) => copy_exclusive(&error.file, path),
+        Err(error) => Err(failure(error)),
+    }
+}
+
+/// Whether `error` reports that the filesystem cannot publish a file without
+/// replacing an existing name. Everything else — in particular `EEXIST`, the
+/// answer for an existing destination — must fail the save as-is.
+fn publication_unsupported(error: &std::io::Error) -> bool {
+    matches!(
+        error.raw_os_error(),
+        Some(libc::ENOTSUP) | Some(libc::EOPNOTSUPP)
+    )
+}
+
+/// Copies the completed, synced `temporary` into a destination created
+/// exclusively, so an existing file is never opened for writing.
+fn copy_exclusive(temporary: &tempfile::NamedTempFile, path: &Path) -> Result<()> {
+    let mut source = temporary.reopen().map_err(failure)?;
+    let mut options = File::options();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // Match the 0o600 the temporary was created with, so publication via
+        // copy yields the same private mode as publication via rename.
+        // Filesystems that store no Unix permissions ignore the request.
+        options.mode(0o600);
+    }
+    let mut destination = options.open(path).map_err(failure)?;
+    let published =
+        std::io::copy(&mut source, &mut destination).and_then(|_| destination.sync_all());
+    if let Err(error) = published {
+        // A failed new save leaves no file at the destination: existing files
+        // were never opened, and a partial copy is removed best-effort.
+        let _ = std::fs::remove_file(path);
+        return Err(failure(error));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "project_tests.rs"]
+mod tests;
