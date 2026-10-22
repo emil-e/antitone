@@ -46,7 +46,7 @@ Cargo uses the committed lockfile. Add `--offline` when caches are populated and
 
 ## Source formatting
 
-The complete local workflow is `cargo xtask all`; [build and delivery](build-and-delivery.md) explains its stages and limits. `cargo xtask setup` prepares the native dependencies and pinned project-local formatting tools.
+The complete local workflow is `cargo xtask all`; [build and delivery](build-and-delivery.md) explains its stages and limits. `cargo xtask setup` prepares the native dependencies and pinned project-local formatting tools. Changes land as pull requests, where CI runs the hardware-independent subset; the Metal-dependent suites listed throughout this guide still run in an agent session or on a local machine before integration.
 
 Run `python3 scripts/check-format.py` before handing off a change. It checks tracked and new authored Rust, native, Python, WGSL and Swift sources, plus shell syntax; ignored caches, samples, vendored upstream sources and generated OCIO GLSL are excluded. `--write` applies the configured formatters without changing lint rules. Neither mode builds the editor or needs native dependencies.
 
