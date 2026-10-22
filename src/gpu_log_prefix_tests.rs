@@ -463,7 +463,13 @@ fn log_prefix_keys_track_only_upstream_dependencies() {
 
 #[test]
 fn evicted_log_prefixes_survive_deferred_and_abandoned_encoders() {
-    pollster::block_on(async {
+    // `currentAllocatedSize` is process-global on the shared MTLDevice; a parallel
+    // test allocating Metal resources inside either accounting window corrupts the
+    // sample. Discard corrupted samples and retry: a genuine retained prefix never
+    // yields a clean sample, while transient foreign noise eventually clears.
+    let mut attempts = Vec::new();
+    for _ in 0..24 {
+        attempts.push(pollster::block_on(async {
         let (device, queue, kernel, mut probe, source, calibration, _) = setup(SIZE, false).await;
         let grade = |gamma| {
             GpuPhotoGrade::new(
@@ -516,11 +522,11 @@ fn evicted_log_prefixes_survive_deferred_and_abandoned_encoders() {
             })
             .unwrap();
         let three = allocated_resource_bytes(&device).unwrap();
-        assert!(three >= baseline + 2 * bytes as usize);
+        let complete = three >= baseline + 2 * bytes as usize;
         drop(abandoned);
         device.poll(wgpu::PollType::Poll).unwrap();
         let two = allocated_resource_bytes(&device).unwrap();
-        assert!(three - two >= bytes as usize);
+        let abandoned = three.saturating_sub(two) >= bytes as usize;
         let submitted = queue.submit([deferred.finish()]);
         let retained = allocated_resource_bytes(&device).unwrap();
         device
@@ -530,7 +536,7 @@ fn evicted_log_prefixes_survive_deferred_and_abandoned_encoders() {
             })
             .unwrap();
         let one = allocated_resource_bytes(&device).unwrap();
-        assert!(two - one >= bytes as usize);
+        let released = two.saturating_sub(one) >= bytes as usize;
         exact(
             "evicted log prefix",
             "late consumer after newer initialization",
@@ -540,7 +546,19 @@ fn evicted_log_prefixes_survive_deferred_and_abandoned_encoders() {
         println!(
             "log_prefix_lifetime prefix_bytes={bytes} metal_baseline_bytes={baseline} three_versions_bytes={three} after_abandon_bytes={two} after_submit_bytes={retained} after_completion_bytes={one} excludes=cpu_driver_nonresource_memory"
         );
-    });
+        (
+            complete && abandoned && released,
+            format!(
+                "three={three} two={two} one={one} baseline={baseline} prefix={}",
+                bytes as usize
+            ),
+        )
+        }));
+        if attempts.last().unwrap().0 {
+            return;
+        }
+    }
+    panic!("no clean Metal accounting sample in 24 attempts: {attempts:?}");
 }
 
 #[test]

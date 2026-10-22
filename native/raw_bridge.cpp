@@ -9,6 +9,7 @@
 #include <malloc.h>
 #endif
 #include <memory>
+#include <mutex>
 
 static_assert(sizeof(AntitoneRawMetadata) == 656);
 static_assert(sizeof(AntitoneRawSonyLens) == 160);
@@ -24,20 +25,24 @@ int check(int code, char *error, size_t size) {
 }
 
 // OpenMP ICVs belong to the calling task; restore them rather than changing process policy.
+// Blocktime is the exception: two concurrent calls would restore each other's saved global
+// setting in racing order, so the sleeping-worker policy is applied once for the process.
+// Its scope is the whole process, which today reaches only LibRaw's work-sharing regions
+// (the DNG SDK and OCIO reference builds compile without OpenMP).
 class ThreadBudget {
     int threads = omp_get_max_threads();
     int dynamic = omp_get_dynamic();
-    int blocktime = kmp_get_blocktime();
 
 public:
     explicit ThreadBudget(int count) {
+        static std::once_flag blocktime;
+        // Sleeping workers must not compete with UI work after a tile/job.
+        std::call_once(blocktime, [] { kmp_set_blocktime(0); });
         omp_set_dynamic(0);
         omp_set_num_threads(count);
-        kmp_set_blocktime(0); // Sleeping workers must not compete with UI work after a tile/job.
     }
 
     ~ThreadBudget() {
-        kmp_set_blocktime(blocktime);
         omp_set_num_threads(threads);
         omp_set_dynamic(dynamic);
     }

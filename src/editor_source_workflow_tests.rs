@@ -47,22 +47,35 @@ fn editor(scheduler: development::Scheduler) -> Editor {
     editor
 }
 
-fn paused() -> (development::Scheduler, mpsc::Receiver<()>, mpsc::Sender<()>) {
+fn normal_pressure() -> crate::resources::MemoryPressure {
+    crate::resources::MemoryPressure::Normal
+}
+
+fn paused_with_pressure(
+    pressure: fn() -> crate::resources::MemoryPressure,
+) -> (development::Scheduler, mpsc::Receiver<()>, mpsc::Sender<()>) {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Mutex::new(resume);
-    let scheduler = development::Scheduler::new_observed(move |_, phase, _| {
-        if matches!(phase, development::NativePhase::UnpackBegin) {
-            entered.send(()).unwrap();
-            resume
-                .lock()
-                .unwrap()
-                .recv_timeout(Duration::from_secs(15))
-                .unwrap();
-        }
-        Ok(())
-    });
+    let scheduler = development::Scheduler::new_observed_with_pressure(
+        move |_, phase, _| {
+            if matches!(phase, development::NativePhase::UnpackBegin) {
+                entered.send(()).unwrap();
+                resume
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(15))
+                    .unwrap();
+            }
+            Ok(())
+        },
+        pressure,
+    );
     (scheduler, starts, release)
+}
+
+fn paused() -> (development::Scheduler, mpsc::Receiver<()>, mpsc::Sender<()>) {
+    paused_with_pressure(crate::resources::memory_pressure)
 }
 
 fn start(app: &crate::application::test_support::TestApplication<'_, Editor>) {
@@ -165,35 +178,45 @@ fn retired_visit_cannot_publish_and_running_native_work_keeps_foreground_admissi
 #[test]
 fn cancelling_an_unstarted_native_demand_releases_admission_without_waiting_for_an_unrelated_call()
 {
-    let (scheduler, starts, release) = paused();
-    let background = scheduler
-        .submit(
-            development::Request {
-                path: path(),
-                wb: None,
-                expected: None,
-                basis: None,
-                file: super::super::thumbnails::FileKey::new(&path()),
-                key: None,
-                store: None,
-                parent: None,
-                retain: false,
-            },
-            development::Priority::Eager,
-        )
-        .unwrap();
+    // Both owners must stay inside their unrelated calls for the demand below to
+    // stay unstarted, so this scenario fixes the pressure reading it needs.
+    let (scheduler, starts, release) = paused_with_pressure(normal_pressure);
+    let mut backgrounds = Vec::new();
+    for _ in 0..2 {
+        backgrounds.push(
+            scheduler
+                .submit(
+                    development::Request {
+                        path: path(),
+                        wb: None,
+                        expected: None,
+                        basis: None,
+                        file: super::super::thumbnails::FileKey::new(&path()),
+                        key: None,
+                        store: None,
+                        parent: None,
+                        retain: false,
+                    },
+                    development::Priority::Eager,
+                )
+                .unwrap(),
+        );
+    }
+    // Both native owners are inside unrelated calls, so the demand below
+    // stays unstarted; cancelling it must release admission without waiting.
+    starts.recv_timeout(Duration::from_secs(10)).unwrap();
     starts.recv_timeout(Duration::from_secs(10)).unwrap();
     let editor = editor(scheduler.clone());
     let jobs = editor.workflow_jobs.clone();
     with_application(editor, |app| {
         start(app);
-        app.run_until(Duration::from_secs(10), |_| scheduler.waiter_count() == 2);
+        app.run_until(Duration::from_secs(10), |_| scheduler.waiter_count() == 3);
         app.update(|e| {
             let view = e.request_id();
             e.replace_photo_scope(view);
         });
         app.pump();
-        assert_eq!(scheduler.waiter_count(), 1);
+        assert_eq!(scheduler.waiter_count(), 2);
         let (entered, observed) = mpsc::channel();
         let probe = app
             .access()
@@ -205,7 +228,8 @@ fn cancelling_an_unstarted_native_demand_releases_admission_without_waiting_for_
         drop(probe);
     });
     release.send(()).unwrap();
-    drop(background);
+    release.send(()).unwrap();
+    drop(backgrounds);
     scheduler.close_and_wait().unwrap();
 }
 
@@ -217,25 +241,33 @@ fn closed_worker_retains_parked_native_backing_until_another_call_returns_and_cl
     let (entered_b, at_b) = mpsc::channel();
     let (continue_b, resume_b) = mpsc::channel();
     let resume_b = Mutex::new(resume_b);
-    let scheduler = development::Scheduler::new_observed(move |file, phase, _| {
-        if file.ends_with("patches.dng") && matches!(phase, development::NativePhase::UnpackEnd) {
-            parked.send(()).unwrap();
-            resume_a
-                .lock()
-                .unwrap()
-                .recv_timeout(Duration::from_secs(15))
-                .unwrap();
-        }
-        if file.ends_with("roll-0.dng") && matches!(phase, development::NativePhase::UnpackBegin) {
-            entered_b.send(()).unwrap();
-            resume_b
-                .lock()
-                .unwrap()
-                .recv_timeout(Duration::from_secs(15))
-                .unwrap();
-        }
-        Ok(())
-    });
+    // Both owners must run concurrently here, so this scenario fixes the
+    // pressure reading it needs rather than trusting the live system level.
+    let scheduler = development::Scheduler::new_observed_with_pressure(
+        move |file, phase, _| {
+            if file.ends_with("patches.dng") && matches!(phase, development::NativePhase::UnpackEnd)
+            {
+                parked.send(()).unwrap();
+                resume_a
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(15))
+                    .unwrap();
+            }
+            if file.ends_with("roll-0.dng")
+                && matches!(phase, development::NativePhase::UnpackBegin)
+            {
+                entered_b.send(()).unwrap();
+                resume_b
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(15))
+                    .unwrap();
+            }
+            Ok(())
+        },
+        normal_pressure,
+    );
     let editor = editor(scheduler.clone());
     let jobs = editor.workflow_jobs.clone();
     with_application(editor, |app| {
@@ -247,25 +279,34 @@ fn closed_worker_retains_parked_native_backing_until_another_call_returns_and_cl
             e.replace_photo_scope(view);
         });
         app.pump();
+        // Two unrelated Visible calls occupy both native owners so the unpacked
+        // source stays parked between phases, still holding mandatory backing.
         let other = path().with_file_name("roll-0.dng");
-        let ticket = scheduler
-            .submit(
-                development::Request {
-                    file: super::super::thumbnails::FileKey::new(&other),
-                    path: other,
-                    wb: None,
-                    expected: None,
-                    basis: None,
-                    key: None,
-                    store: None,
-                    parent: None,
-                    retain: false,
-                },
-                development::Priority::Visible,
-            )
-            .unwrap();
+        let mut tickets = Vec::new();
+        for _ in 0..2 {
+            tickets.push(
+                scheduler
+                    .submit(
+                        development::Request {
+                            file: super::super::thumbnails::FileKey::new(&other),
+                            path: other.clone(),
+                            wb: None,
+                            expected: None,
+                            basis: None,
+                            key: None,
+                            store: None,
+                            parent: None,
+                            retain: false,
+                        },
+                        development::Priority::Visible,
+                    )
+                    .unwrap(),
+            );
+        }
         continue_a.send(()).unwrap();
-        at_b.recv_timeout(Duration::from_secs(10)).unwrap();
+        for _ in 0..2 {
+            at_b.recv_timeout(Duration::from_secs(10)).unwrap();
+        }
         scheduler.close();
         let (entered, observed) = mpsc::channel();
         let probe = app
@@ -283,8 +324,9 @@ fn closed_worker_retains_parked_native_backing_until_another_call_returns_and_cl
             "parked unpacked source still owns mandatory native backing"
         );
         continue_b.send(()).unwrap();
+        continue_b.send(()).unwrap();
         app.run_until(Duration::from_secs(10), |_| observed.try_recv().is_ok());
-        drop((probe, ticket));
+        drop((probe, tickets));
     });
     scheduler.close_and_wait().unwrap();
 }

@@ -1,5 +1,7 @@
-//! One editor native worker. Mutable SDK owners never leave this thread; consumers
-//! join immutable completion, independently of optional cache ownership and UI tickets.
+//! Bounded editor native owners. Mutable SDK owners never leave their worker
+//! thread; consumers join immutable completion, independently of optional cache
+//! ownership and UI tickets. Started work stays pinned to its owner, and at most
+//! two owners overlap independent sources, yielding to foreground demand.
 use super::*;
 use crate::{
     scan::DevelopedSource,
@@ -11,7 +13,7 @@ use std::{
     pin::Pin,
     sync::{
         Condvar, Mutex,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
     task::{Context, Poll, Waker},
 };
@@ -71,6 +73,9 @@ type NativeObserver = Arc<
         + Sync,
 >;
 type Completion = Result<Arc<DevelopedSource>, String>;
+// A step stays on its owner's thread: it holds worker-local mutable native
+// handles that are deliberately !Send.
+type Step = Box<dyn FnMut(&Arc<Task>) -> Result<Option<Arc<DevelopedSource>>, String>>;
 
 struct Consumer {
     id: u64,
@@ -80,12 +85,16 @@ struct Consumer {
     waker: Option<Waker>,
 }
 
+const UNOWNED: usize = usize::MAX;
+
 struct Task {
     id: u64,
     request: Request,
     demands: Mutex<Vec<Consumer>>,
     next: AtomicU64,
     started: std::sync::atomic::AtomicBool,
+    owner: AtomicUsize,
+    share: AtomicUsize,
     native_backing: std::sync::atomic::AtomicBool,
     admissions: Mutex<Vec<crate::blocking_jobs::Admission>>,
     result: Mutex<Option<Completion>>,
@@ -93,6 +102,22 @@ struct Task {
 }
 
 impl Task {
+    fn new(id: u64, request: Request) -> Self {
+        Self {
+            id,
+            request,
+            demands: Mutex::new(Vec::new()),
+            next: AtomicU64::new(0),
+            started: std::sync::atomic::AtomicBool::new(false),
+            owner: AtomicUsize::new(UNOWNED),
+            share: AtomicUsize::new(1),
+            native_backing: std::sync::atomic::AtomicBool::new(false),
+            admissions: Mutex::new(Vec::new()),
+            result: Mutex::new(None),
+            ready: Condvar::new(),
+        }
+    }
+
     fn release_admissions(&self) {
         let retired = std::mem::take(&mut *self.admissions.lock().unwrap());
         drop(retired);
@@ -157,6 +182,7 @@ struct State {
     tasks: Vec<Arc<Task>>,
     queue: Vec<Arc<Task>>,
     next: u64,
+    steps: usize,
     closed: bool,
 }
 
@@ -195,7 +221,7 @@ impl Drop for Owner {
 pub(super) struct Scheduler {
     owner: Arc<Owner>,
     #[cfg(all(test, target_os = "macos"))]
-    worker: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
+    workers: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
 }
 
 struct Demand {
@@ -319,7 +345,10 @@ impl Scheduler {
     pub fn new() -> Self {
         #[cfg(test)]
         {
-            Self::start_native(Arc::new(|_, _, _| Ok(())))
+            Self::start_native(
+                Arc::new(|_, _, _| Ok(())),
+                crate::resources::memory_pressure,
+            )
         }
         #[cfg(not(test))]
         {
@@ -338,15 +367,42 @@ impl Scheduler {
         + Sync
         + 'static,
     ) -> Self {
-        Self::start_native(Arc::new(observe))
+        Self::start_native(Arc::new(observe), crate::resources::memory_pressure)
     }
 
-    fn start_native(#[cfg(test)] observe: NativeObserver) -> Self {
-        Self::start(move |shared| {
-            // LibRaw decoded handles and SDK inspected headers remain worker-local across arbitration.
+    /// The second owner admits background demand only under Normal pressure, so
+    /// a scenario that needs both owners running concurrently must inject that
+    /// reading; live system pressure during a test run would otherwise turn a
+    /// correct schedule into a spurious rendezvous timeout.
+    #[cfg(test)]
+    pub(super) fn new_observed_with_pressure(
+        observe: impl Fn(
+            &std::path::Path,
+            NativePhase,
+            Option<&crate::raw::Metadata>,
+        ) -> Result<(), String>
+        + Send
+        + Sync
+        + 'static,
+        pressure: fn() -> crate::resources::MemoryPressure,
+    ) -> Self {
+        Self::start_native(Arc::new(observe), pressure)
+    }
+
+    fn start_native(
+        #[cfg(test)] observe: NativeObserver,
+        #[cfg(test)] pressure: fn() -> crate::resources::MemoryPressure,
+    ) -> Self {
+        #[cfg(not(test))]
+        let pressure = crate::resources::memory_pressure;
+        Self::start_workers(2, pressure, move |_| {
+            #[cfg(test)]
+            let observe = observe.clone();
+            // LibRaw decoded handles and SDK inspected headers stay worker-local across
+            // arbitration; each owner keeps its own mutable map and never shares handles.
             let mut unpacked: HashMap<u64, Unpacked> = HashMap::new();
 
-            run(shared, |task| {
+            Box::new(move |task| {
                 if task.retired() {
                     unpacked.remove(&task.id);
                     return Err("source demand retired".into());
@@ -358,8 +414,9 @@ impl Scheduler {
                         NativePhase::DevelopBegin,
                         Some(&input.raw.metadata),
                     )?;
-                    let scan =
-                        Scan::from_raw(input.raw, task.request.wb).map_err(|e| e.to_string())?;
+                    let mut raw = input.raw;
+                    raw.set_development_share(task.share.load(Ordering::Relaxed));
+                    let scan = Scan::from_raw(raw, task.request.wb).map_err(|e| e.to_string())?;
                     #[cfg(test)]
                     observe(
                         &task.request.path,
@@ -401,6 +458,7 @@ impl Scheduler {
 
                     // Queue priority is not a different pixel policy or a smaller CPU budget.
                     raw.set_development_priority(crate::raw::DevelopmentPriority::Foreground);
+                    raw.set_development_share(task.share.load(Ordering::Relaxed));
                     #[cfg(test)]
                     observe(
                         &task.request.path,
@@ -425,38 +483,79 @@ impl Scheduler {
                     );
                     Ok(None)
                 }
-            });
+            })
         })
     }
 
-    fn start(worker: impl FnOnce(Arc<Shared>) + Send + 'static) -> Self {
-        let shared = Arc::new(Shared {
+    fn shared() -> Arc<Shared> {
+        Arc::new(Shared {
             state: Mutex::new(State {
                 tasks: Vec::new(),
                 queue: Vec::new(),
                 next: 0,
+                steps: 0,
                 closed: false,
             }),
             changed: Condvar::new(),
-        });
+        })
+    }
+
+    #[cfg(test)]
+    fn start(worker: impl FnOnce(Arc<Shared>) + Send + 'static) -> Self {
+        let shared = Self::shared();
         let worker_shared = shared.clone();
-        let _worker = std::thread::spawn(move || {
-            // Also wake consumers if the worker unwinds; this is not native/OOM recovery.
+        let workers = vec![std::thread::spawn(move || {
+            // Also wake consumers if a worker unwinds; this is not native/OOM recovery.
             let _exit = Owner(worker_shared.clone());
             worker(worker_shared);
-        });
+        })];
+        #[cfg(all(test, target_os = "macos"))]
+        let workers = Arc::new(Mutex::new(workers));
+        #[cfg(not(all(test, target_os = "macos")))]
+        drop(workers);
         Self {
             owner: Arc::new(Owner(shared)),
             #[cfg(all(test, target_os = "macos"))]
-            worker: Arc::new(Mutex::new(Some(_worker))),
+            workers,
+        }
+    }
+
+    // Each owner runs its own step closure so mutable native ownership stays
+    // thread-local; the factory is consulted once per owner on its own thread.
+    fn start_workers(
+        count: usize,
+        pressure: fn() -> crate::resources::MemoryPressure,
+        build: impl Fn(usize) -> Step + Send + Sync + 'static,
+    ) -> Self {
+        let shared = Self::shared();
+        let build = Arc::new(build);
+        let mut workers = Vec::new();
+        for slot in 0..count {
+            let worker_shared = shared.clone();
+            let build = build.clone();
+            workers.push(std::thread::spawn(move || {
+                // Also wake consumers if a worker unwinds; this is not native/OOM recovery.
+                let _exit = Owner(worker_shared.clone());
+                let mut step = build(slot);
+                run(worker_shared, slot, pressure, move |task| step(task));
+            }));
+        }
+        #[cfg(all(test, target_os = "macos"))]
+        let workers = Arc::new(Mutex::new(workers));
+        #[cfg(not(all(test, target_os = "macos")))]
+        drop(workers); // Detached: production retires owners through `Owner`/close.
+        Self {
+            owner: Arc::new(Owner(shared)),
+            #[cfg(all(test, target_os = "macos"))]
+            workers,
         }
     }
 
     #[cfg(all(test, target_os = "macos"))]
     pub(super) fn close_and_wait(&self) -> Result<(), String> {
         self.close();
-        let worker = self.worker.lock().unwrap().take();
-        if let Some(worker) = worker {
+        let workers = std::mem::take(&mut *self.workers.lock().unwrap());
+        for worker in workers {
             worker
                 .join()
                 .map_err(|_| "native diagnostic worker panicked".to_owned())?;
@@ -474,7 +573,11 @@ impl Scheduler {
         + Send
         + 'static,
     ) -> Self {
-        Self::start(move |shared| run(shared, |task| step(&task.request.path)))
+        Self::start(move |shared| {
+            run(shared, 0, crate::resources::memory_pressure, |task| {
+                step(&task.request.path)
+            })
+        })
     }
 
     #[cfg(test)]
@@ -543,17 +646,7 @@ impl Scheduler {
                     task.clone()
                 } else {
                     state.next += 1;
-                    let task = Arc::new(Task {
-                        id: state.next,
-                        request,
-                        demands: Mutex::new(Vec::new()),
-                        next: AtomicU64::new(0),
-                        started: std::sync::atomic::AtomicBool::new(false),
-                        native_backing: std::sync::atomic::AtomicBool::new(false),
-                        admissions: Mutex::new(Vec::new()),
-                        result: Mutex::new(None),
-                        ready: Condvar::new(),
-                    });
+                    let task = Arc::new(Task::new(state.next, request));
                     state.tasks.push(task.clone());
                     state.queue.push(task.clone());
                     task
@@ -585,8 +678,42 @@ impl Scheduler {
     }
 }
 
+// Started work stays on its owner because worker-local mutable native handles are
+// not Send. Unowned starts obey the yield rule — background work begins only when
+// no foreground demand lives — and the second owner idles under memory pressure.
+fn eligible(
+    state: &State,
+    task: &Task,
+    slot: usize,
+    pressure: crate::resources::MemoryPressure,
+) -> bool {
+    match task.owner.load(Ordering::Relaxed) {
+        UNOWNED => {
+            if slot != 0 && !matches!(pressure, crate::resources::MemoryPressure::Normal) {
+                return false;
+            }
+            task.priority() == Priority::Foreground
+                || !state
+                    .tasks
+                    .iter()
+                    .any(|entry| entry.priority() == Priority::Foreground)
+        }
+        owner => owner == slot,
+    }
+}
+
+// The in-flight step count feeds each call's thread share at selection.
+struct StepCount<'a>(&'a Shared);
+impl Drop for StepCount<'_> {
+    fn drop(&mut self) {
+        self.0.state.lock().unwrap().steps -= 1;
+    }
+}
+
 fn run(
     shared: Arc<Shared>,
+    slot: usize,
+    pressure: fn() -> crate::resources::MemoryPressure,
     mut step: impl FnMut(&Arc<Task>) -> Result<Option<Arc<DevelopedSource>>, String>,
 ) {
     loop {
@@ -596,10 +723,12 @@ fn run(
                 if state.closed {
                     return;
                 }
+                let level = pressure();
                 if let Some(index) = state
                     .queue
                     .iter()
                     .enumerate()
+                    .filter(|(_, task)| eligible(&state, task, slot, level))
                     .min_by_key(|(_, task)| (task.priority(), task.id))
                     .map(|(index, _)| index)
                 {
@@ -608,12 +737,16 @@ fn run(
                         state.tasks.retain(|entry| !Arc::ptr_eq(entry, &task));
                     } else {
                         task.started.store(true, Ordering::Relaxed);
+                        task.owner.store(slot, Ordering::Relaxed);
+                        task.share.store(state.steps + 1, Ordering::Relaxed);
                     }
+                    state.steps += 1;
                     break task;
                 }
                 state = shared.changed.wait(state).unwrap();
             }
         };
+        let _steps = StepCount(&shared);
         let _running = Running {
             task: &task,
             shared: &shared,
@@ -712,6 +845,8 @@ fn finish(shared: &Shared, task: &Arc<Task>, result: Completion) {
     task.release_unbacked_admissions();
     task.wake_waiters();
     drop(retired);
+    // Yielding owners sleep until eligibility changes, e.g. a foreground task ends.
+    shared.changed.notify_all();
 }
 
 #[cfg(test)]
