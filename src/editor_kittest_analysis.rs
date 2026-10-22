@@ -264,6 +264,7 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
     let admission = jobs.hold();
     confirm(harness);
     harness.read(|editor| assert_eq!(editor.document.project, before));
+    harness.update(|editor| editor.tasks.elapse(Duration::from_secs(1)));
     harness.step();
     harness.get_by_label("Cancel analysis").click();
     harness.step();

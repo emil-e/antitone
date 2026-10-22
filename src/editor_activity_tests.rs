@@ -269,6 +269,7 @@ fn analysis_cancellation_is_reachable_from_every_stage_and_stays_pending_until_r
             app.enter(|editor, cx| {
                 add_ready_fixture(editor);
                 editor.begin_analysis(cx);
+                editor.tasks.elapse(Duration::from_secs(1));
                 let pending = editor.document.analysis_pending.as_ref().unwrap();
                 let id = pending.id;
                 let request = pending.request.clone();

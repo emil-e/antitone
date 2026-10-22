@@ -1,6 +1,6 @@
 # Shared film and picture metadata
 
-Spatial metadata describes the developed source rather than a tool's preferred crop or sampling inset. Analyze and Auto-crop request the same document-owned preparation through normal source/CPU services. Ready regions can be reused and saved independently of either consumer's accepted choices. [Remaining acceptance](plans/physical-framing-production.md) separates authored workflow checks from photographic, physical-input and resource assessment.
+Spatial metadata describes the developed source rather than a tool's preferred crop or sampling inset. Analyze and Auto-crop request the same document-owned preparation through normal source/CPU services. Ready regions can be reused and saved independently of either consumer's accepted choices. Authored workflow checks and cached replay are separate from photographic, physical-input and resource assessment.
 
 ## One description, independent consumers
 
@@ -56,4 +56,8 @@ cargo clippy --locked --offline --features project --lib --tests -- -D warnings
 
 The opt-in `observe_spatial_metadata_cached_roll` check uses `raw,project`, an explicit version-1 protocol and a fresh ignored output directory. It reads frozen camera-code proxies and runs native line detection, not RAW development or the editor. This evidence predates corrected Sony/HDR/direct-DNG paths; agreement and marked-window accounting are not current-development or independent whole-picture acceptance. Native setup follows the normal [contributor workflow](native-development.md#reusing-native-builds).
 
-Start in [spatial metadata](../src/spatial_metadata.rs), [preparation](../src/scan_regions/framing/mod.rs), [consumer geometry](../src/auto_crop.rs) and [project I/O](../src/project.rs). The [acceptance plan](plans/physical-framing-production.md) owns remaining photographic, physical-input and resource assessment, not another detector-tuning campaign.
+Start in [spatial metadata](../src/spatial_metadata.rs), [preparation](../src/scan_regions/framing/mod.rs), [consumer geometry](../src/auto_crop.rs) and [project I/O](../src/project.rs).
+
+## Evidence and remaining acceptance
+
+Supplied candidates and cached camera-code replays exercise geometry and consumer consistency; photographic content preservation still needs independent marks on current corrected Sony, HDR and direct-DNG captures, including partial frames and neighbours. Bounded native searches and camera-continuation rules have no calibrated photographic error rate. Native keyboard/pointer use and aggregate preparation memory/latency remain separate checks in [diagnostics](diagnostics.md). The shared coarse pass and Analyze's fine/statistical preparation are distinct workloads; preserving bounded evidence does not establish their combined resource acceptance.

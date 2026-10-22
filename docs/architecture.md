@@ -26,7 +26,7 @@ Editor state is nested scopes rather than one flat struct ([`editor_document_sco
 
 | Scope | Owns |
 | --- | --- |
-| [`DocumentScope`](../src/editor_document_scope.rs) | Accepted document data, history, cache lifetime, and the dependent photo visit |
+| [`DocumentScope`](../src/editor_document_scope.rs) | Accepted document data, history, [derived spatial metadata](spatial-metadata.md), cache lifetime and the dependent photo visit |
 | [`PhotoScope`](../src/editor_photo_scope.rs) | One visit: source demand/readiness, measurement and working-source tasks, manual Crop drafts, local mask gestures, the Adjustments UI context |
 | [`GradeScope`](../src/editor_grade_scope.rs) | The effective processing identity and the purpose-bound original-reconstruction task |
 
@@ -51,7 +51,7 @@ Every awaited result carries request IDs, generations and input snapshots. Valid
 
 ### Cooperative cancellation
 
-Use the shared [cancellation signal](../src/cancellation.rs) for new cancellable workflows. Each operation gets a fresh, one-way signal with polling and async wakeup; capture its cancel-on-drop guard in the continuation so retirement before the first poll also signals stop. Analysis and export use this pattern.
+Use the shared [cancellation signal](../src/cancellation.rs) for new cancellable workflows. Each operation gets a fresh, one-way signal with polling and async wakeup; capture its cancel-on-drop guard in the continuation so retirement before the first poll also signals stop. Analysis, region preparation and export use this pattern.
 
 User Cancel keeps the continuation and cancelling feedback until acknowledgement. Owner retirement drops continuation rights while running work retains its inputs and physical admission through cleanup. Queued work can use `BlockingJobs::run_admitted_cancellable`; running work chooses its own safe checkpoints. Return cancellation distinctly from failure, never by parsing diagnostic text, and preserve already-committed side effects as successes. [Development checks](development.md#cancellation-checks) exercise these boundaries.
 

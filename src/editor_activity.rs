@@ -78,7 +78,10 @@ impl Task {
     fn modal(self) -> bool {
         matches!(
             self.request(),
-            TaskRequest::Document(_) | TaskRequest::Export(_) | TaskRequest::Analyze(_) | TaskRequest::Regions(_)
+            TaskRequest::Document(_)
+                | TaskRequest::Export(_)
+                | TaskRequest::Analyze(_)
+                | TaskRequest::Regions(_)
         )
     }
 
@@ -280,7 +283,7 @@ impl TaskActivity {
             title,
             measured,
             cancel,
-            modal: active.task.modal() && active.started.elapsed() >= PROMINENCE_DELAY,
+            modal: active.task.modal(),
         })
     }
 
@@ -299,7 +302,6 @@ impl TaskActivity {
         }
         let view = self.view().expect("active task has presentation");
         if view.presentation().modal(context, id) {
-
             view.cancel.map(|action| action.request)
         } else {
             None
@@ -321,7 +323,12 @@ impl Editor {
             return;
         }
         if let TaskRequest::Regions(id) = request {
-            if self.document.spatial_preparing.as_ref().is_some_and(|p| p.id == id) {
+            if self
+                .document
+                .spatial_preparing
+                .as_ref()
+                .is_some_and(|p| p.id == id)
+            {
                 self.cancel_spatial();
             }
             return;
