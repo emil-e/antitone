@@ -1,0 +1,4 @@
+Antitone 0.1.0 (f896569 with uncommitted changes)
+Window 1440x900 at 1x density
+Input: 36 real scans, DSC04379.ARW to DSC04414.ARW
+Regenerate with the procedure in assets/docs/README.md.

@@ -1,40 +1,57 @@
 # Documentation screenshots
 
-Generated UI screenshots referenced by the [user guide](../../guide/README.md) and the
-root README. `guide_shots` drives the documented states — the roll workspace, a selected
-filmstrip photo on Photo, Analyze's sampling-area review, the viewer help popover and the
-export dialog — and asserts they stay reachable. PNGs are written at 2× density only when
-`ANTITONE_UI_CAPTURE` names a directory; the suite is otherwise capture-free.
+The screenshots referenced by the root README and the [user guide](../../guide/README.md)
+are committed here. A capture comes from real negatives, so these images are part of the
+product's first impression and part of the change that alters them.
 
-The PNGs are ignored by git, because a capture either contains traces of the fixtures or
-the photographer's own negatives.
+The PNGs are committed at 1× (1440×900, about 1.6 MB each). GitHub displays them at their
+CSS size, and the smaller set keeps each regeneration an ordinary commit; 2× captures are
+22 MB per regen.
 
 ## Regenerate
 
-From the repository root, after [build and run](../../docs/build-and-run.md#build-and-run):
+1. **Get the roll.** The committed set came from one complete roll of 36 scans,
+   `DSC04379.ARW`–`DSC04414.ARW`, from the maintainer's archive. Any complete roll
+   reproduces the workflow, but only the same roll keeps the new images comparable with
+   the old ones.
+2. **Run the capture** from the repository root, after [build and run](../../docs/build-and-run.md#build-and-run):
 
-```sh
-ANTITONE_UI_CAPTURE=assets/docs cargo test --locked --features ui-tests \
-  --lib editor::kittest_tests::guide_shots -- --test-threads=1
-```
+   ```sh
+   ANTITONE_DOC_SCANS=/absolute/path/to/roll ANTITONE_UI_CAPTURE=assets/docs \
+     cargo test --locked --features ui-tests \
+     --lib editor::kittest_tests::guide_shots -- --test-threads=1
+   ```
 
-That run uses the committed synthetic RAW fixtures in `tests/fixtures/raw/`, which contain
-no photograph, camera sample or private metadata. They exercise every state but look like
-test patterns, so they are a reachability check rather than imagery for publication.
+   Expect about seven minutes for 36 scans: it analyzes the roll and develops every frame
+   before the shots of the settled grade.
+3. **Inspect all five PNGs** against the list below before committing. The test asserts the
+   states are reachable, not that the pictures are right.
+4. **Commit `*.png` and `SOURCES.txt`** with the change that made them stale, and run
+   `python3 scripts/check-docs.py` so the image links still resolve.
 
-`ANTITONE_DOC_SCANS` substitutes a directory of ARW files for the fixtures:
+## What a correct capture looks like
 
-```sh
-ANTITONE_DOC_SCANS=/absolute/path/to/roll ANTITONE_UI_CAPTURE=assets/docs \
-  cargo test --locked --features ui-tests \
-  --lib editor::kittest_tests::guide_shots -- --test-threads=1
-```
+- **Upright.** The scans are read from the emulsion side, so the capture applies the shared
+  baseline's vertical flip before analyzing.
+- **Neutral.** A cast means the input was not one whole roll — a partial set, or the exposed
+  leader and frame-edge frames from the start of a strip, skews Dmin and the shared white
+  balance for every photograph.
+- **Settled.** The viewer status shows no "Acquiring view" or "Cached preview"; the capture
+  waits for the displayed view to match the current processing.
+- **Developed.** Filmstrip cards show graded positives rather than empty previews.
+- **Consistent.** The export dialog counts match the roll you loaded.
 
-Point it at **one complete roll**, in chronological order. The capture analyzes the scans
-and shows the resulting grade, so a partial set — or a set that includes the exposed leader
-and frame-edge frames from the start of the strip — skews the roll's Dmin/Dmax and white
-balance and the screenshots come out badly cast. The scans are read from the emulsion
-side, so the test applies the shared baseline's vertical flip before analyzing.
+## Without real scans
 
-A real-scan run develops every frame in the background: five scans take about a minute,
-thirty-six closer to seven.
+Omitting `ANTITONE_DOC_SCANS` drives the same states on the committed synthetic fixtures in
+`tests/fixtures/raw/`, which contain no photograph, camera sample or private metadata. They
+prove the states stay reachable in about ten seconds, but render test patterns, so a
+fixture capture is never committed here: write it somewhere under `.cache/` instead.
+
+## Provenance
+
+The capture writes `SOURCES.txt` beside the images: the app version and commit, the window
+size and density, and how many scans produced them. It usually names the commit before the
+change that adds the images, because a capture cannot record a commit that does not exist
+yet. If a change alters what a documented screen looks like and `SOURCES.txt`
+stays unchanged in the same commit, the screenshots were not regenerated.

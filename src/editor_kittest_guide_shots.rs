@@ -5,9 +5,9 @@ use std::path::Path;
 ///
 /// The test always drives the documented states on the synthetic fixtures, so the
 /// documentation's views must stay reachable. PNGs are written only when
-/// `ANTITONE_UI_CAPTURE` names an output directory, and are untracked artifacts —
-/// publication screenshots come from real scans via `ANTITONE_DOC_SCANS` (a
-/// directory of one roll's ARW files). Regenerate from the repository root with:
+/// `ANTITONE_UI_CAPTURE` names an output directory. The committed screenshots come
+/// from real scans via `ANTITONE_DOC_SCANS` (a directory of one roll's ARW files),
+/// because the fixtures render test patterns rather than photographs:
 ///
 /// ```sh
 /// ANTITONE_DOC_SCANS=/absolute/roll ANTITONE_UI_CAPTURE=assets/docs \
@@ -15,17 +15,20 @@ use std::path::Path;
 ///   --lib editor::kittest_tests::guide_shots -- --test-threads=1
 /// ```
 ///
-/// `assets/docs/README.md` owns the workflow and the publishing boundary; the
-/// output contains the supplied photographs and is never committed.
+/// `assets/docs/README.md` owns the regeneration procedure; the capture also writes
+/// `SOURCES.txt` recording what produced the images, so a stale set is recognisable.
 #[test]
 fn documented_states_render() {
     let scans = doc_scans();
     let roll_size = scans.len();
     let first_label = file_label(&scans[0]);
     let second_label = file_label(&scans[1]);
-    // 2× density gives the captured screenshots retina resolution; the builder
-    // keeps it for interaction as well.
-    editor_harness_with_gpu_at(true, 2., |mut harness, _, _, _| {
+    let last_label = file_label(scans.last().unwrap());
+    let real_scans = std::env::var_os("ANTITONE_DOC_SCANS").is_some();
+    // 1× keeps the committed screenshots small enough that regenerating them is an
+    // ordinary commit; the builder sets density because runtime changes break
+    // kittest event mapping.
+    editor_harness_with_gpu_at(true, 1., |mut harness, _, _, _| {
         harness.set_size(egui::vec2(1440., 900.));
         harness.enter(|editor, cx| editor.add_raws(scans, cx));
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
@@ -137,6 +140,58 @@ fn documented_states_render() {
         settle_view(&mut harness);
         save_capture(&harness.render().unwrap(), "window-overview");
     });
+    write_capture_sources(&CaptureSources {
+        scans: roll_size,
+        first: &first_label,
+        last: &last_label,
+        real_scans,
+    });
+}
+
+/// Records what produced the captured images. Review compares it with the UI changes
+/// in the same commit: unchanged sources behind a changed screen means the screenshots
+/// were not regenerated.
+struct CaptureSources<'a> {
+    scans: usize,
+    first: &'a str,
+    last: &'a str,
+    real_scans: bool,
+}
+
+fn write_capture_sources(sources: &CaptureSources<'_>) {
+    let Some(directory) = std::env::var_os("ANTITONE_UI_CAPTURE") else {
+        return;
+    };
+    let revision = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned());
+    let modified = std::process::Command::new("git")
+        .args(["status", "--porcelain", "--untracked-files=no"])
+        .output()
+        .ok()
+        .is_some_and(|output| !output.stdout.is_empty());
+    let revision = match revision {
+        Some(revision) if modified => format!("{revision} with uncommitted changes"),
+        Some(revision) => revision,
+        None => "unknown revision".to_owned(),
+    };
+    let input = if sources.real_scans {
+        format!(
+            "{} real scans, {} to {}",
+            sources.scans, sources.first, sources.last
+        )
+    } else {
+        format!("{} synthetic fixtures (not for publication)", sources.scans)
+    };
+    let record = format!(
+        "Antitone {} ({revision})\nWindow 1440x900 at 1x density\nInput: {input}\n\
+         Regenerate with the procedure in assets/docs/README.md.\n",
+        env!("CARGO_PKG_VERSION")
+    );
+    std::fs::write(Path::new(&directory).join("SOURCES.txt"), record).unwrap();
 }
 
 fn doc_scans() -> Vec<PathBuf> {
