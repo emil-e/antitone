@@ -7,7 +7,7 @@ use crate::{
     geometry::SourceRegion,
     local_adjustments::{GradientMask, LocalAdjustment, PhotoGradeSnapshot},
     photographic::Grade,
-    processing::{Calibration, RollSettings},
+    processing::{Calibration, InputSettings, RollSettings},
 };
 use bytemuck::Zeroable;
 use glam::{DMat3, DVec2, DVec3, Vec4};
@@ -54,18 +54,18 @@ impl GpuPhotoGrade {
     /// Check the complete candidate and adapter limits without allocating GPU resources.
     pub fn validate(
         device: &wgpu::Device,
-        calibration: Calibration,
+        input: &InputSettings,
         roll: RollSettings,
         snapshot: &PhotoGradeSnapshot,
         camera_to_ap1: DMat3,
         area: SourceRegion,
     ) -> Result<(), Error> {
-        Self::prepare(device, calibration, roll, snapshot, camera_to_ap1, area).map(|_| ())
+        Self::prepare(device, input, roll, snapshot, camera_to_ap1, area).map(|_| ())
     }
 
     pub fn new(
         device: &wgpu::Device,
-        calibration: Calibration,
+        input: &InputSettings,
         roll: RollSettings,
         snapshot: PhotoGradeSnapshot,
         camera_to_ap1: DMat3,
@@ -76,7 +76,7 @@ impl GpuPhotoGrade {
             packed,
             area,
             active,
-        } = Self::prepare(device, calibration, roll, &snapshot, camera_to_ap1, area)?;
+        } = Self::prepare(device, input, roll, &snapshot, camera_to_ap1, area)?;
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("immutable local photographic stages"),
             contents: bytemuck::cast_slice(&packed),
@@ -97,7 +97,7 @@ impl GpuPhotoGrade {
     #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
     pub(crate) fn validate_repaired(
         device: &wgpu::Device,
-        calibration: Calibration,
+        input: &InputSettings,
         roll: RollSettings,
         snapshot: &PhotoGradeSnapshot,
         camera_to_ap1: DMat3,
@@ -106,7 +106,7 @@ impl GpuPhotoGrade {
     ) -> Result<(), Error> {
         Self::prepare_with_neutral_bound(
             device,
-            calibration,
+            input,
             roll,
             snapshot,
             camera_to_ap1,
@@ -118,7 +118,7 @@ impl GpuPhotoGrade {
 
     fn prepare(
         device: &wgpu::Device,
-        calibration: Calibration,
+        input: &InputSettings,
         roll: RollSettings,
         snapshot: &PhotoGradeSnapshot,
         camera_to_ap1: DMat3,
@@ -126,7 +126,7 @@ impl GpuPhotoGrade {
     ) -> Result<Prepared, Error> {
         Self::prepare_with_neutral_bound(
             device,
-            calibration,
+            input,
             roll,
             snapshot,
             camera_to_ap1,
@@ -137,7 +137,7 @@ impl GpuPhotoGrade {
 
     fn prepare_with_neutral_bound(
         device: &wgpu::Device,
-        calibration: Calibration,
+        input: &InputSettings,
         roll: RollSettings,
         snapshot: &PhotoGradeSnapshot,
         camera_to_ap1: DMat3,
@@ -148,8 +148,8 @@ impl GpuPhotoGrade {
             return Err(Error::Gpu("invalid neutral repair bound".into()));
         }
         let area = area.validate()?;
-        let (mut parameters, mut bound) = ProcessingParameters::positive_with_neutral_bound(
-            calibration,
+        let (mut parameters, mut bound) = ProcessingParameters::interpret_with_neutral_bound(
+            input,
             roll,
             snapshot.global(),
             camera_to_ap1,

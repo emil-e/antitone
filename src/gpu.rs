@@ -34,8 +34,8 @@ use wgpu::util::DeviceExt;
 use crate::Error;
 use crate::color::{AP1_TO_XYZ, wb_matrix};
 use crate::processing::{
-    Calibration, Inversion, PhotoSettings, RollSettings, exposure_multiplier, log_abs_expm1,
-    log_ratio, validate_camera_matrix,
+    Calibration, Inversion, InputSettings, NegativeInput, PhotoSettings, RollSettings,
+    exposure_multiplier, log_abs_expm1, log_ratio, validate_camera_matrix,
 };
 
 #[repr(C)]
@@ -121,26 +121,26 @@ impl ProcessingParameters {
     }
 
     pub fn positive(
-        calibration: Calibration,
+        negative: NegativeInput,
         roll: RollSettings,
         photo: PhotoSettings,
         camera_to_ap1: DMat3,
     ) -> Result<Self, Error> {
-        Self::positive_with_bound(calibration, roll, photo, camera_to_ap1)
+        Self::positive_with_bound(negative, roll, photo, camera_to_ap1)
             .map(|(parameters, _)| parameters)
     }
 
     fn positive_with_bound(
-        calibration: Calibration,
+        negative: NegativeInput,
         roll: RollSettings,
         photo: PhotoSettings,
         camera_to_ap1: DMat3,
     ) -> Result<(Self, f64), Error> {
-        Self::positive_with_neutral_bound(calibration, roll, photo, camera_to_ap1, DVec3::ZERO)
+        Self::positive_with_neutral_bound(negative, roll, photo, camera_to_ap1, DVec3::ZERO)
     }
 
     fn positive_with_neutral_bound(
-        calibration: Calibration,
+        negative: NegativeInput,
         roll: RollSettings,
         photo: PhotoSettings,
         camera_to_ap1: DMat3,
@@ -148,14 +148,14 @@ impl ProcessingParameters {
     ) -> Result<(Self, f64), Error> {
         validate_camera_matrix(camera_to_ap1)?;
         CameraMatrix::new(camera_to_ap1)?;
-        let inversion = Inversion::new(calibration, roll)?;
+        let inversion = Inversion::new(negative)?;
         photo.validate()?;
         let grade = crate::photographic::Grade::new(photo)?;
         let gain = exposure_multiplier(roll.exposure)? * exposure_multiplier(photo.exposure)?;
         let matrix = wb_matrix(photo.wb)? * wb_matrix(roll.wb)?;
-        let (toe, shoulder) = roll.response.shape()?;
+        let (toe, shoulder) = negative.response.shape()?;
         let floor_bound = inversion
-            .apply(DVec3::splat(calibration.input_floor))?
+            .apply(DVec3::splat(negative.calibration.input_floor))?
             .rgb
             .abs();
         // Above-base continuation is bounded by |expm1(a)| <= 1 for a <= 0.
@@ -185,9 +185,9 @@ impl ProcessingParameters {
                     .into(),
             ));
         }
-        let gammas = roll.channel_gammas()?;
+        let gammas = negative.channel_gammas()?;
         for c in 0..3 {
-            let l = log_ratio(calibration.dmin[c], calibration.input_floor);
+            let l = log_ratio(negative.calibration.dmin[c], negative.calibration.input_floor);
             let a = toe * l / (gammas[c] - shoulder * l / std::f64::consts::LN_10);
             if !a.is_finite() || a > 4096. {
                 return Err(Error::Gpu(
@@ -196,7 +196,7 @@ impl ProcessingParameters {
                 ));
             }
         }
-        let reference = split_constants(calibration.dmin, calibration.input_floor)?;
+        let reference = split_constants(negative.calibration.dmin, negative.calibration.input_floor)?;
         let gamma = split_constants(gammas, toe)?;
         let logs = split_constants(inversion.anchor_exponents.map(log_abs_expm1), gain.ln())?;
         let shapes = split_constants(DVec3::new(toe, shoulder, 0.), 0.)?;
@@ -270,6 +270,137 @@ impl ProcessingParameters {
         // Scratch maxima must not become the next stage's input. Both bounds
         // cover the actual full-strength output; keep the tighter envelope.
         Ok((result, output.min(creative_bound)))
+    }
+
+    /// A digital source is already a positive: interpretation is identity, so there is no
+    /// response `exp` to fold the exposure gain into. It rides in `post` instead (matching
+    /// the CPU `working_to_graded`), and only camera→AP1 · post · grade run.
+    pub fn digital(
+        roll: RollSettings,
+        photo: PhotoSettings,
+        camera_to_ap1: DMat3,
+    ) -> Result<Self, Error> {
+        Self::digital_with_neutral_bound(roll, photo, camera_to_ap1, DVec3::ZERO).map(|(p, _)| p)
+    }
+
+    /// Like `digital`, but also returns the f32 working bound for local-grade preflight.
+    pub fn digital_with_neutral_bound(
+        roll: RollSettings,
+        photo: PhotoSettings,
+        camera_to_ap1: DMat3,
+        additional_neutral: DVec3,
+    ) -> Result<(Self, f64), Error> {
+        validate_camera_matrix(camera_to_ap1)?;
+        CameraMatrix::new(camera_to_ap1)?;
+        photo.validate()?;
+        let grade = crate::photographic::Grade::new(photo)?;
+        let gain = exposure_multiplier(roll.exposure)? * exposure_multiplier(photo.exposure)?;
+        let matrix = wb_matrix(photo.wb)? * wb_matrix(roll.wb)? * gain;
+        let post = CameraMatrix::new(matrix)?;
+        // f32 preflight: source (already positive) → camera→AP1 → post → grade. With no
+        // inversion continuation, the native-positive bound is simply the source magnitude.
+        let largest = DVec3::splat(crate::processing::MAX_SOURCE_GAIN);
+        let working_bound = (camera_to_ap1.x_axis.abs() * largest.x
+            + camera_to_ap1.y_axis.abs() * largest.y
+            + camera_to_ap1.z_axis.abs() * largest.z)
+            .max(additional_neutral * gain);
+        let bound = matrix.x_axis.abs() * working_bound.x
+            + matrix.y_axis.abs() * working_bound.y
+            + matrix.z_axis.abs() * working_bound.z;
+        let creative_bound = grade.intermediate_bound(bound.max_element());
+        if !working_bound.is_finite()
+            || working_bound.max_element() > f32::MAX as f64 / 4.0
+            || !bound.is_finite()
+            || bound.max_element() > f32::MAX as f64 / 4.0
+            || !creative_bound.is_finite()
+            || creative_bound > f32::MAX as f64 / 4.0
+        {
+            return Err(Error::Gpu(
+                "settings can exceed the f32 working range in digital processing".into(),
+            ));
+        }
+        let weights = AP1_TO_XYZ.transpose().y_axis;
+        let [contrast, colour, luminance] = [
+            [photo.contrast, grade.qp, grade.q0, grade.black],
+            [
+                photo.contrast_colour_mix,
+                photo.saturation,
+                photo.saturation_density,
+                0.,
+            ],
+            [weights.x, weights.y, weights.z, 0.],
+        ]
+        .map(|v| split_constants(DVec3::new(v[0], v[1], v[2]), v[3]));
+        let controls = [contrast?, colour?, luminance?];
+        let (_, output, creative_sensitivity) = grade.weighted_bounds(bound.max_element(), 1.);
+        let camera_sensitivity =
+            camera_to_ap1.x_axis.abs() + camera_to_ap1.y_axis.abs() + camera_to_ap1.z_axis.abs();
+        let downstream_sensitivity = (matrix.x_axis.abs() * camera_sensitivity.x
+            + matrix.y_axis.abs() * camera_sensitivity.y
+            + matrix.z_axis.abs() * camera_sensitivity.z)
+            .max_element()
+            .max(1.)
+            * creative_sensitivity.max(1.);
+        Ok((Self {
+            // Interpretation is identity for Digital, so the inversion constants are unused.
+            // Valid placeholders keep the f32 representation checks meaningful.
+            dmin_floor: Vec4::new(1., 0., 0., 1.),
+            dmin_low: Vec4::ZERO,
+            dmin_tail: Vec4::ZERO,
+            gamma_mode: Vec4::new(0., 0., 0., 2.),
+            gamma_low: Vec4::ZERO,
+            gamma_tail: Vec4::ZERO,
+            shape: Vec4::ZERO,
+            shape_tail: Vec4::ZERO,
+            anchor: Vec4::ZERO,
+            anchor_low: Vec4::ZERO,
+            anchor_tail: Vec4::ZERO,
+            post: post.high,
+            post_low: post.low,
+            post_tail: post.tail,
+            creative: std::array::from_fn(|c| controls[c][0]),
+            creative_low: std::array::from_fn(|c| controls[c][1]),
+            creative_tail: std::array::from_fn(|c| controls[c][2]),
+            response_precision: Vec4::new(
+                if downstream_sensitivity.is_finite() {
+                    (1. / downstream_sensitivity) as f32
+                } else {
+                    0.
+                },
+                0.,
+                0.,
+                0.,
+            ),
+        }, output.min(creative_bound)))
+    }
+
+    /// Like `interpret`, but returns the f32 working bound (local-grade preflight).
+    pub fn interpret_with_neutral_bound(
+        input: &InputSettings,
+        roll: RollSettings,
+        photo: PhotoSettings,
+        camera_to_ap1: DMat3,
+        additional_neutral: DVec3,
+    ) -> Result<(Self, f64), Error> {
+        match input.negative_input() {
+            Some(negative) => {
+                Self::positive_with_neutral_bound(negative, roll, photo, camera_to_ap1, additional_neutral)
+            }
+            None => Self::digital_with_neutral_bound(roll, photo, camera_to_ap1, additional_neutral),
+        }
+    }
+
+    /// Build packed parameters, interpreting source samples through `stage`.
+    pub fn interpret(
+        input: &InputSettings,
+        roll: RollSettings,
+        photo: PhotoSettings,
+        camera_to_ap1: DMat3,
+    ) -> Result<Self, Error> {
+        match input.negative_input() {
+            Some(negative) => Self::positive(negative, roll, photo, camera_to_ap1),
+            None => Self::digital(roll, photo, camera_to_ap1),
+        }
     }
 }
 

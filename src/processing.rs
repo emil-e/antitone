@@ -19,6 +19,22 @@ pub const MAX_SHOULDER: f64 = 0.02;
 pub const DEFAULT_PIVOT: f64 = 0.18;
 pub const DEFAULT_COLOUR_MIX: f64 = 0.;
 
+/// How source samples become a scene-referred positive. Persisted per roll.
+/// Negative owns its calibration and response; Digital is already a positive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "project", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "project",
+    serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)
+)]
+pub enum InputKind {
+    /// Camera scans of developed negative film: invert between measured anchors.
+    Negative,
+    /// An ordinary scene-referred photograph: interpret as already positive.
+    #[default]
+    Digital,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "project", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
@@ -70,6 +86,8 @@ impl Response {
 /// Linear native-camera RGB measurements, not optical densities.
 /// Dmin (film base) transmits more light than Dmax: dmin > dmax per channel.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "project", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "project", serde(deny_unknown_fields))]
 pub struct Calibration {
     pub dmin: DVec3,
     pub dmax: DVec3,
@@ -123,50 +141,26 @@ impl Calibration {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Grading shared across a roll, applied to the positive after interpretation.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[cfg_attr(feature = "project", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "project", serde(deny_unknown_fields))]
 pub struct RollSettings {
-    pub response: Response,
-    pub gamma: f64,
-    pub balance: Balance,
     #[cfg_attr(feature = "project", serde(default))]
     pub wb: Balance,
     pub exposure: f64,
 }
 
-impl Default for RollSettings {
-    fn default() -> Self {
-        Self {
-            response: Response::Original,
-            gamma: DEFAULT_GAMMA,
-            balance: Balance::default(),
-            wb: Balance::default(),
-            exposure: 0.0,
-        }
-    }
+/// A negative scan's interpretation inputs: measured anchors and the response curve.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NegativeInput {
+    pub calibration: Calibration,
+    pub response: Response,
+    pub gamma: f64,
+    pub balance: Balance,
 }
 
-impl RollSettings {
-    pub fn new_grade() -> Self {
-        Self {
-            response: Response::film(),
-            ..Self::default()
-        }
-    }
-
-    /// The ungraded positive includes negative interpretation, not photographic Roll controls.
-    /// Spell out every field so future controls require an explicit stage-placement decision.
-    pub fn inversion_only(self) -> Self {
-        Self {
-            response: self.response,
-            gamma: self.gamma,
-            balance: self.balance,
-            wb: Balance::default(),
-            exposure: 0.,
-        }
-    }
-
+impl NegativeInput {
     pub fn channel_gammas(self) -> Result<DVec3, Error> {
         self.response.shape()?;
         if !self.gamma.is_finite() || !(MIN_GAMMA..=MAX_GAMMA).contains(&self.gamma) {
@@ -175,6 +169,61 @@ impl RollSettings {
             ));
         }
         Ok(self.balance.offsets()?.exp() * self.gamma)
+    }
+}
+
+/// How source samples become a scene-referred positive. Per input stage: Negative inverts
+/// between measured anchors; Digital is already a positive. Calibration lives here, not in
+/// the shared grade.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "project", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "project",
+    serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)
+)]
+pub enum InputSettings {
+    /// Camera scans of developed negative film: invert between measured anchors.
+    Negative {
+        calibration: Calibration,
+        response: Response,
+        gamma: f64,
+        balance: Balance,
+    },
+    /// An ordinary scene-referred photograph: already a scene-referred positive.
+    Digital,
+}
+
+impl InputSettings {
+    /// A fresh negative interpretation over measured anchors, with the shared response prior.
+    pub fn negative(calibration: Calibration) -> Self {
+        Self::Negative {
+            calibration,
+            response: Response::film(),
+            gamma: DEFAULT_GAMMA,
+            balance: Balance::default(),
+        }
+    }
+
+    /// The interpretation inputs for the negative stage (absent for Digital).
+    pub fn negative_input(&self) -> Option<NegativeInput> {
+        match self {
+            Self::Negative {
+                calibration,
+                response,
+                gamma,
+                balance,
+            } => Some(NegativeInput {
+                calibration: *calibration,
+                response: *response,
+                gamma: *gamma,
+                balance: *balance,
+            }),
+            Self::Digital => None,
+        }
+    }
+
+    pub fn is_negative(&self) -> bool {
+        matches!(self, Self::Negative { .. })
     }
 }
 
@@ -262,11 +311,41 @@ pub struct InvertedPixel {
     pub floored: [bool; 3],
 }
 
+/// The input stage: source sample → scene-referred native-camera positive.
+/// Everything after this is grading and is blind to which stage ran.
+#[derive(Debug, Clone)]
+enum Interpretation {
+    Negative(Inversion),
+    Digital,
+}
+
+impl Interpretation {
+    fn interpret(&self, scan: DVec3) -> Result<InvertedPixel, Error> {
+        match self {
+            Self::Negative(inversion) => inversion.apply(scan),
+            // A digital source is already a scene-referred positive; no polarity
+            // flip and no density flooring.
+            Self::Digital => {
+                for c in 0..3 {
+                    if !scan[c].is_finite() {
+                        return Err(Error::NonFinitePixel { channel: c });
+                    }
+                }
+                Ok(InvertedPixel {
+                    rgb: scan,
+                    floored: [false; 3],
+                })
+            }
+        }
+    }
+}
+
 impl Inversion {
-    pub fn new(calibration: Calibration, roll: RollSettings) -> Result<Self, Error> {
+    pub fn new(negative: NegativeInput) -> Result<Self, Error> {
+        let calibration = negative.calibration;
         calibration.validate()?;
-        let gammas = roll.channel_gammas()?;
-        let (toe, shoulder) = roll.response.shape()?;
+        let gammas = negative.channel_gammas()?;
+        let (toe, shoulder) = negative.response.shape()?;
         for c in 0..3 {
             let density =
                 log_ratio(calibration.dmin[c], calibration.input_floor) / std::f64::consts::LN_10;
@@ -329,30 +408,50 @@ impl Inversion {
 
 #[derive(Debug, Clone)]
 pub struct Pipeline {
-    inversion: Inversion,
-    post_inversion_matrix: DMat3,
-    post_neutral_matrix: DMat3,
+    interpretation: Interpretation,
+    /// Native-camera positive → pre-contrast graded AP1: camera→AP1, then roll/photo WB
+    /// and exposure. Contrast/saturation follow in `grade`. Used by `apply`, which starts
+    /// from a source sample. (Not named for "inversion": Digital uses it too.)
+    to_graded_ap1: DMat3,
+    /// Working AP1 → pre-contrast graded AP1: roll/photo WB and exposure, *without*
+    /// camera→AP1 (already applied). Used by `grade_neutral`, which starts from an
+    /// already-converted working positive such as a neutral repair replacement.
+    working_to_graded: DMat3,
     grade: crate::photographic::Grade,
 }
 
 impl Pipeline {
-    /// Full-resolution signed/HDR AP1 after correction/inversion/camera conversion, before grades.
-    /// The caller supplies camera samples corrected in the same basis as `calibration`.
-    pub fn ungraded(
-        calibration: Calibration,
+    /// Build the graded pipeline for a source interpreted through `input`.
+    pub fn new(
+        input: &InputSettings,
         roll: RollSettings,
+        photo: PhotoSettings,
         camera_to_ap1: DMat3,
     ) -> Result<Self, Error> {
+        Self::build(Self::interpret(input)?, roll, photo, camera_to_ap1)
+    }
+
+    /// Full-resolution signed/HDR AP1 after correction, interpretation and camera conversion,
+    /// before grading. The caller supplies camera samples corrected in the same basis.
+    pub fn ungraded(input: &InputSettings, camera_to_ap1: DMat3) -> Result<Self, Error> {
         Self::new(
-            calibration,
-            roll.inversion_only(),
+            input,
+            RollSettings::default(),
             PhotoSettings::default(),
             camera_to_ap1,
         )
     }
 
-    pub fn new(
-        calibration: Calibration,
+    fn interpret(input: &InputSettings) -> Result<Interpretation, Error> {
+        match input.negative_input() {
+            Some(negative) => Ok(Interpretation::Negative(Inversion::new(negative)?)),
+            None => Ok(Interpretation::Digital),
+        }
+    }
+
+    /// Shared grading for every input stage; only `interpret` differs.
+    fn build(
+        interpretation: Interpretation,
         roll: RollSettings,
         photo: PhotoSettings,
         camera_to_ap1: DMat3,
@@ -360,29 +459,29 @@ impl Pipeline {
         validate_camera_matrix(camera_to_ap1)?;
         photo.validate()?;
         let gain = exposure_multiplier(roll.exposure)? * exposure_multiplier(photo.exposure)?;
-        let post_inversion_matrix =
+        let to_graded_ap1 =
             wb_matrix(photo.wb)? * wb_matrix(roll.wb)? * camera_to_ap1 * gain;
-        if !post_inversion_matrix.is_finite() {
+        if !to_graded_ap1.is_finite() {
             return Err(Error::NumericalOverflow);
         }
         Ok(Self {
-            inversion: Inversion::new(calibration, roll)?,
-            post_inversion_matrix,
-            post_neutral_matrix: wb_matrix(photo.wb)? * wb_matrix(roll.wb)? * gain,
+            interpretation,
+            to_graded_ap1,
+            working_to_graded: wb_matrix(photo.wb)? * wb_matrix(roll.wb)? * gain,
             grade: crate::photographic::Grade::new(photo)?,
         })
     }
 
     /// Grade an absolute ungraded AP1 replacement without repeating correction or inversion.
     pub fn grade_neutral(&self, mut pixel: InvertedPixel) -> Result<InvertedPixel, Error> {
-        pixel.rgb = self.grade.apply(self.post_neutral_matrix * pixel.rgb)?;
+        pixel.rgb = self.grade.apply(self.working_to_graded * pixel.rgb)?;
         Ok(pixel)
     }
 
     /// Returns unclipped AP1 working RGB; scene-linear AP0 export converts at its boundary.
     pub fn apply(&self, scan: DVec3) -> Result<InvertedPixel, Error> {
-        let mut pixel = self.inversion.apply(scan)?;
-        pixel.rgb = self.grade.apply(self.post_inversion_matrix * pixel.rgb)?;
+        let mut pixel = self.interpretation.interpret(scan)?;
+        pixel.rgb = self.grade.apply(self.to_graded_ap1 * pixel.rgb)?;
         Ok(pixel)
     }
 }

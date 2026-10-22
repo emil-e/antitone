@@ -134,7 +134,33 @@ struct ProcessedPixel {
     flags: u32,
 }
 
-fn native_response(scan: ConvertedScan) -> ProcessedPixel {
+// Input stage: source sample → scene-referred native-camera positive. The switch is
+// confined here — a twin of the CPU `Interpretation::interpret`. Everything downstream
+// (`camera_positive_to_ap1`, `photographic_post`) is stage-blind.
+const STAGE_DIGITAL: u32 = 2u;
+
+fn interpret_positive(scan: ConvertedScan) -> ProcessedPixel {
+    switch u32(parameters.gamma_mode.w) {
+        case STAGE_DIGITAL: {
+            // Already a scene-referred positive: pass through, no polarity flip or
+            // density flooring. The exposure gain rides in `post`, not the response.
+            return ProcessedPixel(
+                array<Triple, 3>(
+                    Triple(scan.high[0], scan.low[0], scan.tail[0]),
+                    Triple(scan.high[1], scan.low[1], scan.tail[1]),
+                    Triple(scan.high[2], scan.low[2], scan.tail[2]),
+                ),
+                0u,
+            );
+        }
+        default: {
+            return negative_positive(scan);
+        }
+    }
+}
+
+// Negative film: invert between the measured Dmin/Dmax anchors.
+fn negative_positive(scan: ConvertedScan) -> ProcessedPixel {
     var q: array<Triple, 3>;
     var flags = 0u;
     let floor = Triple(parameters.dmin_floor.w, parameters.dmin_low.w, parameters.dmin_tail.w);
@@ -149,9 +175,10 @@ fn native_response(scan: ConvertedScan) -> ProcessedPixel {
     return ProcessedPixel(q, flags);
 }
 
+// Shared, stage-blind: interpret → camera→AP1 → global grade.
 fn process_film(scan: ConvertedScan) -> ProcessedPixel {
-    let native = native_response(scan);
-    return ProcessedPixel(photographic_post(camera_positive_to_ap1(native.rgb)), native.flags);
+    let positive = interpret_positive(scan);
+    return ProcessedPixel(photographic_post(camera_positive_to_ap1(positive.rgb)), positive.flags);
 }
 
 fn process_camera_source(scan: ConvertedScan) -> vec4f {

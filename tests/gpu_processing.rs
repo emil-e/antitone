@@ -201,6 +201,118 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
 }
 
 #[test]
+fn metal_digital_processing_matches_the_cpu_model() {
+    pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let kernel = ProcessingKernel::new(&device).await.unwrap();
+        let matrix = DMat3::from_cols(
+            DVec3::new(1., 0., -0.2),
+            DVec3::new(-0.3, 1., 0.),
+            DVec3::new(0., 0., 1.5),
+        );
+        let pixels: Vec<[u16; 4]> = [
+            DVec3::splat(0.18),
+            DVec3::new(0.02, 0.5, 0.9),
+            DVec3::ZERO,
+            DVec3::splat(1.0),
+            DVec3::new(0.9, 0.1, 0.05),
+        ]
+        .into_iter()
+        .map(|s| {
+            [
+                (s.x * 65535.).round() as u16,
+                (s.y * 65535.).round() as u16,
+                (s.z * 65535.).round() as u16,
+                1234,
+            ]
+        })
+        .chain([[0, 65535, 0, 65535], [65535, 0, 0, 65535]])
+        .collect();
+        let scans: Vec<_> = pixels
+            .iter()
+            .map(|p| DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.)
+            .collect();
+        // Digital interprets as already-positive; the camera matrix yields signed/HDR values.
+        assert!(scans.iter().any(|s| (matrix * *s).min_element() < 0.));
+        assert!(scans.iter().any(|s| (matrix * *s).max_element() > 1.));
+        let input = ProcessingSource::new(&device, &pixels, matrix).unwrap();
+        let output = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("test working pixels"),
+            size: (pixels.len() * 16) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("test readback"),
+            size: output.size(),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut configurations = Vec::new();
+        for exposure in [-16., 0., 1.5, 16.] {
+            for wb in [Balance::default(), Balance { warmth: 0.2, tint: -0.1 }] {
+                for contrast in [0.5, 1., 1.5] {
+                    for saturation in [0., 1.3] {
+                        let roll = RollSettings {
+                            wb,
+                            exposure,
+                            ..RollSettings::default()
+                        };
+                        let photo = PhotoSettings {
+                            contrast,
+                            saturation,
+                            exposure: -1.,
+                            wb: Balance { warmth: 0.1, tint: 0.05 },
+                            ..PhotoSettings::default()
+                        };
+                        configurations.push((
+                            Pipeline::digital(roll, photo, matrix).unwrap(),
+                            ProcessingParameters::digital(roll, photo, matrix).unwrap(),
+                        ));
+                    }
+                }
+            }
+        }
+        for (pipeline, parameters) in configurations {
+            let mut encoder = device.create_command_encoder(&Default::default());
+            kernel.encode(&device, &mut encoder, &input, &output, parameters);
+            encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, output.size());
+            queue.submit([encoder.finish()]);
+            let (sender, receiver) = std::sync::mpsc::channel();
+            readback.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+                sender.send(r).unwrap();
+            });
+            device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+            receiver.recv().unwrap().unwrap();
+            let mapped = readback.slice(..).get_mapped_range().unwrap();
+            let actual: &[Vec4] = bytemuck::cast_slice(&mapped);
+            for (i, &scan) in scans.iter().enumerate() {
+                let value = pipeline.apply(scan).unwrap();
+                // Digital never floors (the source is already a positive).
+                assert_eq!(value.floored, [false; 3]);
+                for c in 0..3 {
+                    let gpu = f64::from(actual[i][c]);
+                    assert!(
+                        gpu.is_finite()
+                            && (gpu - value.rgb[c]).abs() <= 2e-5 + 2e-4 * value.rgb[c].abs(),
+                        "pixel {i} channel {c}: GPU={gpu} CPU={}",
+                        value.rgb[c]
+                    );
+                }
+                assert_eq!(actual[i].w as u32, 0);
+            }
+            drop(mapped);
+            readback.unmap();
+        }
+    });
+}
+
+#[test]
 fn metal_creative_primitives_cover_zero_y_continuations_and_signed_hdr_planes() {
     use wgpu::util::DeviceExt;
     pollster::block_on(async {

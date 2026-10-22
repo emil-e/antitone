@@ -3,7 +3,7 @@ use glam::{DMat3, DVec2, DVec3};
 use crate::{
     Error,
     color::{AP1_TO_XYZ, Balance, ap1_to_cones, opponent_coordinates},
-    processing::{Calibration, Inversion, RollSettings},
+    processing::{Inversion, NegativeInput},
     sampling::weighted_mean_iter,
 };
 
@@ -11,13 +11,12 @@ type Bands = Vec<[Vec<DVec3>; 3]>;
 const NONPOSITIVE_CONES: &str = "tonal band mean has nonpositive Bradford responses";
 
 fn bands(
-    cal: Calibration,
-    initial: RollSettings,
+    negative: NegativeInput,
     matrix: DMat3,
     points: &[Vec<DVec3>],
     cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Option<Bands>, Error> {
-    let inv = Inversion::new(cal, initial)?;
+    let inv = Inversion::new(negative)?;
     let mut result = Vec::with_capacity(points.len());
     for frame in points {
         if cancelled() {
@@ -62,13 +61,12 @@ fn drift(means: [DVec3; 3]) -> Result<[DVec2; 2], Error> {
 }
 
 fn evaluate(
-    cal: Calibration,
-    roll: RollSettings,
+    negative: NegativeInput,
     matrix: DMat3,
     bands: &Bands,
     cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Option<f64>, Error> {
-    let inv = Inversion::new(cal, roll)?;
+    let inv = Inversion::new(negative)?;
     let mut total = [DVec2::ZERO; 2];
     for frame in bands {
         if cancelled() {
@@ -96,14 +94,13 @@ fn evaluate(
 }
 
 fn search(
-    cal: Calibration,
-    roll: RollSettings,
+    negative: NegativeInput,
     matrix: DMat3,
     bands: &Bands,
     cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Option<(Balance, f64)>, Error> {
-    let mut best = roll;
-    let Some(mut score) = evaluate(cal, best, matrix, bands, cancelled)? else {
+    let mut best = negative;
+    let Some(mut score) = evaluate(best, matrix, bands, cancelled)? else {
         return Ok(None);
     };
     let mut step = 0.125;
@@ -130,8 +127,8 @@ fn search(
                 if evaluations > 4096 {
                     return Err(Error::UnusableSample("gamma drift search did not converge"));
                 }
-                let candidate = RollSettings { balance, ..base };
-                let value = match evaluate(cal, candidate, matrix, bands, cancelled) {
+                let candidate = NegativeInput { balance, ..base };
+                let value = match evaluate(candidate, matrix, bands, cancelled) {
                     Ok(Some(value)) => value,
                     Ok(None) => return Ok(None),
                     Err(Error::UnusableSample(NONPOSITIVE_CONES)) => continue,
@@ -152,23 +149,22 @@ fn search(
 }
 
 pub(super) fn fit(
-    cal: Calibration,
-    current: RollSettings,
+    negative: NegativeInput,
     matrix: DMat3,
     points: &[Vec<DVec3>],
     cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Option<Balance>, Error> {
-    let initial = RollSettings {
+    let initial = NegativeInput {
         balance: Balance::default(),
-        ..current
+        ..negative
     };
-    let Some(bands) = bands(cal, initial, matrix, points, cancelled)? else {
+    let Some(bands) = bands(initial, matrix, points, cancelled)? else {
         return Ok(None);
     };
-    let spans = (cal.dmin / cal.dmax).ln();
+    let spans = (negative.calibration.dmin / negative.calibration.dmax).ln();
     let xy = opponent_coordinates((spans / (spans.x * spans.y * spans.z).cbrt()).ln());
     let seeds = [
-        current.balance,
+        negative.balance,
         Balance::default(),
         Balance {
             warmth: xy.x,
@@ -182,10 +178,9 @@ pub(super) fn fit(
             continue;
         }
         let (candidate, value) = match search(
-            cal,
-            RollSettings {
+            NegativeInput {
                 balance: seed,
-                ..current
+                ..negative
             },
             matrix,
             &bands,

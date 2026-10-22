@@ -3,7 +3,7 @@ use crate::{
     color::wb_matrix,
     crop::Crop,
     geometry::{PhotoOrientation, RollOrientation, SourceRegion},
-    processing::{Calibration, Inversion, PhotoSettings, RollSettings, exposure_multiplier},
+    processing::{Calibration, InputKind, Inversion, PhotoSettings, RollSettings, exposure_multiplier},
 };
 use glam::{DMat3, DVec3};
 use serde::{Deserialize, Serialize};
@@ -310,6 +310,9 @@ pub struct Project {
     pub dmax: Option<[f64; 3]>,
     pub input_floor: Option<f64>,
     pub roll: RollSettings,
+    /// How source samples become a positive.
+    #[serde(default)]
+    pub input_stage: InputKind,
     #[serde(default, skip_serializing_if = "RollOrientation::is_identity")]
     pub orientation: RollOrientation,
     pub output: Output,
@@ -353,6 +356,7 @@ impl Default for Project {
             dmax: None,
             input_floor: None,
             roll: RollSettings::new_grade(),
+            input_stage: InputKind::default(),
             orientation: RollOrientation::default(),
             output: Output::default(),
             flat_field: None,

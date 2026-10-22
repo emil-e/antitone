@@ -2,7 +2,7 @@ use glam::{DMat2, DMat3, DVec2, DVec3};
 
 use crate::Error;
 use crate::color::{Balance, neutral_wb};
-use crate::processing::{Calibration, Inversion, RollSettings};
+use crate::processing::{Inversion, NegativeInput};
 
 pub const FIT_RESIDUAL_TOLERANCE: f64 = 1e-9;
 const DERIVATIVE_STEP: f64 = 1e-5;
@@ -141,31 +141,27 @@ pub fn photo_neutral(pixels_before_wb: &[DVec3]) -> Result<Balance, Error> {
 }
 
 pub fn roll_neutral(
-    calibration: Calibration,
-    roll: RollSettings,
+    negative: NegativeInput,
     scan_patch: &[DVec3],
     camera_to_ap1: DMat3,
 ) -> Result<Balance, Error> {
     fit_roll_neutral(
-        calibration,
-        roll,
+        negative,
         scan_patch.iter().map(|&p| (p, 1.)),
         camera_to_ap1,
     )
 }
 
 pub fn roll_neutral_weighted(
-    calibration: Calibration,
-    roll: RollSettings,
+    negative: NegativeInput,
     scan_patch: &[(DVec3, f64)],
     camera_to_ap1: DMat3,
 ) -> Result<Balance, Error> {
-    fit_roll_neutral(calibration, roll, scan_patch.iter().copied(), camera_to_ap1)
+    fit_roll_neutral(negative, scan_patch.iter().copied(), camera_to_ap1)
 }
 
 fn fit_roll_neutral(
-    calibration: Calibration,
-    roll: RollSettings,
+    negative: NegativeInput,
     scan_patch: impl Iterator<Item = (DVec3, f64)> + Clone,
     camera_to_ap1: DMat3,
 ) -> Result<Balance, Error> {
@@ -176,13 +172,13 @@ fn fit_roll_neutral(
             "neutral AP1 is not positive in camera RGB",
         ));
     }
-    calibration.validate()?;
-    roll.channel_gammas()?;
+    negative.calibration.validate()?;
+    negative.channel_gammas()?;
     weighted_mean_iter(scan_patch.clone().map(Ok))?;
     let total = scan_patch.clone().map(|(_, w)| w).sum::<f64>();
     if scan_patch
         .clone()
-        .any(|(p, _)| p.min_element() < calibration.input_floor)
+        .any(|(p, _)| p.min_element() < negative.calibration.input_floor)
     {
         return Err(Error::UnusableSample(
             "gamma patch contains floored scan inputs",
@@ -193,7 +189,7 @@ fn fit_roll_neutral(
             warmth: coordinates.x,
             tint: coordinates.y,
         };
-        let inversion = Inversion::new(calibration, RollSettings { balance, ..roll })?;
+        let inversion = Inversion::new(NegativeInput { balance, ..negative })?;
         let mut sum = DVec3::ZERO;
         let mut compensation = DVec3::ZERO;
         for (scan, weight) in scan_patch.clone() {
@@ -214,7 +210,7 @@ fn fit_roll_neutral(
         ))
     };
 
-    let mut x = DVec2::new(roll.balance.warmth, roll.balance.tint);
+    let mut x = DVec2::new(negative.balance.warmth, negative.balance.tint);
     for _ in 0..32 {
         let r = residual(x)?;
         let mut jacobian = DMat2::ZERO;

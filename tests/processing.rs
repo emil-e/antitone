@@ -50,6 +50,49 @@ fn ungraded_positive_excludes_photographic_roll_controls_but_preserves_inversion
 }
 
 #[test]
+fn digital_input_is_already_positive_and_reuses_the_shared_grade() {
+    let matrix = DMat3::from_diagonal(DVec3::new(0.8, 1.1, 1.3));
+    // Identity grade + neutral roll WB + zero exposure: apply is camera→AP1 only,
+    // with no polarity flip (the sample is already a scene-referred positive).
+    let pipeline =
+        Pipeline::digital(RollSettings::default(), PhotoSettings::default(), matrix).unwrap();
+    for input in [
+        DVec3::splat(0.18),
+        DVec3::new(-0.02, 0.5, 1.7),
+        DVec3::splat(0.0),
+    ] {
+        let actual = pipeline.apply(input).unwrap();
+        assert_eq!(actual.floored, [false; 3]);
+        assert_eq!(actual.rgb, matrix * input);
+    }
+    // Ungraded digital positive is camera→AP1, before roll/photo controls.
+    let neutral = Pipeline::ungraded_digital(RollSettings::default(), matrix).unwrap();
+    assert_eq!(
+        neutral.apply(DVec3::splat(0.18)).unwrap().rgb,
+        matrix * DVec3::splat(0.18)
+    );
+    // The shared grade reaches the digital positive: roll exposure scales the working value.
+    let stops = 1.5;
+    let graded = Pipeline::digital(
+        RollSettings {
+            exposure: stops,
+            ..RollSettings::default()
+        },
+        PhotoSettings::default(),
+        matrix,
+    )
+    .unwrap();
+    let input = DVec3::splat(0.18);
+    close_rgb(
+        graded.apply(input).unwrap().rgb,
+        matrix * input * exposure_multiplier(stops).unwrap(),
+    );
+    // Non-finite samples reject rather than becoming an edge colour.
+    assert!(pipeline.apply(DVec3::splat(f64::NAN)).is_err());
+    assert!(pipeline.apply(DVec3::new(f64::INFINITY, 0., 0.)).is_err());
+}
+
+#[test]
 fn weighted_neutral_picks_match_repeated_full_resolution_pixels_not_bounding_box_means() {
     use antitone::sampling::{photo_neutral_weighted, roll_neutral_weighted, weighted_mean};
     let cal = calibration();

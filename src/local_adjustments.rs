@@ -5,7 +5,7 @@ use crate::{
     geometry::SourcePoint,
     photographic::Grade,
     processing::{
-        Calibration, InvertedPixel, PhotoSettings, Pipeline, RollSettings, exposure_multiplier,
+        InputSettings, InvertedPixel, PhotoSettings, Pipeline, RollSettings, exposure_multiplier,
     },
 };
 use glam::{DMat3, DVec2, DVec3};
@@ -227,13 +227,13 @@ pub struct SpatialPipeline {
 
 impl SpatialPipeline {
     pub fn new(
-        calibration: Calibration,
+        input: &InputSettings,
         roll: RollSettings,
         grade: PhotoGradeSnapshot,
         camera_to_ap1: DMat3,
     ) -> Result<Self, Error> {
         Ok(Self {
-            global: Pipeline::new(calibration, roll, grade.global, camera_to_ap1)?,
+            global: Pipeline::new(input, roll, grade.global, camera_to_ap1)?,
             locals: grade.locals,
         })
     }

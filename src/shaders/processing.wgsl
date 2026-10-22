@@ -33,11 +33,14 @@ fn main(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) group
     if index >= source_pixel_count() {
         return;
     }
+    let source = convert_source(scans[index], index);
     if parameters.gamma_mode.w > 0.5 {
-        let global = process_film(convert_source(scans[index], index));
+        // Graded positive render: interpret the input stage, then shared grade + locals.
+        let global = process_film(source);
         positives[index] =
             finish_pixel(ProcessedPixel(local_grade(global.rgb, index), global.flags));
     } else {
-        positives[index] = process_camera_source(convert_source(scans[index], index));
+        // Raw source inspection: no interpretation, no creative grade.
+        positives[index] = process_camera_source(source);
     }
 }

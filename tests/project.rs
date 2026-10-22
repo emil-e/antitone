@@ -1,7 +1,7 @@
 #![cfg(feature = "project")]
 use antitone::{
     color::Balance,
-    processing::{PhotoSettings, Pipeline},
+    processing::{InputKind, PhotoSettings, Pipeline},
     project::*,
 };
 use glam::DVec3;
@@ -132,6 +132,21 @@ fn accepted_per_source_analysis_support_roundtrips_and_rejects_invalid_associati
     assert!(!legacy.analysis_regions[0].areas.opening_shared);
     assert!(legacy.analysis_regions[0].areas.picture_geometry.is_none());
     legacy.validate().unwrap();
+}
+
+#[test]
+fn input_stage_roundtrips() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut project, _id, _other) = fixture(directory.path());
+    // New projects default to Digital (already positive); the value persists exactly.
+    assert_eq!(project.input_stage, InputKind::Digital);
+    let roundtrip: Project =
+        serde_json::from_value(serde_json::to_value(&project).unwrap()).unwrap();
+    assert_eq!(roundtrip.input_stage, InputKind::Digital);
+    project.input_stage = InputKind::Negative;
+    let roundtrip: Project =
+        serde_json::from_value(serde_json::to_value(&project).unwrap()).unwrap();
+    assert_eq!(roundtrip.input_stage, InputKind::Negative);
 }
 
 #[test]
