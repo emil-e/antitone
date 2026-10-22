@@ -1662,6 +1662,100 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "read-only local Canon/Nikon RAW samples; decode, development and eligibility invariants"]
+    fn canon_and_nikon_samples_develop_through_the_accepted_camera_domain() {
+        // Three-colour integer Bayer bodies across both vendors' container variants,
+        // including a 12-bit compressed NEF and actual camera-scanned negatives.
+        let samples = [
+            (
+                "samples/raw-downloads/canon/5dmk2-raw.CR2",
+                ("Canon", "EOS 5D Mark II", 14),
+            ),
+            (
+                "samples/raw-downloads/canon/eosr-raw-iso100.CR3",
+                ("Canon", "EOS R", 14),
+            ),
+            (
+                "samples/raw-downloads/canon/eosr-craw-iso100.CR3",
+                ("Canon", "EOS R", 14),
+            ),
+            (
+                "samples/raw-downloads/canon/r6-raw-nocrop-nodual.CR3",
+                ("Canon", "EOS R6", 14),
+            ),
+            (
+                "samples/raw-downloads/nikon/d750-lossless-14bit.NEF",
+                ("Nikon", "D750", 14),
+            ),
+            (
+                "samples/raw-downloads/nikon/d750-compressed-12bit.NEF",
+                ("Nikon", "D750", 12),
+            ),
+            (
+                "samples/raw-downloads/nikon/d850-lossless-14bit.NEF",
+                ("Nikon", "D850", 14),
+            ),
+            (
+                "samples/raw-downloads/nikon/z7-lossless-14bit.NEF",
+                ("Nikon", "Z 7", 14),
+            ),
+            (
+                "samples/raw-downloads/negative-scans/negadoctor-challenge-canondslr.CR2",
+                ("Canon", "EOS 600D", 14),
+            ),
+            (
+                "samples/raw-downloads/negative-scans/negadoctor-snowy-day-d780.NEF",
+                ("Nikon", "D780", 14),
+            ),
+        ];
+        for (path, (make, model, bps)) in samples {
+            let mut raw = RawFile::open(Path::new(path)).unwrap();
+            let metadata = raw.metadata;
+            assert_eq!(metadata.make(), *make, "{path}");
+            assert_eq!(metadata.model(), *model, "{path}");
+            assert_eq!(metadata.raw_bps, bps, "{path}");
+            // The acceptance domain: three-colour integer Bayer, no repeated black pattern.
+            assert_eq!(metadata.colors, 3);
+            assert_ne!(metadata.filters, 0);
+            assert_eq!(
+                metadata.vendor.sony_lens.distortion_status(),
+                SonyLensDataStatus::Absent,
+                "{path}"
+            );
+            let wb = metadata.as_shot_wb();
+            assert!(wb.iter().all(|v| v.is_finite() && *v > 0.), "{path}");
+            let area = metadata.image_area().unwrap();
+            assert!(area.width > 0 && area.height > 0, "{path}");
+            // Development is repeatable and keeps the metadata-declared area.
+            let first = raw.develop_camera(wb).unwrap();
+            assert_eq!(
+                [first.width, first.height],
+                metadata.source_dimensions().unwrap(),
+                "{path}"
+            );
+            let picks = [
+                (area.x, area.y),
+                (area.x + area.width / 2, area.y + area.height / 2),
+                (area.x + area.width - 1, area.y + area.height - 1),
+            ];
+            let expected: Vec<_> = picks
+                .into_iter()
+                .map(|(x, y)| first.pixel_samples(x, y).unwrap())
+                .collect();
+            let second = raw.develop_camera(wb).unwrap();
+            for ((x, y), value) in picks.into_iter().zip(expected) {
+                assert_eq!(second.pixel_samples(x, y).unwrap(), value, "{path}");
+            }
+            // Eligibility of the whole active area matches its sensor diagnostics.
+            let flags = raw.capture_eligibility(area).unwrap();
+            let diagnostics = raw.region_sensor_diagnostics(area).unwrap();
+            assert_eq!(flags, CaptureFlags::from(diagnostics), "{path}");
+        }
+        // sRAW/mRAW is decimated pre-demosaiced output, not CFA sensor data: rejected.
+        assert!(RawFile::open(Path::new("samples/raw-downloads/canon/6d-sraw.CR2")).is_err());
+    }
+
+    #[test]
     #[ignore = "read-only local portrait Canon RAW sample; composition-seed invariant"]
     fn portrait_sources_seed_the_composition_orientation_setting() {
         let path =

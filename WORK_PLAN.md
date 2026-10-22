@@ -128,17 +128,24 @@ peers (darktable, RawTherapee, Adobe) use external measured databases
   unvalidated publicly) and LensFun/LCP-style measured-database support for
   general lenses. The DNG path already applies vendor corrections via opcodes
   where converters bake them, which covers DNG-routed digital input.
-3. **Real-sample tests.** `#[ignore]`d sample tests mirroring the Sony pattern for
-   at least CR2, CR3/CRAW and NEF (develop, diagnostics, fixed-WB basis, export
-   path where sample-dependent checks exist). Keep the probe's D780 dense-blue
-   case as a documented diagnostic behavior, not an editor rejection.
-4. **Black-pattern scalar case (small, optional).** The 1×1 repeated-black
-   declaration (authored fixtures, some future bodies) still rejects at unpack;
-   accept scalar-equivalent declarations while keeping spatial rejection. This
-   is the old plan's starting case and remains a real defect for DNG-via-LibRaw.
-5. **Docs.** processing.md's accepted-boundary sentence ("three-colour integer
-   Bayer without repeated black-level patterns"), README input sentence, and
-   the editor/docs scanning guidance — following the documentation skill.
+3. **Real-sample tests — DONE (2026-10-22).** One `#[ignore]d` sample test
+   (`raw::tests::canon_and_nikon_samples_develop_through_the_accepted_camera_domain`)
+   covers ten files: CR2 (5D II, 600D negative scan), CR3 RAW (EOS R, R6), CR3
+   CRAW (EOS R), NEF lossless 14-bit (D750, D850, Z 7, D780 negative scan) and
+   NEF compressed 12-bit (D750). Each asserts vendor/model/precision identity,
+   the acceptance domain (three-colour Bayer, no repeated black), absent
+   vendor lens data, valid as-shot WB, repeatable development covering the
+   metadata area, and whole-area eligibility matching sensor diagnostics; the
+   6D sRAW control asserts open-time rejection (non-CFA decimated output).
+4. **Black-pattern scalar case — DEFERRED.** No sampled body declares repeated
+   black; all present scalar black and pass the existing gate. The authored
+   fixtures route through the DNG SDK backend, so the LibRaw unpack gate does
+   not apply to them. Widening the gate now would accept a case with no known
+   producer; revisit when a real body hits it.
+5. **Docs — DONE (2026-10-22).** processing.md's accepted-boundary sentence now
+   names the domain and its formats (ARW, CR2/CR3 incl. CRAW, NEF) with
+   X-Trans/sRAW as LibRaw-recognized-but-unsupported; README's input sentence
+   matches. check-docs: +16 words per guide, no broken links.
 
 ## Acceptance
 

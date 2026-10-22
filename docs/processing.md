@@ -22,7 +22,7 @@ developed camera RGB
 
 LibRaw develops non-DNG RAWs; the editor routes supported DNGs through Adobe's SDK. Both produce linear camera RGB in an explicit fixed-roll WB basis. These are the camera's three channels, not sRGB and not three isolated film dyes: keeping development fixed means a roll's calibration refers to the same kind of measurement in every photo.
 
-The first scan selects its as-shot WB for the roll; later loads keep that choice. Decoded contents, the camera matrix and WB — not the filename — determine whether a source can be used. LibRaw recognizes more formats than this developer accepts (three-colour integer Bayer without repeated black-level patterns); broader compatibility is future work.
+The first scan selects its as-shot WB for the roll; later loads keep that choice. Decoded contents, the camera matrix and WB — not the filename — determine whether a source can be used. The accepted domain is three-colour integer Bayer without repeated black-level patterns: Sony ARW, Canon CR2/CR3 (including CRAW) and Nikon NEF develop through it. LibRaw recognizes further formats (X-Trans, decimated sRAW/mRAW, others); broader compatibility is future work.
 
 This model inverts before the camera-to-working-space matrix: a matrix mixes channels, while inversion applies a different nonlinear response to each channel. Mixing first would be a different model, not a reordering of this one.
 
