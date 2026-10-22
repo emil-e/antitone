@@ -265,10 +265,28 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
     confirm(harness);
     harness.read(|editor| assert_eq!(editor.document.project, before));
     harness.update(|editor| editor.tasks.elapse(Duration::from_secs(1)));
-    harness.step();
+    for _ in 0..3 {
+        harness.step();
+    }
     harness.get_by_label("Cancel analysis").click();
     harness.step();
-    harness.read(|editor| assert_eq!(editor.document.project, before));
+    harness.read(|editor| {
+        assert_ne!(
+            editor
+                .document
+                .analysis_generation
+                .load(std::sync::atomic::Ordering::Relaxed),
+            editor
+                .document
+                .analysis_pending
+                .as_ref()
+                .unwrap()
+                .request
+                .revision,
+            "Cancel must retire the captured fit before physical admission is released"
+        );
+        assert_eq!(editor.document.project, before);
+    });
     drop(admission);
     wait_for(harness, |editor| !editor.busy);
     harness.read(|editor| assert!(editor.document.analysis_pending.is_none()));
