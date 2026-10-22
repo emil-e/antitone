@@ -151,7 +151,7 @@ Demanded immutable full-resolution developments and uncorrected proxies are reta
 
 ### Scheduling and readiness
 
-One [native priority worker](../src/editor_development.rs) serves selected/reference/Analyze and thumbnail development: foreground work precedes visible misses, then eager work for unvisited sources. Cancelling a GPU ticket releases visible admission without discarding already-owned CPU/disk work. CPU/disk preloads and GPU-ready cards have separate completion states, allowing idle work to render an offscreen card later. [Native scheduling](native-development.md#editor-scheduling) explains the thread policy and its latency tradeoff.
+Two [native owners](../src/editor_development.rs) at most serve selected/reference/Analyze and thumbnail development: each keeps worker-local mutable RAW handles and runs one synchronous unpack/development call at a time. Foreground work precedes visible misses, then eager work for unvisited sources; a pending foreground demand can start on a free owner, while background work starts only while no foreground demand exists. Cancelling a GPU ticket releases visible admission without discarding already-owned CPU/disk work. CPU/disk preloads and GPU-ready cards have separate completion states, allowing idle work to render an offscreen card later. [Native scheduling](native-development.md#editor-scheduling) explains the thread policy and its latency tradeoff.
 
 ### Positive thumbnail reuse
 

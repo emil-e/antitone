@@ -39,7 +39,7 @@ Export instead owns an application-level batch: fixed recipes, resolved paths, c
 Workflows never block; services run the work off the UI thread and workflows await typed results:
 
 - **Blocking admission.** Synchronous foreground jobs share one editor-owned permit ([`blocking_jobs.rs`](../src/blocking_jobs.rs)), serializing conservative physical work across visits. A source wait occupies neither a blocking worker nor an additional permit.
-- **One native priority worker** ([`editor_development.rs`](../src/editor_development.rs)) serves foreground, visible and eager development, arbitrating between non-interruptible calls. [Scheduling rationale](native-development.md#editor-scheduling) describes the tradeoff.
+- **Two native owners at most** ([`editor_development.rs`](../src/editor_development.rs)) serve foreground, visible and eager development; each runs one non-interruptible call with worker-local mutable RAW handles, background work yields to foreground demand, and the pair collapses to one owner under memory pressure. [Scheduling rationale](native-development.md#editor-scheduling) describes the tradeoff.
 - **Thumbnail and embedded-preview processing** ([`editor_thumbnail_worker.rs`](../src/editor_thumbnail_worker.rs)) is a background path, not another RAW development pool: it never borrows the selected `Scan` from foreground operations, GPU processing is serial, and obsolete tickets never install images.
 - **The CPU store** ([`source_store.rs`](../src/source_store.rs)) is a byte-bounded, oldest-unprotected LRU: active leases survive eviction, selected/visible proxies are protected separately, and native cache ownership is always optional. Retention settings and pressure behavior: [editor](editor.md#retention-settings-and-pressure).
 

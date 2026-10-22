@@ -100,6 +100,18 @@ impl Metadata {
         }
     }
 
+    /// The direct-SDK route, whose transactions the bridge serializes process-wide.
+    pub(crate) fn uses_sdk(&self) -> bool {
+        #[cfg(feature = "dng-sdk")]
+        {
+            self.sdk.is_some()
+        }
+        #[cfg(not(feature = "dng-sdk"))]
+        {
+            false
+        }
+    }
+
     pub fn dng_identity(&self) -> Option<String> {
         #[cfg(feature = "dng-sdk")]
         if let Some(header) = self.sdk {
@@ -479,15 +491,23 @@ impl DevelopmentPriority {
         cpus.saturating_sub(2).max(1).min(cap) as c_int
     }
 
-    fn current_threads(self) -> c_int {
-        self.threads(
-            std::thread::available_parallelism().map_or(1, usize::from),
-            crate::resources::memory_pressure(),
-        )
+    /// Concurrent native owners split the reported budget; never below one thread.
+    fn shared_threads(
+        self,
+        cpus: usize,
+        pressure: crate::resources::MemoryPressure,
+        share: usize,
+    ) -> c_int {
+        (self.threads(cpus, pressure) / share.max(1) as c_int).max(1)
     }
 }
 
 /// Mutable SDK ownership stays worker-local, unlike a consumed frozen source.
+/// Concurrent use would break the bridge's lend contract; forbidding even
+/// sequential thread migration is a deliberate conservative boundary, not a
+/// LibRaw mandate (the pinned source uses no thread-local state). Before
+/// relaxing it, audit migration safety, the lend-until-next-mutable-call
+/// contract across calls, and DNG SDK/XMP transaction serialization.
 /// ```compile_fail
 /// fn send<T: Send>() {}
 /// send::<antitone::raw::RawFile>();
@@ -501,6 +521,7 @@ pub struct RawFile {
     pub metadata: Metadata,
     unpacked: bool,
     priority: DevelopmentPriority,
+    share: usize,
     diagnostics: Option<SensorDiagnostics>,
     camera_view: Option<NativeView>,
     correction: Option<crate::lens::EmbeddedLensGeometry>,
@@ -549,6 +570,7 @@ impl RawFile {
             metadata: Metadata::from_native(unsafe { metadata.assume_init() }),
             unpacked: false,
             priority: DevelopmentPriority::default(),
+            share: 1,
             diagnostics: None,
             camera_view: None,
             correction: None,
@@ -676,6 +698,20 @@ impl RawFile {
         self.priority = priority;
     }
 
+    /// Divides the execution budget across concurrent native owners. Resource
+    /// scheduling only, exactly like [`Self::set_development_priority`].
+    pub fn set_development_share(&mut self, share: usize) {
+        self.share = share.max(1);
+    }
+
+    fn call_threads(&self) -> c_int {
+        self.priority.shared_threads(
+            std::thread::available_parallelism().map_or(1, usize::from),
+            crate::resources::memory_pressure(),
+            self.share,
+        )
+    }
+
     pub(crate) fn ensure_unpacked(&mut self) -> Result<(), Error> {
         #[cfg(feature = "dng-sdk")]
         if self.metadata.sdk.is_some() {
@@ -691,7 +727,7 @@ impl RawFile {
         let code = unsafe {
             antitone_raw_unpack(
                 self.handle.as_ptr(),
-                self.priority.current_threads(),
+                self.call_threads(),
                 error.as_mut_ptr(),
                 error.len(),
             )
@@ -876,7 +912,7 @@ impl RawFile {
                 &self.path,
                 sdk_options(Some(fixed_wb))?,
                 &crate::dng::Cancellation::default(),
-                self.priority.current_threads() as u32,
+                self.call_threads() as u32,
             )
             .map_err(|e| Error::Raw(e.to_string()))?;
             println!(
@@ -900,7 +936,7 @@ impl RawFile {
         }
         let started = std::time::Instant::now();
         self.ensure_unpacked()?;
-        let threads = self.priority.current_threads();
+        let threads = self.call_threads();
         let unpack_seconds = started.elapsed().as_secs_f64();
         let tick = std::time::Instant::now();
         self.camera_view = None;
@@ -1659,6 +1695,25 @@ mod tests {
         assert_eq!(DevelopmentPriority::Background.threads(18, Normal), 2);
         assert_eq!(DevelopmentPriority::Background.threads(18, Warning), 1);
         assert_eq!(DevelopmentPriority::Foreground.threads(18, Critical), 1);
+        // Concurrent owners split the budget without ever dropping below one thread.
+        assert_eq!(
+            DevelopmentPriority::Foreground.shared_threads(18, Normal, 1),
+            8
+        );
+        assert_eq!(
+            DevelopmentPriority::Foreground.shared_threads(18, Normal, 2),
+            4
+        );
+        assert_eq!(
+            DevelopmentPriority::Foreground.shared_threads(18, Critical, 2),
+            1
+        );
+        for share in 0..=8 {
+            for pressure in [Normal, Warning, Critical] {
+                let count = DevelopmentPriority::Foreground.shared_threads(18, pressure, share);
+                assert!((1..=8).contains(&count));
+            }
+        }
     }
 
     #[test]
