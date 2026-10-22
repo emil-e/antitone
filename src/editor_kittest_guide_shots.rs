@@ -20,6 +20,7 @@ use std::path::Path;
 #[test]
 fn documented_states_render() {
     let scans = doc_scans();
+    let roll_size = scans.len();
     let first_label = file_label(&scans[0]);
     let second_label = file_label(&scans[1]);
     // 2× density gives the captured screenshots retina resolution; the builder
@@ -31,6 +32,14 @@ fn documented_states_render() {
             !e.busy && e.document_pending.is_none()
         });
         harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
+
+        // The scans read from the emulsion side arrive top/bottom mirrored; the
+        // shared scan baseline corrects all photos at once, before analysis.
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, "Flip vertical")
+            .click();
+        harness.step();
+        wait_for(&mut harness, |e| !e.busy);
 
         // Analyze's sampling-area review, entered immediately after loading like
         // the analysis tests do; interaction before it can change tool
@@ -73,18 +82,29 @@ fn documented_states_render() {
         });
         harness.read(|editor| assert!(editor.dmin.is_some(), "{}", editor.status));
 
-        // The Photo tab with the second photograph selected.
+        // The Photo tab with the second photograph selected. The canvas shows
+        // the developed, roll-graded photograph only once the visit is ready,
+        // and filmstrip cards paint graded positives only once development
+        // lands; capturing earlier would record preview fallbacks instead of
+        // the documented grade.
         harness.get_by_label(&second_label).click();
         harness.step();
         wait_for(&mut harness, |e| !e.busy);
         tab(&mut harness, "Photo");
-        settle(&mut harness);
+        wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
+            !e.busy && e.document.visit.ready.is_some()
+        });
+        wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
+            e.thumbnails.ready_count(&e.document, e.target) == roll_size
+        });
+        settle_view(&mut harness);
         save_capture(&harness.render().unwrap(), "getting-started-filmstrip");
 
         // The viewer bar with its help popover open.
         harness.get_by_label("Viewer help").click();
         frames(&mut harness);
         assert!(egui::Popup::is_any_open(&harness.ctx));
+        settle_view(&mut harness);
         save_capture(&harness.render().unwrap(), "viewer-bar");
         harness.event(escape());
         harness.step();
@@ -98,16 +118,23 @@ fn documented_states_render() {
             ));
         });
         frames(&mut harness);
+        settle_view(&mut harness);
         save_capture(&harness.render().unwrap(), "export-dialog");
         harness.update(|editor| editor.export_dialog = None);
 
-        // The overview last: filmstrip thumbnails are sure to be developed and
-        // painted by now, even for full-resolution scans.
+        // The overview last, back on the first photograph: both photographs are
+        // developed by now, so the filmstrip and the canvas show graded
+        // positives even for full-resolution scans.
         harness.get_by_label(&first_label).click();
         harness.step();
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
+            !e.busy && e.document.visit.ready.is_some()
+        });
         tab(&mut harness, "Roll");
-        settle(&mut harness);
+        wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
+            e.thumbnails.ready_count(&e.document, e.target) == roll_size
+        });
+        settle_view(&mut harness);
         save_capture(&harness.render().unwrap(), "window-overview");
     });
 }
@@ -151,24 +178,29 @@ fn frames(harness: &mut Harness<'_, Editor>) {
     }
 }
 
+/// Waits until the canvas's working view matches the current positive
+/// processing — the state the workflow actually leaves the view in. Capturing
+/// earlier records the provisional preview instead of the graded view.
+fn settle_view(harness: &mut Harness<'_, Editor>) {
+    wait_for_with_timeout(harness, Duration::from_secs(600), |e| {
+        assert!(e.working.error.is_none(), "{:?}", e.working.error);
+        if e.working.revision().is_none() {
+            return false;
+        }
+        let expected = e
+            .positive_processing(e.calibration().unwrap(), e.roll, e.photo)
+            .unwrap();
+        !e.working.updating
+            && e.working.displayed.as_ref().is_some_and(|view| {
+                view.processing == expected.signature() && view.target == e.target
+            })
+    });
+    frames(harness);
+}
+
 fn tab(harness: &mut Harness<'_, Editor>, name: &str) {
     harness
         .get_by_role_and_label(egui::accesskit::Role::Tab, name)
         .click();
     frames(harness);
-}
-
-/// Lets background thumbnail development and painting land before a capture.
-/// Full-resolution development is served behind foreground work, so capture runs
-/// wait generously; the assertions themselves do not depend on it.
-fn settle(harness: &mut Harness<'_, Editor>) {
-    let rounds = if std::env::var_os("ANTITONE_UI_CAPTURE").is_some() {
-        60
-    } else {
-        4
-    };
-    for _ in 0..rounds {
-        std::thread::sleep(Duration::from_millis(150));
-        harness.step();
-    }
 }
