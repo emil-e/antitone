@@ -34,6 +34,14 @@ Run `cargo xtask all` in a checkout with no `target/`, `.cache/` or native-prefi
 
 Re-run after preparation to check that setup/building is repeatable. A separate relocated-package check establishes the bundle's loading independence, not clean-machine or minimum-OS compatibility. Retain the relevant command results and limits when reporting verification.
 
+## Continuous integration
+
+[ci.yml](../.github/workflows/ci.yml) runs the hosted-runnable subset on `macos-15` (Apple Silicon) for pull requests, pushes to `main` and manual dispatch. The `checks` job runs `cargo xtask tools`, the formatting gate, the documentation link gate, the packaging/format-tool unit tests and the numerical-core tests. The `editor` job runs `cargo xtask setup`, the Metal-free direct-SDK adapter tests, production and all-features clippy, then `cargo xtask package`/`verify-package` and uploads the ZIP as a workflow artifact.
+
+Hosted macOS runners provide no Metal device, so CI deliberately does not run the editor library tests, kittest `ui-tests` or GPU suites; a green CI run is not equivalent to a full local `cargo xtask check`. Missing Metal is a coverage limit to run locally or on a labeled self-hosted runner, not something to silence in the workflow. GitHub's runner images also change over time (Xcode and tool versions drift); the pinned native-dependency cache is keyed on the setup scripts, so force a fresh cache when a runner-image change needs re-verification.
+
+CI uses SHA-pinned actions with `contents: read` permissions, per-run concurrency cancellation, and selects Xcode 26.3 via `DEVELOPER_DIR` because the image's default Xcode (16.4) ships a `swift-format` too old for the checked-in `.swift-format` schema. A runner-image update may require re-pinning that path. Cached paths are the pinned native dependencies and format tools (keyed on the setup scripts) and Cargo downloads (keyed on the lockfile); `target/` is not cached. The workflow mirrors the documented local commands rather than defining a second build system.
+
 ## Before public distribution
 
 The current ZIP is a local test artifact. [NOTICE.md](../NOTICE.md) describes license/asset and release boundaries. Native dependencies need review alongside Cargo dependencies; the generated inventory is not a legal-compatibility checker. Public release work still includes a fresh dependency/asset license review, outstanding asset clearance, Developer ID signing/notarization if chosen, clean-machine execution and platform-specific acceptance. Do not infer release clearance from a green build or a valid ad-hoc signature.

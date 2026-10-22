@@ -34,36 +34,49 @@ fn prerequisites() -> Result {
     Ok(())
 }
 
-fn setup() -> Result {
-    prerequisites()?;
-    run("sh", &["scripts/setup-native.sh"])?;
+fn install_tools() -> Result {
     let tools = Path::new(".cache/format-tools");
     fs::create_dir_all(tools)?;
     if !tools.join("venv/bin/python").exists() {
         run("python3", &["-m", "venv", ".cache/format-tools/venv"])?;
     }
-    run(
-        ".cache/format-tools/venv/bin/python",
-        &[
-            "-m",
-            "pip",
+    if !(tools.join("venv/bin/ruff").exists() && tools.join("venv/bin/clang-format").exists()) {
+        run(
+            ".cache/format-tools/venv/bin/python",
+            &[
+                "-m",
+                "pip",
+                "install",
+                "ruff==0.17.1",
+                "clang-format==22.1.8",
+            ],
+        )?;
+    }
+    if !tools.join("bin/wgslfmt").exists() {
+        cargo(&[
             "install",
-            "ruff==0.17.1",
-            "clang-format==22.1.8",
-        ],
-    )?;
-    cargo(&[
-        "install",
-        "--git",
-        "https://github.com/wgsl-analyzer/wgsl-analyzer",
-        "--rev",
-        "58a9aba79a0e0f9d3fef12a5ef0e577b3c4a2ae4",
-        "--locked",
-        "--root",
-        ".cache/format-tools",
-        "wgslfmt",
-    ])?;
+            "--git",
+            "https://github.com/wgsl-analyzer/wgsl-analyzer",
+            "--rev",
+            "58a9aba79a0e0f9d3fef12a5ef0e577b3c4a2ae4",
+            "--locked",
+            "--root",
+            ".cache/format-tools",
+            "wgslfmt",
+        ])?;
+    }
     cargo(&["fetch", "--locked"])
+}
+
+fn tools() -> Result {
+    prerequisites()?;
+    install_tools()
+}
+
+fn setup() -> Result {
+    prerequisites()?;
+    run("sh", &["scripts/setup-native.sh"])?;
+    install_tools()
 }
 
 fn check() -> Result {
@@ -168,6 +181,7 @@ fn main() -> Result {
     }
     match action {
         "setup" => setup(),
+        "tools" => tools(),
         "doctor" => prerequisites(),
         "check" => check(),
         "build" => build(),
@@ -181,7 +195,7 @@ fn main() -> Result {
         }
         "help" | "--help" | "-h" => {
             println!(
-                "cargo xtask <doctor|setup|check|build|package|verify-package|all>\n\nsetup downloads/builds pinned dependencies and installs formatters locally.\ncheck requires native setup and Metal, but opens no desktop windows.\npackage builds the production editor and creates a local .app and ZIP.\nverify-package extracts the ZIP, audits its runtime paths/signature and runs it.\nall performs setup, check, package and verification. No system packages are installed."
+                "cargo xtask <doctor|setup|tools|check|build|package|verify-package|all>\n\nsetup downloads/builds pinned dependencies and installs formatters locally.\ntools installs only the pinned formatting tools and warms Cargo downloads; no native build.\ncheck requires native setup and Metal, but opens no desktop windows.\npackage builds the production editor and creates a local .app and ZIP.\nverify-package extracts the ZIP, audits its runtime paths/signature and runs it.\nall performs setup, check, package and verification. No system packages are installed."
             );
             Ok(())
         }
