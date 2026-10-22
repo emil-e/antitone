@@ -12,6 +12,10 @@ use crate::sampling::mean;
 #[path = "raw_sony.rs"]
 mod sony;
 pub use sony::{SonyLensData, SonyLensDataStatus};
+#[path = "raw_orientation.rs"]
+mod orientation;
+pub use orientation::Rotation;
+use orientation::{rotate_f32_rgb_in_place, rotate_u16_rgba};
 #[path = "raw_eligibility.rs"]
 mod eligibility;
 #[path = "raw_lens.rs"]
@@ -72,11 +76,14 @@ pub struct VendorMetadata {
 
 /// Shared source descriptor. LibRaw supplies the header/container fields; SDK DNG
 /// development supplies its own geometry, camera basis, precision and interpretation.
+/// Developed rasters and their published areas are upright (`rotation`); native sensor
+/// data, lens geometry and sensor diagnostics stay in unrotated camera coordinates.
 #[derive(Debug, Clone, Copy)]
 pub struct Metadata {
     native: NativeMetadata,
     #[cfg(feature = "dng-sdk")]
     sdk: Option<crate::dng::Header>,
+    rotation: Rotation,
 }
 
 impl std::ops::Deref for Metadata {
@@ -97,7 +104,13 @@ impl Metadata {
             native,
             #[cfg(feature = "dng-sdk")]
             sdk: None,
+            rotation: Rotation::None,
         }
+    }
+
+    /// Orientation of developed rasters relative to the native sensor data.
+    pub fn rotation(&self) -> Rotation {
+        self.rotation
     }
 
     pub fn dng_identity(&self) -> Option<String> {
@@ -218,9 +231,10 @@ impl Metadata {
     }
 
     pub fn source_dimensions(&self) -> Result<[u32; 2], Error> {
-        Ok(self
-            .lens_geometry()?
-            .map_or([self.width, self.height], |g| g.size()))
+        Ok(self.rotation.size(
+            self.lens_geometry()?
+                .map_or([self.width, self.height], |g| g.size()),
+        ))
     }
 
     pub fn lens_identity(&self) -> Result<Option<String>, Error> {
@@ -229,7 +243,7 @@ impl Metadata {
 
     pub fn image_area(&self) -> Result<Rect, Error> {
         if let Some(geometry) = self.lens_geometry()? {
-            let [width, height] = geometry.size();
+            let [width, height] = self.rotation.size(geometry.size());
             return Ok(Rect {
                 x: 0,
                 y: 0,
@@ -237,7 +251,9 @@ impl Metadata {
                 height,
             });
         }
-        self.native_image_area()
+        Ok(self
+            .rotation
+            .rect_native_to_developed(self.native_image_area()?, [self.width, self.height]))
     }
 
     pub fn native_image_area(&self) -> Result<Rect, Error> {
@@ -453,10 +469,28 @@ pub struct RawFile {
     camera_view: Option<NativeView>,
     correction: Option<crate::lens::EmbeddedLensGeometry>,
     corrected: Option<lens_source::CorrectedImage>,
+    /// Upright rotation of an uncorrected native development, replacing LibRaw's raster.
+    rotated: Option<RotatedView>,
     #[cfg(feature = "dng-sdk")]
     path: std::path::PathBuf,
     #[cfg(feature = "dng-sdk")]
     dng_source: Option<crate::dng::Source>,
+    /// Upright rotation of an SDK DNG development, replacing the borrowed SDK raster.
+    #[cfg(feature = "dng-sdk")]
+    rotated_dng: Option<RotatedDng>,
+}
+
+/// Owned upright copy of a native RGB16 development, in LibRaw's four-component layout.
+struct RotatedView {
+    pixels: Vec<u16>,
+    size: [u32; 2],
+}
+
+/// Owned upright copy of an SDK DNG camera development.
+#[cfg(feature = "dng-sdk")]
+struct RotatedDng {
+    pixels: Vec<[f32; 3]>,
+    size: [u32; 2],
 }
 
 impl RawFile {
@@ -501,11 +535,15 @@ impl RawFile {
             camera_view: None,
             correction: None,
             corrected: None,
+            rotated: None,
             #[cfg(feature = "dng-sdk")]
             path: source_path.to_path_buf(),
             #[cfg(feature = "dng-sdk")]
             dng_source: None,
+            #[cfg(feature = "dng-sdk")]
+            rotated_dng: None,
         };
+        raw.metadata.rotation = Rotation::from_libraw_flip(raw.metadata.flip)?;
         #[cfg(feature = "dng-sdk")]
         if lens_correction && unsafe { antitone_raw_is_dng(raw.handle.as_ptr()) } != 0 {
             let header = crate::dng::Header::read(
@@ -514,7 +552,7 @@ impl RawFile {
                 &crate::dng::Cancellation::default(),
             )
             .map_err(|e| Error::Raw(e.to_string()))?;
-            raw.set_dng_header(header);
+            raw.set_dng_header(header)?;
         }
         #[cfg(not(feature = "dng-sdk"))]
         let _ = fixed_wb;
@@ -554,7 +592,7 @@ impl RawFile {
     }
 
     #[cfg(feature = "dng-sdk")]
-    fn set_dng_header(&mut self, header: crate::dng::Header) {
+    fn set_dng_header(&mut self, header: crate::dng::Header) -> Result<(), Error> {
         let [width, height] = header.dimensions;
         let [left, top] = header.active_origin;
         let [x, y, cw, ch] = header.default_crop;
@@ -568,7 +606,9 @@ impl RawFile {
         self.metadata.inset_top = top + y;
         self.metadata.inset_width = cw;
         self.metadata.inset_height = ch;
+        self.metadata.rotation = Rotation::from_tiff_orientation(header.orientation)?;
         self.metadata.sdk = Some(header);
+        Ok(())
     }
 
     #[cfg(feature = "dng-sdk")]
@@ -603,7 +643,7 @@ impl RawFile {
                 &crate::dng::Cancellation::default(),
             )
             .map_err(|e| Error::Raw(e.to_string()))?;
-            self.set_dng_header(header);
+            self.set_dng_header(header)?;
         }
         #[cfg(not(feature = "dng-sdk"))]
         let _ = requested;
@@ -710,11 +750,20 @@ impl RawFile {
     fn unpacked_capture_eligibility(&self, area: Rect) -> Result<CaptureFlags, Error> {
         #[cfg(feature = "dng-sdk")]
         if let Some(source) = &self.dng_source {
-            self.validate_dng_region(area)?;
+            let native = source.dimensions();
+            let mapped = self
+                .metadata
+                .rotation
+                .rect_developed_to_native(area, native);
+            self.validate_dng_region(mapped)?;
             let mut flags = CaptureFlags::default();
             for y in area.y..area.y + area.height {
                 for x in area.x..area.x + area.width {
-                    let state = source.capture_state(x, y).unwrap();
+                    let [sx, sy] = self
+                        .metadata
+                        .rotation
+                        .point_developed_to_native([x, y], native);
+                    let state = source.capture_state(sx, sy).unwrap();
                     flags.at_white |= state.original_white();
                     flags.below_black |= state.original_black();
                     flags.repeated_border |= state.repeated_border();
@@ -731,7 +780,12 @@ impl RawFile {
                 "corrected capture eligibility needs camera development".into(),
             ));
         }
-        self.native_region_sensor_diagnostics(area).map(Into::into)
+        let mapped = self
+            .metadata
+            .rotation
+            .rect_developed_to_native(area, [self.metadata.width, self.metadata.height]);
+        self.native_region_sensor_diagnostics(mapped)
+            .map(Into::into)
     }
 
     fn capture_mask(&self) -> Result<eligibility::EligibilityMask, Error> {
@@ -812,6 +866,22 @@ impl RawFile {
         self.develop(fixed_wb, 1)
     }
 
+    /// Upright copy of an SDK camera raster; `None` keeps the borrowed unrotated raster.
+    #[cfg(feature = "dng-sdk")]
+    fn rotate_dng_source(&self, source: &crate::dng::Source) -> Result<Option<RotatedDng>, Error> {
+        if self.metadata.rotation == Rotation::None {
+            return Ok(None);
+        }
+        let size = source.dimensions();
+        let mut pixels = source.camera_rgb().to_vec();
+        let mut rotated = size;
+        rotate_f32_rgb_in_place(&mut pixels, &mut rotated, self.metadata.rotation)?;
+        Ok(Some(RotatedDng {
+            pixels,
+            size: rotated,
+        }))
+    }
+
     fn develop(&mut self, fixed_wb: [f64; 4], output_color: c_int) -> Result<Developed<'_>, Error> {
         #[cfg(feature = "dng-sdk")]
         if self.metadata.sdk.is_some() {
@@ -833,7 +903,8 @@ impl RawFile {
                 self.priority,
                 source.timings()
             );
-            self.set_dng_header(source.header());
+            self.set_dng_header(source.header())?;
+            self.rotated_dng = self.rotate_dng_source(&source)?;
             self.dng_source = Some(source);
             self.unpacked = true;
             return self.camera_image();
@@ -853,6 +924,11 @@ impl RawFile {
         let tick = std::time::Instant::now();
         self.camera_view = None;
         self.corrected = None;
+        self.rotated = None;
+        #[cfg(feature = "dng-sdk")]
+        {
+            self.rotated_dng = None;
+        }
         let mut view = std::mem::MaybeUninit::<NativeView>::zeroed();
         let mut error = [0; 512];
         // A successful bridge call lends its image until the next mutable call or handle destruction.
@@ -883,7 +959,7 @@ impl RawFile {
                 let started = std::time::Instant::now();
                 let support = self.capture_mask()?.ahd_support()?;
                 let original = self.borrow_view(view)?;
-                let corrected = lens_source::reconstruct(
+                let mut corrected = lens_source::reconstruct(
                     original.pixels,
                     [view.width, view.height],
                     geometry,
@@ -904,13 +980,65 @@ impl RawFile {
                     corrected.pixels.capacity() * size_of::<[f32; 3]>(),
                     corrected.eligibility.retained_bytes()
                 );
+                if self.metadata.rotation != Rotation::None {
+                    let started = std::time::Instant::now();
+                    corrected.rotate(self.metadata.rotation)?;
+                    println!(
+                        "orientation_rotation size={:?} seconds={:.6}",
+                        corrected.size,
+                        started.elapsed().as_secs_f64()
+                    );
+                }
                 self.corrected = Some(corrected);
+            } else if self.metadata.rotation != Rotation::None {
+                let rotated = self.rotate_native_view(view)?;
+                self.camera_view = Some(NativeView {
+                    pixels: std::ptr::null(),
+                    ..view
+                });
+                self.rotated = Some(rotated);
             } else {
                 self.camera_view = Some(view);
             }
             return self.camera_image();
         }
+        if self.metadata.rotation != Rotation::None {
+            self.rotated = Some(self.rotate_native_view(view)?);
+            return self.rotated_developed(view);
+        }
         self.borrow_view(view)
+    }
+
+    /// Upright owned copy of a LibRaw-developed raster; releases the bridge's RGB16 image.
+    fn rotate_native_view(&self, view: NativeView) -> Result<RotatedView, Error> {
+        let borrowed = self.borrow_view(view)?;
+        let (pixels, size) = rotate_u16_rgba(
+            borrowed.pixels,
+            [view.width, view.height],
+            self.metadata.rotation,
+        )?;
+        unsafe { antitone_raw_free_image(self.handle.as_ptr()) };
+        Ok(RotatedView { pixels, size })
+    }
+
+    /// Borrows the upright owned copy with the development's remaining view fields.
+    fn rotated_developed(&self, view: NativeView) -> Result<Developed<'_>, Error> {
+        let rotated = self
+            .rotated
+            .as_ref()
+            .ok_or_else(|| Error::Raw("rotated development is not available".into()))?;
+        Ok(Developed {
+            pixels: &rotated.pixels,
+            continuous: None,
+            continuous_scale: 1.,
+            width: rotated.size[0],
+            height: rotated.size[1],
+            maximum: view.maximum,
+            data_maximum: view.data_maximum,
+            warnings: view.warnings,
+            pre_mul: view.pre_mul,
+            _owner: PhantomData,
+        })
     }
 
     pub(crate) fn freeze(self) -> Result<FrozenRaw, Error> {
@@ -932,14 +1060,25 @@ impl RawFile {
             + self
                 .correction
                 .as_ref()
-                .map_or(0, |geometry| geometry.retained_bytes())) as u64;
+                .map_or(0, |geometry| geometry.retained_bytes())
+            + self
+                .rotated
+                .as_ref()
+                .map_or(0, |view| view.pixels.capacity() * size_of::<u16>()))
+            as u64;
         #[cfg(feature = "dng-sdk")]
         let extra = extra
             .checked_add(
                 self.dng_source
                     .as_ref()
-                    .map_or(0, crate::dng::Source::retained_bytes),
+                    .map_or(0, |source| source.retained_bytes() as u64),
             )
+            .ok_or(Error::NumericalOverflow)?;
+        #[cfg(feature = "dng-sdk")]
+        let extra = extra
+            .checked_add(self.rotated_dng.as_ref().map_or(0, |image| {
+                (image.pixels.capacity() * size_of::<[f32; 3]>()) as u64
+            }))
             .ok_or(Error::NumericalOverflow)?;
         Ok(FrozenRaw {
             raw: self,
@@ -951,11 +1090,14 @@ impl RawFile {
     pub fn camera_image(&self) -> Result<Developed<'_>, Error> {
         #[cfg(feature = "dng-sdk")]
         if let Some(source) = &self.dng_source {
-            let [width, height] = source.dimensions();
+            let (continuous, [width, height]) = match &self.rotated_dng {
+                Some(rotated) => (Some(rotated.pixels.as_slice()), rotated.size),
+                None => (Some(source.camera_rgb()), source.dimensions()),
+            };
             let [r, g, b] = source.fixed_wb();
             return Ok(Developed {
                 pixels: &[],
-                continuous: Some(source.camera_rgb()),
+                continuous,
                 continuous_scale: 65535.,
                 width,
                 height,
@@ -983,10 +1125,13 @@ impl RawFile {
                 _owner: PhantomData,
             });
         }
-        self.borrow_view(
-            self.camera_view
-                .ok_or_else(|| Error::Raw("camera development is not available".into()))?,
-        )
+        let view = self
+            .camera_view
+            .ok_or_else(|| Error::Raw("camera development is not available".into()))?;
+        if self.rotated.is_some() {
+            return self.rotated_developed(view);
+        }
+        self.borrow_view(view)
     }
 
     fn borrow_view(&self, view: NativeView) -> Result<Developed<'_>, Error> {
@@ -1504,6 +1649,43 @@ mod tests {
         assert_eq!(DevelopmentPriority::Background.threads(18, Normal), 2);
         assert_eq!(DevelopmentPriority::Background.threads(18, Warning), 1);
         assert_eq!(DevelopmentPriority::Foreground.threads(18, Critical), 1);
+    }
+
+    #[test]
+    #[ignore = "read-only local portrait Canon RAW sample; upright-development invariants"]
+    fn portrait_sources_develop_upright_and_map_eligibility_to_native_coordinates() {
+        let path =
+            Path::new("samples/raw-downloads/negative-scans/negadoctor-challenge-canondslr.CR2");
+        let mut raw = RawFile::open(path).unwrap();
+        assert_eq!(raw.metadata.rotation, Rotation::Cw90);
+        let area = raw.metadata.image_area().unwrap();
+        // The upright area is taller than wide, unlike the native sensor raster, and the
+        // metadata inset rotates with the raster.
+        assert!(area.height > area.width);
+        assert_eq!(
+            area,
+            raw.metadata.rotation.rect_native_to_developed(
+                raw.metadata.native_image_area().unwrap(),
+                [raw.metadata.width, raw.metadata.height]
+            )
+        );
+        let dimensions = raw.metadata.source_dimensions().unwrap();
+        let developed = raw.develop_camera(raw.metadata.as_shot_wb()).unwrap();
+        assert_eq!([developed.width, developed.height], dimensions);
+        assert_eq!([area.width, area.height], [3456, 5184]);
+        // Capture eligibility takes developed rectangles and reports the same flags
+        // as native sensor diagnostics on the mapped sensor rectangle.
+        let upright = Rect {
+            x: area.x + 11,
+            y: area.y + 7,
+            width: 23,
+            height: 17,
+        };
+        let flags = raw.capture_eligibility(upright).unwrap();
+        let native_rect = Rotation::Cw90
+            .rect_developed_to_native(upright, [raw.metadata.width, raw.metadata.height]);
+        let diagnostics = raw.region_sensor_diagnostics(native_rect).unwrap();
+        assert_eq!(flags, CaptureFlags::from(diagnostics));
     }
 
     #[test]

@@ -84,6 +84,28 @@ impl EligibilityMask {
         Ok(result)
     }
 
+    /// Rotates the mask into developed orientation, remapping every site's two-bit flags.
+    pub(super) fn rotate(&self, rotation: crate::raw::Rotation) -> Result<Self, Error> {
+        let native = self.size;
+        let mut result = Self::new(rotation.size(native))?;
+        if rotation == crate::raw::Rotation::None {
+            result.words.copy_from_slice(&self.words);
+            return Ok(result);
+        }
+        let developed = result.size;
+        let row_words = result.row_words;
+        let words = result.words_mut();
+        for y in 0..developed[1] {
+            for x in 0..developed[0] {
+                let [sx, sy] = rotation.point_developed_to_native([x, y], native);
+                let value = self.at(sx, sy);
+                words[y as usize * row_words + x as usize / 32] |=
+                    u64::from(value) << (2 * (x % 32));
+            }
+        }
+        Ok(result)
+    }
+
     pub(super) fn flags(&self, area: Rect) -> Result<CaptureFlags, Error> {
         if area.width == 0
             || area.height == 0
@@ -123,6 +145,34 @@ mod tests {
     fn set(mask: &mut EligibilityMask, x: u32, y: u32, flags: u8) {
         mask.words[y as usize * mask.row_words + x as usize / 32] |=
             u64::from(flags) << (2 * (x % 32));
+    }
+
+    #[test]
+    fn rotation_remaps_every_two_bit_site() {
+        let native = [40u32, 28u32];
+        let mut mask = EligibilityMask::new(native).unwrap();
+        set(&mut mask, 10, 20, 3);
+        set(&mut mask, 39, 0, 1);
+        let rotation = crate::raw::Rotation::Cw90;
+        let rotated = mask.rotate(rotation).unwrap();
+        assert_eq!(rotated.size(), [28, 40]);
+        let [x, y] = rotation.point_native_to_developed([10, 20], native);
+        assert_eq!(rotated.at(x, y), 3);
+        let [x, y] = rotation.point_native_to_developed([39, 0], native);
+        assert_eq!(rotated.at(x, y), 1);
+        let mut sites = 0;
+        for y in 0..rotated.size()[1] {
+            for x in 0..rotated.size()[0] {
+                if rotated.at(x, y) != 0 {
+                    sites += 1;
+                }
+            }
+        }
+        assert_eq!(sites, 2);
+        // An unrotated copy keeps every site in place.
+        let copied = mask.rotate(crate::raw::Rotation::None).unwrap();
+        assert_eq!(copied.at(10, 20), 3);
+        assert_eq!(copied.at(39, 0), 1);
     }
 
     #[test]

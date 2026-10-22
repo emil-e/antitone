@@ -11,6 +11,13 @@ impl CorrectedImage {
     pub(super) fn retained_bytes(&self) -> usize {
         self.pixels.capacity() * size_of::<[f32; 3]>() + self.eligibility.retained_bytes()
     }
+
+    /// Rotates pixels, size and eligibility into developed orientation.
+    pub(super) fn rotate(&mut self, rotation: crate::raw::Rotation) -> Result<(), Error> {
+        super::orientation::rotate_f32_rgb_in_place(&mut self.pixels, &mut self.size, rotation)?;
+        self.eligibility = self.eligibility.rotate(rotation)?;
+        Ok(())
+    }
 }
 
 pub(super) fn reconstruct(

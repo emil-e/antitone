@@ -72,8 +72,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("vendor=none");
         }
         println!(
-            "decoded={}x{} metadata_area={area:?} flip={}",
-            metadata.width, metadata.height, metadata.flip
+            "decoded={}x{} metadata_area={area:?} flip={} rotation={:?}",
+            metadata.width,
+            metadata.height,
+            metadata.flip,
+            metadata.rotation()
         );
         println!(
             "as_shot={:?} fixed_roll_wb={wb:?} daylight={:?}",

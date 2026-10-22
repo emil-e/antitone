@@ -1,8 +1,9 @@
 # Canon and Nikon RAW support (broader LibRaw acceptance)
 
-Status: inventory complete; phase 1 (acceptance & naming) implemented and verified.
-All sampled Canon/Nikon files pass current gates and develop end-to-end; the
-remaining phases are portrait-orientation handling, real-sample tests and docs.
+Status: phases 1-2 complete (vendor-neutral naming; upright portrait
+development). All sampled Canon/Nikon files pass current gates and develop
+end-to-end; remaining: real-sample tests, the optional black-pattern scalar
+case, and docs.
 
 ## Agreed scope
 
@@ -80,13 +81,27 @@ R6; Nikon D750 (12-bit compressed + 14-bit lossless), D7200, D850, Z 7; plus
    `gpu_log_prefix_tests` Metal-accounting flake reproduces on main), authored
    Sony-payload suites 17/17, and bit-identical `antitone-raw-probe` output on the
    real A7C negative scan including the corrected embedded-lens path.
-2. **Portrait-orientation handling.** Justified by the planned digital pipeline
-   (simulating a digital RAW as a negative with grain/halation), where general
-   photography exercises non-zero flip; scans themselves rarely need it (user,
-   2026-10-22). Implement flip handling in the developed-raster path rather than
-   only embedded previews, and verify geometry, crop/scan regions, auto-crop and
-   flat-field consistency with the 600D fixture (`flip=6`), which exercises the
-   path even though it is a scan.
+2. **Portrait-orientation handling — DONE (2026-10-22 checkpoint).** Justified by
+   the planned digital pipeline (simulating a digital RAW as a negative with
+   grain/halation), where general photography exercises non-zero flip; scans
+   themselves rarely need it (user, 2026-10-22). Implemented:
+   - `Rotation` (None/Cw180/Cw90/Ccw90) as the single orientation source of truth,
+     from LibRaw `sizes.flip` (dcraw table) or DNG TIFF orientation; mirrored
+     layouts rejected at open. Transforms replicate LibRaw's own `flip_index`
+     exactly, pinned by a reference test.
+   - Rotation applied at the end of `develop` on all three backends (native RGB16
+     into an owned upright raster with LibRaw's copy released; embedded-lens
+     corrected f32 + eligibility mask; SDK DNG raster into an owned upright copy).
+     `image_area`/`source_dimensions` publish upright geometry; `capture_eligibility`
+     maps developed rectangles to native sensor sites; `region_sensor_diagnostics`
+     keeps its documented native-coordinate contract.
+   - Verified: oriented authored fixtures (orientation 3/6/8 × LibRaw/DNG-SDK ×
+     corrected/uncorrected) match unrotated developments of identical sensor data
+     pixel-for-pixel; the real 600D portrait scan (`flip=6`, Canon CameraInfo
+     makernote orientation) passes upright-development and eligibility-mapping
+     invariants; full `--features editor` lib suite green except the pre-existing
+     Metal allocation flake. Downstream consumers (crops, scan regions, flat field,
+     working views) all consume developed coordinates and need no changes.
 
 ### Lens correction position (user topic, 2026-10-22)
 
