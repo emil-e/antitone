@@ -80,7 +80,7 @@ pub fn propose(active: SourceRegion, areas: &Areas) -> Result<Crop, Error> {
 /// Consume prepared spatial evidence without installing sampling, grading or accepted crops.
 /// The document owner validates metadata freshness before calling this pure adapter.
 pub fn propose_spatial(metadata: &crate::spatial_metadata::SourceRegions) -> Result<Crop, Error> {
-    metadata.visible_picture()
+    metadata.picture_crop()
 }
 
 fn rectangle(active: SourceRegion, q: Quad) -> Result<Crop, Error> {

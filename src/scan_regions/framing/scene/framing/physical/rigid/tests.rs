@@ -158,7 +158,6 @@ fn candidate(frame: PictureGeometry, score: f64, gradient: f64) -> Candidate {
         &calibration,
         rectangle(capture.size, [16., 112., 12., 84.]),
         [true, false, true, false],
-        &light::ExteriorLight::new(&capture, &scene.roles(&capture)),
     )
     .unwrap();
     // Selection tests start with qualified alternatives; physical qualification is
@@ -504,7 +503,6 @@ fn completed_companions_requalify_both_rigid_anchors() {
             &calibrated,
             frame,
             [true, false, true, false],
-            &light::ExteriorLight::new(&capture, &roles),
         )
         .is_err()
     );
@@ -572,7 +570,7 @@ fn a_stronger_internal_line_cannot_move_the_fixed_frame_inward_and_lose_authored
 }
 
 #[test]
-fn camera_clipping_is_inferred_but_film_cuts_blank_and_opposite_only_still_abstain() {
+fn camera_and_film_availability_do_not_replace_nominal_edges_but_unanchored_frames_abstain() {
     let (capture, evidence, scene) = fixture([128, 96], [16., 112., -8., 64.], None, true);
     let report = evaluate(
         &capture,
@@ -586,15 +584,19 @@ fn camera_clipping_is_inferred_but_film_cuts_blank_and_opposite_only_still_absta
     assert_eq!(choice.physical.sides[2], Some(-8.));
     choice.crop.region(capture.area).unwrap();
     let (capture, evidence, scene) = fixture([128, 96], [16., 112., 12., 84.], Some(100.), true);
-    assert!(
-        evaluate(
-            &capture,
-            &evidence,
-            &scene,
-            &calibration_for(&capture, [16., 112., 12., 84.])
-        )
-        .proposal
-        .is_none()
+    let cut = evaluate(
+        &capture,
+        &evidence,
+        &scene,
+        &calibration_for(&capture, [16., 112., 12., 84.]),
+    )
+    .proposal
+    .expect("a film end does not move the inferred original frame");
+    assert_eq!(cut.physical.sides[1], Some(112.));
+    assert!(!cut.measured[1] && cut.inferred[1]);
+    assert_eq!(
+        cut.crop.region(capture.area).unwrap(),
+        SourceRegion::from([171, 137, 960, 720])
     );
     for right in [false, true] {
         let (mut capture, mut evidence, scene) =
@@ -621,6 +623,66 @@ fn camera_clipping_is_inferred_but_film_cuts_blank_and_opposite_only_still_absta
             .is_none()
         );
     }
+}
+
+#[test]
+fn unavailable_material_cannot_hide_picture_continuation_on_the_surviving_inferred_edge() {
+    let bounds = [16., 112., 12., 84.];
+    let (mut capture, _, scene) = fixture([128, 96], bounds, Some(100.), true);
+    let calibration = calibration_for(&capture, bounds);
+    let frame = rectangle(capture.size, bounds);
+    let roles = scene.roles(&capture);
+    assert!(
+        assess(
+            &scene,
+            &capture,
+            &roles,
+            &calibration,
+            frame.clone(),
+            [true, false, true, false]
+        )
+        .is_ok(),
+        "pure missing film does not veto the nominal frame"
+    );
+    // Three quarters of the inferred right edge are unavailable. Along the surviving
+    // quarter the picture actually continues past that edge; both facts must survive.
+    for y in 12..30 {
+        for x in 100..128 {
+            capture.rgb[y * 128 + x] = [6000; 3];
+        }
+    }
+    let roles = scene.roles(&capture);
+    let exterior = calibration.template.as_ref().unwrap().exterior;
+    assert!(
+        Mode::Joint
+            .measure(&capture, &roles, &frame, 0, exterior[0])
+            .measured()
+    );
+    assert!(
+        Mode::Joint
+            .measure(&capture, &roles, &frame, 2, exterior[2])
+            .measured()
+    );
+    let side = Mode::Joint.measure(&capture, &roles, &frame, 1, exterior[1]);
+    assert!(
+        side.support.contradicted(),
+        "fixture must exercise unavailable material as well as picture continuation"
+    );
+    assert!(side.directional.as_ref().unwrap().contradictory_stations >= 12);
+    assert!(
+        matches!(
+            assess(
+                &scene,
+                &capture,
+                &roles,
+                &calibration,
+                frame,
+                [true, false, true, false]
+            ),
+            Err("perimeter_contradiction")
+        ),
+        "a fit supported by two real anchors still cannot contradict surviving picture evidence"
+    );
 }
 
 #[test]

@@ -174,7 +174,6 @@ fn assess(
     calibration: &Calibration,
     frame: PictureGeometry,
     measured: [bool; 4],
-    light: &light::ExteriorLight,
 ) -> Result<Candidate, &'static str> {
     if measured[..2].iter().filter(|&&v| v).count() != 1
         || measured[2..].iter().filter(|&&v| v).count() != 1
@@ -182,15 +181,7 @@ fn assess(
         return Err("nonadjacent_anchors");
     }
     let template = validation_template(capture, calibration, &frame);
-    let (crop, sides) = eligible_with(
-        scene,
-        capture,
-        roles,
-        &frame,
-        template.as_ref(),
-        light,
-        Mode::Joint,
-    )?;
+    let (crop, sides) = nominal_with(scene, capture, roles, &frame, template.as_ref())?;
     let actual = sides.each_ref().map(Side::measured);
     if (0..4).any(|side| measured[side] && !actual[side]) {
         return Err("unidentified_completed_anchor");
@@ -329,7 +320,6 @@ fn search(
                 .then_with(|| a.angle_degrees.total_cmp(&b.angle_degrees))
         });
     }
-    let light = light::ExteriorLight::new(capture, roles);
     let mut report = Report::default();
     let mut candidates = vec![];
     let mut seen = BTreeSet::new();
@@ -343,7 +333,7 @@ fn search(
             return;
         }
         report.tested += 1;
-        match assess(scene, capture, roles, calibration, frame, measured, &light) {
+        match assess(scene, capture, roles, calibration, frame, measured) {
             Ok(mut candidate) => {
                 candidate.native_angles = angles;
                 candidate.origin = if angles.is_some() {

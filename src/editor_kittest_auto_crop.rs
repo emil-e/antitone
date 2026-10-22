@@ -529,6 +529,80 @@ fn roll_shelf_keeps_orientation_and_tools_fixed_and_preserves_photo_exceptions()
 }
 
 #[test]
+fn missing_film_does_not_remove_roll_proposals_or_trim_their_applied_nominal_frames() {
+    for size in [egui::vec2(1440., 1000.), egui::vec2(900., 900.)] {
+        setup(|mut h, _directory| {
+            h.set_size(size);
+            h.step();
+            let expected = h.update(|editor| {
+                let mut metadata = (*editor.document.spatial.ready()).clone();
+                let expected: Vec<_> = metadata.groups[0]
+                    .sources
+                    .iter()
+                    .map(|r| {
+                        (
+                            r.input.source,
+                            crate::auto_crop::propose_spatial(r).unwrap(),
+                        )
+                    })
+                    .collect();
+                let row = &mut metadata.groups[0].sources[0];
+                row.observation.as_mut().unwrap().boundaries[0] =
+                    crate::spatial_metadata::Boundary::Unknown;
+                let plane = row.picture.as_ref().unwrap().boundaries[0].plane().unwrap();
+                row.picture.as_mut().unwrap().boundaries[0] =
+                    crate::spatial_metadata::Boundary::Inferred { plane };
+                row.film = Some(crate::spatial_metadata::Region {
+                    angle: 0.,
+                    skew: 0.,
+                    boundaries: [
+                        crate::spatial_metadata::Boundary::Measured {
+                            plane: [1., 0., 120.],
+                        },
+                        crate::spatial_metadata::Boundary::Unknown,
+                        crate::spatial_metadata::Boundary::Unknown,
+                        crate::spatial_metadata::Boundary::Unknown,
+                    ],
+                });
+                row.material = Some(crate::scan_regions::Material {
+                    size: [768, 512],
+                    xs: vec![128, 640],
+                    ys: vec![256],
+                    labels: "LF".into(),
+                });
+                metadata.groups[0].common_size =
+                    crate::spatial_metadata::CommonSize::fit(&metadata.groups[0].sources);
+                publish_regions(editor, metadata);
+                editor.auto_crop_margin = 0.;
+                expected
+            });
+            let before = h.read(|editor| editor.document.project.clone());
+            stage(&mut h, "Roll");
+            click_action(&mut h, "Auto-crop roll");
+            overlay::wait_context(&mut h);
+            assert!(!h.get_by_label("Apply").accesskit_node().is_disabled());
+            assert!(h.query_by_label("Tool warning").is_none());
+            h.read(|editor| {
+                for (id, crop) in &expected {
+                    assert_eq!(editor.auto_crop_preview(*id), Some(Some(*crop)));
+                }
+                assert_eq!(editor.document.project, before);
+            });
+            click_action(&mut h, "Apply");
+            h.read(|editor| {
+                for (id, crop) in &expected {
+                    assert_eq!(
+                        editor.document.project.source(*id).unwrap().crop,
+                        Some(*crop),
+                        "availability cannot trim the nominal photographic crop"
+                    );
+                }
+            });
+        });
+    }
+}
+
+#[test]
 fn whole_roll_entry_ignores_selection_and_keeps_abstentions_unchanged() {
     setup(|mut h, _directory| {
         let ids = h.read(|editor| editor.document.project.order.clone());

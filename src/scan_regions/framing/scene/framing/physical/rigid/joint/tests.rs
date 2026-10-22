@@ -258,7 +258,7 @@ fn all_supplied_sides_requalify_on_completed_companions_before_joint_acceptance(
 }
 
 #[test]
-fn adaptive_authored_joint_route_preserves_content_and_blank_cut_controls() {
+fn adaptive_joint_route_preserves_content_blank_abstention_and_nominal_cut_framing() {
     let bounds = [16., 112., 12., 84.];
     for seed in [15001, 15002, 15003, 15004, 71801, 71802, 71803, 71804] {
         for kind in ["weak", "partial", "blank", "interior"] {
@@ -294,17 +294,23 @@ fn adaptive_authored_joint_route_preserves_content_and_blank_cut_controls() {
     }
     let (capture, evidence, scene) = fixture([128, 96], bounds, Some(100.), true);
     let areas = baseline(&capture, bounds, [true; 4]);
+    let choice = evaluate_optional(
+        &scene,
+        target(&capture, &evidence, &areas),
+        &scene.roles(&capture),
+        &calibration_for(&capture, bounds),
+        || Ok(()),
+    )
+    .unwrap()
+    .proposal
+    .expect("known frame dimensions remain useful across missing film");
     assert!(
-        evaluate_optional(
-            &scene,
-            target(&capture, &evidence, &areas),
-            &scene.roles(&capture),
-            &calibration_for(&capture, bounds),
-            || Ok(())
-        )
-        .unwrap()
-        .proposal
-        .is_none()
+        !choice.measured[1] && choice.inferred[1],
+        "the film cut cannot become a measured picture edge"
+    );
+    assert_eq!(
+        choice.crop.region(capture.area).unwrap(),
+        SourceRegion::from([171, 137, 960, 720])
     );
 }
 

@@ -49,6 +49,41 @@ impl Material {
             [Self::nearest(&self.ys, p[1]) * self.xs.len() + Self::nearest(&self.xs, p[0])]
     }
 
+    pub(crate) fn contains_footprint(
+        &self,
+        footprint: SourceRegion,
+        active: SourceRegion,
+        inset: f64,
+    ) -> bool {
+        let lo = [footprint.x, footprint.y].map(|v| f64::from(v) + 0.5);
+        let hi = [
+            footprint.x + footprint.width,
+            footprint.y + footprint.height,
+        ]
+        .map(|v| f64::from(v) - 0.5);
+        let origin = [f64::from(active.x), f64::from(active.y)];
+        let extent = [f64::from(active.width), f64::from(active.height)];
+        if !inset.is_finite()
+            || inset < 0.
+            || (0..2).any(|i| lo[i] < origin[i] || hi[i] >= origin[i] + extent[i])
+        {
+            return false;
+        }
+        // Only observed material is inset. Camera bounds censor the map; they are
+        // not film edges from which to remove otherwise eligible edge samples.
+        let lower: [usize; 2] = std::array::from_fn(|i| {
+            let p = ((lo[i] - origin[i] - inset).max(0.) / extent[i]) * f64::from(self.size[i]);
+            Self::nearest(if i == 0 { &self.xs } else { &self.ys }, p)
+        });
+        let upper: [usize; 2] = std::array::from_fn(|i| {
+            let p = ((hi[i] - origin[i] + inset) / extent[i]).min(1.) * f64::from(self.size[i]);
+            Self::nearest(if i == 0 { &self.xs } else { &self.ys }, p)
+        });
+        (lower[1]..=upper[1]).all(|y| {
+            (lower[0]..=upper[0]).all(|x| self.labels.as_bytes()[y * self.xs.len() + x] == b'F')
+        })
+    }
+
     pub(crate) fn validate(&self) -> Result<(), Error> {
         let valid = self.size.iter().all(|&v| (16..=768).contains(&v))
             && self.xs.len() <= 96
@@ -264,30 +299,12 @@ impl Areas {
         if corners.iter().any(|&p| !inside(p, &opening)) {
             return false;
         }
-        if let Some(m) = &self.material {
-            let proxy = |p: [f64; 2]| {
-                [
-                    (p[0] - f64::from(active.x)) * f64::from(m.size[0]) / f64::from(active.width),
-                    (p[1] - f64::from(active.y)) * f64::from(m.size[1]) / f64::from(active.height),
-                ]
-            };
-            let lo = proxy(corners[0]);
-            let hi = proxy(corners[2]);
-            if lo
-                .iter()
-                .zip(hi)
-                .zip(m.size)
-                .any(|((&l, h), n)| l < 0. || h >= f64::from(n))
-            {
-                return false;
-            }
-            for y in Material::nearest(&m.ys, lo[1])..=Material::nearest(&m.ys, hi[1]) {
-                for x in Material::nearest(&m.xs, lo[0])..=Material::nearest(&m.xs, hi[0]) {
-                    if m.labels.as_bytes()[y * m.xs.len() + x] != b'F' {
-                        return false;
-                    }
-                }
-            }
+        if self
+            .material
+            .as_ref()
+            .is_some_and(|m| !m.contains_footprint(footprint, active, 0.))
+        {
+            return false;
         }
         if picture {
             let Some(quad) = self.picture else {

@@ -234,16 +234,16 @@ fn camera_continuation_does_not_require_uniform_density_along_the_available_pict
 }
 
 #[test]
-fn native_claims_on_blank_and_cut_captures_do_not_become_picture_metadata() {
+fn blank_or_unreferenced_cut_claims_cannot_establish_a_frame_from_one_bright_edge() {
     let (_dir, inputs) = inputs();
-    for kind in ["blank", "cut", "cut_unobserved"] {
+    for kind in ["blank", "cut"] {
         let metadata = run(frames(&inputs, kind));
         assert!(
             metadata.groups[0]
                 .sources
                 .iter()
                 .all(|source| source.observation.is_none() && source.picture.is_none()),
-            "{kind}"
+            "{kind}: {metadata:#?}"
         );
         assert_eq!(metadata.groups[0].common_size.extent, [None, None]);
         assert!(
@@ -252,6 +252,27 @@ fn native_claims_on_blank_and_cut_captures_do_not_become_picture_metadata() {
                 .iter()
                 .all(|source| source.film.is_none()),
             "a cut without an independent base reference is unresolved, not a certified film limit"
+        );
+    }
+}
+
+#[test]
+fn unreferenced_cut_preserves_credible_height_but_cannot_invent_missing_width() {
+    let (_dir, inputs) = inputs();
+    let metadata = run(frames(&inputs, "cut_unobserved"));
+    assert_eq!(metadata.groups[0].common_size.extent, [None, Some(720.)]);
+    for source in &metadata.groups[0].sources {
+        let observation = source.observation.as_ref().unwrap();
+        assert!(
+            observation.boundaries[2..]
+                .iter()
+                .all(Boundary::is_measured)
+        );
+        assert!(!observation.boundaries[1].is_measured());
+        assert!(source.film.is_none());
+        assert!(
+            crate::auto_crop::propose_spatial(source).is_err(),
+            "no width model or right picture edge exists"
         );
     }
 }
@@ -286,13 +307,26 @@ fn learning_common_dimensions_does_not_erase_an_opposite_only_camera_limited_mem
 }
 
 #[test]
-fn independently_supported_film_base_keeps_a_film_limit_without_certifying_incomplete_picture() {
+fn known_dimensions_recover_nominal_picture_without_measuring_the_cut_as_its_edge() {
     let (_dir, inputs) = inputs();
     // Two complete sources supply20000-code base;40000-code shine-through occurs
     // only on the cut source, so brightness is not circularly learned as film base.
     let metadata = run(frames(&inputs, "cut_member"));
     let cut = &metadata.groups[0].sources[0];
-    assert!(cut.picture.is_none());
+    let picture = cut
+        .picture
+        .as_ref()
+        .expect("nominal frame survives unavailable film");
+    assert!(matches!(picture.boundaries[1], Boundary::Inferred { .. }));
+    assert!(!cut.observation.as_ref().unwrap().boundaries[1].is_measured());
+    assert_eq!(
+        crate::auto_crop::propose_spatial(cut)
+            .unwrap()
+            .region(cut.input.development.active_area.into())
+            .unwrap(),
+        SourceRegion::from([171, 137, 960, 720])
+    );
+    assert!(!metadata.groups[0].common_size.observations[0].contains(&cut.input.source));
     let film = cut.film.as_ref().expect("supported film-limit candidate");
     assert!(film.boundaries[1].is_measured());
     let [a, b, c] = film.boundaries[1].plane().unwrap();

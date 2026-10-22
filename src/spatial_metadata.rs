@@ -18,7 +18,7 @@ pub use store::{Request, Store};
 #[cfg(test)]
 mod tests;
 
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 
 pub(crate) fn read_cached<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
@@ -285,23 +285,19 @@ pub struct SourceRegions {
 }
 
 impl SourceRegions {
-    pub fn visible_picture(&self) -> Result<Crop, Error> {
+    /// Nominal picture framing. Missing film or holder coverage does not move its edges.
+    pub fn picture_crop(&self) -> Result<Crop, Error> {
         self.input.development.validate()?;
         let picture = self
             .picture
             .as_ref()
             .ok_or(Error::UnusableSample("picture region is unavailable"))?;
-        let mut limits = vec![];
-        for region in [&self.film, &self.holder_opening].into_iter().flatten() {
-            region.validate()?;
-            limits.extend(region.boundaries.iter().filter_map(Boundary::plane));
-        }
-        picture.visible_crop(self.input.development.active_area.into(), &limits)
+        picture.visible_crop(self.input.development.active_area.into(), &[])
     }
 
-    /// Derive safe sampling support without biasing the shared picture boundary or accepting areas.
+    /// Nominal picture sampling window; consumers still qualify film/material footprints.
     pub fn picture_sampling(&self, inset_source_pixels: f64) -> Result<Quad, Error> {
-        let mut crop = self.visible_picture()?;
+        let mut crop = self.picture_crop()?;
         if !inset_source_pixels.is_finite() || inset_source_pixels < 0. {
             return Err(invalid("invalid spatial sampling inset"));
         }

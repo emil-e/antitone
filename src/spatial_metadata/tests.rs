@@ -305,6 +305,32 @@ fn source_conversion_roundoff_does_not_remove_whole_pixels_or_swallow_real_inset
 }
 
 #[test]
+fn crop_uses_nominal_picture_even_when_film_holder_and_material_cover_less() {
+    let (_dir, _, mut metadata, _) = fixture();
+    let source = &mut metadata.groups[0].sources[0];
+    source.film = Some(region([40., 70., 10., 60.]));
+    source.holder_opening = Some(region([32., 96., 24., 72.]));
+    source.material = Some(crate::scan_regions::Material {
+        size: [128, 96],
+        xs: vec![64],
+        ys: vec![48],
+        labels: "L".into(),
+    });
+    let nominal = crate::auto_crop::propose_spatial(source).unwrap();
+    assert_eq!(
+        nominal
+            .region(source.input.development.active_area.into())
+            .unwrap(),
+        SourceRegion::from([173, 269, 960, 1440])
+    );
+    assert_eq!(
+        source.picture_sampling(10.).unwrap(),
+        [[183., 279.], [1123., 279.], [1123., 1699.], [183., 1699.]]
+    );
+    assert_eq!(source.observation, source.picture);
+}
+
+#[test]
 fn changed_group_does_not_discard_an_independent_group_and_ambiguous_inputs_are_unavailable() {
     let (_dir, project, mut metadata, mut inputs) = fixture();
     let mut other = metadata.groups[0].clone();
@@ -427,6 +453,11 @@ fn invalid_or_unsupported_derived_payload_is_discardable_but_accepted_unknown_fi
         serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     for mut payload in [
         serde_json::json!({"version":999,"groups":[]}),
+        {
+            let mut old = serde_json::to_value(&metadata).unwrap();
+            old["version"] = serde_json::json!(2);
+            old
+        },
         serde_json::json!({"unexpected":true}),
         serde_json::to_value(&metadata).unwrap(),
     ] {

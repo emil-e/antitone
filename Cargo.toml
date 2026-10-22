@@ -11,6 +11,8 @@ members = ["scripts/xtask"]
 default-members = ["."]
 resolver = "3"
 
+[workspace]
+
 [dependencies]
 glam = { version = "=0.34.1", default-features = false, features = ["std", "f64"] }
 wgpu = { version = "=30.0.1", optional = true, default-features = false, features = ["std", "metal", "glsl", "wgsl"] }

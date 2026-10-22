@@ -210,15 +210,12 @@ pub(super) fn evaluate(
     };
     let fit = solve(target.capture, calibration.source_size, data);
     let validation = validation_template(target.capture, calibration, &fit.geometry);
-    let light = light::ExteriorLight::new(target.capture, roles);
-    match eligible_with(
+    match nominal_with(
         scene,
         target.capture,
         roles,
         &fit.geometry,
         validation.as_ref(),
-        &light,
-        Mode::Joint,
     ) {
         Ok((crop, sides)) => {
             report.failed_anchors = (0..4)

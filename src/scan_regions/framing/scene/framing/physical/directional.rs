@@ -37,6 +37,7 @@ pub(super) struct Station {
 #[derive(Serialize)]
 pub(super) struct Report {
     pub(super) measured: bool,
+    pub(super) contradiction: bool,
     pub(super) rank: f64,
     old_measured: bool,
     pub(super) aggregate_z: f64,
@@ -324,6 +325,7 @@ fn summarize(stations: Vec<Station>, old_measured: bool) -> (Report, bool) {
     (
         Report {
             measured,
+            contradiction,
             rank,
             old_measured,
             aggregate_z,

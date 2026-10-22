@@ -104,6 +104,12 @@ pub(super) fn rect([x, y, width, height]: [u32; 4]) -> Rect {
     }
 }
 
+// Source-scaled statistical inset, rounded inward to whole source pixels. This is
+// sampling policy, not a displacement or an uncertainty claim about physical edges.
+pub(super) fn sampling_inset(active: Rect) -> f64 {
+    (2. * (f64::from(active.width) / 768.).max(f64::from(active.height) / 512.)).ceil()
+}
+
 fn array(r: Rect) -> [u32; 4] {
     [r.x, r.y, r.width, r.height]
 }

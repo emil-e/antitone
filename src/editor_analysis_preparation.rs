@@ -275,9 +275,7 @@ impl Preparation {
                 continue;
             };
             let active = regions.input.development.active_area;
-            // Two evidence pixels keep statistical samples away from soft transitions. This is
-            // sampling policy, not a displacement or an uncertainty claim about physical edges.
-            let inset = 2. * (f64::from(active[2]) / 768.).max(f64::from(active[3]) / 512.);
+            let inset = analysis::sampling_inset(active.into());
             if let Ok(quad) = regions.picture_sampling(inset) {
                 entry.areas.picture = Some(quad);
                 entry.areas.picture_geometry = None;

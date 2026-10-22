@@ -110,6 +110,8 @@ impl Mode {
     }
 }
 
+// Complete available-picture qualification for material-backed calibration/retained checks.
+// Nominal framing qualifies pose separately from material availability.
 fn eligible_with(
     scene: &Scene,
     capture: &Capture,
@@ -160,6 +162,51 @@ fn eligible_with(
     Ok((crop, sides))
 }
 
+/// Qualify a nominal frame pose independently of how much film is available.
+/// Nonfilm can censor an unmeasured side, but cannot supply a picture measurement.
+fn nominal_with(
+    scene: &Scene,
+    capture: &Capture,
+    roles: &[Role],
+    frame: &PictureGeometry,
+    template: Option<&Template>,
+) -> Result<(Crop, [Side; 4]), &'static str> {
+    if template.is_some_and(|template| !template.compatible(frame)) {
+        return Err("roll_geometry");
+    }
+    let bootstrap = scene.base.as_ref().map(|base| Exterior {
+        mean: base.mean,
+        spread: base.spread,
+        samples: 0,
+    });
+    let sides = std::array::from_fn(|side| {
+        Mode::Joint.measure(
+            capture,
+            roles,
+            frame,
+            side,
+            template.and_then(|t| t.exterior[side]).or(bootstrap),
+        )
+    });
+    if sides.iter().any(|side| {
+        side.directional
+            .as_ref()
+            .is_some_and(|report| report.contradiction)
+    }) {
+        return Err("perimeter_contradiction");
+    }
+    let axes: Vec<_> = sides
+        .iter()
+        .filter(|side| side.neighbor_required)
+        .filter_map(|side| side.neighbor.as_ref().map(|n| n.axis))
+        .collect();
+    if axes.iter().any(|axis| Some(axis) != axes.first()) {
+        return Err("incompatible_neighbor_axes");
+    }
+    let crop = visible_crop(capture.area, frame).ok_or("no_visible_picture")?;
+    Ok((crop, sides))
+}
+
 pub(super) fn observe_native(
     scene: &Scene,
     capture: &Capture,
@@ -191,23 +238,14 @@ pub(super) fn observe_native(
             });
         }
     }
-    let light = light::ExteriorLight::new(capture, roles);
-    let (_, sides) = eligible_with(
-        scene,
-        capture,
-        roles,
-        &assessment,
-        None,
-        &light,
-        Mode::Joint,
-    )
-    .ok()?;
-    frame
-        .sides
-        .iter()
-        .zip(sides)
-        .all(|(bound, side)| bound.is_none() || side.measured())
-        .then_some(frame)
+    let (_, sides) = nominal_with(scene, capture, roles, &assessment, None).ok()?;
+    let observed = PictureGeometry {
+        sides: std::array::from_fn(|side| frame.sides[side].filter(|_| sides[side].measured())),
+        ..frame
+    };
+    // A lone bright transition can be film termination rather than a picture edge.
+    // Multiple credible sides tie the partial observation to a frame.
+    (observed.sides.iter().filter(|side| side.is_some()).count() >= 2).then_some(observed)
 }
 
 /// Censoring is an inference from photo-compatible continuation at the camera limit,
