@@ -8,7 +8,8 @@ archive="$cache/OpenColorIO-2.6.0.tar.gz"
 mkdir -p "$cache"
 
 if [ ! -f "$archive" ]; then
-    curl --fail --location https://codeload.github.com/AcademySoftwareFoundation/OpenColorIO/tar.gz/refs/tags/v2.6.0 -o "$archive"
+    curl --fail --location https://codeload.github.com/AcademySoftwareFoundation/OpenColorIO/tar.gz/refs/tags/v2.6.0 -o "$archive.tmp"
+    mv "$archive.tmp" "$archive"
 fi
 printf '%s  %s\n' 784ac37bde5b9c6e5dc15f23d1235bd1452d376cdc03627d6d6dd310f375a735 "$archive" | shasum -a 256 -c -
 if [ ! -d "$cache/OpenColorIO-2.6.0" ]; then

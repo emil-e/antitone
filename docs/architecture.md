@@ -70,4 +70,4 @@ The separate [native-host executable](../tests/native_host.rs) runs the producti
 
 ## Finding the right explanation
 
-[README](README.md) maps questions to topic guides and files. [Development](development.md) maps changes to checks.
+[README](README.md) maps questions to topic guides and files. [Development](development.md) maps changes to checks; [build and delivery](build-and-delivery.md) maps the local setup/check/package workflow and its limits.

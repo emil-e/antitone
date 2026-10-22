@@ -1,0 +1,37 @@
+[
+  {
+    "packages": ["accesskit@0.24.1"],
+    "source": "https://raw.githubusercontent.com/AccessKit/accesskit/a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969/LICENSE-MIT",
+    "copyright": ""
+  },
+  {
+    "packages": ["ecolor@0.36.2", "egui@0.36.2", "egui-wgpu@0.36.2", "egui-winit@0.36.2", "emath@0.36.2", "epaint@0.36.2", "epaint_default_fonts@0.36.2"],
+    "source": "https://raw.githubusercontent.com/emilk/egui/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-MIT",
+    "copyright": "Copyright (c) 2018-2021 Emil Ernerfeldt <emil.ernerfeldt@gmail.com>"
+  },
+  {
+    "packages": ["block2@0.5.1", "objc-sys@0.3.5"],
+    "source": "https://raw.githubusercontent.com/madsmtm/objc2/4fc083f1c6d6784577e38b0ee8dbd344481e2fd2/LICENSE.txt",
+    "copyright": "Copyright (c) Steven Sheldon"
+  },
+  {
+    "packages": ["objc2@0.5.3"],
+    "source": "https://raw.githubusercontent.com/madsmtm/objc2/5237cbf081d04ef75a1f6a207b4018e7c1ae7438/LICENSE.txt",
+    "copyright": "Copyright (c) Steven Sheldon"
+  },
+  {
+    "packages": ["objc2-app-kit@0.2.2", "objc2-core-data@0.2.2", "objc2-core-image@0.2.2", "objc2-foundation@0.2.2", "objc2-metal@0.2.2", "objc2-quartz-core@0.2.2"],
+    "source": "https://raw.githubusercontent.com/madsmtm/objc2/e282618be4c3a3b9542957e0c8540e9588472ce8/LICENSE.txt",
+    "copyright": "Copyright (c) Steven Sheldon"
+  },
+  {
+    "packages": ["profiling@1.0.18"],
+    "source": "https://raw.githubusercontent.com/aclysma/profiling/8271551172eb6fa4cba47369aedd93790c623df9/LICENSE-MIT",
+    "copyright": "Copyright (c) 2020 Philip Degarmo and other contributors"
+  },
+  {
+    "packages": ["pulp-wasm-simd-flag@0.1.1"],
+    "source": "https://raw.githubusercontent.com/sarah-quinones/pulp/5eb07fd7b68edf0a5e19f71737d315f72a510295/LICENSE",
+    "copyright": "Copyright (c) 2021 sarah"
+  }
+]

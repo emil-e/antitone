@@ -82,6 +82,14 @@ class FormatChecks(unittest.TestCase):
         ):
             self.assertEqual(check_format.sources(), ["scripts/new.py"])
 
+    def test_vendored_sources_are_not_reformatted(self):
+        result = SimpleNamespace(stdout=b"native/bridge.cpp\0vendor/dng-sdk/source.cpp\0")
+        with (
+            mock.patch.object(check_format.subprocess, "run", return_value=result),
+            mock.patch.object(Path, "is_file", return_value=True),
+        ):
+            self.assertEqual(check_format.sources(), ["native/bridge.cpp"])
+
     def test_missing_tool_fails_instead_of_skipping_its_language(self):
         with mock.patch.dict(check_format.os.environ, {}, clear=True):
             with mock.patch.object(check_format.shutil, "which", return_value=None):

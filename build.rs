@@ -109,25 +109,54 @@ fn build_dng() {
 
     assert_eq!(std::env::var("CARGO_CFG_TARGET_OS").unwrap(), "macos");
     assert_eq!(std::env::var("CARGO_CFG_TARGET_ARCH").unwrap(), "aarch64");
-    println!("cargo:rerun-if-env-changed=DNG_SDK_PREFIX");
-    let prefix = std::env::var_os("DNG_SDK_PREFIX")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(".cache/dng-sdk"));
-    let source_file = prefix.join("source-path.txt");
-    let defines_file = prefix.join("defines.txt");
-    let source = PathBuf::from(
-        fs::read_to_string(&source_file)
-            .expect("Prepare the opt-in SDK with scripts/build-dng-sdk.py; see README.md")
-            .trim(),
+    let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    let source = root.join("vendor/dng-sdk");
+    let prefix = PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("dng");
+    println!("cargo:rerun-if-changed=vendor/dng-sdk");
+    println!("cargo:rerun-if-changed=native/dng");
+    let defines = fs::read_to_string(root.join("native/dng/defines.txt")).unwrap();
+    let compiler = cc::Build::new().cpp(true).get_compiler();
+    let c_compiler = cc::Build::new().get_compiler();
+    let jobs = std::env::var("NUM_JOBS")
+        .ok()
+        .and_then(|jobs| jobs.parse::<usize>().ok())
+        .unwrap_or(1)
+        .min(4);
+    let mut configure = std::process::Command::new("cmake");
+    configure.args(["-S", "native/dng", "-B"]).arg(&prefix);
+    configure.args(["-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release"]);
+    configure.arg(format!(
+        "-DCMAKE_C_COMPILER={}",
+        c_compiler.path().display()
+    ));
+    configure.arg(format!(
+        "-DCMAKE_CXX_COMPILER={}",
+        compiler.path().display()
+    ));
+    configure.args([
+        "-DCMAKE_OSX_ARCHITECTURES=arm64",
+        "-DCMAKE_OSX_DEPLOYMENT_TARGET=14.0",
+    ]);
+    assert!(
+        configure
+            .status()
+            .expect("CMake is required; see README.md")
+            .success()
     );
-    let defines = fs::read_to_string(&defines_file).expect("Incomplete SDK build metadata");
-    for path in [
-        source_file,
-        defines_file,
-        prefix.join("lib/libantitone_dng_sdk.a"),
-    ] {
-        println!("cargo:rerun-if-changed={}", path.display());
-    }
+    assert!(
+        std::process::Command::new("cmake")
+            .arg("--build")
+            .arg(&prefix)
+            .args([
+                "--target",
+                "antitone_dng_sdk",
+                "--parallel",
+                &jobs.to_string()
+            ])
+            .status()
+            .expect("Could not build the vendored DNG SDK")
+            .success()
+    );
     for path in [
         "native/dng_bridge.cpp",
         "native/dng_bridge.h",
@@ -158,10 +187,7 @@ fn build_dng() {
     build
         .file("native/dng_bridge.cpp")
         .compile("antitone_dng_bridge");
-    println!(
-        "cargo:rustc-link-search=native={}",
-        prefix.join("lib").display()
-    );
+    println!("cargo:rustc-link-search=native={}", prefix.display());
     println!("cargo:rustc-link-lib=static=antitone_dng_sdk");
     println!("cargo:rustc-link-lib=framework=Carbon");
     println!("cargo:rustc-link-arg=-mmacosx-version-min=14.0");

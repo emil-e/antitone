@@ -1,8 +1,9 @@
 [alias]
 app = "run --locked --release --features editor --bin antitone"
 build-app = "build --locked --release --features editor --bin antitone"
+xtask = "run --locked --package xtask --"
 
 [env]
-# Native bridges use the same Apple Clang as the pinned dependency builds.
-CC = { value = "/usr/bin/clang", force = true }
-CXX = { value = "/usr/bin/clang++", force = true }
+# Scope compiler selection to the implemented target, not future Windows builds.
+CC_aarch64_apple_darwin = { value = "/usr/bin/clang", force = true }
+CXX_aarch64_apple_darwin = { value = "/usr/bin/clang++", force = true }

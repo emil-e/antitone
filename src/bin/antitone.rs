@@ -1,7 +1,12 @@
 use antitone::{editor::Editor, platform::host};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let initial = std::env::args().nth(1).map(std::path::PathBuf::from);
+    let argument = std::env::args().nth(1);
+    if argument.as_deref() == Some("--version") {
+        println!("Antitone {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    let initial = argument.map(std::path::PathBuf::from);
     host::run("Antitone", move |device, queue, cx| {
         antitone::platform::macos::set_application_icon()?;
         let mut editor = Editor::new(device, queue);

@@ -31,4 +31,4 @@ The exercise observes native development counts, Ready delivery and accepted phy
 
 ## Runtime and acceptance limits
 
-`otool -l .cache/native-deps/openmp-22.1.8-install/lib/libomp.dylib` should report `@rpath/libomp.dylib` and minimum OS 14.0; `otool -L` should show only system dependencies. The [local macOS bundle](../README.md#build-and-run) keeps those runtime paths. Bundling/codesigning/notices, broader cameras/devices and physical memory-pressure checks remain release work.
+`otool -l .cache/native-deps/openmp-22.1.8-install/lib/libomp.dylib` should report `@rpath/libomp.dylib` and minimum OS 14.0; `otool -L` should show only system dependencies. The [local delivery workflow](build-and-delivery.md) copies OpenMP into the app, replaces checkout search paths with bundle-relative loading and verifies the extracted ZIP. Cargo-built binaries still use the local native prefix. Runtime inspection and relocated execution do not establish clean-machine/macOS-14 execution or public-release clearance; [feedback](feedback.md) tracks what remains unresolved.

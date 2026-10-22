@@ -256,6 +256,15 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                     binding: 1,
                     resource: output.as_entire_binding(),
                 },
+                // The conversion shader reads its storage-format flag from
+                // the camera-matrix uniform (binding 3); for this RGB16 source
+                // ProcessingSource leaves that flag at 0, keeping convert_source
+                // on the RGB16 path this f64 reference expects. The uniform's
+                // colour coefficients stay unused by this entry point.
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: source.matrix.as_entire_binding(),
+                },
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: gpu.nodes.as_entire_binding(),

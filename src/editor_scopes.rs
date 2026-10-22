@@ -182,7 +182,7 @@ pub(super) enum ScopeInput {
 }
 
 impl ScopeInput {
-    #[cfg(test)]
+    #[cfg(all(test, feature = "ui-tests"))]
     pub(super) fn frame(&self) -> FrameRaster {
         match self {
             Self::Proxy(_, _, f) | Self::Rendered(_, f) => *f,

@@ -31,7 +31,9 @@ def sources():
         capture_output=True,
     )
     paths = {os.fsdecode(path) for path in result.stdout.split(b"\0") if path}
-    return sorted(path for path in paths if (ROOT / path).is_file())
+    return sorted(
+        path for path in paths if not path.startswith("vendor/") and (ROOT / path).is_file()
+    )
 
 
 def run(*command):
@@ -57,7 +59,7 @@ def main(argv=None):
     swift = [path for path in paths if path.endswith(".swift")]
     shell = [path for path in paths if path.endswith(".sh")]
 
-    clang = tool("clang-format")
+    clang = tool("clang-format", TOOLS / "venv/bin/clang-format")
     ruff = tool("ruff", TOOLS / "venv/bin/ruff")
     wgslfmt = tool("wgslfmt", TOOLS / "bin/wgslfmt")
     version = subprocess.run([clang, "--version"], check=True, capture_output=True, text=True)

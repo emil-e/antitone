@@ -14,7 +14,11 @@ import sys
 
 BASE_REF = "HEAD"
 
-EXCLUDED_DIRS = {".git", ".worktrees", "node_modules", ".cache", "target", "samples"}
+# Vendored upstream source keeps its own links; this gate covers authored docs.
+# PROVENANCE.md is authored and links into the repo, so it stays checked while
+# the upstream sources around it are excluded.
+EXCLUDED_DIRS = {".git", ".worktrees", "node_modules", ".cache", "target", "samples", "vendor"}
+AUTHORED_IN_VENDOR = {os.path.join("vendor", "dng-sdk", "PROVENANCE.md")}
 HEDGE_PATTERNS = [
     r"\bdoes not establish\b",
     r"\bdoes not (?:imply|mean|guarantee|constitute)\b",
@@ -39,7 +43,7 @@ def md_files(root):
             for f in filenames
             if f.endswith(".md") and os.path.normpath(os.path.join(dirpath, f)) not in SKIPPED_FILES
         )
-    return sorted(files)
+    return sorted(set(files) | AUTHORED_IN_VENDOR)
 
 
 def read(path):

@@ -46,13 +46,15 @@ Cargo uses the committed lockfile. Add `--offline` when caches are populated and
 
 ## Source formatting
 
-Run `python3 scripts/check-format.py` before handing off a change. It checks tracked and new authored Rust, native, Python, WGSL and Swift sources, plus shell syntax; ignored caches, samples and generated OCIO GLSL are excluded. `--write` applies the configured formatters without changing lint rules. Neither mode builds the editor or needs native dependencies.
+The complete local workflow is `cargo xtask all`; [build and delivery](build-and-delivery.md) explains its stages and limits. `cargo xtask setup` prepares the native dependencies and pinned project-local formatting tools.
 
-Rust uses the checked-in toolchain. Native formatting requires **clang-format 22.1.8** on `PATH`; Swift uses `swift-format` from the selected Xcode toolchain. Install the other formatters in ignored checkout-local storage:
+Run `python3 scripts/check-format.py` before handing off a change. It checks tracked and new authored Rust, native, Python, WGSL and Swift sources, plus shell syntax; ignored caches, samples, vendored upstream sources and generated OCIO GLSL are excluded. `--write` applies the configured formatters without changing lint rules. Neither mode builds the editor or needs native dependencies.
+
+Rust uses the checked-in toolchain. Swift uses `swift-format` from the selected Xcode toolchain. Native formatting requires **clang-format 22.1.8**; the script finds it on `PATH` or in the venv below (`cargo xtask setup` installs it there). Install the other formatters in ignored checkout-local storage:
 
 ```sh
 python3 -m venv .cache/format-tools/venv
-.cache/format-tools/venv/bin/python -m pip install 'ruff==0.17.1'
+.cache/format-tools/venv/bin/python -m pip install 'ruff==0.17.1' 'clang-format==22.1.8'
 cargo install --git https://github.com/wgsl-analyzer/wgsl-analyzer \
   --rev 58a9aba79a0e0f9d3fef12a5ef0e577b3c4a2ae4 --locked \
   --root .cache/format-tools wgslfmt
@@ -71,7 +73,7 @@ Production and reference dependencies are separate:
 | --- | --- |
 | no default features | Numerical core; no native, GPU or UI dependency |
 | `raw` | CPU RAW development and measurements; LibRaw/OpenMP |
-| `dng-sdk` | Direct-SDK adapter and authored tests; combined with `raw` routes DNG shared sources; explicitly supplied Adobe SDK |
+| `dng-sdk` | Direct-SDK adapter and authored tests; combined with `raw` routes DNG shared sources; vendored Adobe SDK |
 | `gpu` | Precise photographic GPU processing; no OCIO or desktop |
 | `render` | Output targets, transfer and profiles; no OCIO |
 | `export` | Encoders, metadata and atomic file safety; no OCIO |
@@ -80,7 +82,7 @@ Production and reference dependencies are separate:
 | `ocio-reference` | Independent OCIO renderer and scalar composed export oracles |
 | `ui-tests` | Editor interaction checks, including independent OCIO assertions |
 
-Tests that explicitly use the CPU/OCIO oracle require `ocio-reference`; this is not a production fallback. Editor and `--all-features` builds need the [explicit SDK setup](../README.md#direct-dng-sdk-setup). Verify the production configuration separately so reference-feature unification cannot hide a runtime dependency.
+Tests that explicitly use the CPU/OCIO oracle require `ocio-reference`; this is not a production fallback. Editor and `--all-features` builds compile the [vendored SDK](../README.md#direct-dng-sdk-development) through CMake/Ninja; no separate SDK acquisition or validator build is needed. Verify the production configuration separately so reference-feature unification cannot hide a runtime dependency.
 
 Choose checks for the boundary you changed rather than running every native/sample-dependent exercise:
 
@@ -94,7 +96,7 @@ cargo test --locked --features project \
   --test camera_project --test project --test film_project --test flat_field_project \
   --test dust_project
 
-# Independent direct-SDK adapter; explicit SDK setup, no LibRaw/Metal/private photographs.
+# Independent direct-SDK adapter; vendored native build, no LibRaw/Metal/private photographs.
 cargo test --locked --features dng-sdk --lib dng::
 # Bounded native worker ownership, failure joins and tile-scratch policy; no SDK needed.
 mkdir -p .cache/checks

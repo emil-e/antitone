@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
 publish = false
+license = "MIT"
+
+[workspace]
+members = ["scripts/xtask"]
+default-members = ["."]
+resolver = "3"
 
 [dependencies]
 glam = { version = "=0.34.1", default-features = false, features = ["std", "f64"] }
