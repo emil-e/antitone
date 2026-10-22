@@ -103,19 +103,6 @@ impl ProgressContent<'_> {
         response
     }
 
-    pub fn inline(&self, ui: &mut Ui) -> bool {
-        match self.progress {
-            Progress::Indeterminate => {
-                ui.horizontal(|ui| {
-                    self.spinner(ui, 16.);
-                    ui.label(self.title);
-                });
-            }
-            Progress::Measured { .. } => self.bar(ui),
-        }
-        self.cancel(ui)
-    }
-
     pub fn compact(&self, ui: &mut Ui) -> bool {
         ui.horizontal(|ui| {
             let label = match self.progress {

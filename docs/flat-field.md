@@ -14,11 +14,13 @@ This is scan correction, not film-base calibration, dust removal or a colour gra
 
 ## Choose the illuminated support
 
-The reference workflow bypasses the accepted illumination map, photo composition and orientation, but retains automatic embedded lens development. An automatic rectangle is a suggestion; the user can edit it to exclude the holder and other unsuitable content. The support must contain the image-centre patch used to establish the target.
+Use **Set up…** in Roll's **Flat-field correction** section to select a reference and adjust the illuminated area, then Apply or Cancel. Once accepted, the section shows the reference filename and an enable control. Its Reset removes correction so setup can be run again.
+
+Setup uses untransformed source with automatic embedded lens development. Adjust the suggested rectangle to exclude the holder and other unsuitable content, while retaining the image-centre patch used to establish the target.
 
 The estimator compares local full-resolution camera statistics with a centre-luminance, AP1-neutral target. It rejects clipped or unusable support and smooths the resulting field. Valid developed camera means may exceed native white after embedded shading: capture/development eligibility, not a post-gain value of 1, determines clipping. Software compatibility cannot establish that lighting, aperture, focus and positioning physically match the roll — the reference must actually represent its scanning setup.
 
-Reference selection, re-edit and Apply are an owned workflow: Apply awaits estimation from the captured uncorrected source, then corrected working-source preparation and device/compatibility admission before atomic acceptance. Cancel or failure restores the working photo and accepted state; a preparation failure retains an [acknowledged feedback message](editor.md#decisions-are-not-operation-failures), not a partially accepted map. The reference session owns its prepared reference and asynchronous task independently of temporary photo visits; reference-only sources do not become filmstrip photographs. [The architecture guide](architecture.md) explains the proposal/promotion model behind this.
+Apply estimates the map from the prepared uncorrected reference and validates the corrected working source before acceptance. Cancel or failure restores the working photo and accepted state; preparation failures use [acknowledged feedback](editor.md#decisions-are-not-operation-failures). The reference session owns its source and task independently of temporary photo visits; reference-only sources stay out of the filmstrip. [Architecture](architecture.md) describes that lifecycle.
 
 ## Apply gains before inversion
 
@@ -34,7 +36,7 @@ This is a precision constraint, not a noise measurement or a brightness pedestal
 
 ## Save the accepted result
 
-Projects save the map and its development identity, not merely instructions to regenerate it. A missing nonordered reference does not prevent using the saved map; editing its area does require reopening a compatible reference. Changing, enabling or clearing a map preserves the working composition and inspection mode, and removing it restores the developed-source floor, which can still include embedded shading. [Projects](projects.md) explains the compatibility boundary.
+Projects save the map and its development identity, allowing correction to be used or reset even if the reference RAW is missing. Changing, enabling or resetting a map preserves the working composition and inspection mode, and removing it restores the developed-source floor, which can still include embedded shading. [Projects](projects.md) explains the compatibility boundary.
 
 ## Working on this area
 

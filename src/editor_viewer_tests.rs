@@ -241,7 +241,7 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                             );
                             assert_eq!(text.iter().filter(|(s, _)| s == name).count(), 1);
                         }
-                        for name in ["Details", "Choose reference RAW…", "current.ARW"] {
+                        for name in ["Details", "Set up…", "current.ARW"] {
                             assert!(
                                 !text
                                     .iter()
@@ -897,7 +897,7 @@ fn geometry_tools_use_trailing_viewer_bar_actions_and_only_their_own_inspector()
                     let title = if cropping {
                         "Crop & straighten"
                     } else {
-                        "Flat-field area"
+                        "Flat-field correction"
                     };
                     let own_tab = if cropping { 1 } else { 0 };
                     assert_eq!(text.iter().any(|(s, _)| s == title), tab == own_tab);

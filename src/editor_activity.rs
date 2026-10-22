@@ -186,13 +186,6 @@ impl TaskView {
         }
     }
 
-    pub fn inline(&self, ui: &mut egui::Ui) {
-        let mut content = self.presentation();
-        // Cancellation belongs to the task's global surface, not a stage-local copy.
-        content.cancel = None;
-        content.inline(ui);
-    }
-
     pub fn viewer(&self, ui: &mut egui::Ui, canvas: egui::Rect) {
         self.presentation().viewer(ui, canvas);
     }

@@ -71,101 +71,68 @@ impl Editor {
     pub(super) fn flat_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
         let editing = self.pick == Some(Pick::Flat);
         let settings = self.document.project.flat_field.as_ref();
+        let configured = settings.is_some();
+        let available = !self.busy
+            && self.pick.is_none()
+            && self.document.visit.crop_edit.is_none()
+            && self.document.auto_crop_edit.is_none()
+            && self.document.visit.mask_edit.is_none();
         let summary = match settings {
-            Some(settings) if settings.enabled => "Enabled · check calibration after changes",
+            Some(settings) if settings.enabled => "Enabled",
             Some(_) => "Disabled",
             None => "Not configured",
         };
-        presentation::section(
+        let (_, reset) = presentation::section(
             ui,
             "roll-flat-field",
             "Flat-field correction",
             presentation::SectionHeader {
                 summary,
-                changed: settings.is_some(),
-                reset: None,
+                changed: configured,
+                reset: Some(configured && available),
                 default_open: if editing { None } else { Some(false) },
             },
             |ui| {
                 if editing {
-                    controls::active_tool(
-                        ui,
-                        icons::Icon::Crop,
-                        "Flat-field area",
-                        None,
-                        |ui, _| {
-                            if let Some(view) = self.tasks.view() {
-                                view.inline(ui);
-                            }
-                        },
-                    );
+                    ui.small("Select the illuminated area, excluding the holder and including the image centre.");
+                    ui.small("Dmin/Dmax stay unchanged; re-pick them after applying correction.");
+                    return;
                 }
-                ui.add_enabled_ui(
-                    !self.busy
-                        && self.pick.is_none()
-                        && self.document.visit.crop_edit.is_none()
-                        && self.document.auto_crop_edit.is_none()
-                        && self.document.visit.mask_edit.is_none(),
-                    |ui| {
-                        if presentation::TextAction::new("Choose reference RAW…")
-                            .show(ui)
-                            .clicked()
-                            && let Some(path) = crate::platform::menu::with_native_dialog(|| {
-                                rfd::FileDialog::new()
-                                    .set_title("Bare light source · same setup, without film")
-                                    .add_filter("Camera RAW files", files::RAW_EXTENSIONS)
-                                    .pick_file()
-                            })
-                        {
-                            self.control_command(editing::Command::FlatEdit(path, None), cx);
+                ui.add_enabled_ui(available, |ui| {
+                    if let Some(settings) = self.document.project.flat_field.as_ref() {
+                        let path = self.document.source_path(settings.reference).ok();
+                        let mut enabled = settings.enabled;
+                        if ui.checkbox(&mut enabled, "Enabled").changed() {
+                            self.control_command(editing::Command::Correction(Some(enabled)), cx);
                         }
-                        if let Some(settings) = self.document.project.flat_field.clone() {
-                            let path = self.document.source_path(settings.reference).ok();
-                            ui.label(
-                                path.as_ref()
-                                    .and_then(|p| p.file_name())
-                                    .map(|name| name.to_string_lossy().into_owned())
-                                    .unwrap_or_else(|| "Reference RAW".into()),
-                            );
-                            let mut enabled = settings.enabled;
-                            if ui.checkbox(&mut enabled, "Enabled").changed() {
-                                self.control_command(
-                                    editing::Command::Correction(Some(enabled)),
-                                    cx,
-                                );
-                            }
-                            ui.horizontal(|ui| {
-                                if presentation::TextAction::new("Edit area…")
-                                    .show(ui)
-                                    .clicked()
-                                    && let Some(path) = path
-                                {
-                                    let [x, y, width, height] = settings.map.area();
-                                    self.control_command(
-                                        editing::Command::FlatEdit(
-                                            path,
-                                            Some(Rect {
-                                                x,
-                                                y,
-                                                width,
-                                                height,
-                                            }),
-                                        ),
-                                        cx,
-                                    );
-                                }
-                                if presentation::TextAction::new("Clear").show(ui).clicked() {
-                                    self.control_command(editing::Command::Correction(None), cx);
-                                }
-                            });
+                        let name = path
+                            .as_ref()
+                            .and_then(|p| p.file_name())
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| "Reference RAW".into());
+                        let response = ui.add(egui::Label::new(name).truncate());
+                        if let Some(path) = path {
+                            response.on_hover_text(path.display().to_string());
                         }
-                    },
-                );
-                ui.small(
-                    "Bare light source, same lens/focus/aperture/light. Set this before calibration. Existing Dmin/Dmax stay unchanged; re-pick them after changing correction.",
-                );
+                    } else if presentation::TextAction::new("Set up…")
+                        .help("Choose a film-free RAW of the light source from the same scanning setup.")
+                        .show(ui)
+                        .clicked()
+                        && let Some(path) = crate::platform::menu::with_native_dialog(|| {
+                            rfd::FileDialog::new()
+                                .set_title("Bare light · same lens, focus, aperture and light · without film")
+                                .add_filter("Camera RAW files", files::RAW_EXTENSIONS)
+                                .pick_file()
+                        })
+                    {
+                        self.control_command(editing::Command::FlatEdit(path, None), cx);
+                    }
+                });
             },
         );
+        if reset {
+            self.control_command(editing::Command::Correction(None), cx);
+        }
     }
 
     pub(super) fn begin_flat_edit(

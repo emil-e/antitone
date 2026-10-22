@@ -339,7 +339,7 @@ fn all_three_stage_controls_are_reachable_at_normal_and_narrow_inspector_sizes()
                 vec![
                     "Reset scan orientation",
                     "Flat-field correction",
-                    "Choose reference RAW…",
+                    "Set up…",
                     "Calibration",
                     "Dmin (film base)",
                     "Dmax",

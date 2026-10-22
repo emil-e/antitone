@@ -14,7 +14,7 @@ fn pick_patch(harness: &mut Harness<'_, Editor>, action: &str, area: Rect) {
 }
 
 #[test]
-fn reference_reedit_commits_numeric_focus_before_starting_and_proposes_without_another_paint() {
+fn correction_reset_commits_numeric_focus_and_completes_without_another_paint() {
     editor_harness(|mut harness, _| {
         harness.enter(|e, cx| e.add_raws(vec![fixture("illuminated-patches.dng")], cx));
         wait_for(&mut harness, |e| !e.busy);
@@ -80,28 +80,25 @@ fn reference_reedit_commits_numeric_focus_before_starting_and_proposes_without_a
         // This action is drawn above Gamma. Starting it immediately while drawing
         // would disable the outgoing input before its focus loss can commit.
         harness
-            .get_by_role_and_label(egui::accesskit::Role::Button, "Edit area…")
+            .get_by_role_and_label(egui::accesskit::Role::Button, "Reset Flat-field correction")
             .click();
         harness.step();
         harness.read(|e| {
             assert!((e.roll.gamma - desired).abs() < 1e-12, "{}", e.status);
             assert_eq!(e.document.project.roll.gamma, e.roll.gamma);
-            assert_eq!(e.pick, Some(Pick::Flat));
-            assert!(e.busy && e.flat_edit.as_ref().unwrap().task.is_some());
+            assert!(e.busy && e.document_pending.is_some());
         });
         harness.run_until(Duration::from_secs(20), |e| !e.busy);
         harness.read(|e| {
-            assert!(e.region.is_some());
+            assert!(e.document.project.flat_field.is_none());
             assert!(e.source_context().unwrap().correction.is_none());
-            assert_eq!(e.document.project.flat_field, correction);
-            assert!((e.document.project.roll.gamma - desired).abs() < 1e-12);
-        });
-        harness.get_by_label("Cancel").click();
-        harness.step();
-        harness.read(|e| {
-            assert!(e.flat_edit.is_none());
             assert_eq!(e.current_source, selected);
             assert_eq!(e.viewport, viewport);
+            assert!((e.document.project.roll.gamma - desired).abs() < 1e-12);
+        });
+        harness.enter(|e, cx| e.restore_history(crate::editor::history::Direction::Undo, cx));
+        harness.run_until(Duration::from_secs(20), |e| !e.busy);
+        harness.read(|e| {
             assert_eq!(e.document.project.flat_field, correction);
             assert!((e.document.project.roll.gamma - desired).abs() < 1e-12);
         });
@@ -119,6 +116,20 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
         let before = harness.read(|editor| editor.document.project.clone());
         let selected = harness.read(|editor| editor.current_source);
+        harness.get_by_label("Flat-field correction").click();
+        harness.step();
+        assert!(
+            !harness
+                .get_by_label("Set up…")
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert!(
+            harness
+                .get_by_label("Reset Flat-field correction")
+                .accesskit_node()
+                .is_disabled()
+        );
         // The reference chooser itself remains native acceptance; use its resulting path.
         harness.enter(|editor, cx| editor.begin_flat_edit(reference.clone(), None, cx));
         wait_for(&mut harness, |e| !e.busy);
@@ -188,6 +199,22 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         harness.read(|editor| assert_eq!(editor.document.project.dmin, before.dmin));
         harness.read(|editor| assert_eq!(editor.document.project.dmax, before.dmax));
         let settings = harness.read(|editor| editor.document.project.flat_field.clone().unwrap());
+        let configured = harness.read(|editor| editor.document.project.clone());
+        harness.get_by_label("Pick Dmin (film base)").scroll_to_me();
+        harness.try_run_realtime().unwrap();
+        harness.get_by_label("Pick Dmin (film base)").click();
+        harness.step();
+        harness.read(|editor| assert_eq!(editor.pick, Some(Pick::Dmin)));
+        harness.step();
+        assert!(
+            harness
+                .get_by_label("Reset Flat-field correction")
+                .accesskit_node()
+                .is_disabled()
+        );
+        harness.get_by_label("Cancel").click();
+        harness.step();
+        harness.read(|editor| assert_eq!(editor.document.project, configured));
         assert_eq!(
             settings.map.area(),
             [accepted.x, accepted.y, accepted.width, accepted.height]
@@ -338,14 +365,6 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         harness.step();
         harness.read(|editor| assert_eq!(editor.viewport.zoom, Some(1.)));
         stage(&mut harness, "Roll");
-        harness
-            .get_by_role_and_label(egui::accesskit::Role::Button, "Flat-field correction")
-            .scroll_to_me();
-        harness.try_run_realtime().unwrap();
-        harness
-            .get_by_role_and_label(egui::accesskit::Role::Button, "Flat-field correction")
-            .click();
-        harness.step();
         harness.get_by_label("Enabled").scroll_to_me();
         harness.try_run_realtime().unwrap();
         let viewport = harness.read(|editor| editor.viewport);
@@ -416,9 +435,11 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         save_existing_project(&mut harness);
         let saved = harness.read(|editor| editor.document.project.clone());
         stage(&mut harness, "Roll");
-        harness.get_by_label("Clear").scroll_to_me();
+        harness
+            .get_by_label("Reset Flat-field correction")
+            .scroll_to_me();
         harness.try_run_realtime().unwrap();
-        harness.get_by_label("Clear").click();
+        harness.get_by_label("Reset Flat-field correction").click();
         harness.step();
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| assert!(editor.correction.is_none()));
@@ -444,11 +465,35 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
             e.thumbnails.ready_count(&e.document, e.target) > 0
         });
         set_layout(&mut harness, egui::vec2(800., 600.), 270.);
-        harness.get_by_label("Edit area…").scroll_to_me();
+        harness
+            .get_by_label("Reset Flat-field correction")
+            .scroll_to_me();
         harness.try_run_realtime().unwrap();
-        harness.get_by_label("Edit area…").click();
+        harness.get_by_label("Reset Flat-field correction").click();
         harness.step();
         wait_for(&mut harness, |e| !e.busy);
+        harness.read(|editor| assert_eq!(editor.document.project, cleared));
+        assert!(
+            !harness
+                .get_by_label("Set up…")
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert!(
+            harness
+                .get_by_label("Reset Flat-field correction")
+                .accesskit_node()
+                .is_disabled()
+        );
+        // Supply the native chooser result, then use the ordinary viewer controls.
+        harness.enter(|editor, cx| editor.begin_flat_edit(reference.clone(), None, cx));
+        wait_for(&mut harness, |e| !e.busy);
+        assert!(
+            harness
+                .get_by_label("Reset Flat-field correction")
+                .accesskit_node()
+                .is_disabled()
+        );
         harness.get_by_label("Fit").click();
         harness.step();
         wait_settled(&mut harness);
@@ -463,44 +508,45 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
             )
         });
         let png = harness.render().unwrap();
-        save_capture(&png, "correction-edit-narrow-offscreen");
+        save_capture(&png, "correction-setup-narrow-offscreen");
         harness.get_by_label("Cancel").click();
         harness.step();
-        harness.read(|editor| assert_eq!(editor.document.project, saved));
+        harness.read(|editor| assert_eq!(editor.document.project, cleared));
         harness.read(|editor| assert_eq!(editor.current_source, selected));
+        harness.enter(|editor, cx| editor.begin_flat_edit(reference.clone(), None, cx));
+        wait_for(&mut harness, |e| !e.busy);
+        harness.get_by_label("Apply").click();
+        harness.step();
+        wait_for(&mut harness, |e| !e.busy);
+        harness.read(|editor| {
+            assert!(editor.correction.is_some(), "{}", editor.status);
+            let mut expected = cleared.clone();
+            expected.flat_field = editor.document.project.flat_field.clone();
+            assert_eq!(editor.document.project, expected);
+        });
         std::fs::remove_file(&reference).unwrap();
         open_project(
             &mut harness,
             directory.path().join("correction.antitone.json"),
         );
+        harness.get_by_label("Discard changes").click();
+        harness.step();
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| assert_eq!(editor.document.project, saved));
         harness.read(|editor| assert!(editor.correction.is_some()));
-        let request = harness.read(|editor| editor.next_request);
-        harness.get_by_label("Edit area…").click();
+        harness
+            .get_by_label("Reset Flat-field correction")
+            .scroll_to_me();
+        harness.try_run_realtime().unwrap();
+        harness.get_by_label("Reset Flat-field correction").click();
         harness.step();
-        harness.read(|editor| {
-            assert!(
-                editor.next_request > request,
-                "reference edit did not dispatch"
-            )
-        });
         wait_for(&mut harness, |e| !e.busy);
-        harness.read(|editor| assert!(editor.flat_edit.is_none()));
-        harness.read(|editor| assert!(editor.pick.is_none()));
-        harness.read(|editor| assert!(editor.status.contains("open"), "{}", editor.status));
-        harness.read(|editor| assert_eq!(editor.document.project, saved));
-        harness.read(|editor| assert!(editor.document.visit.ready.is_some()));
         harness.read(|editor| {
-            assert_eq!(
-                editor.failure.as_ref().unwrap().kind,
-                FailureKind::FlatReference
-            )
+            assert_eq!(editor.document.project, cleared);
+            assert!(editor.correction.is_none());
+            assert!(editor.document.visit.ready.is_some());
+            assert!(editor.failure.is_none(), "{}", editor.status);
         });
-        harness.get_by_label("OK").click();
-        harness.step();
-        harness.read(|editor| assert!(editor.failure.is_none()));
-        harness.read(|editor| assert_eq!(editor.document.project, saved));
         harness.read(|editor| assert!(editor.preference_store.is_none()));
     });
 }

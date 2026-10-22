@@ -81,7 +81,7 @@ Working feedback answers two questions: **what is happening, and what can I stil
 | Analyze preparation and estimation | Counted work, then indeterminate validation, in the activity strip with genuine Cancel |
 | Thumbnails, camera previews, scopes | Existing in-place image/card/scope feedback |
 
-[Task activity](../src/editor_activity.rs) is the foreground integration point: begin a typed task on the controller's request ID, report counted or indeterminate progress, and finish the matching request on success, failure or send-failure. Request keys are scoped by operation, so a photo-load result cannot finish an export that happens to share a number; stale reports are ignored. Cancellation has two responsibilities — signal the real worker, then mark the task `cancelling`, which drops measured progress and Cancel until matching completion. [Working presentation](../src/editor_ui_progress.rs) renders these views across modal/inline/compact surfaces.
+[Task activity](../src/editor_activity.rs) is the foreground integration point: begin a typed task on the controller's request ID, report counted or indeterminate progress, and finish the matching request on success, failure or send-failure. Request keys are scoped by operation, so a photo-load result cannot finish an export that happens to share a number; stale reports are ignored. Cancellation has two responsibilities — signal the real worker, then mark the task `cancelling`, which drops measured progress and Cancel until matching completion. [Working presentation](../src/editor_ui_progress.rs) renders the task's modal or local surface.
 
 ## Export photographs
 

@@ -371,7 +371,7 @@ fn inspector_titles_resets_and_body_actions_fit_and_expose_supplied_availability
                     context.set_pixels_per_point(scale);
                     frame(&context, width, enabled, vec![], |_| ());
                     let title = if reset.is_none() {
-                        "Flat-field area"
+                        "Auto-crop"
                     } else {
                         "Crop & straighten"
                     };
