@@ -21,8 +21,8 @@ Run the maintained local pipeline as GitHub Actions on PRs, pushes to main and m
 
 ## Remaining steps
 
-1. Integration on request: the branch is verified green in Actions (run #39743819523, both jobs, ~8.5 min editor / ~1.2 min checks). GitHub `main` is 12 commits behind local main; integrating and pushing main will shrink PR #1's diff to the CI commit alone.
-2. Optional follow-ups: branch-protection settings on GitHub (repo settings, not files); self-hosted/labelled Metal runner for the hosted-out suites; release workflow (out of scope).
+1. User merges PR #2 (docs + delivery guidance) when green; then reset local `main` to the pulled `origin/main` — local `main`'s unpushed `7f28ebc` is patch-identical to the cherry-picked `6f659f0` and drops out as redundant, rewriting nothing shared.
+2. Optional follow-ups: branch protection/rulesets in repo settings; a labelled self-hosted Metal runner; release workflow (out of scope).
 
 ## Current constraints and next action
 

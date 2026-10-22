@@ -36,11 +36,21 @@ Re-run after preparation to check that setup/building is repeatable. A separate 
 
 ## Continuous integration
 
-[ci.yml](../.github/workflows/ci.yml) runs the hosted-runnable subset on `macos-15` (Apple Silicon) for pull requests, pushes to `main` and manual dispatch. The `checks` job runs `cargo xtask tools`, the formatting gate, the documentation link gate, the packaging/format-tool unit tests and the numerical-core tests. The `editor` job runs `cargo xtask setup`, the Metal-free direct-SDK adapter tests, production and all-features clippy, then `cargo xtask package`/`verify-package` and uploads the ZIP as a workflow artifact.
+Development is pull-request based: change work happens on task branches, opens a PR into `main`, and [ci.yml](../.github/workflows/ci.yml) gates it on `macos-15` (Apple Silicon). The same workflow also runs on pushes to `main` and manual dispatch, so merges and the trunk tip stay continuously verified.
 
-Hosted macOS runners provide no Metal device, so CI deliberately does not run the editor library tests, kittest `ui-tests` or GPU suites; a green CI run is not equivalent to a full local `cargo xtask check`. Missing Metal is a coverage limit to run locally or on a labeled self-hosted runner, not something to silence in the workflow. GitHub's runner images also change over time (Xcode and tool versions drift); the pinned native-dependency cache is keyed on the setup scripts, so force a fresh cache when a runner-image change needs re-verification.
+CI covers the hardware-independent subset only. The split of responsibility:
 
-CI uses SHA-pinned actions with `contents: read` permissions, per-run concurrency cancellation, and selects Xcode 26.3 via `DEVELOPER_DIR` because the image's default Xcode (16.4) ships a `swift-format` too old for the checked-in `.swift-format` schema. A runner-image update may require re-pinning that path. Cached paths are the pinned native dependencies and format tools (keyed on the setup scripts) and Cargo downloads (keyed on the lockfile); `target/` is not cached. The workflow mirrors the documented local commands rather than defining a second build system.
+| Verification | Where it runs |
+| --- | --- |
+| Authored-source formatting, documentation links, packaging/format-tool unit tests | `checks` job, hosted (`cargo xtask tools` first) |
+| Numerical-core tests | `checks` job, hosted |
+| Native setup, vendored-SDK adapter tests, production/all-features clippy, package + relocated ZIP verification, ZIP artifact | `editor` job, hosted (Metal-free stages) |
+| Editor library tests, kittest `ui-tests`, GPU suites | Agent/local machine before integration — these need a Metal device, which hosted macOS runners do not provide |
+| Photographic, physical-input, native-window acceptance | Unchanged: manual/local exercise, never CI |
+
+A green PR therefore does not authorize merging on its own: the Metal-dependent suites in [development checks](development.md) still need to run in an agent session or on the developer's machine before integration, until a labeled self-hosted runner joins CI. Do not respond to missing hosted coverage by making the Metal-dependent tests skip or silently pass in the workflow.
+
+GitHub's runner images change over time (Xcode and tool versions drift); the pinned native-dependency cache is keyed on the setup scripts, so force a fresh cache when a runner-image change needs re-verification. CI uses SHA-pinned actions with `contents: read` permissions, per-run concurrency cancellation, and selects Xcode 26.3 via `DEVELOPER_DIR` because the image's default Xcode (16.4) ships a `swift-format` too old for the checked-in `.swift-format` schema; a runner-image update may require re-pinning that path. Cached paths are the pinned native dependencies and format tools (keyed on the setup scripts) and Cargo downloads (keyed on the lockfile); `target/` is not cached. The workflow mirrors the documented local commands rather than defining a second build system.
 
 ## Before public distribution
 

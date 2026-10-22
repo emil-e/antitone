@@ -77,6 +77,8 @@ open .cache/app/Antitone.app
 
 The package contains its OpenMP runtime; it no longer needs a library in the checkout. Normal rendering/export does not link OCIO; the opt-in `ocio-reference` feature remains a diagnostic dependency. Bundles are ad-hoc signed for local execution, **not Developer ID signed or notarized**. Public-release source distribution, asset/license clearance, file associations and clean-machine/macOS-14 acceptance remain separate. See [build and delivery](docs/build-and-delivery.md) for boundaries and verification.
 
+Changes land through pull requests: CI runs the hardware-independent subset of this workflow on every PR, while the Metal-dependent suites still run in agent sessions or on the developer's machine before integration.
+
 [Branding assets](assets/branding/README.md) include self-contained SVG wordmarks, portable PNG/ICO icons, the macOS icon and their regeneration command.
 
 ### Direct DNG SDK development
