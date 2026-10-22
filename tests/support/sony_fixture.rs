@@ -41,6 +41,18 @@ pub(crate) fn source(
     dng: bool,
     decoy: bool,
 ) -> tempfile::NamedTempFile {
+    source_oriented(order, tags, dng, decoy, 1)
+}
+
+/// Same authored sensor data with a TIFF orientation tag; only tag 274 differs, so an
+/// unrotated `source` development of the same tags is the native-coordinate oracle.
+pub(crate) fn source_oriented(
+    order: Order,
+    tags: Vec<Entry>,
+    dng: bool,
+    decoy: bool,
+    orientation: u16,
+) -> tempfile::NamedTempFile {
     let mut bytes = match order {
         Order::Little => b"II\x2a\0\x08\0\0\0".to_vec(),
         Order::Big => b"MM\0\x2a\0\0\0\x08".to_vec(),
@@ -84,6 +96,7 @@ pub(crate) fn source(
             entries.extend([
                 (33421, 3, [order.short(2), order.short(2)].concat()),
                 (33422, 1, vec![0, 1, 1, 2]),
+                (274, 3, order.short(orientation)),
             ]);
             entries.extend(tags.clone());
             if dng {

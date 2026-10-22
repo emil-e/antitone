@@ -10,7 +10,7 @@
 #endif
 #include <memory>
 
-static_assert(sizeof(AntitoneRawMetadata) == 664);
+static_assert(sizeof(AntitoneRawMetadata) == 656);
 static_assert(sizeof(AntitoneRawSonyLens) == 160);
 static_assert(sizeof(AntitoneRawDiagnostics) == 112);
 static_assert(sizeof(AntitoneRawView) == 64);
@@ -223,7 +223,7 @@ void metadata(LibRaw &raw, AntitoneRawMetadata &out) {
     out.colors = d.idata.colors;
     out.filters = d.idata.filters;
     out.raw_bps = c.raw_bps;
-    out.sony_file_type = d.makernotes.sony.SonyRawFileType;
+    out.vendor.sony_file_type = d.makernotes.sony.SonyRawFileType;
     out.black = c.black;
     out.maximum = c.maximum;
     for (int i = 0; i < 4; ++i) {
@@ -306,7 +306,7 @@ extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out, c
         return nullptr;
     }
     metadata(*raw, *out);
-    out->sony_lens = selected_sony_lens(*raw, lens);
+    out->vendor.sony_lens = selected_sony_lens(*raw, lens);
     return raw.release();
 } catch (const std::bad_alloc &) {
 

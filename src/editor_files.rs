@@ -29,6 +29,15 @@ pub(super) enum Transition {
     Close,
 }
 
+/// Picker-extension hint: any listed RAW routes to scan import; contents decide compatibility.
+pub(super) fn is_raw_path(path: &std::path::Path) -> bool {
+    path.extension().is_some_and(|extension| {
+        RAW_EXTENSIONS
+            .iter()
+            .any(|raw| extension.eq_ignore_ascii_case(raw))
+    })
+}
+
 fn project_save_name(path: Option<&std::path::Path>) -> String {
     let mut name = path
         .and_then(|path| path.file_name())

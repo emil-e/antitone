@@ -444,10 +444,7 @@ impl Editor {
     }
 
     pub fn open_initial(&mut self, path: PathBuf, cx: &UiContext<'_, Self>) {
-        if path
-            .extension()
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("arw"))
-        {
+        if files::is_raw_path(&path) {
             self.add_raws(vec![path], cx);
             self.new_project_pending = self.document_pending.is_some();
         } else {

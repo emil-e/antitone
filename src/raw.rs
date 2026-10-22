@@ -50,7 +50,6 @@ pub struct NativeMetadata {
     pub colors: u32,
     pub filters: u32,
     pub raw_bps: u32,
-    pub sony_file_type: u32,
     pub black: u32,
     pub maximum: u32,
     pub cblack: [u32; 4],
@@ -58,8 +57,17 @@ pub struct NativeMetadata {
     pub cam_mul: [f64; 4],
     pub daylight_mul: [f64; 4],
     rgb_cam: [f64; 9],
-    pub sony_lens: SonyLensData,
+    pub vendor: VendorMetadata,
     lens_disabled: u32,
+}
+
+/// Vendor makernote payload. Sony is the vendor with parsed payloads; other makes arrive
+/// zeroed and report absent embedded lens data.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct VendorMetadata {
+    pub sony_file_type: u32,
+    pub sony_lens: SonyLensData,
 }
 
 /// Shared source descriptor. LibRaw supplies the header/container fields; SDK DNG
@@ -186,17 +194,17 @@ impl Metadata {
         Ok(AP1_TO_XYZ.inverse() * adaptation * SRGB_TO_XYZ * camera_to_srgb)
     }
 
-    pub fn lens_geometry(&self) -> Result<Option<crate::lens::SonyLensGeometry>, Error> {
+    pub fn lens_geometry(&self) -> Result<Option<crate::lens::EmbeddedLensGeometry>, Error> {
         if self.dng_identity().is_some() || self.lens_disabled != 0 {
             return Ok(None);
         }
-        let Some(profile) = self.sony_lens.profile()? else {
+        let Some(profile) = self.vendor.sony_lens.profile()? else {
             return Ok(None);
         };
         if !profile.has_distortion() && !profile.has_ca() && !profile.has_vignetting() {
             return Ok(None);
         }
-        crate::lens::SonyLensGeometry::new(profile, self.native_image_area()?).map(Some)
+        crate::lens::EmbeddedLensGeometry::new(profile, self.native_image_area()?).map(Some)
     }
 
     /// Original-code precision amplified conservatively by development; never a clipping limit.
@@ -217,6 +225,17 @@ impl Metadata {
 
     pub fn lens_identity(&self) -> Result<Option<String>, Error> {
         Ok(self.lens_geometry()?.map(|g| g.identity()))
+    }
+
+    /// Orientation the camera recorded for this source, as the initial per-photo
+    /// composition setting. Every TIFF orientation is representable as turns plus
+    /// flips, including the mirrored and transposed cases.
+    pub fn photo_orientation(&self) -> Result<crate::geometry::PhotoOrientation, Error> {
+        #[cfg(feature = "dng-sdk")]
+        if let Some(header) = self.sdk {
+            return photo_orientation_from_tiff(header.orientation);
+        }
+        photo_orientation_from_libraw_flip(self.flip)
     }
 
     pub fn image_area(&self) -> Result<Rect, Error> {
@@ -262,6 +281,47 @@ impl Metadata {
             _ => Err(Error::Raw("invalid metadata-defined image inset".into())),
         }
     }
+}
+
+/// LibRaw stores TIFF orientation as dcraw's `"50132467"` flip table. The composition
+/// model's turns and flips represent all eight orientations, including mirrored and
+/// transposed sources, so no recorded orientation is rejected.
+fn photo_orientation_from_libraw_flip(
+    flip: i32,
+) -> Result<crate::geometry::PhotoOrientation, Error> {
+    use crate::geometry::{Flips, PhotoOrientation, QuarterTurns};
+    const MIRROR: Flips = Flips {
+        horizontal: true,
+        vertical: false,
+    };
+    let (turns, flips) = match flip {
+        0 => (QuarterTurns::Zero, Flips::default()), // TIFF 1
+        1 => (QuarterTurns::Zero, MIRROR),           // TIFF 2: mirror
+        2 => (
+            QuarterTurns::Zero,
+            Flips {
+                horizontal: false,
+                vertical: true,
+            },
+        ), // TIFF 4
+        3 => (QuarterTurns::Two, Flips::default()),  // TIFF 3: 180 degrees
+        4 => (QuarterTurns::One, MIRROR),            // TIFF 5: transpose
+        5 => (QuarterTurns::Three, Flips::default()), // TIFF 8: 270 degrees
+        6 => (QuarterTurns::One, Flips::default()),  // TIFF 6: 90 degrees
+        7 => (QuarterTurns::Three, MIRROR),          // TIFF 7: transverse
+        _ => return Err(Error::Raw("unknown RAW orientation code".into())),
+    };
+    Ok(PhotoOrientation { turns, flips })
+}
+
+fn photo_orientation_from_tiff(
+    orientation: u32,
+) -> Result<crate::geometry::PhotoOrientation, Error> {
+    if !(1..=8).contains(&orientation) {
+        return Err(Error::Raw("invalid DNG orientation tag".into()));
+    }
+    let flip = (b"50132467"[(orientation & 7) as usize] - b'0') as i32;
+    photo_orientation_from_libraw_flip(flip)
 }
 
 pub use crate::geometry::SourceRegion as Rect;
@@ -443,7 +503,7 @@ pub struct RawFile {
     priority: DevelopmentPriority,
     diagnostics: Option<SensorDiagnostics>,
     camera_view: Option<NativeView>,
-    correction: Option<crate::lens::SonyLensGeometry>,
+    correction: Option<crate::lens::EmbeddedLensGeometry>,
     corrected: Option<lens_source::CorrectedImage>,
     #[cfg(feature = "dng-sdk")]
     path: std::path::PathBuf,
@@ -889,7 +949,7 @@ impl RawFile {
                     ..view
                 });
                 println!(
-                    "sony_lens_development width={} height={} reconstruction_seconds={:.6} corrected_bytes={} eligibility_bytes={} native_image_retained=false",
+                    "embedded_lens_development width={} height={} reconstruction_seconds={:.6} corrected_bytes={} eligibility_bytes={} native_image_retained=false",
                     corrected.size[0],
                     corrected.size[1],
                     started.elapsed().as_secs_f64(),
@@ -1169,6 +1229,109 @@ fn native_error(operation: &str, error: &[c_char]) -> Error {
 mod tests {
     use super::*;
 
+    #[test]
+    fn recorded_orientations_seed_every_tiff_case_as_turns_and_flips() {
+        use crate::geometry::{Flips, PhotoOrientation, QuarterTurns};
+        const MIRROR: Flips = Flips {
+            horizontal: true,
+            vertical: false,
+        };
+        let identity = PhotoOrientation {
+            turns: QuarterTurns::Zero,
+            flips: Flips::default(),
+        };
+        let turned = |turns| PhotoOrientation {
+            turns,
+            flips: Flips::default(),
+        };
+        let mirrored = |turns| PhotoOrientation {
+            turns,
+            flips: MIRROR,
+        };
+        for (tiff, flip, expected) in [
+            (1u32, 0i32, identity),
+            (2, 1, mirrored(QuarterTurns::Zero)),
+            (3, 3, turned(QuarterTurns::Two)),
+            (
+                4,
+                2,
+                PhotoOrientation {
+                    turns: QuarterTurns::Zero,
+                    flips: Flips {
+                        horizontal: false,
+                        vertical: true,
+                    },
+                },
+            ),
+            (5, 4, mirrored(QuarterTurns::One)),
+            (6, 6, turned(QuarterTurns::One)),
+            (7, 7, mirrored(QuarterTurns::Three)),
+            (8, 5, turned(QuarterTurns::Three)),
+        ] {
+            assert_eq!(
+                photo_orientation_from_tiff(tiff).unwrap(),
+                expected,
+                "tiff {tiff}"
+            );
+            assert_eq!(
+                photo_orientation_from_libraw_flip(flip).unwrap(),
+                expected,
+                "flip {flip}"
+            );
+        }
+        assert!(photo_orientation_from_tiff(0).is_err());
+        assert!(photo_orientation_from_tiff(9).is_err());
+        assert!(photo_orientation_from_libraw_flip(-1).is_err());
+        assert!(photo_orientation_from_libraw_flip(8).is_err());
+    }
+
+    /// Seeded orientation must display exactly what LibRaw's own writer emits with
+    /// `user_flip` honoured (`LibRaw::flip_index` in file_write.cpp): the oriented
+    /// pixel (x, y) reads the native sensor pixel flip_index returns for (row=y, col=x).
+    #[test]
+    fn seeded_orientation_displays_libraw_flip_index_pixels() {
+        use crate::geometry::{Orientation, OrientedPoint, RollOrientation, SourceRegion};
+        let area = SourceRegion::from([3, 5, 52, 34]);
+        for flip in 0..=7 {
+            let seed = photo_orientation_from_libraw_flip(flip).unwrap();
+            let orientation = Orientation::new(area, RollOrientation::default(), seed).unwrap();
+            let [width, height] = [area.width, area.height];
+            let [displayed_width, displayed_height] = orientation.size();
+            for (col, row) in [
+                (0, 0),
+                (0, 3),
+                (17, 0),
+                (displayed_width - 1, displayed_height - 1),
+                (displayed_width / 2, displayed_height / 2),
+            ] {
+                let mut source_row = row;
+                let mut source_col = col;
+                if flip & 4 != 0 {
+                    std::mem::swap(&mut source_row, &mut source_col);
+                }
+                if flip & 2 != 0 {
+                    source_row = height - 1 - source_row;
+                }
+                if flip & 1 != 0 {
+                    source_col = width - 1 - source_col;
+                }
+                let expected = source_row * width + source_col;
+                // Oriented size swaps axes exactly when the seed turns a quarter.
+                let oriented = orientation.oriented_to_source(OrientedPoint([
+                    f64::from(col) + 0.5,
+                    f64::from(row) + 0.5,
+                ]));
+                let local_x = oriented.0[0] - f64::from(area.x);
+                let local_y = oriented.0[1] - f64::from(area.y);
+                assert_eq!(
+                    (local_y.floor() * f64::from(width) + local_x.floor()) as i64,
+                    i64::from(expected),
+                    "flip {flip} at ({col}, {row})"
+                );
+            }
+        }
+    }
+
     fn metadata_fixture() -> Metadata {
         // All fields are numeric or char arrays, so zero is a valid fixture representation.
         let mut m = Metadata::from_native(unsafe { std::mem::zeroed() });
@@ -1324,7 +1487,7 @@ mod tests {
 
     #[test]
     fn bridge_layout_matches_native_static_assertions() {
-        assert_eq!(size_of::<NativeMetadata>(), 664);
+        assert_eq!(size_of::<NativeMetadata>(), 656);
         assert_eq!(size_of::<SonyLensData>(), 160);
         assert_eq!(size_of::<SensorDiagnostics>(), 112);
         assert_eq!(size_of::<NativeView>(), 64);
@@ -1496,6 +1659,164 @@ mod tests {
         assert_eq!(DevelopmentPriority::Background.threads(18, Normal), 2);
         assert_eq!(DevelopmentPriority::Background.threads(18, Warning), 1);
         assert_eq!(DevelopmentPriority::Foreground.threads(18, Critical), 1);
+    }
+
+    #[test]
+    #[ignore = "read-only local Canon/Nikon/Olympus/Panasonic RAW samples; decode, development and eligibility invariants"]
+    fn vendor_samples_develop_through_the_accepted_camera_domain() {
+        // Three-colour integer Bayer bodies across four vendors and every accepted
+        // container variant: 12-bit compressed NEF, Olympus hi-res ORF, Panasonic
+        // crop modes and both current RW2 decoders, plus actual camera-scanned negatives.
+        let samples = [
+            (
+                "samples/raw-downloads/canon/5dmk2-raw.CR2",
+                ("Canon", "EOS 5D Mark II", 14),
+            ),
+            (
+                "samples/raw-downloads/canon/eosr-raw-iso100.CR3",
+                ("Canon", "EOS R", 14),
+            ),
+            (
+                "samples/raw-downloads/canon/eosr-craw-iso100.CR3",
+                ("Canon", "EOS R", 14),
+            ),
+            (
+                "samples/raw-downloads/canon/r6-raw-nocrop-nodual.CR3",
+                ("Canon", "EOS R6", 14),
+            ),
+            (
+                "samples/raw-downloads/nikon/d750-lossless-14bit.NEF",
+                ("Nikon", "D750", 14),
+            ),
+            (
+                "samples/raw-downloads/nikon/d750-compressed-12bit.NEF",
+                ("Nikon", "D750", 12),
+            ),
+            (
+                "samples/raw-downloads/nikon/d850-lossless-14bit.NEF",
+                ("Nikon", "D850", 14),
+            ),
+            (
+                "samples/raw-downloads/nikon/z7-lossless-14bit.NEF",
+                ("Nikon", "Z 7", 14),
+            ),
+            (
+                "samples/raw-downloads/negative-scans/negadoctor-challenge-canondslr.CR2",
+                ("Canon", "EOS 600D", 14),
+            ),
+            (
+                "samples/raw-downloads/negative-scans/negadoctor-snowy-day-d780.NEF",
+                ("Nikon", "D780", 14),
+            ),
+            (
+                "samples/raw-downloads/olympus/em1-16mp-12bit.ORF",
+                ("Olympus", "E-M1", 12),
+            ),
+            (
+                "samples/raw-downloads/olympus/em1m3-standard-20mp.ORF",
+                ("Olympus", "E-M1MarkIII", 12),
+            ),
+            (
+                "samples/raw-downloads/olympus/em1x-20mp.ORF",
+                ("Olympus", "E-M1X", 12),
+            ),
+            (
+                "samples/raw-downloads/panasonic/gh4-standard-16mp.RW2",
+                ("Panasonic", "DMC-GH4", 12),
+            ),
+            (
+                "samples/raw-downloads/panasonic/g9-standard-20mp.RW2",
+                ("Panasonic", "DC-G9", 12),
+            ),
+            (
+                "samples/raw-downloads/panasonic/gh5-standard-20mp.RW2",
+                ("Panasonic", "DC-GH5", 12),
+            ),
+            (
+                "samples/raw-downloads/panasonic/s5-fullframe.RW2",
+                ("Panasonic", "DC-S5", 14),
+            ),
+            (
+                "samples/raw-downloads/panasonic/gh6-25mp.RW2",
+                ("Panasonic", "DC-GH6", 16),
+            ),
+            (
+                "samples/raw-downloads/panasonic/s5m2-fullframe.RW2",
+                ("Panasonic", "DC-S5M2", 14),
+            ),
+            (
+                "samples/raw-downloads/panasonic/g9m2-25mp.RW2",
+                ("Panasonic", "DC-G9M2", 16),
+            ),
+        ];
+        for (path, (make, model, bps)) in samples {
+            let mut raw = RawFile::open(Path::new(path)).unwrap();
+            let metadata = raw.metadata;
+            assert_eq!(metadata.make(), *make, "{path}");
+            assert_eq!(metadata.model(), *model, "{path}");
+            assert_eq!(metadata.raw_bps, bps, "{path}");
+            // The acceptance domain: three-colour integer Bayer, no repeated black pattern.
+            assert_eq!(metadata.colors, 3);
+            assert_ne!(metadata.filters, 0);
+            assert_eq!(
+                metadata.vendor.sony_lens.distortion_status(),
+                SonyLensDataStatus::Absent,
+                "{path}"
+            );
+            let wb = metadata.as_shot_wb();
+            assert!(wb.iter().all(|v| v.is_finite() && *v > 0.), "{path}");
+            let area = metadata.image_area().unwrap();
+            assert!(area.width > 0 && area.height > 0, "{path}");
+            // Development is repeatable and keeps the metadata-declared area.
+            let first = raw.develop_camera(wb).unwrap();
+            assert_eq!(
+                [first.width, first.height],
+                metadata.source_dimensions().unwrap(),
+                "{path}"
+            );
+            let picks = [
+                (area.x, area.y),
+                (area.x + area.width / 2, area.y + area.height / 2),
+                (area.x + area.width - 1, area.y + area.height - 1),
+            ];
+            let expected: Vec<_> = picks
+                .into_iter()
+                .map(|(x, y)| first.pixel_samples(x, y).unwrap())
+                .collect();
+            let second = raw.develop_camera(wb).unwrap();
+            for ((x, y), value) in picks.into_iter().zip(expected) {
+                assert_eq!(second.pixel_samples(x, y).unwrap(), value, "{path}");
+            }
+            // Eligibility of the whole active area matches its sensor diagnostics.
+            let flags = raw.capture_eligibility(area).unwrap();
+            let diagnostics = raw.region_sensor_diagnostics(area).unwrap();
+            assert_eq!(flags, CaptureFlags::from(diagnostics), "{path}");
+        }
+        // sRAW/mRAW is decimated pre-demosaiced output, not CFA sensor data: rejected.
+        assert!(RawFile::open(Path::new("samples/raw-downloads/canon/6d-sraw.CR2")).is_err());
+    }
+
+    #[test]
+    #[ignore = "read-only local portrait Canon RAW sample; composition-seed invariant"]
+    fn portrait_sources_seed_the_composition_orientation_setting() {
+        let path =
+            Path::new("samples/raw-downloads/negative-scans/negadoctor-challenge-canondslr.CR2");
+        let mut raw = RawFile::open(path).unwrap();
+        assert_eq!(raw.metadata.flip, 6);
+        assert_eq!(
+            raw.metadata.photo_orientation().unwrap(),
+            crate::geometry::PhotoOrientation {
+                turns: crate::geometry::QuarterTurns::One,
+                flips: crate::geometry::Flips::default(),
+            }
+        );
+        // The developed raster keeps native sensor orientation; only the setting rotates.
+        let image = raw.develop_camera(raw.metadata.as_shot_wb()).unwrap();
+        assert!(image.width > image.height);
+        assert_eq!(
+            [image.width, image.height],
+            raw.metadata.source_dimensions().unwrap()
+        );
     }
 
     #[test]

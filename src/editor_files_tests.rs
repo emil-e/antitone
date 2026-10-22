@@ -32,6 +32,29 @@ fn raw_picker_offers_common_camera_formats_not_only_arw() {
     }
 }
 
+#[test]
+fn initial_paths_route_by_raw_extension_not_by_make() {
+    for path in [
+        "/scans/DSC04378.ARW",
+        "/scans/IMG_0051.cr2",
+        "/scans/Canon_EOS_R_RAW_ISO_100.CR3",
+        "/scans/DSC_0977.nef",
+        "/scans/P1000513.ORF",
+        "/scans/P1010136.RW2",
+        "/scans/patches.dng",
+    ] {
+        assert!(is_raw_path(std::path::Path::new(path)), "{path}");
+    }
+    for path in [
+        "/projects/roll.antitone",
+        "/projects/grade.json",
+        "/scans/scan.tif",
+        "/scans/no-extension",
+    ] {
+        assert!(!is_raw_path(std::path::Path::new(path)), "{path}");
+    }
+}
+
 fn ui_frame(
     editor: &mut impl crate::editor::tests::UiFixture,
     context: &egui::Context,

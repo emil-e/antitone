@@ -1,5 +1,5 @@
 use super::eligibility::EligibilityMask;
-use crate::{Error, lens::SonyLensGeometry};
+use crate::{Error, lens::EmbeddedLensGeometry};
 
 pub(super) struct CorrectedImage {
     pub pixels: Vec<[f32; 3]>,
@@ -16,7 +16,7 @@ impl CorrectedImage {
 pub(super) fn reconstruct(
     input: &[u16],
     input_size: [u32; 2],
-    geometry: &SonyLensGeometry,
+    geometry: &EmbeddedLensGeometry,
     support: &EligibilityMask,
     threads: usize,
 ) -> Result<CorrectedImage, Error> {
@@ -29,11 +29,11 @@ pub(super) fn reconstruct(
     let count = (size[0] as usize)
         .checked_mul(size[1] as usize)
         .filter(|&n| n <= isize::MAX as usize / size_of::<[f32; 3]>())
-        .ok_or_else(|| Error::Raw("corrected Sony image exceeds addressable storage".into()))?;
+        .ok_or_else(|| Error::Raw("corrected image exceeds addressable storage".into()))?;
     let mut pixels = Vec::new();
     pixels
         .try_reserve_exact(count)
-        .map_err(|_| Error::Raw("cannot allocate corrected Sony image".into()))?;
+        .map_err(|_| Error::Raw("cannot allocate the corrected image".into()))?;
     pixels.resize(count, [0.; 3]);
     let mut eligibility = EligibilityMask::new(size)?;
     let row_words = eligibility.row_words();
@@ -84,7 +84,7 @@ pub(super) fn reconstruct(
         }
         for job in jobs {
             job.join()
-                .map_err(|_| Error::Raw("Sony correction worker panicked".into()))??;
+                .map_err(|_| Error::Raw("lens correction worker panicked".into()))??;
         }
         Ok(())
     })?;
@@ -99,9 +99,10 @@ pub(super) fn reconstruct(
 mod tests {
     use super::*;
     use crate::{
-        lens::SonyLensProfile,
+        lens::EmbeddedLensProfile,
         raw::{CaptureFlags, Rect},
     };
+    use glam::DVec2;
 
     fn source_mask(size: [u32; 2], sites: &[[u32; 3]]) -> EligibilityMask {
         let mut mask = EligibilityMask::new(size).unwrap();
@@ -118,12 +119,13 @@ mod tests {
         let size = [64, 64];
         let raw = source_mask(size, &[[5, 6, 1], [27, 35, 2], [48, 39, 3]]);
         let support = raw.ahd_support().unwrap();
-        let profile = SonyLensProfile::from_parameters(
-            Some(&[2, 1024, 1024]),
-            Some(&[4, 16384, 16384, -32768, -32768]),
+        let profile = EmbeddedLensProfile::from_knots(
+            &[1.0625, 1.0625],
+            &[DVec2::new(1. + 16384. / 2097152., 1. - 32768. / 2097152.); 2],
+            &[],
         )
         .unwrap();
-        let geometry = SonyLensGeometry::new(profile, Rect::from([7, 11, 40, 28])).unwrap();
+        let geometry = EmbeddedLensGeometry::new(profile, Rect::from([7, 11, 40, 28])).unwrap();
         let image = reconstruct(&vec![100; 64 * 64 * 4], size, &geometry, &support, 8).unwrap();
         let mut region_flags = 0;
         for y in 0..image.size[1] {
@@ -161,10 +163,9 @@ mod tests {
     fn shading_headroom_is_not_clipping_but_native_clipping_survives_attenuation() {
         let size = [64, 64];
         let support = source_mask(size, &[]);
-        let geometry = |coefficient| {
-            SonyLensGeometry::new(
-                SonyLensProfile::from_components(None, None, Some(&[2, coefficient, coefficient]))
-                    .unwrap(),
+        let geometry = |attenuation: f64| {
+            EmbeddedLensGeometry::new(
+                EmbeddedLensProfile::from_knots(&[], &[], &[attenuation; 2]).unwrap(),
                 Rect::from([0, 0, 64, 64]),
             )
             .unwrap()
@@ -172,7 +173,7 @@ mod tests {
         let image = reconstruct(
             &vec![50000; 64 * 64 * 4],
             size,
-            &geometry(8192),
+            &geometry((-0.5f64).exp2()),
             &support,
             8,
         )
@@ -181,7 +182,7 @@ mod tests {
         assert_eq!(image.eligibility.at(5, 5), 0);
         let mut input = vec![10000; 64 * 64 * 4];
         input[(5 * 64 + 5) * 4] = u16::MAX;
-        let image = reconstruct(&input, size, &geometry(-8192), &support, 8).unwrap();
+        let image = reconstruct(&input, size, &geometry((0.25f64).exp2()), &support, 8).unwrap();
         assert!(image.pixels[5 * 64 + 5][0] < 65535.);
         assert_eq!(image.eligibility.at(5, 5), 1);
         assert_eq!(image.eligibility.at(4, 5), 0);
@@ -191,8 +192,8 @@ mod tests {
     fn zero_weight_neighbours_do_not_invalidate_an_identity_sample() {
         let size = [64, 64];
         let support = source_mask(size, &[[21, 12, 1]]).ahd_support().unwrap();
-        let geometry = SonyLensGeometry::new(
-            SonyLensProfile::from_parameters(Some(&[2, 0, 0]), None).unwrap(),
+        let geometry = EmbeddedLensGeometry::new(
+            EmbeddedLensProfile::from_knots(&[1., 1.], &[], &[]).unwrap(),
             Rect::from([0, 0, 40, 28]),
         )
         .unwrap();

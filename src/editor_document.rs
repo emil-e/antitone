@@ -483,7 +483,7 @@ pub(super) fn source_metadata(path: &Path, metadata: &Metadata) -> Result<Source
         photo: Default::default(),
         local_adjustments: None,
         repairs: Default::default(),
-        orientation: Default::default(),
+        orientation: metadata.photo_orientation()?,
         crop: None,
     })
 }

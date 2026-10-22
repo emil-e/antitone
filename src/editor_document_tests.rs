@@ -337,3 +337,44 @@ fn open_empty_document_checks_runtime_and_retains_unavailable_nonfilmstrip_recor
     incompatible.save(&path, Save::Replace).unwrap();
     assert!(Document::open(&path).is_err());
 }
+
+#[test]
+fn oriented_imports_seed_the_photo_composition_setting() {
+    use crate::geometry::{Flips, PhotoOrientation, QuarterTurns};
+    use crate::raw::sony_fixture::{self, Order};
+    for (tag, seed) in [
+        (
+            6u16,
+            PhotoOrientation {
+                turns: QuarterTurns::One,
+                flips: Flips::default(),
+            },
+        ),
+        (
+            5,
+            PhotoOrientation {
+                turns: QuarterTurns::One,
+                flips: Flips {
+                    horizontal: true,
+                    vertical: false,
+                },
+            },
+        ),
+    ] {
+        let file = sony_fixture::source_oriented(Order::Little, vec![], false, false, tag);
+        let mut document = Document::default();
+        // The authored TIFF has no maker-note WB; declare fixed roll gains as kittests do.
+        document.project.development = Some(crate::project::Development::new(
+            crate::raw::version(),
+            [1.; 4],
+        ));
+        let path = file.path().to_path_buf();
+        document.import(std::slice::from_ref(&path)).unwrap();
+        let id = document.project.order[0];
+        assert_eq!(
+            document.project.source(id).unwrap().orientation,
+            seed,
+            "orientation tag {tag}"
+        );
+    }
+}

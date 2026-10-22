@@ -1,14 +1,14 @@
 use antitone::{
     geometry::SourceRegion,
-    lens::{SonyLensGeometry, SonyLensProfile},
+    lens::{EmbeddedLensGeometry, EmbeddedLensProfile},
 };
 use glam::DVec2;
 
 #[test]
 fn active_area_centres_and_valid_rectangle_preserve_pitch_without_border_replication() {
     let area = SourceRegion::from([7, 13, 40, 28]);
-    let profile = SonyLensProfile::from_parameters(Some(&[2, 1024, 1024]), None).unwrap();
-    let geometry = SonyLensGeometry::new(profile, area).unwrap();
+    let profile = EmbeddedLensProfile::from_knots(&[17. / 16.; 2], &[], &[]).unwrap();
+    let geometry = EmbeddedLensGeometry::new(profile, area).unwrap();
     assert_eq!(geometry.size(), [36, 26]);
     assert_eq!(geometry.original_area(), area);
     let center = DVec2::new(26.5, 26.5);
@@ -27,8 +27,9 @@ fn active_area_centres_and_valid_rectangle_preserve_pitch_without_border_replica
 fn ca_only_moves_red_blue_but_does_not_rescale_the_green_plane() {
     let area = SourceRegion::from([8, 12, 40, 28]);
     let profile =
-        SonyLensProfile::from_parameters(None, Some(&[4, 16384, 16384, -32768, -32768])).unwrap();
-    let geometry = SonyLensGeometry::new(profile, area).unwrap();
+        EmbeddedLensProfile::from_knots(&[], &[DVec2::new(129. / 128., 63. / 64.); 2], &[])
+            .unwrap();
+    let geometry = EmbeddedLensGeometry::new(profile, area).unwrap();
     assert_eq!(geometry.size(), [38, 26]);
     for [x, y] in [[0, 0], [37, 25], [12, 7]] {
         let points = geometry.sample_positions(x, y).unwrap();

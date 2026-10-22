@@ -11,17 +11,17 @@ fn selected_ifd_shading_is_signed_bounded_independent_and_padding_is_not_data() 
         let file = source(order, vec![vignette(order, &[2, 8192, 8192])], false, true);
         let raw = RawFile::open(file.path()).unwrap();
         assert_eq!(
-            raw.metadata.sony_lens.vignetting_status(),
+            raw.metadata.vendor.sony_lens.vignetting_status(),
             SonyLensDataStatus::Available {
                 camera_setting: None
             }
         );
         assert_eq!(
-            raw.metadata.sony_lens.distortion_status(),
+            raw.metadata.vendor.sony_lens.distortion_status(),
             SonyLensDataStatus::Absent
         );
         assert_eq!(
-            raw.metadata.sony_lens.ca_status(),
+            raw.metadata.vendor.sony_lens.ca_status(),
             SonyLensDataStatus::Absent
         );
         let geometry = raw.metadata.lens_geometry().unwrap().unwrap();
@@ -56,13 +56,13 @@ fn selected_ifd_shading_is_signed_bounded_independent_and_padding_is_not_data() 
             let file = source(order, tags, false, false);
             assert!(RawFile::open(file.path()).is_err());
             let mut baseline = RawFile::open_uncorrected(file.path()).unwrap();
-            assert!(baseline.metadata.sony_lens.profile().is_err());
+            assert!(baseline.metadata.vendor.sony_lens.profile().is_err());
             baseline.develop_camera([1.; 4]).unwrap();
         }
         let file = source(order, vec![vignette(order, &[2, 8192, 8192])], true, false);
         let raw = RawFile::open(file.path()).unwrap();
         assert_eq!(
-            raw.metadata.sony_lens.vignetting_status(),
+            raw.metadata.vendor.sony_lens.vignetting_status(),
             SonyLensDataStatus::Absent
         );
     }

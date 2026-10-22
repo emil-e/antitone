@@ -24,7 +24,7 @@ fn selected_raw_ifd_not_rendered_ifd_supplies_signed_coefficients_in_either_byte
         let file = source(order, profile_tags(order), false, true);
         let bytes = std::fs::read(file.path()).unwrap();
         let raw = RawFile::open(file.path()).unwrap();
-        let metadata = raw.metadata.sony_lens;
+        let metadata = raw.metadata.vendor.sony_lens;
         assert_eq!(
             metadata.distortion_status(),
             SonyLensDataStatus::Available {
@@ -58,6 +58,7 @@ fn tiled_raw_selection_uses_the_offset_table_not_its_first_image_offset() {
         let raw = RawFile::open(file.path()).unwrap();
         assert!(
             raw.metadata
+                .vendor
                 .sony_lens
                 .profile()
                 .unwrap()
@@ -74,7 +75,15 @@ fn diagnostic_bypass_keeps_original_codes_and_capture_diagnostics() {
     let plain_file = source(order, vec![], false, false);
     let mut raw = RawFile::open_uncorrected(file.path()).unwrap();
     let mut plain = RawFile::open_uncorrected(plain_file.path()).unwrap();
-    assert!(raw.metadata.sony_lens.profile().unwrap().unwrap().has_ca());
+    assert!(
+        raw.metadata
+            .vendor
+            .sony_lens
+            .profile()
+            .unwrap()
+            .unwrap()
+            .has_ca()
+    );
     let before = raw.unpack().unwrap();
     assert_eq!(before.at_white, [0; 4]);
     let developed = raw.develop_camera([1.; 4]).unwrap();
@@ -114,14 +123,14 @@ fn unavailable_flags_override_leftover_payloads_but_off_does_not() {
     let file = source(order, tags, false, false);
     let raw = RawFile::open(file.path()).unwrap();
     assert_eq!(
-        raw.metadata.sony_lens.distortion_status(),
+        raw.metadata.vendor.sony_lens.distortion_status(),
         SonyLensDataStatus::Unavailable
     );
     assert_eq!(
-        raw.metadata.sony_lens.ca_status(),
+        raw.metadata.vendor.sony_lens.ca_status(),
         SonyLensDataStatus::Unavailable
     );
-    assert!(raw.metadata.sony_lens.profile().unwrap().is_none());
+    assert!(raw.metadata.vendor.sony_lens.profile().unwrap().is_none());
 }
 
 #[test]
@@ -134,7 +143,7 @@ fn an_unavailable_component_does_not_disable_the_other_and_zero_profiles_remain_
     ];
     let file = source(order, tags, false, false);
     let raw = RawFile::open(file.path()).unwrap();
-    let profile = raw.metadata.sony_lens.profile().unwrap().unwrap();
+    let profile = raw.metadata.vendor.sony_lens.profile().unwrap().unwrap();
     assert!(!profile.has_distortion() && profile.has_ca());
 
     let file = source(
@@ -145,12 +154,12 @@ fn an_unavailable_component_does_not_disable_the_other_and_zero_profiles_remain_
     );
     let raw = RawFile::open(file.path()).unwrap();
     assert_eq!(
-        raw.metadata.sony_lens.distortion_status(),
+        raw.metadata.vendor.sony_lens.distortion_status(),
         SonyLensDataStatus::Available {
             camera_setting: None
         }
     );
-    let profile = raw.metadata.sony_lens.profile().unwrap().unwrap();
+    let profile = raw.metadata.vendor.sony_lens.profile().unwrap().unwrap();
     assert!(!profile.has_distortion() && !profile.has_ca());
 }
 
@@ -182,7 +191,7 @@ fn ambiguous_raw_ifds_with_the_same_storage_do_not_choose_arbitrary_coefficients
     std::fs::write(file.path(), bytes).unwrap();
     assert!(RawFile::open(file.path()).is_err());
     let raw = RawFile::open_uncorrected(file.path()).unwrap();
-    assert!(raw.metadata.sony_lens.profile().is_err());
+    assert!(raw.metadata.vendor.sony_lens.profile().is_err());
 }
 
 #[test]
@@ -193,14 +202,14 @@ fn missing_data_and_converted_dng_do_not_inherit_rendered_or_sony_profiles() {
         let file = source(order, tags, dng, true);
         let raw = RawFile::open(file.path()).unwrap();
         assert_eq!(
-            raw.metadata.sony_lens.distortion_status(),
+            raw.metadata.vendor.sony_lens.distortion_status(),
             SonyLensDataStatus::Absent
         );
         assert_eq!(
-            raw.metadata.sony_lens.ca_status(),
+            raw.metadata.vendor.sony_lens.ca_status(),
             SonyLensDataStatus::Absent
         );
-        assert!(raw.metadata.sony_lens.profile().unwrap().is_none());
+        assert!(raw.metadata.vendor.sony_lens.profile().unwrap().is_none());
     }
 }
 
@@ -220,7 +229,7 @@ fn malformed_available_profiles_fail_development_but_remain_diagnosable() {
         let file = source(order, tags, false, false);
         assert!(RawFile::open(file.path()).is_err());
         let raw = RawFile::open_uncorrected(file.path()).unwrap();
-        assert!(raw.metadata.sony_lens.profile().is_err());
+        assert!(raw.metadata.vendor.sony_lens.profile().is_err());
     }
 }
 
@@ -683,6 +692,83 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
                             );
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+/// Oriented sources seed the composition setting and develop exactly the native raster:
+/// pixels are byte-identical to an unoriented development of the same sensor data.
+#[test]
+fn oriented_sources_seed_composition_and_keep_native_rasters() {
+    use antitone::geometry::{Flips, PhotoOrientation, QuarterTurns};
+    const MIRROR: Flips = Flips {
+        horizontal: true,
+        vertical: false,
+    };
+    for (orientation, seed) in [
+        (
+            3u16,
+            PhotoOrientation {
+                turns: QuarterTurns::Two,
+                flips: Flips::default(),
+            },
+        ),
+        (
+            5,
+            PhotoOrientation {
+                turns: QuarterTurns::One,
+                flips: MIRROR,
+            },
+        ),
+        (
+            6,
+            PhotoOrientation {
+                turns: QuarterTurns::One,
+                flips: Flips::default(),
+            },
+        ),
+        (
+            7,
+            PhotoOrientation {
+                turns: QuarterTurns::Three,
+                flips: MIRROR,
+            },
+        ),
+        (
+            8,
+            PhotoOrientation {
+                turns: QuarterTurns::Three,
+                flips: Flips::default(),
+            },
+        ),
+    ] {
+        for dng in [false, true] {
+            let native = fixture::source(Order::Little, vec![], dng, false);
+            let oriented = fixture::source_oriented(Order::Little, vec![], dng, false, orientation);
+            let mut unrotated = RawFile::open(native.path()).unwrap();
+            assert_eq!(
+                unrotated.metadata.photo_orientation().unwrap(),
+                PhotoOrientation::default()
+            );
+            let mut rotated = RawFile::open(oriented.path()).unwrap();
+            assert_eq!(
+                rotated.metadata.photo_orientation().unwrap(),
+                seed,
+                "orientation {orientation} dng={dng}"
+            );
+            let wb = [1.; 4];
+            let plain = unrotated.develop_camera(wb).unwrap();
+            let upright = rotated.develop_camera(wb).unwrap();
+            assert_eq!([plain.width, plain.height], [upright.width, upright.height]);
+            for y in 0..plain.height {
+                for x in 0..plain.width {
+                    assert_eq!(
+                        plain.pixel_samples(x, y).unwrap(),
+                        upright.pixel_samples(x, y).unwrap(),
+                        "orientation {orientation} dng={dng} at {x},{y}"
+                    );
                 }
             }
         }

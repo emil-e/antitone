@@ -1,14 +1,13 @@
-//! Embedded Sony lens profiles in normalized coordinates, independent of raster framing.
+//! Embedded camera lens profiles in normalized coordinates, independent of raster framing.
 //!
 //! Pixel origin, optical centre and radius normalization belong to the development adapter.
 //! These maps do not resample pixels or choose whether to apply an available camera profile.
+//! Profiles arrive as radial samples decoded from a vendor payload; `raw_sony` decodes Sony
+//! makernotes today, and other vendors evaluate into the same knot layout.
 
 use glam::{DVec2, DVec3};
 
 use crate::Error;
-
-const DISTORTION_UNIT: f64 = 1. / 16384.;
-const CA_UNIT: f64 = 1. / 2097152.;
 
 /// Geometric components; shading is independent source-space radiometry.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -24,55 +23,44 @@ impl LensCorrections {
     };
 }
 
-/// Sony's radial samples, excluding TIFF count headers and unused padding.
+/// Radial lens samples: distortion and lateral-chromatic-aberration scales plus shading
+/// attenuation. The first sample sits half a knot beyond the optical centre and the last
+/// beyond the unit radius (Sony's radial sampling convention). Shading describes attenuation
+/// on the original image, before geometric reconstruction: interpolate attenuation, then
+/// reciprocate for gains (darktable 5.6.2's v2 interpretation, agreeing with RawTherapee
+/// 5.12 at the knots).
 #[derive(Debug, Clone, PartialEq)]
-pub struct SonyLensProfile {
+pub struct EmbeddedLensProfile {
     distortion: Vec<f64>,
     ca: Vec<DVec2>,
     attenuation: Vec<f64>,
 }
 
-impl SonyLensProfile {
-    /// Parameters include their leading signed count. A missing component is identity.
-    /// Camera Off/Auto flags are not coefficient validity; unavailable data is filtered by the reader.
-    pub fn from_parameters(distortion: Option<&[i16]>, ca: Option<&[i16]>) -> Result<Self, Error> {
-        Self::from_components(distortion, ca, None)
-    }
-
-    /// Shading samples describe attenuation on the original image, before geometric reconstruction.
-    /// Interpolate attenuation, then reciprocate (darktable 5.6.2's v2 interpretation).
-    pub fn from_components(
-        distortion: Option<&[i16]>,
-        ca: Option<&[i16]>,
-        vignetting: Option<&[i16]>,
+impl EmbeddedLensProfile {
+    /// Normalized knots. A missing component is an empty slice and acts as identity;
+    /// distortion and CA must then share knot counts, while shading is independent.
+    pub fn from_knots(
+        distortion: &[f64],
+        ca: &[DVec2],
+        attenuation: &[f64],
     ) -> Result<Self, Error> {
-        let distortion = parameters(distortion, 1)?;
-        let ca = parameters(ca, 2)?;
-        let vignetting = parameters(vignetting, 1)?;
-        if !distortion.is_empty() && !ca.is_empty() && ca.len() != 2 * distortion.len() {
-            return Err(invalid("Sony distortion and CA knot counts differ"));
+        if !distortion.iter().all(|v| v.is_finite())
+            || !ca.iter().all(|v| v.x.is_finite() && v.y.is_finite())
+            || !attenuation.iter().all(|v| v.is_finite() && *v > 0.)
+        {
+            return Err(invalid(
+                "embedded lens knots must be finite; shading must be positive",
+            ));
+        }
+        if !distortion.is_empty() && !ca.is_empty() && ca.len() != distortion.len() {
+            return Err(invalid(
+                "embedded lens distortion and CA knot counts differ",
+            ));
         }
         let profile = Self {
-            distortion: distortion
-                .iter()
-                .map(|&v| 1. + f64::from(v) * DISTORTION_UNIT)
-                .collect(),
-            ca: (0..ca.len() / 2)
-                .map(|i| {
-                    DVec2::new(
-                        1. + f64::from(ca[i]) * CA_UNIT,
-                        1. + f64::from(ca[i + ca.len() / 2]) * CA_UNIT,
-                    )
-                })
-                .collect(),
-            attenuation: if vignetting.iter().all(|&v| v == 0) {
-                Vec::new()
-            } else {
-                vignetting
-                    .iter()
-                    .map(|&v| (0.5 - (f64::from(v) / 8192. - 1.).exp2()).exp2())
-                    .collect()
-            },
+            distortion: distortion.to_vec(),
+            ca: ca.to_vec(),
+            attenuation: attenuation.to_vec(),
         };
         for corrections in [
             LensCorrections {
@@ -158,7 +146,8 @@ impl SonyLensProfile {
         if n == 0 {
             return Ok(DVec3::ONE);
         }
-        // Sony locates the first sample half a knot beyond zero and the last beyond radius one.
+        // The profile locates the first sample half a knot beyond zero and the last beyond
+        // radius one.
         let index = (radius * (n - 1) as f64 - 0.5).max(0.);
         let low = (index.floor() as usize).min(n - 1);
         let high = (low + 1).min(n - 1);
@@ -197,7 +186,7 @@ impl SonyLensProfile {
             return Ok(());
         }
         if self.factors(0, corrections).min_element() <= 0. {
-            return Err(invalid("Sony lens map has a nonpositive radial scale"));
+            return Err(invalid("embedded lens map has a nonpositive radial scale"));
         }
         for i in 0..n - 1 {
             let left = (i as f64 + 0.5) / (n - 1) as f64;
@@ -209,32 +198,35 @@ impl SonyLensProfile {
             let derivative_left = a + slope * left;
             let derivative_right = a + slope * (2. * right.min(1.) - left);
             if derivative_left.min_element() <= 0. || derivative_right.min_element() <= 0. {
-                return Err(invalid("Sony lens map folds within the calibrated radius"));
+                return Err(invalid(
+                    "embedded lens map folds within the calibrated radius",
+                ));
             }
         }
         Ok(())
     }
 }
 
-/// Sony lens mapping in pixel-edge source coordinates. The output keeps original pixel pitch,
-/// trimming symmetrically only where required to keep every channel's bilinear support in-frame.
+/// Embedded lens mapping in pixel-edge source coordinates. The output keeps original pixel
+/// pitch, trimming symmetrically only where required to keep every channel's bilinear
+/// support in-frame.
 #[derive(Debug, Clone)]
-pub struct SonyLensGeometry {
-    profile: SonyLensProfile,
+pub struct EmbeddedLensGeometry {
+    profile: EmbeddedLensProfile,
     original: crate::geometry::SourceRegion,
     trim: [u32; 2],
     size: [u32; 2],
 }
 
-impl SonyLensGeometry {
+impl EmbeddedLensGeometry {
     pub fn new(
-        profile: SonyLensProfile,
+        profile: EmbeddedLensProfile,
         original: crate::geometry::SourceRegion,
     ) -> Result<Self, Error> {
         original.validate()?;
         if original.width < 2 || original.height < 2 {
             return Err(invalid(
-                "Sony lens correction needs at least two pixels per axis",
+                "embedded lens correction needs at least two pixels per axis",
             ));
         }
         let maximum = profile.maximum_scale();
@@ -244,7 +236,7 @@ impl SonyLensGeometry {
         let size = std::array::from_fn(|i| size[i].saturating_sub(2 * trim[i]));
         if size.iter().any(|&n| n < 2) {
             return Err(invalid(
-                "Sony lens profile leaves no usable rectangular image",
+                "embedded lens profile leaves no usable rectangular image",
             ));
         }
         Ok(Self {
@@ -265,7 +257,7 @@ impl SonyLensGeometry {
     /// Original developed pixel-index coordinates of the red, green and blue samples.
     pub fn sample_positions(&self, x: u32, y: u32) -> Result<[DVec2; 3], Error> {
         if x >= self.size[0] || y >= self.size[1] {
-            return Err(invalid("pixel outside corrected Sony image"));
+            return Err(invalid("pixel outside the corrected image"));
         }
         let origin = DVec2::new(self.original.x as f64, self.original.y as f64);
         let half = DVec2::new(self.original.width as f64, self.original.height as f64) * 0.5;
@@ -288,7 +280,7 @@ impl SonyLensGeometry {
                 || (p.cmpgt(maximum + DVec2::splat(1e-9))).any()
             {
                 return Err(invalid(
-                    "Sony correction reads outside valid source support",
+                    "lens correction reads outside valid source support",
                 ));
             }
             // Only absorb arithmetic roundoff at an exact support boundary, not missing image data.
@@ -316,6 +308,8 @@ impl SonyLensGeometry {
 
     #[cfg(feature = "raw")]
     pub(crate) fn identity(&self) -> String {
+        // Retained compatibility identity: it names the shading interpretation applied to the
+        // embedded payloads. Changing it invalidates saved projects' processing basis.
         let mut hash = blake3::Hasher::new();
         hash.update(b"sony-active-shading-before-bilinear-valid-rectangle-v2");
         hash.update(&(self.profile.attenuation.len() as u32).to_le_bytes());
@@ -358,24 +352,6 @@ impl SonyLensGeometry {
     pub(crate) fn retained_bytes(&self) -> usize {
         self.profile.retained_bytes()
     }
-}
-
-fn parameters(values: Option<&[i16]>, channels: usize) -> Result<&[i16], Error> {
-    let Some(values) = values else {
-        return Ok(&[]);
-    };
-    let count = values.first().copied().unwrap_or(0);
-    if count < (2 * channels) as i16
-        || count > (16 * channels) as i16
-        || !(count as usize).is_multiple_of(channels)
-    {
-        return Err(invalid("invalid Sony lens coefficient count"));
-    }
-    let count = count as usize;
-    if values.len() != count + 1 && values.len() != 16 * channels + 1 {
-        return Err(invalid("invalid Sony lens coefficient payload length"));
-    }
-    Ok(&values[1..=count])
 }
 
 fn invalid(reason: &'static str) -> Error {
