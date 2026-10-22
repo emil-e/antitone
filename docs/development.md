@@ -281,7 +281,7 @@ Exercise accepted-state hooks separately from snapshot storage: zero idle histor
 cargo test --locked --features project --test dust_project --test image_recipe
 cargo test --locked --features editor --lib repair_tests -- --test-threads=1
 cargo test --locked --features editor --lib recipe_tests -- --test-threads=1
-# Proper thumbnail pixels against scalar filtering/grading and independent OCIO output.
+# Navigation proxy pixels against scalar grading and independent OCIO output.
 cargo test --locked --features editor,ocio-reference \
   --lib editor::thumbnails::recipe_tests::pixel_tests -- --test-threads=1
 cargo test --locked --features ui-tests --lib dust -- --test-threads=1
@@ -291,7 +291,7 @@ cargo test --locked --features ui-tests --lib editor::document::tests -- --test-
 cargo test --locked --release --features ui-tests --lib editor::kittest_tests::dust -- --test-threads=1
 ```
 
-Test [saved repair intent](projects.md#source-owned-dust-repairs) separately from evaluation. Project checks need malformed-record rejection, destination safety and lossless masks/IDs at uneven roll scale. Composed checks need accepted-only dirty state, failure-safe Save/Open/Save As, reopened donor metadata and repaired f32 bits, and proper-thumbnail pixels with repairs composed before filtering. A nonconstant look must not hide missing repairs, and disabling repairs must restore unrepaired pixels. Optional captures use `dust-persistence-{normal,narrow}-offscreen.png`.
+Test [saved repair intent](projects.md#source-owned-dust-repairs) separately from evaluation. Project checks need malformed-record rejection, destination safety and lossless masks/IDs at uneven roll scale. Composed checks need accepted-only dirty state, failure-safe Save/Open/Save As, reopened donor metadata and repaired f32 bits. Viewer/export pixels need repairs before filtering: a nonconstant look must not hide missing repairs, and disabling repairs must restore unrepaired pixels. Navigation checks cover independent proxy grading and card readiness through pending/failed repair work. Optional captures use `dust-persistence-{normal,narrow}-offscreen.png`.
 
 ## Shared editor UI checks
 

@@ -48,8 +48,14 @@ impl DiskCache {
             return Err(invalid("source file stats unavailable for thumbnail reuse"));
         }
         // File stats are disposable cache freshness, not persisted photograph identity.
-        let identity =
-            serde_json::to_vec(&(3, SOURCE_SIZE, &key.file, &key.source, &key.development))?;
+        let identity = serde_json::to_vec(&(
+            3,
+            SOURCE_SIZE,
+            Proxy::SAMPLING_VERSION,
+            &key.file,
+            &key.source,
+            &key.development,
+        ))?;
         Ok(self
             .root
             .join(format!("{}.camera32", blake3::hash(&identity).to_hex())))
@@ -231,6 +237,23 @@ mod tests {
         };
         assert_eq!(cache.load(&key).unwrap().unwrap().pixels, proxy.pixels);
         key.development.fixed_wb[0] = 2.;
+        assert!(cache.load(&key).unwrap().is_none());
+    }
+
+    #[test]
+    fn point_sampled_cache_entries_do_not_supply_the_filtered_proxy_contract() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = DiskCache::at(directory.path().into());
+        let (key, proxy) = fixture();
+        cache.store(&key, &proxy).unwrap();
+        // The preceding derivation identity had no camera-proxy sampling revision.
+        let legacy =
+            serde_json::to_vec(&(3, SOURCE_SIZE, &key.file, &key.source, &key.development))
+                .unwrap();
+        let legacy_path = directory
+            .path()
+            .join(format!("{}.camera32", blake3::hash(&legacy).to_hex()));
+        fs::rename(cache.path(&key).unwrap(), legacy_path).unwrap();
         assert!(cache.load(&key).unwrap().is_none());
     }
 

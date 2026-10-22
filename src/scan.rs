@@ -157,9 +157,46 @@ pub struct CameraProxy {
 
 impl CameraProxy {
     pub const MAX_EDGE: u32 = 256;
+    #[cfg(feature = "editor")]
+    pub(crate) const SAMPLING_VERSION: u32 = 1;
 
     pub fn from_scan(scan: &Scan) -> Result<Self> {
-        let (width, height, pixels) = scan.preview_source(Self::MAX_EDGE)?;
+        Self::sample(scan, Self::MAX_EDGE)
+    }
+
+    fn sample(scan: &Scan, maximum: u32) -> Result<Self> {
+        let (width, height) = scan.preview_dimensions(maximum)?;
+        let image = scan.source.camera_image()?;
+        // A bounded stratified grid reduces grain/aliasing without reading every
+        // original in each proxy footprint. Measurements use their own source sampling.
+        let samples = [
+            (scan.area.width / width).clamp(1, 4),
+            (scan.area.height / height).clamp(1, 4),
+        ];
+        let raster = SourceRaster::new(scan.area, [width * samples[0], height * samples[1]])?;
+        let count = f64::from(samples[0] * samples[1]);
+        let mut pixels = Vec::with_capacity(width as usize * height as usize);
+        for y in 0..height {
+            for x in 0..width {
+                let mut sum = [0f64; 3];
+                for sy in 0..samples[1] {
+                    for sx in 0..samples[0] {
+                        let [px, py] =
+                            raster.source_pixel([x * samples[0] + sx, y * samples[1] + sy])?;
+                        let sample = image.pixel_samples(px, py)?;
+                        for c in 0..3 {
+                            sum[c] += f64::from(sample[c]);
+                        }
+                    }
+                }
+                pixels.push([
+                    (sum[0] / count) as f32,
+                    (sum[1] / count) as f32,
+                    (sum[2] / count) as f32,
+                    0.,
+                ]);
+            }
+        }
         Ok(Self {
             width,
             height,
@@ -176,6 +213,10 @@ impl CameraProxy {
         (self.pixels.capacity() * size_of::<[f32; 4]>() + size_of::<Self>()) as u64
     }
 }
+
+#[cfg(test)]
+#[path = "scan_proxy_tests.rs"]
+mod proxy_tests;
 
 pub struct Scan {
     source: Arc<DevelopedSource>,

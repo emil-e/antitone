@@ -47,7 +47,7 @@ fn complete(
 }
 
 #[test]
-fn authored_positive_thumbnails_require_originals_reuse_neutral_repairs_and_reject_stale_recipes() {
+fn authored_positive_cards_ignore_dust_and_keep_grade_reuse_and_freshness() {
     let (device, queue) = gpu();
     let renderers = Arc::new(crate::renderer::RendererCache::default());
     let mut thumbnails = Thumbnails::with_disk(device, queue, renderers, None);
@@ -72,12 +72,12 @@ fn authored_positive_thumbnails_require_originals_reuse_neutral_repairs_and_reje
     let started = std::time::Instant::now();
     let plain = complete(&mut thumbnails, &document, plain_key.clone()).unwrap();
     println!(
-        "positive_thumbnail_cold_original_seconds={:.6}",
+        "positive_thumbnail_proxy_seconds={:.6}",
         started.elapsed().as_secs_f64()
     );
     assert!(
         plain.positive.is_some(),
-        "a camera proxy alone is not a completed calibrated positive"
+        "the cached camera proxy must become a graded positive without original reconstruction"
     );
     let repair = document
         .project
@@ -90,13 +90,19 @@ fn authored_positive_thumbnails_require_originals_reuse_neutral_repairs_and_reje
             DonorChoice::Offset([-64, 0]),
         )
         .unwrap();
-    let repaired_key = tests::key(&document, id);
-    assert_ne!(plain_key, repaired_key);
-    let repaired = complete(&mut thumbnails, &document, repaired_key.clone()).unwrap();
-    let neutral = repaired.positive.as_ref().unwrap().0.clone();
-    assert_eq!(neutral.spec.repairs.0.len(), 1);
-    assert!(!Arc::ptr_eq(&plain.positive.as_ref().unwrap().0, &neutral));
-    thumbnails.protect_images(vec![repaired_key.clone()]);
+    let dust_key = tests::key(&document, id);
+    assert_eq!(
+        plain_key, dust_key,
+        "dust edits must not invalidate navigation pixels"
+    );
+    assert!(dust_key.current_recipe(&document));
+    assert_eq!(
+        document.project.image_recipe(id).unwrap().repairs().len(),
+        1,
+        "the viewer/export recipe must retain accepted repairs"
+    );
+    let neutral = plain.positive.as_ref().unwrap().0.clone();
+    thumbnails.protect_images(vec![dust_key.clone()]);
     thumbnails.set_limits(cache_limits::CacheLimits {
         cpu_bytes: 0,
         gpu_bytes: 0,
@@ -127,16 +133,16 @@ fn authored_positive_thumbnails_require_originals_reuse_neutral_repairs_and_reje
     let graded = complete(&mut thumbnails, &document, graded_key.clone()).unwrap();
     assert!(
         Arc::ptr_eq(&neutral, &graded.positive.as_ref().unwrap().0),
-        "grade/target changes must reuse compatible neutral healing"
+        "grade/target changes must reuse the neutral proxy"
     );
-    assert!(!Arc::ptr_eq(&repaired.image, &graded.image));
+    assert!(!Arc::ptr_eq(&plain.image, &graded.image));
     assert!(
         graded_key.estimated_product_bytes().unwrap()
             >= graded.byte_len() + graded_key.retained_bytes()
     );
     thumbnails.protect_images(vec![graded_key.clone()]);
     assert!(
-        !thumbnails.cache.contains(&repaired_key),
+        !thumbnails.cache.contains(&dust_key),
         "replacement completion must retire the carried old card at zero optional retention"
     );
     document.project.source_mut(id).unwrap().photo.exposure = 1.;
@@ -156,6 +162,7 @@ fn authored_positive_thumbnails_require_originals_reuse_neutral_repairs_and_reje
         &neutral,
         &readmitted.positive.as_ref().unwrap().0
     ));
+    let before_toggle = tests::key(&document, id);
     document
         .project
         .source_mut(id)
@@ -163,25 +170,74 @@ fn authored_positive_thumbnails_require_originals_reuse_neutral_repairs_and_reje
         .repairs
         .set_enabled(repair, false)
         .unwrap();
-    assert!(!repaired_key.current_recipe(&document));
-    assert!(!graded_key.current_recipe(&document));
-    let disabled_key = tests::key(&document, id);
-    let disabled = complete(&mut thumbnails, &document, disabled_key).unwrap();
+    assert!(before_toggle.current_recipe(&document));
     assert!(
-        disabled
-            .positive
-            .as_ref()
-            .unwrap()
-            .0
-            .spec
-            .repairs
-            .0
-            .is_empty()
+        !graded_key.current_recipe(&document),
+        "a changed grade must still reject stale results"
+    );
+    assert_eq!(before_toggle, tests::key(&document, id));
+}
+
+#[test]
+fn cached_proxy_finishes_repair_bearing_navigation_cards_without_a_developable_raw() {
+    let (device, queue) = gpu();
+    let mut thumbnails = Thumbnails::with_disk(
+        device,
+        queue,
+        Arc::new(crate::renderer::RendererCache::default()),
+        None,
+    );
+    // This document has locator-only files, not decodable RAWs: the published
+    // camera proxy is the only available image source.
+    let mut document = tests::fixture();
+    document.project.dmin = Some([0.8; 3]);
+    document.project.dmax = Some([0.02; 3]);
+    document.project.input_floor = Some(crate::processing::CAMERA_INPUT_FLOOR);
+    let id = document.project.order[0];
+    thumbnails.bind_sources(document.cache().clone());
+    thumbnails.seed(
+        document.project.source(id).unwrap(),
+        document.project.development.as_ref().unwrap(),
+        FileKey::new(&document.source_path(id).unwrap()),
+        Arc::new(Proxy {
+            width: 8,
+            height: 6,
+            pixels: vec![[5000., 7000., 9000., 0.]; 48],
+            matrix: glam::DMat3::IDENTITY,
+        }),
+    );
+    let plain = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
+    assert!(plain.positive.is_some());
+    document.project.source_mut(id).unwrap().photo.exposure = 0.5;
+    let graded = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
+    assert!(
+        Arc::ptr_eq(
+            &plain.positive.as_ref().unwrap().0,
+            &graded.positive.as_ref().unwrap().0
+        ),
+        "grading must reuse the small neutral source, not request originals"
+    );
+    document
+        .project
+        .source_mut(id)
+        .unwrap()
+        .repairs
+        .insert(
+            SupportMask::new([120, 60], [3, 3], vec![true; 9]).unwrap(),
+            RepairOrigin::Manual,
+            DonorChoice::Offset([-64, 0]),
+        )
+        .unwrap();
+    thumbnails.cache.retain(|_, _| false);
+    let card = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
+    assert!(
+        card.positive.is_some(),
+        "repair-bearing navigation cards must stay on the camera-proxy path"
     );
 }
 
 #[test]
-fn repaired_thumbnails_capture_looks_reuse_neutral_and_grade_and_charge_retained_look_payloads() {
+fn thumbnail_looks_reuse_proxy_support_even_when_the_document_has_dust() {
     use crate::looks::{LookAsset, LookOrigin, Lut3D};
     let (device, queue) = gpu();
     let mut thumbnails = Thumbnails::with_disk(
@@ -205,7 +261,6 @@ fn repaired_thumbnails_capture_looks_reuse_neutral_and_grade_and_charge_retained
         .unwrap();
     let plain = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
     let neutral = plain.positive.as_ref().unwrap().0.clone();
-    assert_eq!(neutral.spec.repairs.0.len(), 1);
     thumbnails.set_limits(cache_limits::CacheLimits {
         cpu_bytes: 0,
         gpu_bytes: 0,
@@ -419,7 +474,7 @@ fn replacing_a_grade_preserves_other_photos_in_the_roll_cache() {
 }
 
 #[test]
-fn previous_card_presentation_requires_the_same_source_repairs_framing_and_target() {
+fn previous_card_presentation_requires_matching_source_framing_and_target_not_dust() {
     let mut document = document();
     let id = document.project.order[0];
     let original = tests::key(&document, id);
@@ -457,8 +512,8 @@ fn previous_card_presentation_requires_the_same_source_repairs_framing_and_targe
         )
         .unwrap();
     assert!(
-        !original.same_presentation(&tests::key(&document, id)),
-        "old unrepaired pixels are not compatible accepted repair feedback"
+        original.same_presentation(&tests::key(&document, id)),
+        "dust does not change navigation presentation"
     );
     let uncropped = tests::key(&document, id);
     document.project.source_mut(id).unwrap().crop = Some(crate::crop::Crop {
@@ -485,7 +540,237 @@ fn previous_card_presentation_requires_the_same_source_repairs_framing_and_targe
 }
 
 #[test]
-fn authored_failed_thumbnail_repairs_publish_only_a_failure_under_the_current_recipe() {
+fn cpu_look_charges_follow_node_allocations_not_equal_contents_or_wrapper_identity() {
+    use crate::looks::{LookAsset, LookOrigin, Lut3D};
+    let mut document = tests::fixture();
+    document.project.dmin = Some([0.8; 3]);
+    document.project.dmax = Some([0.02; 3]);
+    document.project.input_floor = Some(crate::processing::CAMERA_INPUT_FLOOR);
+    let asset = |lut| Arc::new(LookAsset::new("Shared".into(), LookOrigin::Imported, lut).unwrap());
+    let lut = Arc::new(Lut3D::new(2, [-0.5; 3], [1.1; 3], vec![[0.4, 0.3, 0.2]; 8]).unwrap());
+    document.project.output.look = Some(asset(lut.clone()));
+    // Failed entries still retain their recipe's CPU look, but no GPU LUT.
+    let mut entries: std::collections::VecDeque<_> = document.project.order[..2]
+        .iter()
+        .map(|&id| (tests::key(&document, id), Err("failed card".into())))
+        .collect();
+    let node_bytes = 8 * std::mem::size_of::<[f32; 3]>();
+    assert_eq!(shared_look_bytes(&entries), node_bytes);
+    document.project.output.look = Some(asset(Arc::new((*lut).clone())));
+    entries.push_back((
+        tests::key(&document, document.project.order[2]),
+        Err("failed card".into()),
+    ));
+    assert_eq!(
+        shared_look_bytes(&entries),
+        node_bytes,
+        "cloned LUT wrappers share their Arc-backed nodes"
+    );
+    let distinct = Arc::new(Lut3D::new(2, [-0.5; 3], [1.1; 3], vec![[0.4, 0.3, 0.2]; 8]).unwrap());
+    assert_eq!(distinct.id(), lut.id());
+    document.project.output.look = Some(asset(distinct));
+    entries.push_back((
+        tests::key(&document, document.project.order[3]),
+        Err("failed card".into()),
+    ));
+    assert_eq!(
+        shared_look_bytes(&entries),
+        2 * node_bytes,
+        "equal LUT values in distinct node allocations both consume storage"
+    );
+}
+
+#[test]
+fn authored_offscreen_cpu_completion_advances_to_positive_cards_when_the_view_becomes_idle() {
+    let (device, queue) = gpu();
+    let thumbnails = Thumbnails::with_disk(
+        device,
+        queue,
+        Arc::new(crate::renderer::RendererCache::default()),
+        None,
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
+    let paths: Vec<_> = (0..3)
+        .map(|index| {
+            let path = directory.path().join(format!("frame-{index}.dng"));
+            std::fs::copy(&fixture, &path).unwrap();
+            path
+        })
+        .collect();
+    let mut document = Document::default();
+    document.import(&paths).unwrap();
+    document.project.dmin = Some([0.8; 3]);
+    document.project.dmax = Some([0.02; 3]);
+    document.project.input_floor = Some(crate::processing::CAMERA_INPUT_FLOOR);
+    let selected = document.project.order[0];
+    let mut editor = Editor::state();
+    editor.document = document.into();
+    editor.thumbnails = thumbnails;
+    editor
+        .thumbnails
+        .bind_sources(editor.document.cache().clone());
+    editor.thumbnails.set_limits(cache_limits::CacheLimits {
+        cpu_bytes: 0,
+        gpu_bytes: 64 << 20,
+    });
+    editor.current_source = Some(selected);
+    // An unsettled selected-view intent blocks optional offscreen GPU work, not
+    // the actual thumbnail/native services or the selected card's visible work.
+    let frame = crate::frame_raster::FrameRaster::full(
+        editor.thumbnail_composition(editor.document.project.source(selected).unwrap()),
+    )
+    .unwrap();
+    editor.working.observe(
+        editor.id,
+        frame,
+        ProcessingInput::from(ProcessingParameters::source()).signature(),
+        editor.target,
+    );
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.thumbnails.demand = Demand::Visible(vec![selected]);
+            editor.advance_thumbnail_demand(cx);
+        });
+        app.run_until(Duration::from_secs(10), |editor| {
+            editor.thumbnails.attempted_sources.len() == 3 && editor.thumbnails.pending.is_none()
+        });
+        app.read(|editor| {
+            assert_eq!(
+                editor
+                    .thumbnails
+                    .ready_count(&editor.document, editor.target),
+                1,
+                "the selected positive completes while offscreen cards are CPU-only"
+            );
+            assert!(
+                editor
+                    .thumbnails
+                    .cache
+                    .contains(&tests::key(&editor.document, selected))
+            );
+        });
+        app.enter(|editor, cx| {
+            editor.working.clear();
+            editor.original.last_edit = std::time::Instant::now() - Duration::from_secs(1);
+            editor.advance_thumbnail_demand(cx);
+        });
+        app.run_until(Duration::from_secs(10), |editor| {
+            editor
+                .thumbnails
+                .ready_count(&editor.document, editor.target)
+                == 3
+                && editor.thumbnails.pending.is_none()
+        });
+        app.read(|editor| {
+            assert_eq!(editor.thumbnails.attempted_sources.len(), 3);
+            assert!(
+                !editor.document.thumbnail_work.pending(),
+                "completed eager cards must not loop back into preparation"
+            );
+        });
+    });
+}
+
+#[test]
+fn authored_36_positive_cards_with_a_shared_full_size_look_survive_reverse_browsing() {
+    use crate::looks::{LookAsset, LookOrigin, Lut3D};
+    let (device, queue) = gpu();
+    let mut thumbnails = Thumbnails::with_disk(
+        device,
+        queue,
+        Arc::new(crate::renderer::RendererCache::default()),
+        None,
+    );
+    thumbnails.set_limits(cache_limits::CacheLimits {
+        cpu_bytes: 0,
+        gpu_bytes: 256 << 20,
+    });
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
+    let paths: Vec<_> = (0..36)
+        .map(|index| {
+            let path = directory.path().join(format!("frame-{index}.dng"));
+            std::fs::copy(&fixture, &path).unwrap();
+            path
+        })
+        .collect();
+    let mut document = Document::default();
+    document.import(&paths).unwrap();
+    document.project.dmin = Some([0.8; 3]);
+    document.project.dmax = Some([0.02; 3]);
+    document.project.input_floor = Some(crate::processing::CAMERA_INPUT_FLOOR);
+    // The production look grid is 129³. A constant authored LUT makes its resource
+    // footprint realistic without bringing a built-in generator or photographs into this test.
+    document.project.output.look = Some(Arc::new(
+        LookAsset::new(
+            "Shared roll look".into(),
+            LookOrigin::Imported,
+            Arc::new(
+                Lut3D::new(
+                    129,
+                    [-0.5; 3],
+                    [1.1; 3],
+                    vec![[0.4, 0.3, 0.2]; 129_usize.pow(3)],
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap(),
+    ));
+    thumbnails.bind_sources(document.cache().clone());
+    for &id in &document.project.order {
+        let product = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
+        assert!(product.positive.is_some());
+    }
+    println!(
+        "positive_roll ready={} entries={} charged_bytes={}",
+        thumbnails.ready_count(&document, OutputTarget::DisplayP3),
+        thumbnails.cache.entries.len(),
+        thumbnails.cache.measured_bytes()
+    );
+    thumbnails.set_limits(cache_limits::CacheLimits {
+        cpu_bytes: 0,
+        gpu_bytes: 192 << 20,
+    });
+    let mut next_target = tests::key(&document, document.project.order[0]);
+    next_target.target = OutputTarget::Srgb;
+    assert!(
+        thumbnails.can_retain(&next_target),
+        "eager admission must not reserve another copy of an already-live LUT"
+    );
+    for &id in document
+        .project
+        .order
+        .iter()
+        .rev()
+        .chain(document.project.order.iter())
+    {
+        let key = tests::key(&document, id);
+        thumbnails.protect_images(vec![key.clone()]);
+        assert!(
+            thumbnails
+                .cache
+                .get(&key)
+                .is_some_and(|entry| entry.is_ok()),
+            "a developed roll card was evicted despite sufficient room for the actual shared resources"
+        );
+    }
+    thumbnails.protect_images(Vec::new());
+    thumbnails.set_limits(cache_limits::CacheLimits {
+        cpu_bytes: 0,
+        gpu_bytes: 0,
+    });
+    assert!(thumbnails.cache.entries.is_empty());
+    assert_eq!(
+        thumbnails.cache.measured_bytes(),
+        0,
+        "shared charges must retire with their cache owners"
+    );
+}
+
+#[test]
+fn no_donor_repair_instructions_do_not_block_graded_navigation_cards() {
     let (device, queue) = gpu();
     let mut thumbnails = Thumbnails::with_disk(
         device,
@@ -530,12 +815,12 @@ fn authored_failed_thumbnail_repairs_publish_only_a_failure_under_the_current_re
         )
         .unwrap();
     let key = tests::key(&document, id);
-    let error = complete(&mut thumbnails, &document, key.clone())
-        .err()
-        .expect("no donor must not produce an unrepaired positive");
-    assert!(
-        error.contains("repair 1") && error.contains("donor"),
-        "{error}"
+    let card = complete(&mut thumbnails, &document, key.clone()).unwrap();
+    assert!(card.positive.is_some());
+    assert!(key.current_recipe(&document));
+    assert_eq!(
+        document.project.image_recipe(id).unwrap().repairs().len(),
+        1,
+        "navigation omission must not remove authoritative repair intent"
     );
-    assert!(matches!(thumbnails.cache.get(&key), Some(Err(_))));
 }

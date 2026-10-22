@@ -250,21 +250,18 @@ impl Editor {
             let Some(key) = self.thumbnail_key(source, &path, visible) else {
                 continue;
             };
-            if self.thumbnails.cache.contains(&key)
-                || (!visible && self.thumbnails.attempted_sources.contains(&key.source))
-            {
+            if self.thumbnails.cache.contains(&key) {
                 continue;
             }
-            let render = visible
-                || (!hidden
-                    && idle
-                    && key
-                        .estimated_product_bytes()
-                        .is_some_and(|bytes| self.thumbnails.cache.can_retain(bytes)));
+            let render = visible || (!hidden && idle && self.thumbnails.can_retain(&key));
+            if !render && self.thumbnails.attempted_sources.contains(&key.source) {
+                continue;
+            }
+            let source = key.source.metadata_record(&path);
             self.request_thumbnail(
                 key,
                 path,
-                source.clone(),
+                source,
                 render,
                 if visible {
                     development::Priority::Visible

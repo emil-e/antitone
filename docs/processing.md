@@ -78,11 +78,11 @@ The ungraded positive is full-resolution signed/HDR AP1 after scan correction, c
 
 The provisional Dust tool heals here. Fixed RAW-development WB and gamma balance are upstream; exposure, photographic WB, contrast, saturation and locals are downstream. Calibration, response, correction or development changes legitimately require asynchronous reevaluation; downstream grading does not. Every independent repair reads the same unrepaired input and preserves signed/HDR values.
 
-Healing and nonlinear grading do not commute, so pre-grade donor matching can differ from matching graded input. Full-resolution repair composition precedes view filtering; saved repairs identify this stage through an explicit [project repair contract](projects.md#source-owned-dust-repairs). Viewer, TIFF/AP0 EXR and proper thumbnails consume those repairs; camera navigation placeholders and measurement inputs do not.
+Healing and nonlinear grading do not commute, so pre-grade donor matching can differ from matching graded input. Full-resolution repair composition precedes view filtering; saved repairs identify this stage through an explicit [project repair contract](projects.md#source-owned-dust-repairs). Viewer and TIFF/AP0 EXR consume those repairs; [navigation thumbnails](editor.md#positive-thumbnail-reuse) and measurement inputs omit them.
 
 ### One accepted image recipe
 
-[Image recipes](../src/image_recipe.rs) capture accepted source/development, correction, calibration/inversion, committed enabled repairs, Global/ordered-local grades, composition and the immutable creative-look asset. Numeric look identity affects rendering, not neutral healing or graded-AP1 reuse. Output target and format are consumer choices, including EXR's explicit look bypass; metadata-only repair IDs, look labels and disabled instructions do not change photographic identity. [Source-aware resolution](../src/repair_source.rs) shares the neutral sampling boundary across interactive and offscreen work.
+[Full image recipes](../src/image_recipe.rs) capture accepted source/development, correction, calibration/inversion, committed enabled repairs, Global/ordered-local grades, composition and the immutable creative-look asset. Navigation recipes retain grade/look/composition but omit repair payload. Numeric look identity affects rendering, not neutral healing or graded-AP1 reuse. Output target and format are consumer choices, including EXR's explicit look bypass; metadata-only repair IDs, look labels and disabled instructions do not change photographic identity. [Source-aware resolution](../src/repair_source.rs) shares the neutral sampling boundary across interactive and offscreen work.
 
 ### Photo contrast and saturation
 

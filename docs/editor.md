@@ -38,9 +38,9 @@ Dust is direct canvas work, not a per-repair Apply/Cancel transaction. An unmodi
 
 Mask admission is based on marked pixels and a bounded processing area, not a fixed side length. If a held stroke exceeds the budget, the draft and brush turn red and release discards the whole rejected stroke, preserving existing repairs rather than committing a truncated prefix.
 
-Repairs evaluate asynchronously from the same immutable, full-resolution **ungraded AP1**: correction and camera conversion are upstream; grading and locals are downstream. Source, correction or grading changes invalidate evaluated values, which otherwise are reused across navigation and grading. Manual masks bypass detector thresholds; automatic proposals use conservative GPU screening. The workflow and admission lifecycle — document-owned tasks, cooperative cancellation, typed completion outside painting — is [the architecture's](architecture.md), not a per-tool mechanism.
+Repairs evaluate asynchronously from the same immutable, full-resolution **ungraded AP1**: correction and camera conversion are upstream; grading and locals are downstream. Source, correction or inversion changes invalidate evaluated values, which otherwise are reused across navigation and grading. Manual masks bypass detector thresholds; automatic proposals use conservative GPU screening. The workflow and admission lifecycle — document-owned tasks, cooperative cancellation, typed completion outside painting — is [the architecture's](architecture.md), not a per-tool mechanism.
 
-Accepted repair instructions participate in ordinary [project saving and dirty protection](projects.md#source-owned-dust-repairs); TIFF/EXR export and positive thumbnails consume the accepted set, including before the photo has been viewed.
+Accepted repair instructions participate in ordinary [project saving and dirty protection](projects.md#source-owned-dust-repairs); TIFF/EXR export consumes the accepted set, including before the photo has been viewed.
 
 ## Look selection prepares before acceptance
 
@@ -127,7 +127,7 @@ The editor uses several image representations for different jobs:
 | --- | --- |
 | Full developed `Scan` | Full-resolution measurement, refinement and export |
 | Camera-RGB proxy | Initial/pending feedback and uncalibrated/source-inspection thumbnails |
-| Original-derived neutral AP1 thumbnail | Calibrated positive cards, with repairs before filtering and shared grading |
+| Proxy-derived neutral AP1 thumbnail | Calibrated navigation cards with current grading, look and framing |
 | Filtered view-sized linear AP1 | Stable positive/source input at physical display density |
 | Accepted target-linear view | Shared viewer/scope input; never graded or composed again |
 | Original-sample regional result | Explicit same-position comparison or precision-tool refinement |
@@ -151,11 +151,13 @@ Demanded immutable full-resolution developments and uncorrected proxies are reta
 
 ### Scheduling and readiness
 
-One [native priority worker](../src/editor_development.rs) serves selected/reference/Analyze and thumbnail development: foreground work precedes visible misses, then eager work for unvisited sources. Cancelling a GPU ticket releases visible admission without discarding already-owned CPU/disk work. [Native scheduling](native-development.md#editor-scheduling) explains the thread policy and its latency tradeoff.
+One [native priority worker](../src/editor_development.rs) serves selected/reference/Analyze and thumbnail development: foreground work precedes visible misses, then eager work for unvisited sources. Cancelling a GPU ticket releases visible admission without discarding already-owned CPU/disk work. CPU/disk preloads and GPU-ready cards have separate completion states, allowing idle work to render an offscreen card later. [Native scheduling](native-development.md#editor-scheduling) explains the thread policy and its latency tradeoff.
 
 ### Positive thumbnail reuse
 
-Calibrated cards build neutral AP1 from originals, with repairs applied before filtering, then grade that filtered base just as the physical view does — an approximation to grading every original before filtering. Compatible neutral products survive grade, look and target changes; while an update prepares, the previous accepted card stays visible with a shared updating indicator, provided its source, correction, repairs and target still match. A successful replacement retires older outputs for that source so successive versions do not crowd other photos out of the cache.
+Calibrated navigation cards correct/invert a small camera-RGB proxy, then apply Global/local grading, look and output target. This finished navigation representation favors responsive browsing over original-sample fidelity: dust reconstruction is omitted, and repair edits leave ready and in-flight thumbnails usable.
+
+Compatible neutral products survive grade, look and target changes. While an update prepares, the previous card stays visible with an updating indicator if source, correction, framing and target match. Replacements retire older outputs for that source; shared look allocations are charged once across cards.
 
 ### Retention settings and pressure
 

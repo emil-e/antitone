@@ -233,6 +233,11 @@ impl State {
         self.cached.contains_key(&(source, repair))
     }
 
+    #[cfg(all(test, feature = "ui-tests"))]
+    pub(super) fn has_failed_evaluation(&self, source: SourceId, repair: RepairId) -> bool {
+        self.failed.contains_key(&(source, repair))
+    }
+
     pub(super) fn release_gpu(&mut self) {
         self.gpu.clear();
         self.render_error = None;

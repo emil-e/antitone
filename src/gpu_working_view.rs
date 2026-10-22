@@ -1,8 +1,12 @@
 //! Immutable physical-view acquisition and rendering. Originals remain reference/export authority.
 use super::*;
 use crate::{
-    frame_raster::FrameRaster, geometry::TextureMapping, local_adjustments::PhotoGradeSnapshot,
-    rendering::OutputTarget, scan::Scan, viewer::GpuImage,
+    frame_raster::FrameRaster,
+    geometry::{Composition, TextureMapping},
+    local_adjustments::PhotoGradeSnapshot,
+    rendering::OutputTarget,
+    scan::Scan,
+    viewer::GpuImage,
 };
 use std::sync::{
     Arc, Mutex,
@@ -149,6 +153,7 @@ pub(crate) struct ViewKernels {
     grade: wgpu::ComputePipeline,
     inspection: wgpu::ComputePipeline,
     filter: wgpu::ComputePipeline,
+    proxy_coverage: wgpu::ComputePipeline,
     copy: wgpu::RenderPipeline,
     compose: wgpu::RenderPipeline,
 }
@@ -190,6 +195,11 @@ impl ViewKernels {
             .join("\n"),
             "main",
         );
+        let proxy_coverage = compute(
+            "complete camera-proxy coverage",
+            include_str!("shaders/view_proxy_coverage.wgsl").to_owned(),
+            "main",
+        );
         let copy = composite::pipeline(device, "signed/HDR AP1 acquisition copy", COPY);
         let compose = composite::pipeline(
             device,
@@ -203,9 +213,30 @@ impl ViewKernels {
             grade,
             inspection,
             filter,
+            proxy_coverage,
             copy,
             compose,
         }))
+    }
+
+    fn cover_proxy(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        pixels: &wgpu::Buffer,
+    ) {
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("camera-proxy coverage"),
+            layout: &self.proxy_coverage.get_bind_group_layout(0),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: pixels.as_entire_binding(),
+            }],
+        });
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&self.proxy_coverage);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups(((pixels.size() / 16) as u32).div_ceil(64), 1, 1);
     }
 
     fn copy(
@@ -389,6 +420,64 @@ pub(crate) struct ViewSource {
 }
 
 impl ViewSource {
+    /// Navigation positives process the already-sampled camera raster, not the originals.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_camera_proxy(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        submissions: &SubmissionGate,
+        renderer: Arc<crate::renderer::GpuRenderer>,
+        kernels: Arc<ViewKernels>,
+        proxy: &crate::scan::CameraProxy,
+        field: Option<Arc<GpuFlatField>>,
+        spec: ViewSourceSpec,
+    ) -> Result<Arc<Self>, Error> {
+        let mut frame = FrameRaster::full(Composition::new(
+            spec.area,
+            Default::default(),
+            Default::default(),
+        )?)?;
+        frame.output = proxy.dimensions();
+        if spec.is_inspection()
+            || !spec.repairs.0.is_empty()
+            || proxy.width.max(proxy.height) > crate::scan::CameraProxy::MAX_EDGE
+            || proxy.pixels.len() as u64 != u64::from(proxy.width) * u64::from(proxy.height)
+            || spec.matrix != proxy.matrix
+            || spec.frame != frame
+            || spec.field.as_ref() != field.as_ref().map(|field| field.field())
+        {
+            return Err(Error::Gpu(
+                "camera proxy does not match thumbnail source raster".into(),
+            ));
+        }
+        let mut camera = ProcessingSource::new_continuous(device, &proxy.pixels, proxy.matrix)?;
+        camera.set_flat_field(
+            field,
+            SourceGeometry::new(
+                [spec.area.x, spec.area.y, spec.area.width, spec.area.height],
+                proxy.dimensions(),
+            )?,
+        )?;
+        let pixels = float_buffer(device, proxy.dimensions())?;
+        let mut encoder = device.create_command_encoder(&Default::default());
+        renderer
+            .kernel
+            .encode(device, &mut encoder, &camera, &pixels, spec.neutral);
+        kernels.cover_proxy(device, &mut encoder, &pixels);
+        device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(submissions.submit(queue, [encoder.finish()])),
+                timeout: None,
+            })
+            .map_err(|error| Error::Gpu(error.to_string()))?;
+        Ok(Arc::new(Self {
+            spec,
+            pixels,
+            renderer,
+            kernels,
+        }))
+    }
+
     #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn acquire(
@@ -632,7 +721,11 @@ pub(crate) struct RenderedView {
 }
 
 impl RenderedView {
-    /// Conservative thumbnail cache charge beyond the target image; shared parents are not deduplicated.
+    pub(crate) fn look_lut(&self) -> Option<Arc<super::look::Lut>> {
+        self.group.as_ref().and_then(|binding| binding.look_lut())
+    }
+
+    /// Thumbnail payload beyond the target image, including shared parents and LUT storage.
     pub(crate) fn photographic_bytes(&self) -> u64 {
         self.group
             .as_ref()

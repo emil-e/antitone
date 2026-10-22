@@ -60,7 +60,7 @@ User Cancel keeps the continuation and cancelling feedback until acknowledgement
 - **Native development is consumed, not shared.** A mutable `RawFile` stays worker-local; a successful development becomes private frozen native ownership. A [`Scan`](../src/scan.rs) leases an immutable `DevelopedSource` — native RGB16, Sony-corrected f32 or direct-SDK DNG f32 samples with original CFA and metadata — keeping its own illumination-correction context. Leases share sample storage, and final destruction follows the last lease, including synchronized transfer to another thread.
 - **One wgpu device/queue and one export engine** ([`gpu_export_area.rs`](../src/gpu_export_area.rs)) serve TIFF and EXR, view rendering and repairs; mutable processing state stays image/job-owned. The shared submission gate ([`gpu_submission.rs`](../src/gpu_submission.rs)) excludes new submissions while wgpu drains GPU work during a resize.
 - **Grade routing reuses immutable constants by complete processing content** — roll WB plus ordered locals — so view state and metadata never recreate grades. [Output](colour-and-output.md#tiff-and-exr-serve-different-purposes) owns reconstruction and lifetime detail.
-- **One accepted image recipe feeds every consumer** ([processing](processing.md#one-accepted-image-recipe)): viewer, reference, scopes, export and proper thumbnails share the same accepted repair intent.
+- **Image recipes capture accepted intent** ([processing](processing.md#one-accepted-image-recipe)): viewer, reference, scopes and export share accepted repairs; [navigation thumbnails](editor.md#positive-thumbnail-reuse) prioritize inexpensive proxy rendering.
 
 ## UI test boundary
 

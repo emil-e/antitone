@@ -9,7 +9,7 @@ An editor for camera-scanned film negatives. Analyze a roll to establish shared 
 
 Antitone works from linear camera measurements rather than inverting a displayed JPEG. Calibration and response are shared across a roll; Photo adjustments provide individual grading. [How processing works](docs/processing.md) and [how Analyze chooses a starting grade](docs/roll-analysis.md) explain those two separate jobs.
 
-The current photo input is camera RAW from the accepted three-colour Bayer domain: Sony ARW, with Sony ILCE-1M2 lossless-compressed ARW as the supported camera baseline, plus Canon CR2/CR3 (including CRAW), Nikon NEF, Olympus ORF and Panasonic RW2. Saved grades use `.antitone` project files (JSON). Developed JPEG/TIFF/EXR import, catalogs and HDR display output are not implemented; this checkout is not a distribution-ready app. The [provisional Dust workflow](docs/editor.md#provisional-dust-cleanup) saves source-owned manual repairs and applies them to completed positive views, proper thumbnails and TIFF/AP0 EXR exports.
+The current photo input is camera RAW from the accepted three-colour Bayer domain: Sony ARW, with Sony ILCE-1M2 lossless-compressed ARW as the supported camera baseline, plus Canon CR2/CR3 (including CRAW), Nikon NEF, Olympus ORF and Panasonic RW2. Saved grades use `.antitone` project files (JSON). Developed JPEG/TIFF/EXR import, catalogs and HDR display output are not implemented; this checkout is not a distribution-ready app. The [provisional Dust workflow](docs/editor.md#provisional-dust-cleanup) saves source-owned manual repairs and applies them to completed positive views and TIFF/AP0 EXR exports.
 
 ## Prerequisites
 
