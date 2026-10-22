@@ -57,13 +57,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let area = metadata.image_area()?;
         println!("\nSOURCE {}", path.display());
         println!(
-            "camera={} {} decoder={} bits={} sony_type={}",
+            "camera={} {} decoder={} bits={}",
             metadata.make(),
             metadata.model(),
             metadata.decoder(),
-            metadata.raw_bps,
-            metadata.sony_file_type
+            metadata.raw_bps
         );
+        if metadata.make() == "Sony" {
+            println!(
+                "vendor=Sony sony_file_type={}",
+                metadata.vendor.sony_file_type
+            );
+        } else {
+            println!("vendor=none");
+        }
         println!(
             "decoded={}x{} metadata_area={area:?} flip={}",
             metadata.width, metadata.height, metadata.flip
@@ -82,15 +89,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         println!("camera_to_ap1_columns={:?}", matrix.to_cols_array_2d());
         println!(
-            "sony_lens_distortion={:?} sony_lens_ca={:?} sony_lens_vignetting={:?}",
-            metadata.sony_lens.distortion_status(),
-            metadata.sony_lens.ca_status(),
-            metadata.sony_lens.vignetting_status()
+            "embedded_lens_distortion={:?} embedded_lens_ca={:?} embedded_lens_vignetting={:?}",
+            metadata.vendor.sony_lens.distortion_status(),
+            metadata.vendor.sony_lens.ca_status(),
+            metadata.vendor.sony_lens.vignetting_status()
         );
-        match metadata.sony_lens.profile() {
+        match metadata.vendor.sony_lens.profile() {
             Ok(Some(profile)) => {
                 println!(
-                    "sony_lens_knots={} distortion={} ca={} inverse_scales_at_unit_radius={:?} vignetting={} maximum_gain={:.9}",
+                    "embedded_lens_knots={} distortion={} ca={} inverse_scales_at_unit_radius={:?} vignetting={} maximum_gain={:.9}",
                     profile.knot_count(),
                     profile.has_distortion(),
                     profile.has_ca(),
@@ -99,19 +106,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     profile.maximum_gain()
                 );
                 if profile.has_distortion() || profile.has_ca() || profile.has_vignetting() {
-                    let geometry = antitone::lens::SonyLensGeometry::new(
+                    let geometry = antitone::lens::EmbeddedLensGeometry::new(
                         profile,
                         metadata.native_image_area()?,
                     )?;
                     println!(
-                        "sony_lens_automatic_output={:?} pixel_development_requested={}",
+                        "embedded_lens_automatic_output={:?} pixel_development_requested={}",
                         geometry.size(),
                         !metadata_only
                     );
                 }
             }
-            Ok(None) => println!("sony_lens_profile=none"),
-            Err(error) => println!("sony_lens_profile=rejected: {error}"),
+            Ok(None) => println!("embedded_lens_profile=none"),
+            Err(error) => println!("embedded_lens_profile=rejected: {error}"),
         }
         if metadata_only {
             continue;

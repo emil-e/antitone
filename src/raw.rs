@@ -50,7 +50,6 @@ pub struct NativeMetadata {
     pub colors: u32,
     pub filters: u32,
     pub raw_bps: u32,
-    pub sony_file_type: u32,
     pub black: u32,
     pub maximum: u32,
     pub cblack: [u32; 4],
@@ -58,8 +57,17 @@ pub struct NativeMetadata {
     pub cam_mul: [f64; 4],
     pub daylight_mul: [f64; 4],
     rgb_cam: [f64; 9],
-    pub sony_lens: SonyLensData,
+    pub vendor: VendorMetadata,
     lens_disabled: u32,
+}
+
+/// Vendor makernote payload. Sony is the vendor with parsed payloads; other makes arrive
+/// zeroed and report absent embedded lens data.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct VendorMetadata {
+    pub sony_file_type: u32,
+    pub sony_lens: SonyLensData,
 }
 
 /// Shared source descriptor. LibRaw supplies the header/container fields; SDK DNG
@@ -186,17 +194,17 @@ impl Metadata {
         Ok(AP1_TO_XYZ.inverse() * adaptation * SRGB_TO_XYZ * camera_to_srgb)
     }
 
-    pub fn lens_geometry(&self) -> Result<Option<crate::lens::SonyLensGeometry>, Error> {
+    pub fn lens_geometry(&self) -> Result<Option<crate::lens::EmbeddedLensGeometry>, Error> {
         if self.dng_identity().is_some() || self.lens_disabled != 0 {
             return Ok(None);
         }
-        let Some(profile) = self.sony_lens.profile()? else {
+        let Some(profile) = self.vendor.sony_lens.profile()? else {
             return Ok(None);
         };
         if !profile.has_distortion() && !profile.has_ca() && !profile.has_vignetting() {
             return Ok(None);
         }
-        crate::lens::SonyLensGeometry::new(profile, self.native_image_area()?).map(Some)
+        crate::lens::EmbeddedLensGeometry::new(profile, self.native_image_area()?).map(Some)
     }
 
     /// Original-code precision amplified conservatively by development; never a clipping limit.
@@ -443,7 +451,7 @@ pub struct RawFile {
     priority: DevelopmentPriority,
     diagnostics: Option<SensorDiagnostics>,
     camera_view: Option<NativeView>,
-    correction: Option<crate::lens::SonyLensGeometry>,
+    correction: Option<crate::lens::EmbeddedLensGeometry>,
     corrected: Option<lens_source::CorrectedImage>,
     #[cfg(feature = "dng-sdk")]
     path: std::path::PathBuf,
@@ -889,7 +897,7 @@ impl RawFile {
                     ..view
                 });
                 println!(
-                    "sony_lens_development width={} height={} reconstruction_seconds={:.6} corrected_bytes={} eligibility_bytes={} native_image_retained=false",
+                    "embedded_lens_development width={} height={} reconstruction_seconds={:.6} corrected_bytes={} eligibility_bytes={} native_image_retained=false",
                     corrected.size[0],
                     corrected.size[1],
                     started.elapsed().as_secs_f64(),
@@ -1324,7 +1332,7 @@ mod tests {
 
     #[test]
     fn bridge_layout_matches_native_static_assertions() {
-        assert_eq!(size_of::<NativeMetadata>(), 664);
+        assert_eq!(size_of::<NativeMetadata>(), 656);
         assert_eq!(size_of::<SonyLensData>(), 160);
         assert_eq!(size_of::<SensorDiagnostics>(), 112);
         assert_eq!(size_of::<NativeView>(), 64);

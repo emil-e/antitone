@@ -1,7 +1,8 @@
 # Canon and Nikon RAW support (broader LibRaw acceptance)
 
-Status: inventory complete; all sampled Canon/Nikon files pass current gates and
-develop end-to-end. Implementation phases below are re-scoped accordingly.
+Status: inventory complete; phase 1 (acceptance & naming) implemented and verified.
+All sampled Canon/Nikon files pass current gates and develop end-to-end; the
+remaining phases are portrait-orientation handling, real-sample tests and docs.
 
 ## Agreed scope
 
@@ -66,10 +67,20 @@ R6; Nikon D750 (12-bit compressed + 14-bit lossless), D7200, D850, Z 7; plus
 
 ## Remaining implementation phases
 
-3. **Acceptance & naming.** No gate changes for the sampled classes. Re-scope
-   any Sony-shaped naming per the design directives; keep the rejected-variant
-   errors honest (sRAW/mRAW, X-Trans, spatial black patterns).
-4. **Portrait-orientation handling.** Justified by the planned digital pipeline
+1. **Acceptance & naming — DONE (2026-10-22 checkpoint).** Sony payload decoding
+   (integer units, count prefixes, all-zero shading rule) moved from `lens.rs` to
+   `raw_sony.rs`; `SonyLensProfile`/`SonyLensGeometry` became vendor-neutral
+   `EmbeddedLensProfile::from_knots` (normalized knots) and `EmbeddedLensGeometry`;
+   `NativeMetadata`'s Sony fields nested under a documented `VendorMetadata` block
+   (ABI 664→656 bytes, static asserts updated on both sides); probe output is
+   vendor-scoped (`vendor=Sony sony_file_type=2` / `vendor=none`); `Editor::open_initial`
+   now routes by the RAW extension list instead of `.arw` only, with a routing
+   predicate test. Sony-identity compatibility strings retained byte-identical.
+   Verified: full `--features editor` lib suite (969 passed; one pre-existing
+   `gpu_log_prefix_tests` Metal-accounting flake reproduces on main), authored
+   Sony-payload suites 17/17, and bit-identical `antitone-raw-probe` output on the
+   real A7C negative scan including the corrected embedded-lens path.
+2. **Portrait-orientation handling.** Justified by the planned digital pipeline
    (simulating a digital RAW as a negative with grain/halation), where general
    photography exercises non-zero flip; scans themselves rarely need it (user,
    2026-10-22). Implement flip handling in the developed-raster path rather than
@@ -100,15 +111,15 @@ peers (darktable, RawTherapee, Adobe) use external measured databases
   unvalidated publicly) and LensFun/LCP-style measured-database support for
   general lenses. The DNG path already applies vendor corrections via opcodes
   where converters bake them, which covers DNG-routed digital input.
-5. **Real-sample tests.** `#[ignore]`d sample tests mirroring the Sony pattern for
+3. **Real-sample tests.** `#[ignore]`d sample tests mirroring the Sony pattern for
    at least CR2, CR3/CRAW and NEF (develop, diagnostics, fixed-WB basis, export
    path where sample-dependent checks exist). Keep the probe's D780 dense-blue
    case as a documented diagnostic behavior, not an editor rejection.
-6. **Black-pattern scalar case (small, optional).** The 1×1 repeated-black
+4. **Black-pattern scalar case (small, optional).** The 1×1 repeated-black
    declaration (authored fixtures, some future bodies) still rejects at unpack;
    accept scalar-equivalent declarations while keeping spatial rejection. This
    is the old plan's starting case and remains a real defect for DNG-via-LibRaw.
-7. **Docs.** processing.md's accepted-boundary sentence ("three-colour integer
+5. **Docs.** processing.md's accepted-boundary sentence ("three-colour integer
    Bayer without repeated black-level patterns"), README input sentence, and
    the editor/docs scanning guidance — following the documentation skill.
 

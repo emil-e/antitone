@@ -9,7 +9,7 @@ use antitone as api;
 use api::{
     flat_field::FlatField,
     gpu::{GpuFlatField, ProcessingKernel, ProcessingParameters, ProcessingSource, SourceGeometry},
-    lens::SonyLensGeometry,
+    lens::EmbeddedLensGeometry,
     processing::{CAMERA_INPUT_FLOOR, Calibration, PhotoSettings, Pipeline, RollSettings},
     raw::{RawFile, Rect},
     rendering::{CpuRenderer, OutputTarget},
@@ -48,13 +48,13 @@ fn camera(p: [f32; 4]) -> DVec3 {
 
 fn sample(
     scan: &Scan,
-    geometry: Option<&SonyLensGeometry>,
+    geometry: Option<&EmbeddedLensGeometry>,
     tile: bool,
     label: &str,
     calibration: Option<Calibration>,
 ) -> Dataset {
     let image = scan.source().camera_image().unwrap();
-    let dimensions = geometry.map_or([image.width, image.height], SonyLensGeometry::size);
+    let dimensions = geometry.map_or([image.width, image.height], EmbeddedLensGeometry::size);
     let size = if tile { [384, 384] } else { [256, 171] };
     let mut codes = Vec::new();
     let mut eligible = Vec::new();
@@ -591,7 +591,7 @@ fn supplied_raw_storage_precision_study() {
         .into_iter()
         .map(|name| {
             let raw = RawFile::open(&root.join("non-scans").join(name)).unwrap();
-            raw.metadata.sony_lens.profile().unwrap().unwrap()
+            raw.metadata.vendor.sony_lens.profile().unwrap().unwrap()
         })
         .collect();
     let (train, calibration) = train_raw::load();
@@ -600,7 +600,7 @@ fn supplied_raw_storage_precision_study() {
         train.fixed_wb
     );
     for (i, profile) in profiles.iter().enumerate() {
-        let geometry = SonyLensGeometry::new(profile.clone(), train.area).unwrap();
+        let geometry = EmbeddedLensGeometry::new(profile.clone(), train.area).unwrap();
         for tile in [false, true] {
             let label = format!(
                 "film-train-borrowed{}-{}",
@@ -622,7 +622,7 @@ fn supplied_raw_storage_precision_study() {
     let wb = train.fixed_wb;
     drop(train);
     let dense = Scan::open(&root.join("DSC04378.ARW"), Some(wb)).unwrap();
-    let geometry = SonyLensGeometry::new(profiles[0].clone(), dense.area).unwrap();
+    let geometry = EmbeddedLensGeometry::new(profiles[0].clone(), dense.area).unwrap();
     for tile in [false, true] {
         let mut data = sample(
             &dense,
