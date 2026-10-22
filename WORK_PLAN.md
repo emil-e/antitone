@@ -1,9 +1,11 @@
 # Canon and Nikon RAW support (broader LibRaw acceptance)
 
-Status: phases 1-2 complete (vendor-neutral naming; upright portrait
-development). All sampled Canon/Nikon files pass current gates and develop
-end-to-end; remaining: real-sample tests, the optional black-pattern scalar
-case, and docs.
+Status: complete and reviewed. All phases done or explicitly deferred:
+vendor-neutral lens handling (1), orientation seeding (2, reworked from byte
+rotation to a composition-setting seed per user direction), real-sample
+tests (3), black-pattern widening deferred with no known producer (4), docs
+(5). Independent review returned two low findings, both addressed. Remaining:
+rebase onto main before integration; ORF/RW2 scope question still open.
 
 ## Agreed scope
 
