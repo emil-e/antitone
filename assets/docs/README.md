@@ -64,8 +64,7 @@ fixture capture is never committed here: write it somewhere under `.cache/` inst
 
 ## Provenance
 
-The capture writes `SOURCES.txt` beside the images: the app version and commit, the window
-size and density, and how many scans produced them. It usually names the commit before the
-change that adds the images, because a capture cannot record a commit that does not exist
-yet. If a change alters what a documented screen looks like and `SOURCES.txt`
-stays unchanged in the same commit, the screenshots were not regenerated.
+The capture writes `SOURCES.txt` beside the images: the app version, the capture date, the
+window size, and how many scans produced them. If a change alters what a documented screen
+looks like and `SOURCES.txt` keeps an older date in the same commit, the screenshots were
+not regenerated.

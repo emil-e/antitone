@@ -171,15 +171,6 @@ fn write_capture_sources(sources: &CaptureSources<'_>) {
     let Some(directory) = std::env::var_os("ANTITONE_UI_CAPTURE") else {
         return;
     };
-    let revision = std::process::Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned());
-    // Capture precedes the commit that adds the images, so HEAD is normally the parent
-    // of the change they belong to; the record names the tree they came from.
-    let revision = revision.unwrap_or_else(|| "unknown revision".to_owned());
     let input = if sources.real_scans {
         format!(
             "{} real scans, {} to {}",
@@ -188,12 +179,40 @@ fn write_capture_sources(sources: &CaptureSources<'_>) {
     } else {
         format!("{} synthetic fixtures (not for publication)", sources.scans)
     };
+    // A recorded commit cannot survive rebasing, and a capture always precedes the
+    // commit that adds the images; the date changes whenever they are regenerated.
     let record = format!(
-        "Antitone {} ({revision})\nWindow 1440x900 at 1x density\nInput: {input}\n\
+        "Antitone {}, captured {}\nWindow 1440x900, harness density\nInput: {input}\n\
          Regenerate with the procedure in assets/docs/README.md.\n",
-        env!("CARGO_PKG_VERSION")
+        env!("CARGO_PKG_VERSION"),
+        utc_date()
     );
     std::fs::write(Path::new(&directory).join("SOURCES.txt"), record).unwrap();
+}
+
+/// The capture date as `YYYY-MM-DD` (UTC), without pulling in a date library.
+fn utc_date() -> String {
+    let days = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        / 86_400;
+    // Civil-date conversion from days since the 1970 epoch.
+    let days = days as i64 + 719_468;
+    let era = days / 146_097;
+    let day_of_era = days - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_index = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
+    let month = if month_index < 10 {
+        month_index + 3
+    } else {
+        month_index - 9
+    };
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}")
 }
 
 fn doc_scans() -> Vec<PathBuf> {
