@@ -27,14 +27,16 @@ for photographers, not developers.
 
 ## Download
 
-Antitone runs on **macOS on Apple Silicon**.
+Antitone runs on **macOS 14 or later on Apple Silicon**.
 
-Download the latest build from the [releases page](https://github.com/emil-e/antitone/releases),
-unzip, and move `Antitone.app` to Applications.
+Download `Antitone-macos-arm64.zip` from the [releases page](https://github.com/emil-e/antitone/releases),
+unzip it, and move `Antitone.app` to Applications. The release also publishes
+`SHA256SUMS` if you want to verify the download.
 
-<!-- TODO before announcement: confirm release asset name, and the Gatekeeper story
-     (signing/notarization status). If the build is not notarized, this section must say
-     how to open it (right-click → Open, or xattr -d com.apple.quarantine). -->
+The build is not notarized by Apple yet, so macOS blocks the first launch. Antitone is
+signed ad-hoc rather than with a Developer ID, which means one extra approval: try to
+open it once, then allow it under **System Settings → Privacy & Security**, where macOS
+lists the blocked app with an **Open Anyway** button. After that it opens normally.
 
 ## Current state
 
@@ -45,8 +47,8 @@ This is an early public release, and it says so honestly:
   Olympus ORF and Panasonic RW2. Developed JPEG/TIFF/EXR import is not implemented.
 - One project is one roll; there are no catalogs.
 - Dust cleanup is manual and provisional.
-- macOS on Apple Silicon only for now; the long-term goal is cross-platform. Broader
-  device testing and macOS 14 acceptance remain open.
+- macOS 14 or later on Apple Silicon only for now; the long-term goal is cross-platform.
+  Broader device testing and macOS 14 acceptance remain open.
 
 ## License
 

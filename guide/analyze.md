@@ -55,6 +55,9 @@ Knowing the failure modes helps more than any setting:
 
 - The suggestions assume **one roll, one stock, one scanning setup**. Mixed setups confuse
   the evidence.
+- The evidence is the whole set you loaded. A **partial roll**, or the exposed leader and
+  blank frames at the start of a strip, biases Dmin and the shared white balance, and every
+  photograph comes out cast. Analyze the roll's exposed frames together.
 - Areas are statistical suggestions, not physical measurements of your holder. Holder
   fuzz, narrow rebates or a damaged frame can bias them — that is what the review is for.
 - A scene dominated by one colour (a red stage, blue shade) can look like a colour cast
