@@ -13,7 +13,7 @@ resolver = "3"
 
 [dependencies]
 glam = { version = "=0.34.1", default-features = false, features = ["std", "f64"] }
-wgpu = { version = "=30.0.1", optional = true, default-features = false, features = ["std", "metal", "glsl", "wgsl"] }
+wgpu = { version = "=30.0.1", optional = true, default-features = false, features = ["std", "metal", "dx12", "vulkan", "glsl", "wgsl"] }
 pollster = { version = "=1.0.1", optional = true }
 bytemuck = { version = "=1.25.2", optional = true, features = ["derive"] }
 
@@ -51,6 +51,9 @@ objc2-metal = { version = "=0.3.2", optional = true, default-features = false, f
 objc2-core-foundation = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "CFString"] }
 objc2-core-graphics = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "CGColorSpace"] }
 objc2-quartz-core = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "CAMetalLayer", "objc2-core-graphics"] }
+
+[target.'cfg(windows)'.dependencies]
+muda = { version = "=0.21.2", optional = true, default-features = false }
 
 [features]
 ui-tests = ["editor", "ocio-reference", "dep:egui_kittest", "image/png"]

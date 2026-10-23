@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::platform::GpuMemory;
+
 pub(super) const MIB: u64 = 1024 * 1024;
 pub(super) const MAX_MIB: u64 = usize::MAX as u64 / MIB;
 
@@ -17,13 +19,6 @@ impl CacheLimits {
             .into_iter()
             .all(|bytes| bytes.is_multiple_of(MIB) && bytes / MIB <= MAX_MIB)
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum GpuMemory {
-    Unified,
-    Discrete { dedicated_bytes: Option<u64> },
-    Unknown,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -52,27 +47,7 @@ impl Hardware {
     }
 
     pub fn current(device: Option<&wgpu::Device>) -> Self {
-        #[cfg(target_os = "macos")]
-        let gpu = device
-            .and_then(|device| {
-                use objc2_metal::MTLDevice;
-                // Read only a static topology fact under the HAL guard; no resource/ownership changes.
-                let native = unsafe { device.as_hal::<wgpu::hal::api::Metal>() }?;
-                Some(if native.raw_device().hasUnifiedMemory() {
-                    GpuMemory::Unified
-                } else {
-                    // Metal's recommended working set is not a dedicated VRAM capacity.
-                    GpuMemory::Discrete {
-                        dedicated_bytes: None,
-                    }
-                })
-            })
-            .unwrap_or(GpuMemory::Unknown);
-        #[cfg(not(target_os = "macos"))]
-        let gpu = {
-            let _ = device;
-            GpuMemory::Unknown
-        };
+        let gpu = crate::platform::gpu_memory(device);
         let bytes = crate::resources::physical_memory();
         Self {
             ram_bytes: (bytes != 0).then_some(bytes),
@@ -84,6 +59,7 @@ impl Hardware {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::platform::GpuMemory;
 
     #[test]
     fn starting_defaults_distinguish_shared_ram_dedicated_vram_and_unknown_capacity() {

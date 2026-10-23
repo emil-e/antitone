@@ -7,7 +7,8 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy}
 use winit::window::{Window, WindowId};
 
 use super::{
-    SubmissionGate, fullscreen::PhotoFullscreen, latency::Trace, macos, menu, termination,
+    QuitGuard, SubmissionGate, backend, configure_presentation, fullscreen::PhotoFullscreen,
+    latency::Trace, menu, quit_cancel_on_unwind,
 };
 use crate::application::{Application, UiContext};
 
@@ -147,7 +148,7 @@ struct Host<'scope, A, F> {
     application: Application<'scope>,
     app: &'scope RefCell<Option<A>>,
     state: Option<State<'scope, A>>,
-    finishing: Option<termination::Guard>,
+    finishing: Option<QuitGuard>,
     next_repaint: Option<Instant>,
     error: Option<Box<dyn std::error::Error>>,
 }
@@ -203,7 +204,7 @@ impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiContext<'scope, A>
     ApplicationHandler<HostEvent> for Host<'scope, A, F>
 {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let _native_unwind = termination::cancel_on_unwind();
+        let _native_unwind = quit_cancel_on_unwind();
         if self.state.is_some() || self.finishing.is_some() {
             return;
         }
@@ -226,7 +227,7 @@ impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiContext<'scope, A>
                 *self.app.borrow_mut() = Some(app);
                 let termination = if access.read(App::quit_state).is_some() {
                     let proxy = self.proxy.clone();
-                    Some(termination::Guard::install(move || {
+                    Some(QuitGuard::install(move || {
                         proxy.send_event(HostEvent::Quit).is_ok()
                     })?)
                 } else {
@@ -234,6 +235,7 @@ impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiContext<'scope, A>
                 };
                 let menus = access
                     .read(App::menu_state)
+                    .filter(|_| menu::native::SUPPORTED)
                     .map(|state| menu::native::NativeMenu::new(&state))
                     .transpose()?;
                 if menus.is_some() {
@@ -277,7 +279,7 @@ impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiContext<'scope, A>
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: HostEvent) {
-        let _native_unwind = termination::cancel_on_unwind();
+        let _native_unwind = quit_cancel_on_unwind();
         match event {
             HostEvent::ExecutorWake => self.application.drive(),
             HostEvent::Repaint(when) => {
@@ -306,7 +308,7 @@ impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiContext<'scope, A>
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
-        let _native_unwind = termination::cancel_on_unwind();
+        let _native_unwind = quit_cancel_on_unwind();
         let Some(state) = &mut self.state else {
             return;
         };
@@ -370,7 +372,7 @@ impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiContext<'scope, A>
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        let _native_unwind = termination::cancel_on_unwind();
+        let _native_unwind = quit_cancel_on_unwind();
         let mut wake = self.next_repaint;
         if wake.is_some_and(|when| when <= Instant::now()) {
             if let Some(state) = &self.state {
@@ -409,7 +411,7 @@ struct State<'scope, A> {
     viewport: egui::ViewportInfo,
     fullscreen: PhotoFullscreen,
     menus: Option<menu::native::NativeMenu>,
-    termination: Option<termination::Guard>,
+    termination: Option<QuitGuard>,
 }
 
 impl<A: App> State<'_, A> {
@@ -668,7 +670,7 @@ struct Gpu {
 impl Gpu {
     async fn new(window: Arc<Window>) -> Result<Self> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
+            backends: backend(),
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let surface = instance.create_surface(window.clone())?;
@@ -759,7 +761,7 @@ impl Gpu {
             self.window.has_focus()
         );
         submissions.configure(|| self.surface.configure(&self.device, &self.config));
-        macos::configure_sdr(&self.surface)?;
+        configure_presentation(&self.surface)?;
         self.needs_configure = false;
         if let (Some(trace), Some(start)) = (&self.trace, trace_start) {
             trace.configured(start, self.config.width, self.config.height);

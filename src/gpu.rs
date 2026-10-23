@@ -790,6 +790,11 @@ pub(crate) fn allocated_resource_bytes(device: &wgpu::Device) -> Option<usize> {
     Some(native.raw_device().currentAllocatedSize())
 }
 
+#[cfg(all(not(target_os = "macos"), any(test, feature = "ui")))]
+pub(crate) fn allocated_resource_bytes(_device: &wgpu::Device) -> Option<usize> {
+    None
+}
+
 #[cfg(all(test, target_os = "macos"))]
 #[path = "gpu_arithmetic_tests.rs"]
 mod arithmetic_tests;

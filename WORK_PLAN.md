@@ -59,6 +59,12 @@ Bring the Antitone editor to Windows 11 without regressing macOS, behind a capab
 - Fail: `dng-sdk` at the `build.rs` macOS assertion; `raw` at the missing LibRaw build (expected); `editor` stops at `raw` before reaching the host or DNG.
 - Consequence: the Rust, GPU-compute, UI and export layers already compile on Windows. The real work is the native build layer, a Windows host implementation, runtime backend/presentation selection, and OS capabilities (memory, filesystem, menu, quit).
 
+## Progress
+
+- Phase 1 started: `platform/mod.rs` is the single OS selection point; `host.rs`, `fullscreen.rs` and `latency.rs` are portable; macOS capabilities live in `platform/macos.rs`; Windows has a DX12/no-op capability module and an in-window menu fallback.
+- macOS `cargo check --features ui` and `--features editor` pass.
+- Next verification: `cargo check --features ui` on Windows; native build, DXGI presentation and Windows menus remain.
+
 ## Open risks
 
 - wgpu 30 DX12 support and feature levels on Windows 11 ARM64; `Rgba16Float` swapchain availability.

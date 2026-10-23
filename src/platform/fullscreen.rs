@@ -1,6 +1,7 @@
 use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::window::Window;
 
+use super::FullscreenPresentation;
 use super::host::Result;
 
 #[derive(Default)]
@@ -13,7 +14,7 @@ struct SavedWindow {
     size: LogicalSize<f64>,
     decorated: bool,
     resized: bool,
-    presentation: Option<Presentation>,
+    presentation: Option<FullscreenPresentation>,
 }
 
 impl PhotoFullscreen {
@@ -28,7 +29,7 @@ impl PhotoFullscreen {
                 decorated: window.is_decorated(),
                 resized,
                 presentation: if resized {
-                    Some(Presentation::new()?)
+                    Some(FullscreenPresentation::new()?)
                 } else {
                     None
                 },
@@ -72,39 +73,5 @@ impl PhotoFullscreen {
         {
             presentation.show(focused);
         }
-    }
-}
-
-struct Presentation {
-    app: objc2::rc::Retained<objc2_app_kit::NSApplication>,
-    previous: objc2_app_kit::NSApplicationPresentationOptions,
-}
-
-impl Presentation {
-    fn new() -> Result<Self> {
-        let main =
-            objc2::MainThreadMarker::new().ok_or("fullscreen viewing requires the main thread")?;
-        let app = objc2_app_kit::NSApplication::sharedApplication(main);
-        let previous = app.presentationOptions();
-        Ok(Self { app, previous })
-    }
-
-    fn show(&self, focused: bool) {
-        use objc2_app_kit::NSApplicationPresentationOptions as Options;
-        // These paired auto-hide options preserve system access and do not create a fullscreen Space.
-        let desired = if focused {
-            Options::AutoHideDock | Options::AutoHideMenuBar
-        } else {
-            self.previous
-        };
-        if self.app.presentationOptions() != desired {
-            self.app.setPresentationOptions(desired);
-        }
-    }
-}
-
-impl Drop for Presentation {
-    fn drop(&mut self) {
-        self.app.setPresentationOptions(self.previous);
     }
 }

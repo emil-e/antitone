@@ -1,9 +1,51 @@
+use objc2::MainThreadMarker;
+use objc2::rc::Retained;
+use objc2_app_kit::{NSApplication, NSApplicationPresentationOptions};
 use objc2_core_graphics::{CGColorSpace, kCGColorSpaceExtendedSRGB};
 
 use crate::Error;
 
 #[cfg(feature = "editor")]
-pub fn set_application_icon() -> Result<(), Box<dyn std::error::Error>> {
+use super::GpuMemory;
+
+pub(crate) use super::termination::{
+    Guard as QuitGuard, cancel_on_unwind as quit_cancel_on_unwind,
+};
+
+pub(crate) fn backend() -> wgpu::Backends {
+    wgpu::Backends::METAL
+}
+
+pub(crate) fn configure_presentation(surface: &wgpu::Surface<'_>) -> Result<(), Error> {
+    configure_sdr(surface)
+}
+
+#[cfg(feature = "editor")]
+pub fn install_icon() -> Result<(), Box<dyn std::error::Error>> {
+    set_application_icon()
+}
+
+#[cfg(feature = "editor")]
+pub(crate) fn gpu_memory(device: Option<&wgpu::Device>) -> GpuMemory {
+    device
+        .and_then(|device| {
+            use objc2_metal::MTLDevice;
+            // Read only a static topology fact under the HAL guard; no resource/ownership changes.
+            let native = unsafe { device.as_hal::<wgpu::hal::api::Metal>() }?;
+            Some(if native.raw_device().hasUnifiedMemory() {
+                GpuMemory::Unified
+            } else {
+                // Metal's recommended working set is not a dedicated VRAM capacity.
+                GpuMemory::Discrete {
+                    dedicated_bytes: None,
+                }
+            })
+        })
+        .unwrap_or(GpuMemory::Unknown)
+}
+
+#[cfg(feature = "editor")]
+fn set_application_icon() -> Result<(), Box<dyn std::error::Error>> {
     use objc2::{AnyThread, MainThreadMarker};
     use objc2_app_kit::{NSApplication, NSImage};
     use objc2_foundation::NSData;
@@ -18,7 +60,7 @@ pub fn set_application_icon() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Reapply after every configuration: wgpu's SDR configuration clears the layer color space.
-pub fn configure_sdr(surface: &wgpu::Surface<'_>) -> Result<(), Error> {
+fn configure_sdr(surface: &wgpu::Surface<'_>) -> Result<(), Error> {
     // The HAL guard and layer lock prevent concurrent surface access while setting native properties.
     let native = unsafe { surface.as_hal::<wgpu::hal::api::Metal>() }
         .ok_or_else(|| Error::Gpu("managed presentation requires the Metal backend".into()))?;
@@ -44,4 +86,37 @@ pub fn configure_sdr(surface: &wgpu::Surface<'_>) -> Result<(), Error> {
         layer.drawableSize()
     );
     Ok(())
+}
+
+pub(crate) struct FullscreenPresentation {
+    app: Retained<NSApplication>,
+    previous: NSApplicationPresentationOptions,
+}
+
+impl FullscreenPresentation {
+    pub(crate) fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        let main = MainThreadMarker::new().ok_or("fullscreen viewing requires the main thread")?;
+        let app = NSApplication::sharedApplication(main);
+        let previous = app.presentationOptions();
+        Ok(Self { app, previous })
+    }
+
+    pub(crate) fn show(&self, focused: bool) {
+        use NSApplicationPresentationOptions as Options;
+        // These paired auto-hide options preserve system access and do not create a fullscreen Space.
+        let desired = if focused {
+            Options::AutoHideDock | Options::AutoHideMenuBar
+        } else {
+            self.previous
+        };
+        if self.app.presentationOptions() != desired {
+            self.app.setPresentationOptions(desired);
+        }
+    }
+}
+
+impl Drop for FullscreenPresentation {
+    fn drop(&mut self) {
+        self.app.setPresentationOptions(self.previous);
+    }
 }

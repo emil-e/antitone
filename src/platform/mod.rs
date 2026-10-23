@@ -1,17 +1,39 @@
-#[cfg(target_os = "macos")]
 mod fullscreen;
-#[cfg(target_os = "macos")]
 pub mod host;
-#[cfg(target_os = "macos")]
 mod latency;
-#[cfg(target_os = "macos")]
-pub mod macos;
+pub mod menu;
+
 #[cfg(target_os = "macos")]
 mod termination;
 
-pub mod menu;
+#[cfg(target_os = "macos")]
+#[path = "macos.rs"]
+mod native;
+#[cfg(target_os = "windows")]
+#[path = "windows.rs"]
+mod native;
+#[cfg(not(any(target_os = "macos", windows)))]
+compile_error!(
+    "desktop platform support is implemented for macOS and Windows; add a Linux capability module with the same exports"
+);
+
+#[cfg(feature = "editor")]
+pub(crate) use native::gpu_memory;
+#[cfg(feature = "editor")]
+pub use native::install_icon;
+pub(crate) use native::{
+    FullscreenPresentation, QuitGuard, backend, configure_presentation, quit_cancel_on_unwind,
+};
 
 pub use crate::gpu::SubmissionGate;
+
+#[cfg(feature = "editor")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GpuMemory {
+    Unified,
+    Discrete { dedicated_bytes: Option<u64> },
+    Unknown,
+}
 
 pub fn device_limits(supported: wgpu::Limits) -> wgpu::Limits {
     wgpu::Limits {

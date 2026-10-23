@@ -8,7 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let initial = argument.map(std::path::PathBuf::from);
     host::run("Antitone", move |device, queue, cx| {
-        antitone::platform::macos::set_application_icon()?;
+        antitone::platform::install_icon()?;
         let mut editor = Editor::new(device, queue);
         if let Some(path) = initial {
             editor.open_initial(path, &cx);
