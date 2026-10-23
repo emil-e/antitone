@@ -259,5 +259,6 @@ fn build_dng() {
         println!("cargo:rustc-link-arg=-mmacosx-version-min=14.0");
     } else if target_os == "windows" {
         println!("cargo:rustc-link-lib=ws2_32");
+        println!("cargo:rustc-link-lib=ole32");
     }
 }
