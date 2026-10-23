@@ -84,7 +84,7 @@ if(APPLE)
 elseif(WIN32)
     foreach(target dng xmp_core xmp_files)
         target_compile_definitions(${target} PRIVATE
-            WIN_ENV=1 Macintosh=0 qMacOS=0 qWinOS=1)
+            WIN_ENV=1 Macintosh=0 qMacOS=0 qWinOS=1 NOMINMAX WIN32_LEAN_AND_MEAN)
     endforeach()
     # Cargo consumes one archive, including the transitive static codec libraries.
     set(ARCHIVE "${CMAKE_CURRENT_BINARY_DIR}/antitone_dng_sdk.lib")
