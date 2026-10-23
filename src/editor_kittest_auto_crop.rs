@@ -362,7 +362,7 @@ fn unavailable_outlines_have_compact_tool_and_thumbnail_cues_at_both_layouts() {
             overlay::wait_context(&mut h);
             assert!(h.get_by_label("Apply").accesskit_node().is_disabled());
             assert!(
-                h.query_by_role_and_label(egui::accesskit::Role::Slider, "Inward margin")
+                h.query_by_role_and_label(egui::accesskit::Role::Slider, "Margin")
                     .is_none()
             );
             assert_eq!(
@@ -717,7 +717,7 @@ fn fullscreen_pauses_auto_crop_and_escape_returns_to_the_tool_before_cancelling_
         stage(&mut h, "Roll");
         click_action(&mut h, "Auto-crop roll");
         overlay::wait_context(&mut h);
-        workflow::enter_numeric(&mut h, "Inward margin", "2");
+        workflow::enter_numeric(&mut h, "Margin", "2");
         let draft = h.read(|editor| editor.auto_crop_preview(editor.current_source.unwrap()));
         h.key_press(egui::Key::F);
         h.step();

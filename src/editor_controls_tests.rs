@@ -6,8 +6,24 @@ fn frame(
     kind: Parameter,
     width: f32,
     enabled: bool,
+    events: Vec<egui::Event>,
+    modifiers: egui::Modifiers,
+) -> (Response, Response, Response) {
+    frame_at(
+        context, value, kind, width, enabled, events, modifiers, None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn frame_at(
+    context: &egui::Context,
+    value: &mut f64,
+    kind: Parameter,
+    width: f32,
+    enabled: bool,
     mut events: Vec<egui::Event>,
     modifiers: egui::Modifiers,
+    time: Option<f64>,
 ) -> (Response, Response, Response) {
     super::super::presentation::configure_fonts(context);
     let mut responses = None;
@@ -19,6 +35,7 @@ fn frame(
                 egui::vec2(width, 400.),
             )),
             events,
+            time,
             ..Default::default()
         },
         |ui| {
@@ -31,6 +48,20 @@ fn frame(
     );
     output.textures_delta.clear();
     responses.unwrap()
+}
+
+/// Option-click on the value name: the single-action reset gesture.
+fn alt_click(position: egui::Pos2) -> Vec<egui::Event> {
+    let mut events = vec![egui::Event::PointerMoved(position)];
+    for pressed in [true, false] {
+        events.push(egui::Event::PointerButton {
+            pos: position,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::ALT,
+        });
+    }
+    events
 }
 
 fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
@@ -57,10 +88,10 @@ fn pointer(position: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
 
 #[test]
 fn inward_margin_uses_shared_precision_keyboard_steps_and_actual_default() {
-    for width in [230., 315.] {
+    for width in [315., 270.] {
         let context = egui::Context::default();
         let mut value = 1.23456789;
-        let (slider, numeric, reset) = frame(
+        let (slider, numeric, label) = frame(
             &context,
             &mut value,
             Parameter::CropMargin,
@@ -70,23 +101,31 @@ fn inward_margin_uses_shared_precision_keyboard_steps_and_actual_default() {
             egui::Modifiers::NONE,
         );
         assert_eq!(value, 1.23456789);
-        assert!(numeric.rect.right() < reset.rect.left());
+        assert!(slider.rect.right() <= numeric.rect.left());
         assert!(
             slider.rect.is_positive() && slider.rect.left() >= 0. && slider.rect.right() <= width
         );
-        for pressed in [true, false] {
-            frame(
-                &context,
-                &mut value,
-                Parameter::CropMargin,
-                width,
-                true,
-                pointer(reset.rect.center(), pressed),
-                egui::Modifiers::NONE,
-            );
-        }
+        frame(
+            &context,
+            &mut value,
+            Parameter::CropMargin,
+            width,
+            true,
+            alt_click(label.rect.center()),
+            egui::Modifiers::ALT,
+        );
         assert_eq!(value, crate::auto_crop::DEFAULT_MARGIN_PERCENT);
-        context.memory_mut(|m| m.request_focus(slider.id));
+
+        // Tab reaches the track first; the shared step then moves it by one increment.
+        frame(
+            &context,
+            &mut value,
+            Parameter::CropMargin,
+            width,
+            true,
+            vec![key(egui::Key::Tab, egui::Modifiers::NONE)],
+            egui::Modifiers::NONE,
+        );
         frame(
             &context,
             &mut value,
@@ -96,27 +135,20 @@ fn inward_margin_uses_shared_precision_keyboard_steps_and_actual_default() {
             vec![key(egui::Key::ArrowRight, egui::Modifiers::NONE)],
             egui::Modifiers::NONE,
         );
-        assert!((value - crate::auto_crop::DEFAULT_MARGIN_PERCENT - 0.01).abs() < 1e-12);
-        frame(
-            &context,
-            &mut value,
-            Parameter::CropMargin,
-            width,
-            true,
-            vec![key(egui::Key::ArrowRight, egui::Modifiers::SHIFT)],
-            egui::Modifiers::SHIFT,
+        assert!(
+            (value - crate::auto_crop::DEFAULT_MARGIN_PERCENT - 0.01).abs() < 1e-12,
+            "{value}"
         );
-        assert!((value - crate::auto_crop::DEFAULT_MARGIN_PERCENT - 0.011).abs() < 1e-12);
     }
 }
 
 #[test]
 fn drawing_preserves_manual_precision_and_exposure_outside_normal_slider_range() {
-    for width in [230., 315.] {
+    for width in [270., 315.] {
         for initial in [-16., -7.123456789, 0.123456789, 16.] {
             let context = egui::Context::default();
             let mut value = initial;
-            let (slider, numeric, reset) = frame(
+            let (slider, numeric, _) = frame(
                 &context,
                 &mut value,
                 Parameter::Exposure,
@@ -131,8 +163,7 @@ fn drawing_preserves_manual_precision_and_exposure_outside_normal_slider_range()
                     && slider.rect.left() >= 0.
                     && slider.rect.right() <= width
             );
-            assert!(numeric.rect.right() < reset.rect.left());
-            assert!(numeric.rect.bottom() <= slider.rect.top());
+            assert!(slider.rect.right() <= numeric.rect.left());
             let second = frame(
                 &context,
                 &mut value,
@@ -151,7 +182,7 @@ fn drawing_preserves_manual_precision_and_exposure_outside_normal_slider_range()
 
 #[test]
 fn mask_parameters_preserve_precision_clamp_edits_and_reset_only_when_enabled() {
-    for width in [230., 315.] {
+    for width in [270., 315.] {
         for (kind, text, expected) in [Parameter::Strength, Parameter::Feather]
             .into_iter()
             .flat_map(|kind| {
@@ -161,51 +192,63 @@ fn mask_parameters_preserve_precision_clamp_edits_and_reset_only_when_enabled() 
         {
             let context = egui::Context::default();
             let mut value = 0.3456789123;
-            let draw = |value: &mut f64, enabled, events| {
-                frame(
-                    &context,
-                    value,
-                    kind,
-                    width,
-                    enabled,
-                    events,
-                    egui::Modifiers::NONE,
-                )
+            let draw = |value: &mut f64, enabled, events, modifiers| {
+                frame(&context, value, kind, width, enabled, events, modifiers)
             };
-            let response = draw(&mut value, true, vec![]);
+            let response = draw(&mut value, true, vec![], egui::Modifiers::NONE);
             assert_eq!(value, 0.3456789123);
-            assert!(response.1.rect.right() < response.2.rect.left());
+            assert!(response.0.rect.right() <= response.1.rect.left());
             for pressed in [true, false] {
-                draw(&mut value, true, pointer(response.1.rect.center(), pressed));
+                draw(
+                    &mut value,
+                    true,
+                    pointer(response.1.rect.center(), pressed),
+                    egui::Modifiers::NONE,
+                );
             }
-            draw(&mut value, true, vec![egui::Event::Text(text.into())]);
+            draw(
+                &mut value,
+                true,
+                vec![egui::Event::Text(text.into())],
+                egui::Modifiers::NONE,
+            );
             assert_eq!(value, 0.3456789123);
             draw(
                 &mut value,
                 true,
                 vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+                egui::Modifiers::NONE,
             );
-            draw(&mut value, true, vec![]);
+            draw(&mut value, true, vec![], egui::Modifiers::NONE);
             assert_eq!(value, expected);
             value = 0.3456789123;
-            for pressed in [true, false] {
-                draw(
-                    &mut value,
-                    false,
-                    pointer(response.2.rect.center(), pressed),
-                );
-            }
-            assert_eq!(value, 0.3456789123);
-            let response = draw(&mut value, true, vec![]);
-            for pressed in [true, false] {
-                draw(&mut value, true, pointer(response.2.rect.center(), pressed));
-            }
-            assert_eq!(value, kind.default());
-            for pressed in [true, false] {
-                draw(&mut value, true, pointer(response.1.rect.center(), pressed));
-            }
-            draw(&mut value, true, vec![egui::Event::Text("0.75".into())]);
-            draw(&mut value, false, vec![]);
+            let response = draw(&mut value, true, vec![], egui::Modifiers::NONE);
+            draw(
+                &mut value,
+                true,
+                alt_click(response.2.rect.center()),
+                egui::Modifiers::ALT,
+            );
+            assert_eq!(value, kind.default(), "reset did not apply");
+            draw(
+                &mut value,
+                true,
+                pointer(response.1.rect.center(), true),
+                egui::Modifiers::NONE,
+            );
+            draw(
+                &mut value,
+                true,
+                pointer(response.1.rect.center(), false),
+                egui::Modifiers::NONE,
+            );
+            draw(
+                &mut value,
+                true,
+                vec![egui::Event::Text("0.75".into())],
+                egui::Modifiers::NONE,
+            );
+            draw(&mut value, false, vec![], egui::Modifiers::NONE);
             assert_eq!(
                 value,
                 kind.default(),
@@ -213,6 +256,220 @@ fn mask_parameters_preserve_precision_clamp_edits_and_reset_only_when_enabled() 
             );
         }
     }
+}
+
+#[test]
+fn parameter_rows_share_one_track_start() {
+    let context = egui::Context::default();
+    let mut contrast = 1.;
+    let mut pivot = 0.18;
+    let mut exposure = 0.;
+    let mut margin = 1.;
+    let mut rects = None;
+    let mut output = context.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(315., 240.),
+            )),
+            ..Default::default()
+        },
+        |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let a = parameter(ui, Parameter::Contrast, &mut contrast).0;
+                let b = parameter(ui, Parameter::Pivot, &mut pivot).0;
+                let c = parameter(ui, Parameter::Exposure, &mut exposure).0;
+                let d = parameter(ui, Parameter::CropMargin, &mut margin).0;
+                rects = Some((a, b, c, d));
+            });
+        },
+    );
+    output.textures_delta.clear();
+    let (contrast, pivot, exposure, margin) = rects.unwrap();
+    // Unit labels shorten the track at its right end, but every track starts in the same column.
+    assert_eq!(contrast.rect.left(), pivot.rect.left());
+    assert_eq!(pivot.rect.left(), exposure.rect.left());
+    assert_eq!(exposure.rect.left(), margin.rect.left());
+}
+
+#[test]
+fn double_clicking_the_name_resets_the_value() {
+    let context = egui::Context::default();
+    let mut value = 0.5;
+    let (_, _, label) = frame(
+        &context,
+        &mut value,
+        Parameter::Exposure,
+        315.,
+        true,
+        vec![],
+        egui::Modifiers::NONE,
+    );
+    let point = label.rect.center();
+    // Two clicks inside egui's double-click interval, with time advancing between frames.
+    for (time, pressed) in [(0., true), (0., false), (0.1, true), (0.1, false)] {
+        frame_at(
+            &context,
+            &mut value,
+            Parameter::Exposure,
+            315.,
+            true,
+            pointer(point, pressed),
+            egui::Modifiers::NONE,
+            Some(time),
+        );
+    }
+    assert_eq!(value, 0., "double-clicking the name resets to the default");
+}
+
+#[test]
+fn focus_alone_does_not_round_the_stored_value() {
+    let context = egui::Context::default();
+    let precise = 0.123456789;
+    let mut value = precise;
+    let (_, numeric, _) = frame(
+        &context,
+        &mut value,
+        Parameter::Exposure,
+        315.,
+        true,
+        vec![],
+        egui::Modifiers::NONE,
+    );
+    let point = numeric.rect.center();
+    for pressed in [true, false] {
+        frame(
+            &context,
+            &mut value,
+            Parameter::Exposure,
+            315.,
+            true,
+            pointer(point, pressed),
+            egui::Modifiers::NONE,
+        );
+    }
+    for pressed in [true, false] {
+        frame(
+            &context,
+            &mut value,
+            Parameter::Exposure,
+            315.,
+            true,
+            pointer(egui::pos2(4., 4.), pressed),
+            egui::Modifiers::NONE,
+        );
+    }
+    assert_eq!(value, precise, "an inert focus round-trip keeps the value");
+}
+
+#[test]
+fn an_interrupted_precision_drag_does_not_pin_the_value() {
+    let context = egui::Context::default();
+    let mut value = 0.;
+    let (slider, _, _) = frame(
+        &context,
+        &mut value,
+        Parameter::Exposure,
+        315.,
+        true,
+        vec![],
+        egui::Modifiers::NONE,
+    );
+    let start = slider.rect.left_center() + egui::vec2(40., 0.);
+    frame(
+        &context,
+        &mut value,
+        Parameter::Exposure,
+        315.,
+        true,
+        pointer(start, true),
+        egui::Modifiers::SHIFT,
+    );
+    frame(
+        &context,
+        &mut value,
+        Parameter::Exposure,
+        315.,
+        true,
+        vec![egui::Event::PointerMoved(start + egui::vec2(10., 0.))],
+        egui::Modifiers::SHIFT,
+    );
+    let dragged = value;
+    assert_ne!(dragged, 0.);
+    // The row disappears mid-gesture and the pointer is released elsewhere. When it returns,
+    // the pre-drag snapshot must not win over the accepted value.
+    let mut other = 1.;
+    frame(
+        &context,
+        &mut other,
+        Parameter::Contrast,
+        315.,
+        true,
+        pointer(egui::pos2(4., 4.), false),
+        egui::Modifiers::NONE,
+    );
+    frame(
+        &context,
+        &mut value,
+        Parameter::Exposure,
+        315.,
+        true,
+        vec![],
+        egui::Modifiers::NONE,
+    );
+    assert_eq!(value, dragged);
+}
+
+#[test]
+fn shift_drag_on_the_track_moves_ten_times_finer() {
+    let drag = |modifiers: egui::Modifiers| {
+        let context = egui::Context::default();
+        let mut value = 0.;
+        let (slider, _, _) = frame(
+            &context,
+            &mut value,
+            Parameter::Exposure,
+            315.,
+            true,
+            vec![],
+            modifiers,
+        );
+        let start = slider.rect.left_center() + egui::vec2(40., 0.);
+        frame(
+            &context,
+            &mut value,
+            Parameter::Exposure,
+            315.,
+            true,
+            pointer(start, true),
+            modifiers,
+        );
+        let pressed = value;
+        frame(
+            &context,
+            &mut value,
+            Parameter::Exposure,
+            315.,
+            true,
+            vec![egui::Event::PointerMoved(start + egui::vec2(10., 0.))],
+            modifiers,
+        );
+        (pressed, value)
+    };
+    let (plain_press, plain) = drag(egui::Modifiers::NONE);
+    let (fine_press, fine) = drag(egui::Modifiers::SHIFT);
+    let plain_travel = plain - plain_press;
+    let fine_travel = fine - fine_press;
+    assert!(plain_travel.abs() > 0.1, "{plain_travel}");
+    assert_eq!(fine_press, 0., "a precision press holds the accepted value");
+    // Same direction, materially slower; the exact factor is a per-pixel implementation
+    // detail and differs for logarithmic tracks.
+    assert!(
+        fine_travel.signum() == plain_travel.signum()
+            && fine_travel.abs() < plain_travel.abs() / 5.
+            && fine_travel.abs() > plain_travel.abs() / 20.,
+        "fine {fine_travel} vs ordinary {plain_travel}"
+    );
 }
 
 #[test]
@@ -353,15 +610,18 @@ fn tab_focus_allows_numeric_entry_without_a_mouse() {
         vec![],
         egui::Modifiers::NONE,
     );
-    frame(
-        &context,
-        &mut value,
-        Parameter::Exposure,
-        315.,
-        true,
-        vec![key(egui::Key::Tab, egui::Modifiers::NONE)],
-        egui::Modifiers::NONE,
-    );
+    // Tab order follows the row: the track first, then the value field.
+    for _ in 0..2 {
+        frame(
+            &context,
+            &mut value,
+            Parameter::Exposure,
+            315.,
+            true,
+            vec![key(egui::Key::Tab, egui::Modifiers::NONE)],
+            egui::Modifiers::NONE,
+        );
+    }
     frame(
         &context,
         &mut value,
@@ -467,17 +727,8 @@ fn parameter_reset_uses_actual_default_and_disabled_controls_do_not_edit() {
             Parameter::Gamma,
             315.,
             enabled,
-            pointer(position, true),
-            egui::Modifiers::NONE,
-        );
-        frame(
-            &context,
-            &mut value,
-            Parameter::Gamma,
-            315.,
-            enabled,
-            pointer(position, false),
-            egui::Modifiers::NONE,
+            alt_click(position),
+            egui::Modifiers::ALT,
         );
         assert_eq!(value, if enabled { DEFAULT_GAMMA } else { 1.2 });
         if !enabled {
@@ -511,7 +762,7 @@ fn contrast_rows_accept_wider_endpoints_and_reset_to_identity() {
     for (initial, edge_key) in [(0.4, egui::Key::ArrowLeft), (1.6, egui::Key::ArrowRight)] {
         let context = egui::Context::default();
         let mut value = initial;
-        let (slider, _, reset) = frame(
+        let (slider, _, label) = frame(
             &context,
             &mut value,
             Parameter::Contrast,
@@ -532,17 +783,15 @@ fn contrast_rows_accept_wider_endpoints_and_reset_to_identity() {
             egui::Modifiers::NONE,
         );
         assert_eq!(value, initial);
-        for pressed in [true, false] {
-            frame(
-                &context,
-                &mut value,
-                Parameter::Contrast,
-                270.,
-                true,
-                pointer(reset.rect.center(), pressed),
-                egui::Modifiers::NONE,
-            );
-        }
+        frame(
+            &context,
+            &mut value,
+            Parameter::Contrast,
+            270.,
+            true,
+            alt_click(label.rect.center()),
+            egui::Modifiers::ALT,
+        );
         assert_eq!(value, 1.);
     }
 }
@@ -564,19 +813,16 @@ fn photographic_blend_rows_fit_and_reset_to_zero_only_when_enabled() {
                     vec![],
                     egui::Modifiers::NONE,
                 );
-                assert!(reset.rect.right() <= width - 8.);
-                assert!(numeric.rect.right() < reset.rect.left());
-                for pressed in [true, false] {
-                    frame(
-                        &context,
-                        &mut value,
-                        kind,
-                        width,
-                        enabled,
-                        pointer(reset.rect.center(), pressed),
-                        egui::Modifiers::NONE,
-                    );
-                }
+                assert!(reset.rect.left() < numeric.rect.left());
+                frame(
+                    &context,
+                    &mut value,
+                    kind,
+                    width,
+                    enabled,
+                    alt_click(reset.rect.center()),
+                    egui::Modifiers::ALT,
+                );
                 assert_eq!(value, if enabled { 0. } else { 0.75 });
             }
         }
@@ -602,17 +848,15 @@ fn response_inputs_preserve_precision_use_true_defaults_and_fine_shoulder_steps(
                 egui::Modifiers::NONE,
             );
             assert_eq!(value, initial);
-            for pressed in [true, false] {
-                frame(
-                    &context,
-                    &mut value,
-                    kind,
-                    270.,
-                    enabled,
-                    pointer(response.2.rect.center(), pressed),
-                    egui::Modifiers::NONE,
-                );
-            }
+            frame(
+                &context,
+                &mut value,
+                kind,
+                270.,
+                enabled,
+                alt_click(response.2.rect.center()),
+                egui::Modifiers::ALT,
+            );
             assert_eq!(value, if enabled { kind.default() } else { initial });
         }
         for modifiers in [egui::Modifiers::NONE, egui::Modifiers::SHIFT] {
@@ -666,12 +910,20 @@ fn wheel_adapters_roundtrip_full_coordinate_square_and_do_not_change_processing(
     );
 }
 
+/// Test wheel size; the radius, not the size, drives relative motion.
+const TEST_WHEEL: f32 = 76.;
+const TEST_RADIUS: f32 = TEST_WHEEL * 0.5 - 2.;
+
 #[test]
-fn wheel_pointer_updates_the_same_coordinates_and_disabled_wheels_are_read_only() {
+fn wheel_press_alone_does_not_move_the_marker_and_disabled_wheels_are_read_only() {
     for kind in [ColorControl::GammaBalance, ColorControl::WhiteBalance] {
         for enabled in [true, false] {
             let context = egui::Context::default();
-            let mut balance = Balance::default();
+            let untouched = Balance {
+                warmth: 0.21,
+                tint: -0.13,
+            };
+            let mut balance = untouched;
             let mut response = None;
             let mut render = |events| {
                 let mut output = context.run_ui(
@@ -685,7 +937,7 @@ fn wheel_pointer_updates_the_same_coordinates_and_disabled_wheels_are_read_only(
                     },
                     |ui| {
                         ui.add_enabled_ui(enabled, |ui| {
-                            response = Some(wheel(ui, kind, &mut balance));
+                            response = Some(wheel(ui, kind, &mut balance, TEST_WHEEL));
                         });
                     },
                 );
@@ -693,17 +945,11 @@ fn wheel_pointer_updates_the_same_coordinates_and_disabled_wheels_are_read_only(
                 response.as_ref().unwrap().rect.center()
             };
             let center = render(vec![]);
-            let blue = center + egui::vec2(26., 0.);
-            render(pointer(blue, true));
-            render(pointer(blue, false));
-            let expected = if enabled {
-                kind.coordinates(DVec2::X * 0.5)
-            } else {
-                Balance::default()
-            };
-            assert!((balance.warmth - expected.warmth).abs() < 1e-7);
-            assert!((balance.tint - expected.tint).abs() < 1e-7);
-            assert!((kind.position(balance) - kind.position(expected)).length() < 1e-7);
+            render(pointer(center + egui::vec2(26., 0.), true));
+            render(pointer(center + egui::vec2(26., 0.), false));
+            // Pressing away from the marker is a grab, not a jump; a disabled wheel keeps the
+            // accepted value whatever the pointer does.
+            assert_balance(balance, untouched);
         }
     }
 }
@@ -738,7 +984,7 @@ fn wheel_frame(
         },
         |ui| {
             ui.add_enabled_ui(enabled, |ui| {
-                response = Some(wheel(ui, kind, balance));
+                response = Some(wheel(ui, kind, balance, TEST_WHEEL));
             });
         },
     );
@@ -747,12 +993,14 @@ fn wheel_frame(
 }
 
 fn assert_balance(actual: Balance, expected: Balance) {
+    // Relative motion accumulates frame by frame, so exact bit equality is not the contract;
+    // the stored value still keeps far more precision than any control can address.
     assert!(
-        (actual.warmth - expected.warmth).abs() < 1e-12,
+        (actual.warmth - expected.warmth).abs() < 1e-9,
         "{actual:?} != {expected:?}"
     );
     assert!(
-        (actual.tint - expected.tint).abs() < 1e-12,
+        (actual.tint - expected.tint).abs() < 1e-9,
         "{actual:?} != {expected:?}"
     );
 }
@@ -811,7 +1059,7 @@ fn shift_wheel_drag_anchors_to_the_current_value_and_uses_one_tenth_motion() {
                 vec![egui::Event::PointerMoved(point)],
                 egui::Modifiers::SHIFT,
             );
-            let delta = (point - origin) / 52.;
+            let delta = (point - origin) / TEST_RADIUS;
             let expected = kind.coordinates(
                 kind.position(initial) + DVec2::new(f64::from(delta.x), -f64::from(delta.y)) * 0.1,
             );
@@ -839,7 +1087,7 @@ fn shift_wheel_drag_anchors_to_the_current_value_and_uses_one_tenth_motion() {
 }
 
 #[test]
-fn wheel_shift_transitions_do_not_jump_and_normal_motion_resumes_relative_until_release() {
+fn wheel_modifier_changes_keep_motion_relative_until_release() {
     for kind in [ColorControl::GammaBalance, ColorControl::WhiteBalance] {
         let context = egui::Context::default();
         let mut balance = Balance::default();
@@ -861,41 +1109,40 @@ fn wheel_shift_transitions_do_not_jump_and_normal_motion_resumes_relative_until_
             pointer(center, true),
             egui::Modifiers::NONE,
         );
-        let mut point = center + egui::vec2(26., 0.);
-        wheel_frame(
-            &context,
-            &mut balance,
-            kind,
-            true,
-            vec![egui::Event::PointerMoved(point)],
-            egui::Modifiers::NONE,
-        );
-        assert_balance(balance, kind.coordinates(DVec2::new(0.5, 0.)));
-        for modifiers in [
-            egui::Modifiers::SHIFT,
-            egui::Modifiers::NONE,
-            egui::Modifiers::SHIFT,
+        // Each frame contributes its own travel; the sensitivity is per frame, not cumulative.
+        let mut point = center;
+        for (step, modifiers) in [
+            (egui::vec2(18., 0.), egui::Modifiers::NONE),
+            (egui::vec2(-9., 9.), egui::Modifiers::SHIFT),
+            (egui::vec2(0., -9.), egui::Modifiers::NONE),
+            (egui::vec2(9., 0.), egui::Modifiers::SHIFT),
         ] {
             let before = balance;
-            wheel_frame(&context, &mut balance, kind, true, vec![], modifiers);
+            let idle = wheel_frame(&context, &mut balance, kind, true, vec![], modifiers);
             assert_eq!(
                 balance, before,
                 "stationary modifier changes preserve exact f64 values"
             );
-            point += egui::vec2(-13., 13.);
+            assert_eq!(idle.rect.width(), TEST_WHEEL);
+            let next = point + step;
             wheel_frame(
                 &context,
                 &mut balance,
                 kind,
                 true,
-                vec![egui::Event::PointerMoved(point)],
+                vec![egui::Event::PointerMoved(next)],
                 modifiers,
             );
-            let expected = kind.coordinates(
-                kind.position(before)
-                    + DVec2::new(-0.25, -0.25) * if modifiers.shift { 0.1 } else { 1. },
+            let delta = step / TEST_RADIUS;
+            assert_balance(
+                balance,
+                kind.coordinates(
+                    kind.position(before)
+                        + DVec2::new(f64::from(delta.x), -f64::from(delta.y))
+                            * if modifiers.shift { 0.1 } else { 1. },
+                ),
             );
-            assert_balance(balance, expected);
+            point = next;
         }
         let before = balance;
         wheel_frame(
@@ -915,6 +1162,7 @@ fn wheel_shift_transitions_do_not_jump_and_normal_motion_resumes_relative_until_
             egui::Modifiers::NONE,
         );
         assert_eq!(balance, before);
+        // A fresh press starts a new relative gesture instead of jumping to the pointer.
         let target = center + egui::vec2(-26., 0.);
         wheel_frame(
             &context,
@@ -932,12 +1180,12 @@ fn wheel_shift_transitions_do_not_jump_and_normal_motion_resumes_relative_until_
             pointer(target, false),
             egui::Modifiers::NONE,
         );
-        assert_balance(balance, kind.coordinates(DVec2::new(-0.5, 0.)));
+        assert_eq!(balance, before, "a click without motion is not an edit");
     }
 }
 
 #[test]
-fn normal_wheel_drag_keeps_absolute_mapping_and_shift_click_does_not_reposition() {
+fn wheel_drag_accumulates_relative_motion_from_the_press_origin() {
     for kind in [ColorControl::GammaBalance, ColorControl::WhiteBalance] {
         let context = egui::Context::default();
         let mut balance = Balance {
@@ -954,14 +1202,14 @@ fn normal_wheel_drag_keeps_absolute_mapping_and_shift_click_does_not_reposition(
         )
         .rect
         .center();
-        let point = center + egui::vec2(-26., 26.);
+        let start = center + egui::vec2(-26., 26.);
         let before = balance;
         wheel_frame(
             &context,
             &mut balance,
             kind,
             true,
-            pointer(point, true),
+            pointer(start, true),
             egui::Modifiers::SHIFT,
         );
         wheel_frame(
@@ -969,33 +1217,39 @@ fn normal_wheel_drag_keeps_absolute_mapping_and_shift_click_does_not_reposition(
             &mut balance,
             kind,
             true,
-            pointer(point, false),
+            pointer(start, false),
             egui::Modifiers::SHIFT,
         );
-        assert_eq!(balance, before);
+        assert_eq!(balance, before, "a precision click does not reposition");
+
         wheel_frame(
             &context,
             &mut balance,
             kind,
             true,
-            pointer(point, true),
+            pointer(start, true),
             egui::Modifiers::NONE,
         );
-        for offset in [egui::vec2(26., -13.), egui::vec2(-13., 13.)] {
-            let point = center + offset;
+        let mut point = start;
+        for step in [egui::vec2(26., -13.), egui::vec2(-13., 13.)] {
+            let before = balance;
+            let next = point + step;
             wheel_frame(
                 &context,
                 &mut balance,
                 kind,
                 true,
-                vec![egui::Event::PointerMoved(point)],
+                vec![egui::Event::PointerMoved(next)],
                 egui::Modifiers::NONE,
             );
-            let position = offset / 52.;
+            let delta = step / TEST_RADIUS;
             assert_balance(
                 balance,
-                kind.coordinates(DVec2::new(f64::from(position.x), -f64::from(position.y))),
+                kind.coordinates(
+                    kind.position(before) + DVec2::new(f64::from(delta.x), -f64::from(delta.y)),
+                ),
             );
+            point = next;
         }
     }
 }
@@ -1107,7 +1361,7 @@ fn disabled_wheels_never_apply_precision_motion_and_discard_drag_memory() {
             pointer(center, false),
             egui::Modifiers::NONE,
         );
-        assert_eq!(balance, Balance::default());
+        assert_eq!(balance, before, "a disabled gesture leaves the value alone");
     }
 }
 
@@ -1161,19 +1415,30 @@ fn precision_wheels_keep_existing_coordinate_bounds_and_use_current_accepted_val
         );
         assert_eq!(
             balance, accepted,
-            "no stored grade overrides controller rollback/reset"
+            "an idle wheel never overrides the accepted value"
+        );
+        let anchor = center + egui::vec2(0., 40.);
+        wheel_frame(
+            &context,
+            &mut balance,
+            kind,
+            true,
+            pointer(anchor, true),
+            egui::Modifiers::SHIFT,
         );
         wheel_frame(
             &context,
             &mut balance,
             kind,
             true,
-            vec![egui::Event::PointerMoved(point + egui::vec2(-26., 0.))],
+            vec![egui::Event::PointerMoved(anchor + egui::vec2(-26., 0.))],
             egui::Modifiers::SHIFT,
         );
         assert_balance(
             balance,
-            kind.coordinates(kind.position(accepted) + DVec2::new(-0.05, 0.)),
+            kind.coordinates(
+                kind.position(accepted) + DVec2::new(f64::from(-26. / TEST_RADIUS), 0.) * 0.1,
+            ),
         );
     }
 }
@@ -1218,9 +1483,9 @@ fn composed_gamma_roll_and_photo_wheels_keep_precision_gestures_scoped() {
                 ..Default::default()
             },
             |ui| {
-                color(ui, ColorControl::GammaBalance, &mut balances[0], false);
+                balance_body(ui, ColorControl::GammaBalance, &mut balances[0]);
                 white_balance(ui, "roll-white-balance", &mut balances[1], false);
-                color(ui, ColorControl::WhiteBalance, &mut balances[2], false);
+                balance_body(ui, ColorControl::WhiteBalance, &mut balances[2]);
             },
         );
         output.textures_delta.clear();
@@ -1247,9 +1512,12 @@ fn composed_gamma_roll_and_photo_wheels_keep_precision_gestures_scoped() {
         wheels
             .into_iter()
             .map(|bounds| {
-                egui::pos2(
-                    ((bounds.x0 + bounds.x1) / 2.) as f32,
-                    ((bounds.y0 + bounds.y1) / 2.) as f32,
+                (
+                    egui::pos2(
+                        ((bounds.x0 + bounds.x1) / 2.) as f32,
+                        ((bounds.y0 + bounds.y1) / 2.) as f32,
+                    ),
+                    ((bounds.x1 - bounds.x0) / 2.) as f32 - 2.,
                 )
             })
             .collect::<Vec<_>>()
@@ -1257,7 +1525,7 @@ fn composed_gamma_roll_and_photo_wheels_keep_precision_gestures_scoped() {
     draw(&mut balances, vec![], egui::Modifiers::NONE);
     let centers = draw(&mut balances, vec![], egui::Modifiers::NONE);
     assert_eq!(centers.len(), 3);
-    for (index, center) in centers.into_iter().enumerate() {
+    for (index, (center, radius)) in centers.into_iter().enumerate() {
         let before = balances;
         let origin = center + egui::vec2(-13., 13.);
         let point = origin + egui::vec2(26., -13.);
@@ -1278,9 +1546,16 @@ fn composed_gamma_roll_and_photo_wheels_keep_precision_gestures_scoped() {
         } else {
             ColorControl::WhiteBalance
         };
-        assert_balance(
-            balances[index],
-            kind.coordinates(kind.position(before[index]) + DVec2::new(0.05, 0.025)),
+        // The radius comes from a pixel-rounded accesskit rect, so allow a sub-pixel error.
+        let expected = kind.coordinates(
+            kind.position(before[index])
+                + DVec2::new(f64::from(26. / radius), f64::from(13. / radius)) * 0.1,
+        );
+        assert!(
+            (balances[index].warmth - expected.warmth).abs() < 1e-3
+                && (balances[index].tint - expected.tint).abs() < 1e-3,
+            "{:?} != {expected:?}",
+            balances[index]
         );
     }
 }
@@ -1348,7 +1623,12 @@ fn hidden_wheel_drag_memory_cannot_leak_into_a_new_normal_gesture() {
         pointer(target, false),
         egui::Modifiers::NONE,
     );
-    assert_balance(balance, kind.coordinates(DVec2::new(-0.5, 0.)));
+    assert_balance(
+        balance,
+        kind.coordinates(
+            kind.position(Balance::default()) + DVec2::new(f64::from(26. / TEST_RADIUS), 0.) * 0.1,
+        ),
+    );
     assert!(
         context
             .data_mut(|data| data.get_temp::<WheelDrag>(response.id.with("wheel-drag")))
@@ -1398,7 +1678,7 @@ fn precision_motion_is_not_applied_twice_when_egui_repeats_a_layout_pass() {
             },
             |ui| {
                 ui.add_enabled_ui(true, |ui| {
-                    wheel(ui, kind, &mut balance);
+                    wheel(ui, kind, &mut balance, TEST_WHEEL);
                 });
                 passes += 1;
                 if passes == 1 {
@@ -1411,7 +1691,9 @@ fn precision_motion_is_not_applied_twice_when_egui_repeats_a_layout_pass() {
         assert!(passes > 1);
         assert_balance(
             balance,
-            kind.coordinates(kind.position(initial) + DVec2::new(0.05, 0.)),
+            kind.coordinates(
+                kind.position(initial) + DVec2::new(f64::from(26. / TEST_RADIUS), 0.) * 0.1,
+            ),
         );
     }
 }
@@ -1481,7 +1763,7 @@ fn section_frame(
         |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 let changed = *value != 0.;
-                let (_, reset) = section(
+                let (_, action) = section(
                     ui,
                     "grade",
                     "Grade",
@@ -1489,13 +1771,14 @@ fn section_frame(
                         summary: &format!("{:+.2} EV", value),
                         changed,
                         reset: Some(changed),
+                        tool: None,
                         default_open: Some(true),
                     },
                     |ui| {
                         numeric = Some(parameter(ui, Parameter::Exposure, value).1);
                     },
                 );
-                if reset {
+                if action.reset {
                     *value = 0.;
                 }
                 section(
@@ -1506,6 +1789,7 @@ fn section_frame(
                         summary: "Independent section",
                         changed: false,
                         reset: None,
+                        tool: None,
                         default_open: Some(true),
                     },
                     |ui| {

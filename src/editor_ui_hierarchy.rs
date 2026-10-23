@@ -1,7 +1,8 @@
 use super::{
-    CONTROL_HEIGHT,
+    CONTROL_HEIGHT, INSPECTOR_BODY_GAP, INSPECTOR_HEADER_HEIGHT, INSPECTOR_ROW_HEIGHT,
+    INSPECTOR_SECTION_GAP,
     icons::{self, Icon},
-    reset_button,
+    reset_button_at,
 };
 use egui::Ui;
 
@@ -26,7 +27,7 @@ pub fn collect_expansion(ctx: &egui::Context) -> std::collections::BTreeMap<Stri
 pub fn stage_tabs(ui: &mut Ui, selected: &mut usize) {
     // One allocation avoids fractional button widths growing the sidebar and changing Fit.
     let (bar, _) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), CONTROL_HEIGHT),
+        egui::vec2(ui.available_width(), INSPECTOR_HEADER_HEIGHT),
         egui::Sense::hover(),
     );
     let tabs = [
@@ -203,12 +204,30 @@ pub fn draggable_icon_row(
     (response.on_hover_text(label), toggle)
 }
 
+/// A section-level tool that acts on the section's subject rather than on one value.
+#[derive(Clone, Copy)]
+pub struct SectionTool<'a> {
+    pub icon: Icon,
+    pub enabled: bool,
+    pub name: &'a str,
+    pub help: &'a str,
+}
+
 pub struct SectionHeader<'a> {
     pub summary: &'a str,
     pub changed: bool,
     pub reset: Option<bool>,
+    /// Trailing header action, right of the reset, drawn only for inspector sections.
+    pub tool: Option<SectionTool<'a>>,
     /// None keeps transactional/pinned controls visible without a disclosure.
     pub default_open: Option<bool>,
+}
+
+/// Header actions a section reports back; contents keep their own result.
+#[derive(Clone, Copy, Default)]
+pub struct SectionAction {
+    pub reset: bool,
+    pub tool: bool,
 }
 
 pub fn section<R>(
@@ -217,7 +236,7 @@ pub fn section<R>(
     title: &str,
     header: SectionHeader<'_>,
     contents: impl FnOnce(&mut Ui) -> R,
-) -> (Option<R>, bool) {
+) -> (Option<R>, SectionAction) {
     section_impl(
         ui,
         id,
@@ -243,6 +262,7 @@ pub fn dialog_disclosure<R>(
             summary: "",
             changed: false,
             reset: None,
+            tool: None,
             default_open: Some(false),
         },
         SectionPresentation::Dialog,
@@ -378,17 +398,18 @@ fn section_impl<R>(
     header: SectionHeader<'_>,
     presentation: SectionPresentation,
     contents: impl FnOnce(&mut Ui) -> R,
-) -> (Option<R>, bool) {
+) -> (Option<R>, SectionAction) {
     let SectionHeader {
         summary,
         changed,
         reset: reset_enabled,
+        tool,
         default_open,
     } = header;
     let inspector = matches!(presentation, SectionPresentation::Inspector);
     ui.push_id(id, |ui| {
         if inspector {
-            ui.add_space(8.);
+            ui.add_space(INSPECTOR_SECTION_GAP);
             ui.separator();
         }
         let state_id = ui.make_persistent_id("expanded");
@@ -407,7 +428,7 @@ fn section_impl<R>(
             state.set_open(open);
         }
         let open = default_open.is_none() || state.is_open();
-        let mut reset = false;
+        let mut action = SectionAction::default();
         let draw_header = |ui: &mut Ui| {
             let text_color = if inspector {
                 ui.visuals().strong_text_color()
@@ -424,11 +445,13 @@ fn section_impl<R>(
                 .resolve(ui.style()),
                 text_color,
             );
-            let reset_width = if reset_enabled.is_some() {
-                CONTROL_HEIGHT + ui.spacing().item_spacing.x
+            let row_height = if inspector {
+                INSPECTOR_ROW_HEIGHT
             } else {
-                0.
+                CONTROL_HEIGHT
             };
+            let tools = usize::from(reset_enabled.is_some()) + usize::from(tool.is_some());
+            let reset_width = tools as f32 * (row_height + ui.spacing().item_spacing.x);
             let width = if inspector {
                 ui.available_width() - reset_width
             } else {
@@ -436,7 +459,7 @@ fn section_impl<R>(
             }
             .max(1.);
             let height = if inspector {
-                CONTROL_HEIGHT
+                INSPECTOR_ROW_HEIGHT
             } else {
                 DIALOG_DISCLOSURE_HEIGHT
             };
@@ -448,8 +471,20 @@ fn section_impl<R>(
                 egui::vec2(width, height),
                 inspector,
             );
+
             if let Some(enabled) = reset_enabled {
-                reset = reset_button(ui, enabled, title).clicked();
+                action.reset |= reset_button_at(ui, enabled, title, row_height).clicked();
+            }
+            if let Some(tool) = tool {
+                action.tool |= icons::button_at(
+                    ui,
+                    tool.icon,
+                    tool.enabled && inspector,
+                    tool.name,
+                    tool.help,
+                    row_height,
+                )
+                .clicked();
             }
             response
         };
@@ -486,7 +521,7 @@ fn section_impl<R>(
                 .accesskit_node_builder(header.id, |node| node.set_expanded(open));
         }
         let body = if open {
-            ui.add_space(6.);
+            ui.add_space(INSPECTOR_BODY_GAP);
             // A disclosure press steals numeric focus before its release toggles the section.
             // Disabled parameter snapshots absorb that pending commit without editing the grade.
             Some(
@@ -505,7 +540,7 @@ fn section_impl<R>(
             }
             None
         };
-        (body, reset)
+        (body, action)
     })
     .inner
 }

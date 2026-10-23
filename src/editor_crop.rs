@@ -370,12 +370,21 @@ impl Editor {
         let mut degrees = -edit.draft.angle.to_degrees() * composition.handedness();
         let previous_degrees = degrees;
         let mut reset_angle = false;
-        egui::Grid::new("crop-parameters")
-            .min_col_width(0.)
-            .min_row_height(28.)
-            .spacing(egui::vec2(8., 4.))
-            .show(ui, |ui| {
-                ui.label("Aspect");
+        icons::row_at(ui, presentation::INSPECTOR_ROW_HEIGHT, |ui| {
+            let label = presentation::name_label(ui, "Aspect");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if icons::button_at(
+                    ui,
+                    Icon::Swap,
+                    edit.ratio.is_some(),
+                    "Swap portrait / landscape",
+                    "Swap portrait / landscape",
+                    presentation::INSPECTOR_ROW_HEIGHT,
+                )
+                .clicked()
+                {
+                    edit.ratio = edit.ratio.map(|r| 1. / r);
+                }
                 egui::ComboBox::from_id_salt("crop-aspect")
                     .width(96.)
                     .selected_text(aspect_label(edit.ratio))
@@ -396,22 +405,25 @@ impl Editor {
                             ui.selectable_value(&mut edit.ratio, ratio, label);
                         }
                     });
-                if icons::button(
+            });
+            label
+        });
+        ui.add_space(presentation::PARAMETER_GAP);
+        icons::row_at(ui, presentation::INSPECTOR_ROW_HEIGHT, |ui| {
+            let angle_label = presentation::name_label(ui, "Angle");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                reset_angle = icons::button_at(
                     ui,
-                    Icon::Swap,
-                    edit.ratio.is_some(),
-                    "Swap portrait / landscape",
-                    "Swap portrait / landscape",
+                    Icon::Reset,
+                    degrees != 0.,
+                    "Reset straighten",
+                    "Reset straighten",
+                    presentation::INSPECTOR_ROW_HEIGHT,
                 )
-                .clicked()
-                {
-                    edit.ratio = edit.ratio.map(|r| 1. / r);
-                }
-                ui.end_row();
-                let angle_label = ui.label("Angle");
+                .clicked();
                 let angle = ui
                     .add_sized(
-                        [96., 28.],
+                        [96., presentation::INSPECTOR_ROW_HEIGHT - 2.],
                         egui::DragValue::new(&mut degrees)
                             .range(-180.0..=180.0)
                             .speed(0.1)
@@ -423,25 +435,24 @@ impl Editor {
                 if controls::numeric_cancelled(ui, &angle) || !ui.is_enabled() {
                     degrees = previous_degrees;
                 }
-                reset_angle = icons::button(
-                    ui,
-                    Icon::Reset,
-                    degrees != 0.,
-                    "Reset straighten",
-                    "Reset straighten",
-                )
-                .clicked();
-                ui.end_row();
-                ui.label("Guides");
-                icons::toggle(
+            });
+        });
+        ui.add_space(presentation::PARAMETER_GAP);
+        icons::row_at(ui, presentation::INSPECTOR_ROW_HEIGHT, |ui| {
+            presentation::name_label(ui, "Guides");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let size = presentation::INSPECTOR_ROW_HEIGHT;
+                icons::toggle_at(
                     ui,
                     Icon::Guides,
                     &mut edit.guides,
                     "Thirds guides",
                     "Show thirds guides. Composition aid only; never affects measurements or exports.",
+                    size,
                 );
-                ui.end_row();
             });
+        });
+        ui.add_space(presentation::PARAMETER_GAP);
         if edit.ratio != previous_ratio
             && let Some(ratio) = edit.ratio
         {

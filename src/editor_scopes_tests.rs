@@ -162,6 +162,7 @@ fn scope_height_follows_width_and_is_bounded_in_short_windows() {
     let context = egui::Context::default();
     let mut scopes = Scopes::default();
     let mut previous = 0.;
+    let ratio = Scopes::default().height_ratio;
     for width in [270., 315., 480.] {
         let (slot, output) = panel_frame(&mut scopes, &context, egui::vec2(width, 900.), vec![]);
         assert!(
@@ -172,7 +173,7 @@ fn scope_height_follows_width_and_is_bounded_in_short_windows() {
             "divider must be visible even when idle"
         );
         assert!(
-            (slot.plot.height() - slot.plot.width() * 0.85).abs() <= 0.5,
+            (slot.plot.height() - slot.plot.width() * ratio).abs() <= 0.5,
             "width={width}: {:?}",
             slot.plot
         );
@@ -184,7 +185,7 @@ fn scope_height_follows_width_and_is_bounded_in_short_windows() {
     assert!(short.painter.clip_rect().contains_rect(short.plot));
     assert!(short.plot.bottom() + 12. <= short.painter.clip_rect().bottom() - 120.);
     assert_eq!(
-        scopes.height_ratio, 0.85,
+        scopes.height_ratio, ratio,
         "window limits must not overwrite preference"
     );
 }
@@ -260,7 +261,7 @@ fn scope_divider_drag_release_reset_and_width_scaling_are_stable_at_both_dpis() 
             panel_frame(&mut scopes, &context, size, vec![button(reset, false)]);
         }
         let (reset, _) = panel_frame(&mut scopes, &context, size, vec![]);
-        assert_eq!(scopes.height_ratio, 0.85);
+        assert_eq!(scopes.height_ratio, super::DEFAULT_HEIGHT_RATIO);
         assert_eq!(reset.plot, initial.plot);
     }
 }

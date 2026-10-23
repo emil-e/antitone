@@ -153,7 +153,7 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
             harness.step();
             for (name, tab, label, kind) in [
                 ("dmin", "Roll", "Pick Dmin (film base)", Pick::Dmin),
-                ("wb", "Photo", "Pick neutral…", Pick::Wb),
+                ("wb", "Photo", "Pick neutral for white balance", Pick::Wb),
             ] {
                 stage(&mut harness, tab);
                 let before = harness.read(|editor| editor.document.project.clone());

@@ -5,6 +5,9 @@ use crate::{
     scopes::{Basis, Plot, Settings, references},
 };
 
+/// Share of the column width given to the scope plot; the rest stays with the stage controls.
+pub(super) const DEFAULT_HEIGHT_RATIO: f32 = 0.6;
+
 pub(super) struct Scopes {
     pub(super) visible: bool,
     pub(super) vector: bool,
@@ -22,7 +25,7 @@ impl Default for Scopes {
             vector: true,
             waveform: Plot::Rgb,
             amplification: 1,
-            height_ratio: 0.85,
+            height_ratio: DEFAULT_HEIGHT_RATIO,
             gpu: None,
             error: None,
         }
@@ -62,7 +65,7 @@ impl Scopes {
         target: OutputTarget,
         reserved_height: f32,
     ) -> Option<Slot> {
-        icons::row(ui, |ui| {
+        icons::row_at(ui, super::presentation::INSPECTOR_ROW_HEIGHT, |ui| {
             let width = ui.available_width();
             // Reserve a stable menu width so switching plots never moves the disclosure.
             let menu_width = 156.;
@@ -131,12 +134,12 @@ impl Scopes {
             ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
         let plot_response = response;
         let (divider, response) =
-            ui.allocate_exact_size(egui::vec2(width, 8.), egui::Sense::click_and_drag());
+            ui.allocate_exact_size(egui::vec2(width, 6.), egui::Sense::click_and_drag());
         let response = response
             .on_hover_cursor(egui::CursorIcon::ResizeVertical)
             .on_hover_text("Drag to resize scopes; double-click to reset.");
         if response.double_clicked() {
-            self.height_ratio = 0.85;
+            self.height_ratio = DEFAULT_HEIGHT_RATIO;
             ui.ctx().request_repaint();
         } else if response.dragged() && response.drag_delta().y != 0. {
             self.height_ratio = (height + response.drag_delta().y).clamp(96., max_height) / width;

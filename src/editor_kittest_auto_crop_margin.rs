@@ -41,11 +41,11 @@ fn live_slider_and_precise_numeric_drafts_preserve_the_background_and_zero_resto
             let layout = h.read(|editor| editor.last_layout.unwrap().0);
             let viewport = h.read(|editor| editor.viewport);
             let image = h.read(|editor| editor.working.displayed.clone().unwrap());
-            h.get_by_role_and_label(egui::accesskit::Role::Slider, "Inward margin")
+            h.get_by_role_and_label(egui::accesskit::Role::Slider, "Margin")
                 .scroll_to_me();
             h.try_run_realtime().unwrap();
             let rect = h
-                .get_by_role_and_label(egui::accesskit::Role::Slider, "Inward margin")
+                .get_by_role_and_label(egui::accesskit::Role::Slider, "Margin")
                 .rect();
             let at = |fraction| egui::pos2(rect.left() + rect.width() * fraction, rect.center().y);
             h.hover_at(at(0.2));
@@ -81,19 +81,19 @@ fn live_slider_and_precise_numeric_drafts_preserve_the_background_and_zero_resto
                 modifiers: egui::Modifiers::NONE,
             });
             h.step();
-            workflow::enter_numeric(&mut h, "Inward margin", "0.123456");
+            workflow::enter_numeric(&mut h, "Margin", "0.123456");
             overlay::wait_context(&mut h);
             h.read(|editor| assert_eq!(editor.auto_crop_margin, 0.123456));
             let crop = expected_crop(&h, source, 0.123456);
             h.read(|editor| assert_eq!(editor.auto_crop_preview(source), Some(Some(crop))));
-            workflow::enter_numeric(&mut h, "Inward margin", "0");
+            workflow::enter_numeric(&mut h, "Margin", "0");
             h.read(|editor| {
                 assert_eq!(
                     editor.auto_crop_preview(source),
                     Some(Some(expected_crop(&h, source, 0.)))
                 )
             });
-            workflow::enter_numeric(&mut h, "Inward margin", "0.123456");
+            workflow::enter_numeric(&mut h, "Margin", "0.123456");
             h.read(|editor| {
                 assert_eq!(
                     editor.auto_crop_preview(source),
@@ -124,7 +124,7 @@ fn live_slider_and_precise_numeric_drafts_preserve_the_background_and_zero_resto
             });
             h.read(|editor| assert_eq!(editor.document.project, before));
             assert!(
-                h.query_by_role_and_label(egui::accesskit::Role::Slider, "Inward margin")
+                h.query_by_role_and_label(egui::accesskit::Role::Slider, "Margin")
                     .is_none()
             );
         });

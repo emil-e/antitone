@@ -22,6 +22,23 @@ fn frame(
     output
 }
 
+fn painted_labels(output: &egui::FullOutput) -> Vec<(String, egui::Rect)> {
+    output
+        .shapes
+        .iter()
+        .filter_map(|shape| {
+            if let egui::Shape::Text(text) = &shape.shape {
+                Some((
+                    text.galley.job.text.clone(),
+                    text.galley.rect.translate(text.pos.to_vec2()),
+                ))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 fn labels(
     editor: &mut impl UiFixture,
     context: &egui::Context,
@@ -207,7 +224,7 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                             assert!(bounds.y0 as f32 >= canvas.bottom());
                             assert!(bounds.x1 as f32 <= canvas.right() + 4.);
                         }
-                        let text = ui_labels(output);
+                        let text = ui_labels(output.clone());
                         let title = match pick {
                             Pick::Dmin => "Dmin",
                             Pick::Dmax => "Dmax",
@@ -865,7 +882,8 @@ fn geometry_tools_use_trailing_viewer_bar_actions_and_only_their_own_inspector()
                         assert!(bounds.y0 as f32 >= canvas.bottom());
                         assert!(bounds.x1 as f32 <= canvas.right() + 4.);
                     }
-                    let text = ui_labels(output);
+                    let painted = painted_labels(&output);
+                    let text = ui_labels(output.clone());
                     let current_canvas = editor
                         .document
                         .visit
@@ -902,11 +920,16 @@ fn geometry_tools_use_trailing_viewer_bar_actions_and_only_their_own_inspector()
                     let own_tab = if cropping { 1 } else { 0 };
                     assert_eq!(text.iter().any(|(s, _)| s == title), tab == own_tab);
                     if cropping && tab == 1 {
-                        let aspect = text.iter().find(|(s, _)| s == "Aspect").unwrap().1;
-                        let angle = text.iter().find(|(s, _)| s == "Angle").unwrap().1;
-                        let guides = text.iter().find(|(s, _)| s == "Guides").unwrap().1;
-                        assert_eq!(aspect.left(), angle.left());
-                        assert_eq!(angle.left(), guides.left());
+                        // Compare painted text only: accessibility bounds round differently from
+                        // galley rects, and mixing the two would compare different conventions.
+                        let find =
+                            |name: &str| painted.iter().find(|(text, _)| text == name).unwrap().1;
+                        let (aspect, angle, guides) =
+                            (find("Aspect"), find("Angle"), find("Guides"));
+                        // Names are right-aligned against their controls, so their right edges
+                        // are the shared x; vertical order still proves the row stacking.
+                        assert!((aspect.right() - angle.right()).abs() < 0.5);
+                        assert!((angle.right() - guides.right()).abs() < 0.5);
                         assert!(aspect.bottom() < angle.top() && angle.bottom() < guides.top());
                     }
                     assert_eq!(
@@ -1208,7 +1231,9 @@ fn geometry_busy_guards_and_crop_apply_use_the_original_transactions() {
 
 #[test]
 fn source_inspection_is_hidden_outside_source_view_without_losing_its_value() {
-    let size = egui::vec2(800., 600.);
+    // The readout only appears when the viewer bar has room for it, so use a normal window
+    // rather than the narrow layout, which has its own coverage.
+    let size = egui::vec2(1100., 800.);
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
     editor.source = false;
@@ -1250,6 +1275,22 @@ fn source_inspection_is_hidden_outside_source_view_without_losing_its_value() {
     assert!(!egui::Popup::is_any_open(&context));
     assert_eq!(editor.source_exposure, 7.25);
     assert_eq!(editor.last_layout.unwrap().0.canvas, canvas);
+
+    // In a narrow window the readout is the first thing the bar gives up, with the value still
+    // retained for the popup once a wider window has room for it.
+    let narrow = egui::vec2(800., 600.);
+    editor.source = true;
+    warm(&mut editor, &context, narrow);
+    let text = labels(&mut editor, &context, narrow, vec![]);
+    assert!(
+        !text.iter().any(|(s, _)| s.starts_with("Source +")),
+        "the narrow bar drops the exposure readout before its actions"
+    );
+    assert!(
+        editor.source,
+        "source viewing stays active without the readout"
+    );
+    assert_eq!(editor.source_exposure, 7.25);
 }
 
 #[test]

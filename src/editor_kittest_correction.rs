@@ -293,7 +293,8 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
             .click();
         harness.step();
         harness.try_run_realtime().unwrap();
-        pick_patch(&mut harness, "Pick neutral…", region);
+        // The roll's neutral reference drives gamma balance; roll WB fills per-photo WB.
+        pick_patch(&mut harness, "Pick neutral for gamma balance", region);
         harness.read(|editor| assert_eq!(editor.roll.balance, balance));
         let (roll, photo) = harness.read(|editor| (editor.roll, editor.photo));
         let (region, balance) = patches
@@ -305,7 +306,7 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
             })
             .expect("usable corrected photo-neutral patch");
         stage(&mut harness, "Photo");
-        pick_patch(&mut harness, "Pick neutral…", region);
+        pick_patch(&mut harness, "Pick neutral for white balance", region);
         harness.read(|editor| assert_eq!(editor.photo.wb, balance));
         harness.update(|editor| {
             adjustments::install_locals(editor);

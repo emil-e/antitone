@@ -1,6 +1,7 @@
 use super::{CONTROL_HEIGHT, frame, key, pointer};
 use crate::editor::{
     icons::{self, Icon},
+    presentation::hierarchy::SectionAction,
     presentation::{
         SectionHeader, collect_expansion, labelled_row, restore_expansion, section,
         section_disclosure,
@@ -184,7 +185,7 @@ fn section_frame(
 ) -> (Option<Response>, bool, egui::FullOutput) {
     context.enable_accesskit();
     let mut body = None;
-    let mut reset = false;
+    let mut action = SectionAction::default();
     let mut output = context.run_ui(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -196,7 +197,7 @@ fn section_frame(
         },
         |ui| {
             restore_expansion(ui.ctx(), preferences.clone());
-            (body, reset) = section(
+            (body, action) = section(
                 ui,
                 "caller-section",
                 "Caller section",
@@ -204,6 +205,7 @@ fn section_frame(
                     summary: "Caller summary",
                     changed: true,
                     reset: Some(true),
+                    tool: None,
                     default_open: if pinned { None } else { Some(true) },
                 },
                 |ui| ui.button("Caller body"),
@@ -212,7 +214,7 @@ fn section_frame(
         },
     );
     output.textures_delta.clear();
-    (body, reset, output)
+    (body, action.reset, output)
 }
 
 #[test]
@@ -232,6 +234,7 @@ fn modified_sections_have_a_visible_cue_independent_of_value_and_reset_availabil
                                 summary: "Current setting",
                                 changed,
                                 reset: None,
+                                tool: None,
                                 default_open: Some(false),
                             },
                             |_| (),

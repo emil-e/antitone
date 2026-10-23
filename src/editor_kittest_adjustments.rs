@@ -81,6 +81,30 @@ fn delete_selected(harness: &mut Harness<'_, Editor>) {
     harness.try_run_realtime().unwrap();
 }
 
+/// Reset a value through its name gesture: Option-click, without a per-row control.
+fn reset_parameter(harness: &mut Harness<'_, Editor>, name: &str) {
+    harness.try_run_realtime().unwrap();
+    let node = harness.get_by_role_and_label(egui::accesskit::Role::Label, name);
+    node.scroll_to_me();
+    harness.try_run_realtime().unwrap();
+    let point = harness
+        .get_by_role_and_label(egui::accesskit::Role::Label, name)
+        .rect()
+        .center();
+    harness.event(egui::Event::ModifiersChanged(egui::Modifiers::ALT));
+    for pressed in [true, false] {
+        harness.event(egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::ALT,
+        });
+    }
+    harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    harness.step();
+    harness.try_run_realtime().unwrap();
+}
+
 fn click(harness: &mut Harness<'_, Editor>, name: &str) {
     if [
         "Sky",
@@ -206,7 +230,7 @@ fn local_target_widgets_commit_outgoing_numbers_and_keep_global_and_section_rese
             });
             assert!(
                 harness
-                    .get_by_label("Pick neutral…")
+                    .get_by_label("Pick neutral for white balance")
                     .accesskit_node()
                     .is_disabled(),
                 "local controls must not invoke Global neutral fitting"
@@ -273,7 +297,7 @@ fn local_target_widgets_commit_outgoing_numbers_and_keep_global_and_section_rese
             click(&mut harness, "Invert mask");
             harness.read(|editor| assert!(locals(editor).adjustments[1].adjustment.invert));
             click(&mut harness, "Invert mask");
-            click(&mut harness, "Reset Strength");
+            reset_parameter(&mut harness, "Strength");
             harness
                 .read(|editor| assert_eq!(locals(editor).adjustments[1].adjustment.strength, 1.));
             let scopes_visible = harness.read(|editor| editor.scopes.visible);
