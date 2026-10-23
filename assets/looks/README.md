@@ -59,7 +59,7 @@ Selection resolves asynchronously and caches successful assets persistently by d
 
 ## Generate and check
 
-Use Python **3.9+**, with only the standard library. Native operations additionally need the existing pinned OCIO **2.6.0** installation and a C++17 compiler. Use the normal [native setup](../../README.md#build-and-run); there is no separate dependency bootstrap. A separate worktree can set `OCIO_PREFIX` to an existing compatible installation, as described in [native-build reuse](../../docs/native-development.md#reusing-native-builds). `CXX` optionally selects the compiler; it defaults to `/usr/bin/clang++`.
+Use Python **3.9+**, with only the standard library. Native operations additionally need the existing pinned OCIO **2.6.0** installation and a C++17 compiler. Use the normal [native setup](../../docs/build-and-run.md#build-and-run); there is no separate dependency bootstrap. A separate worktree can set `OCIO_PREFIX` to an existing compatible installation, as described in [native-build reuse](../../docs/native-development.md#reusing-native-builds). `CXX` optionally selects the compiler; it defaults to `/usr/bin/clang++`.
 
 Run from the repository root:
 

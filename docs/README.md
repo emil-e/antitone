@@ -1,6 +1,6 @@
 # Contributing to Antitone
 
-Start with [build and run](../README.md), then choose the part of the project you want to understand or change. You do not need to read the whole documentation set first.
+Start with [build and run](build-and-run.md), then choose the part of the project you want to understand or change. You do not need to read the whole documentation set first.
 
 ## Understand the system
 

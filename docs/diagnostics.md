@@ -2,7 +2,7 @@
 
 Use [development checks](development.md) for the ordinary contributor loop. These recipes investigate native, numerical, image or presentation boundaries; they are not prerequisites for every change.
 
-Run from the repository root after [setup](../README.md#build-and-run). Examples use `--offline` with populated caches. Private RAWs are read-only local inputs, not downloadable fixtures. Keep generated products under ignored `.cache/` and use fresh export/report directories.
+Run from the repository root after [setup](build-and-run.md#build-and-run). Examples use `--offline` with populated caches. Private RAWs are read-only local inputs, not downloadable fixtures. Keep generated products under ignored `.cache/` and use fresh export/report directories.
 
 Choose a diagnostic for a concrete question. A command's presence here does not make it a routine gate: numerical agreement, offscreen input, a visible native window and physical photographic acceptance are different evidence, and timings and captures are observations, not acceptance thresholds.
 
@@ -348,6 +348,18 @@ On one M5 Pro / 48-GiB distortion/CA-only run, maximum differences expressed in 
 | Sony photographs, source inspection | 0.030 | 0.272 |
 
 Within its representable range, RGB16 adds at most half a native code. The dense reference's rare roughly-two-level output changes show rounding is not always negligible after inversion. Q16.8 reduced those differences substantially (dense-case maximum below 0.008 encoded 8-bit levels) but needs custom packing and still requires continuous inversion. The study supports a tradeoff — within-range packed corrected RGB16 could halve retained storage but would need a range/scale design to preserve shading headroom — not a universal source-format requirement, and no production format change follows automatically from it.
+
+### Direct DNG SDK probe
+
+The `dng-sdk` feature exposes a read-only probe of the vendored SDK backend without the editor or LibRaw. The native library keeps its validation instrumentation; the Adobe validator executable is not built.
+
+```sh
+# Explicit main-sensor pixel bound; inputs remain read-only.
+cargo run --locked --features dng-sdk --bin antitone-dng-probe -- 1000000 /path/to/authored.dng
+# Compare bounded execution budgets; reports split timings and pixel/CFA/eligibility digests.
+cargo run --locked --release --features dng-sdk --bin antitone-dng-probe -- \
+  --threads 8 60000000 /path/to/photo.dng
+```
 
 ## Rendering, gamut and ICC
 

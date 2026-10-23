@@ -21,6 +21,8 @@ mod dust;
 mod export;
 #[path = "editor_kittest_fullscreen.rs"]
 mod fullscreen;
+#[path = "editor_kittest_guide_shots.rs"]
+mod guide_shots;
 #[path = "editor_kittest_history.rs"]
 mod history;
 #[path = "editor_kittest_looks.rs"]
