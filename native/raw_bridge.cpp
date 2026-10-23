@@ -36,8 +36,12 @@ class ThreadBudget {
 public:
     explicit ThreadBudget(int count) {
         static std::once_flag blocktime;
+#if defined(__APPLE__) || defined(__linux__)
         // Sleeping workers must not compete with UI work after a tile/job.
         std::call_once(blocktime, [] { kmp_set_blocktime(0); });
+#else
+        (void)blocktime;
+#endif
         omp_set_dynamic(0);
         omp_set_num_threads(count);
     }

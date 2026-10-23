@@ -29,6 +29,7 @@ fn main() {
                 .std("c++17")
                 .define("WIN32", None)
                 .define("LIBRAW_NODLL", None)
+                .flag("/EHsc")
                 .flag("/openmp")
                 .include(&root)
                 .file("native/raw_bridge.cpp")
