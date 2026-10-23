@@ -148,8 +148,7 @@ fn main() {
 fn build_dng() {
     use std::{fs, path::PathBuf};
 
-    assert_eq!(std::env::var("CARGO_CFG_TARGET_OS").unwrap(), "macos");
-    assert_eq!(std::env::var("CARGO_CFG_TARGET_ARCH").unwrap(), "aarch64");
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
     let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let source = root.join("vendor/dng-sdk");
     let prefix = PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("dng");
@@ -174,10 +173,14 @@ fn build_dng() {
         "-DCMAKE_CXX_COMPILER={}",
         compiler.path().display()
     ));
-    configure.args([
-        "-DCMAKE_OSX_ARCHITECTURES=arm64",
-        "-DCMAKE_OSX_DEPLOYMENT_TARGET=14.0",
-    ]);
+    if target_os == "windows" {
+        configure.arg("-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL");
+    } else {
+        configure.args([
+            "-DCMAKE_OSX_ARCHITECTURES=arm64",
+            "-DCMAKE_OSX_DEPLOYMENT_TARGET=14.0",
+        ]);
+    }
     assert!(
         configure
             .status()
@@ -206,10 +209,28 @@ fn build_dng() {
         println!("cargo:rerun-if-changed={path}");
     }
     let mut build = cc::Build::new();
-    build
-        .cpp(true)
-        .std("c++17")
-        .flag("-mmacosx-version-min=14.0");
+    build.cpp(true).std("c++17");
+    if target_os == "macos" {
+        build.flag("-mmacosx-version-min=14.0");
+    }
+    let platform = if target_os == "windows" {
+        [
+            ("WIN_ENV", Some("1")),
+            ("Macintosh", Some("0")),
+            ("qMacOS", Some("0")),
+            ("qWinOS", Some("1")),
+        ]
+    } else {
+        [
+            ("MAC_ENV", Some("1")),
+            ("Macintosh", Some("1")),
+            ("qMacOS", Some("1")),
+            ("qWinOS", Some("0")),
+        ]
+    };
+    for (name, value) in platform {
+        build.define(name, value);
+    }
     for flag in defines.lines() {
         let (name, value) = flag
             .split_once('=')
@@ -230,6 +251,10 @@ fn build_dng() {
         .compile("antitone_dng_bridge");
     println!("cargo:rustc-link-search=native={}", prefix.display());
     println!("cargo:rustc-link-lib=static=antitone_dng_sdk");
-    println!("cargo:rustc-link-lib=framework=Carbon");
-    println!("cargo:rustc-link-arg=-mmacosx-version-min=14.0");
+    if target_os == "macos" {
+        println!("cargo:rustc-link-lib=framework=Carbon");
+        println!("cargo:rustc-link-arg=-mmacosx-version-min=14.0");
+    } else if target_os == "windows" {
+        println!("cargo:rustc-link-lib=ws2_32");
+    }
 }
