@@ -28,7 +28,7 @@ impl CacheBudgets {
         Self::new(
             super::cache_limits::Hardware {
                 ram_bytes: Some(bytes),
-                gpu: super::cache_limits::GpuMemory::Unified,
+                gpu: crate::sys::GpuMemory::Unified,
             }
             .defaults(),
             pressure,

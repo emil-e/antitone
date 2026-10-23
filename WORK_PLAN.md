@@ -66,8 +66,9 @@ Bring the Antitone editor to Windows 11 without regressing macOS, behind a capab
 - Windows stubs still no-op: presentation tagging, quit negotiation, fullscreen policy, GPU memory and icon. The native menu is disabled (`SUPPORTED = false`), so the in-window menu is used.
 - `sys/` now owns memory pressure, physical memory, file identity, no-overwrite publish, GPU memory kind and resource accounting behind one target selection; `platform/` is desktop-only. The macOS feature matrix (core, raw, project, export, gpu, ui, editor) passes.
 - `FileRevision` now carries device/inode/change fields on every platform with serde defaults, so projects stay compatible across platforms.
+- Native build: LibRaw 0.22.0 builds with MSVC and `/openmp`, and the Windows RAW probe links. `scan_regions` is ported to portable C++ with no Foundation dependency; the macOS native boundary test passes.
 - Runtime host and DXGI presentation remain unverified; `tests/native_host.rs` is still macOS-only.
-- Next: phase 2 native build (LibRaw MSVC, DNG CMake, `build.rs` Windows branch), then a Windows host smoke test.
+- Next: DNG SDK CMake for MSVC, then a Windows host smoke test.
 
 ## Open risks
 

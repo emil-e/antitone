@@ -150,7 +150,8 @@ mod tests {
 
     #[test]
     fn chosen_cache_limits_persist_including_zero_and_survive_other_hardware_defaults() {
-        use super::super::cache_limits::{CacheLimits, GpuMemory, Hardware, MIB};
+        use super::super::cache_limits::{CacheLimits, Hardware, MIB};
+        use crate::sys::GpuMemory;
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("preferences.json");
         std::fs::write(&path, r#"{"scopes_visible":false}"#).unwrap();
