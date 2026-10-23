@@ -45,7 +45,7 @@ mod typography;
 mod workflow;
 
 #[test]
-fn parameter_reset_click_respects_disabled_state() {
+fn parameter_reset_is_a_name_gesture_and_respects_disabled_state() {
     let mut harness = EguiHarness::builder().with_max_steps(12).build_ui_state(
         |ui, state: &mut (f64, bool)| {
             ui.add_enabled_ui(state.1, |ui| {
@@ -65,17 +65,27 @@ fn parameter_reset_click_respects_disabled_state() {
                 .is_disabled()
         );
     }
-    harness.get_by_label("Reset Contrast").click();
+    // The row carries no reset control; Option-clicking the name resets the value.
+    assert!(harness.query_by_label("Reset Contrast").is_none());
+    let name = harness
+        .get_by_role_and_label(egui::accesskit::Role::Label, "Contrast")
+        .rect()
+        .center();
+    harness.event(egui::Event::ModifiersChanged(egui::Modifiers::ALT));
+    for pressed in [true, false] {
+        harness.event(egui::Event::PointerButton {
+            pos: name,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::ALT,
+        });
+    }
+    harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
     harness.run();
     assert_eq!(harness.state().0, 1.);
+
     *harness.state_mut() = (1.4, false);
     harness.run();
-    assert!(
-        harness
-            .get_by_label("Reset Contrast")
-            .accesskit_node()
-            .is_disabled()
-    );
     for role in [
         egui::accesskit::Role::Slider,
         egui::accesskit::Role::SpinButton,
@@ -87,9 +97,18 @@ fn parameter_reset_click_respects_disabled_state() {
                 .is_disabled()
         );
     }
-    harness.get_by_label("Reset Contrast").click();
+    harness.event(egui::Event::ModifiersChanged(egui::Modifiers::ALT));
+    for pressed in [true, false] {
+        harness.event(egui::Event::PointerButton {
+            pos: name,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::ALT,
+        });
+    }
+    harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
     harness.run();
-    assert_eq!(harness.state().0, 1.4);
+    assert_eq!(harness.state().0, 1.4, "a disabled row must not reset");
 }
 
 const UI_MAX_STEPS: u64 = 240;
@@ -1085,7 +1104,7 @@ fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
         let project = harness.read(|editor| editor.document.project.clone());
         let source = harness.read(|editor| editor.current_source);
         for (layout, size, width) in [
-            ("normal", egui::vec2(1100., 800.), 315.),
+            ("normal", egui::vec2(1100., 800.), 340.),
             ("narrow", egui::vec2(800., 600.), 270.),
         ] {
             set_layout(&mut harness, size, width);

@@ -82,7 +82,7 @@ impl Editor {
             Some(_) => "Disabled",
             None => "Not configured",
         };
-        let (_, reset) = presentation::section(
+        let (_, action) = presentation::section(
             ui,
             "roll-flat-field",
             "Flat-field correction",
@@ -90,6 +90,7 @@ impl Editor {
                 summary,
                 changed: configured,
                 reset: Some(configured && available),
+                tool: None,
                 default_open: if editing { None } else { Some(false) },
             },
             |ui| {
@@ -130,7 +131,7 @@ impl Editor {
                 });
             },
         );
-        if reset {
+        if action.reset {
             self.control_command(editing::Command::Correction(None), cx);
         }
     }

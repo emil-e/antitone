@@ -23,7 +23,7 @@ impl Default for Preferences {
             version: 1,
             sections: BTreeMap::new(),
             scopes_visible: true,
-            scope_height_ratio: 0.85,
+            scope_height_ratio: 0.6,
             filmstrip_height: 140.,
             cache_limits: None,
             export_folder: None,
@@ -114,7 +114,7 @@ mod tests {
         std::fs::write(&path, r#"{"scopes_visible":false,"future_hint":true}"#).unwrap();
         let (_, preferences) = Store::open(path).unwrap();
         assert!(!preferences.scopes_visible);
-        assert_eq!(preferences.scope_height_ratio, 0.85);
+        assert_eq!(preferences.scope_height_ratio, 0.6);
         assert_eq!(preferences.filmstrip_height, 140.);
     }
 

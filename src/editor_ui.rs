@@ -20,7 +20,7 @@ pub(super) use progress::{ACTIVITY_BAR_HEIGHT, Progress, ProgressContent};
 #[path = "editor_ui_hierarchy.rs"]
 mod hierarchy;
 pub(super) use hierarchy::{
-    SectionHeader, collect_expansion, draggable_icon_row, restore_expansion, section,
+    SectionHeader, SectionTool, collect_expansion, draggable_icon_row, restore_expansion, section,
     section_disclosure, stage_tabs,
 };
 
@@ -29,6 +29,19 @@ mod application;
 pub(super) use application::{AppPanel, MenuFocus, app_panel, application_menus};
 
 pub(super) const CONTROL_HEIGHT: f32 = 28.;
+/// Inspector rows are tighter than general application controls; the inspector is
+/// scanned continuously while grading, so density there is worth more than everywhere else.
+pub(super) const INSPECTOR_ROW_HEIGHT: f32 = 24.;
+pub(super) const INSPECTOR_HEADER_HEIGHT: f32 = 24.;
+pub(super) const INSPECTOR_ITEM_GAP: f32 = 4.;
+pub(super) const INSPECTOR_SECTION_GAP: f32 = 5.;
+pub(super) const INSPECTOR_BODY_GAP: f32 = 3.;
+pub(super) const PARAMETER_SLIDER_HEIGHT: f32 = 20.;
+pub(super) const PARAMETER_NUMERIC_WIDTH: f32 = 52.;
+/// Shared name column so every parameter track starts at the same x.
+pub(super) const PARAMETER_LABEL_WIDTH: f32 = 76.;
+/// Adjacent value rows sit closer together than sections or shelves.
+pub(super) const PARAMETER_GAP: f32 = 2.;
 pub(super) const VIEWER_BAR_HEIGHT: f32 = 40.;
 pub(super) const VIEWER_ITEM_GAP: f32 = 4.;
 
@@ -136,8 +149,31 @@ fn wordmark(ui: &mut Ui) -> Response {
     response
 }
 
+/// One spacing scale for the inspector column; the rest of the application keeps its own.
+pub(super) fn inspector_spacing(ui: &mut Ui) {
+    ui.spacing_mut().item_spacing.y = INSPECTOR_ITEM_GAP;
+    ui.spacing_mut().interact_size.y = INSPECTOR_ROW_HEIGHT;
+    // Dense rows put value and section actions near the right edge. Reserve a band for the
+    // floating scroll bar so they cannot steal their pointer input.
+    ui.spacing_mut().scroll.floating_allocated_width = 12.;
+}
+
 pub(super) fn active_tool_fill(ui: &Ui) -> Color32 {
     ui.visuals().selection.bg_fill.linear_multiply(0.15)
+}
+
+/// A fixed-width name cell; parameter and tool rows share it so their controls line up.
+pub(super) fn name_label(ui: &mut Ui, text: &str) -> Response {
+    // The cell is fixed so tracks align; names sit against their track, not the column edge.
+    ui.allocate_ui_with_layout(
+        egui::vec2(PARAMETER_LABEL_WIDTH, INSPECTOR_ROW_HEIGHT),
+        egui::Layout::right_to_left(egui::Align::Center),
+        |ui| {
+            ui.set_min_width(PARAMETER_LABEL_WIDTH);
+            ui.add(egui::Label::new(text).truncate().selectable(false))
+        },
+    )
+    .inner
 }
 
 /// One label and a right-aligned control group; supplies the label ID without an extra ID scope.
@@ -147,7 +183,18 @@ pub(super) fn labelled_row<R>(
     help: Option<&str>,
     controls: impl FnOnce(&mut Ui, egui::Id) -> R,
 ) -> egui::InnerResponse<R> {
-    icons::row(ui, |ui| {
+    labelled_row_at(ui, CONTROL_HEIGHT, label, help, controls)
+}
+
+/// One label and a right-aligned control group at a caller-chosen row height.
+pub(super) fn labelled_row_at<R>(
+    ui: &mut Ui,
+    height: f32,
+    label: &str,
+    help: Option<&str>,
+    controls: impl FnOnce(&mut Ui, egui::Id) -> R,
+) -> egui::InnerResponse<R> {
+    icons::row_at(ui, height, |ui| {
         let label = ui.label(label);
         let label_id = label.id;
         if let Some(help) = help {
@@ -191,8 +238,13 @@ pub(super) fn inspector_dropdown<R>(
 }
 
 pub(super) fn reset_button(ui: &mut Ui, enabled: bool, name: &str) -> Response {
+    reset_button_at(ui, enabled, name, CONTROL_HEIGHT)
+}
+
+/// Inspector reset sits on the row it resets, so it shares that row's height.
+pub(super) fn reset_button_at(ui: &mut Ui, enabled: bool, name: &str, size: f32) -> Response {
     let name = format!("Reset {name}");
-    icons::button(ui, Icon::Reset, enabled, &name, &name)
+    icons::button_at(ui, Icon::Reset, enabled, &name, &name, size)
 }
 
 /// Text-button presentation only; callers retain availability and action dispatch.
@@ -322,12 +374,12 @@ pub(super) struct ToolShelf;
 impl ToolShelf {
     pub(super) fn show<R>(ui: &mut Ui, contents: impl FnOnce(&mut Ui) -> R) -> R {
         ui.push_id("tool-shelf", |ui| {
-            ui.add_space(6.);
+            // A little air between the stage tabs and their tools; the first section's own
+            // separator supplies the separation below.
+            ui.add_space(INSPECTOR_SECTION_GAP);
             ui.spacing_mut().item_spacing.x = 4.;
-            let result = icons::row(ui, contents).inner;
-            ui.add_space(6.);
-            ui.separator();
-            result
+            ui.spacing_mut().interact_size.y = INSPECTOR_ROW_HEIGHT;
+            icons::row_at(ui, INSPECTOR_ROW_HEIGHT, contents).inner
         })
         .inner
     }
@@ -373,7 +425,15 @@ impl<'a> ToolButton<'a> {
     }
 
     pub(super) fn show(self, ui: &mut Ui) -> Response {
-        let response = icons::button(ui, self.icon, self.enabled, self.name, self.help);
+        // Shelves inherit the inspector row height so the row they were given actually fits.
+        let response = icons::button_at(
+            ui,
+            self.icon,
+            self.enabled,
+            self.name,
+            self.help,
+            ui.spacing().interact_size.y,
+        );
         if self.active {
             ui.painter().rect_stroke(
                 response.rect.shrink(1.),

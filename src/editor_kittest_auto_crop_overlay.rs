@@ -90,7 +90,7 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
             let viewport = h.read(|editor| editor.viewport);
             let image = h.read(|editor| editor.working.displayed.clone().unwrap());
             let revision = h.read(|editor| editor.original.revision());
-            workflow::enter_numeric(&mut h, "Inward margin", "1.25");
+            workflow::enter_numeric(&mut h, "Margin", "1.25");
             wait_context(&mut h);
             h.read(|editor| assert_ne!(editor.auto_crop_outline(layout).unwrap(), outline));
             let q = h.read(|editor| editor.auto_crop_outline(layout).unwrap());
@@ -167,7 +167,7 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
                 "outside the captured set is not a metadata failure"
             );
             let request = h.read(|editor| editor.id);
-            workflow::enter_numeric(&mut h, "Inward margin", "2");
+            workflow::enter_numeric(&mut h, "Margin", "2");
             h.read(|editor| assert_eq!(editor.id, request));
             h.read(|editor| assert!(editor.auto_crop_preview(ids[1]).is_none()));
             h.read(|editor| assert_eq!(editor.document.project, before));
@@ -236,7 +236,7 @@ fn numeric_popup_disabled_and_hidden_artwork_input_cannot_accidentally_accept_or
         let before = h.read(|editor| editor.document.project.clone());
         let source = h.read(|editor| editor.current_source.unwrap());
         let initial = h.read(|editor| editor.auto_crop_preview(source));
-        h.get_by_role_and_label(egui::accesskit::Role::SpinButton, "Inward margin")
+        h.get_by_role_and_label(egui::accesskit::Role::SpinButton, "Margin")
             .click();
         h.step();
         h.event(egui::Event::Text("4".into()));
@@ -290,7 +290,7 @@ fn numeric_popup_disabled_and_hidden_artwork_input_cannot_accidentally_accept_or
                 h.step();
             }
         }
-        h.get_by_role_and_label(egui::accesskit::Role::SpinButton, "Inward margin")
+        h.get_by_role_and_label(egui::accesskit::Role::SpinButton, "Margin")
             .click();
         h.step();
         h.event(egui::Event::Text("3.5".into()));

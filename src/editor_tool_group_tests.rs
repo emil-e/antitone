@@ -3,7 +3,8 @@ use crate::editor::{
     controls,
     icons::Icon,
     presentation::{
-        CONTROL_HEIGHT, SessionToolGroup, ToolButton, ToolGroup, ToolIdentity, ToolShelf,
+        CONTROL_HEIGHT, INSPECTOR_ROW_HEIGHT, SessionToolGroup, ToolButton, ToolGroup,
+        ToolIdentity, ToolShelf,
     },
 };
 use egui::{Context, FullOutput, Ui};
@@ -126,9 +127,9 @@ fn stage_tool_shelf_distinguishes_commands_active_tools_and_changed_state() {
     assert!(crop.enabled());
     assert!(dust.enabled());
     assert_eq!(node(&output, "Crop & straighten").is_selected(), Some(true));
-    assert_eq!(turn.rect.height(), 28.);
-    assert_eq!(crop.rect.height(), 28.);
-    assert_eq!(dust.rect.height(), 28.);
+    assert_eq!(turn.rect.height(), INSPECTOR_ROW_HEIGHT);
+    assert_eq!(crop.rect.height(), INSPECTOR_ROW_HEIGHT);
+    assert_eq!(dust.rect.height(), INSPECTOR_ROW_HEIGHT);
 }
 
 #[test]

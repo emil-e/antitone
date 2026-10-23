@@ -924,6 +924,10 @@ impl Editor {
 
         let reviewing = self.document.analysis_review.is_some();
         let previous_orientation = (self.roll_orientation, self.photo_orientation);
+        presentation::inspector_spacing(ui);
+        // The inspector column width is authoritative; content must not widen the panel.
+        let inspector_width = ui.available_width();
+        ui.set_width(inspector_width);
         presentation::restore_expansion(ui.ctx(), self.preferences.sections.clone());
         let mut analyze = false;
         let scope_slot = self.scope_panel(ui);
@@ -940,10 +944,19 @@ impl Editor {
             ui.ctx().request_repaint();
         }
 
+        let before_shelf = ui.cursor().min.y;
         if self.tab == 0 {
             analyze = self.roll_tool_shelf(ui, cx);
         } else if self.tab == 1 {
             ui.add_enabled_ui(!reviewing, |ui| self.photo_tool_shelf(ui, cx));
+        }
+        if std::env::var_os("ANTITONE_DEBUG_SPACE").is_some() {
+            eprintln!(
+                "DBG tab={} before_shelf={before_shelf} after_shelf={} tabs={:?}",
+                self.tab,
+                ui.cursor().min.y,
+                ui.min_rect()
+            );
         }
 
         let editable = !self.busy
@@ -988,6 +1001,7 @@ impl Editor {
                                 summary: calibration_summary,
                                 changed: false,
                                 reset: None,
+                                tool: None,
                                 default_open: Some(true),
                             },
                             |ui| {
@@ -1017,7 +1031,7 @@ impl Editor {
                             let inversion_changed = self.roll.gamma
                                 != crate::processing::DEFAULT_GAMMA
                                 || self.roll.balance != Balance::default();
-                            let (_, reset) = presentation::section(
+                            let (_, action) = presentation::section(
                                 ui,
                                 "roll-gamma-balance",
                                 "Gamma & balance",
@@ -1033,21 +1047,25 @@ impl Editor {
                                     ),
                                     changed: inversion_changed,
                                     reset: Some(inversion_changed),
+                                    tool: Some(controls::balance_pick_tool(
+                                        can_pick,
+                                        "Pick neutral for gamma balance",
+                                    )),
                                     default_open: Some(true),
                                 },
                                 |ui| {
                                     controls::parameter(ui, Parameter::Gamma, &mut self.roll.gamma);
-                                    if controls::color(
+                                    controls::balance_body(
                                         ui,
                                         ColorControl::GammaBalance,
                                         &mut self.roll.balance,
-                                        can_pick,
-                                    ) {
-                                        start_pick = Some(Pick::Gamma);
-                                    }
+                                    );
                                 },
                             );
-                            if reset && !controls::defer_reset(ui, controls::Reset::GammaAndBalance) {
+                            if action.tool {
+                                start_pick = Some(Pick::Gamma);
+                            }
+                            if action.reset && !controls::defer_reset(ui, controls::Reset::GammaAndBalance) {
                                 self.roll.gamma = crate::processing::DEFAULT_GAMMA;
                                 self.roll.balance = Balance::default();
                             }
@@ -1057,7 +1075,7 @@ impl Editor {
                                     format!("Toe {toe:.2} · Shoulder {shoulder:.4}")
                                 }
                             };
-                            let (_, reset) = presentation::section(
+                            let (_, action) = presentation::section(
                                 ui,
                                 "roll-response",
                                 "Toe & shoulder",
@@ -1070,6 +1088,7 @@ impl Editor {
                                             && self.roll.response
                                                 != crate::processing::Response::film(),
                                     ),
+                                    tool: None,
                                     default_open: Some(false),
                                 },
                                 |ui| match &mut self.roll.response {
@@ -1091,11 +1110,10 @@ impl Editor {
                                     crate::processing::Response::Film { toe, shoulder } => {
                                         controls::parameter(ui, Parameter::Toe, toe);
                                         controls::parameter(ui, Parameter::Shoulder, shoulder);
-                                        ui.label("Shoulder: 0 = off");
                                     }
                                 },
                             );
-                            if reset && !controls::defer_reset(ui, controls::Reset::Response) {
+                            if action.reset && !controls::defer_reset(ui, controls::Reset::Response) {
                                 self.roll.response = crate::processing::Response::film();
                             }
                             if controls::white_balance(
@@ -1106,7 +1124,7 @@ impl Editor {
                             ) {
                                 start_pick = Some(Pick::RollWb);
                             }
-                            let (_, reset) = presentation::section(
+                            let (_, action) = presentation::section(
                                 ui,
                                 "roll-exposure",
                                 "Exposure",
@@ -1114,6 +1132,7 @@ impl Editor {
                                     summary: &format!("{:+.2} EV", self.roll.exposure),
                                     changed: self.roll.exposure != 0.,
                                     reset: Some(self.roll.exposure != 0.),
+                                    tool: None,
                                     default_open: Some(false),
                                 },
                                 |ui| {
@@ -1124,7 +1143,7 @@ impl Editor {
                                     );
                                 },
                             );
-                            if reset && !controls::defer_reset(ui, controls::Reset::Exposure) {
+                            if action.reset && !controls::defer_reset(ui, controls::Reset::Exposure) {
                                 self.roll.exposure = 0.;
                             }
                         });
@@ -1147,7 +1166,7 @@ impl Editor {
                             && self.document.visit.mask_edit.is_none(),
                         |ui| {
                             let changed = self.target != OutputTarget::DisplayP3;
-                            let (_, reset) = presentation::section(
+                            let (_, action) = presentation::section(
                                 ui,
                                 "rendering-target",
                                 "Target",
@@ -1159,6 +1178,7 @@ impl Editor {
                                     },
                                     changed,
                                     reset: Some(changed),
+                                    tool: None,
                                     default_open: Some(true),
                                 },
                                 |ui| {
@@ -1188,7 +1208,7 @@ impl Editor {
                                     .on_hover_text("Output colour space, not the monitor profile.");
                                 },
                             );
-                            if reset && !controls::defer_reset(ui, controls::Reset::Target) {
+                            if action.reset && !controls::defer_reset(ui, controls::Reset::Target) {
                                 self.target = OutputTarget::DisplayP3;
                             }
                         },

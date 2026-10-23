@@ -37,6 +37,10 @@ fn physical_view_underlay_keeps_navigation_covered_during_blocked_acquisition_an
             // Exercise the actual exposure widget without waiting for acquisition to become idle.
             harness
                 .get_by_role_and_label(egui::accesskit::Role::SpinButton, "Exposure")
+                .scroll_to_me();
+            harness.try_run_realtime().unwrap();
+            harness
+                .get_by_role_and_label(egui::accesskit::Role::SpinButton, "Exposure")
                 .click();
             harness.step();
             harness.event(egui::Event::Text(format!("{}", 0.6 + index as f64 * 0.2)));

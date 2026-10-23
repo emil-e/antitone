@@ -453,8 +453,10 @@ impl Editor {
         cx: &UiContext<'_, Self>,
     ) -> (Option<ScopeSlot>, bool) {
         if self.fullscreen.is_none() {
+            // The fixed name column and the balance wheel set the useful width; narrower than
+            // this leaves the axis tracks too short to drag comfortably.
             egui::Panel::right("controls")
-                .default_size(315.)
+                .default_size(340.)
                 .min_size(270.)
                 .show(ui, |ui| self.controls(ui, cx))
                 .inner

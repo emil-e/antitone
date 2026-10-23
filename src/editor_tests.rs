@@ -990,6 +990,26 @@ fn crop_inspector_settings_remain_photo_only_without_transaction_buttons() {
             for _ in 0..3 {
                 controls_frame_sized(&mut editor, &context, width, 600., vec![]);
             }
+            // Reveal scrolling animates over time, which these raw frames never advance; pin the
+            // column back to the top before reading the composition rows.
+            let pointer = egui::pos2(width / 2., 420.);
+            for _ in 0..2 {
+                controls_frame_sized(
+                    &mut editor,
+                    &context,
+                    width,
+                    600.,
+                    vec![
+                        egui::Event::PointerMoved(pointer),
+                        egui::Event::MouseWheel {
+                            unit: egui::MouseWheelUnit::Point,
+                            delta: egui::vec2(0., 2000.),
+                            modifiers: egui::Modifiers::NONE,
+                            phase: egui::TouchPhase::Move,
+                        },
+                    ],
+                );
+            }
             let text = controls_frame_sized(&mut editor, &context, width, 600., vec![]);
             let heading = if tab == 0 {
                 "Reset scan orientation"
@@ -2447,18 +2467,7 @@ fn click_section_button(editor: &mut Editor, context: &egui::Context, section: &
 
 fn click_section_reset(editor: &mut Editor, context: &egui::Context, name: &str) {
     let text = controls_frame(editor, context, 315., vec![]);
-    let title = text
-        .iter()
-        .find(|(label, _)| {
-            label
-                == if name == "Gamma balance" {
-                    "Balance"
-                } else {
-                    name
-                }
-        })
-        .unwrap()
-        .1;
+    let title = text.iter().find(|(label, _)| label == name).unwrap().1;
     let reset = text
         .iter()
         .find(|(label, rect)| {
@@ -2503,7 +2512,7 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
                     "Auto-crop roll",
                     "Calibration",
                     "Gamma & balance",
-                    "Balance",
+                    "Gamma balance wheel",
                     "Toe & shoulder",
                     "Exposure",
                 ]
@@ -2719,20 +2728,20 @@ fn section_and_color_resets_preserve_calibration_and_other_edit_scopes() {
         warmth: 0.2,
         tint: -0.1,
     };
-    click_section_reset(&mut editor, &context, "Gamma balance");
-    assert_eq!(editor.roll.gamma, 0.9);
+    // One section reset covers gamma and balance; the wheel's double-click is the
+    // balance-only gesture, exercised by the control tests.
+    click_section_reset(&mut editor, &context, "Gamma & balance");
+    assert_eq!(editor.roll.gamma, crate::processing::DEFAULT_GAMMA);
     assert_eq!(editor.roll.balance, Balance::default());
 
     click_section_reset(&mut editor, &context, "Toe & shoulder");
     assert_eq!(editor.roll.response, crate::processing::Response::film());
-    assert_eq!(editor.roll.gamma, 0.9);
     assert_eq!(editor.roll.balance, Balance::default());
     assert_eq!(editor.roll.exposure, 2.);
     assert_eq!(editor.photo, photo);
 
     click_section_reset(&mut editor, &context, "Exposure");
     assert_eq!(editor.roll.exposure, 0.);
-    assert_eq!(editor.roll.gamma, 0.9);
     assert_eq!(editor.photo, photo);
 
     let roll = editor.roll;

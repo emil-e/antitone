@@ -356,8 +356,16 @@ pub(super) fn rotation_cursor(
 }
 
 pub(super) fn row<R>(ui: &mut Ui, contents: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
+    row_at(ui, CONTROL_HEIGHT, contents)
+}
+
+pub(super) fn row_at<R>(
+    ui: &mut Ui,
+    height: f32,
+    contents: impl FnOnce(&mut Ui) -> R,
+) -> egui::InnerResponse<R> {
     ui.allocate_ui_with_layout(
-        egui::vec2(ui.available_width(), CONTROL_HEIGHT),
+        egui::vec2(ui.available_width(), height),
         egui::Layout::left_to_right(egui::Align::Center),
         contents,
     )
@@ -370,11 +378,22 @@ pub(super) fn button(
     name: &str,
     tooltip: &str,
 ) -> Response {
+    button_at(ui, icon, enabled, name, tooltip, CONTROL_HEIGHT)
+}
+
+pub(super) fn button_at(
+    ui: &mut Ui,
+    icon: Icon,
+    enabled: bool,
+    name: &str,
+    tooltip: &str,
+    size: f32,
+) -> Response {
     ui.push_id(name, |ui| {
         ui.add_enabled_ui(enabled, |ui| {
             let response = ui.add(
                 egui::Button::new("")
-                    .min_size(Vec2::splat(CONTROL_HEIGHT))
+                    .min_size(Vec2::splat(size))
                     .frame_when_inactive(false),
             );
             response.widget_info(|| {
@@ -399,7 +418,18 @@ pub(super) fn toggle(
     name: &str,
     tooltip: &str,
 ) -> Response {
-    let response = button(ui, icon, true, name, tooltip);
+    toggle_at(ui, icon, value, name, tooltip, CONTROL_HEIGHT)
+}
+
+pub(super) fn toggle_at(
+    ui: &mut Ui,
+    icon: Icon,
+    value: &mut bool,
+    name: &str,
+    tooltip: &str,
+    size: f32,
+) -> Response {
+    let response = button_at(ui, icon, true, name, tooltip, size);
     if response.clicked() {
         *value = !*value;
     }

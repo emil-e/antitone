@@ -172,7 +172,21 @@ Use the existing component families rather than copying their painting or intera
 - [Decisions](../src/editor_ui_dialogs.rs), [Feedback](../src/editor_ui_feedback.rs), [Tasks](../src/editor_activity.rs), [Working](../src/editor_ui_progress.rs): the shared modal, severity, task and progress surfaces.
 - [Cards](../src/editor_ui_cards.rs), [Icons](../src/editor_icons.rs), [Controls](../src/editor_controls.rs): filmstrip geometry, semantic actions, photographic value widgets.
 
-Presentation receives display-ready state and returns responses; controllers still own availability, IDs, accepted/draft state and dispatch. Inspector dropdowns fill the section width at the shared control height, with truncation rather than value-dependent sizing.
+Presentation receives display-ready state and returns responses; controllers still own availability, IDs, accepted/draft state and dispatch. Inspector dropdowns fill the section width, with truncation rather than value-dependent sizing.
+
+### Inspector density and value grammar
+
+The inspector uses its own spacing scale, tighter than the rest of the application: [Presentation](../src/editor_ui.rs) owns the inspector row height, item gap, section gap, slider height and numeric width, and `inspector_spacing` applies them to the column. Sections separate with a separator and a short gap; a section header carries its disclosure, its changed cue, a reset, and optionally one section tool. Anything added to the inspector should take its height and gaps from these constants rather than choosing its own. Consecutive value rows use a tighter gap than sections: their tracks read as one block only when the neighbouring rows are closer than the separators around them.
+
+A parameter is one row: a fixed-width name column, the track, then an editable value with its unit. The shared name column makes every track start and end at the same x, and names are right-aligned inside it so each sits against the control it labels; keep names short enough to fit, since a truncating name buys no track. Reset is a name gesture rather than a control — double-click or Option-click the name — backed by a **Reset to default** item in the value's context menu; a section reset still covers its whole group. Keep the row to those three parts: a per-row icon competes with the value for the narrow column.
+
+Dragging a track is absolute, except when the press begins with Shift: that press holds the accepted value and the remaining travel applies at one-tenth rate, matching the numeric field's fine adjustment. Keyboard steps follow the same fraction.
+
+White balance and gamma balance share one body: the two axis rows, and a label-free hue wheel at the right end of the block, with the eyedropper and section reset in the header. The axes use the same one-line row as every other parameter; the wheel gives up a little diameter so those tracks stay usable. The wheel is a correction surface rather than a measurement device, so it sizes with the panel width and drags relatively from the press origin — Shift gives ten-times finer motion and a double-click resets the balance. Precision and stepping stay with the axis rows and their numeric fields.
+
+Scopes sit at the top of the column with their own disclosure, plot menu and drag handle. Their height is a persisted ratio of the column width and the default is deliberately modest, so the stage controls stay reachable; the handle restores that default on double-click, and the vectorscope's plot is square, so its circle follows the shorter side.
+
+The inspector reserves a band for the scroll bar because dense rows put values and header actions near the right edge, where a floating bar would take their pointer input.
 
 Feature controllers use ordinary `&mut Editor`, raw `egui::Ui` and a separate borrowed [UiContext](../src/application.rs); `spawn` supplies combined state/execution context to its factory only when the host polls outside painting. [Architecture](architecture.md) owns that execution model.
 

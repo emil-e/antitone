@@ -281,7 +281,7 @@ impl Editor {
         let mut clear = false;
         let mut import = false;
         ui.add_enabled_ui(allowed, |ui| {
-            let (_, reset) = presentation::section(
+            let (_, action) = presentation::section(
                 ui,
                 "rendering-look",
                 "Look",
@@ -289,6 +289,7 @@ impl Editor {
                     summary: &name,
                     changed,
                     reset: Some(changed),
+                    tool: None,
                     default_open: Some(true),
                 },
                 |ui| {
@@ -354,7 +355,7 @@ impl Editor {
                     }
                 },
             );
-            clear |= reset;
+            clear |= action.reset;
         });
         if clear {
             self.clear_look();
