@@ -130,34 +130,18 @@ fn atomic_file(
         before_publish()?;
         match overwrite {
             Overwrite::Confirmed => fs::rename(temporary.path(), path).map_err(failure)?,
-            Overwrite::Refuse => exclusive_rename(temporary.path(), path)?,
+            Overwrite::Refuse => {
+                crate::sys::exclusive_rename(temporary.path(), path).map_err(|error| {
+                    if error.kind() == std::io::ErrorKind::AlreadyExists {
+                        Error::DestinationExists
+                    } else {
+                        failure(error)
+                    }
+                })?
+            }
         }
         Ok(())
     })
-}
-
-#[cfg(target_os = "macos")]
-fn exclusive_rename(from: &Path, to: &Path) -> Result<()> {
-    use std::{ffi::CString, os::unix::ffi::OsStrExt};
-    let from = CString::new(from.as_os_str().as_bytes()).map_err(failure)?;
-    let to = CString::new(to.as_os_str().as_bytes()).map_err(failure)?;
-    // Same-directory temporary output; RENAME_EXCL atomically refuses a competing destination.
-    if unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) } != 0 {
-        let error = std::io::Error::last_os_error();
-        return Err(if error.kind() == std::io::ErrorKind::AlreadyExists {
-            Error::DestinationExists
-        } else {
-            failure(error)
-        });
-    }
-    Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-fn exclusive_rename(_from: &Path, _to: &Path) -> Result<()> {
-    Err(Error::Export(
-        "exclusive atomic export is implemented only on macOS".into(),
-    ))
 }
 
 /// Scalar/OCIO reference adapter, not a production rendering path.

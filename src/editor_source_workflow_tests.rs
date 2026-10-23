@@ -47,12 +47,12 @@ fn editor(scheduler: development::Scheduler) -> Editor {
     editor
 }
 
-fn normal_pressure() -> crate::resources::MemoryPressure {
-    crate::resources::MemoryPressure::Normal
+fn normal_pressure() -> crate::sys::MemoryPressure {
+    crate::sys::MemoryPressure::Normal
 }
 
 fn paused_with_pressure(
-    pressure: fn() -> crate::resources::MemoryPressure,
+    pressure: fn() -> crate::sys::MemoryPressure,
 ) -> (development::Scheduler, mpsc::Receiver<()>, mpsc::Sender<()>) {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
@@ -75,7 +75,7 @@ fn paused_with_pressure(
 }
 
 fn paused() -> (development::Scheduler, mpsc::Receiver<()>, mpsc::Sender<()>) {
-    paused_with_pressure(crate::resources::memory_pressure)
+    paused_with_pressure(crate::sys::memory_pressure)
 }
 
 fn start(app: &crate::application::test_support::TestApplication<'_, Editor>) {

@@ -1,8 +1,5 @@
 use crate::Error;
 
-#[cfg(feature = "editor")]
-use super::GpuMemory;
-
 pub(crate) fn backend() -> wgpu::Backends {
     wgpu::Backends::DX12
 }
@@ -14,11 +11,6 @@ pub(crate) fn configure_presentation(_surface: &wgpu::Surface<'_>) -> Result<(),
 #[cfg(feature = "editor")]
 pub fn install_icon() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
-}
-
-#[cfg(feature = "editor")]
-pub(crate) fn gpu_memory(_device: Option<&wgpu::Device>) -> GpuMemory {
-    GpuMemory::Unknown
 }
 
 pub(crate) struct FullscreenPresentation;

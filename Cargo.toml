@@ -54,6 +54,7 @@ objc2-quartz-core = { version = "=0.3.2", optional = true, default-features = fa
 
 [target.'cfg(windows)'.dependencies]
 muda = { version = "=0.21.2", optional = true, default-features = false }
+windows-sys = { version = "=0.59.0", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_SystemInformation"] }
 
 [features]
 ui-tests = ["editor", "ocio-reference", "dep:egui_kittest", "image/png"]

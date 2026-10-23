@@ -1,5 +1,5 @@
 use super::cache_limits::CacheLimits;
-pub(super) use crate::resources::MemoryPressure as Pressure;
+pub(super) use crate::sys::MemoryPressure as Pressure;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct CacheBudgets {
@@ -44,14 +44,14 @@ impl PressureWatch {
     pub fn new(context: egui::Context) -> Self {
         let alive = std::sync::Arc::new(());
         let weak = std::sync::Arc::downgrade(&alive);
-        let mut previous = crate::resources::memory_pressure();
+        let mut previous = crate::sys::memory_pressure();
         std::thread::spawn(move || {
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(1));
                 if weak.upgrade().is_none() {
                     break;
                 }
-                let current = crate::resources::memory_pressure();
+                let current = crate::sys::memory_pressure();
                 if current != previous {
                     previous = current;
                     context.request_repaint();

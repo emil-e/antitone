@@ -207,14 +207,7 @@ fn same_destination(a: &Path, b: &Path) -> bool {
     if document::same_path(a, b) {
         return true;
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if let (Ok(a), Ok(b)) = (std::fs::metadata(a), std::fs::metadata(b)) {
-            return a.dev() == b.dev() && a.ino() == b.ino();
-        }
-    }
-    false
+    crate::sys::same_file(a, b)
 }
 
 pub(super) fn require_safe(path: &Path, protected: &[PathBuf]) -> Result<(), Error> {

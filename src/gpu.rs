@@ -781,19 +781,8 @@ impl ProcessingKernel {
     }
 }
 
-/// Metal resource allocation, including retained native versions; not total process memory.
-#[cfg(all(target_os = "macos", any(test, feature = "ui")))]
-pub(crate) fn allocated_resource_bytes(device: &wgpu::Device) -> Option<usize> {
-    use objc2_metal::MTLDevice;
-    // The HAL guard keeps the device alive; this query neither mutates nor destroys resources.
-    let native = unsafe { device.as_hal::<wgpu::hal::api::Metal>() }?;
-    Some(native.raw_device().currentAllocatedSize())
-}
-
-#[cfg(all(not(target_os = "macos"), any(test, feature = "ui")))]
-pub(crate) fn allocated_resource_bytes(_device: &wgpu::Device) -> Option<usize> {
-    None
-}
+#[cfg(any(test, feature = "ui"))]
+pub(crate) use crate::sys::allocated_resource_bytes;
 
 #[cfg(all(test, target_os = "macos"))]
 #[path = "gpu_arithmetic_tests.rs"]

@@ -359,7 +359,7 @@ impl Default for Thumbnails {
     fn default() -> Self {
         let limits = cache_limits::Hardware::current(None).defaults();
         #[cfg(not(test))]
-        let pressure = crate::resources::memory_pressure();
+        let pressure = crate::sys::memory_pressure();
         #[cfg(test)]
         let pressure = memory::Pressure::Normal;
         let budgets = memory::CacheBudgets::new(limits, pressure);
@@ -554,11 +554,11 @@ impl Thumbnails {
 
     pub(super) fn update_memory(&mut self) {
         #[cfg(not(test))]
-        let pressure = crate::resources::memory_pressure();
+        let pressure = crate::sys::memory_pressure();
         #[cfg(test)]
         let pressure = self
             .pressure_override
-            .unwrap_or_else(crate::resources::memory_pressure);
+            .unwrap_or_else(crate::sys::memory_pressure);
         self.apply_budgets(memory::CacheBudgets::new(self.limits, pressure));
     }
 

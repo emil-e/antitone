@@ -5,9 +5,6 @@ use objc2_core_graphics::{CGColorSpace, kCGColorSpaceExtendedSRGB};
 
 use crate::Error;
 
-#[cfg(feature = "editor")]
-use super::GpuMemory;
-
 pub(crate) use super::termination::{
     Guard as QuitGuard, cancel_on_unwind as quit_cancel_on_unwind,
 };
@@ -23,25 +20,6 @@ pub(crate) fn configure_presentation(surface: &wgpu::Surface<'_>) -> Result<(), 
 #[cfg(feature = "editor")]
 pub fn install_icon() -> Result<(), Box<dyn std::error::Error>> {
     set_application_icon()
-}
-
-#[cfg(feature = "editor")]
-pub(crate) fn gpu_memory(device: Option<&wgpu::Device>) -> GpuMemory {
-    device
-        .and_then(|device| {
-            use objc2_metal::MTLDevice;
-            // Read only a static topology fact under the HAL guard; no resource/ownership changes.
-            let native = unsafe { device.as_hal::<wgpu::hal::api::Metal>() }?;
-            Some(if native.raw_device().hasUnifiedMemory() {
-                GpuMemory::Unified
-            } else {
-                // Metal's recommended working set is not a dedicated VRAM capacity.
-                GpuMemory::Discrete {
-                    dedicated_bytes: None,
-                }
-            })
-        })
-        .unwrap_or(GpuMemory::Unknown)
 }
 
 #[cfg(feature = "editor")]

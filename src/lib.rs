@@ -49,8 +49,6 @@ mod region_timing;
 pub mod rendering;
 #[cfg(feature = "raw")]
 pub mod repair_source;
-#[cfg(feature = "raw")]
-mod resources;
 pub mod roll_analysis;
 pub mod sampling;
 #[cfg(feature = "raw")]
@@ -63,6 +61,14 @@ mod source_revision;
 pub mod source_store;
 #[cfg(feature = "project")]
 pub mod spatial_metadata;
+#[cfg(any(
+    feature = "raw",
+    feature = "project",
+    feature = "export",
+    feature = "gpu",
+    feature = "ui"
+))]
+pub(crate) mod sys;
 #[cfg(feature = "editor")]
 pub mod viewport;
 #[cfg(all(

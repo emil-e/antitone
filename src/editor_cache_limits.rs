@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::platform::GpuMemory;
+use crate::sys::GpuMemory;
 
 pub(super) const MIB: u64 = 1024 * 1024;
 pub(super) const MAX_MIB: u64 = usize::MAX as u64 / MIB;
@@ -47,8 +47,8 @@ impl Hardware {
     }
 
     pub fn current(device: Option<&wgpu::Device>) -> Self {
-        let gpu = crate::platform::gpu_memory(device);
-        let bytes = crate::resources::physical_memory();
+        let gpu = crate::sys::gpu_memory(device);
+        let bytes = crate::sys::physical_memory();
         Self {
             ram_bytes: (bytes != 0).then_some(bytes),
             gpu,
@@ -59,7 +59,7 @@ impl Hardware {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::platform::GpuMemory;
+    use crate::sys::GpuMemory;
 
     #[test]
     fn starting_defaults_distinguish_shared_ram_dedicated_vram_and_unknown_capacity() {
