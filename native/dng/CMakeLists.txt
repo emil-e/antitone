@@ -59,7 +59,8 @@ file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/defines.txt" DNG_DEFINES)
 target_compile_definitions(dng PUBLIC ${DNG_DEFINES})
 target_include_directories(dng PUBLIC
     "${SDK}/dng_sdk/source" "${SDK}/libjpeg"
-    "${SDK}/xmp/toolkit/public/include")
+    "${SDK}/xmp/toolkit/public/include"
+    "${SDK}/xmp/toolkit/third-party/zlib")
 target_link_libraries(dng PRIVATE jxl jxl_threads)
 
 if(APPLE)

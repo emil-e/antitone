@@ -245,6 +245,7 @@ fn build_dng() {
         "libjxl/libjxl/lib/include",
         "libjxl/client_projects/include",
         "xmp/toolkit/public/include",
+        "xmp/toolkit/third-party/zlib",
     ] {
         build.include(source.join(directory));
     }
