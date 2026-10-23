@@ -1275,6 +1275,22 @@ fn source_inspection_is_hidden_outside_source_view_without_losing_its_value() {
     assert!(!egui::Popup::is_any_open(&context));
     assert_eq!(editor.source_exposure, 7.25);
     assert_eq!(editor.last_layout.unwrap().0.canvas, canvas);
+
+    // In a narrow window the readout is the first thing the bar gives up, with the value still
+    // retained for the popup once a wider window has room for it.
+    let narrow = egui::vec2(800., 600.);
+    editor.source = true;
+    warm(&mut editor, &context, narrow);
+    let text = labels(&mut editor, &context, narrow, vec![]);
+    assert!(
+        !text.iter().any(|(s, _)| s.starts_with("Source +")),
+        "the narrow bar drops the exposure readout before its actions"
+    );
+    assert!(
+        editor.source,
+        "source viewing stays active without the readout"
+    );
+    assert_eq!(editor.source_exposure, 7.25);
 }
 
 #[test]

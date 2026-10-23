@@ -473,8 +473,6 @@ fn section_impl<R>(
             );
 
             if let Some(enabled) = reset_enabled {
-                // egui may run several passes for one frame; a click is consumed by the first,
-                // so latched actions accumulate instead of being overwritten by later passes.
                 action.reset |= reset_button_at(ui, enabled, title, row_height).clicked();
             }
             if let Some(tool) = tool {

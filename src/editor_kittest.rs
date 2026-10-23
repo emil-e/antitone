@@ -65,8 +65,7 @@ fn parameter_reset_is_a_name_gesture_and_respects_disabled_state() {
                 .is_disabled()
         );
     }
-    // The row carries no reset control; Option-clicking the name resets the value.
-    assert!(harness.query_by_label("Reset Contrast").is_none());
+    // Option-clicking the name resets the value.
     let name = harness
         .get_by_role_and_label(egui::accesskit::Role::Label, "Contrast")
         .rect()

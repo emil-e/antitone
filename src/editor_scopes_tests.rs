@@ -261,7 +261,7 @@ fn scope_divider_drag_release_reset_and_width_scaling_are_stable_at_both_dpis() 
             panel_frame(&mut scopes, &context, size, vec![button(reset, false)]);
         }
         let (reset, _) = panel_frame(&mut scopes, &context, size, vec![]);
-        assert_eq!(scopes.height_ratio, Scopes::default().height_ratio);
+        assert_eq!(scopes.height_ratio, super::DEFAULT_HEIGHT_RATIO);
         assert_eq!(reset.plot, initial.plot);
     }
 }

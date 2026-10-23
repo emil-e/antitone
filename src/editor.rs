@@ -944,19 +944,10 @@ impl Editor {
             ui.ctx().request_repaint();
         }
 
-        let before_shelf = ui.cursor().min.y;
         if self.tab == 0 {
             analyze = self.roll_tool_shelf(ui, cx);
         } else if self.tab == 1 {
             ui.add_enabled_ui(!reviewing, |ui| self.photo_tool_shelf(ui, cx));
-        }
-        if std::env::var_os("ANTITONE_DEBUG_SPACE").is_some() {
-            eprintln!(
-                "DBG tab={} before_shelf={before_shelf} after_shelf={} tabs={:?}",
-                self.tab,
-                ui.cursor().min.y,
-                ui.min_rect()
-            );
         }
 
         let editable = !self.busy

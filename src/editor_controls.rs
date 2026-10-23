@@ -245,7 +245,7 @@ fn name_reset_gesture(ui: &Ui, label: &Response) -> bool {
     })
 }
 
-/// The track: absolute drag normally, one-tenth-rate travel when the press began with Shift.
+/// The track: absolute drag normally, slow relative travel when the press began with Shift.
 fn track(ui: &mut Ui, kind: Parameter, value: &mut f64, width: f32, name: egui::Id) -> Response {
     let step = kind.step()
         * if ui.input(|input| input.modifiers.shift) {
@@ -274,13 +274,17 @@ fn track(ui: &mut Ui, kind: Parameter, value: &mut f64, width: f32, name: egui::
                     .step_by(step),
             )
             .on_hover_text(if matches!(kind, Parameter::Exposure) {
-                "Slider: ±3 EV; type a value for up to ±65 EV. Shift-drag for finer steps."
+                "Slider: ±3 EV; type a value for up to ±16 EV. Shift-drag for finer steps."
             } else {
                 "Shift-drag for finer steps."
             });
-        if response.drag_started()
-            || (shift && response.is_pointer_button_down_on() && fine.is_none())
-        {
+        let pointer_down = ui.is_enabled() && response.is_pointer_button_down_on();
+        if fine.is_some() && !pointer_down && !response.drag_stopped() {
+            // A gesture interrupted by disabling or hiding the row must not hold the value
+            // back to its pre-drag snapshot when the row reappears.
+            fine = None;
+        }
+        if response.drag_started() || (shift && pointer_down && fine.is_none()) {
             // The press itself holds the accepted value, so precision never jumps.
             fine = Some(FineDrag {
                 start: before,
@@ -293,6 +297,8 @@ fn track(ui: &mut Ui, kind: Parameter, value: &mut f64, width: f32, name: egui::
                 if response.dragged() {
                     state.travel += response.drag_delta().x;
                 }
+                // One tenth of a full-width linear drag; logarithmic tracks scale the value,
+                // so their per-pixel travel differs at either end.
                 let span = range.end() - range.start();
                 let per_pixel = span / f64::from(width);
                 *value = (state.start + f64::from(state.travel) * per_pixel * 0.1)
@@ -303,7 +309,7 @@ fn track(ui: &mut Ui, kind: Parameter, value: &mut f64, width: f32, name: egui::
         if response.drag_stopped() {
             fine = None;
         }
-        if let Some(state) = fine {
+        if pointer_down && let Some(state) = fine {
             ui.ctx().data_mut(|data| data.insert_temp(drag_id, state));
         }
         response
@@ -314,6 +320,11 @@ fn track(ui: &mut Ui, kind: Parameter, value: &mut f64, width: f32, name: egui::
 
 fn numeric_field(ui: &mut Ui, kind: Parameter, value: &mut f64, height: f32) -> Response {
     let previous = *value;
+    let decimals = match kind {
+        Parameter::Shoulder => 4,
+        Parameter::Pivot => 3,
+        _ => 2,
+    };
     let numeric = ui
         .push_id("numeric", |ui| {
             ui.add_sized(
@@ -327,17 +338,21 @@ fn numeric_field(ui: &mut Ui, kind: Parameter, value: &mut f64, height: f32) -> 
                     .range(kind.range())
                     .clamp_existing_to_range(false)
                     .min_decimals(2)
-                    .max_decimals(match kind {
-                        Parameter::Shoulder => 4,
-                        Parameter::Pivot => 3,
-                        _ => 2,
-                    })
+                    .max_decimals(decimals)
                     .update_while_editing(false),
             )
         })
         .inner;
     if numeric_cancelled(ui, &numeric) {
         *value = previous;
+    } else if numeric.lost_focus() {
+        // Focus alone rewrites the stored value with its formatted text; keep the accepted
+        // value when the only thing that changed is that display rounding.
+        let factor = 10f64.powi(decimals as i32);
+        let displayed = (previous * factor).round() / factor;
+        if *value == displayed && previous != displayed {
+            *value = previous;
+        }
     }
     numeric
 }
@@ -495,7 +510,7 @@ pub fn calibration(
     ui.push_id(id, |ui| {
         let pick = labelled_row_at(ui, INSPECTOR_ROW_HEIGHT, label, Some(meaning), |ui, _| {
             let name = format!("Pick {label}");
-            icons::button(ui, Icon::Pick, enabled, &name, &name).clicked()
+            icons::button_at(ui, Icon::Pick, enabled, &name, &name, INSPECTOR_ROW_HEIGHT).clicked()
         })
         .inner;
 
@@ -513,7 +528,7 @@ pub fn calibration(
         } else {
             ui.weak("Not measured");
         }
-        ui.add_space(6.);
+        ui.add_space(PARAMETER_GAP);
         pick
     })
     .inner

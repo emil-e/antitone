@@ -54,21 +54,21 @@ start at 0.60, a sensible prior for most stocks; adjust to taste.
 **Balance** (the gamma balance wheel) is *not* white balance. It changes the relative
 response of the three colour channels across tones, so it can fix a colour cast that
 differs between shadows and highlights — a negative that goes warm in the highlights and
-cool in the shadows, for example. **Neutral reference** / **Pick neutral…** fits it from a
+cool in the shadows, for example. The eyedropper in the section header fits it from a
 neutral area.
 
 ## Toe & shoulder
 
 **Toe** and **Shoulder** shape the ends of the response: how quickly the deepest shadows
-and brightest highlights roll off. "Shoulder: 0 = off." If the project shows "Classic
+and brightest highlights roll off; 0 turns the shoulder off. If the project shows "Classic
 curve", the roll is using a fixed stock-style response; **Use adjustable response** swaps
 to the editable curve.
 
 ## White balance
 
 This is ordinary photographic white balance, applied to the developed positive and shared
-by the roll: **Warmth** and **Tint**, or the **White balance wheel**, or **Pick neutral…**
-on a grey/neutral area of the scene.
+by the roll: **Warmth** and **Tint**, the **White balance wheel** beside them, or the
+eyedropper in the section header on a grey/neutral area of the scene.
 
 (Each photograph can then fine-tune balance individually on the Photo tab — Roll WB is
 the shared baseline.)

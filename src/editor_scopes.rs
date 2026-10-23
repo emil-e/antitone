@@ -5,6 +5,9 @@ use crate::{
     scopes::{Basis, Plot, Settings, references},
 };
 
+/// Share of the column width given to the scope plot; the rest stays with the stage controls.
+pub(super) const DEFAULT_HEIGHT_RATIO: f32 = 0.6;
+
 pub(super) struct Scopes {
     pub(super) visible: bool,
     pub(super) vector: bool,
@@ -22,7 +25,7 @@ impl Default for Scopes {
             vector: true,
             waveform: Plot::Rgb,
             amplification: 1,
-            height_ratio: 0.6,
+            height_ratio: DEFAULT_HEIGHT_RATIO,
             gpu: None,
             error: None,
         }
@@ -136,7 +139,7 @@ impl Scopes {
             .on_hover_cursor(egui::CursorIcon::ResizeVertical)
             .on_hover_text("Drag to resize scopes; double-click to reset.");
         if response.double_clicked() {
-            self.height_ratio = 0.6;
+            self.height_ratio = DEFAULT_HEIGHT_RATIO;
             ui.ctx().request_repaint();
         } else if response.dragged() && response.drag_delta().y != 0. {
             self.height_ratio = (height + response.drag_delta().y).clamp(96., max_height) / width;

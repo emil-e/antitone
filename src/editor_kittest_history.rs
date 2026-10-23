@@ -376,7 +376,7 @@ fn history_focus_loss_commits_numeric_text_separately_from_an_orientation_comman
 fn history_focus_loss_numeric_commit_is_separate_from_section_resets() {
     setup(|mut h| {
         enter_numeric(&mut h, "Exposure", "0.5");
-        for _ in 0..1 {
+        {
             h.get_by_role_and_label(egui::accesskit::Role::SpinButton, "Exposure")
                 .click();
             h.step();
