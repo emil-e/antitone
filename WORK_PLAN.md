@@ -1,6 +1,12 @@
 # Windows port
 
-Worktree: `.worktrees/windows-port`, branch `port/windows`, based on `origin/main` (`6f2f4fd`).
+Worktree: `.worktrees/windows-port`, branch `port/windows`, parked on the `6f2f4fd` base.
+
+## Status: parked (2026-10-23)
+
+Parked until the RTX 2080 Ti Windows machine is available for DX12 hardware and presentation acceptance. The VMware Fusion guest exposes Direct3D 11 feature level 11_0 only; wgpu therefore uses WARP (Microsoft Basic Render Driver), so the VM is functional-only validation.
+
+The branch is local and not pushed. The guest checkout and `.cache` artifacts are disposable.
 
 ## Goal
 
@@ -61,37 +67,34 @@ Bring the Antitone editor to Windows 11 without regressing macOS, behind a capab
 
 ## Progress
 
-- Phase 1 compile seam: macOS `cargo check --features ui` and `--features editor` pass; Windows ARM64 `cargo check --features ui` passes, including the portable host, DX12 backend selection, Windows capability module and in-window menu fallback.
-- `platform/mod.rs` is the single OS selection point. `host.rs`, `fullscreen.rs` and `latency.rs` are portable; macOS capabilities live in `platform/macos.rs`; Windows capabilities are stubs in `platform/windows.rs`.
-- Windows stubs still no-op: presentation tagging, quit negotiation, fullscreen policy, GPU memory and icon. The native menu is disabled (`SUPPORTED = false`), so the in-window menu is used.
-- `sys/` now owns memory pressure, physical memory, file identity, no-overwrite publish, GPU memory kind and resource accounting behind one target selection; `platform/` is desktop-only. The macOS feature matrix (core, raw, project, export, gpu, ui, editor) passes.
-- `FileRevision` now carries device/inode/change fields on every platform with serde defaults, so projects stay compatible across platforms.
-- Native build: LibRaw 0.22.0 builds with MSVC and `/openmp`, and the Windows RAW probe links. `scan_regions` is ported to portable C++ with no Foundation dependency; the macOS native boundary test passes.
-- The vendored DNG SDK (DNG + XMP + libjxl) builds with MSVC, merges into one `.lib`, and `antitone-dng-probe` links.
-- The full editor builds and runs on Windows ARM64. In the interactive console session it creates a DX12 WARP surface (Microsoft Basic Render Driver, `Rgba16Float`) and renders the in-window menu and empty state. Preferences and caches use `%APPDATA%`/`%LOCALAPPDATA%`.
-- Not yet: Windows native menu (in-window menu works), DXGI colour-space tagging, hardware/perf acceptance, the Windows test suite and packaging/CI.
-- Next: Windows `cargo test --features editor --lib`, then native menu, presentation and packaging.
-- Runtime host and DXGI presentation remain unverified; `tests/native_host.rs` is still macOS-only.
-- Next: DNG SDK CMake for MSVC, then a Windows host smoke test.
+- Platform seam complete: one selection point in `platform/mod.rs`; `host.rs`, `fullscreen.rs` and `latency.rs` are portable; macOS capabilities live in `platform/macos.rs`; Windows capabilities are in `platform/windows.rs`.
+- `sys/` owns memory pressure, physical memory, file identity, no-overwrite publish, GPU facts, config and cache directories behind one target selection; `platform/` is desktop-only.
+- `FileRevision` carries device/inode/change fields on every platform with serde defaults, so projects stay compatible across platforms.
+- Native build: LibRaw 0.22.0 builds with MSVC `/openmp` (script at `scripts/build-libraw.ps1`); `scan_regions` is portable C++ with no Foundation dependency; DNG + XMP + libjxl build with MSVC and merge into one `.lib`.
+- Verified: macOS feature matrix (core, raw, project, export, gpu, ui, editor); the native scan-region boundary test; Windows `project`, `export`, `gpu`, `ui`, `raw`, `dng-sdk` builds and probe links; the full editor builds and launches in session 1 on WARP, rendering the in-window menu and empty state.
+- Not yet: the Windows test suite; native Windows menu (`SUPPORTED = false`, in-window menu works); DXGI colour-space tagging; DXGI GPU-memory query; Windows quit/fullscreen/icon policy; packaging/CI; hardware acceptance.
+- `tests/native_host.rs` remains macOS-only.
 
 ## Open risks
 
-- wgpu 30 DX12 support and feature levels on Windows 11 ARM64; `Rgba16Float` swapchain availability.
-- DNG SDK/libjxl MSVC build effort and archive/link integration.
-- DXGI colour-space semantics versus macOS extended-sRGB tagging; what this wgpu version exposes for surface colour space.
-- OpenMP runtime choice and redistributable obligations on Windows.
-- Export publishing still uses macOS `renamex_np`; Windows needs a no-overwrite publish tested on NTFS. Project save already falls back to `create_new` when no-replace rename is unsupported (#30); verify that path on NTFS.
-- Memory-pressure equivalents on Windows/Linux; implement only for the consumers that matter (issue #37 removes the RAW thread throttle).
-- GPU memory query for cache budgets: wgpu exposes no DXGI video-memory information, so a native query is needed or budgets fall back to *unknown*.
-- No GitHub push credentials from this environment; remote actions need working auth or the user.
+- DXGI colour-space semantics versus the macOS extended-sRGB path; SDR hardware presentation is unverified.
+- Windows test-suite portability: some tests assume Unix symlinks and file metadata.
+- Windows native menu, quit negotiation, fullscreen policy and icon remain stubs or in-window fallbacks.
+- GPU memory query for cache budgets currently falls back to *Unknown* on Windows.
+- Packaging: VC++ runtime/OpenMP DLL policy, dependency audit and portable ZIP are not implemented.
+- Hardware acceptance: 2080 Ti SDR colour, export, performance and memory budgets at 8704×6144.
+- OCIO reference remains macOS-only; the editor does not require it.
 
 ## VM access
 
 - Verified: `pi@192.168.166.131` (administrator), key at `.cache/ssh/antitone-vm`; NAT network reachable from the host.
+- Measured GPU: VMware SVGA 3D, WDDM 2.0, DDI 11.3, feature levels 11_0/10_1/10_0/9_3/9_2/9_1. No D3D12 adapter, so wgpu selects WARP.
 - Do not expose SSH to the internet.
 
-## Next actions
+## Resume
 
-1. Commit this plan as the first checkpoint.
-2. Create the Windows 11 ARM64 VM, install the toolchain, and run the baseline failure inventory.
-3. Start phase 1 in this worktree.
+1. On the Windows machine: VS Build Tools (MSVC x64, Windows 11 SDK, CMake, Ninja), Rust 1.99.0 with `x86_64-pc-windows-msvc`, Git and Python.
+2. Move the branch: push `port/windows` through the GitHub tool or copy a `git bundle` and clone from it.
+3. Build LibRaw: `powershell -ExecutionPolicy Bypass -File scripts/build-libraw.ps1 -Arch x64 -HostArch x64` (use `-HostArch arm64` when cross-building on ARM64).
+4. Build: `cargo build --locked --features editor --bin antitone`; launch from an interactive desktop session.
+5. First checks: `cargo test --locked --features editor --lib`, then the 2080 Ti acceptance run.
