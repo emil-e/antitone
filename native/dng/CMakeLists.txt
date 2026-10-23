@@ -90,7 +90,7 @@ elseif(WIN32)
     # Cargo consumes one archive, including the transitive static codec libraries.
     set(ARCHIVE "${CMAKE_CURRENT_BINARY_DIR}/antitone_dng_sdk.lib")
     add_custom_command(OUTPUT "${ARCHIVE}"
-        COMMAND "${CMAKE_AR}" /NOLOGO /OUT:"${ARCHIVE}"
+        COMMAND "${CMAKE_AR}" /NOLOGO "/OUT:${ARCHIVE}"
             $<TARGET_FILE:dng> $<TARGET_FILE:jxl> $<TARGET_FILE:jxl_threads>
             $<TARGET_FILE:jxl_cms> $<TARGET_FILE:hwy>
             $<TARGET_FILE:brotlienc> $<TARGET_FILE:brotlidec> $<TARGET_FILE:brotlicommon>
