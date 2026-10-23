@@ -120,3 +120,23 @@ pub(crate) enum GpuMemory {
 pub(crate) fn gpu_memory(_device: Option<&wgpu::Device>) -> GpuMemory {
     GpuMemory::Unknown
 }
+
+#[cfg(feature = "editor")]
+pub(crate) fn config_dir(app: &str) -> Option<std::path::PathBuf> {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".config"))
+        })
+        .map(|directory| directory.join(app.to_ascii_lowercase()))
+}
+
+#[cfg(feature = "editor")]
+pub(crate) fn cache_dir(app: &str) -> Option<std::path::PathBuf> {
+    std::env::var_os("XDG_CACHE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".cache"))
+        })
+        .map(|directory| directory.join(app.to_ascii_lowercase()))
+}

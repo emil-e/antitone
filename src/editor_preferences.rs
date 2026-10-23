@@ -57,14 +57,8 @@ pub(super) struct Store {
 
 impl Store {
     pub(super) fn open_default() -> Result<(Self, Preferences)> {
-        let home = std::env::var_os("HOME").ok_or("HOME is unavailable for UI preferences")?;
-        #[cfg(target_os = "macos")]
-        let directory = PathBuf::from(home).join("Library/Application Support/Antitone");
-        #[cfg(not(target_os = "macos"))]
-        let directory = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(home).join(".config"))
-            .join("antitone");
+        let directory = crate::sys::config_dir("Antitone")
+            .ok_or("user configuration directory is unavailable for UI preferences")?;
         Self::open(directory.join("ui-preferences.json"))
     }
 

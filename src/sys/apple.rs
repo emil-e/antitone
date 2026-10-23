@@ -115,3 +115,17 @@ pub(crate) fn gpu_memory(device: Option<&wgpu::Device>) -> GpuMemory {
         })
         .unwrap_or(GpuMemory::Unknown)
 }
+
+#[cfg(feature = "editor")]
+pub(crate) fn config_dir(app: &str) -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(|home| {
+        std::path::PathBuf::from(home)
+            .join("Library/Application Support")
+            .join(app)
+    })
+}
+
+#[cfg(feature = "editor")]
+pub(crate) fn cache_dir(app: &str) -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".cache").join(app))
+}

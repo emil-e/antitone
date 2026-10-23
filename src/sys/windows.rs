@@ -104,6 +104,7 @@ pub(crate) fn allocated_resource_bytes(_device: &wgpu::Device) -> Option<usize> 
 }
 
 #[cfg(feature = "editor")]
+#[allow(dead_code)] // DXGI capacity query is not implemented; Windows returns Unknown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GpuMemory {
     Unified,
@@ -114,4 +115,30 @@ pub(crate) enum GpuMemory {
 #[cfg(feature = "editor")]
 pub(crate) fn gpu_memory(_device: Option<&wgpu::Device>) -> GpuMemory {
     GpuMemory::Unknown
+}
+
+#[cfg(feature = "editor")]
+fn roaming_appdata() -> Option<std::path::PathBuf> {
+    std::env::var_os("APPDATA")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .map(|home| std::path::PathBuf::from(home).join("AppData/Roaming"))
+        })
+}
+
+#[cfg(feature = "editor")]
+pub(crate) fn config_dir(app: &str) -> Option<std::path::PathBuf> {
+    roaming_appdata().map(|directory| directory.join(app))
+}
+
+#[cfg(feature = "editor")]
+pub(crate) fn cache_dir(app: &str) -> Option<std::path::PathBuf> {
+    std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .map(|home| std::path::PathBuf::from(home).join("AppData/Local"))
+        })
+        .map(|directory| directory.join(app))
 }

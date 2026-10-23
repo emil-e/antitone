@@ -22,6 +22,6 @@ pub(crate) use imp::physical_memory;
 #[cfg(feature = "editor")]
 pub(crate) use imp::same_file;
 #[cfg(feature = "editor")]
-pub(crate) use imp::{GpuMemory, gpu_memory};
+pub(crate) use imp::{GpuMemory, cache_dir, config_dir, gpu_memory};
 #[cfg(feature = "raw")]
 pub(crate) use imp::{MemoryPressure, memory_pressure};
