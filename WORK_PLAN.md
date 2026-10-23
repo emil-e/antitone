@@ -61,9 +61,11 @@ Bring the Antitone editor to Windows 11 without regressing macOS, behind a capab
 
 ## Progress
 
-- Phase 1 started: `platform/mod.rs` is the single OS selection point; `host.rs`, `fullscreen.rs` and `latency.rs` are portable; macOS capabilities live in `platform/macos.rs`; Windows has a DX12/no-op capability module and an in-window menu fallback.
-- macOS `cargo check --features ui` and `--features editor` pass.
-- Next verification: `cargo check --features ui` on Windows; native build, DXGI presentation and Windows menus remain.
+- Phase 1 compile seam: macOS `cargo check --features ui` and `--features editor` pass; Windows ARM64 `cargo check --features ui` passes, including the portable host, DX12 backend selection, Windows capability module and in-window menu fallback.
+- `platform/mod.rs` is the single OS selection point. `host.rs`, `fullscreen.rs` and `latency.rs` are portable; macOS capabilities live in `platform/macos.rs`; Windows capabilities are stubs in `platform/windows.rs`.
+- Windows stubs still no-op: presentation tagging, quit negotiation, fullscreen policy, GPU memory and icon. The native menu is disabled (`SUPPORTED = false`), so the in-window menu is used.
+- Runtime host and DXGI presentation remain unverified; `tests/native_host.rs` is still macOS-only.
+- Next: phase 2 native build (LibRaw MSVC, DNG CMake, `build.rs` Windows branch), then a Windows host smoke test.
 
 ## Open risks
 
