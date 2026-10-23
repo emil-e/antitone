@@ -214,7 +214,6 @@ fn build_dng() {
         build.flag("-mmacosx-version-min=14.0");
     } else if target_os == "windows" {
         build.define("NOMINMAX", None);
-        build.define("WIN32_LEAN_AND_MEAN", None);
     }
     let platform = if target_os == "windows" {
         [
