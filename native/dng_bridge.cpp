@@ -1,4 +1,5 @@
 #include "dng_bridge.h"
+#include "logging.h"
 #include "dng_execution.h"
 
 #include "dng_abort_sniffer.h"
@@ -712,6 +713,7 @@ std::unique_ptr<Source> develop(const char *path, const AntitoneDngOptions &opti
 
 static int complete(const char *path, const AntitoneDngOptions *options, void **owner,
                     AntitoneDngView *view, char *error, size_t error_size, bool inspect_only) {
+    antitone::NativeLog diagnostic("dng", inspect_only ? "inspect" : "develop");
     if (owner) {
         *owner = nullptr;
     }
@@ -723,6 +725,7 @@ static int complete(const char *path, const AntitoneDngOptions *options, void **
         auto source = develop(path, *options, inspect_only);
         *view = source->view;
         *owner = source.release();
+        diagnostic.complete();
         return 0;
     } catch (const dng_exception &exception) {
         const bool cancelled = exception.ErrorCode() == dng_error_user_canceled;
@@ -731,13 +734,16 @@ static int complete(const char *path, const AntitoneDngOptions *options, void **
                           cancelled ? "DNG development cancelled" : "DNG SDK rejected development",
                           exception.ErrorCode());
         }
+        diagnostic.complete(cancelled ? 1 : 2, cancelled ? 3 : 2);
         return cancelled ? 1 : 2;
     } catch (const std::exception &exception) {
+        diagnostic.complete(2, 2);
         if (error && error_size) {
             std::snprintf(error, error_size, "%s", exception.what());
         }
         return 2;
     } catch (...) {
+        diagnostic.complete(2, 2);
         if (error && error_size) {
             std::snprintf(error, error_size, "Unknown DNG development failure");
         }

@@ -1,4 +1,5 @@
 #include "ocio_bridge.h"
+#include "logging.h"
 #include "rendering_transform.h"
 #include <algorithm>
 #include <climits>
@@ -11,7 +12,7 @@ struct Renderer {
     antitone::OCIO::ConstCPUProcessorRcPtr cpu;
 };
 
-void diagnostic(char *error, size_t size, const char *message) {
+void error_message(char *error, size_t size, const char *message) {
     if (size)
         std::snprintf(error, size, "%s", message);
 }
@@ -32,19 +33,22 @@ int antitone_output_parameters(uint32_t target, double *parameters) {
 }
 
 void *antitone_ocio_create(uint32_t target, char *error, size_t error_size) {
+    antitone::NativeLog diagnostic("ocio", "create");
     try {
         if (std::string(antitone::OCIO::GetVersion()) != "2.6.0")
             throw std::runtime_error("OCIO runtime version must be 2.6.0");
         auto renderer = std::make_unique<Renderer>();
         renderer->cpu = antitone::rendering(target)->getDefaultCPUProcessor();
+        diagnostic.complete();
         return renderer.release();
     } catch (const std::exception &e) {
-        diagnostic(error, error_size, e.what());
+        error_message(error, error_size, e.what());
         return nullptr;
     }
 }
 
 void *antitone_ocio_reference_create(const double *parameters, char *error, size_t error_size) {
+    antitone::NativeLog diagnostic("ocio", "reference_create");
     try {
         if (std::string(antitone::OCIO::GetVersion()) != "2.6.0")
             throw std::runtime_error("OCIO runtime version must be 2.6.0");
@@ -57,9 +61,10 @@ void *antitone_ocio_reference_create(const double *parameters, char *error, size
         auto renderer = std::make_unique<Renderer>();
         renderer->cpu =
             antitone::OCIO::Config::CreateRaw()->getProcessor(group)->getDefaultCPUProcessor();
+        diagnostic.complete();
         return renderer.release();
     } catch (const std::exception &e) {
-        diagnostic(error, error_size, e.what());
+        error_message(error, error_size, e.what());
         return nullptr;
     }
 }
@@ -74,7 +79,7 @@ int antitone_ocio_apply(void *handle, float *rgb, size_t count, char *error, siz
         }
         return 0;
     } catch (const std::exception &e) {
-        diagnostic(error, error_size, e.what());
+        error_message(error, error_size, e.what());
         return -1;
     }
 }

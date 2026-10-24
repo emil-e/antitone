@@ -284,11 +284,12 @@ impl Document {
         }
 
         self.validate_with_device(device)?;
-        println!(
-            "raw_import sources={} seconds={:.6}",
-            paths.len(),
-            started.elapsed().as_secs_f64()
+        log::info!(
+            sources = paths.len(),
+            seconds = started.elapsed().as_secs_f64();
+            "raw_import"
         );
+
         Ok(())
     }
 
@@ -467,10 +468,7 @@ pub(super) fn open_source(path: &Path, wb: Option<[f64; 4]>) -> Result<(Source, 
     let started = std::time::Instant::now();
     let raw = RawFile::open_with_wb(&path, wb)
         .map_err(|error| failure(format!("{}: {error}", path.display())))?;
-    println!(
-        "source_registration header_seconds={:.6}",
-        started.elapsed().as_secs_f64()
-    );
+    log::debug!(header_seconds = started.elapsed().as_secs_f64(); "source_registration");
     Ok((source_metadata(&path, &raw.metadata)?, raw))
 }
 

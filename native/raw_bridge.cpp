@@ -1,4 +1,5 @@
 #include "raw_bridge.h"
+#include "logging.h"
 #include <libraw/libraw.h>
 #include <algorithm>
 #include <array>
@@ -297,11 +298,14 @@ extern "C" const char *antitone_raw_version() {
 
 extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out, char *error,
                                    size_t size) try {
+    antitone::NativeLog diagnostic("raw", "open");
     auto raw = std::make_unique<LibRaw>();
     raw->imgdata.params.use_camera_matrix = 1;
     SonyLensCapture lens;
     raw->set_exifparser_handler(sony_lens_tag, &lens);
     int code = raw->open_file(path);
+    if (code != 0)
+        diagnostic.complete(code, 2);
     raw->set_exifparser_handler(nullptr, nullptr);
     if (check(code, error, size))
         return nullptr;
@@ -312,6 +316,7 @@ extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out, c
     }
     metadata(*raw, *out);
     out->vendor.sony_lens = selected_sony_lens(*raw, lens);
+    diagnostic.complete();
     return raw.release();
 } catch (const std::bad_alloc &) {
 
@@ -376,11 +381,14 @@ extern "C" int antitone_raw_is_dng(const void *handle) {
 }
 
 extern "C" int antitone_raw_unpack(void *handle, int threads, char *error, size_t size) {
+    antitone::NativeLog diagnostic("raw", "unpack");
     if (check_threads(threads, error, size))
         return -1;
     ThreadBudget budget(threads);
     auto &raw = *static_cast<LibRaw *>(handle);
     int code = raw.unpack();
+    if (code != 0)
+        diagnostic.complete(code, 2);
     if (check(code, error, size))
         return code;
     const auto &d = raw.imgdata.rawdata;
@@ -389,6 +397,7 @@ extern "C" int antitone_raw_unpack(void *handle, int threads, char *error, size_
                       "Probe requires integer Bayer data without a repeated black pattern");
         return -1;
     }
+    diagnostic.complete();
     return 0;
 }
 
@@ -454,6 +463,7 @@ extern "C" int antitone_raw_capture_flags(const void *handle, uint64_t *words, s
 
 extern "C" int antitone_raw_develop(void *handle, const double *wb, int output_color, int threads,
                                     AntitoneRawView *view, char *error, size_t size) {
+    antitone::NativeLog diagnostic("raw", "develop");
     if (check_threads(threads, error, size))
         return -1;
     ThreadBudget budget(threads);
@@ -479,6 +489,8 @@ extern "C" int antitone_raw_develop(void *handle, const double *wb, int output_c
     p.use_fuji_rotate = 0;
     p.camera_profile = p.output_profile = nullptr;
     int code = raw.dcraw_process();
+    if (code != 0)
+        diagnostic.complete(code, 2);
     if (check(code, error, size))
         return code;
     const auto &d = raw.imgdata;
@@ -494,6 +506,7 @@ extern "C" int antitone_raw_develop(void *handle, const double *wb, int output_c
     view->warnings = d.process_warnings;
     for (int c = 0; c < 4; ++c)
         view->pre_mul[c] = d.color.pre_mul[c];
+    diagnostic.complete();
     return 0;
 }
 

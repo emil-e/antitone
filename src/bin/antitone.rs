@@ -6,8 +6,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Antitone {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
+
+    let _session = antitone::logging::init();
+    log::info!(libraw = antitone::raw::version().as_str(); "native_runtime");
+
     let initial = argument.map(std::path::PathBuf::from);
-    host::run("Antitone", move |device, queue, cx| {
+    let outcome = host::run("Antitone", move |device, queue, cx| {
         antitone::platform::macos::set_application_icon()?;
         let mut editor = Editor::new(device, queue);
         if let Some(path) = initial {
@@ -15,6 +19,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         editor.restore_ui_preferences();
         Ok(editor)
-    })?;
-    Ok(())
+    });
+
+    match &outcome {
+        Ok(frames) => log::info!(frames = *frames; "session_finished"),
+        Err(error) => log::error!(error = error.to_string().as_str(); "session_failed"),
+    }
+
+    outcome.map(|_| ())
 }

@@ -164,6 +164,7 @@ impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiContext<'scope, A>
     Host<'scope, A, F>
 {
     fn fail(&mut self, event_loop: &ActiveEventLoop, error: Box<dyn std::error::Error>) {
+        log::error!(error = error.to_string().as_str(); "host_failed");
         if let Some(guard) = self
             .state
             .as_ref()
@@ -344,11 +345,12 @@ impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiContext<'scope, A>
                 Ok(())
             }
             WindowEvent::Occluded(occluded) => {
-                println!(
-                    "presentation window occluded={occluded} visible={:?} minimized={:?} focused={}",
-                    state.gpu.window.is_visible(),
-                    state.gpu.window.is_minimized(),
-                    state.gpu.window.has_focus()
+                log::debug!(
+                    occluded,
+                    visible:? = state.gpu.window.is_visible(),
+                    minimized:? = state.gpu.window.is_minimized(),
+                    focused = state.gpu.window.has_focus();
+                    "window_occlusion"
                 );
                 Ok(())
             }
@@ -713,11 +715,12 @@ impl Gpu {
         };
         // No application or background submitters exist during initial configuration.
         gpu.configure(SubmissionGate::default())?;
-        println!(
-            "presentation adapter={:?} target={:?}",
-            gpu.adapter.get_info(),
-            gpu.config.format
+        log::info!(
+            adapter:? = gpu.adapter.get_info(),
+            format:? = gpu.config.format;
+            "gpu_initialized"
         );
+
         Ok(gpu)
     }
 
@@ -752,12 +755,13 @@ impl Gpu {
         }
         self.config.width = size.width;
         self.config.height = size.height;
-        println!(
-            "presentation native_window visible={:?} minimized={:?} focused={}",
-            self.window.is_visible(),
-            self.window.is_minimized(),
-            self.window.has_focus()
+        log::debug!(
+            visible:? = self.window.is_visible(),
+            minimized:? = self.window.is_minimized(),
+            focused = self.window.has_focus();
+            "window_configured"
         );
+
         submissions.configure(|| self.surface.configure(&self.device, &self.config));
         macos::configure_sdr(&self.surface)?;
         self.needs_configure = false;

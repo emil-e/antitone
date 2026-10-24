@@ -48,6 +48,15 @@ impl Request {
         if self.pending.replace(false) {
             self.delivered.set(false);
             self.prepared.set(false);
+            if allow {
+                // AppKit may exit here without running the executable's stack destructors.
+                log::info!(
+                    target: "antitone::logging",
+                    reason = "native_quit";
+                    "session_finished"
+                );
+                log::logger().flush();
+            }
             self.app.replyToApplicationShouldTerminate(allow);
         }
     }

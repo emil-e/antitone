@@ -915,12 +915,13 @@ impl RawFile {
                 self.call_threads() as u32,
             )
             .map_err(|e| Error::Raw(e.to_string()))?;
-            println!(
-                "dng_development size={:?} priority={:?} timings={:?}",
-                source.dimensions(),
-                self.priority,
-                source.timings()
+            log::debug!(
+                size:? = source.dimensions(),
+                priority:? = self.priority,
+                timings:? = source.timings();
+                "dng_development"
             );
+
             self.set_dng_header(source.header());
             self.dng_source = Some(source);
             self.unpacked = true;
@@ -959,13 +960,16 @@ impl RawFile {
             return Err(native_error("develop", &error));
         }
         let view = unsafe { view.assume_init() };
-        println!(
-            "raw_development width={} height={} priority={:?} threads={threads} unpack_seconds={unpack_seconds:.6} process_seconds={:.6}",
-            view.width,
-            view.height,
-            self.priority,
-            tick.elapsed().as_secs_f64()
+        log::debug!(
+            width = view.width,
+            height = view.height,
+            priority:? = self.priority,
+            threads,
+            unpack_seconds,
+            process_seconds = tick.elapsed().as_secs_f64();
+            "raw_development"
         );
+
         if output_color == 0 {
             if let Some(geometry) = &self.correction {
                 let started = std::time::Instant::now();
@@ -984,14 +988,16 @@ impl RawFile {
                     pixels: std::ptr::null(),
                     ..view
                 });
-                println!(
-                    "embedded_lens_development width={} height={} reconstruction_seconds={:.6} corrected_bytes={} eligibility_bytes={} native_image_retained=false",
-                    corrected.size[0],
-                    corrected.size[1],
-                    started.elapsed().as_secs_f64(),
-                    corrected.pixels.capacity() * size_of::<[f32; 3]>(),
-                    corrected.eligibility.retained_bytes()
+                log::debug!(
+                    width = corrected.size[0],
+                    height = corrected.size[1],
+                    reconstruction_seconds = started.elapsed().as_secs_f64(),
+                    corrected_bytes = corrected.pixels.capacity() * size_of::<[f32; 3]>(),
+                    eligibility_bytes = corrected.eligibility.retained_bytes(),
+                    native_image_retained = false;
+                    "embedded_lens_development"
                 );
+
                 self.corrected = Some(corrected);
             } else {
                 self.camera_view = Some(view);
@@ -1258,7 +1264,13 @@ fn ffi_string(bytes: &[c_char]) -> String {
 }
 
 fn native_error(operation: &str, error: &[c_char]) -> Error {
-    Error::Raw(format!("{operation}: {}", ffi_string(error)))
+    let message = ffi_string(error);
+    log::warn!(
+        operation,
+        error = message.as_str();
+        "raw_failed"
+    );
+    Error::Raw(format!("{operation}: {message}"))
 }
 
 #[cfg(test)]

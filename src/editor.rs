@@ -546,7 +546,7 @@ impl Editor {
                         .insert("roll-calibration".into(), true);
                 }
             }
-            Err(error) => eprintln!("UI preferences not loaded (file left unchanged): {error}"),
+            Err(error) => log::warn!(error = error.to_string().as_str(); "preferences_load_failed"),
         }
     }
 
@@ -565,7 +565,7 @@ impl Editor {
             && let Err(error) = store.save(&self.preferences)
         {
             self.status = format!("Unable to save application preferences: {error}");
-            eprintln!("{}", self.status);
+            log::warn!(error = self.status.as_str(); "preferences_save_failed");
         }
     }
 
@@ -1292,7 +1292,7 @@ impl host::App for Editor {
         if let Some(store) = &mut self.preference_store
             && let Err(error) = store.save(&self.preferences)
         {
-            eprintln!("UI preferences not saved: {error}");
+            log::warn!(error = error.to_string().as_str(); "preferences_save_failed");
         }
     }
 

@@ -363,6 +363,8 @@ fn main() -> host::Result<()> {
     } else {
         None
     };
+    #[cfg(feature = "logging")]
+    let _session = antitone::logging::init();
     let report = Arc::new(Mutex::new(Report::default()));
     let outcome = report.clone();
     let (stop, receive) = mpsc::channel();

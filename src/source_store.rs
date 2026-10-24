@@ -534,7 +534,7 @@ impl SourceStore {
             if allowed.contains(&key)
                 && let Err(error) = target.publish_resource(key, resource, bytes)
             {
-                eprintln!("CPU cache transfer rejected: {error}");
+                log::warn!(error = error.to_string().as_str(); "cpu_cache_transfer_rejected");
             }
         }
     }

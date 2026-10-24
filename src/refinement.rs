@@ -132,15 +132,16 @@ pub fn refine(
     if generation.load(Ordering::Relaxed) != expected {
         return Ok(None);
     }
-    println!(
-        "settled_preview source={}x{} output={}x{} target={target:?} seconds={:.3} sampling_seconds={:.3} gpu_seconds={:.3}",
-        view.area.width,
-        view.area.height,
-        width,
-        height,
-        start.elapsed().as_secs_f64(),
-        sampling.as_secs_f64(),
-        gpu.as_secs_f64()
+    log::debug!(
+        source_width = view.area.width,
+        source_height = view.area.height,
+        output_width = width,
+        output_height = height,
+        target:?,
+        seconds = start.elapsed().as_secs_f64(),
+        sampling_seconds = sampling.as_secs_f64(),
+        gpu_seconds = gpu.as_secs_f64();
+        "settled_preview"
     );
     Ok(Some(Arc::new(output)))
 }

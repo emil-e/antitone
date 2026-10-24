@@ -6,6 +6,28 @@ Run from the repository root after [setup](build-and-run.md#build-and-run). Exam
 
 Choose a diagnostic for a concrete question. A command's presence here does not make it a routine gate: numerical agreement, offscreen input, a visible native window and physical photographic acceptance are different evidence, and timings and captures are observations, not acceptance thresholds.
 
+## Collecting a session log
+
+The desktop app writes readable stderr and local JSON-lines session files automatically, including launches from Finder. Console lines show UTC time, level, target, thread and `key=value` fields; session files preserve typed fields. To report a problem:
+
+1. Reproduce it, then quit Antitone to drain queued session-file events.
+2. In Finder, choose **Go → Go to Folder** and enter `~/Library/Logs/Antitone`.
+3. Copy the newest `session-…` folder and share its `.jsonl` files together. `current.jsonl` is newest; `1.jsonl` and `2.jsonl` hold earlier events after rotation.
+
+Logs stay on the machine until shared. Review them first: propagated errors and panic details can contain file paths and usernames, and startup records identify the GPU and native runtime. Abrupt termination can lose queued events; copy the folder before repeated relaunches age it out.
+
+Each session retains up to three 8 MiB files. Startup keeps five sessions where possible, protecting sessions still open in other processes. A bounded background queue keeps normal log IO out of paint callbacks; overload is reported as `records_dropped`. File failures leave console logging active; unavailable stderr does not stop file capture. Use a writable `ANTITONE_LOG_DIR` and relaunch if capture fails.
+
+During normal capture, stderr has its own bounded queue and is best effort under backpressure: a full console queue drops console-only lines, and each console flush waits at most 250 ms. A stalled reader therefore cannot hold session-file capture or native Quit.
+
+Both outputs use the same filter: the default app level is `info`, and dependencies are capped at `warn`. For detailed source, thumbnail, native and preview timings, launch with `debug` and optionally a separate capture directory:
+
+```sh
+ANTITONE_LOG=debug ANTITONE_LOG_DIR="$PWD/.cache/logs" cargo app
+```
+
+`ANTITONE_LOG` accepts `off`, `error`, `warn`, `info`, `debug` or `trace`. Records carry a timestamp, level, target, thread, event name and typed fields. Rust instrumentation uses `log` key/value fields, for example `log::warn!(request, error = reason.as_str(); "source_failed")`; native bridges use [the shared scope logger](../native/logging.h). Standalone probe output and test reports remain on stdout.
+
 ## Editor and layout checks
 
 Build and open a saved project for real-use inspection:
@@ -176,21 +198,20 @@ The compact-header check covers normal/narrow 1×/2× layouts, disclosure and me
 
 ## Investigating responsiveness
 
-Use import/development, selected-preview/switch, thumbnail, acquisition and original-view logs for a reported workload. Match phases and inputs; filesystem caching is uncontrolled. Backend Ready or paint-command recording is not GPU completion or physical presentation, and no minimum hardware target or general latency threshold is established. The `authored_` [worker checks](development.md#feature-specific-checks) use repository fixtures; their deadlines detect stalled tests, not unacceptable photographic latency.
+Capture a [debug session](#collecting-a-session-log) to inspect import/development, selected-preview/switch, thumbnail, acquisition and original-view events for a reported workload. Match phases and inputs; filesystem caching is uncontrolled. Backend Ready or paint-command recording is not GPU completion or physical presentation, and no minimum hardware target or general latency threshold is established. The `authored_` [worker checks](development.md#feature-specific-checks) use repository fixtures; their deadlines detect stalled tests, not unacceptable photographic latency.
 
 ### Separating input, queue work and presentation
 
 Enable hosted [latency tracing](../src/platform/latency.rs) when kernel timings cannot explain an interaction:
 
 ```sh
-mkdir -p .cache/probes
-ANTITONE_LATENCY_TRACE=1 cargo app > .cache/probes/latency.log 2>&1
+ANTITONE_LATENCY_TRACE=1 ANTITONE_LOG_DIR="$PWD/.cache/logs" cargo app
 # Requires an explicitly authorized, unoccluded desktop window:
-ANTITONE_LATENCY_TRACE=1 cargo test --locked --offline --features editor \
-  --test native_host -- --run editor
+ANTITONE_LATENCY_TRACE=1 ANTITONE_LOG_DIR="$PWD/.cache/logs" \
+  cargo test --locked --offline --features editor --test native_host -- --run editor
 ```
 
-Match frame/completion rows by ID. Timestamps separate drawable acquisition, UI handling, encoding, submission and the present call; input starts at delivery to winit, not the physical gesture. Completion callbacks attach under the shared submission gate; callback observation includes polling/thread scheduling and is not a hardware GPU timestamp. Metal allocation includes resources retained by native commands but not all driver/process memory — sampled peaks are not exhaustive, and Arc counts or declared bytes do not establish aggregate pressure safety. Measure same-PID RSS separately; on Apple Silicon these views overlap and must not be added.
+Match `latency_frame`/`latency_completion` session events by their `id` field. Timestamps separate drawable acquisition, UI handling, encoding, submission and the present call; input starts at delivery to winit, not the physical gesture. Completion callbacks attach under the shared submission gate; callback observation includes polling/thread scheduling and is not a hardware GPU timestamp. Metal allocation includes resources retained by native commands but not all driver/process memory — sampled peaks are not exhaustive, and Arc counts or declared bytes do not establish aggregate pressure safety. Measure same-PID RSS separately; on Apple Silicon these views overlap and must not be added.
 
 For native scheduling and shared native builds, see [native development](native-development.md#editor-scheduling).
 

@@ -458,12 +458,15 @@ impl Thumbnails {
         self.protect_cpu();
         let _ = self.sources.get_proxy(&native_key);
         let bytes = preview.proxy.byte_len();
-        println!(
-            "selected_preview request={request} source_id={} cache=memory dimensions={}x{} gpu_pixel_bytes={bytes} preparation_ms={:.6}",
-            id.0,
-            proxy.width,
-            proxy.height,
-            started.elapsed().as_secs_f64() * 1000.
+        log::debug!(
+            request,
+            source_id = id.0,
+            cache = "memory",
+            width = proxy.width,
+            height = proxy.height,
+            gpu_pixel_bytes = bytes,
+            preparation_ms = started.elapsed().as_secs_f64() * 1000.;
+            "selected_preview"
         );
         Ok(Some(preview))
     }
@@ -497,7 +500,7 @@ impl Thumbnails {
         // Readmit a live candidate/selected native by-product after the accepted budget is bound.
         let _ = self.sources.get(&key);
         if let Err(error) = self.sources.publish_proxy(key, proxy) {
-            eprintln!("Selected proxy cache admission rejected: {error}");
+            log::warn!(error = error.to_string().as_str(); "selected_proxy_admission_rejected");
         }
     }
 

@@ -317,6 +317,7 @@ fn actual_native_development_preserves_frozen_pixels_and_native_charge() {
 #[ignore = "explicit composed native-overlap diagnostic; needs private RAW samples"]
 fn composed_native_overlap_throughput_and_foreground_latency() {
     use std::time::{Duration, Instant};
+    let _session = std::env::var_os("ANTITONE_LOG_DIR").and_then(|_| crate::logging::init());
     fn same_development(a: &crate::scan::DevelopedSource, b: &crate::scan::DevelopedSource) {
         let a = a.camera_image().unwrap();
         let b = b.camera_image().unwrap();

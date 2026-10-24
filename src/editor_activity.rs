@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 const PROMINENCE_DELAY: Duration = Duration::from_millis(300);
 
 /// Foreground task presentation keyed by controller-owned requests.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(super) enum Task {
     Import(u64),
     Open(u64),
@@ -206,6 +206,8 @@ impl TaskView {
 impl TaskActivity {
     /// Replaces only presentation. The controller must supersede execution before beginning work.
     pub fn begin(&mut self, task: Task) {
+        log::info!(task:?; "activity_started");
+
         self.active = Some(ActiveTask {
             task,
             started: Instant::now(),
@@ -248,8 +250,12 @@ impl TaskActivity {
             .active
             .as_ref()
             .is_some_and(|active| active.task.request() == request);
-        if current {
-            self.active = None;
+        if current && let Some(active) = self.active.take() {
+            log::info!(
+                request:?,
+                seconds = active.started.elapsed().as_secs_f64();
+                "activity_finished"
+            );
         }
         current
     }

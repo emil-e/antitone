@@ -87,7 +87,7 @@ pub(super) fn resolve(
             let cached = cache.and_then(|cache| match cache.load(builtin, DEFAULT_GRID) {
                 Ok(asset) => asset,
                 Err(e) => {
-                    eprintln!("look cache ignored: {e}");
+                    log::warn!(error = e.to_string().as_str(); "look_cache_ignored");
                     None
                 }
             });
@@ -110,7 +110,7 @@ pub(super) fn resolve(
                     if let Some(cache) = cache
                         && let Err(e) = cache.store(builtin, &asset)
                     {
-                        eprintln!("look cache write failed: {e}");
+                        log::warn!(error = e.to_string().as_str(); "look_cache_write_failed");
                     }
                     asset
                 }

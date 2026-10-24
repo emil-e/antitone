@@ -38,10 +38,12 @@ pub fn configure_sdr(surface: &wgpu::Surface<'_>) -> Result<(), Error> {
             "Metal layer SDR/color-space configuration did not persist".into(),
         ));
     }
-    println!(
-        "presentation_layer color_space={actual} pixel_format={:?} EDR=false drawable_size={:?}",
-        layer.pixelFormat(),
-        layer.drawableSize()
+    log::debug!(
+        color_space = actual.to_string().as_str(),
+        pixel_format:? = layer.pixelFormat(),
+        edr = false,
+        drawable_size:? = layer.drawableSize();
+        "presentation_layer"
     );
     Ok(())
 }

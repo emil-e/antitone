@@ -12,6 +12,7 @@ default-members = ["."]
 resolver = "3"
 
 [dependencies]
+log = { version = "=0.4.34", features = ["std", "kv"] }
 glam = { version = "=0.34.1", default-features = false, features = ["std", "f64"] }
 wgpu = { version = "=30.0.1", optional = true, default-features = false, features = ["std", "metal", "glsl", "wgsl"] }
 pollster = { version = "=1.0.1", optional = true }
@@ -54,7 +55,8 @@ objc2-quartz-core = { version = "=0.3.2", optional = true, default-features = fa
 
 [features]
 ui-tests = ["editor", "ocio-reference", "dep:egui_kittest", "image/png"]
-editor = ["ui", "raw", "dng-sdk", "export", "project", "dep:rfd", "dep:blake3", "dep:image", "dep:async-lock", "dep:event-listener", "dep:futures-lite", "dep:blocking"]
+logging = ["dep:serde_json", "dep:tempfile"]
+editor = ["logging", "ui", "raw", "dng-sdk", "export", "project", "dep:rfd", "dep:blake3", "dep:image", "dep:async-lock", "dep:event-listener", "dep:futures-lite", "dep:blocking"]
 project = ["dep:serde", "dep:serde_json", "dep:tempfile", "dep:blake3", "dep:base64", "dep:flate2", "dep:libc", "glam/serde"]
 ui = ["gpu", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:winit", "dep:half", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-core-foundation", "dep:objc2-core-graphics", "dep:objc2-quartz-core", "dep:objc2-foundation", "dep:muda", "dep:async-executor", "dep:futures-channel"]
 raw = ["dep:cc", "dep:libc", "dep:blake3"]

@@ -143,6 +143,12 @@ impl Editor {
         self.export_summary = None;
         self.tasks.begin(Task::Export(id));
         let total = request.photos.len();
+        log::info!(
+            request = id,
+            total;
+            "export_started"
+        );
+
         let services = self.export_services.clone();
         let retire = cancelled.cancel_on_drop();
         let Some(task) = cx.spawn(move |cx| async move {
@@ -196,6 +202,7 @@ impl Editor {
         if let Some(cancelled) = &self.export_operation.cancelled {
             cancelled.cancel();
         }
+        log::info!(request = id; "export_cancellation_requested");
         self.tasks.cancelling(TaskRequest::Export(id));
     }
 
@@ -220,6 +227,24 @@ impl Editor {
     pub(super) fn batch_result(&mut self, id: u64, summary: Summary) {
         if self.export_operation.pending != Some(id) {
             return;
+        }
+        log::info!(
+            request = id,
+            total = summary.total,
+            exported = summary.exported(),
+            failed = summary.failed(),
+            stopped = summary.stopped;
+            "export_finished"
+        );
+
+        for outcome in &summary.outcomes {
+            if let Outcome::Failed { error, .. } = outcome {
+                log::warn!(
+                    request = id,
+                    error = error.as_str();
+                    "export_photo_failed"
+                );
+            }
         }
         self.export_operation = State::default();
         if !self.tasks.finish(TaskRequest::Export(id)) {

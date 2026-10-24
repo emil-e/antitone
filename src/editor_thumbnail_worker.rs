@@ -69,9 +69,10 @@ impl Worker {
                         proxy
                     }
                     Err(error) => {
-                        eprintln!(
-                            "thumbnail disk_cache_miss source_id={} reason={error}",
-                            job.source.id.0
+                        log::debug!(
+                            source_id = job.source.id.0,
+                            error = error.to_string().as_str();
+                            "thumbnail_disk_cache_miss"
                         );
                         None
                     }
@@ -302,9 +303,10 @@ impl Worker {
             if let Some(disk) = &self.disk
                 && let Err(error) = disk.store_if_missing(&job.key.source, &proxy)
             {
-                eprintln!(
-                    "thumbnail disk_cache_write_failed source_id={} reason={error}",
-                    job.source.id.0
+                log::warn!(
+                    source_id = job.source.id.0,
+                    error = error.to_string().as_str();
+                    "thumbnail_disk_cache_write_failed"
                 );
             }
             proper = true;
@@ -325,17 +327,18 @@ impl Worker {
             )
         })()
         .map_err(|error: Error| error.to_string());
-        println!(
-            "thumbnail source_id={} target={:?} source_cache_hit={} disk_cache_hit={} proper={proper} render={} cancelled={} failed={} seconds={:.6} phases={:?}",
-            job.source.id.0,
-            job.key.target,
-            work.cache_hit,
-            work.metrics.disk_hit,
-            job.render,
-            !self.active(job),
-            image.is_err(),
-            work.started.elapsed().as_secs_f64(),
-            work.metrics
+        log::debug!(
+            source_id = job.source.id.0,
+            target:? = job.key.target,
+            source_cache_hit = work.cache_hit,
+            disk_cache_hit = work.metrics.disk_hit,
+            proper,
+            render = job.render,
+            cancelled = !self.active(job),
+            failed = image.is_err(),
+            seconds = work.started.elapsed().as_secs_f64(),
+            phases:? = work.metrics;
+            "thumbnail"
         );
         Outcome {
             ticket: job.ticket,
