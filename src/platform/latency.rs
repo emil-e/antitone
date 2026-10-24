@@ -56,8 +56,14 @@ impl Trace {
 
     fn new() -> Self {
         let (send, receive) = mpsc::channel();
-        println!(
-            "latency_trace clock=host_monotonic_ns input_origin=winit_delivery completion=callback_observation_not_gpu_timestamp presentation=present_call_not_scanout poll_interval_ms=2 metal_bytes=allocated_resources_not_process_memory"
+        log::info!(
+            clock = "host_monotonic_ns",
+            input_origin = "winit_delivery",
+            completion = "callback_observation_not_gpu_timestamp",
+            presentation = "present_call_not_scanout",
+            poll_interval_ms = 2,
+            metal_bytes = "allocated_resources_not_process_memory";
+            "latency_trace"
         );
         Self {
             origin: Instant::now(),
@@ -136,45 +142,46 @@ impl Trace {
     ) {
         let bytes = crate::gpu::allocated_resource_bytes(device);
         self.peak_resource_bytes = self.peak_resource_bytes.max(bytes.unwrap_or(0));
-        let ns =
-            |at: Option<Instant>| at.map_or_else(|| "-".to_owned(), |at| self.ns(at).to_string());
-        println!(
-            "latency_frame id={} input_count={} input_first_ns={} input_last_ns={} draw_ns={} acquire_status={} acquire_start_ns={} acquire_end_ns={} ui_start_ns={} ui_end_ns={} encode_start_ns={} submit_start_ns={} submit_end_ns={} present_end_ns={} request={} revision={} metal_resource_bytes={}",
-            frame.id,
-            frame.input.map_or(0, |input| input.count),
-            ns(frame.input.map(|input| input.first)),
-            ns(frame.input.map(|input| input.last)),
-            self.ns(frame.draw),
-            frame.acquire_status,
-            ns(frame.acquire_start),
-            ns(frame.acquire_end),
-            ns(frame.ui_start),
-            ns(frame.ui_end),
-            ns(frame.encode_start),
-            ns(frame.submit_start),
-            ns(frame.submit_end),
-            ns(frame.present_end),
-            revision.map_or_else(|| "-".to_owned(), |r| r.0.to_string()),
-            revision.map_or_else(|| "-".to_owned(), |r| r.1.to_string()),
-            bytes.map_or_else(|| "-".to_owned(), |bytes| bytes.to_string())
+        let ns = |at: Option<Instant>| at.map(|at| self.ns(at));
+        log::info!(
+            id = frame.id,
+            input_count = frame.input.map_or(0, |input| input.count),
+            input_first_ns = ns(frame.input.map(|input| input.first)),
+            input_last_ns = ns(frame.input.map(|input| input.last)),
+            draw_ns = self.ns(frame.draw),
+            acquire_status = frame.acquire_status,
+            acquire_start_ns = ns(frame.acquire_start),
+            acquire_end_ns = ns(frame.acquire_end),
+            ui_start_ns = ns(frame.ui_start),
+            ui_end_ns = ns(frame.ui_end),
+            encode_start_ns = ns(frame.encode_start),
+            submit_start_ns = ns(frame.submit_start),
+            submit_end_ns = ns(frame.submit_end),
+            present_end_ns = ns(frame.present_end),
+            request = revision.map(|r| r.0),
+            revision = revision.map(|r| r.1),
+            metal_resource_bytes = bytes;
+            "latency_frame"
         );
     }
 
     pub(super) fn configured(&self, start: Instant, width: u32, height: u32) {
-        println!(
-            "latency_configure start_ns={} end_ns={} width={width} height={height}",
-            self.ns(start),
-            self.ns(Instant::now())
+        log::info!(
+            start_ns = self.ns(start),
+            end_ns = self.ns(Instant::now()),
+            width,
+            height;
+            "latency_configure"
         );
     }
 
     pub(super) fn flush(&self) {
         for done in self.receive.try_iter() {
-            println!(
-                "latency_completion id={} observed_ns={} remaining={}",
-                done.frame,
-                self.ns(done.at),
-                done.remaining
+            log::info!(
+                id = done.frame,
+                observed_ns = self.ns(done.at),
+                remaining = done.remaining;
+                "latency_completion"
             );
         }
     }
@@ -190,12 +197,12 @@ impl Trace {
 
     pub(super) fn summary(&self) {
         self.flush();
-        println!(
-            "latency_summary frames={} peak_uncompleted_frames={} peak_sampled_metal_resource_bytes={} remaining={}",
-            self.next_frame,
-            self.peak_outstanding,
-            self.peak_resource_bytes,
-            self.outstanding.load(Ordering::Relaxed)
+        log::info!(
+            frames = self.next_frame,
+            peak_uncompleted_frames = self.peak_outstanding,
+            peak_sampled_metal_resource_bytes = self.peak_resource_bytes,
+            remaining = self.outstanding.load(Ordering::Relaxed);
+            "latency_summary"
         );
     }
 

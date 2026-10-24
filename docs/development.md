@@ -357,9 +357,9 @@ cargo test --locked --release --features ui --test native_executor -- --run
 cargo test --locked --features ui --test native_host -- --run fullscreen
 # Native menu installation/state/accelerators/event wakeup and file-panel Edit restoration.
 cargo test --locked --features ui --test native_menus -- --run
-# Isolated child apps: native termination negotiation and cleanup; no real logout/shutdown.
-cargo test --locked --features ui --test native_termination -- --run
-cargo test --locked --release --features ui --test native_termination -- --run
+# Isolated child apps: native termination, cleanup and both log sinks; no real logout/shutdown.
+cargo test --locked --features ui,logging --test native_termination -- --run
+cargo test --locked --release --features ui,logging --test native_termination -- --run
 # Actual Editor composition, native menus and selected-image surface passes; authored inputs only.
 cargo test --locked --features editor --test native_host -- --run editor
 cargo test --locked --release --features editor --test native_host -- --run editor

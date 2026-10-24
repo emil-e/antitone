@@ -230,6 +230,7 @@ impl host::App for NativeApp {
             "system presentation was not restored before cleanup"
         );
         record(&self.marker, "cleanup");
+        log::info!(target: "antitone::test", "native_cleanup");
         if self.mode == Mode::CleanupPanic {
             record(&self.marker, "panic");
             panic!("fixture panic before native termination approval");
@@ -335,11 +336,14 @@ impl host::App for NativeApp {
 
 impl Drop for NativeApp {
     fn drop(&mut self) {
+        log::info!(target: "antitone::test", "native_drop");
         record(&self.marker, "drop");
     }
 }
 
 fn child(mode: Mode, marker: PathBuf) -> host::Result<()> {
+    #[cfg(feature = "logging")]
+    let _session = antitone::logging::Session::from_env()?;
     let result = marker.clone();
     let entry = Arc::new(AtomicUsize::new(0));
     let original = entry.clone();
@@ -414,6 +418,11 @@ fn run() -> host::Result<()> {
             .arg("--child")
             .arg(mode.name())
             .arg(&marker)
+            .env(
+                "ANTITONE_LOG_DIR",
+                scratch.0.join(format!("{}-logs", mode.name())),
+            )
+            .env("ANTITONE_LOG", "info")
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr))
             .spawn()?;
@@ -472,6 +481,76 @@ fn run() -> host::Result<()> {
             "termination decision/cleanup order for {}",
             mode.name()
         );
+        #[cfg(feature = "logging")]
+        {
+            let log_root = scratch.0.join(format!("{}-logs", mode.name()));
+            let session = std::fs::read_dir(log_root)?
+                .flatten()
+                .find(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+                .unwrap();
+            let text = std::fs::read_to_string(session.path().join("current.jsonl"))?;
+            let rows: Vec<serde_json::Value> = text
+                .lines()
+                .map(serde_json::from_str)
+                .collect::<Result<_, _>>()?;
+
+            let finished: Vec<_> = rows
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| row["event"] == "session_finished")
+                .collect();
+
+            let console =
+                std::fs::read_to_string(scratch.0.join(format!("{}.stderr", mode.name())))?;
+            let console_finished: Vec<_> = console
+                .lines()
+                .enumerate()
+                .filter(|(_, line)| line.contains(": session_finished"))
+                .collect();
+
+            if matches!(
+                mode,
+                Mode::Approve
+                    | Mode::CancelRetry
+                    | Mode::BlockedRetry
+                    | Mode::FullscreenApprove
+                    | Mode::NativeModal
+            ) {
+                assert_eq!(
+                    finished.len(),
+                    1,
+                    "native approval must flush exactly one completion"
+                );
+
+                let position =
+                    |event: &str| rows.iter().position(|row| row["event"] == event).unwrap();
+                assert!(position("native_cleanup") < position("native_drop"));
+                assert!(position("native_drop") < finished[0].0);
+                assert_eq!(finished[0].1["fields"]["reason"], "native_quit");
+
+                assert_eq!(
+                    console_finished.len(),
+                    1,
+                    "native approval must drain readable stderr too"
+                );
+                let console_position = |event: &str| {
+                    console
+                        .lines()
+                        .position(|line| line.contains(&format!(": {event}")))
+                        .unwrap()
+                };
+
+                assert!(console_position("native_cleanup") < console_position("native_drop"));
+                assert!(console_position("native_drop") < console_finished[0].0);
+            } else {
+                assert!(
+                    finished.is_empty(),
+                    "cancelled/failed native termination must not report completion"
+                );
+                assert!(console_finished.is_empty());
+            }
+        }
+
         println!("native termination {}: passed", mode.name());
     }
     Ok(())

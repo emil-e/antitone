@@ -171,18 +171,22 @@ impl Editor {
                 self.correction.as_ref(),
             ) {
                 Ok(preview) => {
-                    println!(
-                        "selected_switch request={} cache_hit={} boundary=admission elapsed_ms={:.6}",
-                        self.id,
-                        preview.is_some(),
-                        started.elapsed().as_secs_f64() * 1000.
+                    log::debug!(
+                        request = self.id,
+                        cache_hit = preview.is_some(),
+                        boundary = "admission",
+                        elapsed_ms = started.elapsed().as_secs_f64() * 1000.;
+                        "selected_switch"
                     );
                     self.pending_preview = preview;
                 }
-                Err(error) => eprintln!(
-                    "selected_preview request={} unavailable reason={error}",
-                    self.id
-                ),
+                Err(error) => {
+                    log::debug!(
+                        request = self.id,
+                        error = error.to_string().as_str();
+                        "selected_preview_unavailable"
+                    )
+                }
             }
         }
     }
@@ -208,15 +212,23 @@ impl Editor {
         self.tasks.finish(TaskRequest::Photo(view));
         self.pending_preview = None;
         if let Some(timing) = &self.selection_timing {
-            println!(
-                "selected_switch request={view} success={} boundary=source_ready elapsed_ms={:.6}",
-                result.is_ok(),
-                timing.started.elapsed().as_secs_f64() * 1000.
+            log::debug!(
+                request = view,
+                success = result.is_ok(),
+                boundary = "source_ready",
+                elapsed_ms = timing.started.elapsed().as_secs_f64() * 1000.;
+                "selected_switch"
             );
         }
         self.busy = false;
         match result {
             Ok(ready) => {
+                log::info!(
+                    request = view,
+                    width = ready.area.width,
+                    height = ready.area.height;
+                    "source_ready"
+                );
                 if self.floor == 0. {
                     self.floor = ready.floor;
                 }
@@ -245,6 +257,12 @@ impl Editor {
                 self.document.visit.ready = Some(*ready);
             }
             Err(error) => {
+                log::warn!(
+                    request = view,
+                    error = error.as_str();
+                    "source_load_failed"
+                );
+
                 self.selection_timing = None;
                 self.status = error;
             }

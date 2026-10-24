@@ -67,6 +67,11 @@ impl Failure {
 
 impl Editor {
     pub(super) fn report_failure(&mut self, kind: FailureKind, details: String) {
+        log::warn!(
+            kind:?,
+            error = details.as_str();
+            "operation_failed"
+        );
         self.failure = Some(Failure { kind, details });
     }
 

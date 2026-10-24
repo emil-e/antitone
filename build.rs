@@ -2,6 +2,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=LIBRAW_SOURCE");
     println!("cargo:rerun-if-changed=native/raw_bridge.cpp");
     println!("cargo:rerun-if-changed=native/raw_bridge.h");
+    println!("cargo:rerun-if-changed=native/logging.h");
     #[cfg(feature = "raw")]
     {
         let root = std::env::var_os("LIBRAW_SOURCE")

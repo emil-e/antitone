@@ -29,8 +29,12 @@ pub mod gpu_export;
 pub mod image_recipe;
 pub mod lens;
 pub mod local_adjustments;
+#[cfg(feature = "logging")]
+pub mod logging;
 #[cfg(any(feature = "project", feature = "gpu"))]
 pub mod looks;
+#[cfg(any(feature = "raw", feature = "dng-sdk", feature = "ocio-reference"))]
+mod native_logging;
 pub mod photographic;
 #[cfg(feature = "ui")]
 pub mod platform;

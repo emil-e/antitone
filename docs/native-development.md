@@ -14,10 +14,11 @@ The thread budget does not parallelize every native phase. In pinned LibRaw 0.22
 
 Measure decode and development separately before changing the eight-thread cap or adding owners. A measured single-source example (serial unpack, sublinear process scaling, small cap-raise headroom) is recorded with the implementation that relied on it. More development threads can shorten only the parallel portion; independent-source overlap carries roll throughput through serial decode with separate mutable owners, foreground-yield checks and a shared thread budget. Neither a native budget nor the foreground permit is a measure of CPU/GPU occupancy.
 
-The maintained `composed_native_overlap_throughput_and_foreground_latency` diagnostic measures the production schedule at production priorities on real sources: a solo development, two overlapped background ones, and foreground demands arriving beside queued and in-flight background work. It reports wall times and per-image contention, fails unless every schedule reproduces the solo development pixel for pixel, and each run prints the pressure reading it observed. The bridge's timing lines report the thread team each call actually used — the only direct confirmation that the budget split reached the native call. Treat the timings as observations for that machine and source class, not acceptance thresholds:
+The maintained `composed_native_overlap_throughput_and_foreground_latency` diagnostic measures the production schedule at production priorities on real sources: a solo development, two overlapped background ones, and foreground demands arriving beside queued and in-flight background work. It reports wall times and per-image contention, fails unless every schedule reproduces the solo development pixel for pixel, and each run prints the pressure reading it observed. The `raw_development` events in a [debug session log](diagnostics.md#collecting-a-session-log) report the thread team passed to each successful LibRaw call, confirming that the budget split reached the native call. Treat the timings as observations for that machine and source class, not acceptance thresholds:
 
 ```sh
-ANTITONE_RAW_SAMPLES=/absolute/samples cargo test --locked --offline --release \
+ANTITONE_RAW_SAMPLES=/absolute/samples ANTITONE_LOG=debug \
+ANTITONE_LOG_DIR="$PWD/.cache/logs" cargo test --locked --offline --release \
   --features editor --lib composed_native_overlap -- --ignored --nocapture --test-threads=1
 ```
 

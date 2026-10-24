@@ -61,6 +61,7 @@ impl Editor {
         self.resume_source_after_document();
         match result {
             Ok(document) => {
+                log::info!(request = id; "project_saved");
                 self.document.accept_save(*document);
                 self.status = "Project saved".into();
                 self.resolve_failure(FailureKind::Save);

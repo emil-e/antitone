@@ -269,12 +269,18 @@ impl Editor {
                     "Project ready"
                 }
                 .into();
+                log::info!(request = id; "document_ready");
                 self.history_prepared(pending_history);
                 if let Some(kind) = failure_kind {
                     self.resolve_failure(kind);
                 }
             }
             Err(error) => {
+                log::warn!(
+                    request = id,
+                    error = error.as_str();
+                    "document_failed"
+                );
                 self.history_failed(pending_history);
                 self.resume_source_after_document();
                 self.status = format!("Project: {error}");

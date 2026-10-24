@@ -429,10 +429,19 @@ impl Developed {
             registration_seconds,
             verification_seconds,
         } = self.timing;
-        println!(
-            "selected_source native_cache_hit={native_hit} seconds={:.6} registration_seconds={registration_seconds:.6} development_seconds={development_seconds:.6} verification_seconds={verification_seconds:.6} proxy_seconds={proxy_seconds:.6} renderer_seconds={renderer_seconds:.6} images_seconds={images_seconds:.6}",
-            started.elapsed().as_secs_f64()
+
+        log::debug!(
+            native_cache_hit = native_hit,
+            seconds = started.elapsed().as_secs_f64(),
+            registration_seconds,
+            development_seconds,
+            verification_seconds,
+            proxy_seconds,
+            renderer_seconds,
+            images_seconds;
+            "selected_source"
         );
+
         Ok(Ready {
             developed: self.context.source,
             file: self.file,

@@ -8,8 +8,10 @@
 #include <cstring>
 #include <vector>
 #include "scan_region_lines.h"
+#include "logging.h"
 
 extern "C" char *antitone_scan_region_lines(const uint16_t *input, unsigned w, unsigned h) {
+    antitone::NativeLog diagnostic("regions", "lines");
     @autoreleasepool {
         try {
             if (!input || w < 16 || h < 16 || w > 768 || h > 768)
@@ -60,6 +62,7 @@ extern "C" char *antitone_scan_region_lines(const uint16_t *input, unsigned w, u
                 return nullptr;
             std::memcpy(result, json.bytes, json.length);
             result[json.length] = 0;
+            diagnostic.complete();
             return result;
         } catch (...) {
             return nullptr;

@@ -43,13 +43,13 @@ impl Services {
                 let started = std::time::Instant::now();
                 let active = || !work.cancelled.load(Ordering::Relaxed);
                 let image = load(&work.request, &active);
-                println!(
-                    "embedded_preview source_id={} available={} failed={} cancelled={} seconds={:.6}",
-                    work.request.key.id.0,
-                    matches!(&image, Ok(Some(_))),
-                    image.is_err(),
-                    !active(),
-                    started.elapsed().as_secs_f64()
+                log::debug!(
+                    source_id = work.request.key.id.0,
+                    available = matches!(&image, Ok(Some(_))),
+                    failed = image.is_err(),
+                    cancelled = !active(),
+                    seconds = started.elapsed().as_secs_f64();
+                    "embedded_preview"
                 );
                 // A departed waiter cannot stop this shared resource worker.
                 let _ = work.reply.send(image);
@@ -258,9 +258,10 @@ impl EmbeddedPreviews {
             )),
             Completion::Image(Ok(None)) | Completion::Stopped => None,
             Completion::Image(Err(reason)) => {
-                eprintln!(
-                    "embedded_preview unavailable source_id={} reason={reason}",
-                    key.id.0
+                log::debug!(
+                    source_id = key.id.0,
+                    error = reason.as_str();
+                    "embedded_preview_unavailable"
                 );
                 None
             }

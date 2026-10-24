@@ -69,11 +69,12 @@ impl CallbackTrait for SelectionPaint {
                 &timing.ready_painted
             };
             if !painted.swap(true, Ordering::Relaxed) {
-                println!(
-                    "selected_switch request={} stage={} boundary=paint_callback elapsed_ms={:.6}",
-                    timing.id,
-                    if self.pending { "pending" } else { "ready" },
-                    timing.started.elapsed().as_secs_f64() * 1000.
+                log::debug!(
+                    request = timing.id,
+                    stage = if self.pending { "pending" } else { "ready" },
+                    boundary = "paint_callback",
+                    elapsed_ms = timing.started.elapsed().as_secs_f64() * 1000.;
+                    "selected_switch"
                 );
             }
         }
