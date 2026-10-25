@@ -44,13 +44,13 @@ Where each area's implementation lives — navigation, not specification. Follow
 | Editor | [editor](../src/editor.rs) and its feature modules | Live state, controls and transactions |
 | Workflows | [application](../src/application.rs), [blocking admission](../src/blocking_jobs.rs), [measurement](../src/editor_measurement.rs), [workflow modules](../src/editor_export_workflow.rs) | UI-thread async execution, borrowed UI context, off-thread services |
 | Persistence | [project](../src/project.rs), [document](../src/editor_document.rs), [document owner](../src/editor_document_scope.rs) | Accepted state, history and cache lifetime, compatibility |
-| Host | [host](../src/platform/host.rs), [macOS](../src/platform/macos.rs), [full-display inspection](../src/platform/fullscreen.rs) | Event loop, surface, SDR presentation, native menus, window coverage |
+| Host | [host](../src/platform/host.rs), [macOS](../src/platform/macos.rs), [Windows](../src/platform/windows.rs), [full-display inspection](../src/platform/fullscreen.rs) | Event loop, surface, presentation, native menus, window coverage |
 | Branding | [assets](../assets/branding/README.md), [generator](../native/branding_assets.swift), [macOS packaging](../scripts/package-macos.py) | Portable artwork and relocatable local-test application bundle |
 
 ## Make a change
 
 Use the [development guide](development.md) for engineering standards, the normal edit/test loop and targeted subsystem checks. [Diagnostics](diagnostics.md) covers sample-dependent, numerical, export and presentation exercises; [native development](native-development.md) covers native scheduling, build reuse and runtime limits. [Build and delivery](build-and-delivery.md) explains the automated local setup/check/package workflow, native build ownership and local-package versus public-release boundaries.
 
-The current platform is macOS on Apple Silicon. Local RAWs and generated photographic outputs are private, ignored inputs/products—not contributor prerequisites or repository fixtures to upload.
+The supported platforms are macOS on Apple Silicon and Windows 11 on x64. Local RAWs and generated photographic outputs are private, ignored inputs/products—not contributor prerequisites or repository fixtures to upload.
 
 For the provisional Dust tool, read the [editor workflow](editor.md#provisional-dust-cleanup).

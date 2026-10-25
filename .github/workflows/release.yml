@@ -5,7 +5,7 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -15,10 +15,23 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  release:
-    name: Package and publish
+  validate:
+    name: Validate release inputs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Validate the tag against the crate version
+        run: python3 scripts/prepare-release.py --tag "$GITHUB_REF_NAME" --check-tag
+      - name: Release assembly tests
+        run: python3 -m unittest discover -s scripts -p test_prepare_release.py
+
+  macos:
+    name: Package macOS ARM64
+    needs: validate
     runs-on: macos-15
     timeout-minutes: 40
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Cache pinned native dependencies and tools
@@ -40,14 +53,6 @@ jobs:
           key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             cargo-${{ runner.os }}-${{ runner.arch }}-
-      - name: Validate the tag against the crate version
-        run: |
-          tag="${GITHUB_REF_NAME#v}"
-          crate="$(cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
-          if [ "$tag" != "$crate" ]; then
-            echo "Tag v$tag does not match Cargo.toml version $crate" >&2
-            exit 1
-          fi
       - name: Prepare pinned dependencies and tools
         run: cargo xtask setup
       - name: Direct-SDK adapter tests
@@ -56,12 +61,52 @@ jobs:
         run: cargo xtask package
       - name: Verify the relocated package
         run: cargo xtask verify-package
-      - name: Create the release with the package and checksums
+      - name: Upload the verified macOS package
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: release-macos
+          path: |
+            .cache/app/Antitone-macos-arm64.zip
+            .cache/app/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+
+  windows:
+    name: Package Windows x64
+    needs: validate
+    uses: ./.github/workflows/windows.yml
+
+  publish:
+    name: Publish both platforms
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Download macOS package
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: release-macos
+          path: .cache/release-input/macos
+      - name: Download Windows package
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: Antitone-windows-x64-${{ github.sha }}
+          path: .cache/release-input/windows
+      - name: Verify both archives and combine checksums
+        run: |
+          python3 scripts/prepare-release.py --tag "$GITHUB_REF_NAME" \
+            --macos .cache/release-input/macos \
+            --windows .cache/release-input/windows \
+            --output .cache/release
+      - name: Create the release with both packages and checksums
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
             --title "Antitone $GITHUB_REF_NAME" \
             --generate-notes \
-            .cache/app/Antitone-macos-arm64.zip \
-            .cache/app/SHA256SUMS
+            .cache/release/Antitone-macos-arm64.zip \
+            .cache/release/Antitone-windows-x64.zip \
+            .cache/release/SHA256SUMS

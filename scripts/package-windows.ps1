@@ -104,5 +104,31 @@ if ($LASTEXITCODE -ne 0 -or $smoke.Trim() -ne $version) {
 
 if (Test-Path $archive) { Remove-Item -Force $archive }
 Compress-Archive -Path $stage -DestinationPath $archive -CompressionLevel Optimal
+
+# Exercise the archived package under a fresh path, not just the staging directory.
+$relocated = Join-Path $dist ('relocated package ' + [guid]::NewGuid().ToString('N'))
+try {
+    Expand-Archive -LiteralPath $archive -DestinationPath $relocated
+    $unpacked = Join-Path $relocated 'Antitone-windows-x64'
+    foreach ($name in @('antitone.exe', 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll', 'vcomp140.dll')) {
+        $expected = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $stage $name)).Hash
+        $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $unpacked $name)).Hash
+        if ($expected -ne $actual) { throw "Archived file differs: $name" }
+    }
+    Push-Location $unpacked
+    try {
+        $smoke = & '.\antitone.exe' --version
+        if ($LASTEXITCODE -ne 0 -or $smoke.Trim() -ne $version) {
+            throw "Relocated package failed its smoke test: '$smoke' (exit $LASTEXITCODE)"
+        }
+    } finally {
+        Pop-Location
+    }
+} finally {
+    if (Test-Path $relocated) { Remove-Item -Recurse -Force $relocated }
+}
+
+$hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+"$hash  $(Split-Path -Leaf $archive)" | Set-Content (Join-Path $dist 'SHA256SUMS') -Encoding ASCII
 $size = [math]::Round((Get-Item $archive).Length / 1MB, 1)
 Write-Host "Packaged $version -> $archive ($size MB)"

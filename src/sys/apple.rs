@@ -84,7 +84,7 @@ pub(crate) fn exclusive_rename(from: &Path, to: &Path) -> std::io::Result<()> {
 /// The graphics API this platform presents and computes with.
 #[cfg(feature = "gpu")]
 pub(crate) fn backends() -> wgpu::Backends {
-    crate::sys::backends()
+    wgpu::Backends::METAL
 }
 
 /// Native drivers compile the translated shaders; no runtime compiler choice applies.

@@ -83,6 +83,7 @@ dependencies = [
 name = "antitone"
 version = "0.1.0"
 dependencies = [
+ "ash",
  "async-executor",
  "async-lock",
  "base64",

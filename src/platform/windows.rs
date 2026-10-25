@@ -1,10 +1,10 @@
 use super::Presentation;
 use crate::Error;
 
-/// Vulkan on Win32 exposes no float swapchain, so presentation is SDR: 10-bit where the surface
-/// offers it, 8-bit otherwise. Both formats store the pipeline's sRGB-encoded values directly,
-/// so the host's copy pass needs no transfer conversion. wgpu's Vulkan surface reports only the
-/// sRGB colour space, so wide-gamut or HDR presentation needs an upstream change.
+/// SDR presentation uses 10-bit where offered, 8-bit otherwise. Both formats store the pipeline's
+/// sRGB-encoded values directly, so the host's copy pass needs no transfer conversion. Vulkan can
+/// expose scRGB and HDR10 on HDR displays; using them needs monitor-aware selection and matching
+/// output encoding rather than this SDR copy path.
 pub(crate) fn presentation() -> Presentation {
     Presentation {
         color_space: wgpu::SurfaceColorSpace::Auto,
@@ -25,9 +25,16 @@ pub fn install_icon() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+pub fn configure_window(window: &winit::window::Window) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(feature = "editor")]
+    install_window_icon(window)?;
+    light_caption(window);
+    Ok(())
+}
+
 /// The taskbar and title bar take their icon from the window.
 #[cfg(feature = "editor")]
-pub fn configure_window(window: &winit::window::Window) -> Result<(), Box<dyn std::error::Error>> {
+fn install_window_icon(window: &winit::window::Window) -> Result<(), Box<dyn std::error::Error>> {
     let png = include_bytes!("../../assets/branding/png/icon-256.png");
     let image = image::load_from_memory_with_format(png, image::ImageFormat::Png)?;
     let rgba = image.to_rgba8();
@@ -37,7 +44,6 @@ pub fn configure_window(window: &winit::window::Window) -> Result<(), Box<dyn st
         width,
         height,
     )?));
-    light_caption(window);
     Ok(())
 }
 

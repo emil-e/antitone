@@ -31,7 +31,6 @@ pub fn install_icon() -> Result<(), Box<dyn std::error::Error>> {
 pub(crate) const MENU_STRIP_IS_LIGHT: bool = false;
 
 /// The application icon is set through AppKit; the window carries no icon of its own.
-#[cfg(feature = "editor")]
 pub fn configure_window(_window: &winit::window::Window) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }

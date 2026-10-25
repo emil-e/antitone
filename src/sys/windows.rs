@@ -74,32 +74,34 @@ pub(crate) fn same_file(a: &Path, b: &Path) -> bool {
 
 #[cfg(feature = "export")]
 pub(crate) fn exclusive_rename(from: &Path, to: &Path) -> std::io::Result<()> {
-    // A same-volume hard link preserves the no-overwrite guarantee; remove the temporary name
-    // after publication. Filesystems without hard links fall back to exclusive creation.
-    match std::fs::hard_link(from, to) {
-        Ok(()) => std::fs::remove_file(from),
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Err(error),
-        Err(_) => {
-            let mut source = std::fs::File::open(from)?;
-            let mut destination = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(to)?;
-            let result =
-                std::io::copy(&mut source, &mut destination).and_then(|_| destination.sync_all());
-            drop(destination);
-            if result.is_ok() {
-                std::fs::remove_file(from)?;
-            } else {
-                let _ = std::fs::remove_file(to);
-            }
-            result.map(|_| ())
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
+
+    let wide = |path: &Path| -> std::io::Result<Vec<u16>> {
+        let mut units: Vec<_> = path.as_os_str().encode_wide().collect();
+        if units.contains(&0) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "path contains NUL",
+            ));
         }
+        units.push(0);
+        Ok(units)
+    };
+    let (from, to) = (wide(from)?, wide(to)?);
+    // No REPLACE_EXISTING or COPY_ALLOWED: publish by a same-volume rename or fail, including on
+    // filesystems without hard links. Copying into the final name would expose incomplete output.
+    if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), 0) } == 0 {
+        return Err(std::io::Error::last_os_error());
     }
+    Ok(())
 }
 
-/// Vulkan compiles the photographic kernel in well under a second; DX12 hands the same
-/// kernel to FXC or DXC, which need minutes for it.
+#[cfg(all(test, feature = "export"))]
+#[path = "windows/file_tests.rs"]
+mod file_tests;
+
+/// Vulkan avoids the DX12 runtime HLSL compiler and is the Windows production backend.
 #[cfg(feature = "gpu")]
 pub(crate) fn backends() -> wgpu::Backends {
     wgpu::Backends::VULKAN
@@ -115,13 +117,14 @@ pub(crate) fn backend_options() -> wgpu::BackendOptions {
     options
 }
 
+#[cfg(feature = "gpu")]
+#[path = "windows/gpu.rs"]
+mod gpu;
+
 #[cfg(all(feature = "gpu", any(test, feature = "ui")))]
-pub(crate) fn allocated_resource_bytes(_device: &wgpu::Device) -> Option<usize> {
-    None
-}
+pub(crate) use gpu::allocated_resource_bytes;
 
 #[cfg(feature = "editor")]
-#[allow(dead_code)] // DXGI capacity query is not implemented; Windows returns Unknown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GpuMemory {
     Unified,
@@ -130,8 +133,8 @@ pub(crate) enum GpuMemory {
 }
 
 #[cfg(feature = "editor")]
-pub(crate) fn gpu_memory(_device: Option<&wgpu::Device>) -> GpuMemory {
-    GpuMemory::Unknown
+pub(crate) fn gpu_memory(device: Option<&wgpu::Device>) -> GpuMemory {
+    device.map_or(GpuMemory::Unknown, gpu::memory_capacity)
 }
 
 #[cfg(feature = "editor")]

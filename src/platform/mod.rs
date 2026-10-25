@@ -17,12 +17,13 @@ compile_error!(
     "desktop platform support is implemented for macOS and Windows; add a Linux capability module with the same exports"
 );
 
+pub use native::configure_window;
+#[cfg(feature = "editor")]
+pub use native::install_icon;
 pub(crate) use native::{
     FullscreenPresentation, MENU_STRIP_IS_LIGHT, QuitGuard, configure_presentation, presentation,
     quit_cancel_on_unwind,
 };
-#[cfg(feature = "editor")]
-pub use native::{configure_window, install_icon};
 
 pub use crate::gpu::SubmissionGate;
 

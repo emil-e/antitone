@@ -660,6 +660,7 @@ void color_basis(dng_negative &negative, const dng_vector &as_shot,
             "Singular camera color matrix");
 }
 
+#if defined(_WIN32)
 // The SDK's narrow path goes through the ANSI code page on Windows, which cannot represent most
 // non-ASCII names; the wide constructor keeps UTF-8 paths intact.
 static std::wstring wide_path(const char *path) {
@@ -672,6 +673,7 @@ static std::wstring wide_path(const char *path) {
     wide.resize(static_cast<size_t>(length - 1));
     return wide;
 }
+#endif
 
 // One constructor per platform: the SDK needs the wide name on Windows.
 static std::unique_ptr<dng_file_stream> open_source(const char *path) {

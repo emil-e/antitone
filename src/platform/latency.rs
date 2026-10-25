@@ -160,7 +160,7 @@ impl Trace {
             present_end_ns = ns(frame.present_end),
             request = revision.map(|r| r.0),
             revision = revision.map(|r| r.1),
-            metal_resource_bytes = bytes;
+            gpu_resource_bytes = bytes;
             "latency_frame"
         );
     }
@@ -200,7 +200,7 @@ impl Trace {
         log::info!(
             frames = self.next_frame,
             peak_uncompleted_frames = self.peak_outstanding,
-            peak_sampled_metal_resource_bytes = self.peak_resource_bytes,
+            peak_sampled_gpu_resource_bytes = self.peak_resource_bytes,
             remaining = self.outstanding.load(Ordering::Relaxed);
             "latency_summary"
         );

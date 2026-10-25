@@ -1,6 +1,6 @@
 # Local build and delivery
 
-The [build and run](build-and-run.md) guide owns prerequisites and commands. The first delivery workflow targets macOS on Apple Silicon and produces a local `.app` and ZIP. Windows/Linux packaging is not implemented yet; [continuous integration](#continuous-integration) and tagging publish the macOS build.
+The [build and run](build-and-run.md) guide owns prerequisites and commands. Local packaging produces a macOS `.app` and ZIP on Apple Silicon and a portable ZIP on Windows x64; Linux packaging is not implemented. [Continuous integration](#continuous-integration) verifies both platforms, and tagging publishes both packages.
 
 ## Build ownership
 
@@ -12,6 +12,8 @@ LibRaw/OpenMP and the independent OCIO test dependency use the maintained native
 
 ## Checks and environment
 
+The `cargo xtask` setup/check/package sequence below is the macOS workflow. Windows uses the PowerShell setup and packaging scripts in [build and run](build-and-run.md#windows), with ordinary Cargo commands for verification.
+
 `setup` checks tools, runs native setup, installs pinned Ruff/clang-format into a local Python environment and installs the revision-pinned WGSL formatter locally through Cargo. Rustup selects the checked-in Rust toolchain. All generated tools/dependencies stay in ignored storage or Cargo's normal cache; no system installation is performed.
 
 `check` runs authored-source formatting, packaging/format-tool tests, core tests, production editor tests/lints, all-feature reference tests/lints and release-profile composed UI tests. Production is checked separately so feature unification cannot conceal an OCIO runtime dependency. No private samples are needed. Ignored photographic/resource diagnostics and explicitly launched native-window exercises remain separate, as described in [development](development.md).
@@ -22,7 +24,9 @@ Use `DEVELOPER_DIR` to select Xcode and the normal Cargo target-directory overri
 
 ## Package boundary
 
-`package` first builds the production editor, then creates the bundle in staging. The packager accepts system libraries plus the explicitly bundled OpenMP runtime; unexpected non-system dependencies fail, including OCIO. It removes checkout-local search paths, installs a bundle-relative runtime path, copies notices and signs the runtime/app ad hoc. It never modifies the Cargo-built executable in place.
+On Windows, `scripts/package-windows.ps1` builds the editor and stages `antitone.exe`, the app-local Visual C++/OpenMP runtime DLLs and component notices into a portable ZIP. It checks the staged executable with `--version`, extracts the ZIP into a fresh path containing spaces, checks executable/runtime hashes and repeats the smoke test there. A `SHA256SUMS` file accompanies the ZIP; keep the DLLs beside the executable when distributing or moving the folder.
+
+On macOS, `package` first builds the production editor, then creates the bundle in staging. The packager accepts system libraries plus the explicitly bundled OpenMP runtime; unexpected non-system dependencies fail, including OCIO. It removes checkout-local search paths, installs a bundle-relative runtime path, copies notices and signs the runtime/app ad hoc. It never modifies the Cargo-built executable in place.
 
 The bundle includes version/toolchain/source-state metadata and a production Cargo dependency-license inventory. Archive SHA-256 is written beside the ZIP. `verify-package` extracts the ZIP under a new path outside the checkout, checks libraries/search paths and the code signature, then executes it with an isolated home/current directory and no inherited loader overrides. Loader diagnostics must identify the bundled OpenMP library. Packaging tests also exercise real compiled/signed fixture bundles, path names containing spaces and rejection of an external search path or missing runtime.
 
@@ -30,13 +34,13 @@ Ad-hoc signing permits local execution; it provides neither Developer ID identit
 
 ## Fresh-checkout exercise
 
-Run `cargo xtask all` in a checkout with no `target/`, `.cache/` or native-prefix overrides. Preinstalled developer tools and normal Cargo/rustup download caches are allowed prerequisites; project build artifacts are not. To validate cold acquisition as well, use empty download caches and network access. Do not describe archive-seeded or reused-prefix checks as a successful cold-download exercise.
+Run the platform's [setup, checks and packaging](build-and-run.md) in a checkout with no `target/`, `.cache/` or native-prefix overrides. Preinstalled developer tools and normal Cargo/rustup download caches are allowed prerequisites; project build artifacts are not. To validate cold acquisition as well, use empty download caches and network access. Do not describe archive-seeded or reused-prefix checks as a successful cold-download exercise.
 
 Re-run after preparation to check that setup/building is repeatable. A separate relocated-package check establishes the bundle's loading independence, not clean-machine or minimum-OS compatibility. Retain the relevant command results and limits when reporting verification.
 
 ## Continuous integration
 
-Development is pull-request based: change work happens on task branches, opens a PR into `main`, and [ci.yml](../.github/workflows/ci.yml) gates it on `macos-15` (Apple Silicon). The same workflow also runs on pushes to `main` and manual dispatch, so merges and the trunk tip stay continuously verified.
+Development is pull-request based: change work happens on task branches, opens a PR into `main`, and two workflows gate it — [ci.yml](../.github/workflows/ci.yml) on `macos-15` (Apple Silicon) and [windows.yml](../.github/workflows/windows.yml) on `windows-latest` x64. Both also run on pushes to `main` and manual dispatch, so merges and the trunk tip stay continuously verified.
 
 CI covers the hardware-independent subset only. The split of responsibility:
 
@@ -45,17 +49,20 @@ CI covers the hardware-independent subset only. The split of responsibility:
 | Authored-source formatting, documentation links, packaging/format-tool unit tests | `checks` job, hosted (`cargo xtask tools` first) |
 | Numerical-core tests | `checks` job, hosted |
 | Native setup, vendored-SDK adapter tests, production/all-features clippy, package + relocated ZIP verification, ZIP artifact | `editor` job, hosted (Metal-free stages) |
-| Editor library tests, kittest `ui-tests`, GPU suites | Agent/local machine before integration — these need a Metal device, which hosted macOS runners do not provide |
+| Windows native setup, formatting, clippy, numerical-core and direct-SDK tests, editor build, portable ZIP artifact | Windows workflow, hosted |
+| Editor library tests, kittest `ui-tests`, GPU suites | Agent/local machine before integration — these need a Metal device on macOS or a Vulkan device on Windows, outside the hardware-independent hosted jobs |
 | Photographic, physical-input, native-window acceptance | Unchanged: manual/local exercise, never CI |
 
-A green PR therefore does not authorize merging on its own: the Metal-dependent suites in [development checks](development.md) still need to run in an agent session or on the developer's machine before integration, until a labeled self-hosted runner joins CI. Do not respond to missing hosted coverage by making the Metal-dependent tests skip or silently pass in the workflow.
+A green PR therefore does not authorize merging on its own: the device-dependent suites in [development checks](development.md) still need to run in an agent session or on the developer's machine before integration, until a labeled self-hosted runner joins CI. Do not respond to missing hosted coverage by making those tests skip or silently pass in the workflow.
 
 GitHub's runner images change over time (Xcode and tool versions drift); the pinned native-dependency cache is keyed on the setup scripts, so force a fresh cache when a runner-image change needs re-verification. CI uses SHA-pinned actions with `contents: read` permissions, per-run concurrency cancellation, and selects Xcode 26.3 via `DEVELOPER_DIR` because the image's default Xcode (16.4) ships a `swift-format` too old for the checked-in `.swift-format` schema; a runner-image update may require re-pinning that path. Cached paths are the pinned native dependencies and format tools (keyed on the setup scripts) and Cargo downloads (keyed on the lockfile); `target/` is not cached. The workflow mirrors the documented local commands rather than defining a second build system.
 
 ## Releasing a tag
 
-Pushing a `v*` tag publishes a release: [release.yml](../.github/workflows/release.yml) validates that the tag matches the crate version in `Cargo.toml`, runs the hosted-runnable verification stages (native setup, Metal-free direct-SDK adapter tests, `cargo xtask package`, `cargo xtask verify-package`), then creates a GitHub Release with the ZIP and its SHA-256 checksums — directly, not as a draft, because pushing a tag is a deliberate act. Metal-dependent suites remain the manual pre-merge responsibility described above and are not re-run here. A release is a public distribution: before tagging, complete the license review and clean-machine acceptance described under [before public distribution](#before-public-distribution).
+Pushing a `v*` tag publishes both platforms: [release.yml](../.github/workflows/release.yml) first validates that the tag matches the crate version in `Cargo.toml`, then builds macOS ARM64 and Windows x64 in separate jobs. macOS runs native setup, direct-SDK adapter tests, `cargo xtask package` and relocated-package verification; Windows reuses the [Windows workflow](../.github/workflows/windows.yml), including its tests and package smoke checks.
+
+Only after both jobs succeed does publication download the artifacts, verify each platform's SHA-256 manifest and ZIP integrity with [release assembly](../scripts/prepare-release.py), and create one GitHub Release containing both ZIPs and a combined `SHA256SUMS`. Publishing is direct rather than draft because pushing a tag is a deliberate act. Device-dependent suites remain the local pre-merge responsibility. Before tagging, complete the license review and clean-machine acceptance under [before public distribution](#before-public-distribution).
 
 ## Before public distribution
 
-The current ZIP is a local test artifact. [NOTICE.md](../NOTICE.md) describes license/asset and release boundaries. Native dependencies need review alongside Cargo dependencies; the generated inventory is not a legal-compatibility checker. Public release work still includes a fresh dependency/asset license review, outstanding asset clearance, Developer ID signing/notarization if chosen, clean-machine execution and platform-specific acceptance. Do not infer release clearance from a green build or a valid ad-hoc signature.
+Packaged ZIPs and CI artifacts are verification outputs; public distribution requires the review below. [NOTICE.md](../NOTICE.md) describes license/asset and release boundaries. Native dependencies need review alongside Cargo dependencies; the generated inventory is not a legal-compatibility checker. Public release work still includes a fresh dependency/asset license review, outstanding asset clearance, Developer ID signing/notarization if chosen, clean-machine execution and platform-specific acceptance. Do not infer release clearance from a green build or a valid ad-hoc signature.

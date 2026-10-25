@@ -46,7 +46,7 @@ Cargo uses the committed lockfile. Add `--offline` when caches are populated and
 
 ## Source formatting
 
-The complete local workflow is `cargo xtask all`; [build and delivery](build-and-delivery.md) explains its stages and limits. `cargo xtask setup` prepares the native dependencies and pinned project-local formatting tools. Changes land as pull requests, where CI runs the hardware-independent subset; the Metal-dependent suites listed throughout this guide still run in an agent session or on a local machine before integration.
+The complete macOS local workflow is `cargo xtask all`; [build and delivery](build-and-delivery.md) explains its stages and limits, alongside the Windows workflow. `cargo xtask setup` prepares the macOS native dependencies and pinned project-local formatting tools. Changes land as pull requests, where CI runs the hardware-independent subset; device-dependent suites still run locally before integration.
 
 Run `python3 scripts/check-format.py` before handing off a change. It checks tracked and new authored Rust, native, Python, WGSL and Swift sources, plus shell syntax; ignored caches, samples, vendored upstream sources and generated OCIO GLSL are excluded. `--write` applies the configured formatters without changing lint rules. Neither mode builds the editor or needs native dependencies.
 
@@ -84,7 +84,7 @@ Production and reference dependencies are separate:
 
 Tests that explicitly use the CPU/OCIO oracle require `ocio-reference`; this is not a production fallback. Editor and `--all-features` builds compile the [vendored SDK](build-and-delivery.md#build-ownership) through CMake/Ninja. Verify the production configuration separately so reference-feature unification cannot hide a runtime dependency.
 
-Choose checks for the boundary you changed rather than running every native/sample-dependent exercise:
+Production GPU checks use Metal on macOS and Vulkan on Windows. [Windows setup](build-and-run.md#windows) prepares production dependencies; OCIO reference checks require a separate OCIO build, and AppKit/native-window checks below are macOS-specific. Shell examples use POSIX syntax. Choose checks for the boundary you changed rather than running every native/sample-dependent exercise:
 
 ```sh
 # Pixel processing and photographic grading; no native libraries or Metal.
@@ -133,17 +133,17 @@ cargo test --locked --features editor --lib editor::save:: -- --test-threads=1
 # Visit-owned source workflow and native physical admission, including pending candidates.
 cargo test --locked --features editor --lib editor::source_workflow:: -- --test-threads=1
 
-# Authored import/correction/Analyze/JPEG/cache workers; native setup and Metal, no desktop window.
+# Authored import/correction/Analyze/JPEG/cache workers; native setup and GPU, no desktop window.
 cargo test --locked --features editor --lib authored_ -- --test-threads=1
 
-# Production GPU math; requires Metal, not native RAW/rendering libraries.
+# Production GPU math; requires a GPU, not native RAW/rendering libraries.
 cargo test --locked --features gpu --test gpu_processing --test gpu_film_response
 
-# Composed editor, scopes and viewer; native setup and Metal required.
+# Composed editor, scopes and viewer; native setup, OCIO and GPU required.
 cargo test --locked --features editor,ocio-reference --lib --test scopes --test viewer
 ```
 
-The [authored RAW fixtures](../tests/fixtures/raw/README.md) supply declared sensor data for API, worker and UI checks. The photographic tests use an independent scalar oracle in [test support](../tests/support/photographic_reference.rs); a missing Metal device is a verification limit, not a numerical pass.
+The [authored RAW fixtures](../tests/fixtures/raw/README.md) supply declared sensor data for API, worker and UI checks. The photographic tests use an independent scalar oracle in [test support](../tests/support/photographic_reference.rs); a missing GPU device is a verification limit, not a numerical pass.
 
 After native setup, use broader integration/lints when the change warrants them:
 
@@ -242,7 +242,7 @@ cargo test --locked --features gpu --lib gpu::submission
 cargo test --locked --features editor --lib refinement_worker_uses_the_submission_gate_supplied_to_the_host
 ```
 
-These headless Metal checks exercise submission exclusion and the host-supplied gate. Use the [native presentation stress route](diagnostics.md#macos-presentation) for real surface reconfiguration alongside background GPU work.
+These headless GPU checks exercise submission exclusion and the host-supplied gate. Use the [native presentation stress route](diagnostics.md#macos-presentation) for real surface reconfiguration alongside background GPU work.
 
 ## Local grading and shared consumers
 
@@ -323,7 +323,7 @@ Physical pointer/trackpad behavior, native folder selection and Finder reveal, V
 
 ### Framework UI regressions
 
-The optional `ui-tests` feature pins egui_kittest to the application's egui version. It exercises the production UI offscreen, with authored RAWs and no desktop window. Native setup and a **Metal device** are required; missing Metal fails rather than silently skipping. Run both profiles:
+The optional `ui-tests` feature pins egui_kittest to the application's egui version. It exercises the production UI offscreen, with authored RAWs and no desktop window. Native setup, OCIO and a **GPU device** are required; missing hardware fails rather than silently skipping. Run both profiles:
 
 ```sh
 cargo test --locked --features ui-tests --lib editor::kittest_tests -- --test-threads=1
@@ -345,7 +345,7 @@ Captures are clipped/quantized from float output for inspection, not approval of
 
 ### Explicit native-host checks
 
-The [native-host executable](../tests/native_host.rs) uses the production host. Lifecycle cases need macOS/Metal and an available desktop, but no RAWs/native RAW libraries. The `editor` case additionally needs native setup and the patch DNG; it opens a temporary authored project with isolated HOME/cache storage. Ordinary invocation runs software result-contract checks without opening a window, including under `--all-features`. Only explicit `--run` launches it:
+The [native-host executable](../tests/native_host.rs) exercises the production host on macOS; its Windows entry point only reports that macOS is required. Lifecycle cases need macOS/Metal and an available desktop, but no RAWs/native RAW libraries. The `editor` case additionally needs native setup and the patch DNG; it opens a temporary authored project with isolated HOME/cache storage. Ordinary invocation runs software result-contract checks without opening a window, including under `--all-features`. Only explicit `--run` launches it:
 
 ```sh
 cargo test --locked --features ui --test native_host -- --run lifecycle

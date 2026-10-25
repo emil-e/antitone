@@ -304,6 +304,7 @@ extern "C" const char *antitone_raw_version() {
     return LibRaw::version();
 }
 
+#if defined(_WIN32)
 // LibRaw's narrow path goes through the ANSI code page on Windows, which cannot represent most
 // non-ASCII names; the wide overload keeps UTF-8 paths intact.
 static std::wstring wide_path(const char *path) {
@@ -316,6 +317,7 @@ static std::wstring wide_path(const char *path) {
     wide.resize(static_cast<size_t>(length - 1));
     return wide;
 }
+#endif
 
 extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out, char *error,
                                    size_t size) try {
@@ -324,7 +326,11 @@ extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out, c
     raw->imgdata.params.use_camera_matrix = 1;
     SonyLensCapture lens;
     raw->set_exifparser_handler(sony_lens_tag, &lens);
+#if defined(_WIN32)
     int code = raw->open_file(wide_path(path).c_str());
+#else
+    int code = raw->open_file(path);
+#endif
     if (code != 0)
         diagnostic.complete(code, 2);
     raw->set_exifparser_handler(nullptr, nullptr);
