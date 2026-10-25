@@ -351,3 +351,13 @@ set(XMP_FILES_SOURCES
     "${SDK}/xmp/toolkit/third-party/zuid/sources/MD5.cpp"
 )
 
+
+# Adobe's project selects one plugin/host implementation per platform.
+if(WIN32)
+    list(REMOVE_ITEM XMP_FILES_SOURCES
+        "${SDK}/xmp/toolkit/XMPFiles/source/PluginHandler/OS_Utils_Mac.cpp"
+        "${SDK}/xmp/toolkit/source/Host_IO-POSIX.cpp")
+    list(APPEND XMP_FILES_SOURCES
+        "${SDK}/xmp/toolkit/XMPFiles/source/PluginHandler/OS_Utils_WIN.cpp"
+        "${SDK}/xmp/toolkit/source/Host_IO-Win.cpp")
+endif()

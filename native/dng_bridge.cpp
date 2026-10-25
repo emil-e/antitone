@@ -41,6 +41,9 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 
 namespace {
 static_assert(kDNGSDK_MajorVersion == 1 && kDNGSDK_MinorVersion == 7 && kDNGSDK_DotVersion == 1 &&
@@ -657,6 +660,28 @@ void color_basis(dng_negative &negative, const dng_vector &as_shot,
             "Singular camera color matrix");
 }
 
+// The SDK's narrow path goes through the ANSI code page on Windows, which cannot represent most
+// non-ASCII names; the wide constructor keeps UTF-8 paths intact.
+static std::wstring wide_path(const char *path) {
+    const int length = MultiByteToWideChar(CP_UTF8, 0, path, -1, nullptr, 0);
+    if (length <= 0) {
+        throw std::runtime_error("Source path is not valid UTF-8");
+    }
+    std::wstring wide(static_cast<size_t>(length), wchar_t(0));
+    MultiByteToWideChar(CP_UTF8, 0, path, -1, wide.data(), length);
+    wide.resize(static_cast<size_t>(length - 1));
+    return wide;
+}
+
+// One constructor per platform: the SDK needs the wide name on Windows.
+static std::unique_ptr<dng_file_stream> open_source(const char *path) {
+#if defined(_WIN32)
+    return std::make_unique<dng_file_stream>(wide_path(path).c_str());
+#else
+    return std::make_unique<dng_file_stream>(path);
+#endif
+}
+
 std::unique_ptr<Source> develop(const char *path, const AntitoneDngOptions &options,
                                 bool inspect_only) {
     const auto start = Clock::now();
@@ -670,7 +695,8 @@ std::unique_ptr<Source> develop(const char *path, const AntitoneDngOptions &opti
     sniffer.Sniff();
     auto source = std::make_unique<Source>();
     Host host(sniffer, *source, execution);
-    dng_file_stream stream(path);
+    auto stream_owner = open_source(path);
+    dng_file_stream &stream = *stream_owner;
     dng_info info;
     info.Parse(host, stream);
     info.PostParse(host);

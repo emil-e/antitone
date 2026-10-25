@@ -93,7 +93,12 @@ fn save_as_rebased_relative_locators_do_not_retire_a_completed_shared_result() {
     }
     let metadata = supplied(&mut editor);
     editor.document.spatial = crate::spatial_metadata::Store::default();
-    let dir = tempfile::tempdir().unwrap();
+    // Keep the saved project on the sources' volume: a relative locator cannot span volumes,
+    // and the system temporary directory may live on another drive than the checkout.
+    let dir = tempfile::Builder::new()
+        .prefix("antitone-moved-")
+        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target"))
+        .unwrap();
     let path = dir.path().join("moved.antitone");
     with_application(editor, |app| {
         app.enter(|editor, cx| {

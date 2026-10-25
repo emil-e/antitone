@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn compiled_screening_is_reused_across_jobs_and_a_panicking_job_can_discard_it_safely() {
     let (device, queue) = pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let instance = crate::gpu::instance();
         instance
             .request_adapter(&Default::default())
             .await

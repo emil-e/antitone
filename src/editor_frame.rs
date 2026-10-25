@@ -1,12 +1,10 @@
 use super::*;
-use crate::platform::menu::{Action as MenuAction, State as MenuState};
+use crate::platform::menu::Action as MenuAction;
 
 pub(super) struct Actions {
     pub(super) menu: Option<MenuAction>,
     pub(super) file: Option<FileAction>,
     pub(super) export: bool,
-    text_input_pending: bool,
-    state: MenuState,
 }
 
 impl Editor {
@@ -90,8 +88,6 @@ impl Editor {
             file: menu.and_then(|action| self.menu_file_action(action)),
             export: menu == Some(MenuAction::Export),
             menu,
-            text_input_pending,
-            state,
         }
     }
 
@@ -326,58 +322,38 @@ impl Editor {
         ui: &mut egui::Ui,
         cx: &UiContext<'_, Self>,
         actions: &mut Actions,
-    ) -> Option<presentation::MenuFocus> {
-        let mut focus = None;
+    ) {
         if self.fullscreen.is_none() {
-            presentation::app_header(ui, |ui| {
-                if self.menus.native {
-                    self.project_identity(ui);
-                } else {
-                    let response = presentation::application_menus(ui, &actions.state, |ui| {
-                        self.project_identity(ui)
-                    });
-                    focus = response.focus;
-                    if let Some(action) = response.action {
-                        if actions.text_input_pending {
-                            self.menus.pending.push_back(action);
-                            ui.ctx().request_repaint();
-                        } else {
-                            actions.menu = Some(action);
-                            actions.file = self.menu_file_action(action);
-                            actions.export = action == MenuAction::Export;
-                        }
-                    }
+            // The menu bar belongs to the platform; the header keeps the project identity.
+            presentation::app_header(ui, |ui| self.project_identity(ui));
+        }
+        if actions.file.is_some()
+            || actions
+                .menu
+                .is_some_and(|action| !self.menu_targets_text(action))
+        {
+            ui.ctx().memory_mut(|memory| {
+                if let Some(id) = memory.focused() {
+                    memory.surrender_focus(id);
                 }
             });
-            if actions.file.is_some()
-                || actions
-                    .menu
-                    .is_some_and(|action| !self.menu_targets_text(action))
-            {
-                ui.ctx().memory_mut(|memory| {
-                    if let Some(id) = memory.focused() {
-                        memory.surrender_focus(id);
-                    }
-                });
-            }
-            egui::Panel::bottom("status")
-                .exact_size(presentation::ACTIVITY_BAR_HEIGHT)
-                .show(ui, |ui| {
-                    if let Some(view) = self.tasks.view() {
-                        if let Some(request) = view.compact(ui) {
-                            self.cancel_task(request);
-                        }
-                    } else {
-                        ui.add(egui::Label::new(&self.status).truncate())
-                            .on_hover_text(&self.status);
-                    }
-                });
-            self.filmstrip(ui, cx);
-            if self.removal_pending.is_some() {
-                ui.disable();
-            }
         }
-        focus
+        egui::Panel::bottom("status")
+            .exact_size(presentation::ACTIVITY_BAR_HEIGHT)
+            .show(ui, |ui| {
+                if let Some(view) = self.tasks.view() {
+                    if let Some(request) = view.compact(ui) {
+                        self.cancel_task(request);
+                    }
+                } else {
+                    ui.add(egui::Label::new(&self.status).truncate())
+                        .on_hover_text(&self.status);
+                }
+            });
+        self.filmstrip(ui, cx);
+        if self.removal_pending.is_some() {
+            ui.disable();
+        }
     }
 
     fn project_identity(&self, ui: &mut egui::Ui) {

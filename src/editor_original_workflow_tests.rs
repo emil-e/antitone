@@ -12,10 +12,7 @@ use std::time::{Duration, Instant};
 fn editor() -> (Editor, development::Scheduler) {
     let mut e = fixture();
     let (device, queue) = pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         instance
             .request_adapter(&Default::default())
             .await

@@ -1,19 +1,17 @@
-//! Explicit native host lifecycle check; ordinary Cargo test invocations never open its window.
-//! Run with --run [lifecycle|fullscreen|editor|early-close|timeout|process-timeout]. Requires macOS/Metal and a desktop.
-//! The editor case additionally needs the editor feature/native setup and uses an authored temporary project.
-//! Checks focus/size forwarding, native resize, submitted frames, clean exit and explicit completion.
-//! Early close, timeout, absent completion or zero frames fail. A process watchdog bounds hangs.
-//! Does not establish physical gestures, native dialogs, monitor colour or broader-device acceptance.
-use antitone::platform::{SubmissionGate, host};
-use std::{
-    sync::{Arc, Mutex, mpsc},
-    time::{Duration, Instant},
-};
+//! native host check: macOS runs the real check, other platforms report it.
 
-#[cfg(feature = "editor")]
-#[path = "native_host/editor.rs"]
-mod editor;
+#[cfg(target_os = "macos")]
+#[path = "native_host/macos.rs"]
+mod macos;
 
+<<<<<<< HEAD
+fn main() {
+    #[cfg(target_os = "macos")]
+    macos::main();
+
+    #[cfg(not(target_os = "macos"))]
+    eprintln!("this check requires macOS");
+=======
 #[derive(Clone, Copy, PartialEq)]
 enum Mode {
     Lifecycle,
@@ -439,4 +437,5 @@ fn main() -> host::Result<()> {
         SIZES.len()
     );
     Ok(())
+>>>>>>> origin/main
 }

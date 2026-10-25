@@ -15,10 +15,7 @@ pub(super) const LIMIT: Duration = Duration::from_secs(20);
 pub(super) fn fixture(scheduler: development::Scheduler) -> Editor {
     let mut editor = crate::editor::tests::fixture();
     let (device, queue) = pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         instance
             .request_adapter(&Default::default())
             .await

@@ -837,13 +837,22 @@ impl ProcessingKernel {
     }
 }
 
-/// Metal resource allocation, including retained native versions; not total process memory.
-#[cfg(all(target_os = "macos", any(test, feature = "ui")))]
-pub(crate) fn allocated_resource_bytes(device: &wgpu::Device) -> Option<usize> {
-    use objc2_metal::MTLDevice;
-    // The HAL guard keeps the device alive; this query neither mutates nor destroys resources.
-    let native = unsafe { device.as_hal::<wgpu::hal::api::Metal>() }?;
-    Some(native.raw_device().currentAllocatedSize())
+/// Retained GPU resource bytes where the platform can report them; not total process memory.
+#[cfg(any(test, feature = "ui"))]
+pub(crate) use crate::sys::allocated_resource_bytes;
+
+/// The graphics API this platform presents and computes with, from the one `sys` selection.
+pub fn backends() -> wgpu::Backends {
+    crate::sys::backends()
+}
+
+/// An instance with this platform's graphics API and shader-compiler policy.
+pub fn instance() -> wgpu::Instance {
+    wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: crate::sys::backends(),
+        backend_options: crate::sys::backend_options(),
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
+    })
 }
 
 #[cfg(all(test, target_os = "macos"))]

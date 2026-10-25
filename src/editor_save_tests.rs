@@ -10,10 +10,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 fn gpu() -> (wgpu::Device, wgpu::Queue) {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         instance
             .request_adapter(&Default::default())
             .await

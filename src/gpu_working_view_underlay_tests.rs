@@ -614,10 +614,7 @@ fn physical_view_underlay_in_flight_callbacks_do_not_retain_support_or_renderer_
 #[test]
 fn physical_view_underlay_texture_composition_does_not_inherit_storage_buffer_size_limits() {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let limits = wgpu::Limits {
             max_storage_buffer_binding_size: 4 * 1024 * 1024,

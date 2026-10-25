@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn branded_header_preserves_composed_menu_availability_and_processing_state() {
+fn branded_header_preserves_menu_availability_and_processing_state() {
     for scale in [1., 2.] {
         for width in [720., 1100.] {
             for busy in [false, true] {
@@ -44,18 +44,8 @@ fn branded_header_preserves_composed_menu_availability_and_processing_state() {
                 assert!(bounds.x0 >= 0. && bounds.x1 <= f64::from(width));
                 assert!(bounds.y0 >= 0. && bounds.y1 <= 600.);
 
-                for label in ["File", "Edit", "View"] {
-                    let menu = &nodes
-                        .iter()
-                        .find(|(_, node)| node.label() == Some(label))
-                        .unwrap()
-                        .1;
-                    assert!(!menu.is_disabled());
-                    let menu_bounds = menu.bounds().unwrap();
-                    assert!(menu_bounds.x0 >= bounds.x1);
-                    assert!(menu_bounds.x1 <= f64::from(width));
-                    assert!(menu_bounds.y0 >= 0. && menu_bounds.y1 <= 600.);
-                }
+                // The menu bar belongs to the platform now, so the header carries only the
+                // project identity; availability still comes from the shared menu state.
                 let availability = editor.application_menu_state();
                 assert_eq!(
                     availability.enabled(crate::platform::menu::Action::AddScans),

@@ -150,6 +150,58 @@ pub const MENUS: &[(&str, &[Entry])] = &[
     ("Help", &[Item(Help)]),
 ];
 
+/// Windows keeps the menu bar in the window and has no application menu, so the app-level
+/// entries live in File where Windows users expect them.
+pub const WINDOWS_MENUS: &[(&str, &[Entry])] = &[
+    (
+        "File",
+        &[
+            Item(New),
+            Item(Open),
+            Item(AddScans),
+            Sep,
+            Item(Close),
+            Sep,
+            Item(Save),
+            Item(SaveAs),
+            Sep,
+            Item(Export),
+            Sep,
+            Item(Settings),
+            Sep,
+            Item(Quit),
+        ],
+    ),
+    (
+        "Edit",
+        &[
+            Item(Undo),
+            Item(Redo),
+            Sep,
+            Item(Cut),
+            Item(Copy),
+            Item(Paste),
+            Sep,
+            Item(SelectAll),
+        ],
+    ),
+    (
+        "View",
+        &[
+            Item(Fit),
+            Item(ActualSize),
+            Item(ZoomIn),
+            Item(ZoomOut),
+            Sep,
+            Item(PhotoInspection),
+            Sep,
+            Item(Scopes),
+        ],
+    ),
+    ("Window", &[Item(Minimize), Item(ZoomWindow)]),
+    ("Help", &[Item(Help), Sep, Item(About)]),
+];
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct State {
     pub enabled: BTreeSet<Action>,
@@ -193,4 +245,8 @@ pub fn with_native_dialog<T>(show: impl FnOnce() -> T) -> T {
 
 #[cfg(target_os = "macos")]
 #[path = "menu_macos.rs"]
+pub(crate) mod native;
+
+#[cfg(windows)]
+#[path = "menu_windows.rs"]
 pub(crate) mod native;

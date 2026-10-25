@@ -1,14 +1,11 @@
-use super::*;
-use crate::project::Save;
-
+// Gated to macOS: LibRaw holds an open RAW with write sharing denied on Windows, so the test cannot
+// append to the loaded file.
+#[cfg(target_os = "macos")]
 #[test]
 fn authored_raw_byte_edits_reopen_without_identity_rejection_and_old_seed_keeps_its_revision() {
     use std::io::Write;
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let renderers = crate::renderer::RendererCache::default();

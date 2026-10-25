@@ -232,10 +232,7 @@ mod tests {
     #[test]
     fn real_queue_completion_clears_pending_without_another_draw() {
         pollster::block_on(async {
-            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-                backends: wgpu::Backends::METAL,
-                ..wgpu::InstanceDescriptor::new_without_display_handle()
-            });
+            let instance = crate::gpu::instance();
             let adapter = instance.request_adapter(&Default::default()).await.unwrap();
             let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
             let mut trace = Trace::new();

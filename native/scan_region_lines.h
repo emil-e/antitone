@@ -1,4 +1,16 @@
 // Source-owned gradient observations. Strength and polarity are not material identity.
+#pragma once
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <utility>
+#include <vector>
+
+constexpr double kPi = 3.14159265358979323846;
+
 static float quantile(std::vector<float> values, double q) {
     size_t k = size_t(q * (values.size() - 1));
     std::nth_element(values.begin(), values.begin() + k, values.end());
@@ -15,7 +27,7 @@ static AlongGradient gradientAlong(const std::vector<float> &gradient, unsigned 
                                    double last = .9, unsigned count = 96, unsigned marginX = 1,
                                    unsigned marginY = 1) {
     const double across = vertical ? h : w, center = (across - 1) / 2.;
-    const double slope = std::tan(angle * M_PI / 180.);
+    const double slope = std::tan(angle * kPi / 180.);
     AlongGradient result;
     for (unsigned sample = 0; sample < count; ++sample) {
         const double fraction = first + (last - first) * sample / (count - 1);
@@ -37,11 +49,19 @@ static AlongGradient gradientAlong(const std::vector<float> &gradient, unsigned 
     return result;
 }
 
-static id surfaceAlong(const std::vector<uint16_t> &rgb, unsigned w, unsigned h, bool vertical,
-                       double position, double angle, double first = .1, double last = .9,
-                       unsigned count = 96) {
+struct Surface {
+    double sample_fraction;
+    std::array<double, 2> span_fraction;
+    size_t sample_count;
+    std::array<double, 3> median_camera_rgb;
+};
+
+static std::optional<Surface> surfaceAlong(const std::vector<uint16_t> &rgb, unsigned w,
+                                           unsigned h, bool vertical, double position,
+                                           double angle, double first = .1, double last = .9,
+                                           unsigned count = 96) {
     const double across = vertical ? h : w, center = (across - 1) / 2.;
-    const double slope = std::tan(angle * M_PI / 180.);
+    const double slope = std::tan(angle * kPi / 180.);
     std::array<std::vector<float>, 3> values;
     double observedFirst = 0, observedLast = 0;
     for (unsigned sample = 0; sample < count; ++sample) {
@@ -59,20 +79,27 @@ static id surfaceAlong(const std::vector<uint16_t> &rgb, unsigned w, unsigned h,
             values[c].push_back(rgb[(size_t(y) * w + x) * 3 + c] / 65535.f);
     }
     if (values[0].size() < count / 2)
-        return [NSNull null];
-    return @{
-        @"sample_fraction" : @(double(values[0].size()) / count),
-        @"span_fraction" : @[ @(observedFirst), @(observedLast) ],
-        @"sample_count" : @(values[0].size()),
-        @"median_camera_rgb" :
-            @[ @(quantile(values[0], .5)), @(quantile(values[1], .5)), @(quantile(values[2], .5)) ]
+        return std::nullopt;
+    return Surface{
+        double(values[0].size()) / count,
+        {observedFirst, observedLast},
+        values[0].size(),
+        {quantile(values[0], .5), quantile(values[1], .5), quantile(values[2], .5)},
     };
 }
 
-static id normalTransition(const std::vector<uint16_t> &rgb, unsigned w, unsigned h, bool vertical,
-                           double position, double angle, double first, double last, unsigned count,
-                           double scaleX = 1., double scaleY = 1.) {
-    const double slope = std::tan(angle * M_PI / 180.), scale = std::sqrt(1 + slope * slope);
+struct Transition {
+    std::array<double, 3> mean_camera_delta;
+    double lower_quartile_projection;
+    size_t sample_count;
+};
+
+static std::optional<Transition> normalTransition(const std::vector<uint16_t> &rgb, unsigned w,
+                                                  unsigned h, bool vertical, double position,
+                                                  double angle, double first, double last,
+                                                  unsigned count, double scaleX = 1.,
+                                                  double scaleY = 1.) {
+    const double slope = std::tan(angle * kPi / 180.), scale = std::sqrt(1 + slope * slope);
     const double nx = (vertical ? 1. : -slope) / scale * scaleX,
                  ny = (vertical ? -slope : 1.) / scale * scaleY;
     const double across = vertical ? h : w;
@@ -101,7 +128,7 @@ static id normalTransition(const std::vector<uint16_t> &rgb, unsigned w, unsigne
         deltas.push_back(delta);
     }
     if (deltas.size() < count / 2)
-        return [NSNull null];
+        return std::nullopt;
     double magnitude = 0;
     for (double &v : mean) {
         v /= deltas.size();
@@ -115,47 +142,59 @@ static id normalTransition(const std::vector<uint16_t> &rgb, unsigned w, unsigne
             dot += delta[c] * mean[c];
         projections.push_back(magnitude > 0 ? dot / magnitude : 0);
     }
-    return @{
-        @"mean_camera_delta" : @[ @(mean[0]), @(mean[1]), @(mean[2]) ],
-        @"lower_quartile_projection" : @(quantile(std::move(projections), .25)),
-        @"sample_count" : @(deltas.size())
+    return Transition{
+        {mean[0], mean[1], mean[2]},
+        quantile(std::move(projections), .25),
+        deltas.size(),
     };
 }
 
-static bool opposedTransitions(id a, id b) {
-    if (a == [NSNull null] || b == [NSNull null])
-        return false;
-    if ([a[@"lower_quartile_projection"] doubleValue] <= 0 ||
-        [b[@"lower_quartile_projection"] doubleValue] <= 0)
+static bool opposedTransitions(const std::optional<Transition> &a,
+                               const std::optional<Transition> &b) {
+    if (!a || !b || a->lower_quartile_projection <= 0 || b->lower_quartile_projection <= 0)
         return false;
     double dot = 0;
     for (unsigned c = 0; c < 3; ++c)
-        dot += [a[@"mean_camera_delta"][c] doubleValue] * [b[@"mean_camera_delta"][c] doubleValue];
+        dot += a->mean_camera_delta[c] * b->mean_camera_delta[c];
     return dot < 0;
 }
 
-static NSArray *orientedLines(const std::vector<float> &gradient, const std::vector<uint16_t> &rgb,
-                              unsigned w, unsigned h, bool vertical, int first, int end,
-                              double spanFirst = .1, double spanLast = .9, unsigned samples = 96,
-                              unsigned maximum = 5, bool partial = false,
-                              const std::vector<double> &requestedAngles = {},
-                              bool preserveOpposed = false, double scaleX = 1.,
-                              double scaleY = 1.) {
+struct Line {
+    double midpoint_pixel;
+    double angle_degrees;
+    double lower_quartile_gradient_score;
+    double visible_sample_fraction;
+    bool angle_limit_reached;
+    std::optional<double> local_gradient_background;
+    unsigned observed_shoulders;
+    std::optional<Surface> outside_surface;
+    std::optional<Surface> inside_surface;
+    std::array<double, 2> span_fraction;
+    bool partial_span;
+    std::optional<Transition> normal_transition;
+};
+
+static std::vector<Line> orientedLines(
+    const std::vector<float> &gradient, const std::vector<uint16_t> &rgb, unsigned w, unsigned h,
+    bool vertical, int first, int end, double spanFirst = .1, double spanLast = .9,
+    unsigned samples = 96, unsigned maximum = 5, bool partial = false,
+    const std::vector<double> &requestedAngles = {}, bool preserveOpposed = false,
+    double scaleX = 1., double scaleY = 1.) {
     const double crossScale = vertical ? scaleX : scaleY;
     const unsigned marginX = std::lround(scaleX), marginY = std::lround(scaleY);
 
-    struct Line {
+    struct Candidate {
         double score, angle, position, visible;
     };
 
-    std::vector<Line> candidates;
+    std::vector<Candidate> candidates;
     auto angles = requestedAngles;
     if (angles.empty())
         for (int step = -24; step <= 24; ++step)
             angles.push_back(step * .25);
     // A small-angle continuity baseline, not an implementation of LSD/EDLines or a format prior.
     for (int position = first; position < end; ++position) {
-        Line best = {};
+        Candidate best = {};
         for (double angle : angles) {
             auto strengths = gradientAlong(gradient, w, h, vertical, position, angle, spanFirst,
                                            spanLast, samples, marginX, marginY);
@@ -171,13 +210,13 @@ static NSArray *orientedLines(const std::vector<float> &gradient, const std::vec
     }
     std::sort(candidates.begin(), candidates.end(),
               [](auto a, auto b) { return a.score > b.score; });
-    NSMutableArray *result = [NSMutableArray array];
+    std::vector<Line> result;
     std::vector<double> accepted;
-    NSMutableArray *transitions = [NSMutableArray array];
+    std::vector<std::optional<Transition>> transitions;
     for (const auto &line : candidates) {
         const double position = line.position;
-        id transition = normalTransition(rgb, w, h, vertical, position, line.angle, spanFirst,
-                                         spanLast, samples, scaleX, scaleY);
+        auto transition = normalTransition(rgb, w, h, vertical, position, line.angle, spanFirst,
+                                           spanLast, samples, scaleX, scaleY);
         bool blocked = false;
         for (size_t i = 0; i < accepted.size(); ++i) {
             const double distance = std::abs(position - accepted[i]);
@@ -190,7 +229,7 @@ static NSArray *orientedLines(const std::vector<float> &gradient, const std::vec
         if (blocked)
             continue;
         accepted.push_back(position);
-        [transitions addObject:transition];
+        transitions.push_back(transition);
         double local = 0;
         unsigned shoulders = 0;
         for (double offset : {-6., 6.}) {
@@ -204,48 +243,45 @@ static NSArray *orientedLines(const std::vector<float> &gradient, const std::vec
         const double outward = (first < int((vertical ? w : h) / 2) ? -6. : 6.) * crossScale;
         auto observed = gradientAlong(gradient, w, h, vertical, position, line.angle, spanFirst,
                                       spanLast, samples, marginX, marginY);
-        [result addObject:@{
-            @"midpoint_pixel" : @(position),
-            @"angle_degrees" : @(line.angle),
-            @"lower_quartile_gradient_score" : @(line.score),
-            @"visible_sample_fraction" : @(line.visible),
-            @"angle_limit_reached" : @(std::abs(line.angle) >= 6.),
-            @"local_gradient_background" : shoulders ? @(local / shoulders) : (id)[NSNull null],
-            @"observed_shoulders" : @(shoulders),
-            @"outside_surface" : surfaceAlong(rgb, w, h, vertical, position + outward, line.angle,
-                                              spanFirst, spanLast, samples),
-            @"inside_surface" : surfaceAlong(rgb, w, h, vertical, position - outward, line.angle,
-                                             spanFirst, spanLast, samples),
-            @"span_fraction" : @[ @(observed.first), @(observed.last) ],
-            @"partial_span" : @(partial),
-            @"normal_transition" : transition
-        }];
+        result.push_back(Line{
+            position,
+            line.angle,
+            line.score,
+            line.visible,
+            std::abs(line.angle) >= 6.,
+            shoulders ? std::optional<double>(local / shoulders) : std::nullopt,
+            shoulders,
+            surfaceAlong(rgb, w, h, vertical, position + outward, line.angle, spanFirst, spanLast,
+                         samples),
+            surfaceAlong(rgb, w, h, vertical, position - outward, line.angle, spanFirst, spanLast,
+                         samples),
+            {observed.first, observed.last},
+            partial,
+            std::move(transition),
+        });
         if (accepted.size() == maximum)
             break;
     }
     return result;
 }
 
-static std::vector<double> segmentPoseGuides(NSDictionary *lines) {
+static std::vector<double> segmentPoseGuides(const std::array<std::vector<Line>, 4> &lines) {
     struct Pose {
         unsigned side;
         double angle;
     };
 
     std::vector<Pose> poses;
-    unsigned side = 0;
-    for (NSString *name in @[ @"left", @"right", @"top", @"bottom" ]) {
-        for (NSDictionary *line in lines[name]) {
-            id background = line[@"local_gradient_background"];
-            if (background == [NSNull null] || [line[@"angle_limit_reached"] boolValue])
+    for (unsigned side = 0; side < 4; ++side) {
+        for (const auto &line : lines[side]) {
+            if (!line.local_gradient_background || line.angle_limit_reached)
                 continue;
-            const double ratio = [line[@"lower_quartile_gradient_score"] doubleValue] /
-                                 std::max(1. / 65535., [background doubleValue]);
+            const double ratio = line.lower_quartile_gradient_score /
+                                 std::max(1. / 65535., *line.local_gradient_background);
             if (ratio >= 4.)
                 poses.push_back(
-                    {side, [line[@"angle_degrees"] doubleValue] * (side < 2 ? -1. : 1.)});
+                    {side, line.angle_degrees * (side < 2 ? -1. : 1.)});
         }
-        ++side;
     }
     std::vector<double> guides;
     for (size_t i = 0; i < poses.size(); ++i)
@@ -257,11 +293,12 @@ static std::vector<double> segmentPoseGuides(NSDictionary *lines) {
     return guides;
 }
 
-static NSArray *segmentLines(const std::vector<float> &gradient, const std::vector<uint16_t> &rgb,
-                             unsigned w, unsigned h, bool vertical, int first, int end,
-                             const std::vector<double> &poses, bool preserveOpposed,
-                             double scaleX = 1., double scaleY = 1.) {
-    NSMutableArray *result = [NSMutableArray array];
+static std::vector<Line> segmentLines(const std::vector<float> &gradient,
+                                      const std::vector<uint16_t> &rgb, unsigned w, unsigned h,
+                                      bool vertical, int first, int end,
+                                      const std::vector<double> &poses, bool preserveOpposed,
+                                      double scaleX = 1., double scaleY = 1.) {
+    std::vector<Line> result;
     if (poses.empty())
         return result;
     auto angles = poses;
@@ -270,9 +307,9 @@ static NSArray *segmentLines(const std::vector<float> &gradient, const std::vect
             angle = -angle;
     for (unsigned window = 0; window < 8; ++window) {
         const double start = window == 7 ? .70 : .05 + window * .10;
-        [result addObjectsFromArray:orientedLines(gradient, rgb, w, h, vertical, first, end, start,
-                                                  start + .25, 48, 3, true, angles, preserveOpposed,
-                                                  scaleX, scaleY)];
+        auto lines = orientedLines(gradient, rgb, w, h, vertical, first, end, start, start + .25, 48,
+                                   3, true, angles, preserveOpposed, scaleX, scaleY);
+        result.insert(result.end(), lines.begin(), lines.end());
     }
     return result;
 }

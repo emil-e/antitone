@@ -10,7 +10,7 @@ fn shared_source(image: &GpuImage) -> &Arc<ProcessingSource> {
 #[test]
 fn selected_proxy_has_one_immutable_source_and_lazy_active_target_output() {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
@@ -105,7 +105,7 @@ fn selected_proxy_has_one_immutable_source_and_lazy_active_target_output() {
 #[test]
 fn proxy_view_source_accepts_a_cropped_frame_output() {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let renderer = GpuRenderer::new(&device, &queue).await.unwrap();

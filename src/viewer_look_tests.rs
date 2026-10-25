@@ -9,10 +9,7 @@ fn idle_host_polling_completes_projected_look_admission_without_another_frame_or
     use glam::DVec3;
     use std::time::{Duration, Instant};
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let gate = SubmissionGate::default();

@@ -12,7 +12,7 @@ mod fixture;
 const WB: [f64; 4] = [1.0; 4];
 
 struct Input {
-    file: tempfile::NamedTempFile,
+    file: crate::fixture::FixturePath,
     record: Source,
     development: Development,
     key: SourceKey,
@@ -622,16 +622,14 @@ fn duplicate_completions_share_one_charge_and_reject_alias_or_reweighting() {
 
 #[test]
 fn changed_files_reject_prework_publication_and_hits_without_losing_leased_accounting() {
-    use std::io::Write;
-    let mut input = Input::new();
+    let input = Input::new();
     let source = input.source();
     let store = SourceStore::new(10);
     store
         .publish(input.key.clone(), source.clone(), 10)
         .unwrap()
         .unwrap();
-    input.file.as_file_mut().write_all(b"changed").unwrap();
-    input.file.as_file_mut().flush().unwrap();
+    input.file.append(b"changed");
     assert!(store.get(&input.key).is_none());
     assert!(
         store

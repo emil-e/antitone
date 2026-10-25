@@ -25,10 +25,7 @@ fn editor(scheduler: development::Scheduler) -> Editor {
             gpu_bytes: 0,
         });
     let (device, queue) = pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         instance
             .request_adapter(&Default::default())
             .await
@@ -47,12 +44,12 @@ fn editor(scheduler: development::Scheduler) -> Editor {
     editor
 }
 
-fn normal_pressure() -> crate::resources::MemoryPressure {
-    crate::resources::MemoryPressure::Normal
+fn normal_pressure() -> crate::sys::MemoryPressure {
+    crate::sys::MemoryPressure::Normal
 }
 
 fn paused_with_pressure(
-    pressure: fn() -> crate::resources::MemoryPressure,
+    pressure: fn() -> crate::sys::MemoryPressure,
 ) -> (development::Scheduler, mpsc::Receiver<()>, mpsc::Sender<()>) {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
@@ -75,7 +72,7 @@ fn paused_with_pressure(
 }
 
 fn paused() -> (development::Scheduler, mpsc::Receiver<()>, mpsc::Sender<()>) {
-    paused_with_pressure(crate::resources::memory_pressure)
+    paused_with_pressure(crate::sys::memory_pressure)
 }
 
 fn start(app: &crate::application::test_support::TestApplication<'_, Editor>) {
@@ -468,12 +465,17 @@ fn save_preserves_pending_visit_and_later_edits_in_both_completion_orders() {
 }
 
 #[test]
-fn same_source_candidate_supplies_readiness_without_replacing_the_pending_visit() {
-    let scheduler = development::Scheduler::new();
+fn a_correction_preparation_retires_the_pending_visit_and_installs_its_product() {
+    // A flat-field correction changes the source's development, so the product being acquired is
+    // already stale: the pending visit is retired and the correction acquires its own.
+    let (scheduler, starts, release) = paused();
     let editor = editor(scheduler.clone());
     with_application(editor, |app| {
         start(app);
+        app.pump();
+        starts.recv_timeout(Duration::from_secs(10)).unwrap();
         let view = app.read(|e| e.document.visit.view);
+        assert!(app.read(|e| e.document.visit.source.pending()));
         app.enter(|e, cx| {
             e.start_document(
                 Preparation::Correction(e.document.capture(), e.current_source),
@@ -482,39 +484,24 @@ fn same_source_candidate_supplies_readiness_without_replacing_the_pending_visit(
         });
         let operation = app.read(|e| e.document_pending.unwrap());
         assert!(app.read(|e| e.busy && e.document_pending.is_some()));
-        app.run_until(Duration::from_secs(15), |e| {
-            e.document.visit.source.completion.is_some()
+        // Release the held acquisition and let the correction's own development run.
+        for _ in 0..8 {
+            let _ = release.send(());
+        }
+        app.run_until(Duration::from_secs(30), |e| {
+            !e.busy && e.document_pending.is_none()
         });
-        // Reuse the immutable prepared product; document preparation is a separate
-        // boundary. This case exercises pending-visit promotion, not its algorithm.
-        let prepared = app.read(|e| {
-            let mut document = e.document.capture();
-            document.fork_cache();
-            Prepared {
-                document,
-                ready: Some(
-                    (**e.document
-                        .visit
-                        .source
-                        .completion
-                        .as_ref()
-                        .unwrap()
-                        .as_ref()
-                        .unwrap())
-                    .clone(),
-                ),
-                selected: e.current_source,
-                reuse_ready: false,
-                correction: None,
-                preserve_view: true,
-            }
-        });
-        app.update(|editor| editor.document_prepared(operation, Ok(Box::new(prepared))));
         app.read(|e| {
-            assert_eq!(e.document.visit.view, view);
             assert_eq!(e.id, operation);
+            // The pending acquisition is retired rather than left dangling, and the document's
+            // own product is installed.
             assert!(!e.document.visit.source.pending());
-            assert!(e.document.visit.ready.is_some() && !e.busy);
+            assert!(e.document.visit.ready.is_some());
+            // Whether the scope survives depends on the prepared product's key, not on the
+            // preparation being a correction: this fixture has no reference frame, so the
+            // development is unchanged and the visit continues into the installed document.
+            // A correction that changes the gains changes the key and replaces the scope.
+            assert_eq!(e.document.visit.view, view);
             assert!(!e.document.cache().is_closed());
         });
     });

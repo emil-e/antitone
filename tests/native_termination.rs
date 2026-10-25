@@ -1,27 +1,17 @@
-//! Explicit native termination negotiation. --run uses only isolated child apps;
-//! it never requests logout/shutdown or changes personal projects/preferences.
-use antitone::platform::{
-    SubmissionGate,
-    host::{self, QuitState},
-};
-use objc2::{
-    ClassType, MainThreadMarker,
-    runtime::{AnyObject, ClassBuilder, NSObject, Sel},
-    sel,
-};
-use objc2_app_kit::NSApplication;
-use objc2_foundation::{NSArray, NSObjectNSDelayedPerforming, NSRunLoopCommonModes};
-use std::{
-    io::Write,
-    path::{Path, PathBuf},
-    process::{Command, Stdio},
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-};
+//! native termination check: macOS runs the real check, other platforms report it.
 
+<<<<<<< HEAD
+#[cfg(target_os = "macos")]
+#[path = "native_termination/macos.rs"]
+mod macos;
+
+fn main() {
+    #[cfg(target_os = "macos")]
+    macos::main();
+
+    #[cfg(not(target_os = "macos"))]
+    eprintln!("this check requires macOS");
+=======
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Mode {
     Approve,
@@ -566,4 +556,5 @@ fn main() -> host::Result<()> {
         println!("Native termination requires explicit --run and a macOS desktop.");
         Ok(())
     }
+>>>>>>> origin/main
 }

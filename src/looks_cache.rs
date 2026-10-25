@@ -17,8 +17,7 @@ impl Cache {
     }
 
     pub fn default_location() -> Option<Self> {
-        std::env::var_os("HOME")
-            .map(|home| Self::at(PathBuf::from(home).join(".cache/antitone/looks-v1")))
+        crate::sys::cache_dir("antitone").map(|root| Self::at(root.join("looks-v1")))
     }
 
     fn path(&self, builtin: Builtin, size: u32) -> Result<PathBuf, crate::Error> {

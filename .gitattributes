@@ -1,2 +1,2 @@
-# Preserve upstream source bytes and do not lint its original whitespace.
-vendor/** -text -whitespace
+# Shader sources are compiled text and are compared as text in tests; keep one checkout form.
+*.wgsl text eol=lf

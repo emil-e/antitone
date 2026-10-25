@@ -129,10 +129,7 @@ mod tests {
     #[test]
     fn queue_submission_waits_until_configuration_releases_the_shared_gate() {
         pollster::block_on(async {
-            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-                backends: wgpu::Backends::METAL,
-                ..wgpu::InstanceDescriptor::new_without_display_handle()
-            });
+            let instance = crate::gpu::instance();
             let adapter = instance.request_adapter(&Default::default()).await.unwrap();
             let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
             for observed in [false, true] {

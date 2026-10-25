@@ -19,10 +19,7 @@ fn document(count: usize) -> (Document, tempfile::TempDir) {
 
 fn editor(document: Document, disk: &std::path::Path, scheduler: development::Scheduler) -> Editor {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let mut editor = crate::editor::tests::fixture();
@@ -394,6 +391,9 @@ fn application_retirement_drops_waiters_but_running_native_work_finishes_before_
     );
 }
 
+// Gated to macOS: LibRaw holds an open RAW with write sharing denied on Windows, so the test cannot
+// append to the loaded file.
+#[cfg(target_os = "macos")]
 #[test]
 fn a_changed_source_revision_retries_current_demand_without_publishing_the_departed_result() {
     use std::io::Write;

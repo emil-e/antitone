@@ -38,7 +38,7 @@ fn demand_revision_tracks_source_authority_and_idle_requires_presentation() {
 #[test]
 fn navigation_reuses_underlay_until_basis_change_clear_or_drop() {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let renderer = crate::renderer::GpuRenderer::new(&device, &queue)

@@ -2,6 +2,8 @@ use super::{Action, Entry, MENUS, State};
 use muda::accelerator::{Key, KeyAccelerator, Modifiers};
 use muda::{CheckMenuItem, Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 
+pub(crate) const SUPPORTED: bool = true;
+
 pub(crate) struct NativeMenu {
     root: Menu,
     items: Vec<(Action, muda::MenuItemKind)>,
@@ -9,7 +11,10 @@ pub(crate) struct NativeMenu {
 }
 
 impl NativeMenu {
-    pub(crate) fn new(state: &State) -> Result<Self, muda::Error> {
+    pub(crate) fn new(
+        state: &State,
+        _window: &winit::window::Window,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut native = Self {
             root: Menu::new(),
             items: Vec::new(),

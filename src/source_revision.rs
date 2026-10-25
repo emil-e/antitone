@@ -8,28 +8,24 @@ use std::{path::Path, time::SystemTime};
 pub struct FileRevision {
     pub(crate) bytes: u64,
     pub(crate) modified: SystemTime,
-    #[cfg(unix)]
+    #[serde(default)]
     pub(crate) device: u64,
-    #[cfg(unix)]
+    #[serde(default)]
     pub(crate) inode: u64,
-    #[cfg(unix)]
+    #[serde(default)]
     pub(crate) changed: (i64, i64),
 }
 
 impl FileRevision {
     pub fn read(path: &Path) -> std::io::Result<Self> {
-        #[cfg(unix)]
-        use std::os::unix::fs::MetadataExt;
         let metadata = std::fs::metadata(path)?;
+        let identity = crate::sys::file_identity(path)?;
         Ok(Self {
             bytes: metadata.len(),
             modified: metadata.modified()?,
-            #[cfg(unix)]
-            device: metadata.dev(),
-            #[cfg(unix)]
-            inode: metadata.ino(),
-            #[cfg(unix)]
-            changed: (metadata.ctime(), metadata.ctime_nsec()),
+            device: identity.device,
+            inode: identity.inode,
+            changed: identity.changed,
         })
     }
 }

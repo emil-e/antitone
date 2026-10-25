@@ -460,10 +460,7 @@ fn quantized_terms_bound_reference_subtractions_and_normalizations() {
 #[cfg(feature = "editor")]
 #[test]
 fn hosted_gpu_screening_matches_cpu_and_scalar_integer_prefixes() {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::METAL,
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
+    let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
     let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
     let gate = crate::gpu::SubmissionGate::default();
@@ -563,10 +560,7 @@ fn hosted_gpu_screening_matches_cpu_and_scalar_integer_prefixes() {
 #[ignore = "private read-only AP1 corpus; set ANTITONE_DUST_CORPUS"]
 fn retained_gpu_screening_preserves_all_donor_and_pixel_bits() {
     let manifest = std::env::var("ANTITONE_DUST_CORPUS").expect("set ANTITONE_DUST_CORPUS");
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::METAL,
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
+    let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
     let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
     let gate = crate::gpu::SubmissionGate::default();

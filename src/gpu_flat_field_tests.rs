@@ -51,11 +51,6 @@ fn original_pairs_keep_real_rectangles_exact_slots_and_admit_each_member() {
     assert_eq!(&words[16..20], &[0; 4]);
 }
 
-use crate::{
-    flat_field::FlatField,
-    processing::{Pipeline, Response},
-};
-
 #[test]
 fn source_geometry_uses_exact_nearest_centres_and_rejects_overflow() {
     let geometry = SourceGeometry::new([12, 14, 8640, 5760], [257, 173]).unwrap();
@@ -107,10 +102,7 @@ fn source_geometry_uses_exact_nearest_centres_and_rejects_overflow() {
 #[test]
 fn corrected_conversion_and_processing_preserve_spatial_gains_and_floor_flags() {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let matrix = DMat3::from_cols(

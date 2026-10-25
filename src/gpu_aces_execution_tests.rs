@@ -353,10 +353,7 @@ impl Executable {
 }
 
 pub(super) async fn context() -> (wgpu::Device, wgpu::Queue, Arc<GpuRenderer>) {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::METAL,
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
+    let instance = crate::gpu::instance();
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {

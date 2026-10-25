@@ -35,7 +35,7 @@ mod production_tests;
 #[cfg(all(test, target_os = "macos", feature = "editor"))]
 #[path = "gpu_export_resource_tests.rs"]
 mod resource_tests;
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 #[path = "gpu_export_tests.rs"]
 mod tests;
 

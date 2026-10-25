@@ -552,10 +552,7 @@ fn camera_images_and_badges_fit_polished_wells_and_clip_without_squeezing_or_hid
 fn sufficient_camera_preview_and_developed_card_have_matching_display_size() {
     let camera = decode(jpeg(1616, 1080, 0)).unwrap().unwrap();
     let (device, queue) = pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         adapter.request_device(&Default::default()).await.unwrap()
     });
@@ -800,10 +797,7 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
         "keep the camera image until the GPU thumbnail, not just its CPU proxy, is ready"
     );
     let proper = pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         GpuImage::new(

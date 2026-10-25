@@ -1,6 +1,8 @@
 //! Authored SDK-adapter DNGs: explicit sensor codes and opcode bytes, no photographed input.
 
-use std::io::Write;
+#[path = "fixture_path.rs"]
+mod fixture_path;
+use fixture_path::FixturePath;
 
 pub struct Opcode {
     pub id: u32,
@@ -103,7 +105,7 @@ impl Default for Fixture {
 }
 
 impl Fixture {
-    pub fn write(&self) -> tempfile::NamedTempFile {
+    pub fn write(&self) -> FixturePath {
         assert!(self.side >= 32);
         assert!((self.side * u32::from(self.bits)).is_multiple_of(8));
         let short = |v: u16| v.to_le_bytes().to_vec();
@@ -267,10 +269,7 @@ impl Fixture {
                 .copy_from_slice(&(jpeg.len() as u32).to_le_bytes());
             bytes.extend(jpeg);
         }
-        let mut file = tempfile::Builder::new().suffix(".dng").tempfile().unwrap();
-        file.write_all(&bytes).unwrap();
-        file.flush().unwrap();
-        file
+        FixturePath::write("fixture.dng", &bytes)
     }
 }
 

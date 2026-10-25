@@ -224,7 +224,7 @@ impl Drop for Owner {
 #[derive(Clone)]
 pub(super) struct Scheduler {
     owner: Arc<Owner>,
-    #[cfg(all(test, target_os = "macos"))]
+    #[cfg(test)]
     workers: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
 }
 
@@ -349,10 +349,7 @@ impl Scheduler {
     pub fn new() -> Self {
         #[cfg(test)]
         {
-            Self::start_native(
-                Arc::new(|_, _, _| Ok(())),
-                crate::resources::memory_pressure,
-            )
+            Self::start_native(Arc::new(|_, _, _| Ok(())), crate::sys::memory_pressure)
         }
         #[cfg(not(test))]
         {
@@ -371,7 +368,7 @@ impl Scheduler {
         + Sync
         + 'static,
     ) -> Self {
-        Self::start_native(Arc::new(observe), crate::resources::memory_pressure)
+        Self::start_native(Arc::new(observe), crate::sys::memory_pressure)
     }
 
     /// The second owner admits background demand only under Normal pressure, so
@@ -388,17 +385,17 @@ impl Scheduler {
         + Send
         + Sync
         + 'static,
-        pressure: fn() -> crate::resources::MemoryPressure,
+        pressure: fn() -> crate::sys::MemoryPressure,
     ) -> Self {
         Self::start_native(Arc::new(observe), pressure)
     }
 
     fn start_native(
         #[cfg(test)] observe: NativeObserver,
-        #[cfg(test)] pressure: fn() -> crate::resources::MemoryPressure,
+        #[cfg(test)] pressure: fn() -> crate::sys::MemoryPressure,
     ) -> Self {
         #[cfg(not(test))]
-        let pressure = crate::resources::memory_pressure;
+        let pressure = crate::sys::memory_pressure;
         Self::start_workers(2, pressure, move |_| {
             #[cfg(test)]
             let observe = observe.clone();
@@ -512,13 +509,13 @@ impl Scheduler {
             let _exit = Owner(worker_shared.clone());
             worker(worker_shared);
         })];
-        #[cfg(all(test, target_os = "macos"))]
+        #[cfg(test)]
         let workers = Arc::new(Mutex::new(workers));
-        #[cfg(not(all(test, target_os = "macos")))]
+        #[cfg(not(test))]
         drop(workers);
         Self {
             owner: Arc::new(Owner(shared)),
-            #[cfg(all(test, target_os = "macos"))]
+            #[cfg(test)]
             workers,
         }
     }
@@ -527,7 +524,7 @@ impl Scheduler {
     // thread-local; the factory is consulted once per owner on its own thread.
     fn start_workers(
         count: usize,
-        pressure: fn() -> crate::resources::MemoryPressure,
+        pressure: fn() -> crate::sys::MemoryPressure,
         build: impl Fn(usize) -> Step + Send + Sync + 'static,
     ) -> Self {
         let shared = Self::shared();
@@ -543,18 +540,18 @@ impl Scheduler {
                 run(worker_shared, slot, pressure, move |task| step(task));
             }));
         }
-        #[cfg(all(test, target_os = "macos"))]
+        #[cfg(test)]
         let workers = Arc::new(Mutex::new(workers));
-        #[cfg(not(all(test, target_os = "macos")))]
+        #[cfg(not(test))]
         drop(workers); // Detached: production retires owners through `Owner`/close.
         Self {
             owner: Arc::new(Owner(shared)),
-            #[cfg(all(test, target_os = "macos"))]
+            #[cfg(test)]
             workers,
         }
     }
 
-    #[cfg(all(test, target_os = "macos"))]
+    #[cfg(test)]
     pub(super) fn close_and_wait(&self) -> Result<(), String> {
         self.close();
         let workers = std::mem::take(&mut *self.workers.lock().unwrap());
@@ -577,7 +574,7 @@ impl Scheduler {
         + 'static,
     ) -> Self {
         Self::start(move |shared| {
-            run(shared, 0, crate::resources::memory_pressure, |task| {
+            run(shared, 0, crate::sys::memory_pressure, |task| {
                 step(&task.request.path)
             })
         })
@@ -684,12 +681,7 @@ impl Scheduler {
 // Started work stays on its owner because worker-local mutable native handles are
 // not Send. Unowned starts obey the yield rule — background work begins only when
 // no foreground demand lives — and the second owner idles under memory pressure.
-fn eligible(
-    state: &State,
-    task: &Task,
-    slot: usize,
-    pressure: crate::resources::MemoryPressure,
-) -> bool {
+fn eligible(state: &State, task: &Task, slot: usize, pressure: crate::sys::MemoryPressure) -> bool {
     if task.sdk.load(Ordering::Relaxed) {
         if state.steps != 0 {
             return false;
@@ -699,7 +691,7 @@ fn eligible(
     }
     match task.owner.load(Ordering::Relaxed) {
         UNOWNED => {
-            if slot != 0 && !matches!(pressure, crate::resources::MemoryPressure::Normal) {
+            if slot != 0 && !matches!(pressure, crate::sys::MemoryPressure::Normal) {
                 return false;
             }
             task.priority() == Priority::Foreground
@@ -736,7 +728,7 @@ impl Drop for StepCount<'_> {
 fn run(
     shared: Arc<Shared>,
     slot: usize,
-    pressure: fn() -> crate::resources::MemoryPressure,
+    pressure: fn() -> crate::sys::MemoryPressure,
     mut step: impl FnMut(&Arc<Task>) -> Result<Option<Arc<DevelopedSource>>, String>,
 ) {
     loop {

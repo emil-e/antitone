@@ -56,10 +56,7 @@ fn authored_history_restores_import_crop_dust_local_and_analysis_through_the_rea
         geometry::SourcePoint,
         local_adjustments::{GradientMask, LocalAdjustment},
     };
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::METAL,
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
+    let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default()))
         .expect("history worker test requires Metal");
     let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();

@@ -1,6 +1,7 @@
 use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::window::Window;
 
+use super::FullscreenPresentation;
 use super::host::Result;
 
 #[derive(Default)]
@@ -13,7 +14,7 @@ struct SavedWindow {
     size: LogicalSize<f64>,
     decorated: bool,
     resized: bool,
-    presentation: Option<Presentation>,
+    presentation: Option<FullscreenPresentation>,
 }
 
 impl PhotoFullscreen {
@@ -28,7 +29,7 @@ impl PhotoFullscreen {
                 decorated: window.is_decorated(),
                 resized,
                 presentation: if resized {
-                    Some(Presentation::new()?)
+                    Some(FullscreenPresentation::new(window)?)
                 } else {
                     None
                 },
@@ -41,7 +42,7 @@ impl PhotoFullscreen {
                     .presentation
                     .as_ref()
                     .unwrap()
-                    .show(window.has_focus());
+                    .show(window, window.has_focus());
                 window.set_decorations(false);
                 let _ = window.request_inner_size(monitor.size());
                 window.set_outer_position(monitor.position());
@@ -50,6 +51,10 @@ impl PhotoFullscreen {
             changed = Some(true);
             window.request_redraw();
         } else if !requested && let Some(saved) = self.saved.take() {
+            if let Some(presentation) = saved.presentation.as_ref() {
+                // Release the presentation (window level, menu-bar hiding) before restoring.
+                presentation.show(window, false);
+            }
             // Restore chrome before content size so the original outer position stays meaningful.
             if saved.resized {
                 window.set_decorations(saved.decorated);
@@ -60,51 +65,17 @@ impl PhotoFullscreen {
             changed = Some(false);
             window.request_redraw();
         }
-        self.focus_changed(window.has_focus());
+        self.focus_changed(window, window.has_focus());
         Ok(changed)
     }
 
-    pub(super) fn focus_changed(&self, focused: bool) {
+    pub(super) fn focus_changed(&self, window: &Window, focused: bool) {
         if let Some(presentation) = self
             .saved
             .as_ref()
             .and_then(|saved| saved.presentation.as_ref())
         {
-            presentation.show(focused);
+            presentation.show(window, focused);
         }
-    }
-}
-
-struct Presentation {
-    app: objc2::rc::Retained<objc2_app_kit::NSApplication>,
-    previous: objc2_app_kit::NSApplicationPresentationOptions,
-}
-
-impl Presentation {
-    fn new() -> Result<Self> {
-        let main =
-            objc2::MainThreadMarker::new().ok_or("fullscreen viewing requires the main thread")?;
-        let app = objc2_app_kit::NSApplication::sharedApplication(main);
-        let previous = app.presentationOptions();
-        Ok(Self { app, previous })
-    }
-
-    fn show(&self, focused: bool) {
-        use objc2_app_kit::NSApplicationPresentationOptions as Options;
-        // These paired auto-hide options preserve system access and do not create a fullscreen Space.
-        let desired = if focused {
-            Options::AutoHideDock | Options::AutoHideMenuBar
-        } else {
-            self.previous
-        };
-        if self.app.presentationOptions() != desired {
-            self.app.setPresentationOptions(desired);
-        }
-    }
-}
-
-impl Drop for Presentation {
-    fn drop(&mut self) {
-        self.app.setPresentationOptions(self.previous);
     }
 }
