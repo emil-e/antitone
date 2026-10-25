@@ -337,7 +337,10 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
                     == Some(Coverage::rectangle(picture).corners().map(|p| p.0)))
         );
         assert_eq!(after.input.gamma(), before.input.gamma());
-        assert_eq!(after.input.response(), before.input.response());
+        assert_eq!(
+            Editor::response_of(after.input),
+            Editor::response_of(before.input)
+        );
         assert_eq!(after.orientation, before.orientation);
         assert_eq!(after.flat_field(), before.flat_field());
         assert_eq!(editor.current_source, selected);

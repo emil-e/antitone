@@ -309,7 +309,7 @@ fn text_actions_fit_their_labels_and_keep_ids_and_supplied_availability() {
         for width in [315., 270.] {
             for inherited_enabled in [true, false] {
                 for action in [
-                    TextAction::new("Use adjustable response").help("Explicit opt-in"),
+                    TextAction::new("Choose…").help("Explicit opt-in"),
                     TextAction::new("Set up…"),
                     TextAction::new("Cancel"),
                     TextAction::new("Discard"),

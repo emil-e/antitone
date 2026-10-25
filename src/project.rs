@@ -21,7 +21,7 @@ use std::{
 #[path = "project_json.rs"]
 mod json;
 
-pub const SCHEMA_VERSION: u32 = 9;
+pub const SCHEMA_VERSION: u32 = 10;
 /// Negative scanning is independent of the camera's as-shot white balance.
 pub const UNITY_WB: [f64; 4] = [1.; 4];
 // Bump when native/raw_bridge.cpp development or scan.rs matrix/normalization/floor contracts change.
@@ -926,7 +926,7 @@ impl Project {
     pub fn load(path: &Path) -> Result<Self> {
         let input = BufReader::new(json::bounded_strings(File::open(path).map_err(failure)?));
         let mut project: Self = serde_json::from_reader(input).map_err(failure)?;
-        // Schema-9 files may contain nonordered source records. Keep only ordered photos and the
+        // Files may contain nonordered source records. Keep only ordered photos and the
         // accepted flat-field reference before validation.
         project.prune_unreferenced_sources();
         project.validate()?;

@@ -2821,7 +2821,7 @@ fn section_and_color_resets_preserve_calibration_and_other_edit_scopes() {
     };
     let calibration = (editor.dmin(), editor.dmax());
     let photo = editor.photo;
-    let shape = crate::processing::Response::Film {
+    let shape = crate::processing::Response {
         toe: 3.,
         shoulder: 0.01,
     };
@@ -2975,53 +2975,6 @@ fn response_section_is_reachable_by_scrolling_while_stage_tabs_stay_fixed() {
             tabs
         );
     }
-}
-
-#[test]
-fn original_grade_requires_explicit_response_opt_in_and_drawing_never_regrades_it() {
-    let context = egui::Context::default();
-    let mut editor = fixture();
-    with_camera_basis(&mut editor);
-    editor.set_response(crate::processing::Response::Original);
-    editor.set_gamma(0.73);
-    editor.roll.exposure = 2.345;
-    let before = editor.roll;
-    let references = (editor.dmin(), editor.dmax());
-    let photo = editor.photo;
-    click_section_header(&mut editor, &context, "Toe & shoulder");
-    let text = controls_frame(&mut editor, &context, 315., vec![]);
-    assert_eq!(editor.roll, before);
-    assert!(
-        !text
-            .iter()
-            .any(|(label, _)| label == "Toe" || label == "Shoulder")
-    );
-    let button = text
-        .iter()
-        .find(|(label, _)| label == "Use adjustable response")
-        .unwrap()
-        .1
-        .center();
-    for pressed in [true, false] {
-        controls_frame(
-            &mut editor,
-            &context,
-            315.,
-            vec![
-                egui::Event::PointerMoved(button),
-                egui::Event::PointerButton {
-                    pos: button,
-                    button: egui::PointerButton::Primary,
-                    pressed,
-                    modifiers: egui::Modifiers::NONE,
-                },
-            ],
-        );
-    }
-    assert_eq!(editor.roll, before);
-    assert_eq!(editor.response(), crate::processing::Response::film());
-    assert_eq!((editor.dmin(), editor.dmax()), references);
-    assert_eq!(editor.photo, photo);
 }
 
 #[test]

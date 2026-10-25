@@ -113,7 +113,7 @@ fn usable_film_is_pooled_without_requiring_every_frame_to_supply_base() {
     let film = vec![BASE; 256];
     let a = picture(512, 0.05, 0.5);
     let b = picture(512, 0.1, 0.8);
-    let current = current(0.9, Response::Original);
+    let current = current(0.9, Response::film());
     let p = proposal(
         &[
             FrameSamples {
@@ -417,7 +417,7 @@ fn cooperative_cancellation_at_start_during_fitting_and_before_completion_change
             dmax: BASE * 0.02,
             input_floor: FLOOR,
         },
-        response: Response::Original,
+        response: Response::film(),
         gamma: DEFAULT_GAMMA,
         balance: Balance {
             warmth: 0.1,

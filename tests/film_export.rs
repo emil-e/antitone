@@ -15,7 +15,7 @@ use tiff::decoder::{Decoder, DecodingResult};
 #[test]
 fn film_exports_reopen_with_unchanged_target_and_ap0_pixels() {
     let directory = tempfile::tempdir().unwrap();
-    let response = Response::Film {
+    let response = Response {
         toe: 2.543210987654321,
         shoulder: 0.003210987654321,
     };

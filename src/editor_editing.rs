@@ -83,16 +83,8 @@ fn reset_roll(input: &mut InputSettings, roll: &mut RollSettings, reset: control
             let value = kind.default();
             match kind {
                 P::Gamma => *gamma = value,
-                P::Toe => {
-                    if let crate::processing::Response::Film { toe, .. } = response {
-                        *toe = value;
-                    }
-                }
-                P::Shoulder => {
-                    if let crate::processing::Response::Film { shoulder, .. } = response {
-                        *shoulder = value;
-                    }
-                }
+                P::Toe => response.toe = value,
+                P::Shoulder => response.shoulder = value,
                 P::Warmth | P::Tint if matches!(bal, C::GammaBalance) => match kind {
                     P::Warmth => balance.warmth = value,
                     _ => balance.tint = value,

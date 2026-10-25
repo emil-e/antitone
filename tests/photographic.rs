@@ -318,7 +318,7 @@ fn input_for(cal: antitone::processing::Calibration) -> antitone::processing::In
         dmin: Some(cal.dmin),
         dmax: Some(cal.dmax),
         input_floor: cal.input_floor,
-        response: antitone::processing::Response::Original,
+        response: antitone::processing::Response::film(),
         gamma: antitone::processing::DEFAULT_GAMMA,
         balance: antitone::color::Balance::default(),
     }

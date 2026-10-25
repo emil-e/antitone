@@ -745,9 +745,14 @@ impl Editor {
 
     #[cfg(test)]
     fn response(&self) -> crate::processing::Response {
-        match self.input {
-            InputSettings::Negative { response, .. } => response,
-            InputSettings::Digital => crate::processing::Response::Original,
+        Self::response_of(self.input).expect("negative fixture has an interpretation response")
+    }
+
+    #[cfg(test)]
+    fn response_of(input: InputSettings) -> Option<crate::processing::Response> {
+        match input {
+            InputSettings::Negative { response, .. } => Some(response),
+            InputSettings::Digital => None,
         }
     }
 
@@ -1308,27 +1313,34 @@ impl Editor {
                                         ),
                                         changed: inversion_changed,
                                         reset: Some(inversion_changed),
-                                        tool: Some(controls::balance_pick_tool(can_pick, "Pick neutral for gamma balance")),
+                                        tool: Some(controls::balance_pick_tool(
+                                            can_pick,
+                                            "Pick neutral for gamma balance",
+                                        )),
                                         default_open: Some(true),
                                     },
                                     |ui| {
                                         controls::parameter(ui, Parameter::Gamma, gamma);
-                                        controls::balance_body(ui, ColorControl::GammaBalance, balance);
+                                        controls::balance_body(
+                                            ui,
+                                            ColorControl::GammaBalance,
+                                            balance,
+                                        );
                                     },
                                 );
-                                if reset.tool { start_pick = Some(Pick::Gamma); }
+                                if reset.tool {
+                                    start_pick = Some(Pick::Gamma);
+                                }
                                 if reset.reset
                                     && !controls::defer_reset(ui, controls::Reset::GammaAndBalance)
                                 {
                                     *gamma = crate::processing::DEFAULT_GAMMA;
                                     *balance = Balance::default();
                                 }
-                                let response_summary = match response {
-                                    crate::processing::Response::Original => "Classic curve".into(),
-                                    crate::processing::Response::Film { toe, shoulder } => {
-                                        format!("Toe {toe:.2} · Shoulder {shoulder:.4}")
-                                    }
-                                };
+                                let response_summary = format!(
+                                    "Toe {:.2} · Shoulder {:.4}",
+                                    response.toe, response.shoulder
+                                );
                                 let (_, reset) = presentation::section(
                                     ui,
                                     "roll-response",
@@ -1337,37 +1349,18 @@ impl Editor {
                                         summary: &response_summary,
                                         changed: *response != crate::processing::Response::film(),
                                         reset: Some(
-                                            !response.is_original()
-                                                && *response != crate::processing::Response::film(),
+                                            *response != crate::processing::Response::film(),
                                         ),
                                         tool: None,
                                         default_open: Some(false),
                                     },
-                                    |ui| match response {
-                                        crate::processing::Response::Original => {
-                                            ui.label("Classic curve · camera model 4");
-                                            if presentation::TextAction::new(
-                                                "Use adjustable response",
-                                            )
-                                            .help(
-                                                "Start with toe 2.5 and shoulder off; keep other adjustments.",
-                                            )
-                                            .show(ui)
-                                            .clicked()
-                                            {
-                                                self.control_command(
-                                                    editing::Command::Reset(
-                                                        editing::Scope::Roll,
-                                                        controls::Reset::Response,
-                                                    ),
-                                                    cx,
-                                                );
-                                            }
-                                        }
-                                        crate::processing::Response::Film { toe, shoulder } => {
-                                            controls::parameter(ui, Parameter::Toe, toe);
-                                            controls::parameter(ui, Parameter::Shoulder, shoulder);
-                                        }
+                                    |ui| {
+                                        controls::parameter(ui, Parameter::Toe, &mut response.toe);
+                                        controls::parameter(
+                                            ui,
+                                            Parameter::Shoulder,
+                                            &mut response.shoulder,
+                                        );
                                     },
                                 );
                                 if reset.reset
@@ -1403,7 +1396,8 @@ impl Editor {
                                     );
                                 },
                             );
-                            if action.reset && !controls::defer_reset(ui, controls::Reset::Exposure) {
+                            if action.reset && !controls::defer_reset(ui, controls::Reset::Exposure)
+                            {
                                 self.roll.exposure = 0.;
                             }
                         });

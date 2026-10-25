@@ -69,7 +69,13 @@ fn corrected_viewer_shares_the_field_and_matches_both_cpu_output_targets() {
             ProcessingParameters::source(),
             scans.iter().map(|p| matrix * p).collect::<Vec<_>>(),
         )];
-        for response in [Response::Original, Response::film()] {
+        for response in [
+            Response::film(),
+            Response {
+                toe: 3.5,
+                shoulder: 0.01,
+            },
+        ] {
             let input = InputSettings::Negative {
                 dmin: Some(calibration.dmin),
                 dmax: Some(calibration.dmax),
@@ -441,7 +447,7 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
             .collect();
         let films: Vec<_> = [
             Response::film(),
-            Response::Film {
+            Response {
                 toe: 3.875,
                 shoulder: 0.02,
             },

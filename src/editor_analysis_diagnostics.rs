@@ -200,8 +200,6 @@ fn diagnose_sample_rolls() {
                     after.photo = prior.photo;
                     assert_eq!(&after, prior);
                 }
-                assert_eq!(before.input.gamma(), before.input.gamma());
-                assert_eq!(before.input.response(), before.input.response());
             } else {
                 assert_eq!(editor.document.project, before);
             }

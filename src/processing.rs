@@ -39,51 +39,36 @@ pub struct InputCapabilities {
     pub response: bool,
 }
 
+/// The interpretation curve's toe and shoulder. Toe 1 with no shoulder removes their
+/// shaping, leaving gamma's contrast between the anchors.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "project", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(
-    feature = "project",
-    serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)
-)]
-pub enum Response {
-    Original,
-    Film { toe: f64, shoulder: f64 },
+#[cfg_attr(feature = "project", serde(deny_unknown_fields))]
+pub struct Response {
+    pub toe: f64,
+    pub shoulder: f64,
 }
 
 impl Response {
-    pub const fn original() -> Self {
-        Self::Original
-    }
-
+    /// The shared film prior over measured anchors: a default toe and no shoulder.
     pub const fn film() -> Self {
-        Self::Film {
+        Self {
             toe: DEFAULT_TOE,
             shoulder: 0.0,
         }
     }
 
-    pub fn is_original(&self) -> bool {
-        matches!(self, Self::Original)
-    }
-
-    pub fn processing_model(self) -> u32 {
-        crate::PROCESSING_MODEL_VERSION
-    }
-
     pub fn shape(self) -> Result<(f64, f64), Error> {
-        let Self::Film { toe, shoulder } = self else {
-            return Ok((1.0, 0.0));
-        };
-        if !toe.is_finite()
-            || !(MIN_TOE..=MAX_TOE).contains(&toe)
-            || !shoulder.is_finite()
-            || !(0.0..=MAX_SHOULDER).contains(&shoulder)
+        if !self.toe.is_finite()
+            || !(MIN_TOE..=MAX_TOE).contains(&self.toe)
+            || !self.shoulder.is_finite()
+            || !(0.0..=MAX_SHOULDER).contains(&self.shoulder)
         {
             return Err(Error::InvalidParameter(
                 "toe must be within 1..4 and shoulder within 0..0.02",
             ));
         }
-        Ok((toe, shoulder))
+        Ok((self.toe, self.shoulder))
     }
 }
 
@@ -338,17 +323,9 @@ impl InputSettings {
         }
     }
 
-    /// The response curve in effect (Digital is already a positive: identity).
-    pub fn response(&self) -> Response {
-        match self {
-            Self::Negative { response, .. } => *response,
-            Self::Digital => Response::Original,
-        }
-    }
-
     /// The processing-model version this interpretation maps to.
     pub fn processing_model(&self) -> u32 {
-        self.response().processing_model()
+        crate::PROCESSING_MODEL_VERSION
     }
 
     /// The same input stage over a source-refined calibration (Digital ignores it).
@@ -544,11 +521,7 @@ impl Inversion {
         }
         let anchor_exponents = DVec3::from_array(std::array::from_fn(|c| {
             let l = log_ratio(calibration.dmin[c], calibration.dmax[c]);
-            if toe == 1.0 && shoulder == 0.0 {
-                l / gammas[c]
-            } else {
-                toe * l / (gammas[c] - shoulder * l / std::f64::consts::LN_10)
-            }
+            toe * l / (gammas[c] - shoulder * l / std::f64::consts::LN_10)
         }));
         if !anchor_exponents.is_finite() {
             return Err(Error::NumericalOverflow);
@@ -574,6 +547,8 @@ impl Inversion {
             let s = scan[c].max(self.calibration.input_floor);
             let l = log_ratio(self.calibration.dmin[c], s);
             rgb[c] = if toe == 1.0 && shoulder == 0.0 {
+                // The general branch round-trips through log/exp; this setting is reachable
+                // and is the neutral toe/shoulder choice, so evaluate the ratio directly.
                 expm1_ratio(l / self.gammas[c], self.anchor_exponents[c])
             } else {
                 let a = toe * l / (self.gammas[c] - shoulder * l / std::f64::consts::LN_10);

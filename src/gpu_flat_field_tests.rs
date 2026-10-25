@@ -310,12 +310,15 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                 (ProcessingParameters::source_inspection(16.).unwrap(), None),
             ];
             for response in [
-                Response::Original,
-                Response::Film {
+                Response {
+                    toe: 1.,
+                    shoulder: 0.,
+                },
+                Response {
                     toe: 2.5,
                     shoulder: 0.,
                 },
-                Response::Film {
+                Response {
                     toe: 4.,
                     shoulder: 0.003,
                 },

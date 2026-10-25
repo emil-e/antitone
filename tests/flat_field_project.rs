@@ -174,7 +174,7 @@ fn inversion_domain_uses_each_developed_floor_and_residual_gain_not_the_native_b
             *dmin = Some(DVec3::splat(2.));
             *dmax = Some(DVec3::splat(floor * 1.01));
             *gamma = 0.1;
-            *response = Response::Film {
+            *response = Response {
                 toe: 1.,
                 shoulder: 0.02,
             };

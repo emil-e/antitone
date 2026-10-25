@@ -58,7 +58,13 @@ fn saved_gamma_is_explicit_and_preserved_independently_of_the_new_grade_default(
     );
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("roll.antitone.json");
-    for response in [Response::Original, Response::film()] {
+    for response in [
+        Response::film(),
+        Response {
+            toe: 3.25,
+            shoulder: 0.004,
+        },
+    ] {
         let mut p = project();
         if let InputSettings::Negative {
             gamma,
