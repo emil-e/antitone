@@ -16,9 +16,6 @@ fn local_grade(input: array<Triple, 3>, index: u32) -> array<Triple, 3> {
         return input;
     }
     let pixel = source_pixel(index);
-    let point = array<Triple, 2>(
-            precise_add(colour_coordinate(pixel.x), number(0.5)),
-            precise_add(colour_coordinate(pixel.y), number(0.5)),
-        );
+    let point = vec2f(colour_coordinate(pixel.x) + 0.5, colour_coordinate(pixel.y) + 0.5);
     return colour_expansion(colour_locals(colour_round(input), point));
 }

@@ -115,23 +115,12 @@ fn round53(a: Triple) -> Triple {
     return Triple(result.h / scale, result.l / scale, result.t / scale);
 }
 
-fn normalized(code: u32) -> Triple {
-    return normalized_value(f32(code));
-}
-
 fn normalized_value(value: f32) -> Triple {
     let h = value / 65535.0;
     let rem = fma(-h, 65535.0, value);
     let l = rem / 65535.0;
     let t = fma(-l, 65535.0, rem) / 65535.0;
     return round53(Triple(h, l, t));
-}
-
-fn convert_camera(code: vec2u) -> ConvertedScan {
-    let x = normalized(code.x & 65535u);
-    let y = normalized(code.x >> 16u);
-    let z = normalized(code.y & 65535u);
-    return convert_components(x, y, z);
 }
 
 fn convert_components(x: Triple, y: Triple, z: Triple) -> ConvertedScan {

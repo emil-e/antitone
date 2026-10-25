@@ -25,24 +25,16 @@ fn colour_local(stage: u32, row: u32, column: u32) -> f32 {
     return colour_value(local_constant(stage, row, column));
 }
 
-// A 64:1 product/signal margin avoids ill-conditioned cancellation in fast matrix work.
-// This is an evaluated accuracy/cost choice, not a universal floating-point bound.
-fn colour_conditioned(value: f32, magnitude: f32) -> bool {
-    return abs(value) >= magnitude * 0.015625;
-}
-
-// Physical-view inputs are already FP32. Preserve exposure and coefficient residuals when
-// cancellation would make rounding that reusable input again observable after later recovery.
-fn colour_post(input: array<f32, 3>, gain: Triple) -> array<f32, 3> {
+// Physical-view inputs are already FP32; one f32 evaluation serves every input.
+fn colour_post(input: array<f32, 3>, gain: f32) -> array<f32, 3> {
     var rgb: array<f32, 3>;
-    for(var c = 0u; c < 3u; c++) {
-        rgb[c] = input[c] * colour_value(gain);
+    for (var c = 0u; c < 3u; c++) {
+        rgb[c] = input[c] * gain;
     }
     var output: array<f32, 3>;
-    for(var c = 0u; c < 3u; c++) {
+    for (var c = 0u; c < 3u; c++) {
         var value = 0.0;
-        var magnitude = 0.0;
-        for(var j = 0u; j < 3u; j++) {
+        for (var j = 0u; j < 3u; j++) {
             let coefficient = colour_value(
                     Triple(
                         parameters.post[j][c],
@@ -51,30 +43,12 @@ fn colour_post(input: array<f32, 3>, gain: Triple) -> array<f32, 3> {
                     ),
                 );
             value = fma(coefficient, rgb[j], value);
-            magnitude = fma(abs(coefficient), abs(rgb[j]), magnitude);
         }
-        if colour_conditioned(value, magnitude) {
-            output[c] = value;
-        } else {
-            var sum = number(0.0);
-            for(var j = 0u; j < 3u; j++) {
-                let coefficient = Triple(
-                        parameters.post[j][c],
-                        parameters.post_low[j][c],
-                        parameters.post_tail[j][c],
-                    );
-                sum = precise_add(
-                        sum,
-                        precise_mul(coefficient, precise_mul(number(input[j]), gain)),
-                    );
-            }
-            output[c] = colour_value(sum);
-        }
+        output[c] = value;
     }
     return output;
 }
 
-// Propagate absolute products through both Bradford matrices to detect cancellation.
 fn colour_wb_product(inverse: bool, rgb: array<vec2f, 3>) -> array<vec2f, 3> {
     var output: array<vec2f, 3>;
     for(var c = 0u; c < 3u; c++) {
@@ -104,11 +78,11 @@ fn colour_wb_product(inverse: bool, rgb: array<vec2f, 3>) -> array<vec2f, 3> {
     return output;
 }
 
-fn colour_balance(stage: u32, rgb: array<f32, 3>, weight: Triple) -> array<f32, 3> {
+fn colour_balance(stage: u32, rgb: array<f32, 3>, weight: f32) -> array<f32, 3> {
     let ev = colour_local(stage, 2u, 0u);
     var exposure = 1.0;
     if ev != 0.0 {
-        exposure = exp(colour_value(weight) * ev);
+        exposure = exp(weight * ev);
     }
     var exposed: array<vec2f, 3>;
     for(var c = 0u; c < 3u; c++) {
@@ -116,39 +90,12 @@ fn colour_balance(stage: u32, rgb: array<f32, 3>, weight: Triple) -> array<f32, 
     }
     var fast = colour_wb_product(false, exposed);
     for(var c = 0u; c < 3u; c++) {
-        fast[c] *= exp(colour_value(weight) * colour_local(stage, 2u, c + 1u));
+        fast[c] *= exp(weight * colour_local(stage, 2u, c + 1u));
     }
     fast = colour_wb_product(true, fast);
-    var sensitive = false;
-    for(var c = 0u; c < 3u; c++) {
-        if !colour_conditioned(fast[c].x, fast[c].y) {
-            sensitive = true;
-        }
-    }
-    if !sensitive {
-        return array<f32, 3>(fast[0].x, fast[1].x, fast[2].x);
-    }
-    // Reconstruct from the pre-exposure input; rounding that product first would discard
-    // the very residual that the sensitive WB calculation must recover.
-    var precise_rgb = array<Triple, 3>(number(rgb[0]), number(rgb[1]), number(rgb[2]));
-    if ev != 0.0 {
-        let gain = precise_exp(precise_mul(weight, local_constant(stage, 2u, 0u)));
-        for(var c = 0u; c < 3u; c++) {
-            precise_rgb[c] = precise_mul(precise_rgb[c], gain);
-        }
-    }
-    var cones = local_matrix(false, precise_rgb);
-    for(var c = 0u; c < 3u; c++) {
-        cones[c] = precise_mul(
-                cones[c],
-                precise_exp(precise_mul(weight, local_constant(stage, 2u, c + 1u))),
-            );
-    }
-    let result = local_matrix(true, cones);
-    return array<f32, 3>(colour_value(result[0]), colour_value(result[1]), colour_value(result[2]));
+    return array<f32, 3>(fast[0].x, fast[1].x, fast[2].x);
 }
 
-// Analytic expm1(x)/x limit, without epsilon division or a luminance clamp.
 fn colour_exprel(x: f32) -> f32 {
     if abs(x) <= 0.125 {
         var p = 1.0 / 5040.0;
@@ -341,33 +288,33 @@ fn colour_global(rgb: array<f32, 3>) -> array<f32, 3> {
         );
 }
 
-fn colour_locals(input: array<f32, 3>, source: array<Triple, 2>) -> array<f32, 3> {
+fn colour_locals(input: array<f32, 3>, source: vec2f) -> array<f32, 3> {
     if local_context.count.x == 0u {
         return input;
     }
-    if !precise_le(colour_coordinate(local_context.area.x), source[0])
-        || !precise_le(colour_coordinate(local_context.area.y), source[1])
-        || precise_le(colour_coordinate(local_context.area.x + local_context.area.z), source[0])
-        || precise_le(colour_coordinate(local_context.area.y + local_context.area.w), source[1]) {
+    let area = local_context.area;
+    if f32(area.x) > source.x
+        || f32(area.y) > source.y
+        || f32(area.x + area.z) <= source.x
+        || f32(area.y + area.w) <= source.y {
         return input;
     }
     var rgb = input;
-    for(var stage = 0u; stage < local_context.count.x; stage++) {
-        var coverage = local_coverage_point(stage, source);
+    for (var stage = 0u; stage < local_context.count.x; stage++) {
+        var coverage = local_coverage_point32(stage, source);
         if local_stages[stage].flags.y != 0u {
-            coverage = precise_sub(number(1.0), coverage);
+            coverage = 1.0 - coverage;
         }
-        let precise_weight = precise_mul(coverage, local_constant(stage, 1u, 3u));
-        let weight = colour_value(precise_weight);
+        let weight = coverage * local_value(stage, 1u, 3u);
         if weight == 0.0 {
             continue;
         }
         let ev = colour_local(stage, 2u, 0u);
         if local_stages[stage].flags.z != 0u {
-            rgb = colour_balance(stage, rgb, precise_weight);
+            rgb = colour_balance(stage, rgb, weight);
         } else if ev != 0.0 {
             let gain = exp(weight * ev);
-            for(var c = 0u; c < 3u; c++) {
+            for (var c = 0u; c < 3u; c++) {
                 rgb[c] *= gain;
             }
         }
@@ -388,7 +335,7 @@ fn colour_locals(input: array<f32, 3>, source: array<Triple, 2>) -> array<f32, 3
     return rgb;
 }
 
-// Split integer coordinates before conversion: original pixels can exceed f32 unit precision.
-fn colour_coordinate(value: u32) -> Triple {
-    return precise_add(number(f32(value >> 16u) * 65536.0), number(f32(value & 65535u)));
+// Original pixel coordinates stay exact in f32 well beyond this application's image sizes.
+fn colour_coordinate(value: u32) -> f32 {
+    return f32(value);
 }

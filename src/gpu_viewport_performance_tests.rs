@@ -76,7 +76,7 @@ async fn viewport_probe(
         size[0],
         size[1]
     );
-    let shader = ProcessingKernel::shader();
+    let shader = ProcessingKernel::kernel_shader();
     assert_eq!(shader.matches(old).count(), 1);
     let crop_kernel = shader_kernel(&device, shader.replace(old, &replacement)).await;
     let mut full_source = ProcessingSource::new_continuous(&device, &pixels, matrix).unwrap();

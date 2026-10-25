@@ -31,16 +31,10 @@ fn response_log1p(z: f32) -> f32 {
     return 2.0 * r * sum;
 }
 
+// One f32 response for every input: the compensated inversion it used to fall back to was
+// compiled into every pipeline and taken only for "sensitive" values.
 fn invert_film(sample: Triple, c: u32) -> Triple {
-    if abs(parameters.anchor[c]) > 32.0 || parameters.response_precision.x <= 0.0 {
-        return precise_invert_film(sample, c);
-    }
-    let reference = Triple(
-            parameters.dmin_floor[c],
-            parameters.dmin_low[c],
-            parameters.dmin_tail[c],
-        );
-    let relative = precise_sub(reference, sample).h / sample.h;
+    let relative = (parameters.dmin_floor[c] - sample.h) / sample.h;
     // Ratio density avoids subtracting large logs before low-gamma amplification.
     var l = log(parameters.dmin_floor[c] / sample.h);
     if abs(relative) < 0.5 {
@@ -55,9 +49,5 @@ fn invert_film(sample: Triple, c: u32) -> Triple {
     }
     let value = sign(a)
         * exp((response_log_abs_expm1(a) - parameters.anchor[c]) / beta + parameters.anchor.w);
-    // Camera/WB/creative/local amplification determines when precise response is needed.
-    if abs(value) > parameters.response_precision.x || value != value {
-        return precise_invert_film(sample, c);
-    }
     return number(value);
 }

@@ -220,7 +220,7 @@ impl Kernels {
     pub async fn new(device: &wgpu::Device) -> Result<Self, Error> {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let shader = [
-            ProcessingKernel::shader(),
+            ProcessingKernel::kernel_shader(),
             include_str!("shaders/footprint.wgsl").into(),
             include_str!("shaders/repairs.wgsl").into(),
         ]

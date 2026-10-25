@@ -69,65 +69,10 @@ fn precise_mul(a: Triple, b: Triple) -> Triple {
     return round53(multiply(a, b));
 }
 
-fn precise_div(a: Triple, b: Triple) -> Triple {
-    let h = a.h / b.h;
-    let rem = add(a, precise_neg(multiply(number(h), b)));
-    let l = rem.h / b.h;
-    let tail = add(rem, precise_neg(multiply(number(l), b)));
-    return round53(add(number(h), add(number(l), number(tail.h / b.h))));
-}
 
-fn precise_log(x: Triple) -> Triple {
-    let bits = bitcast<u32>(x.h);
-    let exponent = (bits >> 23u) & 255u;
-    var n = i32(exponent) - 127;
-    let scale = bitcast<f32>((254u - exponent) << 23u);
-    var m = Triple(bitcast<f32>((bits & 0x7fffffu) | (127u << 23u)), x.l * scale, x.t * scale);
-    if m.h > 1.4142135623730951 {
-        m = precise_mul(m, number(0.5));
-        n += 1;
-    }
-    return precise_add(
-            precise_log1p(precise_sub(m, number(1.0))),
-            precise_mul(number(f32(n)), LN2_PRECISE),
-        );
-}
 
-fn precise_log_ratio(base: Triple, sample: Triple) -> Triple {
-    let delta = precise_sub(base, sample);
-    let z = precise_div(delta, sample);
-    if abs(z.h) < 0.5 {
-        return precise_log1p(z);
-    }
-    return precise_sub(precise_log(base), precise_log(sample));
-}
 
-fn precise_log_abs_expm1(x: Triple) -> Triple {
-    if x.h > 50.0 {
-        return x;
-    }
-    if x.h > 0.0 {
-        return precise_add(x, precise_log(precise_neg(precise_expm1(precise_neg(x)))));
-    }
-    return precise_log(precise_neg(precise_expm1(x)));
-}
 
-fn precise_invert_film(sample: Triple, c: u32) -> Triple {
-    let base = Triple(parameters.dmin_floor[c], parameters.dmin_low[c], parameters.dmin_tail[c]);
-    let l = precise_log_ratio(base, sample);
-    let beta = Triple(parameters.shape.x, parameters.shape.z, parameters.shape_tail.x);
-    let k = Triple(parameters.shape.y, parameters.shape.w, parameters.shape_tail.y);
-    let gamma = Triple(parameters.gamma_mode[c], parameters.gamma_low[c], parameters.gamma_tail[c]);
-    let density = precise_div(l, LN10_PRECISE);
-    let a = precise_div(precise_mul(beta, l), precise_sub(gamma, precise_mul(k, density)));
-    if precise_eq(a, number(0.0)) {
-        return number(0.0);
-    }
-    let anchor = Triple(parameters.anchor[c], parameters.anchor_low[c], parameters.anchor_tail[c]);
-    let anchored = precise_div(precise_sub(precise_log_abs_expm1(a), anchor), beta);
-    let gain = Triple(parameters.anchor.w, parameters.anchor_low.w, parameters.anchor_tail.w);
-    return precise_mul(number(sign(a.h)), precise_exp(precise_add(anchored, gain)));
-}
 
 struct ProcessedPixel {
     rgb: array<Triple, 3>,
@@ -193,51 +138,30 @@ fn process_camera_source(scan: ConvertedScan) -> vec4f {
 
 fn camera_positive_to_ap1(q: array<Triple, 3>) -> array<Triple, 3> {
     var working: array<Triple, 3>;
-    for(var c = 0u; c < 3u; c++) {
-        var sum = number(0.0);
-        for(var j = 0u; j < 3u; j++) {
-            let m = Triple(
-                    camera_matrix.high[j][c],
-                    camera_matrix.low[j][c],
-                    camera_matrix.tail[j][c],
-                );
-            sum = precise_add(sum, precise_mul(m, q[j]));
+    for (var c = 0u; c < 3u; c++) {
+        var sum = 0.0;
+        for (var j = 0u; j < 3u; j++) {
+            let m = camera_matrix.high[j][c]
+                    + (camera_matrix.low[j][c] + camera_matrix.tail[j][c]);
+            sum = fma(m, q[j].h + (q[j].l + q[j].t), sum);
         }
-        working[c] = sum;
+        working[c] = number(sum);
     }
     return working;
 }
 
 fn photographic_post(working: array<Triple, 3>) -> array<Triple, 3> {
     var rgb: array<Triple, 3>;
-    for(var c = 0u; c < 3u; c++) {
-        let x = precise_mul(
-                Triple(
-                    parameters.post[0][c],
-                    parameters.post_low[0][c],
-                    parameters.post_tail[0][c],
-                ),
-                working[0],
-            );
-        let y = precise_mul(
-                Triple(
-                    parameters.post[1][c],
-                    parameters.post_low[1][c],
-                    parameters.post_tail[1][c],
-                ),
-                working[1],
-            );
-        let z = precise_mul(
-                Triple(
-                    parameters.post[2][c],
-                    parameters.post_low[2][c],
-                    parameters.post_tail[2][c],
-                ),
-                working[2],
-            );
-        rgb[c] = precise_add(precise_add(x, y), z);
+    for (var c = 0u; c < 3u; c++) {
+        var sum = 0.0;
+        for (var j = 0u; j < 3u; j++) {
+            let coefficient = parameters.post[j][c]
+                    + (parameters.post_low[j][c] + parameters.post_tail[j][c]);
+            sum = fma(coefficient, working[j].h + (working[j].l + working[j].t), sum);
+        }
+        rgb[c] = number(sum);
     }
-    // Source inspection shares the precise matrix stage, never the creative grade.
+    // Source inspection shares the matrix stage, never the creative grade.
     if parameters.stage != STAGE_SOURCE {
         rgb = photographic_grade(rgb);
     }

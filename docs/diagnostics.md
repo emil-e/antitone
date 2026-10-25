@@ -6,28 +6,6 @@ Run from the repository root after [setup](build-and-run.md#build-and-run). Exam
 
 Choose a diagnostic for a concrete question. A command's presence here does not make it a routine gate: numerical agreement, offscreen input, a visible native window and physical photographic acceptance are different evidence, and timings and captures are observations, not acceptance thresholds.
 
-## Collecting a session log
-
-The desktop app writes readable stderr and local JSON-lines session files automatically, including launches from Finder. Console lines show UTC time, level, target, thread and `key=value` fields; session files preserve typed fields. To report a problem:
-
-1. Reproduce it, then quit Antitone to drain queued session-file events.
-2. In Finder, choose **Go → Go to Folder** and enter `~/Library/Logs/Antitone`.
-3. Copy the newest `session-…` folder and share its `.jsonl` files together. `current.jsonl` is newest; `1.jsonl` and `2.jsonl` hold earlier events after rotation.
-
-Logs stay on the machine until shared. Review them first: propagated errors and panic details can contain file paths and usernames, and startup records identify the GPU and native runtime. Abrupt termination can lose queued events; copy the folder before repeated relaunches age it out.
-
-Each session retains up to three 8 MiB files. Startup keeps five sessions where possible, protecting sessions still open in other processes. A bounded background queue keeps normal log IO out of paint callbacks; overload is reported as `records_dropped`. File failures leave console logging active; unavailable stderr does not stop file capture. Use a writable `ANTITONE_LOG_DIR` and relaunch if capture fails.
-
-During normal capture, stderr has its own bounded queue and is best effort under backpressure: a full console queue drops console-only lines, and each console flush waits at most 250 ms. A stalled reader therefore cannot hold session-file capture or native Quit.
-
-Both outputs use the same filter: the default app level is `info`, and dependencies are capped at `warn`. For detailed source, thumbnail, native and preview timings, launch with `debug` and optionally a separate capture directory:
-
-```sh
-ANTITONE_LOG=debug ANTITONE_LOG_DIR="$PWD/.cache/logs" cargo app
-```
-
-`ANTITONE_LOG` accepts `off`, `error`, `warn`, `info`, `debug` or `trace`. Records carry a timestamp, level, target, thread, event name and typed fields. Rust instrumentation uses `log` key/value fields, for example `log::warn!(request, error = reason.as_str(); "source_failed")`; native bridges use [the shared scope logger](../native/logging.h). Standalone probe output and test reports remain on stdout.
-
 ## Editor and layout checks
 
 Build and open a saved project for real-use inspection:
@@ -208,20 +186,21 @@ The compact-header check covers normal/narrow 1×/2× layouts, disclosure and me
 
 ## Investigating responsiveness
 
-Capture a [debug session](#collecting-a-session-log) to inspect import/development, selected-preview/switch, thumbnail, acquisition and original-view events for a reported workload. Match phases and inputs; filesystem caching is uncontrolled. Backend Ready or paint-command recording is not GPU completion or physical presentation, and no minimum hardware target or general latency threshold is established. The `authored_` [worker checks](development.md#feature-specific-checks) use repository fixtures; their deadlines detect stalled tests, not unacceptable photographic latency.
+Use import/development, selected-preview/switch, thumbnail, acquisition and original-view logs for a reported workload. Match phases and inputs; filesystem caching is uncontrolled. Backend Ready or paint-command recording is not GPU completion or physical presentation, and no minimum hardware target or general latency threshold is established. The `authored_` [worker checks](development.md#feature-specific-checks) use repository fixtures; their deadlines detect stalled tests, not unacceptable photographic latency.
 
 ### Separating input, queue work and presentation
 
 Enable hosted [latency tracing](../src/platform/latency.rs) when kernel timings cannot explain an interaction:
 
 ```sh
-ANTITONE_LATENCY_TRACE=1 ANTITONE_LOG_DIR="$PWD/.cache/logs" cargo app
+mkdir -p .cache/probes
+ANTITONE_LATENCY_TRACE=1 cargo app > .cache/probes/latency.log 2>&1
 # Requires an explicitly authorized, unoccluded desktop window:
-ANTITONE_LATENCY_TRACE=1 ANTITONE_LOG_DIR="$PWD/.cache/logs" \
-  cargo test --locked --offline --features editor --test native_host -- --run editor
+ANTITONE_LATENCY_TRACE=1 cargo test --locked --offline --features editor \
+  --test native_host -- --run editor
 ```
 
-Match `latency_frame`/`latency_completion` session events by their `id` field. Timestamps separate drawable acquisition, UI handling, encoding, submission and the present call; input starts at delivery to winit, not the physical gesture. Completion callbacks attach under the shared submission gate; callback observation includes polling/thread scheduling and is not a hardware GPU timestamp. Metal allocation includes resources retained by native commands but not all driver/process memory — sampled peaks are not exhaustive, and Arc counts or declared bytes do not establish aggregate pressure safety. Measure same-PID RSS separately; on Apple Silicon these views overlap and must not be added.
+Match frame/completion rows by ID. Timestamps separate drawable acquisition, UI handling, encoding, submission and the present call; input starts at delivery to winit, not the physical gesture. Completion callbacks attach under the shared submission gate; callback observation includes polling/thread scheduling and is not a hardware GPU timestamp. Metal allocation includes resources retained by native commands but not all driver/process memory — sampled peaks are not exhaustive, and Arc counts or declared bytes do not establish aggregate pressure safety. Measure same-PID RSS separately; on Apple Silicon these views overlap and must not be added.
 
 For native scheduling and shared native builds, see [native development](native-development.md#editor-scheduling).
 
@@ -250,7 +229,7 @@ cargo test --locked --offline --release --features editor --lib \
 
 The [diagnostic](../src/gpu_working_view_local_resource_tests.rs) uses an authored RAW, a 1080p detail grid and the production whole-composition underlay with correction off/on, numeric/geometry edits and both targets. It samples same-process footprint/resident/Metal allocation and checkpoints current/building, deferred encoded consumers and retirement. Set `ANTITONE_SCREEN_RAW=1 ANTITONE_RAW_SAMPLES=/absolute/samples` for the supplied native-size source (headers must pass the existing 600-MiB diagnostic source bound); both variants use the existing pressure/free-memory/swap/growth stops, and timings without a coordinated window are indicative, not isolated interaction latency.
 
-Original-sample processing uses direct compensated inversion for integer and continuous inputs. [Continuous-source checks](../tests/gpu_continuous.rs), [film-response references](../tests/gpu_film_response.rs) and [original export references](../src/gpu_export_tests.rs) retain independent numerical coverage. Counterfactual exact-code/prefix probes in `gpu_reuse_tests.rs` are test-only experiments, not production caches; existing numerical gates must not be relaxed for a faster candidate.
+Original-sample processing runs the same inversion the editor uses, for integer and continuous inputs. [Continuous-source checks](../tests/gpu_continuous.rs), [film-response references](../tests/gpu_film_response.rs) and [original export references](../src/gpu_export_tests.rs) retain independent numerical coverage. Counterfactual exact-code/prefix probes in `gpu_reuse_tests.rs` are test-only experiments, not production caches; existing numerical gates must not be relaxed for a faster candidate.
 
 ## Equivalent ACES execution
 
@@ -286,7 +265,7 @@ For scale, the tested Sony/M5 Pro native-width workload (8640-wide originals) me
 
 ## Stable float32 view grading
 
-The [production colour tests](../src/gpu_working_view_colour_tests.rs) use the actual `RenderedView` lifecycle and [shared viewer/export colour operators](../src/shaders/photographic_colour.wgsl). Their independent precise oracle applies original photographic arithmetic and mapped source-coordinate masks to identical acquired AP1; it is not another cache, renderer or admission policy:
+The [production colour tests](../src/gpu_working_view_colour_tests.rs) use the actual `RenderedView` lifecycle and [shared viewer/export colour operators](../src/shaders/photographic_colour.wgsl). Their independent scalar reference applies the same photographic arithmetic and mapped source-coordinate masks on the CPU to identical acquired AP1; it is not another cache, renderer or admission policy:
 
 ```sh
 cargo test --locked --offline --features editor --lib gpu::view::tests::colour \
@@ -300,7 +279,7 @@ ANTITONE_RAW_SAMPLES=/absolute/samples cargo test --locked --offline --release \
 
 All authored signed/HDR configurations must remain admitted, with complete-raster comparison at AP1 `2e-5 + 2e-4×abs(reference)`, exact floor/coverage flags and rendered-linear absolute `2e-5`, including final-cell corruption and nonfinite checks on the reduction itself. The [scalar/sampling/lifetime regressions](../src/gpu_working_view_oracle_tests.rs) check continuous original-coordinate masks, corrected footprints, floor provenance and deferred encoded consumers after owner release; the optional RAW check spans three locations, correction on/off, both targets and Global/soft/hard locals (180 comparisons). [Composed shared-colour checks](../src/gpu_shared_colour_tests.rs) additionally compare actual viewer grading and export repair application with independent scalar processing on identical canonical signed AP1.
 
-These isolate arithmetic agreement, not filtering-before-grading or footprint-centre-mask approximation error. Stable colour uses black-relative/linear-toe formulas, compensated luminance and guarded WB/post residuals; later attenuation can expose an error hidden by clipping, so do not substitute a clamp or weaken gates.
+These isolate arithmetic agreement, not filtering-before-grading or footprint-centre-mask approximation error. Stable colour uses black-relative/linear-toe formulas and f32 luminance and WB/post products; later attenuation can expose an error hidden by clipping, so do not substitute a clamp or weaken gates.
 
 ## View sampling quality oracles
 

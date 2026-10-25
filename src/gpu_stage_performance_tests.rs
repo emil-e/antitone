@@ -489,7 +489,7 @@ fn paired_production_local_kernel() {
         );
         std::fs::read_to_string(path).unwrap()
     } else {
-        ProcessingKernel::shader()
+        ProcessingKernel::kernel_shader()
     };
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {

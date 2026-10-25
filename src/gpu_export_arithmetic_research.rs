@@ -28,10 +28,11 @@ mod precision_margins;
 pub(crate) mod tests;
 
 #[test]
-fn shared_export_assembles_guarded_response_and_common_colour_without_changing_stage_routing() {
-    let text = shader();
+fn one_photographic_composition_serves_the_viewport_and_export() {
+    let text = kernel_shader();
     assert_eq!(text.matches("fn invert_film(").count(), 1);
-    assert!(text.contains("precise_sub(reference, sample).h / sample.h"));
+    // The response keeps the near-base ratio density, which is the one place the model needs it.
+    assert!(text.contains("/ sample.h"));
     for source in [
         include_str!("shaders/camera_conversion.wgsl"),
         include_str!("shaders/flat_field.wgsl"),
@@ -43,9 +44,7 @@ fn shared_export_assembles_guarded_response_and_common_colour_without_changing_s
     ] {
         assert!(text.contains(source));
     }
-    let control = ProcessingKernel::shader();
-    assert!(control.contains(include_str!("shaders/photographic_precise.wgsl")));
-    assert!(!text.contains(include_str!("shaders/photographic_precise.wgsl")));
-    assert!(!control.contains("response_log1p"));
-    assert!(control.contains(include_str!("shaders/film_inversion_precise.wgsl")));
+    // The viewport kernel and the export kernel are the same implementation.
+    assert_eq!(text, ProcessingKernel::kernel_shader());
+    assert_eq!(text, ProcessingKernel::export_shader());
 }

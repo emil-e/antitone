@@ -1,12 +1,17 @@
 use super::*;
-use crate::processing::Calibration;
 
 #[test]
-fn processing_assembles_one_precise_primitive_family() {
-    let shader = ProcessingKernel::shader();
+fn processing_assembles_each_response_primitive_once() {
+    let shader = ProcessingKernel::kernel_shader();
     assert!(shader.contains(include_str!("shaders/processing_math.wgsl")));
-    for name in ["precise_log1p", "precise_exp", "precise_expm1"] {
-        assert_eq!(shader.matches(&format!("fn {name}(")).count(), 1);
+    // One definition each: a second implementation of the response is what this guards against.
+    for name in [
+        "invert_film",
+        "response_log1p",
+        "response_expm1",
+        "precise_exp",
+    ] {
+        assert_eq!(shader.matches(&format!("fn {name}(")).count(), 1, "{name}");
     }
 }
 
@@ -39,7 +44,7 @@ fn global_output_bounds_do_not_propagate_scratch_peaks_into_locals() {
         dmax: DVec3::new(0.008, 0.004, 0.002),
         input_floor: 1. / 65535.,
     };
-    let roll = RollSettings::default();
+    let roll = RollSettings::new_grade();
     let (_, input) = ProcessingParameters::positive_with_bound(
         calibration,
         roll,
@@ -191,10 +196,7 @@ fn authored_source_preview_scale_agrees_with_actual_libraw_development_gains() {
 #[test]
 fn source_inspection_gpu_matches_scaled_camera_to_ap1_with_zero_diagnostic_flags() {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let codes = [
@@ -301,10 +303,7 @@ fn camera_matrix_rejects_unrepresentable_values_without_repair() {
 #[test]
 fn rgb16_native_normalization_matches_f64_and_source_mapping_preserves_f32_bits() {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let mut codes: Vec<_> = (0..=65535u16).map(|v| [v, v, v, 65535]).collect();

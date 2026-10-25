@@ -1,11 +1,6 @@
 //! Original-footprint, scalar-mask and encoded-lifetime regressions on production objects.
 use super::*;
-use crate::{
-    color::Balance,
-    crop::Crop,
-    geometry::Composition,
-    processing::{NegativeInput, Response},
-};
+use crate::{crop::Crop, geometry::Composition};
 
 fn cropped(area: SourceRegion, region: SourceRegion, output: [u32; 2], angle: f64) -> FrameRaster {
     let composition = Composition::with_crop(
@@ -129,13 +124,10 @@ fn physical_view_original_footprints_match_scalar_correction_signed_hdr_and_floo
         // A narrow density span makes the fixture's dark patches HDR, without clipping.
         anchors.dmax = anchors.dmin * 0.8;
         let cal = correction.processing_calibration(anchors).unwrap();
-        let input = NegativeInput {
-            calibration: cal,
-            response: Response::film(),
+        let roll = RollSettings {
             gamma: 0.65,
-            balance: Balance::default(),
+            ..RollSettings::new_grade()
         };
-        let roll = RollSettings::default();
         let region = SourceRegion {
             x: area.x + area.width / 8,
             y: area.y + area.height / 8,
@@ -146,7 +138,8 @@ fn physical_view_original_footprints_match_scalar_correction_signed_hdr_and_floo
         let spec = ViewSourceSpec::new(
             1,
             frame,
-            input,
+            cal,
+            roll,
             scan.camera_to_ap1,
             Some(correction.clone()),
         )
@@ -165,7 +158,7 @@ fn physical_view_original_footprints_match_scalar_correction_signed_hdr_and_floo
         .unwrap()
         .unwrap();
         let scalar = crate::local_adjustments::SpatialPipeline::new(
-            input,
+            cal,
             roll,
             PhotoGradeSnapshot::new(PhotoSettings::default(), vec![]).unwrap(),
             scan.camera_to_ap1,
@@ -272,93 +265,6 @@ fn raw_cases(region: SourceRegion) -> Vec<(&'static str, PhotoGradeSnapshot)> {
 }
 
 #[test]
-#[ignore = "private RAW: 180 production colour/original-precision comparisons; no gallery or sampling-acceptance claim"]
-fn physical_view_colour_raw_correspondence() {
-    pollster::block_on(async {
-        let (device, queue, renderer, kernels) = context().await;
-        let precise = precise_kernels(&device, &kernels);
-        let (mut scan, base_cal) = crate::raw_test_support::train_raw::load();
-        let mut comparisons = 0;
-        for (location, offset) in [
-            ("centre", [0i32, 0]),
-            ("left", [-1800, 0]),
-            ("upper", [0, -1400]),
-        ] {
-            let region = SourceRegion {
-                x: (scan.area.x as i32 + scan.area.width as i32 / 2 + offset[0] - 384) as u32,
-                y: (scan.area.y as i32 + scan.area.height as i32 / 2 + offset[1] - 256) as u32,
-                width: 768,
-                height: 512,
-            };
-            for corrected in [false, true] {
-                let field = corrected.then(|| field(scan.area));
-                scan.set_flat_field(field.clone()).unwrap();
-                let cal = field
-                    .as_ref()
-                    .map_or(base_cal, |f| f.processing_calibration(base_cal).unwrap());
-                let gpu_field = field
-                    .as_ref()
-                    .map(|f| Arc::new(GpuFlatField::new(&device, f.clone()).unwrap()));
-                let roll = RollSettings::default();
-                for (label, size, angle) in [
-                    ("native", [768, 512], 0.),
-                    ("two-to-one", [384, 256], 0.),
-                    ("six-to-one-rotated", [128, 85], 0.17),
-                ] {
-                    let frame = cropped(scan.area, region, size, angle);
-                    let spec =
-                        ViewSourceSpec::new(1, frame, cal, scan.camera_to_ap1, field.clone())
-                            .unwrap();
-                    let source = ViewSource::acquire(
-                        &device,
-                        &queue,
-                        &SubmissionGate::default(),
-                        renderer.clone(),
-                        kernels.clone(),
-                        &scan,
-                        gpu_field.clone(),
-                        spec,
-                        || false,
-                    )
-                    .unwrap()
-                    .unwrap();
-                    let original = read(&device, &queue, &source.pixels);
-                    for (case, snapshot) in raw_cases(region) {
-                        for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-                            let a = render_with_basis(
-                                &device,
-                                &queue,
-                                source_with_kernel(&source, precise.clone()),
-                                snapshot.clone(),
-                                target,
-                                cal,
-                                roll,
-                            );
-                            let b = render_with_basis(
-                                &device,
-                                &queue,
-                                source.clone(),
-                                snapshot.clone(),
-                                target,
-                                cal,
-                                roll,
-                            );
-                            assert_comparison(
-                                &format!("{location}-{corrected}-{label}-{case}-{target:?}"),
-                                compare(&device, &queue, &a, &b),
-                            );
-                            comparisons += 1;
-                        }
-                    }
-                    assert_eq!(read(&device, &queue, &source.pixels), original);
-                }
-            }
-        }
-        assert_eq!(comparisons, 180);
-    });
-}
-
-#[test]
 fn physical_view_encoded_versions_survive_owner_release_and_abandoned_encoders_do_not_initialize() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
@@ -383,20 +289,17 @@ fn physical_view_encoded_versions_survive_owner_release_and_abandoned_encoders_d
             ..Default::default()
         };
         let snapshot = PhotoGradeSnapshot::new(photo, vec![]).unwrap();
-        let negative = NegativeInput {
-            calibration: calibration(),
-            response: Response::film(),
+        let roll = RollSettings {
             gamma: 0.65,
-            balance: Balance::default(),
+            ..RollSettings::new_grade()
         };
-        let roll = RollSettings::default();
         let input = ProcessingInput::from(
-            ProcessingParameters::positive(negative, roll, photo, source.spec.matrix).unwrap(),
+            ProcessingParameters::positive(calibration(), roll, photo, source.spec.matrix).unwrap(),
         );
         let view = RenderedView::new(
             &device,
             source.clone(),
-            negative,
+            calibration(),
             roll,
             snapshot,
             &input,

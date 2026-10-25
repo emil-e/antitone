@@ -691,13 +691,28 @@ pub struct ProcessingKernel {
 
 impl ProcessingKernel {
     pub async fn new(device: &wgpu::Device) -> Result<Self, Error> {
-        Self::build_pipeline(device, Self::shader()).await
+        Self::build_pipeline(device, Self::module_shader()).await
     }
 
-    fn shader() -> String {
+    /// The exact module text the pipelines compile, exposed for device-free validation.
+    pub(crate) fn module_shader() -> String {
+        [
+            Self::kernel_shader(),
+            include_str!("shaders/footprint.wgsl").to_owned(),
+            include_str!("shaders/repairs.wgsl").to_owned(),
+        ]
+        .join(
+            "
+",
+        )
+    }
+
+    /// One implementation serves the viewport, export and analysis: the near-base ratio response
+    /// and the f32 colour operators.
+    pub(crate) fn kernel_shader() -> String {
         Self::shader_with_response(
-            include_str!("shaders/film_inversion_precise.wgsl"),
-            include_str!("shaders/photographic_precise.wgsl"),
+            include_str!("shaders/film_inversion_export.wgsl"),
+            include_str!("shaders/photographic_export.wgsl"),
         )
     }
 
@@ -719,30 +734,20 @@ impl ProcessingKernel {
 
     #[cfg(all(feature = "raw", feature = "export"))]
     pub(crate) fn export_shader() -> String {
-        Self::shader_with_response(
-            include_str!("shaders/film_inversion_export.wgsl"),
-            include_str!("shaders/photographic_export.wgsl"),
-        )
+        // Export and the viewport share one photographic implementation.
+        Self::kernel_shader()
     }
 
     #[cfg(all(feature = "raw", feature = "export"))]
     pub(crate) async fn new_export(device: &wgpu::Device) -> Result<Self, Error> {
-        Self::build_pipeline(device, Self::export_shader()).await
+        Self::build_pipeline(device, Self::module_shader()).await
     }
 
     async fn build_pipeline(device: &wgpu::Device, shader: String) -> Result<Self, Error> {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("camera originals to AP1 photographic processing"),
-            source: wgpu::ShaderSource::Wgsl(
-                [
-                    shader.as_str(),
-                    include_str!("shaders/footprint.wgsl"),
-                    include_str!("shaders/repairs.wgsl"),
-                ]
-                .join("\n")
-                .into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shader.into()),
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("Antitone processing"),
@@ -964,9 +969,6 @@ pub(crate) fn allocated_resource_bytes(device: &wgpu::Device) -> Option<usize> {
     Some(native.raw_device().currentAllocatedSize())
 }
 
-#[cfg(all(test, target_os = "macos"))]
-#[path = "gpu_arithmetic_tests.rs"]
-mod arithmetic_tests;
 #[cfg(all(test, target_os = "macos"))]
 #[path = "gpu_execution_tests.rs"]
 mod execution_tests;

@@ -49,7 +49,7 @@ A destination pixel inverse-maps to a source footprint, and exact intersection a
 
 ## Source-anchored local masks
 
-Local gradients remain in original developed-source coordinates. Authoritative original-sample processing evaluates them at original pixel centres after Global grading, before any rendered/working reconstruction; the working view evaluates precise original-coordinate masks at mapped footprint centres after filtering, which remains a sampling approximation rather than export authority. Crop, turns/flips, straightening and navigation transform the photograph and its overlay, not the stored mask.
+Local gradients remain in original developed-source coordinates. Authoritative original-sample processing evaluates them at original pixel centres after Global grading, before any rendered/working reconstruction; the working view evaluates original-coordinate masks at mapped footprint centres after filtering, which remains a sampling approximation rather than export authority. Crop, turns/flips, straightening and navigation transform the photograph and its overlay, not the stored mask.
 
 Point-sampled proxies evaluate local masks at the chosen native pixel; averaged navigation proxies use source-cell centres. Regional processing preserves that raster addressing rather than replacing a proxy crop with rounded source bounds. Geometry is supplied independently of flat-field correction, so clearing correction must not erase it. [Local interaction](editor.md#immutable-local-grade-routing) describes gesture acceptance and cancellation.
 

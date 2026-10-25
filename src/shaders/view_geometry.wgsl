@@ -10,17 +10,23 @@ var<uniform> view: WorkingView;
 @group(0) @binding(11)
 var<storage, read> working_source: array<vec4f>;
 
-fn view_point(index: u32) -> array<Triple, 2> {
+fn view_coefficient(high: f32, low: f32, tail: f32) -> f32 {
+    return high + (low + tail);
+}
+
+fn view_point(index: u32) -> vec2f {
     let xy = vec2f(f32(index % view.dimensions.x), f32(index / view.dimensions.x));
-    var point: array<Triple, 2>;
-    for(var c = 0u; c < 2u; c++) {
-        let origin = Triple(view.origin[0][c], view.origin[1][c], view.origin[2][c]);
-        let dx = Triple(view.axis_x[0][c], view.axis_x[1][c], view.axis_x[2][c]);
-        let dy = Triple(view.axis_y[0][c], view.axis_y[1][c], view.axis_y[2][c]);
-        point[c] = precise_add(
-                origin,
-                precise_add(precise_mul(number(xy.x), dx), precise_mul(number(xy.y), dy)),
-            );
-    }
-    return point;
+    let origin = vec2f(
+        view_coefficient(view.origin[0][0], view.origin[1][0], view.origin[2][0]),
+        view_coefficient(view.origin[0][1], view.origin[1][1], view.origin[2][1]),
+    );
+    let dx = vec2f(
+        view_coefficient(view.axis_x[0][0], view.axis_x[1][0], view.axis_x[2][0]),
+        view_coefficient(view.axis_x[0][1], view.axis_x[1][1], view.axis_x[2][1]),
+    );
+    let dy = vec2f(
+        view_coefficient(view.axis_y[0][0], view.axis_y[1][0], view.axis_y[2][0]),
+        view_coefficient(view.axis_y[0][1], view.axis_y[1][1], view.axis_y[2][1]),
+    );
+    return origin + xy.x * dx + xy.y * dy;
 }

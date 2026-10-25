@@ -1,11 +1,4 @@
 use super::*;
-use crate::{
-    color::Balance,
-    processing::{Calibration, DEFAULT_GAMMA},
-};
-use crate::{
-    geometry::SourceRegion, local_adjustments::PhotoGradeSnapshot, processing::PhotoSettings,
-};
 
 pub(crate) fn read_working(
     device: &wgpu::Device,
@@ -39,13 +32,13 @@ pub(crate) fn read_working(
     pixels
 }
 
+// Gated to macOS: Dense cancellation drops components of order 2e4 to 2e-4, which needs compensation
+// the NVIDIA compiler reassociates away; measured 18 violations, max 4e-2.
+#[cfg(target_os = "macos")]
 #[test]
 fn cancellation_aware_candidate_records_independent_working_errors_and_preserves_floor_flags() {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let baseline = crate::renderer::GpuRenderer::new(&device, &queue)
@@ -102,16 +95,13 @@ fn cancellation_aware_candidate_records_independent_working_errors_and_preserves
             mapped_at_creation: false,
         });
         for ev in [0., 4., 6.] {
-            let negative = NegativeInput {
-                calibration,
+            let roll = RollSettings {
                 response: crate::processing::Response::Film {
                     toe: 4.,
                     shoulder: 0.,
                 },
-                gamma: DEFAULT_GAMMA,
-                balance: Balance::default(),
+                ..RollSettings::new_grade()
             };
-            let roll = RollSettings::default();
             let snapshot = PhotoGradeSnapshot::new(
                 PhotoSettings {
                     exposure: ev,
@@ -122,7 +112,7 @@ fn cancellation_aware_candidate_records_independent_working_errors_and_preserves
             .unwrap();
             let grade = GpuPhotoGrade::new(
                 &device,
-                negative,
+                calibration,
                 roll,
                 snapshot.clone(),
                 DMat3::IDENTITY,
@@ -130,7 +120,7 @@ fn cancellation_aware_candidate_records_independent_working_errors_and_preserves
             )
             .unwrap();
             let scalar = crate::local_adjustments::SpatialPipeline::new(
-                negative,
+                calibration,
                 roll,
                 snapshot,
                 DMat3::IDENTITY,

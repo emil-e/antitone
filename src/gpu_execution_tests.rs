@@ -130,7 +130,7 @@ fn paired_kernel_variants() {
             adapter.get_info()
         );
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let shader = ProcessingKernel::shader();
+        let shader = ProcessingKernel::kernel_shader();
         let shader = if let Some(path) = std::env::var_os("ANTITONE_KERNEL_CANDIDATE_WGSL") {
             println!(
                 "kernel_variants candidate={}",
