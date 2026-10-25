@@ -37,7 +37,17 @@ pub fn configure_window(window: &winit::window::Window) -> Result<(), Box<dyn st
         width,
         height,
     )?));
+    light_caption(window);
     Ok(())
+}
+
+/// The system draws the menu strip in its light colours whatever the application theme.
+pub(crate) const MENU_STRIP_IS_LIGHT: bool = true;
+
+/// Following the menu keeps one light band from the frame to the last item, instead of framing a
+/// dark caption over a light menu over the dark editor.
+fn light_caption(window: &winit::window::Window) {
+    window.set_theme(Some(winit::window::Theme::Light));
 }
 
 /// Photo fullscreen keeps the window above the taskbar, which a borderless window sized to the

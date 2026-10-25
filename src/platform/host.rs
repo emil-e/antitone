@@ -66,6 +66,11 @@ pub fn run<A: App>(
     let event_loop = EventLoop::<HostEvent>::with_user_event().build()?;
     let context = egui::Context::default();
     context.set_embed_viewports(true);
+    if super::MENU_STRIP_IS_LIGHT {
+        // The native menu is drawn in light system colours, so the window frame follows the menu
+        // rather than the editor's dark appearance; egui would otherwise push its own theme out.
+        context.options_mut(|options| options.sync_window_theme = false);
+    }
     let proxy = event_loop.create_proxy();
     let menu_proxy = proxy.clone();
     let quit_proxy = proxy.clone();

@@ -18,7 +18,8 @@ compile_error!(
 );
 
 pub(crate) use native::{
-    FullscreenPresentation, QuitGuard, configure_presentation, presentation, quit_cancel_on_unwind,
+    FullscreenPresentation, MENU_STRIP_IS_LIGHT, QuitGuard, configure_presentation, presentation,
+    quit_cancel_on_unwind,
 };
 #[cfg(feature = "editor")]
 pub use native::{configure_window, install_icon};
