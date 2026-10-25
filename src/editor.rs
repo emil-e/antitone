@@ -826,21 +826,11 @@ impl Editor {
     }
 
     fn apply_input(&mut self, target: InputSettings, cx: &UiContext<'_, Self>) {
-        if target.requires_scan_sources()
-            && let Err(error) = self.document.project.require_scan_sources()
-        {
-            self.status = error.to_string();
-            return;
-        }
         if self.input.is_negative() != target.is_negative()
-            && self
-                .document
-                .project
-                .flat_field()
-                .is_some_and(|field| field.enabled)
+            && !self.document.project.sources.is_empty()
         {
-            // The accepted map remains in the scan setup. Rebuild the live source context
-            // through normal document preparation so no proxy retains the outgoing field.
+            // Crossing stages changes every retained source's decode WB, so it is an atomic
+            // document operation rather than an input-only edit.
             self.sync_document();
             let mut candidate = self.document.capture();
             candidate.project.input = target;
@@ -871,7 +861,7 @@ impl Editor {
         };
         let choice = presentation::DecisionDialog::new(
             "Switch input stage?",
-            "Switching stages discards the current stage's settings: calibration, gamma, balance and response. Your source files are not changed.",
+            "Switching stages discards the current stage's settings: calibration, gamma, balance, response and flat-field correction. Your source files are not changed.",
             "Switch stage",
         )
         .warning()

@@ -38,13 +38,7 @@ fn metadata(document: &Document, inset: f64) -> Metadata {
     let value = Metadata {
         version: VERSION,
         groups: vec![Group {
-            development: document
-                .project
-                .scan_basis()
-                .unwrap()
-                .development
-                .decode
-                .clone(),
+            development: document.project.sources[0].development.decode.clone(),
             code_scale: document.spatial_code_scale(),
             common_size: CommonSize::fit(&sources),
             sources,

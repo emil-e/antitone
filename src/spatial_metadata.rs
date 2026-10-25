@@ -459,12 +459,15 @@ impl Metadata {
         }
         let mut result = self.clone();
         result.groups.retain(|group| {
-            project.scan_basis().map(|basis| &basis.development.decode) == Some(&group.development)
-                && group.sources.iter().all(|source| {
-                    project
-                        .source(source.input.source)
-                        .is_ok_and(|record| record.development == source.input.development)
-                })
+            group.sources.first().is_some_and(|source| {
+                project
+                    .scan_basis()
+                    .is_some_and(|basis| basis.require_source(&source.input.development).is_ok())
+            }) && group.sources.iter().all(|source| {
+                project
+                    .source(source.input.source)
+                    .is_ok_and(|record| record.development == source.input.development)
+            })
         });
         result
     }

@@ -10,7 +10,7 @@ fn source(model: &str, matrix: DMat3) -> Source {
         id: SourceId(0),
         path: "test.ARW".into(),
         development: SourceDevelopment {
-            decode: Development::new("test-backend".into(), [2., 1., 1.7, 1.]),
+            decode: Development::new("test-backend".into(), [1.; 4]),
             lens_correction: None,
             dng_development: None,
             dimensions: [900, 600],

@@ -2,7 +2,7 @@
 
 use antitone::{
     dng::{Cancellation, Header, Options},
-    processing::CAMERA_INPUT_FLOOR,
+    processing::{CAMERA_INPUT_FLOOR, InputSettings},
     project::{Project, Save, Source, SourceDevelopment, SourceId},
     raw::{RawFile, Rect},
     scan::Scan,
@@ -207,7 +207,10 @@ fn sdk_project_roundtrip_and_cache_keep_backend_precision_and_fixed_wb_identity(
     let scan = Scan::open(file.path(), Some(wb)).unwrap();
     let source = record(file.path(), &scan);
     let development = scan.source().metadata().development(wb);
-    let mut project = Project::default();
+    let mut project = Project {
+        input: InputSettings::Digital,
+        ..Project::default()
+    };
     let _ = CAMERA_INPUT_FLOOR;
     let id = project.add_source(source).unwrap();
     let directory = tempfile::tempdir().unwrap();
@@ -345,7 +348,10 @@ fn supplied_cameras_share_editor_source_and_saved_project_contracts() {
         assert!(scan.source().metadata().dng_identity().is_some());
         let (w, h, proxy) = scan.preview_source(256).unwrap();
         assert_eq!(proxy.len(), w as usize * h as usize);
-        let mut project = Project::default();
+        let mut project = Project {
+            input: InputSettings::Digital,
+            ..Project::default()
+        };
         let id = project.add_source(record(&path, &scan)).unwrap();
         let temporary = tempfile::tempdir().unwrap();
         let destination = temporary.path().join("camera.antitone");
@@ -403,7 +409,10 @@ fn supplied_m9_shared_source_and_project_roundtrip() {
         .unwrap();
     let (w, h, proxy) = scan.preview_source(256).unwrap();
     assert_eq!(proxy.len(), w as usize * h as usize);
-    let mut project = Project::default();
+    let mut project = Project {
+        input: InputSettings::Digital,
+        ..Project::default()
+    };
     let id = project.add_source(record(path, &scan)).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let destination = directory.path().join("m9.antitone");

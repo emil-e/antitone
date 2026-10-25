@@ -125,7 +125,7 @@ pub(super) fn fixture() -> Document {
                     orientation: Default::default(),
                     crop: None,
                 },
-                Development::new(crate::raw::version(), [2., 1., 1.5, 1.]),
+                Development::new(crate::raw::version(), [1.; 4]),
             )
             .unwrap();
     }
@@ -557,7 +557,7 @@ fn thumbnail_grades_follow_roll_and_photo_without_inspection_gain_or_redecode() 
     let source = editor.document.project.source(id).unwrap().clone();
     assert_eq!(
         bytemuck::bytes_of(&editor.thumbnail_parameters(&source).unwrap().parameters()),
-        bytemuck::bytes_of(&ProcessingParameters::source_inspection(2.).unwrap())
+        bytemuck::bytes_of(&editor.source_parameters(0.).unwrap())
     );
     editor.set_dmin(Some(DVec3::new(0.2, 0.15, 0.1)));
     editor.set_dmax(Some(DVec3::new(0.008, 0.005, 0.002)));
@@ -646,7 +646,6 @@ fn uncalibrated_thumbnails_share_source_default_but_not_transient_inspection_ev(
     let other = editor.document.project.order[1];
     editor.current_source = Some(id);
     let before = editor.document.project.clone();
-    let source = editor.document.project.source(id).unwrap().clone();
     let original_key = key(&editor.document, id);
     let default = editor.source_parameters(0.).unwrap();
     for ev in [-16., 0., 2., 16.] {
@@ -661,15 +660,6 @@ fn uncalibrated_thumbnails_share_source_default_but_not_transient_inspection_ev(
     }
     assert_eq!(editor.document.project, before);
     assert_eq!(key(&editor.document, id), original_key);
-    editor.document.project.development_mut().unwrap().fixed_wb = [1., 1., 1., 1.];
-    let new_default = editor.source_parameters(0.).unwrap();
-    let thumbnail = editor.thumbnail_parameters(&source).unwrap().parameters();
-    assert_eq!(
-        bytemuck::bytes_of(&thumbnail),
-        bytemuck::bytes_of(&new_default)
-    );
-    assert_ne!(bytemuck::bytes_of(&thumbnail), bytemuck::bytes_of(&default));
-    assert_ne!(key(&editor.document, id), original_key);
 }
 
 #[test]

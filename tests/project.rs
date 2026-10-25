@@ -9,7 +9,7 @@ use antitone::{
 use glam::DVec3;
 
 fn fixture(directory: &std::path::Path) -> (Project, SourceId, SourceId) {
-    let decode = Development::new("0.22.0".into(), [2133., 1024., 1771., 1024.]);
+    let decode = Development::new("0.22.0".into(), antitone::project::UNITY_WB);
     let mut project = Project {
         input: InputSettings::Negative {
             dmin: Some(DVec3::new(
@@ -515,7 +515,7 @@ fn output_contract_and_old_schemas_are_rejected_without_reinterpretation() {
     value["output"]["tiff"] = "pro_photo".into();
     assert!(serde_json::from_value::<Project>(value).is_err());
     let path = dir.path().join("legacy.antitone.json");
-    for schema in [1, 2, 3, 4] {
+    for schema in 1..antitone::project::SCHEMA_VERSION {
         let mut legacy = project.clone();
         legacy.schema = schema;
         assert!(legacy.validate().is_err());
@@ -730,6 +730,9 @@ fn digital_accepts_mixed_cameras_with_per_source_recipes_but_scan_stage_refuses(
         gamma: DEFAULT_GAMMA,
         balance: Balance::default(),
     };
+    for source in &mut project.sources {
+        source.development.decode.fixed_wb = antitone::project::UNITY_WB;
+    }
     let error = project.require_scan_sources().unwrap_err();
     assert!(error.to_string().contains("one scanning setup"));
     let third = mixed_source(
@@ -742,7 +745,29 @@ fn digital_accepts_mixed_cameras_with_per_source_recipes_but_scan_stage_refuses(
 }
 
 #[test]
-fn default_negative_admits_one_scan_basis_and_rejects_mixed_wb_or_cameras() {
+fn scan_basis_ignores_wb_but_compares_camera_and_development_contract() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = mixed_source(
+        directory.path().join("basis.ARW").to_str().unwrap(),
+        "camera-a",
+        [1.; 4],
+        [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+    );
+    let basis = antitone::project::ScanBasis::from_development(&source.development);
+    let mut other_wb = source.development.clone();
+    other_wb.decode.fixed_wb = [2., 1., 1.5, 1.];
+    assert_eq!(
+        basis,
+        antitone::project::ScanBasis::from_development(&other_wb)
+    );
+    assert!(basis.require_source(&other_wb).is_ok());
+    let mut other_contract = source.development;
+    other_contract.decode.contract = "another-development".into();
+    assert!(basis.require_source(&other_contract).is_err());
+}
+
+#[test]
+fn default_negative_admits_one_scan_basis_and_rejects_mixed_cameras() {
     let directory = tempfile::tempdir().unwrap();
     let mut project = Project::default();
     assert!(matches!(project.input, InputSettings::Negative { .. }));
@@ -752,24 +777,20 @@ fn default_negative_admits_one_scan_basis_and_rejects_mixed_wb_or_cameras() {
         .add_source(mixed_source(
             directory.path().join("roll-a.ARW").to_str().unwrap(),
             "camera-a",
-            [2., 1., 1.5, 1.],
+            [1.; 4],
             [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
         ))
         .unwrap();
     assert_eq!(
-        project.scan_basis().unwrap().development.decode.fixed_wb,
-        [2., 1., 1.5, 1.]
-    );
-    assert_eq!(
-        project.scan_basis().unwrap().development,
-        project.source(first).unwrap().development
+        project.scan_basis().unwrap().camera,
+        project.source(first).unwrap().development.camera_basis()
     );
 
     project
         .add_source(mixed_source(
             directory.path().join("roll-b.ARW").to_str().unwrap(),
             "camera-a",
-            [2., 1., 1.5, 1.],
+            [1.; 4],
             [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
         ))
         .unwrap();
@@ -778,22 +799,12 @@ fn default_negative_admits_one_scan_basis_and_rejects_mixed_wb_or_cameras() {
     assert!(
         project
             .add_source(mixed_source(
-                directory.path().join("other-wb.ARW").to_str().unwrap(),
-                "camera-a",
-                [1.4, 1., 2.1, 1.],
-                [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
-            ))
-            .is_err()
-    );
-    assert_eq!(project, before);
-    assert!(
-        project
-            .add_source(mixed_source(
                 directory.path().join("camera-b.ARW").to_str().unwrap(),
                 "camera-b",
-                [2., 1., 1.5, 1.],
+                [1.; 4],
                 [[0.9, 0., 0.1], [0., 1.1, 0.], [0.05, 0., 0.95]],
             ))
             .is_err()
     );
+    assert_eq!(project, before);
 }

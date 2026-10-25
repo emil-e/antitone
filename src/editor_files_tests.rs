@@ -690,7 +690,7 @@ fn fixture() -> Editor {
                 orientation: Default::default(),
                 crop: None,
             },
-            Development::new(crate::raw::version(), [2., 1., 1.5, 1.]),
+            Development::new(crate::raw::version(), [1.; 4]),
         )
         .unwrap();
     editor.current_source = Some(editor.document.project.order[0]);

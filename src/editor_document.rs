@@ -267,6 +267,33 @@ impl Document {
         Ok(document)
     }
 
+    /// Re-acquire active sources for the target input stage before accepting a stage switch.
+    /// Negative uses unity WB; Digital resolves each source's as-shot WB. Removed records stay
+    /// dormant and are redeveloped when re-added.
+    pub(super) fn redevelop_for_input(
+        &mut self,
+        target: crate::processing::InputSettings,
+    ) -> Result<()> {
+        // A correction belongs to the stage in which it was measured, so crossing stages drops it.
+        self.project.set_flat_field(None);
+        let wb = target.is_negative().then_some(crate::project::UNITY_WB);
+        let active = self.project.active_source_ids();
+        let mut developments = Vec::with_capacity(active.len());
+        for id in active {
+            let path = self.source_path(id)?;
+            developments.push((id, read_source(&path, wb)?.development));
+        }
+        for (id, development) in developments {
+            self.project.source_mut(id)?.development = development;
+        }
+        self.project.input = target;
+        if target.requires_scan_sources() {
+            self.project.reset_scan_basis();
+            self.project.require_scan_sources()?;
+        }
+        Ok(())
+    }
+
     #[cfg(test)]
     pub fn import(&mut self, paths: &[PathBuf]) -> Result<()> {
         self.import_with_progress(paths, None, |_, _| {})
@@ -281,23 +308,30 @@ impl Document {
         let started = std::time::Instant::now();
         progress(0, paths.len());
         let auto_digital = self.auto_digital_available();
-        let mut added = Vec::new();
-        // A scan-based stage decodes every new source in the scan's fixed WB basis; Digital
-        // uses each source's as-shot basis (mixed cameras are allowed). The first successful
-        // scan establishes that basis inside `add_source`, so read it again for every file.
+        // Negative decodes every new source with unity WB; Digital uses each source's as-shot
+        // WB. The first successful scan establishes the compatibility basis inside
+        // `add_source`, so read it again for every file.
         for (index, path) in paths.iter().enumerate() {
             let existing = self.find_source(path);
-            let wb = self
-                .project
-                .acquisition_wb(existing.and_then(|id| self.project.source(id).ok()));
-            let mut source = read_source(path, wb)?;
             if let Some(id) = existing {
-                verify_source(self.project.source(id)?, &source)?;
-                if !self.project.order.contains(&id) {
+                let expected = self.project.source(id)?.clone();
+                if self.project.order.contains(&id) {
+                    let source = read_source(path, Some(expected.development.decode.fixed_wb))?;
+                    verify_source(&expected, &source)?;
+                } else {
+                    let wb = self
+                        .project
+                        .input
+                        .requires_scan_sources()
+                        .then_some(crate::project::UNITY_WB);
+                    let development = read_source(path, wb)?.development;
                     self.project.order.push(id);
+                    self.project.source_mut(id)?.development = development;
                 }
                 self.project.source_mut(id)?.reference_only = false;
             } else {
+                let wb = self.project.acquisition_wb(None);
+                let mut source = read_source(path, wb)?;
                 // A fresh scan import may contain sources that cannot share one acquisition
                 // basis. In that case choose Digital for the batch; the first source remains
                 // valid in its own as-shot basis. An existing calibrated Negative project is
@@ -308,16 +342,12 @@ impl Document {
                 {
                     self.project.input = crate::processing::InputSettings::Digital;
                     self.project.scan = None;
-                    // Earlier new files in this batch were admitted in the scan WB. Once the
-                    // whole batch becomes Digital, reacquire their metadata in their own WB;
-                    // saved sources keep their accepted development identity.
-                    for id in &added {
-                        let development = read_source(&self.source_path(*id)?, None)?.development;
-                        self.project.source_mut(*id)?.development = development;
-                    }
+                    // Every ordered source now belongs to Digital, including one that was
+                    // already present before this batch. Reacquire all of them in as-shot WB.
+                    self.redevelop_for_input(crate::processing::InputSettings::Digital)?;
                     source = read_source(path, None)?;
                 }
-                added.push(self.register(source)?);
+                self.register(source)?;
             }
             progress(index + 1, paths.len());
         }
@@ -360,7 +390,12 @@ impl Document {
 
     pub fn register_reference(&mut self, mut source: Source) -> Result<SourceId> {
         if let Some(id) = self.find_source(&source.path) {
-            verify_source(self.project.source(id)?, &source)?;
+            if self.project.order.contains(&id) {
+                verify_source(self.project.source(id)?, &source)?;
+            } else {
+                // A dormant record is re-added in the currently selected stage.
+                self.project.source_mut(id)?.development = source.development;
+            }
             return Ok(id);
         }
         source.reference_only = true;

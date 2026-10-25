@@ -88,8 +88,15 @@ pub(super) async fn prepare(
             let development = document
                 .project
                 .scan_basis()
-                .map(|basis| basis.development.decode.clone())
-                .ok_or(Error::UnusableSample("no roll development"))?;
+                .ok_or(Error::UnusableSample("no roll development"))
+                .and_then(|_| {
+                    document
+                        .project
+                        .sources
+                        .first()
+                        .map(|source| source.development.decode.clone())
+                        .ok_or(Error::UnusableSample("no roll development"))
+                })?;
             let metadata =
                 prepare_spatial(frames, development, document.spatial_code_scale(), || {
                     if retired.is_cancelled() {

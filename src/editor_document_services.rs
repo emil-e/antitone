@@ -82,7 +82,13 @@ pub(super) fn candidate(
             None,
         ),
         Preparation::New => (Document::default(), None),
-        Preparation::Correction(mut document, _) | Preparation::Input(mut document, _) => {
+        Preparation::Correction(mut document, _) => {
+            document.fork_cache();
+            (document, None)
+        }
+        Preparation::Input(mut document, _) => {
+            let target = document.project.input;
+            document.redevelop_for_input(target)?;
             document.fork_cache();
             (document, None)
         }

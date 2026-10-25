@@ -9,7 +9,7 @@ use crate::{
     },
 };
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, mpsc},
     time::Duration,
 };
@@ -120,7 +120,89 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
 }
 
 #[test]
-fn input_switch_rebuilds_live_correction_atomically_and_history_restores_activation() {
+fn input_stage_switch_redevelops_every_source_for_the_target_stage() {
+    use crate::processing::InputSettings;
+
+    let directory = tempfile::tempdir().unwrap();
+    let original =
+        std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"))
+            .unwrap();
+    let red = directory.path().join("red-neutral.dng");
+    std::fs::write(&red, super::super::tests::dng_with_red_as_shot(&original)).unwrap();
+    let red_as_shot = crate::editor::document::read_source(&red, None)
+        .unwrap()
+        .development
+        .decode
+        .fixed_wb;
+    assert_ne!(red_as_shot, crate::project::UNITY_WB);
+
+    let assert_stage_development = |e: &Editor, digital: bool| {
+        let wb = if digital {
+            None
+        } else {
+            Some(crate::project::UNITY_WB)
+        };
+        for source in &e.document.project.sources {
+            let expected = crate::editor::document::read_source(
+                &e.document.source_path(source.id).unwrap(),
+                wb,
+            )
+            .unwrap();
+            assert_eq!(
+                source.development,
+                expected.development,
+                "source {} did not use the {} stage WB",
+                source.path.display(),
+                if digital { "Digital" } else { "Negative" }
+            );
+        }
+    };
+
+    let scheduler = development::Scheduler::new();
+    with_application(editor(scheduler.clone()), |app| {
+        app.enter(|e, cx| e.add_raws(vec![path("patches.dng"), red.clone()], cx));
+        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.read(|e| {
+            assert!(e.input.is_negative(), "{}", e.status);
+            assert_eq!(e.document.project.sources.len(), 2);
+            assert_stage_development(e, false);
+        });
+        app.enter(|e, cx| e.request_input(InputSettings::Digital, cx));
+        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.read(|e| {
+            assert_eq!(e.input, InputSettings::Digital, "{}", e.status);
+            assert_stage_development(e, true);
+        });
+        app.enter(|e, cx| e.request_input(e.negative_input(), cx));
+        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.read(|e| {
+            assert!(e.input.is_negative(), "{}", e.status);
+            assert_stage_development(e, false);
+            assert_eq!(
+                e.document.project.scan_basis(),
+                Some(&crate::project::ScanBasis::from_development(
+                    &e.document.project.sources[0].development
+                ))
+            );
+        });
+        app.enter(|e, cx| e.restore_history(history::Direction::Undo, cx));
+        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.read(|e| {
+            assert_eq!(e.input, InputSettings::Digital, "{}", e.status);
+            assert_stage_development(e, true);
+        });
+        app.enter(|e, cx| e.restore_history(history::Direction::Redo, cx));
+        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.read(|e| {
+            assert!(e.input.is_negative(), "{}", e.status);
+            assert_stage_development(e, false);
+        });
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn input_switch_clears_live_correction_atomically_and_history_restores_activation() {
     use crate::{
         flat_field::FlatField, gpu::ProcessingParameters, processing::InputSettings,
         project::FlatFieldSettings,
@@ -170,6 +252,8 @@ fn input_switch_rebuilds_live_correction_atomically_and_history_restores_activat
                 digital_proxy_pixels(e, &uncorrected),
             )
         });
+        let mut cleared_scan = scan.clone().unwrap();
+        cleared_scan.flat_field = None;
         // The fixture really exercises an active GPU correction, not just saved settings.
         let corrected_pixels =
             app.read(|e| digital_proxy_pixels(e, e.document.visit.ready.as_ref().unwrap()));
@@ -202,7 +286,7 @@ fn input_switch_rebuilds_live_correction_atomically_and_history_restores_activat
                     .flat_field()
                     .is_none()
             );
-            assert_eq!(e.document.project.scan, scan);
+            assert_eq!(e.document.project.scan, Some(cleared_scan.clone()));
             assert_eq!(
                 e.history_label(history::Direction::Undo),
                 Some("Input stage")
@@ -232,11 +316,11 @@ fn input_switch_rebuilds_live_correction_atomically_and_history_restores_activat
         app.run_until(Duration::from_secs(15), |e| !e.busy);
         app.read(|e| {
             assert!(
-                e.input.is_negative() && e.source && e.correction.is_some(),
+                e.input.is_negative() && e.source && e.correction.is_none(),
                 "{}",
                 e.status
             );
-            assert_eq!(e.document.project.scan, scan);
+            assert_eq!(e.document.project.scan, Some(cleared_scan));
         });
     });
     scheduler.close_and_wait().unwrap();

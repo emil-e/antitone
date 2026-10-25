@@ -26,9 +26,30 @@ fn record(path: &str) -> Source {
 }
 
 #[test]
+fn dormant_reference_preview_reacquires_for_the_current_stage() {
+    let mut editor = Editor::state();
+    let reference = editor.document.register(record("light.ARW")).unwrap();
+    editor
+        .document
+        .project
+        .remove_from_filmstrip(reference)
+        .unwrap();
+
+    editor.document.project.input = crate::processing::InputSettings::Digital;
+    let request = editor.reference_preview_input("light.ARW".into());
+    assert_eq!(request.wb, None);
+    assert!(request.expected.is_none() && request.cache.is_none());
+
+    editor.document.project.input = crate::project::Project::default().input;
+    let request = editor.reference_preview_input("light.ARW".into());
+    assert_eq!(request.wb, Some(crate::project::UNITY_WB));
+    assert!(request.expected.is_none() && request.cache.is_none());
+}
+
+#[test]
 fn reference_registration_does_not_add_a_photo_or_hide_an_existing_one() {
     let mut document = Document::default();
-    let development = Development::new(crate::raw::version(), [2., 1., 1.7, 1.]);
+    let development = Development::new(crate::raw::version(), [1.; 4]);
     let photo = document
         .register_with_development(record("photo.ARW"), development.clone())
         .unwrap();

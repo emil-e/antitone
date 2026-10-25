@@ -36,7 +36,7 @@ fn fixture() -> (Project, SourceId) {
             id: SourceId(0),
             path: "one.ARW".into(),
             development: SourceDevelopment {
-                decode: Development::new("test-backend".into(), [2., 1., 1.5, 1.]),
+                decode: Development::new("test-backend".into(), [1.; 4]),
                 lens_correction: None,
                 dng_development: None,
                 dimensions: [900, 600],

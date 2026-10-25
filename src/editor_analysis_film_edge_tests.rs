@@ -22,11 +22,7 @@ fn attach_film(request: &mut Request, index: usize, boundaries: [Boundary; 4]) {
         .collect();
     let metadata = Metadata {
         groups: vec![Group {
-            development: request
-                .document
-                .project
-                .scan_basis()
-                .unwrap()
+            development: request.document.project.sources[0]
                 .development
                 .decode
                 .clone(),
