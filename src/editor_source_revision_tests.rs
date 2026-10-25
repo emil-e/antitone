@@ -6,6 +6,7 @@ use super::*;
 #[cfg(target_os = "macos")]
 #[test]
 fn authored_raw_byte_edits_reopen_without_identity_rejection_and_old_seed_keeps_its_revision() {
+    use crate::project::Save;
     use std::io::Write;
     pollster::block_on(async {
         let instance = crate::gpu::instance();
