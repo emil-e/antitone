@@ -13,6 +13,8 @@ compile_error!("sys support is implemented for macOS, Windows and Linux");
 
 #[cfg(all(feature = "gpu", any(test, feature = "ui")))]
 pub(crate) use imp::allocated_resource_bytes;
+#[cfg(feature = "project")]
+pub(crate) use imp::cache_dir;
 #[cfg(feature = "export")]
 pub(crate) use imp::exclusive_rename;
 #[cfg(feature = "project")]
@@ -22,7 +24,7 @@ pub(crate) use imp::physical_memory;
 #[cfg(feature = "editor")]
 pub(crate) use imp::same_file;
 #[cfg(feature = "editor")]
-pub(crate) use imp::{GpuMemory, cache_dir, config_dir, gpu_memory};
+pub(crate) use imp::{GpuMemory, config_dir, gpu_memory};
 #[cfg(feature = "raw")]
 pub(crate) use imp::{MemoryPressure, memory_pressure};
 #[cfg(feature = "gpu")]

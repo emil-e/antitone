@@ -152,7 +152,7 @@ pub(crate) fn config_dir(app: &str) -> Option<std::path::PathBuf> {
     roaming_appdata().map(|directory| directory.join(app))
 }
 
-#[cfg(feature = "editor")]
+#[cfg(feature = "project")]
 pub(crate) fn cache_dir(app: &str) -> Option<std::path::PathBuf> {
     std::env::var_os("LOCALAPPDATA")
         .map(std::path::PathBuf::from)

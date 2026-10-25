@@ -137,7 +137,7 @@ pub(crate) fn config_dir(app: &str) -> Option<std::path::PathBuf> {
     })
 }
 
-#[cfg(feature = "editor")]
+#[cfg(feature = "project")]
 pub(crate) fn cache_dir(app: &str) -> Option<std::path::PathBuf> {
     std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".cache").join(app))
 }
