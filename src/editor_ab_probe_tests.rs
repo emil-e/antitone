@@ -67,10 +67,7 @@ fn ab_compare() {
             .with_limits(tiff::decoder::Limits::unlimited());
         let (width, height) = decoder.dimensions().unwrap();
         let pixels = match decoder.read_image().unwrap() {
-            tiff::decoder::DecodingResult::U16(values) => values
-                .chunks_exact(3)
-                .map(|p| [p[0], p[1], p[2]])
-                .collect::<Vec<_>>(),
+            tiff::decoder::DecodingResult::U16(values) => values.as_chunks::<3>().0.to_vec(),
             other => panic!("unexpected TIFF sample type: {other:?}"),
         };
         (width, height, pixels)
@@ -221,7 +218,7 @@ fn ab_channel_spread() {
     };
     let mut spreads: Vec<f32> = Vec::with_capacity((width * height) as usize);
     let mut worst = (0f32, [0u16; 3]);
-    for pixel in pixels.chunks_exact(3) {
+    for pixel in pixels.as_chunks::<3>().0 {
         let mut low = f32::MAX;
         let mut high = f32::MIN;
         for code in pixel {
