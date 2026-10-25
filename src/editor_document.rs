@@ -268,8 +268,8 @@ impl Document {
     }
 
     /// Re-acquire active sources for the target input stage before accepting a stage switch.
-    /// Negative uses unity WB; Digital resolves each source's as-shot WB. Removed records stay
-    /// dormant and are redeveloped when re-added.
+    /// Negative uses unity WB; Digital resolves each source's as-shot WB. Crossing stages clears
+    /// the accepted correction and its reference record before this redevelopment.
     pub(super) fn redevelop_for_input(
         &mut self,
         target: crate::processing::InputSettings,
@@ -319,6 +319,8 @@ impl Document {
                     let source = read_source(path, Some(expected.development.decode.fixed_wb))?;
                     verify_source(&expected, &source)?;
                 } else {
+                    // The only nonordered record kept by accepted state is the current
+                    // flat-field reference. Importing it as a photo reuses that record.
                     let wb = self
                         .project
                         .input
@@ -390,17 +392,12 @@ impl Document {
 
     pub fn register_reference(&mut self, mut source: Source) -> Result<SourceId> {
         if let Some(id) = self.find_source(&source.path) {
-            if self.project.order.contains(&id) {
-                verify_source(self.project.source(id)?, &source)?;
-            } else {
-                // A dormant record is re-added in the currently selected stage.
-                self.project.source_mut(id)?.development = source.development;
-            }
+            verify_source(self.project.source(id)?, &source)?;
             return Ok(id);
         }
         source.reference_only = true;
         let id = self.register(source)?;
-        self.project.remove_from_filmstrip(id)?;
+        self.project.remove_from_order(id)?;
         Ok(id)
     }
 

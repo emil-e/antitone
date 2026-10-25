@@ -59,8 +59,7 @@ fn with_repairs() -> (Project, SourceId) {
 
 #[test]
 fn exact_instructions_survive_single_file_roundtrip_and_deleted_ids_are_not_reused() {
-    let (mut project, id) = with_repairs();
-    project.remove_from_filmstrip(id).unwrap();
+    let (project, id) = with_repairs();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("dust.antitone");
     project.save(&path, Save::New).unwrap();
@@ -89,7 +88,6 @@ fn exact_instructions_survive_single_file_roundtrip_and_deleted_ids_are_not_reus
         )
         .unwrap();
     assert_eq!(next, RepairId(3));
-    reopened.order.push(id);
     reopened.validate().unwrap();
 }
 

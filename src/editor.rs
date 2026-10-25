@@ -829,7 +829,7 @@ impl Editor {
         if self.input.is_negative() != target.is_negative()
             && !self.document.project.sources.is_empty()
         {
-            // Crossing stages changes every retained source's decode WB, so it is an atomic
+            // Crossing stages changes every active source's decode WB, so it is an atomic
             // document operation rather than an input-only edit.
             self.sync_document();
             let mut candidate = self.document.capture();

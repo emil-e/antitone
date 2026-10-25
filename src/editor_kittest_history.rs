@@ -405,6 +405,21 @@ fn history_focus_loss_numeric_commit_is_separate_from_section_resets() {
 #[test]
 fn history_confirmed_multi_removal_can_restore_an_empty_roll_without_resetting_its_basis() {
     setup(|mut h| {
+        h.update(|editor| {
+            let id = editor.document.project.order[0];
+            let source = editor.document.project.source_mut(id).unwrap();
+            source.photo.exposure = 0.75;
+            editor.photo.exposure = 0.75;
+            source
+                .repairs
+                .insert(
+                    crate::dust_repair::SupportMask::new([100, 100], [2, 2], vec![true; 4])
+                        .unwrap(),
+                    crate::dust_repair::RepairOrigin::Manual,
+                    crate::dust_repair::DonorChoice::Automatic,
+                )
+                .unwrap();
+        });
         let before = h.read(|editor| editor.document.project.clone());
         h.get_by_label("roll-1.dng")
             .click_modifiers(egui::Modifiers::COMMAND);
@@ -417,8 +432,8 @@ fn history_confirmed_multi_removal_can_restore_an_empty_roll_without_resetting_i
         h.step();
         wait_for(&mut h, |e| !e.busy);
         h.read(|editor| assert!(editor.document.project.order.is_empty()));
-        h.read(|editor| assert_eq!(editor.document.project.sources, before.sources));
-        h.read(|editor| assert_eq!(editor.document.project.development(), before.development()));
+        h.read(|editor| assert!(editor.document.project.sources.is_empty()));
+        h.read(|editor| assert_eq!(editor.document.project.development(), None));
         let removed = h.read(|editor| editor.document.project.clone());
         shortcut(&mut h, false);
         h.read(|editor| assert_eq!(editor.document.project, before));

@@ -20,7 +20,7 @@ Setup uses untransformed source with automatic embedded lens development. Adjust
 
 The estimator compares local full-resolution camera statistics with a centre-luminance, AP1-neutral target. It rejects clipped or unusable support and smooths the resulting field. Valid developed camera means may exceed native white after embedded shading: capture/development eligibility, not a post-gain value of 1, determines clipping. Software compatibility cannot establish that lighting, aperture, focus and positioning physically match the roll — the reference must actually represent its scanning setup.
 
-Apply estimates the map from the prepared uncorrected reference and validates the corrected working source before acceptance. Cancel or failure restores the working photo and accepted state; preparation failures use [acknowledged feedback](editor.md#decisions-are-not-operation-failures). The reference session owns its source and task independently of temporary photo visits; reference-only sources stay out of the filmstrip. [Architecture](architecture.md) describes that lifecycle.
+Apply estimates the map from the prepared uncorrected reference and validates the corrected working source before acceptance. Cancel or failure restores the working photo and accepted state; preparation failures use [acknowledged feedback](editor.md#decisions-are-not-operation-failures). The reference session owns its source and task independently of temporary photo visits; a newly registered reference source stays out of the filmstrip as a reference-only record. [Architecture](architecture.md) describes that lifecycle.
 
 ## Apply gains before inversion
 
@@ -36,7 +36,7 @@ This is a precision constraint, not a noise measurement or a brightness pedestal
 
 ## Save the accepted result
 
-Projects save the map and its development identity, allowing correction to be used or reset even if the reference RAW is missing. Changing input stage clears the accepted correction, because the map belongs to the stage in which it was measured; the dormant scan basis remains. Digital does not apply the map or enforce its compatibility on Digital sources. Changing, enabling or resetting a map preserves composition and inspection mode; removing it restores the developed-source floor, which can still include embedded shading. [Projects](projects.md#compatibility-is-about-the-processing-basis) owns the switching and compatibility boundary.
+Projects save the map and its development identity, allowing correction to be used or reset even if the reference RAW is missing. The reference source record is retained only while the map is accepted; clearing or replacing correction removes it unless the same source remains an ordered photo. Changing input stage clears the accepted correction and its reference record, because the map belongs to the stage in which it was measured; the dormant scan basis remains. Digital does not apply the map or enforce its compatibility on Digital sources. Changing, enabling or resetting a map preserves composition and inspection mode; removing it restores the developed-source floor, which can still include embedded shading. [Projects](projects.md#compatibility-is-about-the-processing-basis) owns the switching and compatibility boundary.
 
 ## Working on this area
 

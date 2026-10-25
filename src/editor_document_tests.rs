@@ -180,7 +180,7 @@ fn mixed_as_shot_wb_does_not_select_digital_or_change_the_negative_basis() {
 }
 
 #[test]
-fn stage_redevelopment_skips_unavailable_removed_sources_and_reactivates_available_ones() {
+fn stage_redevelopment_redevelops_ordered_sources_and_reimport_registers_new_records() {
     let original =
         std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"))
             .unwrap();
@@ -208,34 +208,18 @@ fn stage_redevelopment_skips_unavailable_removed_sources_and_reactivates_availab
     document.project.remove_from_filmstrip(missing_id).unwrap();
     document.project.remove_from_filmstrip(removed_id).unwrap();
     std::fs::remove_file(&missing).unwrap();
+    assert!(document.project.source(missing_id).is_err());
+    assert!(document.project.source(removed_id).is_err());
+    assert_eq!(document.project.order.len(), 1);
 
     document
         .redevelop_for_input(crate::processing::InputSettings::Digital)
         .unwrap();
+    let active = document.project.order[0];
     assert_eq!(
         document
             .project
-            .source(missing_id)
-            .unwrap()
-            .development
-            .decode
-            .fixed_wb,
-        crate::project::UNITY_WB
-    );
-    assert_eq!(
-        document
-            .project
-            .source(removed_id)
-            .unwrap()
-            .development
-            .decode
-            .fixed_wb,
-        crate::project::UNITY_WB
-    );
-    assert_eq!(
-        document
-            .project
-            .source(document.project.order[0])
+            .source(active)
             .unwrap()
             .development
             .decode
@@ -248,15 +232,17 @@ fn stage_redevelopment_skips_unavailable_removed_sources_and_reactivates_availab
     );
 
     document.import(std::slice::from_ref(&removed)).unwrap();
-    assert!(document.project.order.contains(&removed_id));
+    let readded = document.find_source(&removed).unwrap();
+    assert_ne!(readded, removed_id);
+    assert!(document.project.order.contains(&readded));
     assert_eq!(
-        document.project.source(removed_id).unwrap().development,
+        document.project.source(readded).unwrap().development,
         read_source(&removed, None).unwrap().development
     );
 }
 
 #[test]
-fn stage_redevelopment_clears_flat_field_correction_and_leaves_the_reference_dormant() {
+fn stage_redevelopment_clears_flat_field_and_removes_its_reference_record() {
     let original =
         std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"))
             .unwrap();
@@ -282,28 +268,47 @@ fn stage_redevelopment_clears_flat_field_correction_and_leaves_the_reference_dor
         )
         .unwrap(),
     );
-    let field =
-        crate::project::FlatFieldSettings::new(document.project.source(reference_id).unwrap(), map);
+    let field = crate::project::FlatFieldSettings::new(
+        document.project.source(reference_id).unwrap(),
+        map.clone(),
+    );
     document.project.set_flat_field(Some(field));
+    assert!(document.project.flat_field().is_some());
+    assert!(document.project.source(reference_id).is_ok());
 
     document
         .redevelop_for_input(crate::processing::InputSettings::Digital)
         .unwrap();
     assert!(document.project.flat_field().is_none());
-    assert_eq!(
-        document.project.source(reference_id).unwrap().development,
-        reference.development
-    );
+    assert!(document.project.source(reference_id).is_err());
+    assert!(document.project.order.iter().all(|id| *id != reference_id));
+
     let refreshed = read_source(&reference.path, None).unwrap();
+    let new_reference_id = document.register_reference(refreshed.clone()).unwrap();
+    assert_ne!(new_reference_id, reference_id);
     assert_eq!(
-        document.register_reference(refreshed.clone()).unwrap(),
-        reference_id
-    );
-    assert_eq!(
-        document.project.source(reference_id).unwrap().development,
+        document
+            .project
+            .source(new_reference_id)
+            .unwrap()
+            .development,
         refreshed.development
     );
+    assert!(
+        document
+            .project
+            .source(new_reference_id)
+            .unwrap()
+            .reference_only
+    );
+    assert!(!document.project.order.contains(&new_reference_id));
 
+    document
+        .project
+        .set_flat_field(Some(crate::project::FlatFieldSettings::new(
+            document.project.source(new_reference_id).unwrap(),
+            map,
+        )));
     document
         .redevelop_for_input(crate::processing::InputSettings::Negative {
             dmin: None,
@@ -315,6 +320,7 @@ fn stage_redevelopment_clears_flat_field_correction_and_leaves_the_reference_dor
         })
         .unwrap();
     assert!(document.project.flat_field().is_none());
+    assert!(document.project.source(new_reference_id).is_err());
 }
 
 #[test]
@@ -523,16 +529,45 @@ fn relative_save_as_uses_physical_directory_bases_without_requiring_sources_to_e
 }
 
 #[test]
-fn open_empty_document_checks_runtime_and_retains_unavailable_nonfilmstrip_records() {
+fn open_empty_document_with_unavailable_flat_field_reference_checks_runtime_and_keeps_correction() {
     let directory = tempfile::tempdir().unwrap();
     let mut document = fixture(directory.path());
-    document.project.order.clear();
+    let reference = document.project.sources[1].clone();
+    let map = std::sync::Arc::new(
+        crate::flat_field::FlatField::from_nodes(
+            reference.development.active_area,
+            [2, 2],
+            vec![glam::DVec3::ONE; 4],
+        )
+        .unwrap(),
+    );
+    document
+        .project
+        .set_flat_field(Some(crate::project::FlatFieldSettings::new(
+            &reference, map,
+        )));
+    let ordered = document.project.order[0];
+    document.project.remove_from_filmstrip(ordered).unwrap();
+    document
+        .project
+        .remove_from_filmstrip(reference.id)
+        .unwrap();
+    assert!(document.project.order.is_empty());
+    assert_eq!(document.project.sources.len(), 1);
+    assert!(
+        document
+            .project
+            .source(reference.id)
+            .unwrap()
+            .reference_only
+    );
     let path = directory.path().join("references.antitone.json");
     let saved = document.save(&path, Save::New).unwrap();
     std::fs::remove_file(directory.path().join("one.ARW")).unwrap();
     std::fs::remove_file(directory.path().join("two.ARW")).unwrap();
     let opened = Document::open(&path).unwrap();
     assert_eq!(opened.project, saved.project);
+    assert!(opened.project.flat_field().is_some());
     assert!(!opened.dirty());
     let mut incompatible = saved.project;
     incompatible.output.contract = "different output".into();
@@ -678,15 +713,18 @@ fn mixed_import_fallback_uses_batch_entry_and_restores_each_new_sources_as_shot_
         );
     }
 
-    // Re-adding a dormant source and then encountering an incompatible source in the same
-    // batch also redevelops the re-added source for Digital.
+    // Re-importing a removed source and then encountering an incompatible source in the same
+    // batch registers a fresh record and redevelops it for Digital.
     let mut readded = Document::default();
     readded.import(std::slice::from_ref(&first)).unwrap();
     let first_id = readded.project.order[0];
     readded.project.remove_from_filmstrip(first_id).unwrap();
+    assert!(readded.project.source(first_id).is_err());
     readded
         .import(&[first.clone(), other_camera.clone()])
         .unwrap();
+    let readded_id = readded.find_source(&first).unwrap();
+    assert_ne!(readded_id, first_id);
     assert_eq!(
         readded.project.input,
         crate::processing::InputSettings::Digital

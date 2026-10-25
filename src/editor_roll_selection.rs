@@ -183,12 +183,16 @@ impl Editor {
             return;
         };
         let index = self.selected;
+        let active_removed = self.current_source.is_some_and(|id| ids.contains(&id));
         let before = self.history_snapshot();
         for id in ids {
             self.document
                 .project
                 .remove_from_filmstrip(id)
                 .expect("confirmed ordered source");
+        }
+        if active_removed {
+            self.current_source = None;
         }
         self.record_edit(before, "Remove photos", None);
         self.thumbnails.cancel();
@@ -243,7 +247,7 @@ impl Editor {
         };
         let choice = presentation::DecisionDialog::new(
             &title,
-            "The photos will be removed from this roll. Your RAW files are not changed.",
+            "The photos will be removed from this roll. Their project data will be discarded. Your RAW files are not changed.",
             "Remove photos",
         )
         .warning()

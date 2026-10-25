@@ -62,6 +62,32 @@ fn point(output: &FullOutput, name: &str) -> Pos2 {
     )
 }
 
+fn truncate_filmstrip(editor: &mut Editor, keep: usize) {
+    let removed: Vec<_> = editor
+        .document
+        .project
+        .order
+        .iter()
+        .copied()
+        .skip(keep)
+        .collect();
+    for id in removed {
+        editor.document.project.remove_from_filmstrip(id).unwrap();
+    }
+    if editor
+        .current_source
+        .is_some_and(|id| !editor.document.project.order.contains(&id))
+    {
+        editor.current_source = None;
+    }
+    editor.selected = editor
+        .selected
+        .min(editor.document.project.order.len().saturating_sub(1));
+    editor
+        .roll_selection
+        .reconcile(&editor.document.project.order, editor.current_source);
+}
+
 fn pointer(point: Pos2, pressed: bool) -> Vec<Event> {
     vec![
         Event::PointerMoved(point),
@@ -136,7 +162,7 @@ fn cold_loading_and_failed_selected_raw_retain_selection_and_filename() {
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
             *editor.document = super::tests::fixture();
-            editor.document.project.order.truncate(3);
+            truncate_filmstrip(editor, 3);
             let selected = editor.document.project.order[1];
             let name = "京都_Long_Scan_Reference_Roll01_Frame_04397.ARW";
             editor.document.project.source_mut(selected).unwrap().path = name.into();
@@ -191,7 +217,7 @@ fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus(
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
             *editor.document = super::tests::fixture();
-            editor.document.project.order.truncate(2);
+            truncate_filmstrip(editor, 2);
             crate::editor::tests::add_ready_fixture(editor);
             editor.selected = 2;
             editor.sync_document();
@@ -283,7 +309,7 @@ fn document_work_still_blocks_navigation_when_a_selected_load_was_pending() {
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
             *editor.document = super::tests::fixture();
-            editor.document.project.order.truncate(2);
+            truncate_filmstrip(editor, 2);
             editor.load(
                 editor
                     .document
@@ -315,7 +341,7 @@ fn card_tooltips_reveal_only_the_source_path_even_when_selection_is_disabled() {
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
                 *editor.document = super::tests::fixture();
-                editor.document.project.order.truncate(1);
+                truncate_filmstrip(editor, 1);
                 editor.current_source = Some(editor.document.project.order[0]);
                 editor.busy = disabled;
                 let path = editor
@@ -355,7 +381,7 @@ fn disabled_cards_keep_actionable_error_tooltips() {
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
     *editor.document = super::tests::fixture();
-    editor.document.project.order.truncate(1);
+    truncate_filmstrip(editor, 1);
     editor.current_source = Some(editor.document.project.order[0]);
     editor.busy = true;
     let image_key = super::tests::key(&editor.document, editor.current_source.unwrap());
@@ -389,7 +415,7 @@ fn enabled_reference_cards_keep_ordered_roll_sampling_and_working_photo_return_c
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
                 *editor.document = super::tests::fixture();
-                editor.document.project.order.truncate(2);
+                truncate_filmstrip(editor, 2);
                 crate::editor::tests::add_ready_fixture(editor);
                 editor.selected = 2;
                 editor.sync_document();
@@ -449,7 +475,7 @@ fn pending_photo_loading_accepts_mouse_and_keyboard_replacement_and_ignores_old_
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
                 *editor.document = super::tests::fixture();
-                editor.document.project.order.truncate(2);
+                truncate_filmstrip(editor, 2);
                 let first = editor.document.project.order[0];
                 let second = editor.document.project.order[1];
                 editor.load(editor.document.source_path(first).unwrap(), cx);
@@ -500,7 +526,7 @@ fn modifier_clicks_expose_selection_separately_from_the_active_photo() {
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
             *editor.document = super::tests::fixture();
-            editor.document.project.order.truncate(3);
+            truncate_filmstrip(editor, 3);
             editor.current_source = Some(editor.document.project.order[0]);
             let context = egui::Context::default();
             frame(editor, &context, vec![], cx);

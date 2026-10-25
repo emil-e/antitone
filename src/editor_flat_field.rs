@@ -183,24 +183,16 @@ impl Editor {
             .find_source(&path)
             .and_then(|id| self.document.project.source(id).ok())
             .cloned();
-        // A dormant record belongs to an earlier stage. Reacquire it for the current stage
-        // instead of verifying it against its old decode identity.
-        let retained = expected
+        // A retained record is either an ordered photo or the current flat-field reference;
+        // both belong to the current stage. Use its saved decode identity when present.
+        let wb = self.document.project.acquisition_wb(expected.as_ref());
+        let cache = expected
             .as_ref()
-            .is_some_and(|source| self.document.project.order.contains(&source.id));
-        let wb = if retained {
-            self.document.project.acquisition_wb(expected.as_ref())
-        } else {
-            self.document.project.acquisition_wb(None)
-        };
-        let cache = retained
-            .then_some(expected.as_ref())
-            .flatten()
             .map(|source| LoadCache::new(&path, Some(source), &self.document));
         source::Request {
             path,
             wb,
-            expected: retained.then_some(expected).flatten(),
+            expected,
             cache,
             correction: None,
         }

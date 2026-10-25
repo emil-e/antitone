@@ -193,9 +193,14 @@ fn removal_is_staged_cancellable_and_uses_old_index_in_the_updated_order() {
                     index.min(editor.document.project.order.len() - 1)
                 );
                 assert_eq!(editor.roll_selection.ids, vec![ids[expected]]);
-                assert_eq!(editor.document.project.sources, before.sources);
                 let mut expected_project = before;
                 expected_project.order.retain(|id| !selection.contains(id));
+                expected_project
+                    .sources
+                    .retain(|source| !selection.contains(&source.id));
+                expected_project
+                    .analysis_regions
+                    .retain(|entry| !selection.contains(&entry.source));
                 assert_eq!(editor.document.project, expected_project);
                 assert!(editor.removal_pending.is_none());
                 assert!(editor.document.visit.source.pending());
@@ -214,6 +219,8 @@ fn removing_every_photo_clears_working_images_and_stale_replies_but_keeps_roll_b
             editor.sync_document();
             let mut expected = editor.document.project.clone();
             expected.order.clear();
+            expected.sources.clear();
+            expected.analysis_regions.clear();
             let old_id = editor.id;
             let ready = editor.document.visit.ready.take().unwrap();
             let source = Arc::downgrade(&ready.developed);

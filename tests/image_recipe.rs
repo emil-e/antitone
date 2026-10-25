@@ -2,9 +2,11 @@
 use antitone::{
     color::Balance,
     dust_repair::{DonorChoice, RepairOrigin, SupportMask},
+    flat_field::FlatField,
     processing::{CAMERA_INPUT_FLOOR, DEFAULT_GAMMA, InputSettings, Response},
-    project::{Development, Project, Source, SourceDevelopment, SourceId},
+    project::{Development, FlatFieldSettings, Project, Source, SourceDevelopment, SourceId},
 };
+use std::sync::Arc;
 
 fn project() -> (Project, SourceId) {
     let mut project = Project {
@@ -95,13 +97,19 @@ fn accepted_recipes_separate_neutral_identity_from_grades_composition_and_repair
 }
 
 #[test]
-fn recipe_capture_uses_the_requested_source_even_when_it_is_not_in_the_filmstrip() {
+fn recipe_capture_uses_the_requested_reference_source_even_when_it_is_not_in_the_filmstrip() {
     let (mut project, first) = project();
     let mut second = project.source(first).unwrap().clone();
     second.path = "other.ARW".into();
     second.photo.exposure = 2.;
     let second = project.add_source(second).unwrap();
+    let map = Arc::new(
+        FlatField::from_nodes([12, 12, 864, 576], [2, 2], vec![glam::DVec3::ONE; 4]).unwrap(),
+    );
+    let field = FlatFieldSettings::new(project.source(second).unwrap(), map);
+    project.set_flat_field(Some(field));
     project.remove_from_filmstrip(second).unwrap();
+    assert!(!project.order.contains(&second));
     let a = project.image_recipe(first).unwrap();
     let b = project.image_recipe(second).unwrap();
     assert_ne!(a.neutral, b.neutral);

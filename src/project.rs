@@ -372,7 +372,7 @@ pub struct Project {
     pub processing_model: u32,
     pub next_source_id: u64,
     pub sources: Vec<Source>,
-    // Source records survive removal from the ordered filmstrip.
+    // Ordered photos; the accepted flat-field reference may remain outside this list.
     pub order: Vec<SourceId>,
     pub roll: RollSettings,
     /// How source samples become a positive (per stage; owns the negative calibration).
@@ -563,6 +563,7 @@ impl Project {
             if let Some(scan) = &mut self.scan {
                 scan.flat_field = None;
             }
+            self.prune_unreferenced_sources();
             return;
         }
         if self.scan.is_none() {
@@ -584,6 +585,25 @@ impl Project {
         if let Some(scan) = &mut self.scan {
             scan.flat_field = flat_field;
         }
+        self.prune_unreferenced_sources();
+    }
+
+    /// Keep only ordered photos and the source referenced by the accepted flat field. A
+    /// retained reference stays available to process and save the accepted correction, but is
+    /// marked reference-only while outside the filmstrip. Other removed records disappear with
+    /// their analysis support.
+    fn prune_unreferenced_sources(&mut self) {
+        let ordered: HashSet<_> = self.order.iter().copied().collect();
+        let reference = self.flat_field().map(|field| field.reference);
+        for source in &mut self.sources {
+            if !ordered.contains(&source.id) {
+                source.reference_only = true;
+            }
+        }
+        self.sources
+            .retain(|source| ordered.contains(&source.id) || reference == Some(source.id));
+        self.analysis_regions
+            .retain(|entry| ordered.contains(&entry.source));
     }
 
     fn ensure_scan_setup(&mut self) {
@@ -640,8 +660,8 @@ impl Project {
         Ok(id)
     }
 
-    /// Sources that participate in the active roll or its accepted correction. Removed source
-    /// records remain dormant and do not constrain a stage switch.
+    /// Sources that participate in the active roll or its accepted correction. An unreferenced
+    /// nonordered record is not part of accepted state and does not reach a stage switch.
     pub fn active_source_ids(&self) -> Vec<SourceId> {
         let mut ids = self.order.clone();
         if let Some(reference) = self.flat_field().map(|field| field.reference)
@@ -704,6 +724,7 @@ impl Project {
     }
 
     /// Replace the negative scan basis after stage-specific source redevelopment.
+    #[cfg(feature = "editor")]
     pub(crate) fn reset_scan_basis(&mut self) {
         let Some(first) = self
             .order
@@ -725,7 +746,19 @@ impl Project {
         }
     }
 
+    /// Remove a photo from the filmstrip and erase its source record unless an accepted flat
+    /// field still references it. Undo restores a removal through the document history snapshot.
     pub fn remove_from_filmstrip(&mut self, id: SourceId) -> Result<()> {
+        self.source(id)?;
+        self.order.retain(|candidate| *candidate != id);
+        self.prune_unreferenced_sources();
+        Ok(())
+    }
+
+    /// Remove a source from the ordered filmstrip without deleting its record. Reference
+    /// registration needs this while the accepted correction has not yet been installed.
+    #[cfg(feature = "editor")]
+    pub(crate) fn remove_from_order(&mut self, id: SourceId) -> Result<()> {
         self.source(id)?;
         self.order.retain(|candidate| *candidate != id);
         Ok(())
@@ -892,7 +925,10 @@ impl Project {
 
     pub fn load(path: &Path) -> Result<Self> {
         let input = BufReader::new(json::bounded_strings(File::open(path).map_err(failure)?));
-        let project: Self = serde_json::from_reader(input).map_err(failure)?;
+        let mut project: Self = serde_json::from_reader(input).map_err(failure)?;
+        // Schema-9 files may contain nonordered source records. Keep only ordered photos and the
+        // accepted flat-field reference before validation.
+        project.prune_unreferenced_sources();
         project.validate()?;
         Ok(project)
     }
