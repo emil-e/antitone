@@ -6,6 +6,7 @@ pub(super) struct FullscreenView {
     layout: Option<(crate::viewport::CanvasLayout, f32)>,
     source: bool,
     source_exposure: f64,
+    source_white_balance: crate::raw::SourceWhiteBalance,
     calibrated: bool,
     native_before: bool,
     restored: bool,
@@ -50,6 +51,7 @@ impl Editor {
                 layout: self.last_layout,
                 source: self.source,
                 source_exposure: self.source_exposure,
+                source_white_balance: self.source_white_balance,
                 calibrated: self.input.ready(),
                 native_before,
                 restored: false,
@@ -107,6 +109,7 @@ impl Editor {
                     self.source = view.source;
                 }
                 self.source_exposure = view.source_exposure;
+                self.source_white_balance = view.source_white_balance;
             }
             context.request_repaint();
         }

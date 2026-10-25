@@ -95,13 +95,13 @@ The batch captures accepted crops and adjustments at full resolution, then proce
 
 ## Source inspection is a view
 
-Developed-source inspection uses the same automatically lens-corrected development as the positive. It bypasses inversion and photographic grading but retains camera-to-AP1 conversion and ACES; its [default display normalization](colour-and-output.md#source-inspection-has-its-own-exposure-convention) is shared with uncalibrated thumbnails. The exposure control adjusts the preview relative to that default — zero restores it, not the unscaled RAW buffer — and it does not alter development, calibration, fitting, exports or the project.
+Developed-source inspection uses the same automatically lens-corrected development as the positive, bypassing inversion and photographic grading. Negative's **Viewing WB** defaults to Daylight, with As shot available for comparison; Digital already develops as-shot. The exposure control adjusts brightness relative to the [source-display baseline](colour-and-output.md#source-inspection-has-its-own-exposure-convention). Both controls apply to the canvas and source-preview thumbnails; calibrated filmstrip cards retain their positive grade. These viewing choices are transient: calibration, fitting, grades and exports still use the underlying developed pixels.
 
 Source and positive caches have distinct identities: switching modes reacquires the appropriate source rather than grading an inverted positive as source light. Missing Negative calibration forces source-only presentation; completing a usable Dmin/Dmax pair returns to the positive. Digital is ready without anchors.
 
 ## Immutable local-grade routing
 
-Local grades are recipe values, not rendered pixels: selected and cached previews, thumbnails and scopes share complete processing snapshots, and each image owns only its mutable output/preparation state. Roll WB, calibration/correction, camera basis, Global settings and ordered local values invalidate a grade; names, IDs, view selection and inspection EV do not. [Processing](processing.md#local-grades-change-controls-not-rendered-pixels) owns what that means for the recipe.
+Local grades are recipe values, not rendered pixels: selected and cached previews, thumbnails and scopes share complete processing snapshots, and each image owns only its mutable output/preparation state. Roll WB, calibration/correction, camera basis, Global settings and ordered local values invalidate a grade; names, IDs, view selection and source-inspection WB/EV do not. [Processing](processing.md#local-grades-change-controls-not-rendered-pixels) owns what that means for the recipe.
 
 The Adjustments drawer opens local editing. It contains only locals, offers linear/radial creation, and shows Strength, Invert and radial Feather directly below the list. Photographic controls stay visible but greyed until a local is selected — they cannot edit Global while the tool is open. Closing hides handles and coverage but retains all accepted local effects.
 

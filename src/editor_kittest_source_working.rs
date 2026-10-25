@@ -2,6 +2,104 @@ use super::*;
 use crate::raw::sony_fixture as sony;
 
 #[test]
+fn negative_viewing_white_and_exposure_update_canvas_and_source_card_without_redevelopment() {
+    use crate::raw::SourceWhiteBalance;
+    let authored = crate::raw::fixture::bayer_dng();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("negative.dng");
+    std::fs::write(
+        &path,
+        super::super::tests::dng_with_red_as_shot(&std::fs::read(authored.path()).unwrap()),
+    )
+    .unwrap();
+    editor_harness_with_thumbnails(true, |mut h, capture| {
+        h.enter(|editor, cx| editor.add_raws(vec![path], cx));
+        wait_for(&mut h, |e| {
+            !e.busy
+                && e.document_pending.is_none()
+                && e.working.support_ready()
+                && e.thumbnails.ready_count(&e.document, e.target) == 1
+        });
+        let accepted = h.read(|editor| editor.document.project.clone());
+        let developed = h.read(|editor| {
+            editor
+                .document
+                .visit
+                .ready
+                .as_ref()
+                .unwrap()
+                .developed
+                .clone()
+        });
+        let support = h.read(|editor| editor.working.regional().unwrap().clone());
+        h.read(|editor| assert_eq!(editor.source_white_balance, SourceWhiteBalance::Daylight));
+        let mut pixels = vec![];
+        for (white, ev) in [
+            (SourceWhiteBalance::Daylight, 0.),
+            (SourceWhiteBalance::AsShot, 0.),
+            (SourceWhiteBalance::AsShot, 1.),
+        ] {
+            h.get_by_role_and_label(egui::accesskit::Role::Button, "Source inspection")
+                .click();
+            h.step();
+            h.step();
+            h.get_by_label(match white {
+                SourceWhiteBalance::Daylight => "Daylight",
+                SourceWhiteBalance::AsShot => "As shot",
+            })
+            .click();
+            h.step();
+            enter_numeric(&mut h, "Exposure", &ev.to_string());
+            if white == SourceWhiteBalance::AsShot && ev == 1. {
+                h.step();
+                workflow::wait_settled(&mut h);
+                let png = h.render().unwrap();
+                save_capture(&png, "negative-inspection-controls-offscreen");
+            }
+            h.get_by_role_and_label(egui::accesskit::Role::Button, "Source inspection")
+                .click();
+            h.step();
+            workflow::wait_settled(&mut h);
+            h.render().unwrap();
+            let canvas = h.read(|editor| editor.last_layout.unwrap().0.image.center());
+            // The authored frame is spatially uniform. The card's centre is an
+            // interior image point, clear of its caption and selection border.
+            let card = h.get_by_label("negative.dng").rect().center();
+            let output = capture.borrow();
+            let sample = |point: egui::Pos2| {
+                output.pixels
+                    [point.y.floor() as usize * output.size[0] as usize + point.x.floor() as usize]
+            };
+            let main = sample(canvas);
+            let thumbnail = sample(card);
+            for c in 0..3 {
+                assert!(
+                    (main[c] - thumbnail[c]).abs() < 0.003,
+                    "{white:?} EV {ev}: {main:?} != {thumbnail:?}"
+                );
+            }
+            pixels.push(main);
+            h.read(|editor| {
+                assert_eq!(editor.source_white_balance, white);
+                assert_eq!(editor.source_exposure, ev);
+                assert_eq!(editor.document.project, accepted);
+                assert!(Arc::ptr_eq(
+                    &editor.document.visit.ready.as_ref().unwrap().developed,
+                    &developed
+                ));
+                assert!(editor.working.regional().unwrap().same_source_as(&support));
+            });
+        }
+        for adjacent in pixels.windows(2) {
+            assert!(
+                (0..3).any(|c| (adjacent[0][c] - adjacent[1][c]).abs() > 0.01),
+                "viewing controls must change rendered colour/brightness"
+            );
+        }
+    });
+}
+
+#[test]
 fn selecting_and_zooming_a_calibrated_photo_paints_proxy_while_acquisition_is_running() {
     use std::sync::{
         atomic::{AtomicBool, Ordering},

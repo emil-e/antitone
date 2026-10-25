@@ -934,11 +934,16 @@ impl RenderedView {
         previous: Option<&Arc<Self>>,
     ) -> Result<Arc<Self>, Error> {
         let parameters = input.parameters();
-        let gain = f64::from(parameters.post[0].x);
-        let expected = ProcessingParameters::source_with_gain(gain)?;
+        let matrix = DMat3::from_cols(
+            parameters.post[0].truncate().as_dvec3(),
+            parameters.post[1].truncate().as_dvec3(),
+            parameters.post[2].truncate().as_dvec3(),
+        );
+        let expected = ProcessingParameters::source_with_matrix(matrix)?;
         if !source.spec.inspection
             || input.grade().is_some()
-            || gain <= 0.
+            || !matrix.is_finite()
+            || matrix.determinant() == 0.
             || bytemuck::bytes_of(&expected) != bytemuck::bytes_of(&parameters)
         {
             return Err(Error::Gpu(
@@ -960,7 +965,7 @@ impl RenderedView {
                             0,
                             0,
                         ],
-                        gain: [parameters.post[0].x, 0., 0., 0.],
+                        source_transform: parameters.post,
                         ..bytemuck::Zeroable::zeroed()
                     },
                     source: source.clone(),
@@ -1177,6 +1182,7 @@ struct ViewUniform {
     dx: [f32; 4],
     dy: [f32; 4],
     gain: [f32; 4],
+    source_transform: [Vec4; 3],
 }
 
 impl ViewUniform {
@@ -1193,6 +1199,7 @@ impl ViewUniform {
             dx: view_pair(std::array::from_fn(|c| x[c] - origin[c])),
             dy: view_pair(std::array::from_fn(|c| y[c] - origin[c])),
             gain: [gain, 0., 0., 0.],
+            source_transform: parameters.post,
         }
     }
 }

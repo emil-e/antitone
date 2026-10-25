@@ -35,9 +35,9 @@ The [project embeds that accepted numeric asset](projects.md#embed-the-accepted-
 
 ## Source inspection has its own exposure convention
 
-The undeveloped negative is not a graded working positive. LibRaw's highlight-safe development divides fixed WB gains by their maximum, which can leave green below sensor white. Source presentation alone restores a green-referenced scale, then applies a common **+1 EV** ACES preview baseline — a rendering convention that makes the default less dark without changing the RAW buffer or camera-to-AP1 conversion. It is not a camera exposure calibration, and neither it nor WB normalization promises camera-JPEG/LCD matching across cameras.
+Negative source viewing balances unity-developed camera light for inspection before ACES. LibRaw uses green-relative daylight/as-shot gain ratios, expressed in the cached source's AP1 basis. The DNG SDK supplies profile-adapted viewing matrices; applying generic gains on top would balance it twice. Header preparation retains these per-source transforms separately from development identity. Unavailable as-shot WB falls back to daylight; unavailable daylight leaves the source's existing balance.
 
-Selected source views and uncalibrated developed thumbnails use the same default; missing or invalid WB falls back to the baseline alone. Manual source-inspection EV is relative to that default and affects only the selected view. See [source inspection](editor.md#source-inspection-is-a-view) for transient editor state.
+LibRaw's highlight-safe development divides fixed WB gains by their maximum. Source presentation restores a green-referenced scale; SDK development needs no such compensation. Both use a common **+1 EV** ACES preview baseline, with manual inspection EV relative to it. Canvas and source-preview thumbnails share this transform without changing their underlying pixels. This is a viewing convention, not a camera exposure calibration or camera-JPEG match. [Source inspection](editor.md#source-inspection-is-a-view) owns the transient controls.
 
 ## Let the OS handle the monitor
 

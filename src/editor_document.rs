@@ -32,6 +32,7 @@ pub(super) struct Document {
     saved: Project,
     cache: Arc<CacheScope>,
     parent_cache: Option<Arc<SourceStore>>,
+    source_previews: std::collections::HashMap<SourceId, crate::raw::SourcePreview>,
     #[cfg(test)]
     pub(super) fixture_directory: Option<Arc<tempfile::TempDir>>,
 }
@@ -44,6 +45,7 @@ impl Default for Document {
             project,
             path: None,
             spatial_metadata: Arc::default(),
+            source_previews: Default::default(),
             cache: Arc::new(CacheScope(Arc::new(SourceStore::new(0)))),
             parent_cache: None,
             #[cfg(test)]
@@ -103,6 +105,45 @@ impl Document {
 
             parent.transfer_to(&self.cache.0, &allowed);
         }
+    }
+
+    pub(super) fn remember_source_preview(
+        &mut self,
+        id: SourceId,
+        metadata: &Metadata,
+        fixed_wb: [f64; 4],
+    ) {
+        self.source_previews
+            .insert(id, metadata.source_preview(fixed_wb));
+    }
+
+    pub(super) fn source_preview(&self, source: &Source) -> crate::raw::SourcePreview {
+        self.source_previews
+            .get(&source.id)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    fn read_source_preview(
+        path: &Path,
+        wb: Option<[f64; 4]>,
+    ) -> Result<(Source, crate::raw::SourcePreview)> {
+        let (source, raw) = open_source(path, wb)?;
+        let preview = raw
+            .metadata
+            .source_preview(source.development.decode.fixed_wb);
+        Ok((source, preview))
+    }
+
+    pub(super) fn refresh_source(&mut self, id: SourceId) -> Result<()> {
+        let expected = self.project.source(id)?;
+        let (actual, preview) = Self::read_source_preview(
+            &self.source_path(id)?,
+            Some(expected.development.decode.fixed_wb),
+        )?;
+        verify_source(expected, &actual)?;
+        self.source_previews.insert(id, preview);
+        Ok(())
     }
 
     pub fn dirty(&self) -> bool {
@@ -246,6 +287,7 @@ impl Document {
             project,
             path: Some(path),
             spatial_metadata: Arc::new(spatial_metadata),
+            source_previews: Default::default(),
             cache: Arc::new(CacheScope(Arc::new(SourceStore::new(0)))),
             parent_cache: None,
             #[cfg(test)]
@@ -254,13 +296,8 @@ impl Document {
         document.validate_with_device(device)?;
         let total = document.project.order.len();
         progress(0, total);
-        for (index, id) in document.project.order.iter().enumerate() {
-            let path = document.source_path(*id)?;
-            let actual = read_source(
-                &path,
-                Some(document.project.source(*id)?.development.decode.fixed_wb),
-            )?;
-            verify_source(document.project.source(*id)?, &actual)?;
+        for (index, id) in document.project.order.clone().into_iter().enumerate() {
+            document.refresh_source(id)?;
             progress(index + 1, total);
         }
         document.spatial_metadata = Arc::new(document.ready_spatial_metadata());
@@ -281,10 +318,12 @@ impl Document {
         let mut developments = Vec::with_capacity(active.len());
         for id in active {
             let path = self.source_path(id)?;
-            developments.push((id, read_source(&path, wb)?.development));
+            let (source, preview) = Self::read_source_preview(&path, wb)?;
+            developments.push((id, source.development, preview));
         }
-        for (id, development) in developments {
+        for (id, development, preview) in developments {
             self.project.source_mut(id)?.development = development;
+            self.source_previews.insert(id, preview);
         }
         self.project.input = target;
         if target.requires_scan_sources() {
@@ -314,10 +353,8 @@ impl Document {
         for (index, path) in paths.iter().enumerate() {
             let existing = self.find_source(path);
             if let Some(id) = existing {
-                let expected = self.project.source(id)?.clone();
                 if self.project.order.contains(&id) {
-                    let source = read_source(path, Some(expected.development.decode.fixed_wb))?;
-                    verify_source(&expected, &source)?;
+                    self.refresh_source(id)?;
                 } else {
                     // The only nonordered record kept by accepted state is the current
                     // flat-field reference. Importing it as a photo reuses that record.
@@ -326,14 +363,15 @@ impl Document {
                         .input
                         .requires_scan_sources()
                         .then_some(crate::project::UNITY_WB);
-                    let development = read_source(path, wb)?.development;
+                    let (source, preview) = Self::read_source_preview(path, wb)?;
                     self.project.order.push(id);
-                    self.project.source_mut(id)?.development = development;
+                    self.project.source_mut(id)?.development = source.development;
+                    self.source_previews.insert(id, preview);
                 }
                 self.project.source_mut(id)?.reference_only = false;
             } else {
                 let wb = self.project.acquisition_wb(None);
-                let mut source = read_source(path, wb)?;
+                let (mut source, mut preview) = Self::read_source_preview(path, wb)?;
                 // A fresh scan import may contain sources that cannot share one acquisition
                 // basis. In that case choose Digital for the batch; the first source remains
                 // valid in its own as-shot basis. An existing calibrated Negative project is
@@ -347,9 +385,10 @@ impl Document {
                     // Every ordered source now belongs to Digital, including one that was
                     // already present before this batch. Reacquire all of them in as-shot WB.
                     self.redevelop_for_input(crate::processing::InputSettings::Digital)?;
-                    source = read_source(path, None)?;
+                    (source, preview) = Self::read_source_preview(path, None)?;
                 }
-                self.register(source)?;
+                let id = self.register(source)?;
+                self.source_previews.insert(id, preview);
             }
             progress(index + 1, paths.len());
         }
@@ -534,6 +573,7 @@ pub(super) fn metadata_development(
     })
 }
 
+#[cfg(test)]
 pub(super) fn read_source(path: &Path, wb: Option<[f64; 4]>) -> Result<Source> {
     open_source(path, wb).map(|(source, _)| source)
 }

@@ -6,26 +6,56 @@ pub(super) fn surface() -> egui::Color32 {
 
 impl Editor {
     pub(super) fn source_parameters(&self, exposure: f64) -> Result<ProcessingParameters, Error> {
-        let decode = self
-            .document
-            .visit
-            .ready
-            .as_ref()
-            .map(|ready| &ready.record.development.decode)
-            .or_else(|| {
-                self.document
-                    .project
-                    .sources
-                    .first()
-                    .map(|source| &source.development.decode)
-            });
-        ProcessingParameters::source_preview(
-            // SDK camera-to-PCS already defines the balanced white scale; only
-            // LibRaw's max-gain normalization needs this preview compensation.
+        if let Some(ready) = &self.document.visit.ready {
+            return self.source_preview_parameters(
+                Some(&ready.record.development.decode),
+                ready
+                    .developed
+                    .metadata()
+                    .source_preview(ready.developed.fixed_wb()),
+                exposure,
+            );
+        }
+        let source = self
+            .current_source
+            .and_then(|id| self.document.project.source(id).ok())
+            .or_else(|| self.document.project.sources.first());
+        match source {
+            Some(source) => self.source_parameters_for(source, exposure),
+            None => self.source_preview_parameters(None, Default::default(), exposure),
+        }
+    }
+
+    pub(super) fn source_parameters_for(
+        &self,
+        source: &Source,
+        exposure: f64,
+    ) -> Result<ProcessingParameters, Error> {
+        self.source_preview_parameters(
+            Some(&source.development.decode),
+            self.document.source_preview(source),
+            exposure,
+        )
+    }
+
+    fn source_preview_parameters(
+        &self,
+        decode: Option<&crate::project::Development>,
+        preview: crate::raw::SourcePreview,
+        exposure: f64,
+    ) -> Result<ProcessingParameters, Error> {
+        let transform = if self.input.is_negative() {
+            preview.transform(self.source_white_balance)
+        } else {
+            glam::DMat3::IDENTITY
+        };
+        ProcessingParameters::source_preview_with_transform(
+            // Only LibRaw normalizes development gains by their maximum.
             decode
                 .filter(|d| d.contract != crate::project::DNG_DEVELOPMENT_CONTRACT)
                 .map(|d| d.fixed_wb),
             exposure,
+            transform,
         )
     }
 
@@ -349,7 +379,7 @@ impl Editor {
                         Icon::Inspection,
                         navigating,
                         "Source inspection",
-                        "Adjust source-preview brightness.",
+                        "Adjust source-preview white balance and brightness.",
                     );
                     egui::Popup::from_toggle_button_response(&inspection)
                         .id(inspection_id)
@@ -359,13 +389,28 @@ impl Editor {
                             ui.set_width(240.);
                             ui.label(egui::RichText::new("Source inspection").strong());
                             ui.add_enabled_ui(navigating, |ui| {
+                                if self.input.is_negative() {
+                                    use crate::raw::SourceWhiteBalance;
+                                    presentation::labelled_row(ui, "Viewing WB", None, |ui, _| {
+                                        ui.selectable_value(
+                                            &mut self.source_white_balance,
+                                            SourceWhiteBalance::AsShot,
+                                            "As shot",
+                                        );
+                                        ui.selectable_value(
+                                            &mut self.source_white_balance,
+                                            SourceWhiteBalance::Daylight,
+                                            "Daylight",
+                                        );
+                                    });
+                                }
                                 controls::parameter(
                                     ui,
                                     controls::Parameter::Exposure,
                                     &mut self.source_exposure,
                                 );
                             });
-                            ui.small("Relative to default source preview · not saved");
+                            ui.small("Canvas and source thumbnails · not saved");
                         });
                     let readout = presentation::instrument_readout(
                         &exposure,

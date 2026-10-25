@@ -248,7 +248,19 @@ fn source_inspection_gpu_matches_scaled_camera_to_ap1_with_zero_diagnostic_flags
                     ),
                 ]
             });
-        for (parameters, gain) in cases {
+        let transform = DMat3::from_cols(
+            DVec3::new(1.4, 0.1, -0.05),
+            DVec3::new(-0.2, 1.1, 0.05),
+            DVec3::new(0.1, -0.1, 0.8),
+        );
+        let cases = cases
+            .map(|(parameters, gain)| (parameters, DMat3::IDENTITY * gain))
+            .chain([(
+                ProcessingParameters::source_preview_with_transform(Some([1.; 4]), 0.37, transform)
+                    .unwrap(),
+                transform * (2. * 0.37_f64.exp2()),
+            )]);
+        for (parameters, post) in cases {
             let mut encoder = device.create_command_encoder(&Default::default());
             kernel.encode(&device, &mut encoder, &source, &output, parameters);
             encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, 64);
@@ -265,7 +277,7 @@ fn source_inspection_gpu_matches_scaled_camera_to_ap1_with_zero_diagnostic_flags
             let values: &[Vec4] = bytemuck::cast_slice(&mapped);
             for (pixel, actual) in codes.iter().zip(values) {
                 let camera = DVec3::new(pixel[0] as f64, pixel[1] as f64, pixel[2] as f64) / 65535.;
-                let expected = matrix * camera * gain;
+                let expected = post * matrix * camera;
                 for channel in 0..3 {
                     assert!(
                         (actual[channel] as f64 - expected[channel]).abs()

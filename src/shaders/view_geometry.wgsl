@@ -4,6 +4,7 @@ struct WorkingView {
     axis_x: vec4f,
     axis_y: vec4f,
     gain: vec4f,
+    source_transform: array<vec4f, 3>,
 }
 @group(0) @binding(10)
 var<uniform> view: WorkingView;

@@ -634,6 +634,21 @@ void color_basis(dng_negative &negative, const dng_vector &as_shot,
             v.camera_to_xyz_d50[row * 3 + col] = entry;
         }
     }
+    // Viewing whites use the profile's own adaptation, independently of the
+    // development neutral. These matrices consume the already WB-scaled buffer.
+    const auto viewing_matrix = [&](const dng_xy_coord &white, double *output) {
+        spec->SetWhiteXY(white);
+        const auto &view = spec->CameraToPCS();
+        for (uint32 row = 0; row < 3; ++row) {
+            for (uint32 col = 0; col < 3; ++col) {
+                output[row * 3 + col] = view[row][col] / v.wb[col];
+            }
+        }
+    };
+    viewing_matrix(D65_xy_coord(), v.daylight_to_xyz_d50);
+    if (as_shot.Count() == 3) {
+        viewing_matrix(spec->NeutralToXY(as_shot), v.as_shot_to_xyz_d50);
+    }
     const auto *m = v.camera_to_xyz_d50;
     const double determinant = m[0] * (m[4] * m[8] - m[5] * m[7]) -
                                m[1] * (m[3] * m[8] - m[5] * m[6]) +

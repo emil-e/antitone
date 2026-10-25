@@ -58,6 +58,8 @@ pub struct Header {
     pub fixed_wb: [f64; 3],
     pub as_shot_wb: [f64; 3],
     pub camera_to_xyz_d50: DMat3,
+    pub daylight_to_xyz_d50: DMat3,
+    pub as_shot_to_xyz_d50: DMat3,
     pub input_floor: f64,
     pub interpretation_id: [u8; 32],
 }
@@ -81,6 +83,8 @@ impl Header {
             fixed_wb: v.wb,
             as_shot_wb: v.as_shot_wb,
             camera_to_xyz_d50: DMat3::from_cols_array(&v.camera_to_xyz_d50).transpose(),
+            daylight_to_xyz_d50: DMat3::from_cols_array(&v.daylight_to_xyz_d50).transpose(),
+            as_shot_to_xyz_d50: DMat3::from_cols_array(&v.as_shot_to_xyz_d50).transpose(),
             input_floor: v.input_floor,
             interpretation_id: hash_interpretation(v),
         }
@@ -161,6 +165,8 @@ struct NativeView {
     as_shot_wb: [f64; 3],
     camera_to_xyz_d50: [f64; 9],
     input_floor: f64,
+    daylight_to_xyz_d50: [f64; 9],
+    as_shot_to_xyz_d50: [f64; 9],
     retained_bytes: u64,
     timings: Timings,
 }

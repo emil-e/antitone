@@ -156,6 +156,50 @@ fn stage_wb_policy_selects_unity_for_negative_and_as_shot_for_digital() {
 }
 
 #[test]
+fn source_viewing_metadata_survives_save_as_and_is_rebuilt_on_open() {
+    use crate::raw::SourceWhiteBalance;
+    let directory = tempfile::tempdir().unwrap();
+    let raw_path = directory.path().join("red.dng");
+    let original =
+        std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"))
+            .unwrap();
+    std::fs::write(
+        &raw_path,
+        super::super::tests::dng_with_red_as_shot(&original),
+    )
+    .unwrap();
+    let mut document = Document::default();
+    document.import(&[raw_path]).unwrap();
+    let id = document.project.order[0];
+    let preview = document.source_preview(document.project.source(id).unwrap());
+    assert_ne!(
+        preview.transform(SourceWhiteBalance::AsShot),
+        preview.transform(SourceWhiteBalance::Daylight)
+    );
+    let project_directory = directory.path().join("projects");
+    std::fs::create_dir(&project_directory).unwrap();
+    let path = project_directory.join("first.antitone");
+    let mut saved = document.save(&path, Save::New).unwrap();
+    // Exercise a loaded project's relative locator, not just imported absolute paths.
+    saved.project.source_mut(id).unwrap().path = PathBuf::from("../red.dng");
+    saved.save(&path, Save::Replace).unwrap();
+    let opened = Document::open(&path).unwrap();
+    let other_directory = directory.path().join("elsewhere");
+    std::fs::create_dir(&other_directory).unwrap();
+    let other = opened
+        .save(&other_directory.join("second.antitone"), Save::New)
+        .unwrap();
+    let reopened = Document::open(other.path.as_ref().unwrap()).unwrap();
+    for document in [&opened, &other, &reopened] {
+        let actual = document.source_preview(document.project.source(id).unwrap());
+        for white in [SourceWhiteBalance::Daylight, SourceWhiteBalance::AsShot] {
+            assert_eq!(actual.transform(white), preview.transform(white));
+        }
+        assert!(!document.dirty());
+    }
+}
+
+#[test]
 fn mixed_as_shot_wb_does_not_select_digital_or_change_the_negative_basis() {
     let original =
         std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"))

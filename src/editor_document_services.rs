@@ -95,13 +95,8 @@ pub(super) fn candidate(
         Preparation::History(mut document, _, _) => {
             document.fork_cache();
             document.validate_for_device(device)?;
-            for id in &document.project.order {
-                let expected = document.project.source(*id)?;
-                let actual = super::document::read_source(
-                    &document.source_path(*id)?,
-                    Some(expected.development.decode.fixed_wb),
-                )?;
-                super::document::verify_source(expected, &actual)?;
+            for id in document.project.order.clone() {
+                document.refresh_source(id)?;
             }
             (document, None)
         }
