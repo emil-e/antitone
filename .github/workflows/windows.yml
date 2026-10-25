@@ -49,6 +49,8 @@ jobs:
             cargo-${{ runner.os }}-
       - name: Prepare the toolchain and native dependencies
         run: powershell -ExecutionPolicy Bypass -File scripts/setup-windows.ps1
+      - name: Runtime packaging selection tests
+        run: powershell -ExecutionPolicy Bypass -File scripts/test-windows-runtime.ps1
       - name: Formatting
         run: cargo fmt --all -- --check
       - name: Production editor clippy

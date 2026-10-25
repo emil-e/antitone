@@ -40,23 +40,9 @@ $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer
 if (-not (Test-Path $vswhere)) { throw 'vswhere.exe is required to locate the Visual C++ runtime.' }
 $installation = & $vswhere -latest -products * -property installationPath | Select-Object -First 1
 if (-not $installation) { throw 'No Visual Studio installation found for the runtime files.' }
-# The redistributable directory holds versioned copies next to a "v143" alias; prefer the
-# versioned one so the packaged runtime matches the toolset that built the binary.
-$redist = Get-ChildItem (Join-Path $installation 'VC/Redist/MSVC') -Directory |
-    Where-Object { $_.Name -match '^\d+\.' } |
-    Sort-Object Name -Descending |
-    Select-Object -First 1
-if (-not $redist) { throw 'No Visual C++ redistributable directory found.' }
-foreach ($set in @('Microsoft.VC143.CRT', 'Microsoft.VC143.OpenMP')) {
-    $directory = Join-Path $redist.FullName "x64/$set"
-    if (-not (Test-Path $directory)) { throw "Missing runtime set $directory" }
-    Get-ChildItem $directory -Filter '*.dll' | ForEach-Object {
-        # The binary imports a subset; copy what it needs rather than the whole set.
-        $needed = @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll', 'vcomp140.dll')
-        if ($needed -contains $_.Name.ToLowerInvariant()) {
-            Copy-Item $_.FullName $stage
-        }
-    }
+. (Join-Path $PSScriptRoot 'windows-runtime.ps1')
+Get-VcRuntimeFiles -RedistRoot (Join-Path $installation 'VC/Redist/MSVC') | ForEach-Object {
+    Copy-Item -LiteralPath $_ -Destination $stage
 }
 
 foreach ($name in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll', 'vcomp140.dll')) {
