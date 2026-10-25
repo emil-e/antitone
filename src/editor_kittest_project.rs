@@ -133,7 +133,7 @@ fn interpretation_numeric_edits_reject_unsupported_processing_before_accepting_t
 }
 
 #[test]
-fn project_widgets_save_precision_order_wb_and_reject_open_atomically() {
+fn project_widgets_save_precision_order_and_reject_open_atomically() {
     let directory = tempfile::tempdir().unwrap();
     let paths: Vec<_> = ["calibration.dng", "working.dng", "unvisited.dng"]
         .map(|name| {
@@ -143,10 +143,6 @@ fn project_widgets_save_precision_order_wb_and_reject_open_atomically() {
         })
         .into();
     editor_harness_with_thumbnails(true, |mut harness, _| {
-        let custom = [2., 1., 1.5, 1.];
-        harness.update(|editor| {
-            editor.document.project.scan = Some(scan_setup(&paths[0], custom));
-        });
         harness.enter(|editor, cx| editor.add_raws(paths.clone(), cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| {
@@ -156,10 +152,10 @@ fn project_widgets_save_precision_order_wb_and_reject_open_atomically() {
                     .development
                     .decode
                     .fixed_wb
-                    == custom)
+                    == crate::project::UNITY_WB)
             );
         });
-        let mut scan = Scan::open(&paths[0], Some(custom)).unwrap();
+        let mut scan = Scan::open(&paths[0], Some(crate::project::UNITY_WB)).unwrap();
         harness.update(|e| {
             e.set_dmin(Some(
                 scan.reference(Rect {
@@ -237,10 +233,6 @@ fn project_widgets_save_precision_order_wb_and_reject_open_atomically() {
         harness.read(|editor| assert!(editor.document.visit.ready.is_none()));
         harness.enter(|editor, cx| editor.add_raws(vec![paths[0].clone()], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-        let as_shot = crate::raw::RawFile::open(&paths[0])
-            .unwrap()
-            .metadata
-            .as_shot_wb();
         harness.read(|editor| {
             assert_eq!(
                 editor
@@ -250,10 +242,9 @@ fn project_widgets_save_precision_order_wb_and_reject_open_atomically() {
                     .as_ref()
                     .unwrap()
                     .fixed_wb,
-                as_shot
+                crate::project::UNITY_WB
             )
         });
-        assert_ne!(as_shot, custom);
         let before_open = harness.read(|editor| editor.document.project.clone());
         open_project(&mut harness, directory.path().join("film.antitone"));
         harness.read(|editor| assert!(editor.transition.is_some()));
@@ -277,7 +268,7 @@ fn project_widgets_save_precision_order_wb_and_reject_open_atomically() {
                     .unwrap()
                     .development()
                     .fixed_wb,
-                custom
+                crate::project::UNITY_WB
             )
         });
         wait_settled(&mut harness);

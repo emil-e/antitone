@@ -187,10 +187,7 @@ pub(super) fn wait_settled(harness: &mut Harness<'_, Editor>) {
 fn uncalibrated_source_working_view_uses_saved_roll_wb_in_both_targets_without_idle_refinement() {
     let directory = tempfile::tempdir().unwrap();
     editor_harness_with_thumbnails(true, |mut harness, capture| {
-        let wb = [2., 1., 1.5, 1.];
-        harness.update(|editor| {
-            editor.document.project.scan = Some(scan_setup(&fixture("patches.dng"), wb));
-        });
+        let wb = crate::project::UNITY_WB;
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| {

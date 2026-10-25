@@ -66,7 +66,7 @@ fn fixture() -> (TempDir, Project, Metadata, Vec<Input>) {
     let metadata = Metadata {
         version: VERSION,
         groups: vec![Group {
-            development: project.scan_basis().unwrap().development.decode.clone(),
+            development: project.sources[0].development.decode.clone(),
             code_scale: 1.,
             sources,
             common_size,

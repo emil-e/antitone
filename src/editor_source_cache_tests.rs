@@ -586,10 +586,10 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
 }
 
 #[test]
-fn acquisition_requests_share_scan_wb_and_preserve_saved_source_wb_in_digital() {
+fn acquisition_requests_use_stage_wb_and_preserve_saved_source_wb() {
     let file = raw_fixture::bayer_dng();
     let mut editor = Editor::state();
-    let scan_wb = [2., 1., 1.5, 1.];
+    let scan_wb = crate::project::UNITY_WB;
     editor
         .document
         .register(document::read_source(file.path(), Some(scan_wb)).unwrap())
@@ -610,7 +610,14 @@ fn acquisition_requests_share_scan_wb_and_preserve_saved_source_wb_in_digital() 
             editor.reference_preview_input(fresh.clone()),
             editor.source_input(fresh.clone()),
         ] {
-            assert_eq!(request.wb, if digital { None } else { Some(scan_wb) });
+            assert_eq!(
+                request.wb,
+                if digital {
+                    None
+                } else {
+                    Some(crate::project::UNITY_WB)
+                }
+            );
             assert!(request.expected.is_none());
         }
         for request in [

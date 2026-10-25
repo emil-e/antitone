@@ -21,7 +21,9 @@ use std::{
 #[path = "project_json.rs"]
 mod json;
 
-pub const SCHEMA_VERSION: u32 = 8;
+pub const SCHEMA_VERSION: u32 = 9;
+/// Negative scanning is independent of the camera's as-shot white balance.
+pub const UNITY_WB: [f64; 4] = [1.; 4];
 // Bump when native/raw_bridge.cpp development or scan.rs matrix/normalization/floor contracts change.
 pub const DEVELOPMENT_CONTRACT: &str =
     "libraw-camera-ahd-sony-shading-active-bilinear-f32-inversion-ap1-floor-v4";
@@ -163,23 +165,6 @@ impl SourceDevelopment {
         }
     }
 
-    /// One scanning setup: same camera interpretation, same decode basis, same fixed WB.
-    /// Digital does not require this; scan-based stages assert it on entry.
-    pub fn scan_compatible(&self, other: &Self) -> bool {
-        self.camera_basis() == other.camera_basis()
-            && self.decode.contract == other.decode.contract
-            && self.decode.fixed_wb == other.decode.fixed_wb
-            && self.decode.inversion_space == other.decode.inversion_space
-            && self.decode.working_space == other.decode.working_space
-    }
-
-    pub fn require_scan_compatible(&self, other: &Self) -> Result<()> {
-        require(
-            self.scan_compatible(other),
-            "sources do not share one scanning setup; use Digital for mixed sources",
-        )
-    }
-
     pub(crate) fn processing_calibration(
         &self,
         calibration: Calibration,
@@ -319,26 +304,46 @@ pub struct SourceAnalysis {
 }
 
 /// The acquisition basis shared by scan-based stages (Negative now, Slide later).
-/// Digital is per-source and does not require one.
+/// Digital is per-source and does not require one. The fixed WB is deliberately absent:
+/// Negative always develops with [`UNITY_WB`], while Digital uses each source's as-shot WB.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScanBasis {
-    pub development: SourceDevelopment,
+    pub camera: CameraBasis,
+    pub contract: String,
+    pub inversion_space: String,
+    pub working_space: String,
 }
 
 impl ScanBasis {
     pub fn new(source: &Source) -> Self {
+        Self::from_development(&source.development)
+    }
+
+    pub fn from_development(development: &SourceDevelopment) -> Self {
         Self {
-            development: source.development.clone(),
+            camera: development.camera_basis(),
+            contract: development.decode.contract.clone(),
+            inversion_space: development.decode.inversion_space.clone(),
+            working_space: development.decode.working_space.clone(),
         }
     }
 
-    pub fn from_development(development: SourceDevelopment) -> Self {
-        Self { development }
+    pub fn require_source(&self, source: &SourceDevelopment) -> Result<()> {
+        require(
+            self == &Self::from_development(source),
+            "sources do not share one scanning setup; use Digital for mixed sources",
+        )
     }
 
-    pub fn require_source(&self, source: &SourceDevelopment) -> Result<()> {
-        self.development.require_scan_compatible(source)
+    fn validate(&self) -> Result<()> {
+        self.camera.validate()?;
+        require(
+            !self.contract.is_empty()
+                && !self.inversion_space.is_empty()
+                && !self.working_space.is_empty(),
+            "invalid RAW development basis",
+        )
     }
 }
 
@@ -355,8 +360,7 @@ pub struct ScanSetup {
 impl ScanSetup {
     #[cfg(test)]
     fn ensure_camera_basis(&mut self, basis: &CameraBasis) {
-        self.basis.development.camera_model = basis.camera_model.clone();
-        self.basis.development.camera_to_ap1 = basis.camera_to_ap1;
+        self.basis.camera = basis.clone();
     }
 }
 
@@ -537,20 +541,12 @@ impl Project {
         self.scan.as_ref().map(|scan| &scan.basis)
     }
 
-    /// Saved sources retain their own decode identity. New scan sources share acquisition WB;
-    /// returning None lets the decoder choose as-shot WB for a new independent source.
+    /// Saved sources retain their own decode identity. New Negative sources use unity WB;
+    /// Digital returns None so the decoder chooses the source's as-shot WB.
     pub fn acquisition_wb(&self, existing: Option<&Source>) -> Option<[f64; 4]> {
         existing
             .map(|source| source.development.decode.fixed_wb)
-            .or_else(|| {
-                self.input
-                    .requires_scan_sources()
-                    .then(|| {
-                        self.scan_basis()
-                            .map(|basis| basis.development.decode.fixed_wb)
-                    })
-                    .flatten()
-            })
+            .or_else(|| self.input.requires_scan_sources().then_some(UNITY_WB))
     }
 
     pub fn flat_field(&self) -> Option<&FlatFieldSettings> {
@@ -580,7 +576,7 @@ impl Project {
                 });
             if let Some(development) = development {
                 self.scan = Some(ScanSetup {
-                    basis: ScanBasis::from_development(development),
+                    basis: ScanBasis::from_development(&development),
                     flat_field: None,
                 });
             }
@@ -644,21 +640,39 @@ impl Project {
         Ok(id)
     }
 
+    /// Sources that participate in the active roll or its accepted correction. Removed source
+    /// records remain dormant and do not constrain a stage switch.
+    pub fn active_source_ids(&self) -> Vec<SourceId> {
+        let mut ids = self.order.clone();
+        if let Some(reference) = self.flat_field().map(|field| field.reference)
+            && !ids.contains(&reference)
+        {
+            ids.push(reference);
+        }
+        ids
+    }
+
     /// Assert the shared scanning setup required by scan-based input stages.
     pub fn require_scan_sources(&self) -> Result<()> {
-        let Some(first) = self.sources.first() else {
-            return Ok(());
-        };
-        let basis = self
+        let active = self.active_source_ids();
+        let Some(basis) = self
             .scan
             .as_ref()
-            .map(|scan| &scan.basis)
-            .map_or(&first.development, |basis| &basis.development);
-        for source in &self.sources {
-            source.development.require_scan_compatible(basis)?;
+            .map(|scan| scan.basis.clone())
+            .or_else(|| {
+                active
+                    .first()
+                    .and_then(|id| self.source(*id).ok())
+                    .map(ScanBasis::new)
+            })
+        else {
+            return Ok(());
+        };
+        for id in active {
+            basis.require_source(&self.source(id)?.development)?;
         }
         if let Some(field) = self.flat_field().filter(|field| field.enabled) {
-            field.development.require_scan_compatible(basis)?;
+            basis.require_source(&field.development)?;
             field.require_photos(self)?;
         }
         Ok(())
@@ -667,25 +681,48 @@ impl Project {
     pub fn require_scan_source(&self, source: &SourceDevelopment) -> Result<()> {
         self.scan
             .as_ref()
-            .map(|scan| scan.basis.require_source(source))
+            .map(|scan| scan.basis.clone())
             .or_else(|| {
-                self.sources
+                self.active_source_ids()
                     .first()
-                    .map(|first| source.require_scan_compatible(&first.development))
+                    .and_then(|id| self.source(*id).ok())
+                    .map(ScanBasis::new)
             })
-            .unwrap_or(Ok(()))
+            .map_or(Ok(()), |basis| basis.require_source(source))
     }
 
     /// The shared acquisition basis of the roll's sources, when there are any.
     pub fn camera_basis(&self) -> Option<CameraBasis> {
         self.scan
             .as_ref()
-            .map(|scan| scan.basis.development.camera_basis())
+            .map(|scan| scan.basis.camera.clone())
             .or_else(|| {
                 self.sources
                     .first()
                     .map(|source| source.development.camera_basis())
             })
+    }
+
+    /// Replace the negative scan basis after stage-specific source redevelopment.
+    pub(crate) fn reset_scan_basis(&mut self) {
+        let Some(first) = self
+            .order
+            .first()
+            .and_then(|id| self.source(*id).ok())
+            .or_else(|| self.sources.first())
+        else {
+            return;
+        };
+        let basis = ScanBasis::new(first);
+        match &mut self.scan {
+            Some(scan) => scan.basis = basis,
+            None => {
+                self.scan = Some(ScanSetup {
+                    basis,
+                    flat_field: None,
+                });
+            }
+        }
     }
 
     pub fn remove_from_filmstrip(&mut self, id: SourceId) -> Result<()> {
@@ -822,7 +859,7 @@ impl Project {
             }
         }
         if let Some(scan) = &self.scan {
-            scan.basis.development.validate()?;
+            scan.basis.validate()?;
             if let Some(field) = &scan.flat_field {
                 field.validate(self)?;
             }

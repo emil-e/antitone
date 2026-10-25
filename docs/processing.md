@@ -20,9 +20,9 @@ developed camera RGB
 
 ## Start with the camera's measurements
 
-LibRaw develops non-DNG RAWs; the editor routes supported DNGs through Adobe's SDK. Both produce linear camera RGB, not sRGB or three isolated film dyes. Each saved source retains its own development and WB identity; the native developer still enforces its supported sensor domain.
+LibRaw develops non-DNG RAWs; the editor routes supported DNGs through Adobe's SDK. Both produce linear camera RGB, not sRGB or three isolated film dyes. Each saved source retains its own development identity. Negative always develops with unity WB, so the scanner's as-shot setting cannot change the inversion basis; Digital develops each source with its as-shot WB. The native developer still enforces its supported sensor domain.
 
-Negative uses one shared scan basis: the first scan selects its as-shot WB, and later new scans use that fixed choice so calibration refers to comparable measurements. Digital admits mixed cameras and develops each new source in its own as-shot WB. Reloading a saved source preserves its accepted WB even after an input-stage switch. [Project compatibility](projects.md#compatibility-is-about-the-processing-basis) owns admission and switching.
+Negative uses one shared scan basis: the camera interpretation and developer contract must match, while WB is determined by the stage rather than stored in that basis. Digital admits mixed cameras and per-source as-shot WB. Crossing input stages redevelops active sources for the target stage and updates their recorded identities. [Project compatibility](projects.md#compatibility-is-about-the-processing-basis) owns admission and switching.
 
 The accepted domain is three-colour integer Bayer without repeated black-level patterns: Sony ARW, Canon CR2/CR3 (including CRAW), Nikon NEF, Olympus ORF and Panasonic RW2 develop through it. LibRaw recognizes further formats (X-Trans, decimated sRAW/mRAW, others); broader compatibility is future work.
 
@@ -61,7 +61,7 @@ Photographic WB instead acts on the interpreted positive. Antitone uses Bradford
 
 | Adjustment | Role |
 | --- | --- |
-| Fixed scan WB | Establishes the RAW development basis for the roll |
+| Development WB | Unity for Negative; each source's as-shot for Digital |
 | Gamma balance | Changes the native-channel inversion curves |
 | Roll WB | Shared photographic colour balance after inversion |
 | Photo WB | Individual photographic colour balance after Roll WB |
@@ -76,7 +76,7 @@ After input interpretation, each source's metadata-derived camera matrix maps th
 
 The ungraded positive is full-resolution signed/HDR AP1 after input interpretation and camera conversion, but before photographic Roll or Photo controls. `Pipeline::ungraded` keeps that boundary explicit: Negative includes correction and calibrated inversion; Digital preserves scene-referred light.
 
-The provisional Dust tool heals here. Fixed RAW-development WB and gamma balance are upstream; exposure, photographic WB, contrast, saturation and locals are downstream. Calibration, response, correction or development changes legitimately require asynchronous reevaluation; downstream grading does not. Every independent repair reads the same unrepaired input and preserves signed/HDR values.
+The provisional Dust tool heals here. RAW-development WB and gamma balance are upstream; exposure, photographic WB, contrast, saturation and locals are downstream. Calibration, response, correction or development changes legitimately require asynchronous reevaluation; downstream grading does not. Every independent repair reads the same unrepaired input and preserves signed/HDR values.
 
 Healing and nonlinear grading do not commute, so pre-grade donor matching can differ from matching graded input. Full-resolution repair composition precedes view filtering; saved repairs identify this stage through an explicit [project repair contract](projects.md#source-owned-dust-repairs). Viewer and TIFF/AP0 EXR consume those repairs; [navigation thumbnails](editor.md#positive-thumbnail-reuse) and measurement inputs omit them.
 

@@ -116,7 +116,7 @@ fn fixture(directory: &Path) -> Document {
                     orientation: Default::default(),
                     crop: None,
                 },
-                Development::new(crate::raw::version(), [2., 1., 1.5, 1.]),
+                Development::new(crate::raw::version(), [1.; 4]),
             )
             .unwrap();
     }
@@ -124,24 +124,227 @@ fn fixture(directory: &Path) -> Document {
 }
 
 #[test]
-fn authored_dng_import_selects_as_shot_wb_and_open_preserves_saved_gains() {
-    let raw_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
+fn stage_wb_policy_selects_unity_for_negative_and_as_shot_for_digital() {
+    let original =
+        std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"))
+            .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let raw_path = directory.path().join("red-neutral.dng");
+    std::fs::write(
+        &raw_path,
+        super::super::tests::dng_with_red_as_shot(&original),
+    )
+    .unwrap();
+    let as_shot = read_source(&raw_path, None)
+        .unwrap()
+        .development
+        .decode
+        .fixed_wb;
+    assert_ne!(as_shot, crate::project::UNITY_WB);
+
+    let mut negative = Document::default();
+    negative.import(std::slice::from_ref(&raw_path)).unwrap();
+    assert_eq!(
+        negative.project.development().unwrap().fixed_wb,
+        crate::project::UNITY_WB
+    );
+
+    let mut digital = Document::default();
+    digital.project.input = crate::processing::InputSettings::Digital;
+    digital.import(std::slice::from_ref(&raw_path)).unwrap();
+    assert_eq!(digital.project.development().unwrap().fixed_wb, as_shot);
+}
+
+#[test]
+fn mixed_as_shot_wb_does_not_select_digital_or_change_the_negative_basis() {
+    let original =
+        std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"))
+            .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let first = directory.path().join("first.dng");
+    let red = directory.path().join("red-neutral.dng");
+    std::fs::write(&first, &original).unwrap();
+    std::fs::write(&red, super::super::tests::dng_with_red_as_shot(&original)).unwrap();
+    let mut document = Document::default();
+    document.import(&[first, red]).unwrap();
+    assert!(document.project.input.is_negative());
+    assert_eq!(document.project.sources.len(), 2);
+    assert!(
+        document
+            .project
+            .sources
+            .iter()
+            .all(|source| source.development.decode.fixed_wb == crate::project::UNITY_WB)
+    );
+    assert!(document.project.require_scan_sources().is_ok());
+}
+
+#[test]
+fn stage_redevelopment_skips_unavailable_removed_sources_and_reactivates_available_ones() {
+    let original =
+        std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"))
+            .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let first = directory.path().join("first.dng");
+    let missing = directory.path().join("missing.dng");
+    let removed = directory.path().join("removed.dng");
+    std::fs::write(&first, &original).unwrap();
+    std::fs::write(
+        &missing,
+        super::super::tests::dng_with_red_as_shot(&original),
+    )
+    .unwrap();
+    std::fs::write(
+        &removed,
+        super::super::tests::dng_with_red_as_shot(&original),
+    )
+    .unwrap();
+    let mut document = Document::default();
+    document
+        .import(&[first.clone(), missing.clone(), removed.clone()])
+        .unwrap();
+    let missing_id = document.find_source(&missing).unwrap();
+    let removed_id = document.find_source(&removed).unwrap();
+    document.project.remove_from_filmstrip(missing_id).unwrap();
+    document.project.remove_from_filmstrip(removed_id).unwrap();
+    std::fs::remove_file(&missing).unwrap();
+
+    document
+        .redevelop_for_input(crate::processing::InputSettings::Digital)
+        .unwrap();
+    assert_eq!(
+        document
+            .project
+            .source(missing_id)
+            .unwrap()
+            .development
+            .decode
+            .fixed_wb,
+        crate::project::UNITY_WB
+    );
+    assert_eq!(
+        document
+            .project
+            .source(removed_id)
+            .unwrap()
+            .development
+            .decode
+            .fixed_wb,
+        crate::project::UNITY_WB
+    );
+    assert_eq!(
+        document
+            .project
+            .source(document.project.order[0])
+            .unwrap()
+            .development
+            .decode
+            .fixed_wb,
+        read_source(&first, None)
+            .unwrap()
+            .development
+            .decode
+            .fixed_wb
+    );
+
+    document.import(std::slice::from_ref(&removed)).unwrap();
+    assert!(document.project.order.contains(&removed_id));
+    assert_eq!(
+        document.project.source(removed_id).unwrap().development,
+        read_source(&removed, None).unwrap().development
+    );
+}
+
+#[test]
+fn stage_redevelopment_clears_flat_field_correction_and_leaves_the_reference_dormant() {
+    let original =
+        std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"))
+            .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let photo = directory.path().join("photo.dng");
+    let reference = directory.path().join("reference.dng");
+    std::fs::write(&photo, &original).unwrap();
+    std::fs::write(
+        &reference,
+        super::super::tests::dng_with_red_as_shot(&original),
+    )
+    .unwrap();
+    let mut document = Document::default();
+    document.import(std::slice::from_ref(&photo)).unwrap();
+    let reference = read_source(&reference, Some([1.; 4])).unwrap();
+    let reference_id = document.register_reference(reference.clone()).unwrap();
+    let source = document.project.source(document.project.order[0]).unwrap();
+    let map = std::sync::Arc::new(
+        crate::flat_field::FlatField::from_nodes(
+            source.development.active_area,
+            [2, 2],
+            vec![glam::DVec3::ONE; 4],
+        )
+        .unwrap(),
+    );
+    let field =
+        crate::project::FlatFieldSettings::new(document.project.source(reference_id).unwrap(), map);
+    document.project.set_flat_field(Some(field));
+
+    document
+        .redevelop_for_input(crate::processing::InputSettings::Digital)
+        .unwrap();
+    assert!(document.project.flat_field().is_none());
+    assert_eq!(
+        document.project.source(reference_id).unwrap().development,
+        reference.development
+    );
+    let refreshed = read_source(&reference.path, None).unwrap();
+    assert_eq!(
+        document.register_reference(refreshed.clone()).unwrap(),
+        reference_id
+    );
+    assert_eq!(
+        document.project.source(reference_id).unwrap().development,
+        refreshed.development
+    );
+
+    document
+        .redevelop_for_input(crate::processing::InputSettings::Negative {
+            dmin: None,
+            dmax: None,
+            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
+            response: crate::processing::Response::film(),
+            gamma: crate::processing::DEFAULT_GAMMA,
+            balance: Balance::default(),
+        })
+        .unwrap();
+    assert!(document.project.flat_field().is_none());
+}
+
+#[test]
+fn negative_import_uses_unity_wb_and_digital_open_preserves_saved_gains() {
+    let original =
+        std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"))
+            .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let raw_path = directory.path().join("red-neutral.dng");
+    std::fs::write(
+        &raw_path,
+        super::super::tests::dng_with_red_as_shot(&original),
+    )
+    .unwrap();
     let mut document = Document::default();
     document.import(std::slice::from_ref(&raw_path)).unwrap();
     assert_eq!(document.project.order.len(), 1);
     assert_eq!(
         document.project.development().as_ref().unwrap().fixed_wb,
-        [1.; 4]
+        crate::project::UNITY_WB
     );
     let custom = [2., 1., 1.5, 1.];
-    // A saved SDK WB has a matching matrix/precision/program identity. Construct
-    // that accepted basis rather than silently reinterpreting an older source record.
+    // Digital saves each source's own as-shot decode identity. Construct that accepted
+    // record rather than silently reinterpreting the source from its current file header.
     let raw = RawFile::open_with_wb(&raw_path, Some(custom)).unwrap();
     let actual = source_metadata(&raw_path, &raw.metadata, raw.fixed_wb(custom)).unwrap();
-    document.project.scan.as_mut().unwrap().basis = crate::project::ScanBasis::new(&actual);
+    document.project.input = crate::processing::InputSettings::Digital;
+    document.project.scan = None;
     document.project.sources[0].development = actual.development;
-    assert_eq!(document.project.acquisition_wb(None), Some(custom));
-    let directory = tempfile::tempdir().unwrap();
+    assert_eq!(document.project.acquisition_wb(None), None);
     let project_path = directory.path().join("grade.antitone");
     let saved = document.save(&project_path, Save::New).unwrap();
     let mut reopened = Document::open(&project_path).unwrap();
@@ -364,9 +567,9 @@ fn oriented_imports_seed_the_photo_composition_setting() {
         let mut document = Document::default();
         // The authored TIFF has no maker-note WB; declare fixed roll gains as kittests do.
         document.project.scan = Some(crate::project::ScanSetup {
-            basis: crate::project::ScanBasis {
-                development: read_source(file.path(), Some([1.; 4])).unwrap().development,
-            },
+            basis: crate::project::ScanBasis::from_development(
+                &read_source(file.path(), Some([1.; 4])).unwrap().development,
+            ),
             flat_field: None,
         });
         let path = file.path().to_path_buf();
@@ -390,24 +593,11 @@ fn mixed_import_fallback_uses_batch_entry_and_restores_each_new_sources_as_shot_
     let second = directory.path().join("different-wb.dng");
     let other_camera = directory.path().join("other-camera.dng");
     std::fs::write(&first, &original).unwrap();
-    let mut different_wb = original.clone();
-    assert_eq!(&different_wb[..2], b"II");
-    let ifd = u32::from_le_bytes(different_wb[4..8].try_into().unwrap()) as usize;
-    let count = u16::from_le_bytes(different_wb[ifd..ifd + 2].try_into().unwrap());
-    let entry = (0..usize::from(count))
-        .map(|i| ifd + 2 + i * 12)
-        .find(|&i| u16::from_le_bytes(different_wb[i..i + 2].try_into().unwrap()) == 50728)
-        .expect("authored AsShotNeutral");
-    assert_eq!(
-        u16::from_le_bytes(different_wb[entry + 2..entry + 4].try_into().unwrap()),
-        5
-    );
-    let offset =
-        u32::from_le_bytes(different_wb[entry + 8..entry + 12].try_into().unwrap()) as usize;
-    // Only the first neutral denominator changes: the declared as-shot red gain is now 2.
-    assert_eq!(&different_wb[offset..offset + 8], &[1, 0, 0, 0, 1, 0, 0, 0]);
-    different_wb[offset + 4..offset + 8].copy_from_slice(&2_u32.to_le_bytes());
-    std::fs::write(&second, different_wb).unwrap();
+    std::fs::write(
+        &second,
+        super::super::tests::dng_with_red_as_shot(&original),
+    )
+    .unwrap();
     let mut different_camera = original.clone();
     let locations: Vec<_> = original
         .windows(b"Authored Bayer patches".len())
@@ -464,6 +654,52 @@ fn mixed_import_fallback_uses_batch_entry_and_restores_each_new_sources_as_shot_
             expected_wb
         );
     }
+    // Auto fallback also redevelops a source that already existed before the batch.
+    let mut existing = Document::default();
+    existing.import(std::slice::from_ref(&first)).unwrap();
+    assert!(existing.project.input.is_negative());
+    assert_eq!(
+        existing.project.sources[0].development.decode.fixed_wb,
+        crate::project::UNITY_WB
+    );
+    existing
+        .import(std::slice::from_ref(&other_camera))
+        .unwrap();
+    assert_eq!(
+        existing.project.input,
+        crate::processing::InputSettings::Digital
+    );
+    for source in &existing.project.sources {
+        assert_eq!(
+            source.development,
+            read_source(&source.path, None).unwrap().development,
+            "{}",
+            source.path.display()
+        );
+    }
+
+    // Re-adding a dormant source and then encountering an incompatible source in the same
+    // batch also redevelops the re-added source for Digital.
+    let mut readded = Document::default();
+    readded.import(std::slice::from_ref(&first)).unwrap();
+    let first_id = readded.project.order[0];
+    readded.project.remove_from_filmstrip(first_id).unwrap();
+    readded
+        .import(&[first.clone(), other_camera.clone()])
+        .unwrap();
+    assert_eq!(
+        readded.project.input,
+        crate::processing::InputSettings::Digital
+    );
+    for source in &readded.project.sources {
+        assert_eq!(
+            source.development,
+            read_source(&source.path, None).unwrap().development,
+            "{}",
+            source.path.display()
+        );
+    }
+
     // A later batch must not reinterpret an already-established multi-source roll.
     let mut established = Document::default();
     established.import(&[first, second]).unwrap();
@@ -515,7 +751,7 @@ fn fresh_mixed_scan_import_switches_to_digital_only_before_calibration() {
             id: crate::project::SourceId(0),
             path: path.into(),
             development: crate::project::SourceDevelopment {
-                decode: Development::new("test-backend".into(), [2., 1., 1.5, 1.]),
+                decode: Development::new("test-backend".into(), [1.; 4]),
                 lens_correction: None,
                 dng_development: None,
                 dimensions: [900, 600],

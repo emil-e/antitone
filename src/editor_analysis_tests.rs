@@ -229,7 +229,7 @@ fn state() -> Editor {
                 orientation: Default::default(),
                 crop: None,
             },
-            Development::new(crate::raw::version(), [2., 1., 1.7, 1.]),
+            Development::new(crate::raw::version(), [1.; 4]),
         )
         .unwrap();
     editor.id = 5;

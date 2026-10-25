@@ -23,7 +23,7 @@ fn fixture() -> Project {
         id: SourceId(0),
         path: "photo.ARW".into(),
         development: SourceDevelopment {
-            decode: Development::new("test-backend".into(), [2., 1., 1.7, 1.]),
+            decode: Development::new("test-backend".into(), [1.; 4]),
             lens_correction: None,
             dng_development: None,
             dimensions: [824, 624],
@@ -277,10 +277,9 @@ fn scan_reentry_checks_dormant_correction_geometry_before_activation() {
     let mut other = project.sources[0].clone();
     other.path = "larger-same-camera.ARW".into();
     other.development.dimensions = [1024, 824];
-    assert!(
-        other
-            .development
-            .scan_compatible(&project.sources[0].development)
+    assert_eq!(
+        antitone::project::ScanBasis::from_development(&other.development),
+        antitone::project::ScanBasis::from_development(&project.sources[0].development)
     );
     project.add_source(other).unwrap();
     project.validate().unwrap();

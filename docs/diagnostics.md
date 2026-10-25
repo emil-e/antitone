@@ -70,6 +70,16 @@ ANTITONE_SAMPLES=/absolute/samples cargo test --locked --offline --release \
 
 Its named files and area/Dmax assertions apply only to that case; neither route certifies photographic success or a general opening detector.
 
+A unity-WB project can compare the current Negative analysis against the former first-scan as-shot basis on one complete read-only roll:
+
+```sh
+ANTITONE_UNITY_WB_PROJECT=/absolute/roll.antitone cargo test --locked --offline --release \
+  --features editor --test unity_wb_roll_compare \
+  -- --ignored --nocapture --test-threads=1
+```
+
+It uses the project's accepted analysis areas, redevelops the roll in both bases, and checks that the analyzed frame means and chroma remain within diagnostic general-look bounds. Equal eligible sample populations are required; differing populations make the comparison inconclusive rather than evidence about WB.
+
 ### Retained area evidence and complete native review
 
 The retained-evidence comparison pins native line extraction, the frozen **local** rectangle baseline and canonical original-centre membership — the current shared-holder provider intentionally differs from that local baseline:

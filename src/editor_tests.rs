@@ -5,6 +5,26 @@ mod viewer;
 #[path = "editor_workspace_tests.rs"]
 mod workspace;
 
+pub(super) fn dng_with_red_as_shot(bytes: &[u8]) -> Vec<u8> {
+    let mut changed = bytes.to_vec();
+    assert_eq!(&changed[..2], b"II");
+    let ifd = u32::from_le_bytes(changed[4..8].try_into().unwrap()) as usize;
+    let count = u16::from_le_bytes(changed[ifd..ifd + 2].try_into().unwrap());
+    let entry = (0..usize::from(count))
+        .map(|i| ifd + 2 + i * 12)
+        .find(|&i| u16::from_le_bytes(changed[i..i + 2].try_into().unwrap()) == 50728)
+        .expect("authored AsShotNeutral");
+    assert_eq!(
+        u16::from_le_bytes(changed[entry + 2..entry + 4].try_into().unwrap()),
+        5
+    );
+    let offset = u32::from_le_bytes(changed[entry + 8..entry + 12].try_into().unwrap()) as usize;
+    // Only the first neutral denominator changes: the declared as-shot red gain is now 2.
+    assert_eq!(&changed[offset..offset + 8], &[1, 0, 0, 0, 1, 0, 0, 0]);
+    changed[offset + 4..offset + 8].copy_from_slice(&2_u32.to_le_bytes());
+    changed
+}
+
 pub(super) fn with_camera_basis(editor: &mut Editor) {
     let development = Development::new(crate::raw::version(), [1.; 4]);
     editor
@@ -2337,7 +2357,7 @@ fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
                     orientation: Default::default(),
                     crop: None,
                 },
-                Development::new(crate::raw::version(), [2., 1., 1.5, 1.]),
+                Development::new(crate::raw::version(), [1.; 4]),
             )
             .unwrap();
     }
@@ -3001,11 +3021,6 @@ fn input_stage_switch_requires_confirmation_before_discarding_negative_settings(
                 Some(crate::processing::InputSettings::Digital)
             );
             editor.input_switch = None;
-            editor.apply_input(crate::processing::InputSettings::Digital, cx);
-            assert_eq!(editor.input, crate::processing::InputSettings::Digital);
-            assert!(!editor.source);
-            editor.request_input(editor.negative_input(), cx);
-            assert!(editor.input.is_negative());
         });
     });
 }

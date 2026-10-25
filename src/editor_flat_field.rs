@@ -183,14 +183,24 @@ impl Editor {
             .find_source(&path)
             .and_then(|id| self.document.project.source(id).ok())
             .cloned();
-        let wb = self.document.project.acquisition_wb(expected.as_ref());
-        let cache = expected
+        // A dormant record belongs to an earlier stage. Reacquire it for the current stage
+        // instead of verifying it against its old decode identity.
+        let retained = expected
             .as_ref()
+            .is_some_and(|source| self.document.project.order.contains(&source.id));
+        let wb = if retained {
+            self.document.project.acquisition_wb(expected.as_ref())
+        } else {
+            self.document.project.acquisition_wb(None)
+        };
+        let cache = retained
+            .then_some(expected.as_ref())
+            .flatten()
             .map(|source| LoadCache::new(&path, Some(source), &self.document));
         source::Request {
             path,
             wb,
-            expected,
+            expected: retained.then_some(expected).flatten(),
             cache,
             correction: None,
         }

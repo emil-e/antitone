@@ -57,6 +57,58 @@ fn close(a: DVec3, b: DVec3) {
 }
 
 #[test]
+fn per_channel_development_scale_preserves_the_analyzed_positive_look() {
+    let scale = DVec3::new(2., 1.25, 1.6);
+    let film_unity = vec![BASE; 256];
+    let film_scaled: Vec<_> = film_unity.iter().map(|&v| v * scale).collect();
+    let source_unity = picture(1001, 0.05, 0.8);
+    let source_scaled: Vec<_> = source_unity.iter().map(|&v| v * scale).collect();
+    let matrix = DMat3::from_diagonal(DVec3::new(1.3, 0.8, 1.1));
+    let unity = proposal(
+        &[FrameSamples {
+            film: &film_unity,
+            picture: &source_unity,
+        }],
+        matrix,
+        default_current(),
+    );
+    let scaled_current = NegativeInput {
+        calibration: Calibration {
+            dmin: BASE * scale,
+            dmax: BASE * 0.02 * scale,
+            input_floor: FLOOR,
+        },
+        ..default_current()
+    };
+    let scaled = proposal(
+        &[FrameSamples {
+            film: &film_scaled,
+            picture: &source_scaled,
+        }],
+        matrix,
+        scaled_current,
+    );
+
+    close(calibration(&scaled).dmin, calibration(&unity).dmin * scale);
+    close(calibration(&scaled).dmax, calibration(&unity).dmax * scale);
+    assert!((negative(&scaled).balance.warmth - negative(&unity).balance.warmth).abs() < 1e-9);
+    assert!((negative(&scaled).balance.tint - negative(&unity).balance.tint).abs() < 1e-9);
+    assert!((scaled.roll.wb.warmth - unity.roll.wb.warmth).abs() < 1e-9);
+    assert!((scaled.roll.wb.tint - unity.roll.wb.tint).abs() < 1e-9);
+    assert!((scaled.roll.exposure - unity.roll.exposure).abs() < 1e-9);
+    assert!((scaled.photos[0].exposure - unity.photos[0].exposure).abs() < 1e-9);
+
+    let unity_pipeline = Pipeline::new(unity.input, unity.roll, unity.photos[0], matrix).unwrap();
+    let scaled_pipeline =
+        Pipeline::new(scaled.input, scaled.roll, scaled.photos[0], matrix).unwrap();
+    for (&a, &b) in source_unity.iter().zip(&source_scaled) {
+        let a = unity_pipeline.apply(a).unwrap().rgb;
+        let b = scaled_pipeline.apply(b).unwrap().rgb;
+        assert!((a - b).abs().max_element() < 1e-10, "{a:?} != {b:?}");
+    }
+}
+
+#[test]
 fn usable_film_is_pooled_without_requiring_every_frame_to_supply_base() {
     let film = vec![BASE; 256];
     let a = picture(512, 0.05, 0.5);

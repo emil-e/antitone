@@ -95,14 +95,7 @@ fn setup<R>(test: impl FnOnce(Harness<'_, Editor>, tempfile::TempDir) -> R) -> R
             let metadata = crate::spatial_metadata::Metadata {
                 version: crate::spatial_metadata::VERSION,
                 groups: vec![crate::spatial_metadata::Group {
-                    development: e
-                        .document
-                        .project
-                        .scan_basis()
-                        .unwrap()
-                        .development
-                        .decode
-                        .clone(),
+                    development: e.document.project.sources[0].development.decode.clone(),
                     code_scale: e.document.spatial_code_scale(),
                     common_size: crate::spatial_metadata::CommonSize::fit(&sources),
                     sources,
