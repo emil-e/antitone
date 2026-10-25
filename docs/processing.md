@@ -98,9 +98,9 @@ Coverage, inversion and strength produce a weight between zero and one: exposure
 
 GPU source conversion, illumination correction, inversion, camera matrices, repairs and photographic grades use ordinary f32 arithmetic. Preview and export share those operators. Signed and above-one working values remain available to downstream stages; area reconstruction separately accumulates original-cell contributions.
 
-Additional precision carries compilation and execution costs on every photograph. It needs evidence of a meaningful difference in real photographic output, rather than disagreement with f64 in a constructed cancellation case. The scalar f64 implementation remains an independent model reference for stage order, equations and output comparisons. [Photographic diagnostics](diagnostics.md#photographic-arithmetic) produce paired rendered files for that assessment.
+Additional precision carries compilation and execution costs on every photograph. It needs evidence of a meaningful difference in real photographic output, rather than disagreement with f64 in a constructed cancellation case. CPU measurements, Analyze and repair preparation use ordinary f64 arithmetic; the scalar pipeline also serves as an independent model reference for stage order, equations and output comparisons. [Photographic diagnostics](diagnostics.md#photographic-arithmetic) produce paired rendered files for that assessment.
 
-Continuous signed contrast and the film-base continuation retain explicit zero-input limits. The shaders otherwise use built-in f32 exponentials and logarithms. Preflight checks representable constants and finite intermediate ranges.
+Continuous signed contrast and the film-base continuation retain explicit zero-input limits. The shaders otherwise use built-in f32 exponentials and logarithms. Preflight checks representable constants and finite intermediate ranges, including response evaluation after f32 packing.
 
 ### Physical-view processing is an approximation
 

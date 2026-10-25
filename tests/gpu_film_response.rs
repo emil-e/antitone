@@ -225,6 +225,50 @@ fn film_shapes_camera_matrices_balance_and_exposure_match_the_scalar_model() {
 }
 
 #[test]
+fn scalar_valid_floor_anchor_is_rejected_or_stays_finite_with_packed_parameters() {
+    let floor = 10_f64.powf(-(0.65 / 0.02 - 1e-5));
+    let interpretation = negative(
+        Calibration {
+            dmin: DVec3::ONE,
+            dmax: DVec3::splat(floor),
+            input_floor: floor,
+        },
+        Response::Film {
+            toe: 2.5,
+            shoulder: 0.02,
+        },
+        0.65,
+        Balance::default(),
+    );
+    let scalar = antitone::processing::Inversion::new(interpretation).unwrap();
+    assert_eq!(scalar.apply(DVec3::splat(floor)).unwrap().rgb, DVec3::ONE);
+    let Ok(parameters) = ProcessingParameters::positive(
+        interpretation,
+        RollSettings::default(),
+        PhotoSettings::default(),
+        DMat3::IDENTITY,
+    ) else {
+        return;
+    };
+    pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let kernel = ProcessingKernel::new(&device).await.unwrap();
+        let source =
+            ProcessingSource::new_continuous(&device, &[[0.; 4]], DMat3::IDENTITY).unwrap();
+        let actual = read(&device, &queue, &kernel, &source, parameters, 1)[0];
+        assert_eq!(actual[3] as u32, 7);
+        for value in &actual[..3] {
+            assert!(value.is_finite() && (value - 1.).abs() < 2e-4, "{actual:?}");
+        }
+    });
+}
+
+#[test]
 fn response_rejects_a_pole_inside_the_supported_sample_domain() {
     let interpretation = negative(
         Calibration {

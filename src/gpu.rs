@@ -148,6 +148,35 @@ impl ProcessingParameters {
         let gain = exposure_multiplier(roll.exposure)? * exposure_multiplier(photo.exposure)?;
         let matrix = wb_matrix(photo.wb)? * wb_matrix(roll.wb)?;
         let (toe, shoulder) = negative.response.shape()?;
+        let reference =
+            packed_constants(negative.calibration.dmin, negative.calibration.input_floor)?;
+        let gamma = packed_constants(negative.channel_gammas()?, 0.)?;
+        let anchor = packed_constants(inversion.anchor_exponents.map(log_abs_expm1), gain.ln())?;
+        let mut packed_floor_bound = DVec3::ZERO;
+        for c in 0..3 {
+            let density = (reference[c] / reference.w).ln();
+            let denominator = gamma[c] - shoulder as f32 * density / std::f32::consts::LN_10;
+            if !denominator.is_finite() || denominator <= 0. {
+                return Err(Error::Gpu(
+                    "film response has a pole in its f32 sample domain".into(),
+                ));
+            }
+            // Scalar bounds alone can miss overflow/underflow after packing near a pole.
+            // Match the shader's ordinary-f32 floor evaluation, including folded exposure.
+            let a = toe as f32 * density / denominator;
+            let numerator = if a > 50. {
+                a
+            } else {
+                (a.exp() - 1.).abs().ln()
+            };
+            let value = ((numerator - anchor[c]) / toe as f32 + anchor.w).exp();
+            if !value.is_finite() || value < f32::MIN_POSITIVE {
+                return Err(Error::Gpu(
+                    "film response exceeds the f32 range at the packed sample floor".into(),
+                ));
+            }
+            packed_floor_bound[c] = f64::from(value);
+        }
         let floor_bound = inversion
             .apply(DVec3::splat(negative.calibration.input_floor))?
             .rgb
@@ -156,7 +185,7 @@ impl ProcessingParameters {
         let negative_bound = inversion
             .anchor_exponents
             .map(|a| (-log_abs_expm1(a) / toe).exp());
-        let largest = floor_bound.max(negative_bound) * gain;
+        let largest = (floor_bound.max(negative_bound) * gain).max(packed_floor_bound);
         let working_bound = (camera_to_ap1.x_axis.abs() * largest.x
             + camera_to_ap1.y_axis.abs() * largest.y
             + camera_to_ap1.z_axis.abs() * largest.z)
@@ -179,19 +208,6 @@ impl ProcessingParameters {
                     .into(),
             ));
         }
-        let reference =
-            packed_constants(negative.calibration.dmin, negative.calibration.input_floor)?;
-        let gamma = packed_constants(negative.channel_gammas()?, 0.)?;
-        for c in 0..3 {
-            let density = (reference[c] / reference.w).ln();
-            let denominator = gamma[c] - shoulder as f32 * density / std::f32::consts::LN_10;
-            if !denominator.is_finite() || denominator <= 0. {
-                return Err(Error::Gpu(
-                    "film response has a pole in its f32 sample domain".into(),
-                ));
-            }
-        }
-        let anchor = packed_constants(inversion.anchor_exponents.map(log_abs_expm1), gain.ln())?;
         let post = CameraMatrix::new(matrix)?;
         let weights = AP1_TO_XYZ.transpose().y_axis;
         let creative = [

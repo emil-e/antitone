@@ -116,7 +116,9 @@ fn leases_keep_native_storage_alive_with_independent_correction_contexts() {
     assert_eq!(corrected.effective_floor(), 2.0 * source.input_floor());
     assert_eq!(plain.effective_floor(), source.input_floor());
     let mean = plain.reference(region()).unwrap();
-    assert_eq!(corrected.reference(region()).unwrap(), mean * 2.0);
+    let corrected_mean = corrected.reference(region()).unwrap();
+    // Plain and corrected references group their ordinary sums differently.
+    assert!((corrected_mean - mean * 2.0).abs().max_element() < 1e-12);
     let fresh = Scan::from_source(corrected.source().clone());
     assert!(fresh.flat_field().is_none());
     assert_eq!(fresh.pixel(16, 16).unwrap(), original);
