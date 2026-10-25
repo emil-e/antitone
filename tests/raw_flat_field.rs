@@ -248,7 +248,7 @@ fn authored_corrected_dng_exports_reopen_in_rgb16_and_ap0() {
     use antitone::{
         color::ap1_to_ap0,
         export::{self, ExrPrecision, ImageSize, Overwrite},
-        processing::{InputSettings, PhotoSettings, Pipeline, Response, RollSettings},
+        processing::{InputSettings, PhotoSettings, Pipeline, RollSettings},
         profiles,
         rendering::{CpuRenderer, OutputTarget},
     };
@@ -277,15 +277,7 @@ fn authored_corrected_dng_exports_reopen_in_rgb16_and_ap0() {
     let directory = tempfile::tempdir().unwrap();
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
         let path = directory.path().join(format!("{target:?}.tif"));
-        export::tiff(
-            &path,
-            size,
-            target,
-            Overwrite::Refuse,
-            Response::film(),
-            pixel,
-        )
-        .unwrap();
+        export::tiff(&path, size, target, Overwrite::Refuse, pixel).unwrap();
         let mut decoder = tiff::decoder::Decoder::new(fs::File::open(path).unwrap()).unwrap();
         assert_eq!(decoder.dimensions().unwrap(), (size.width, size.height));
         assert_eq!(
@@ -306,15 +298,7 @@ fn authored_corrected_dng_exports_reopen_in_rgb16_and_ap0() {
         assert_eq!(actual, expected);
     }
     let path = directory.path().join("corrected.exr");
-    export::exr(
-        &path,
-        size,
-        ExrPrecision::Half,
-        Overwrite::Refuse,
-        Response::film(),
-        pixel,
-    )
-    .unwrap();
+    export::exr(&path, size, ExrPrecision::Half, Overwrite::Refuse, pixel).unwrap();
     let image = exr::prelude::read_first_flat_layer_from_file(path).unwrap();
     assert_eq!(
         image.layer_data.size,

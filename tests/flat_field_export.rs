@@ -2,7 +2,7 @@
 use antitone::{
     color::ap1_to_ap0,
     export::{self, ExrPrecision, ImageSize, Overwrite},
-    processing::{Calibration, InputSettings, PhotoSettings, Pipeline, Response, RollSettings},
+    processing::{Calibration, InputSettings, PhotoSettings, Pipeline, RollSettings},
     profiles,
     raw::Rect,
     rendering::{CpuRenderer, OutputTarget},
@@ -61,15 +61,7 @@ fn corrected_full_size_tiff_and_ap0_exr_reopen() {
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
         let start = Instant::now();
         let path = directory.path().join(format!("{target:?}.tif"));
-        export::tiff(
-            &path,
-            size,
-            target,
-            Overwrite::Refuse,
-            Response::film(),
-            pixel,
-        )
-        .unwrap();
+        export::tiff(&path, size, target, Overwrite::Refuse, pixel).unwrap();
         let mut limits = tiff::decoder::Limits::default();
         limits.decoding_buffer_size = a.width as usize * a.height as usize * 6;
         let mut decoder = tiff::decoder::Decoder::new(std::fs::File::open(&path).unwrap())
@@ -111,15 +103,7 @@ fn corrected_full_size_tiff_and_ap0_exr_reopen() {
     for precision in [ExrPrecision::Half, ExrPrecision::Full] {
         let start = Instant::now();
         let path = directory.path().join(format!("{precision:?}.exr"));
-        export::exr(
-            &path,
-            size,
-            precision,
-            Overwrite::Refuse,
-            Response::film(),
-            pixel,
-        )
-        .unwrap();
+        export::exr(&path, size, precision, Overwrite::Refuse, pixel).unwrap();
         let image = exr::prelude::read_first_flat_layer_from_file(&path).unwrap();
         assert_eq!(
             image.layer_data.size,

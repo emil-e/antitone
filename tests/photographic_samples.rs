@@ -9,7 +9,7 @@
 use antitone as api;
 use antitone::{
     crop::Crop,
-    export::{self, Overwrite, ProcessingMetadata},
+    export::{self, Overwrite},
     flat_field::FlatField,
     geometry::{Composition, SourcePoint, SourceRegion},
     gpu::{GpuFlatField, SubmissionGate},
@@ -192,7 +192,6 @@ fn photographic_tiff_pairs() {
                         composition,
                         target,
                         Overwrite::Refuse,
-                        ProcessingMetadata::with_grade(input.response(), &grade),
                         |x, y| pipeline.apply(scan.pixel(x, y)?, [x, y]).map(|p| p.rgb),
                     )
                     .unwrap();

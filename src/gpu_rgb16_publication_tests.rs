@@ -17,7 +17,6 @@ fn rgb16_late_status_errors_preserve_destination_and_remove_temporary() {
         let result = encode_with_checked(
             composition,
             Format::Tiff(OutputTarget::Srgb),
-            crate::processing::Response::film().into(),
             (&path, Overwrite::Confirmed),
             |origin, extent| {
                 blocks += 1;
@@ -48,7 +47,6 @@ fn rgb16_late_status_errors_preserve_destination_and_remove_temporary() {
     let result = encode_with_checked(
         composition,
         Format::Tiff(OutputTarget::Srgb),
-        crate::processing::Response::film().into(),
         (&path, Overwrite::Confirmed),
         |_, extent| {
             Ok(OutputBlock::Rgb16 {

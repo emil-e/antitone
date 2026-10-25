@@ -119,14 +119,6 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
             } else {
                 reference = Some(pixels);
             }
-            let mut decoder = Decoder::new(std::fs::File::open(&path).unwrap()).unwrap();
-            assert_eq!(
-                decoder
-                    .get_tag_ascii_string(tiff::tags::Tag::ImageDescription)
-                    .unwrap()
-                    .contains(&format!("creative-look-blake3={}", look.lut().id())),
-                with_look,
-            );
             assert!(
                 !editor
                     .document

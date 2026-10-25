@@ -2,7 +2,7 @@
 use crate::export_timing::timed;
 use crate::{
     Error,
-    export::{self, ExrPrecision, ImageSize, Overwrite, ProcessingMetadata},
+    export::{self, ExrPrecision, ImageSize, Overwrite},
     frame_raster::FrameRaster,
     geometry::{Composition, SourceRegion},
     gpu::{GpuFlatField, GpuPhotoGrade, ProcessingSource, SourceGeometry, SubmissionGate},
@@ -105,7 +105,6 @@ fn default_order(composition: Composition) -> export::BlockOrder {
 fn encode_with_checked(
     composition: Composition,
     format: Format,
-    metadata: ProcessingMetadata,
     destination: (&Path, Overwrite),
     build: impl FnMut([u32; 2], [u32; 2]) -> Result<OutputBlock, Error>,
     before_publish: impl FnOnce() -> Result<(), Error>,
@@ -113,7 +112,6 @@ fn encode_with_checked(
     encode_ordered_checked(
         composition,
         format,
-        metadata,
         destination,
         default_order(composition),
         build,
@@ -124,7 +122,6 @@ fn encode_with_checked(
 fn encode_ordered_checked(
     composition: Composition,
     format: Format,
-    metadata: ProcessingMetadata,
     (path, overwrite): (&Path, Overwrite),
     order: export::BlockOrder,
     mut build: impl FnMut([u32; 2], [u32; 2]) -> Result<OutputBlock, Error>,
@@ -137,7 +134,6 @@ fn encode_ordered_checked(
             (path, overwrite),
             size,
             target,
-            metadata,
             order,
             |origin, extent| match build(origin, extent)? {
                 OutputBlock::Rgb16 {
@@ -156,7 +152,6 @@ fn encode_ordered_checked(
             (path, overwrite),
             size,
             precision,
-            metadata,
             |origin, extent| match build(origin, extent)? {
                 OutputBlock::Linear(pixels) => working_readback(pixels),
                 _ => Err(Error::Gpu(

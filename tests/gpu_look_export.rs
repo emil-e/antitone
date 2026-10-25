@@ -6,13 +6,13 @@
     target_os = "macos"
 ))]
 use antitone::{
-    export::{self, ExrPrecision, Overwrite, ProcessingMetadata},
+    export::{self, ExrPrecision, Overwrite},
     geometry::{Composition, PhotoOrientation, RollOrientation},
     gpu::SubmissionGate,
     gpu_export::{self, Format, Request},
     local_adjustments::{PhotoGradeSnapshot, SpatialPipeline},
     looks::{LookAsset, LookOrigin, Lut3D},
-    processing::{Calibration, InputSettings, PhotoSettings, Response, RollSettings},
+    processing::{Calibration, InputSettings, PhotoSettings, RollSettings},
     renderer::GpuRenderer,
     rendering::OutputTarget,
     scan::Scan,
@@ -166,7 +166,6 @@ fn compare_tiff(repaired: bool) {
             composition,
             target,
             Overwrite::Confirmed,
-            ProcessingMetadata::with_grade(Response::film(), &grade),
             |x, y| {
                 let value = if let Some(repair) = repairs
                     .iter()
@@ -199,13 +198,6 @@ fn compare_tiff(repaired: bool) {
                 .all(|(a, b)| a.abs_diff(*b) <= 1)
         );
         assert_ne!(actual_values, rgb16(&bypass));
-        let mut decoder =
-            tiff::decoder::Decoder::new(std::fs::File::open(&actual).unwrap()).unwrap();
-        let description = decoder
-            .get_tag_ascii_string(tiff::tags::Tag::ImageDescription)
-            .unwrap();
-        assert!(description.contains(&format!("creative-look-blake3={}", asset.lut().id())));
-        assert!(description.contains("creative-look-input-range=clip"));
     }
 }
 #[test]
@@ -214,7 +206,7 @@ fn exr_is_identical_with_a_selected_look_even_when_rendered_inputs_would_be_clip
 }
 
 #[test]
-fn repaired_half_and_full_exr_bypass_the_look_in_pixels_and_metadata() {
+fn repaired_half_and_full_exr_bypass_the_look_in_pixels_and_attributes() {
     compare_exr(true);
 }
 
@@ -367,7 +359,6 @@ fn narrow_lut_renders_crop_and_full_image_and_invalid_settings_preserve_destinat
         composition,
         OutputTarget::Srgb,
         Overwrite::Refuse,
-        ProcessingMetadata::with_grade(Response::film(), &grade),
         |x, y| {
             asset
                 .lut()

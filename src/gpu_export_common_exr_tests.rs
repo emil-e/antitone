@@ -80,7 +80,6 @@ fn common_linear_engine_exr_matches_independent_scalar_with_shared_working_budge
                 composition,
                 precision,
                 Overwrite::Refuse,
-                ProcessingMetadata::with_grade(crate::processing::Response::film(), &grade),
                 |x, y| scalar.apply(scan.pixel(x, y)?, [x, y]).map(|p| p.rgb),
             )
             .unwrap();

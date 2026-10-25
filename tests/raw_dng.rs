@@ -362,14 +362,10 @@ fn authored_raw_rejects_sensor_white_and_black_references_without_mutating_sourc
 }
 
 #[cfg(all(feature = "export", feature = "ocio-reference"))]
-fn authored_export_image() -> (
-    antitone::export::ImageSize,
-    antitone::processing::Response,
-    Vec<DVec3>,
-) {
+fn authored_export_image() -> (antitone::export::ImageSize, Vec<DVec3>) {
     use antitone::{
         export::ImageSize,
-        processing::{Calibration, InputSettings, PhotoSettings, Pipeline, Response},
+        processing::{Calibration, InputSettings, PhotoSettings, Pipeline},
     };
     let mut scan = Scan::open(&fixture(), Some(WB)).unwrap();
     let calibration = Calibration {
@@ -407,7 +403,7 @@ fn authored_export_image() -> (
         width: scan.area.width,
         height: scan.area.height,
     };
-    (size, Response::film(), working)
+    (size, working)
 }
 
 #[cfg(all(feature = "export", feature = "ocio-reference"))]
@@ -424,12 +420,12 @@ fn authored_dng_model4_exports_reopen_as_rgb16_tiff_and_ap0_exr() {
         decoder::{Decoder, DecodingResult},
         tags::Tag,
     };
-    let (size, response, working) = authored_export_image();
+    let (size, working) = authored_export_image();
     let pixel = |x: u32, y: u32| Ok(working[(y * size.width + x) as usize]);
     let directory = tempfile::tempdir().unwrap();
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
         let path = directory.path().join(format!("{target:?}.tif"));
-        export::tiff(&path, size, target, Overwrite::Refuse, response, pixel).unwrap();
+        export::tiff(&path, size, target, Overwrite::Refuse, pixel).unwrap();
         let mut decoder = Decoder::new(fs::File::open(path).unwrap()).unwrap();
         assert_eq!(decoder.dimensions().unwrap(), (size.width, size.height));
         assert_eq!(
@@ -453,7 +449,7 @@ fn authored_dng_model4_exports_reopen_as_rgb16_tiff_and_ap0_exr() {
     }
     for precision in [ExrPrecision::Half, ExrPrecision::Full] {
         let path = directory.path().join(format!("{precision:?}.exr"));
-        export::exr(&path, size, precision, Overwrite::Refuse, response, pixel).unwrap();
+        export::exr(&path, size, precision, Overwrite::Refuse, pixel).unwrap();
         let image = read_first_flat_layer_from_file(path).unwrap();
         assert_eq!(
             image.layer_data.size,
@@ -527,7 +523,7 @@ fn authored_dng_tiffs_reopen_with_independent_imageio_storage_and_profiles() {
             .output()
             .unwrap()
     };
-    let (size, response, working) = authored_export_image();
+    let (size, working) = authored_export_image();
     let small = ImageSize {
         width: 7,
         height: 19,
@@ -551,7 +547,7 @@ fn authored_dng_tiffs_reopen_with_independent_imageio_storage_and_profiles() {
                 .path()
                 .join(format!("{}x{}-{suffix}.tif", size.width, size.height));
             let profile = root.join(format!("assets/profiles/antitone-{suffix}-v1.icc"));
-            export::tiff(&path, size, target, Overwrite::Refuse, response, |x, y| {
+            export::tiff(&path, size, target, Overwrite::Refuse, |x, y| {
                 Ok(working[(y * size.width + x) as usize])
             })
             .unwrap();

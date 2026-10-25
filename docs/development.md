@@ -76,7 +76,7 @@ Production and reference dependencies are separate:
 | `dng-sdk` | Direct-SDK adapter and authored tests; combined with `raw` routes DNG shared sources; vendored Adobe SDK |
 | `gpu` | Photographic GPU processing; no OCIO or desktop |
 | `render` | Output targets, transfer and profiles; no OCIO |
-| `export` | Encoders, metadata and atomic file safety; no OCIO |
+| `export` | Encoders, colour tagging and atomic file safety; no OCIO |
 | `raw,gpu,export` | Bounded original-sample GPU export; no desktop or OCIO |
 | `editor` | Application, including direct DNG SDK development and GPU export; no OCIO |
 | `ocio-reference` | Independent OCIO renderer and scalar composed export oracles |

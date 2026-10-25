@@ -6,12 +6,12 @@
     target_os = "macos"
 ))]
 use antitone::{
-    export::{self, ExrPrecision, Overwrite, ProcessingMetadata},
+    export::{self, ExrPrecision, Overwrite},
     geometry::{Composition, PhotoOrientation, RollOrientation},
     gpu::SubmissionGate,
     gpu_export::{self, Format, Request},
     local_adjustments::{PhotoGradeSnapshot, SpatialPipeline},
-    processing::{Calibration, InputSettings, PhotoSettings, Response, RollSettings},
+    processing::{Calibration, InputSettings, PhotoSettings, RollSettings},
     renderer::GpuRenderer,
     rendering::OutputTarget,
     scan::Scan,
@@ -92,7 +92,6 @@ fn gpu_tiff_matches_scalar_ocio_within_one_rgb16_code_on_authored_patches() {
         scan.camera_to_ap1,
     )
     .unwrap();
-    let metadata = ProcessingMetadata::with_grade(Response::film(), &grade);
     let mut differences = 0;
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
         let gpu = directory.path().join(format!("gpu-{target:?}.tif"));
@@ -116,14 +115,9 @@ fn gpu_tiff_matches_scalar_ocio_within_one_rgb16_code_on_authored_patches() {
             Overwrite::Refuse,
         )
         .unwrap();
-        export::tiff_composed(
-            &cpu,
-            composition,
-            target,
-            Overwrite::Refuse,
-            metadata,
-            |x, y| pipeline.apply(scan.pixel(x, y)?, [x, y]).map(|p| p.rgb),
-        )
+        export::tiff_composed(&cpu, composition, target, Overwrite::Refuse, |x, y| {
+            pipeline.apply(scan.pixel(x, y)?, [x, y]).map(|p| p.rgb)
+        })
         .unwrap();
         let actual = tiff(&gpu);
         let expected = tiff(&cpu);
@@ -161,7 +155,6 @@ fn gpu_exr_uses_shared_working_precision_through_linear_ap0_on_authored_patches(
         scan.camera_to_ap1,
     )
     .unwrap();
-    let metadata = ProcessingMetadata::with_grade(Response::film(), &grade);
     let mut differences = 0;
     for precision in [ExrPrecision::Half, ExrPrecision::Full] {
         let gpu = directory.path().join(format!("gpu-{precision:?}.exr"));
@@ -185,14 +178,9 @@ fn gpu_exr_uses_shared_working_precision_through_linear_ap0_on_authored_patches(
             Overwrite::Refuse,
         )
         .unwrap();
-        export::exr_composed(
-            &cpu,
-            composition,
-            precision,
-            Overwrite::Refuse,
-            metadata,
-            |x, y| pipeline.apply(scan.pixel(x, y)?, [x, y]).map(|p| p.rgb),
-        )
+        export::exr_composed(&cpu, composition, precision, Overwrite::Refuse, |x, y| {
+            pipeline.apply(scan.pixel(x, y)?, [x, y]).map(|p| p.rgb)
+        })
         .unwrap();
         let rounded_path = directory.path().join(format!("rounded-{precision:?}.exr"));
         export::exr_composed(
@@ -200,7 +188,6 @@ fn gpu_exr_uses_shared_working_precision_through_linear_ap0_on_authored_patches(
             composition,
             precision,
             Overwrite::Refuse,
-            metadata,
             |x, y| {
                 pipeline
                     .apply(scan.pixel(x, y)?, [x, y])
@@ -391,7 +378,6 @@ fn corrected_ordered_locals_reopen_after_native_permutations_and_rotated_coverag
             )
             .unwrap();
             let raster = FrameRaster::full(composition).unwrap();
-            let metadata = ProcessingMetadata::with_grade(Response::film(), &grade);
             for format in [
                 Format::Tiff(OutputTarget::Srgb),
                 Format::Tiff(OutputTarget::DisplayP3),
@@ -426,16 +412,9 @@ fn corrected_ordered_locals_reopen_after_native_permutations_and_rotated_coverag
                             composition,
                             target,
                             Overwrite::Confirmed,
-                            metadata,
                             |x, y| scalar.apply(scan.pixel(x, y)?, [x, y]).map(|p| p.rgb),
                         )
                         .unwrap();
-                        let mut decoder =
-                            Decoder::new(std::fs::File::open(&path).unwrap()).unwrap();
-                        let description = decoder
-                            .get_tag_ascii_string(tiff::tags::Tag::ImageDescription)
-                            .unwrap();
-                        assert!(description.contains(antitone::local_adjustments::CONTRACT));
                         let actual = tiff(&path);
                         let expected = tiff(&expected);
                         assert_eq!(actual.len(), expected.len());
@@ -457,13 +436,6 @@ fn corrected_ordered_locals_reopen_after_native_permutations_and_rotated_coverag
                         let image = read_first_flat_layer_from_file(&path).unwrap();
                         let [width, height] = composition.size();
                         assert_eq!(image.layer_data.size, Vec2(width as usize, height as usize));
-                        assert!(
-                            image
-                                .layer_data
-                                .attributes
-                                .other
-                                .contains_key(&Text::from("antitoneLocalAdjustmentProcessing"))
-                        );
                         for channel in &image.layer_data.channel_data.list {
                             let c = match channel.name.to_string().as_str() {
                                 "R" => 0,

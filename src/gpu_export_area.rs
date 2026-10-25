@@ -466,16 +466,9 @@ pub(super) fn write(
             .clone()
             .map(|clock| crate::gpu::timestamp_ledger::TimestampProbe::new(device, clock)),
     );
-    let metadata = ProcessingMetadata::with_grade(request.input.response(), &request.grade)
-        .with_look(if matches!(request.format, Format::Tiff(_)) {
-            request.look.as_ref().map(|a| a.lut().id().bytes())
-        } else {
-            None
-        });
     encode_with_checked(
         request.composition,
         request.format,
-        metadata,
         destination,
         |origin, extent| {
             check()?;
