@@ -105,7 +105,7 @@ fn source_geometry_uses_exact_nearest_centres_and_rejects_overflow() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn corrected_conversion_matches_f64_and_full_pipeline_preserves_flags_and_precision() {
+fn corrected_conversion_and_processing_preserve_spatial_gains_and_floor_flags() {
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,
@@ -140,7 +140,7 @@ fn corrected_conversion_matches_f64_and_full_pipeline_preserves_flags_and_precis
             .collect();
         let field = Arc::new(FlatField::from_nodes([46, 46, 8602, 5508], [w, h], nodes).unwrap());
         let gpu = Arc::new(GpuFlatField::new(&device, field.clone()).unwrap());
-        assert_eq!(gpu.byte_len(), field.nodes().len() as u64 * 36);
+        assert_eq!(gpu.byte_len(), field.nodes().len() as u64 * 12);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
             source: wgpu::ShaderSource::Wgsl(
@@ -156,9 +156,7 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
     if id.x >= arrayLength(&scans) { return; }
     let s=convert_source(scans[id.x],id.x);
     let g=field_gains(id.x);
-    output[3u*id.x]=vec4f(s.high,g[0].h);
-    output[3u*id.x+1u]=vec4f(s.low,g[0].l);
-    output[3u*id.x+2u]=vec4f(s.tail,g[0].t);
+    output[id.x]=vec4f(s,g.x);
 }
 "#
                 )
@@ -207,7 +205,8 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
             );
             assert!(source.flat_field.is_some());
             assert_eq!(source.geometry, Some(geometry));
-            for value in [2. * f32::MIN_POSITIVE as f64, f32::MAX as f64] {
+            {
+                let value = f32::MAX as f64;
                 let unsupported = Arc::new(
                     FlatField::from_nodes(field.area(), [2, 2], vec![DVec3::splat(value); 4])
                         .unwrap(),
@@ -217,20 +216,6 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                 assert!(Arc::ptr_eq(source.flat_field.as_ref().unwrap(), &gpu));
                 assert_eq!(source.geometry, Some(geometry));
             }
-            let tiny = Arc::new(
-                FlatField::from_nodes(
-                    field.area(),
-                    [2, 2],
-                    vec![DVec3::splat(1e-35_f32 as f64); 4],
-                )
-                .unwrap(),
-            );
-            let tiny = Arc::new(GpuFlatField::new(&device, tiny).unwrap());
-            let mut amplified =
-                ProcessingSource::new(&device, &codes, DMat3::from_diagonal(DVec3::splat(1e10)))
-                    .unwrap();
-            assert!(amplified.set_flat_field(Some(tiny), geometry).is_err());
-            assert!(amplified.flat_field.is_none());
             let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: None,
                 contents: bytemuck::bytes_of(&flat::FieldGeometry::new(&gpu, geometry)),
@@ -238,7 +223,7 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
             });
             let output = device.create_buffer(&wgpu::BufferDescriptor {
                 label: None,
-                size: codes.len() as u64 * 48,
+                size: codes.len() as u64 * 16,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             });
@@ -302,21 +287,13 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
             for (i, pixel) in expected.iter().enumerate() {
                 let [x, y] = geometry.pixel(i as u32).unwrap();
                 let gain = field.gain([x as f64 + 0.5, y as f64 + 0.5]).unwrap();
-                let actual_gain = values[3 * i].w as f64
-                    + values[3 * i + 1].w as f64
-                    + values[3 * i + 2].w as f64;
-                assert_eq!(
-                    actual_gain.to_bits(),
-                    gain.x.to_bits(),
+                assert!(
+                    (f64::from(values[i].w) - gain.x).abs() < 1e-6,
                     "gain index={i} point={x},{y} geometry={geometry:?}"
                 );
                 for c in 0..3 {
-                    let value = values[3 * i][c] as f64
-                        + values[3 * i + 1][c] as f64
-                        + values[3 * i + 2][c] as f64;
-                    assert_eq!(
-                        value.to_bits(),
-                        pixel[c].to_bits(),
+                    assert!(
+                        (f64::from(values[i][c]) - pixel[c]).abs() < 1e-6,
                         "index={i} channel={c} geometry={geometry:?}"
                     );
                 }
@@ -332,7 +309,7 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                 (ProcessingParameters::source_inspection(0.).unwrap(), None),
                 (ProcessingParameters::source_inspection(16.).unwrap(), None),
             ];
-            for _response in [
+            for response in [
                 Response::Original,
                 Response::Film {
                     toe: 2.5,
@@ -344,33 +321,22 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                 },
             ] {
                 let roll = RollSettings {
-                    exposure: 2.,
+                    exposure: 0.5,
                     ..RollSettings::default()
                 };
                 let photo = PhotoSettings {
-                    exposure: 3.,
+                    exposure: -0.25,
                     ..PhotoSettings::default()
                 };
-                cases.push((
-                    ProcessingParameters::positive(calibration, roll, photo, matrix).unwrap(),
-                    Some(Pipeline::new(calibration, roll, photo, matrix).unwrap()),
-                ));
-            }
-            for offset in [0., 1e-12, -1e-12] {
-                let anchored = Calibration {
-                    dmin: expected[1] * (1. + offset),
-                    ..calibration
+                let input = crate::processing::NegativeInput {
+                    calibration,
+                    response,
+                    gamma: crate::processing::DEFAULT_GAMMA,
+                    balance: Default::default(),
                 };
-                let roll = RollSettings::default();
                 cases.push((
-                    ProcessingParameters::positive(
-                        anchored,
-                        roll,
-                        PhotoSettings::default(),
-                        matrix,
-                    )
-                    .unwrap(),
-                    Some(Pipeline::new(anchored, roll, PhotoSettings::default(), matrix).unwrap()),
+                    ProcessingParameters::positive(input, roll, photo, matrix).unwrap(),
+                    Some(Pipeline::new(input, roll, photo, matrix).unwrap()),
                 ));
             }
             for (parameters, pipeline) in cases {
@@ -397,7 +363,7 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                     for c in 0..3 {
                         assert!(
                             (value[c] as f64 - reference[c]).abs()
-                                <= 2e-5 + 2e-4 * reference[c].abs(),
+                                <= 2e-5 + 2e-4 * reference.abs().max_element(),
                             "actual={value:?} expected={reference:?}"
                         );
                     }

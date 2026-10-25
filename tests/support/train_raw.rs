@@ -5,7 +5,8 @@ pub fn load() -> (Scan, Calibration) {
     let root = std::env::var_os("ANTITONE_RAW_SAMPLES")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("samples"));
-    let mut dmax = Scan::open(&root.join("DSC04378.ARW"), None).unwrap();
+    // Calibration and scan samples use the Negative stage's unity-WB development basis.
+    let mut dmax = Scan::open(&root.join("DSC04378.ARW"), Some([1.; 4])).unwrap();
     let wb = dmax.fixed_wb;
     let matrix = dmax.camera_to_ap1;
     let model = dmax.camera_model.clone();

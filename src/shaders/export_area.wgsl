@@ -101,7 +101,6 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     let first = max(vec2i(floor(lo)), vec2i(0));
     let end = min(vec2i(ceil(hi)), vec2i(mapping.sizes.xy));
     var linear = vec4f(0.0);
-    var residual = vec4f(0.0);
     var error = 0.0;
     for(var y = first.y; y < end.y; y++) {
         for(var x = first.x; x < end.x; x++) {
@@ -129,22 +128,10 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
             if pixel.a < 0.0 {
                 error = -2.0;
             }
-            // Signed HDR can cancel large terms. Keep multiplication/addition residuals
-            // in the same accumulator for every output, not an EXR-only numeric path.
-            // Accumulate the normalization with the same arithmetic to conserve constants.
-            let value = vec4f(pixel.rgb, 1.0);
-            let weighted = weight * value;
-            let product_error = fma(vec4f(weight), value, -weighted);
-            let ordered = abs(linear) >= abs(weighted);
-            let large = select(weighted, linear, ordered);
-            let small = select(linear, weighted, ordered);
-            let sum = fma(vec4f(1.0), large, small);
-            residual += fma(vec4f(1.0), small, fma(vec4f(1.0), large, -sum)) + product_error;
-            linear = sum;
+            linear += weight * vec4f(pixel.rgb, 1.0);
         }
     }
-    let combined = linear + residual;
-    let total = combined.w;
+    let total = linear.w;
     let expected = abs(mapping.dx.x * mapping.dy.y - mapping.dx.y * mapping.dy.x);
     if !(total > 0.0) || abs(total - expected) > 0.0001 * expected {
         error = -3.0;
@@ -152,6 +139,6 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     if error < 0.0 {
         destination[index] = vec4f(0.0, 0.0, 0.0, error);
     } else {
-        destination[index] = vec4f(combined.rgb / total, total);
+        destination[index] = vec4f(linear.rgb / total, total);
     }
 }

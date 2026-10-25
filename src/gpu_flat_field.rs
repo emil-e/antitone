@@ -1,4 +1,4 @@
-use super::{CameraMatrix, split_constants};
+use super::CameraMatrix;
 use crate::{Error, flat_field::FlatField, geometry::SourceRaster};
 use bytemuck::Zeroable;
 use glam::{DMat3, DVec3, Vec4};
@@ -22,7 +22,7 @@ impl SourceGeometry {
                 || 2 * u64::from(size[axis]) > u32::MAX as u64
             {
                 return Err(Error::Gpu(
-                    "source geometry exceeds the precise GPU coordinate domain".into(),
+                    "source geometry exceeds the GPU coordinate domain".into(),
                 ));
             }
         }
@@ -110,15 +110,15 @@ impl GpuFlatField {
     pub fn new(device: &wgpu::Device, field: Arc<FlatField>) -> Result<Self, Error> {
         let a = field.area();
         SourceGeometry::new(a, [1, 1])?;
-        let nodes: Vec<[f32; 9]> = field
+        let nodes: Vec<[f32; 3]> = field
             .nodes()
             .iter()
-            .map(|g| {
-                let parts = split_constants(*g, 0.)?;
-                Ok(std::array::from_fn(|i| parts[i / 3][i % 3]))
-            })
-            .collect::<Result<_, Error>>()?;
-        if nodes.len() as u64 * 36 > device.limits().max_storage_buffer_binding_size {
+            .map(|g| g.as_vec3().to_array())
+            .collect();
+        if nodes.iter().flatten().any(|v| !v.is_finite()) {
+            return Err(Error::Gpu("flat-field gains exceed the f32 range".into()));
+        }
+        if nodes.len() as u64 * 12 > device.limits().max_storage_buffer_binding_size {
             return Err(Error::Gpu("flat-field grid exceeds GPU limits".into()));
         }
         Ok(Self {
@@ -141,36 +141,16 @@ impl GpuFlatField {
     }
 
     pub(super) fn validate_matrix(&self, matrix: DMat3, source_gain: f64) -> Result<(), Error> {
-        let (min, max) = self.bounds;
+        let (_, max) = self.bounds;
         // Camera gains execute before the matrix, so small coefficients cannot rescue overflow.
         if max.max_element() * source_gain > f32::MAX as f64 / 16. {
             return Err(Error::Gpu(
-                "corrected camera values exceed the precise GPU domain before matrix conversion"
-                    .into(),
-            ));
-        }
-        if min.min_element() / 65535. < f32::MIN_POSITIVE as f64 {
-            return Err(Error::Gpu(
-                "corrected camera code can underflow before matrix conversion".into(),
+                "corrected camera values exceed the f32 range before matrix conversion".into(),
             ));
         }
         CameraMatrix::new(matrix * DMat3::from_diagonal(max))?;
         if source_gain > 1. {
             CameraMatrix::new(matrix * source_gain * DMat3::from_diagonal(max))?;
-        }
-        for (column, gain) in [matrix.x_axis, matrix.y_axis, matrix.z_axis]
-            .into_iter()
-            .zip(min.to_array())
-        {
-            if column
-                .to_array()
-                .iter()
-                .any(|v| *v != 0. && v.abs() * gain / 65535. < f32::MIN_POSITIVE as f64)
-            {
-                return Err(Error::Gpu(
-                    "corrected camera-code product can underflow".into(),
-                ));
-            }
         }
         Ok(())
     }

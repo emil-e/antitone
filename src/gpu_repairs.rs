@@ -212,28 +212,21 @@ pub(crate) struct Kernels {
 
 impl Kernels {
     #[cfg(not(feature = "editor"))]
-    pub async fn new(_device: &wgpu::Device) -> Result<Self, Error> {
+    pub async fn new(
+        _device: &wgpu::Device,
+        _processing: &ProcessingKernel,
+    ) -> Result<Self, Error> {
         Ok(Self {})
     }
 
     #[cfg(feature = "editor")]
-    pub async fn new(device: &wgpu::Device) -> Result<Self, Error> {
+    pub async fn new(device: &wgpu::Device, processing: &ProcessingKernel) -> Result<Self, Error> {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let shader = [
-            ProcessingKernel::shader(),
-            include_str!("shaders/footprint.wgsl").into(),
-            include_str!("shaders/repairs.wgsl").into(),
-        ]
-        .join("\n");
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("source-coordinate neutral AP1 repair composition"),
-            source: wgpu::ShaderSource::Wgsl(shader.into()),
-        });
         let pipeline = |entry| {
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
                 layout: None,
-                module: &module,
+                module: &processing.module,
                 entry_point: Some(entry),
                 compilation_options: Default::default(),
                 cache: None,

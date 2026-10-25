@@ -68,9 +68,7 @@ fn sony_corrected_source_inspection_preserves_headroom_flat_field_and_rendered_p
                 .collect();
             for (a, b) in read(&device, &queue, &source.pixels).iter().zip(&expected) {
                 for c in 0..3 {
-                    assert!(
-                        (a[c] as f64 - b[c]).abs() <= 1e-7 + 2. * f32::EPSILON as f64 * b[c].abs()
-                    );
+                    assert!((a[c] as f64 - b[c]).abs() <= 2e-6 * b.abs().max_element().max(1.));
                 }
             }
             let rendered =

@@ -9,10 +9,7 @@ fn view_main(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) 
         positives[index] = vec4f(0.0);
         return;
     }
-    let post = colour_post(
-            array<f32, 3>(input.x, input.y, input.z),
-            Triple(view.gain.x, view.gain.y, view.gain.z),
-        );
-    let result = colour_locals(colour_global(post), view_point(index));
+    let post = photographic_post(array<f32, 3>(input.x, input.y, input.z), view.gain.x);
+    let result = colour_locals(post, view_point(index));
     positives[index] = vec4f(result[0], result[1], result[2], input.w);
 }

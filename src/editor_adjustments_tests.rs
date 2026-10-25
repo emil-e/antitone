@@ -376,62 +376,62 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
                 .unwrap();
             let base = source.local_adjustments.as_ref().unwrap().adjustments[0].adjustment;
             let photos = if reorder {
-                vec![
+                let mut photos = vec![
                     PhotoSettings {
-                        contrast: 0.6,
-                        contrast_colour_mix: 1.,
+                        contrast: 1.4,
                         ..Default::default()
-                    },
-                    PhotoSettings {
-                        exposure: 12.,
+                    };
+                    4
+                ];
+                photos.extend(
+                    [PhotoSettings {
+                        exposure: 16.,
                         ..Default::default()
-                    },
-                    PhotoSettings {
-                        exposure: 12.,
-                        ..Default::default()
-                    },
-                ]
+                    }; 2],
+                );
+                photos
             } else {
                 vec![
                     PhotoSettings {
                         exposure: 16.,
                         ..Default::default()
                     };
-                    4
+                    7
                 ]
             };
+            let last = photos.len() - 1;
             let mut locals = LocalAdjustments::default();
             for (index, photo) in photos.into_iter().enumerate() {
                 locals
                     .add(
-                        "Precision boundary".into(),
+                        "Range boundary".into(),
                         LocalAdjustment {
                             photo,
-                            enabled: reorder || index < 3,
+                            enabled: reorder || index < last,
                             strength: 1.,
                             ..base
                         },
                     )
                     .unwrap();
             }
-            let subject = locals.adjustments[if reorder { 0 } else { 3 }].id;
+            let subject = locals.adjustments[last].id;
             source.local_adjustments = Some(locals);
             editor.sync_document();
             editor.select_adjustment(Target::Local(subject));
             let accepted = editor
                 .positive_processing(editor.input, editor.roll, editor.photo)
-                .unwrap();
+                .unwrap_or_else(|error| panic!("accepted fixture reorder={reorder}: {error}"));
             let before = editor.document.project.clone();
             let revision = editor.original.revision();
             let viewport = editor.viewport;
             editor.apply_adjustment_action(if reorder {
-                Action::Reorder(editor.order_drag(subject).unwrap(), 2)
+                Action::Reorder(editor.order_drag(subject).unwrap(), 0)
             } else {
                 Action::Enable(subject, true)
             });
             assert!(
-                editor.status.contains("normal GPU precision domain"),
-                "{}",
+                editor.status.contains("f32 intermediate working range"),
+                "reorder={reorder}: {}",
                 editor.status
             );
             assert_eq!(editor.document.project, before);
@@ -446,6 +446,64 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
                 current.grade().unwrap()
             ));
         }
+    });
+}
+
+#[test]
+fn reenabling_a_finite_stack_is_not_blocked_by_a_precision_budget() {
+    pollster::block_on(async {
+        let (mut editor, _, _) = processing::tests::fixture().await;
+        editor.roll = RollSettings::default();
+        editor.photo = PhotoSettings::default();
+        let source = editor
+            .document
+            .project
+            .source_mut(editor.current_source.unwrap())
+            .unwrap();
+        let base = source.local_adjustments.as_ref().unwrap().adjustments[0].adjustment;
+        let mut locals = LocalAdjustments::default();
+        for index in 0..4 {
+            locals
+                .add(
+                    "Exposure".into(),
+                    LocalAdjustment {
+                        photo: PhotoSettings {
+                            exposure: 16.,
+                            ..Default::default()
+                        },
+                        enabled: index < 3,
+                        strength: 1.,
+                        ..base
+                    },
+                )
+                .unwrap();
+        }
+        let subject = locals.adjustments[3].id;
+        let allocator = locals.next_id;
+        source.local_adjustments = Some(locals);
+        editor.sync_document();
+        editor.select_adjustment(Target::Local(subject));
+        let before = editor
+            .positive_processing(editor.input, editor.roll, editor.photo)
+            .unwrap();
+        let viewport = editor.viewport;
+        editor.apply_adjustment_action(Action::Enable(subject, true));
+        let locals = editor
+            .document
+            .project
+            .source(editor.current_source.unwrap())
+            .unwrap()
+            .local_adjustments
+            .as_ref()
+            .unwrap();
+        assert!(locals.adjustments[3].adjustment.enabled);
+        assert_eq!(locals.next_id, allocator);
+        assert_eq!(editor.adjustment_target(), Target::Local(subject));
+        assert_eq!(editor.viewport, viewport);
+        let current = editor
+            .positive_processing(editor.input, editor.roll, editor.photo)
+            .unwrap();
+        assert_ne!(before.signature(), current.signature());
     });
 }
 

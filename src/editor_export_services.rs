@@ -292,9 +292,6 @@ impl Services {
                 .renderers
                 .get(&self.device, &self.queue)
                 .map_err(WriteFailure::Infrastructure)?;
-            renderer
-                .export_kernel(&self.device)
-                .map_err(WriteFailure::Infrastructure)?;
             let stopped = || cancelled.load(Ordering::Relaxed);
             self.screening
                 .with(&self.device, &self.queue, &self.submissions, |screener| {

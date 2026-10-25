@@ -91,7 +91,7 @@ fn headroom_survives_gpu_inspection_inversion_and_residual_gains_without_lut_ind
                     for c in 0..3 {
                         assert!(
                             (output[c] as f64 - expected.rgb[c]).abs()
-                                <= 2e-12 + 2e-7 * expected.rgb[c].abs(),
+                                <= 2e-6 * expected.rgb.abs().max_element().max(1.),
                             "flat={flat} response={response:?} {output:?} expected={:?}",
                             expected.rgb
                         );

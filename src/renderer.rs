@@ -73,12 +73,16 @@ impl RendererCache {
         let cache = self.clone();
         // Initialization errors remain cached and are reported by foreground consumers.
         std::thread::spawn(move || {
-            if let Ok(renderer) = cache.get(&device, &queue) {
-                // Export's additional pipeline shares this existing infrastructure warm-up;
-                // direct library callers still initialize it lazily on first export.
-                let _ = renderer.export_kernel(&device);
-            }
+            let _ = cache.get(&device, &queue);
         });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_initialization(&self, error: Error) {
+        assert!(
+            self.renderer.set(Err(error)).is_ok(),
+            "fixture requires an uninitialized renderer cache"
+        );
     }
 
     #[cfg(test)]
@@ -160,8 +164,6 @@ pub(crate) struct TargetResources {
 /// Image storage and processing signatures remain image-owned.
 pub struct GpuRenderer {
     pub(crate) kernel: ProcessingKernel,
-    #[cfg(all(feature = "raw", feature = "export"))]
-    export: std::sync::OnceLock<Result<ProcessingKernel, Error>>,
     pub(crate) submissions: crate::gpu::SubmissionGate,
     #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
     pub(crate) repairs: crate::gpu::repairs::Kernels,
@@ -192,7 +194,7 @@ impl GpuRenderer {
         #[cfg(feature = "ui")]
         let average = Arc::new(AveragePipelines::new(device).await?);
         #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
-        let repairs = crate::gpu::repairs::Kernels::new(device).await?;
+        let repairs = crate::gpu::repairs::Kernels::new(device, &kernel).await?;
         let look_kernel = crate::gpu::look::Kernel::new(device).await?;
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let vertex = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -210,8 +212,6 @@ impl GpuRenderer {
         }
         Ok(Arc::new(Self {
             kernel,
-            #[cfg(all(feature = "raw", feature = "export"))]
-            export: std::sync::OnceLock::new(),
             submissions,
             #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
             repairs,
@@ -228,28 +228,6 @@ impl GpuRenderer {
             average,
         }))
     }
-    /// One original-processing pipeline for both export formats; ACES/look resources stay shared.
-    #[cfg(all(feature = "raw", feature = "export"))]
-    pub(crate) fn export_kernel(&self, device: &wgpu::Device) -> Result<&ProcessingKernel, Error> {
-        self.export
-            .get_or_init(|| pollster::block_on(ProcessingKernel::new_export(device)))
-            .as_ref()
-            .map_err(Clone::clone)
-    }
-
-    #[cfg(all(test, feature = "editor"))]
-    pub(crate) fn fail_export_initialization(&self, error: Error) {
-        assert!(
-            self.export.set(Err(error)).is_ok(),
-            "fixture requires an uninitialized export cache"
-        );
-    }
-
-    #[cfg(all(test, feature = "raw", feature = "export"))]
-    pub(crate) fn export_initialized(&self) -> bool {
-        self.export.get().is_some()
-    }
-
     /// Native worker-only generation. No compiler, Python or OCIO runtime is involved.
     #[cfg(feature = "project")]
     pub fn bake_builtin(

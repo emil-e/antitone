@@ -2,11 +2,18 @@ use super::*;
 use crate::processing::Calibration;
 
 #[test]
-fn processing_assembles_one_precise_primitive_family() {
-    let shader = ProcessingKernel::shader();
-    assert!(shader.contains(include_str!("shaders/processing_math.wgsl")));
-    for name in ["precise_log1p", "precise_exp", "precise_expm1"] {
-        assert_eq!(shader.matches(&format!("fn {name}(")).count(), 1);
+fn processing_assembles_shared_photographic_operators_once() {
+    let shader = ProcessingKernel::kernel_shader();
+    assert!(!shader.contains("Triple"));
+    assert!(!shader.contains("precise_"));
+    // Originals, repairs and working views use the same photographic operators.
+    for name in [
+        "invert_film",
+        "colour_encode",
+        "colour_ratio",
+        "photographic_post",
+    ] {
+        assert_eq!(shader.matches(&format!("fn {name}(")).count(), 1, "{name}");
     }
 }
 
@@ -64,7 +71,7 @@ fn global_output_bounds_do_not_propagate_scratch_peaks_into_locals() {
     ] {
         let grade = crate::photographic::Grade::new(photo).unwrap();
         let peak = grade.intermediate_bound(input);
-        let (_, output, _) = grade.weighted_bounds(input, 1.);
+        let (_, output) = grade.weighted_bounds(input, 1.);
         let (_, actual) =
             ProcessingParameters::positive_with_bound(calibration, roll, photo, DMat3::IDENTITY)
                 .unwrap();
@@ -110,7 +117,6 @@ fn source_preview_restores_green_referenced_headroom_and_keeps_inspection_relati
             let base = ProcessingParameters::source();
             let unchanged = ProcessingParameters {
                 post: base.post,
-                post_low: base.post_low,
                 ..adjusted
             };
             assert_eq!(bytemuck::bytes_of(&unchanged), bytemuck::bytes_of(&base));
@@ -275,31 +281,16 @@ fn source_inspection_gpu_matches_scaled_camera_to_ap1_with_zero_diagnostic_flags
 }
 
 #[test]
-fn camera_matrix_rejects_unrepresentable_values_without_repair() {
-    assert_eq!(size_of::<CameraMatrix>(), 144);
-    for value in [f64::NAN, f64::INFINITY, 1e300, 1e-300] {
+fn camera_matrix_rejects_nonfinite_and_overflowing_values() {
+    for value in [f64::NAN, f64::INFINITY, 1e300] {
         assert!(CameraMatrix::new(DMat3::from_diagonal(DVec3::splat(value))).is_err());
     }
-    let tiny = f32::from_bits(1) as f64;
-    let matrix = DMat3::from_cols(DVec3::splat(tiny), DVec3::splat(tiny), DVec3::splat(tiny));
-    let individual = tiny * (30000. / 65535.);
-    assert_eq!(individual as f32, 0.);
-    assert!(
-        (matrix * DVec3::splat(30000. / 65535.))
-            .as_vec3()
-            .min_element()
-            > 0.
-    );
-    assert!(CameraMatrix::new(matrix).is_err());
-    assert!(
-        CameraMatrix::new(DMat3::from_diagonal(DVec3::splat(f32::MIN_POSITIVE as f64))).is_err()
-    );
     assert!(CameraMatrix::new(DMat3::IDENTITY).is_ok());
 }
 
 #[cfg(target_os = "macos")]
 #[test]
-fn rgb16_native_normalization_matches_f64_and_source_mapping_preserves_f32_bits() {
+fn native_and_continuous_transport_preserve_normalization_and_source_addressing() {
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,
@@ -307,52 +298,18 @@ fn rgb16_native_normalization_matches_f64_and_source_mapping_preserves_f32_bits(
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let mut codes: Vec<_> = (0..=65535u16).map(|v| [v, v, v, 65535]).collect();
-        let mut seed = 0x619af501u32;
-        for _ in 0..65536 {
-            let mut pixel = [0, 0, 0, 1234];
-            for v in &mut pixel[..3] {
-                seed ^= seed << 13;
-                seed ^= seed >> 17;
-                seed ^= seed << 5;
-                *v = seed as u16;
-            }
-            codes.push(pixel);
-        }
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("conversion precision readback"),
-            source: wgpu::ShaderSource::Wgsl(
-                format!(
-                    "{}\n{}",
-                    include_str!("shaders/camera_conversion.wgsl"),
-                    r#"
-@group(0) @binding(0) var<storage, read> scans: array<vec2u>;
-@group(0) @binding(1) var<storage, read_write> output: array<vec4f>;
-@compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) id: vec3u) {
-    if id.x >= arrayLength(&scans) { return; }
-    let s = convert_camera(scans[id.x]);
-    output[3u*id.x] = vec4f(s.high,0.0);
-    output[3u*id.x+1u] = vec4f(s.low,0.0);
-    output[3u*id.x+2u] = vec4f(s.tail,0.0);
-}
-"#
-                )
-                .into(),
-            ),
-        });
-        let conversion = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: None,
-            layout: None,
-            module: &module,
-            entry_point: Some("main"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
         let kernel = ProcessingKernel::new(&device).await.unwrap();
+        let codes: Vec<_> = (0..=65535u16).map(|v| [v, 65535 - v, v / 2, 0]).collect();
+        let continuous: Vec<_> = codes.iter().map(|p| p.map(f32::from)).collect();
+        let native = ProcessingSource::new(&device, &codes, DMat3::IDENTITY).unwrap();
+        let float =
+            ProcessingSource::new_continuous(&device, &continuous, DMat3::IDENTITY).unwrap();
+        assert_eq!(native.byte_len(), codes.len() as u64 * 8);
+        assert!(native.write(&queue, &codes[..1]).is_err());
+        assert!(ProcessingSource::new(&device, &[], DMat3::IDENTITY).is_err());
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: codes.len() as u64 * 48,
+            size: codes.len() as u64 * 16,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
@@ -362,100 +319,41 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        for matrix in [
-            DMat3::IDENTITY,
-            DMat3::from_cols(
-                DVec3::new(
-                    0.6062051167485374,
-                    0.01610845369283179,
-                    -0.003058878537448056,
-                ),
-                DVec3::new(0.38024835632147796, 1.192683246450255, -0.14899261591291027),
-                DVec3::new(
-                    0.013546559132378455,
-                    -0.20879153479206025,
-                    1.1520515014561068,
-                ),
-            ),
-            DMat3::from_cols(
-                DVec3::new(3., 0., -0.6),
-                DVec3::new(-0.9, 3., 0.),
-                DVec3::new(0., 0., 4.5),
-            ),
-        ] {
-            let source = ProcessingSource::new(&device, &codes, matrix).unwrap();
-            assert_eq!(source.byte_len(), codes.len() as u64 * 8);
-            assert!(source.write(&queue, &codes[..1]).is_err());
-            assert!(ProcessingSource::new(&device, &[], matrix).is_err());
-            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &conversion.get_bind_group_layout(0),
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: source.input.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: output.as_entire_binding(),
-                    },
-                ],
-            });
-            for full_precision in [true, false] {
-                let mut encoder = device.create_command_encoder(&Default::default());
-                let bytes = if full_precision {
-                    let mut pass = encoder.begin_compute_pass(&Default::default());
-                    pass.set_pipeline(&conversion);
-                    pass.set_bind_group(0, &group, &[]);
-                    pass.dispatch_workgroups((codes.len() as u32).div_ceil(64), 1, 1);
-                    codes.len() as u64 * 48
-                } else {
-                    let parameters = ProcessingParameters {
-                        post: [Vec4::X, Vec4::Y, Vec4::Z],
-                        ..ProcessingParameters::source()
-                    };
-                    kernel.encode(&device, &mut encoder, &source, &output, parameters);
-                    codes.len() as u64 * 16
-                };
-                encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, bytes);
-                queue.submit([encoder.finish()]);
-                let (tx, rx) = std::sync::mpsc::channel();
-                readback
-                    .slice(..bytes)
-                    .map_async(wgpu::MapMode::Read, move |r| tx.send(r).unwrap());
-                device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-                rx.recv().unwrap().unwrap();
-                let mapped = readback.slice(..bytes).get_mapped_range().unwrap();
-                let data: &[Vec4] = bytemuck::cast_slice(&mapped);
-                for (i, p) in codes.iter().enumerate() {
-                    let camera = DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.;
-                    let expected = if full_precision {
-                        camera
-                    } else {
-                        matrix * camera
-                    };
-                    for c in 0..3 {
-                        if full_precision {
-                            let actual = data[3 * i][c] as f64
-                                + data[3 * i + 1][c] as f64
-                                + data[3 * i + 2][c] as f64;
-                            assert_eq!(
-                                actual.to_bits(),
-                                expected[c].to_bits(),
-                                "RGB16={p:?} channel={c} matrix={matrix:?}"
-                            );
-                        } else {
-                            assert_eq!(
-                                data[i][c].to_bits(),
-                                (expected[c] as f32).to_bits(),
-                                "original input RGB16={p:?} channel={c} matrix={matrix:?}"
-                            );
-                        }
-                    }
+        let mut previous = None;
+        for source in [&native, &float] {
+            let mut encoder = device.create_command_encoder(&Default::default());
+            kernel.encode(
+                &device,
+                &mut encoder,
+                source,
+                &output,
+                ProcessingParameters::source(),
+            );
+            encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, output.size());
+            queue.submit([encoder.finish()]);
+            let (tx, rx) = std::sync::mpsc::channel();
+            readback.map_async(wgpu::MapMode::Read, .., move |r| tx.send(r).unwrap());
+            device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+            rx.recv().unwrap().unwrap();
+            let mapped = readback.get_mapped_range(..).unwrap();
+            let data: &[[f32; 4]] = bytemuck::cast_slice(&mapped);
+            for (pixel, code) in data.iter().zip(&codes) {
+                for c in 0..3 {
+                    // Half a native code distinguishes source/normalization mistakes from f32 rounding.
+                    assert!((pixel[c] * 65535. - f32::from(code[c])).abs() < 0.5);
                 }
-                drop(mapped);
-                readback.unmap();
+                assert_eq!(pixel[3], 0.);
             }
+            if let Some(previous) = &previous {
+                assert_eq!(
+                    data, previous,
+                    "integer samples must not depend on transport"
+                );
+            } else {
+                previous = Some(data.to_vec());
+            }
+            drop(mapped);
+            readback.unmap();
         }
     });
 }

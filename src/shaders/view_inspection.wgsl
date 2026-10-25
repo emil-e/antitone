@@ -14,11 +14,5 @@ fn inspection_main(
         positives[index] = vec4f(0.);
         return;
     }
-    let gain = Triple(view.gain.x, view.gain.y, view.gain.z);
-    var rgb: vec3f;
-    for(var c = 0u; c < 3u; c++) {
-        let value = precise_mul(number(input[c]), gain);
-        rgb[c] = value.h + (value.l + value.t);
-    }
-    positives[index] = vec4f(rgb, input.w);
+    positives[index] = vec4f(input.xyz * view.gain.x, input.w);
 }

@@ -33,14 +33,9 @@ fn repair_index(point: vec2u) -> u32 {
     return repair_tile.offset.x + xy.x + xy.y * repair_tile.area.z;
 }
 
-fn repaired_positive(value: vec3f, index: u32) -> array<Triple, 3> {
-    let gain =
-        precise_exp(Triple(parameters.anchor.w, parameters.anchor_low.w, parameters.anchor_tail.w));
-    var rgb: array<Triple, 3>;
-    for(var c = 0u; c < 3u; c++) {
-        rgb[c] = precise_mul(number(value[c]), gain);
-    }
-    return local_grade(photographic_post(rgb), index);
+fn repaired_positive(value: vec3f, index: u32) -> array<f32, 3> {
+    let rgb = value * exp(parameters.anchor.w);
+    return local_grade(photographic_post(array<f32, 3>(rgb.x, rgb.y, rgb.z), 1.0), index);
 }
 
 @compute @workgroup_size(64)

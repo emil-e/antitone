@@ -79,6 +79,8 @@ async fn variant(
         name,
         global_only,
         kernel: ProcessingKernel {
+            #[cfg(feature = "editor")]
+            module,
             pipeline,
             // These dispatch-size/global-only diagnostics do not apply repairs.
             repair: baseline.repair.clone(),
@@ -130,7 +132,7 @@ fn paired_kernel_variants() {
             adapter.get_info()
         );
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let shader = ProcessingKernel::shader();
+        let shader = ProcessingKernel::kernel_shader();
         let shader = if let Some(path) = std::env::var_os("ANTITONE_KERNEL_CANDIDATE_WGSL") {
             println!(
                 "kernel_variants candidate={}",

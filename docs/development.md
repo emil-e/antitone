@@ -74,7 +74,7 @@ Production and reference dependencies are separate:
 | no default features | Numerical core; no native, GPU or UI dependency |
 | `raw` | CPU RAW development and measurements; LibRaw/OpenMP |
 | `dng-sdk` | Direct-SDK adapter and authored tests; combined with `raw` routes DNG shared sources; vendored Adobe SDK |
-| `gpu` | Precise photographic GPU processing; no OCIO or desktop |
+| `gpu` | Photographic GPU processing; no OCIO or desktop |
 | `render` | Output targets, transfer and profiles; no OCIO |
 | `export` | Encoders, metadata and atomic file safety; no OCIO |
 | `raw,gpu,export` | Bounded original-sample GPU export; no desktop or OCIO |

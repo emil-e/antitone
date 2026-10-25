@@ -439,9 +439,18 @@ fn corrected_ordered_locals_reopen_after_native_permutations_and_rotated_coverag
                         let actual = tiff(&path);
                         let expected = tiff(&expected);
                         assert_eq!(actual.len(), expected.len());
+                        let maximum = actual
+                            .iter()
+                            .zip(&expected)
+                            .map(|(a, b)| a.abs_diff(*b))
+                            .max()
+                            .unwrap();
+                        // This is a composition/model check, not bit-exact photographic arithmetic.
+                        // Four RGB16 codes allow f32 processing/rendering rounding; encoder
+                        // serialization has separate exact-sample coverage.
                         assert!(
-                            actual.iter().zip(expected).all(|(a, b)| a.abs_diff(b) <= 1),
-                            "corrected={corrected}, angle={angle}, target={target:?}"
+                            maximum <= 4,
+                            "corrected={corrected}, angle={angle}, target={target:?}, maximum RGB16 difference={maximum}"
                         );
                     }
                     Format::Exr(precision) => {
