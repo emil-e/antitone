@@ -2,6 +2,106 @@ use super::*;
 use crate::raw::sony_fixture as sony;
 
 #[test]
+fn selecting_and_zooming_a_calibrated_photo_paints_proxy_while_acquisition_is_running() {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    };
+
+    struct ReleaseOnDrop(mpsc::Sender<()>);
+    impl Drop for ReleaseOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.send(());
+        }
+    }
+
+    editor_harness(|mut harness, _| {
+        let first = fixture("roll-0.dng");
+        let second = fixture("roll-1.dng");
+        harness.enter(|editor, cx| editor.add_raws(vec![first, second.clone()], cx));
+        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        harness.update(|editor| {
+            editor.set_dmin(Some(DVec3::splat(0.7)));
+            editor.set_dmax(Some(DVec3::splat(0.01)));
+            editor.source = false;
+            editor.sync_document();
+        });
+        wait_for(&mut harness, |e| e.working.support_ready());
+        let previous = harness.read(|editor| editor.current_source.unwrap());
+        harness.enter(|editor, cx| editor.load_source(second, true, cx));
+        // Deliver source readiness without painting or starting physical-view acquisition.
+        harness.run_until(Duration::from_secs(15), |e| !e.busy);
+        harness.read(|editor| {
+            assert_ne!(editor.current_source.unwrap(), previous);
+            assert!(editor.document.visit.ready.is_some());
+            assert!(editor.input.is_negative() && editor.input.calibration().is_some());
+            assert!(!editor.source && editor.working.displayed.is_none());
+        });
+
+        let (started, starts) = mpsc::channel();
+        let (release, resume) = mpsc::channel();
+        let release = ReleaseOnDrop(release);
+        let resume = std::sync::Mutex::new(resume);
+        let entered = Arc::new(AtomicBool::new(false));
+        let resumed = Arc::new(AtomicBool::new(false));
+        let worker_resumed = resumed.clone();
+        harness.read(|editor| {
+            editor.submissions.observe_submissions(Arc::new(move || {
+                if !entered.swap(true, Ordering::Relaxed) {
+                    started.send(()).unwrap();
+                    // The timeout only releases a broken implementation for failure/cleanup;
+                    // the UI must finish before this running acquisition is released.
+                    let _ = resume.lock().unwrap().recv_timeout(Duration::from_secs(10));
+                    worker_resumed.store(true, Ordering::Release);
+                }
+            }));
+        });
+        harness.step();
+        harness.application.pump();
+        starts.recv_timeout(Duration::from_secs(15)).unwrap();
+        harness.read(|editor| {
+            assert!(editor.document.visit.working.task.is_some());
+            assert!(!editor.working.support_ready());
+        });
+
+        harness.get_by_label("100%").click();
+        harness.step();
+        harness.render().unwrap();
+        assert!(
+            !resumed.load(Ordering::Acquire),
+            "painting and zoom must finish before the running acquisition resumes"
+        );
+        harness.read(|editor| {
+            assert_eq!(editor.viewport.zoom, Some(1.));
+            assert!(!editor.working.support_ready() && editor.working.displayed.is_none());
+            let preview = editor
+                .preview_rendered
+                .as_ref()
+                .expect("available proxy preview");
+            assert_eq!(
+                preview.0, editor.id,
+                "preview belongs to the selected photo"
+            );
+            assert!(
+                editor
+                    .selection_timing
+                    .as_ref()
+                    .unwrap()
+                    .ready_was_painted()
+            );
+        });
+
+        drop(release);
+        wait_for(&mut harness, |e| e.working.support_ready());
+        harness.render().unwrap();
+        harness.read(|editor| {
+            assert!(editor.preview_rendered.is_none());
+            assert!(editor.working.displayed.is_some());
+        });
+    });
+}
+
+#[test]
 fn sony_source_inspection_and_positive_share_automatic_development() {
     let order = sony::Order::Little;
     let mut tags = sony::profile_tags(order);

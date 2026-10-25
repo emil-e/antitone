@@ -35,7 +35,7 @@ impl Acquisition {
             working_view::acquire(
                 &self.mailbox,
                 &services.renderers,
-                &mut self.kernels.lock().unwrap(),
+                &self.kernels,
                 &services.device,
                 &services.queue,
                 &submissions,
