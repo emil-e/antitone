@@ -14,6 +14,14 @@ fn cpp_bridge() -> cc::Build {
 }
 
 fn main() {
+    // Explorer and the taskbar take the executable's icon and version details from its resources.
+    #[cfg(windows)]
+    {
+        println!("cargo:rerun-if-changed=native/antitone.rc");
+        embed_resource::compile("native/antitone.rc", embed_resource::NONE)
+            .manifest_required()
+            .expect("Could not embed the Windows application resources");
+    }
     println!("cargo:rerun-if-env-changed=LIBRAW_SOURCE");
     println!("cargo:rerun-if-changed=native/raw_bridge.cpp");
     println!("cargo:rerun-if-changed=native/raw_bridge.h");

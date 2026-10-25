@@ -78,6 +78,10 @@ naga = { version = "=30.0.1", default-features = false, features = ["wgsl-in"] }
 [build-dependencies]
 cc = { version = "=1.2.62", optional = true }
 
+[target.'cfg(windows)'.build-dependencies]
+# Embeds the application icon and version details in the executable.
+embed-resource = "=3.0.12"
+
 [lib]
 path = "src/lib.rs"
 
