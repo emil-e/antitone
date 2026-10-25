@@ -104,6 +104,9 @@ mod view_sampling_tests;
 #[path = "../native/spatial_observation.rs"]
 mod spatial_observation;
 
+#[cfg(all(test, feature = "gpu"))]
+mod shader_validation_tests;
+
 pub const PROCESSING_MODEL_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, PartialEq)]

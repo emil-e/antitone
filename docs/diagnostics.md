@@ -6,6 +6,28 @@ Run from the repository root after [setup](build-and-run.md#build-and-run). Exam
 
 Choose a diagnostic for a concrete question. A command's presence here does not make it a routine gate: numerical agreement, offscreen input, a visible native window and physical photographic acceptance are different evidence, and timings and captures are observations, not acceptance thresholds.
 
+## Collecting a session log
+
+The desktop app writes readable stderr and local JSON-lines session files automatically, including launches from Finder. Console lines show UTC time, level, target, thread and `key=value` fields; session files preserve typed fields. To report a problem:
+
+1. Reproduce it, then quit Antitone to drain queued session-file events.
+2. In Finder, choose **Go → Go to Folder** and enter `~/Library/Logs/Antitone`.
+3. Copy the newest `session-…` folder and share its `.jsonl` files together. `current.jsonl` is newest; `1.jsonl` and `2.jsonl` hold earlier events after rotation.
+
+Logs stay on the machine until shared. Review them first: propagated errors and panic details can contain file paths and usernames, and startup records identify the GPU and native runtime. Abrupt termination can lose queued events; copy the folder before repeated relaunches age it out.
+
+Each session retains up to three 8 MiB files. Startup keeps five sessions where possible, protecting sessions still open in other processes. A bounded background queue keeps normal log IO out of paint callbacks; overload is reported as `records_dropped`. File failures leave console logging active; unavailable stderr does not stop file capture. Use a writable `ANTITONE_LOG_DIR` and relaunch if capture fails.
+
+During normal capture, stderr has its own bounded queue and is best effort under backpressure: a full console queue drops console-only lines, and each console flush waits at most 250 ms. A stalled reader therefore cannot hold session-file capture or native Quit.
+
+Both outputs use the same filter: the default app level is `info`, and dependencies are capped at `warn`. For detailed source, thumbnail, native and preview timings, launch with `debug` and optionally a separate capture directory:
+
+```sh
+ANTITONE_LOG=debug ANTITONE_LOG_DIR="$PWD/.cache/logs" cargo app
+```
+
+`ANTITONE_LOG` accepts `off`, `error`, `warn`, `info`, `debug` or `trace`. Records carry a timestamp, level, target, thread, event name and typed fields. Rust instrumentation uses `log` key/value fields, for example `log::warn!(request, error = reason.as_str(); "source_failed")`; native bridges use [the shared scope logger](../native/logging.h). Standalone probe output and test reports remain on stdout.
+
 ## Editor and layout checks
 
 Build and open a saved project for real-use inspection:
@@ -186,21 +208,20 @@ The compact-header check covers normal/narrow 1×/2× layouts, disclosure and me
 
 ## Investigating responsiveness
 
-Use import/development, selected-preview/switch, thumbnail, acquisition and original-view logs for a reported workload. Match phases and inputs; filesystem caching is uncontrolled. Backend Ready or paint-command recording is not GPU completion or physical presentation, and no minimum hardware target or general latency threshold is established. The `authored_` [worker checks](development.md#feature-specific-checks) use repository fixtures; their deadlines detect stalled tests, not unacceptable photographic latency.
+Capture a [debug session](#collecting-a-session-log) to inspect import/development, selected-preview/switch, thumbnail, acquisition and original-view events for a reported workload. Match phases and inputs; filesystem caching is uncontrolled. Backend Ready or paint-command recording is not GPU completion or physical presentation, and no minimum hardware target or general latency threshold is established. The `authored_` [worker checks](development.md#feature-specific-checks) use repository fixtures; their deadlines detect stalled tests, not unacceptable photographic latency.
 
 ### Separating input, queue work and presentation
 
 Enable hosted [latency tracing](../src/platform/latency.rs) when kernel timings cannot explain an interaction:
 
 ```sh
-mkdir -p .cache/probes
-ANTITONE_LATENCY_TRACE=1 cargo app > .cache/probes/latency.log 2>&1
+ANTITONE_LATENCY_TRACE=1 ANTITONE_LOG_DIR="$PWD/.cache/logs" cargo app
 # Requires an explicitly authorized, unoccluded desktop window:
-ANTITONE_LATENCY_TRACE=1 cargo test --locked --offline --features editor \
-  --test native_host -- --run editor
+ANTITONE_LATENCY_TRACE=1 ANTITONE_LOG_DIR="$PWD/.cache/logs" \
+  cargo test --locked --offline --features editor --test native_host -- --run editor
 ```
 
-Match frame/completion rows by ID. Timestamps separate drawable acquisition, UI handling, encoding, submission and the present call; input starts at delivery to winit, not the physical gesture. Completion callbacks attach under the shared submission gate; callback observation includes polling/thread scheduling and is not a hardware GPU timestamp. Metal allocation includes resources retained by native commands but not all driver/process memory — sampled peaks are not exhaustive, and Arc counts or declared bytes do not establish aggregate pressure safety. Measure same-PID RSS separately; on Apple Silicon these views overlap and must not be added.
+Match `latency_frame`/`latency_completion` session events by their `id` field. Timestamps separate drawable acquisition, UI handling, encoding, submission and the present call; input starts at delivery to winit, not the physical gesture. Completion callbacks attach under the shared submission gate; callback observation includes polling/thread scheduling and is not a hardware GPU timestamp. Metal allocation includes resources retained by native commands but not all driver/process memory — sampled peaks are not exhaustive, and Arc counts or declared bytes do not establish aggregate pressure safety. Measure same-PID RSS separately; on Apple Silicon these views overlap and must not be added.
 
 For native scheduling and shared native builds, see [native development](native-development.md#editor-scheduling).
 
@@ -213,8 +234,6 @@ ANTITONE_LOCAL_PERF_QUICK=1 cargo test --locked --offline --release \
   --features editor --test local_adjustment_performance -- --ignored --nocapture --test-threads=1
 cargo test --locked --offline --release --features gpu --lib \
   paired_kernel_variants -- --ignored --nocapture --test-threads=1
-cargo test --locked --offline --release --features gpu --lib \
-  paired_production_local_kernel -- --ignored --nocapture --test-threads=1
 ANTITONE_RAW_SAMPLES=/absolute/samples cargo test --locked --offline --release \
   --features editor --lib real_raw_local_preview_tiles_and_refinement \
   -- --ignored --nocapture --test-threads=1
@@ -229,7 +248,7 @@ cargo test --locked --offline --release --features editor --lib \
 
 The [diagnostic](../src/gpu_working_view_local_resource_tests.rs) uses an authored RAW, a 1080p detail grid and the production whole-composition underlay with correction off/on, numeric/geometry edits and both targets. It samples same-process footprint/resident/Metal allocation and checkpoints current/building, deferred encoded consumers and retirement. Set `ANTITONE_SCREEN_RAW=1 ANTITONE_RAW_SAMPLES=/absolute/samples` for the supplied native-size source (headers must pass the existing 600-MiB diagnostic source bound); both variants use the existing pressure/free-memory/swap/growth stops, and timings without a coordinated window are indicative, not isolated interaction latency.
 
-Original-sample processing runs the same inversion the editor uses, for integer and continuous inputs. [Continuous-source checks](../tests/gpu_continuous.rs), [film-response references](../tests/gpu_film_response.rs) and [original export references](../src/gpu_export_tests.rs) retain independent numerical coverage. Counterfactual exact-code/prefix probes in `gpu_reuse_tests.rs` are test-only experiments, not production caches; existing numerical gates must not be relaxed for a faster candidate.
+Original-sample processing shares the editor's f32 inversion for integer and continuous inputs. [Continuous-source checks](../tests/gpu_continuous.rs), [film-response checks](../tests/gpu_film_response.rs) and [original export checks](../src/gpu_export_tests.rs) exercise the model and exact floor flags.
 
 ## Equivalent ACES execution
 
@@ -265,21 +284,27 @@ For scale, the tested Sony/M5 Pro native-width workload (8640-wide originals) me
 
 ## Stable float32 view grading
 
-The [production colour tests](../src/gpu_working_view_colour_tests.rs) use the actual `RenderedView` lifecycle and [shared viewer/export colour operators](../src/shaders/photographic_colour.wgsl). Their independent scalar reference applies the same photographic arithmetic and mapped source-coordinate masks on the CPU to identical acquired AP1; it is not another cache, renderer or admission policy:
+The [working-view tests](../src/gpu_working_view_colour_tests.rs) exercise the actual `RenderedView` lifecycle and shared colour operators:
 
 ```sh
 cargo test --locked --offline --features editor --lib gpu::view::tests::colour \
   -- --nocapture --test-threads=1
-cargo test --locked --offline --release --features editor --lib \
-  physical_view_colour_domain -- --ignored --nocapture --test-threads=1
-ANTITONE_RAW_SAMPLES=/absolute/samples cargo test --locked --offline --release \
-  --features editor --lib physical_view_colour_raw_correspondence \
-  -- --ignored --nocapture --test-threads=1
 ```
 
-All authored signed/HDR configurations must remain admitted, with complete-raster comparison at AP1 `2e-5 + 2e-4×abs(reference)`, exact floor/coverage flags and rendered-linear absolute `2e-5`, including final-cell corruption and nonfinite checks on the reduction itself. The [scalar/sampling/lifetime regressions](../src/gpu_working_view_oracle_tests.rs) check continuous original-coordinate masks, corrected footprints, floor provenance and deferred encoded consumers after owner release; the optional RAW check spans three locations, correction on/off, both targets and Global/soft/hard locals (180 comparisons). [Composed shared-colour checks](../src/gpu_shared_colour_tests.rs) additionally compare actual viewer grading and export repair application with independent scalar processing on identical canonical signed AP1.
+[Model and geometry checks](../src/gpu_working_view_model_tests.rs) cover Digital coverage, exactly-once exposure, asymmetric crops and rounded proxy dimensions. [Scalar/sampling/lifetime checks](../src/gpu_working_view_oracle_tests.rs) cover continuous original-coordinate masks, corrected footprints, floor provenance and deferred encoded consumers after owner release. These isolate stage and sampling behavior from the working view's filtering-before-grading approximation.
 
-These isolate arithmetic agreement, not filtering-before-grading or footprint-centre-mask approximation error. Stable colour uses black-relative/linear-toe formulas and f32 luminance and WB/post products; later attenuation can expose an error hidden by clipping, so do not substitute a clamp or weaken gates.
+## Photographic arithmetic
+
+Use the [paired-output diagnostic](../tests/photographic_samples.rs) to inspect ordinary f32 photographic processing against the scalar/OCIO model:
+
+```sh
+ANTITONE_RAW_SAMPLES=/absolute/samples \
+ANTITONE_PHOTO_OUTPUT="$PWD/.cache/photographic-FRESH" \
+  cargo test --locked --offline --release --features raw,gpu,export,ocio-reference \
+  --test photographic_samples -- --ignored --nocapture --test-threads=1
+```
+
+It reads the train calibration references and three photographs (`DSC04520`, `DSC04522`, `DSC04524`), writes paired 512×384 original-pixel TIFF crops in both targets, and varies correction and photographic/local grades. Reports include RGB16 difference distributions, counts above one 8-bit-code equivalent, nonclipped reference coverage and export time. Inspect the paired files before attributing a difference to precision; the outputs also include GPU-versus-OCIO rendering differences. Crop timings include export setup and encoding, and do not predict full-frame throughput. The [full-size exercise](#export) measures that workload separately.
 
 ## View sampling quality oracles
 
@@ -406,7 +431,7 @@ Record power source and configured mode with timing observations (`pmset -g batt
 
 The [shared engine](../src/gpu_export_area.rs) processes conservative real-source bounds plus a real-cell halo per destination block and reads back destination pixels only; exact crops, rotated crops and repaired edges all use it, with exact whole-frame source-cell masks keeping repair relevance valid under native mapping roundoff. The [worker entry](../src/gpu_export_job.rs) validates the captured source basis and resolves cold repairs independently of viewer warmth.
 
-[Independent stage checks](../src/gpu_export_stage_oracle_tests.rs) combine canonical repairs, source-point grades, a scene look, scalar f64 footprint weights and CPU/OCIO target rendering. [EXR checks](../src/gpu_export_common_exr_tests.rs) exercise the public engine in both storage precisions under the common working allowance `2e-5 + 2e-4 × |reference|` (storage quantization separate), with exact signed-HDR cancellation, invalid-input masks and selected tighter TIFF cases. [Continuous-source worker checks](../src/gpu_export_corrected_source_tests.rs) exercise authored Sony fractions/headroom plus residual correction; [lifetime checks](../src/gpu_export_look_lifetime_tests.rs) count cold/warm LUT allocations through changing scratch dimensions and owner release; [margin](../src/gpu_export_precision_margin_tests.rs) and [low-gamma](../src/gpu_export_density_condition_tests.rs) tests retain independent working-space and exact-flag checks.
+[Independent stage checks](../src/gpu_export_stage_oracle_tests.rs) combine canonical repairs, source-point grades, a scene look, scalar f64 footprint weights and CPU/OCIO target rendering. [EXR checks](../src/gpu_export_common_exr_tests.rs) exercise the public engine in both storage precisions under the common working allowance `2e-5 + 2e-4 × |reference|` (storage quantization separate), with signed/HDR inputs, invalid-input masks and selected tighter TIFF cases. [Continuous-source worker checks](../src/gpu_export_corrected_source_tests.rs) exercise authored Sony fractions/headroom plus residual correction; [lifetime checks](../src/gpu_export_look_lifetime_tests.rs) count cold/warm LUT allocations through changing scratch dimensions and owner release.
 
 For TIFF pixel-endpoint measurements, the test-only [ready-to-encode sink](../src/export_pixel_receipt.rs) receives complete RGB16 frame codes through production block callbacks without opening a destination or invoking a codec. File-writing/reopening comparisons must use the identical captured recipe and match those codes; report source acquisition, renderer/kernel preparation and codec/I/O separately (prewarm is startup work, not free computation).
 

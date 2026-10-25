@@ -69,7 +69,7 @@ impl ViewSourceSpec {
         })
     }
 
-    // The input is already normalized by the correction owner, exactly as for the precise path.
+    // The correction owner supplies the effective calibration and source floor.
     pub(crate) fn new(
         authority: u64,
         frame: FrameRaster,
@@ -141,11 +141,12 @@ impl ViewSourceSpec {
     }
 }
 
-pub(crate) fn colour_shader() -> String {
+pub(crate) fn view_shader() -> String {
     [
         ProcessingKernel::kernel_shader(),
         include_str!("shaders/view_geometry.wgsl").to_owned(),
         include_str!("shaders/view_colour.wgsl").to_owned(),
+        include_str!("shaders/view_inspection.wgsl").to_owned(),
     ]
     .join("\n")
 }
@@ -176,17 +177,22 @@ impl ViewKernels {
                 cache: None,
             })
         };
-        let inspection = compute(
-            "physical-view linear source inspection",
-            [
-                ProcessingKernel::kernel_shader(),
-                include_str!("shaders/view_geometry.wgsl").to_owned(),
-                include_str!("shaders/view_inspection.wgsl").to_owned(),
-            ]
-            .join("\n"),
-            "inspection_main",
-        );
-        let grade = compute("stable physical-view colour", colour_shader(), "view_main");
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("physical-view photographic grading and source inspection"),
+            source: wgpu::ShaderSource::Wgsl(view_shader().into()),
+        });
+        let photographic = |label, entry| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(label),
+                layout: None,
+                module: &module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let inspection = photographic("physical-view linear source inspection", "inspection_main");
+        let grade = photographic("stable physical-view colour", "view_main");
         let filter = compute(
             "original-cell physical-view acquisition",
             [
@@ -858,11 +864,8 @@ impl RenderedView {
         previous: Option<&Arc<Self>>,
     ) -> Result<Arc<Self>, Error> {
         let settings = settings.into();
-        let mut expected =
+        let expected =
             ProcessingParameters::interpret(settings, roll, snapshot.global(), source.spec.matrix)?;
-        // Local preflight can tighten the original-response error budget. It does not change
-        // photographic identity, and this colour pass does not evaluate the response.
-        expected.response_precision.x = input.parameters().response_precision.x;
         if bytemuck::bytes_of(&expected) != bytemuck::bytes_of(&input.parameters())
             || input
                 .grade()
@@ -931,9 +934,7 @@ impl RenderedView {
         previous: Option<&Arc<Self>>,
     ) -> Result<Arc<Self>, Error> {
         let parameters = input.parameters();
-        let gain = f64::from(parameters.post[0].x)
-            + f64::from(parameters.post_low[0].x)
-            + f64::from(parameters.post_tail[0].x);
+        let gain = f64::from(parameters.post[0].x);
         let expected = ProcessingParameters::source_with_gain(gain)?;
         if !source.spec.inspection
             || input.grade().is_some()
@@ -959,12 +960,7 @@ impl RenderedView {
                             0,
                             0,
                         ],
-                        gain: [
-                            parameters.post[0].x,
-                            parameters.post_low[0].x,
-                            parameters.post_tail[0].x,
-                            0.,
-                        ],
+                        gain: [parameters.post[0].x, 0., 0., 0.],
                         ..bytemuck::Zeroable::zeroed()
                     },
                     source: source.clone(),
@@ -1169,20 +1165,17 @@ fn float_buffer(device: &wgpu::Device, size: [u32; 2]) -> Result<wgpu::Buffer, E
     }))
 }
 
-fn split_pair(pair: [f64; 2]) -> [[f32; 4]; 3] {
-    let h = pair.map(|v| v as f32);
-    let l: [f32; 2] = std::array::from_fn(|c| (pair[c] - f64::from(h[c])) as f32);
-    let t: [f32; 2] = std::array::from_fn(|c| (pair[c] - f64::from(h[c]) - f64::from(l[c])) as f32);
-    [h, l, t].map(|v| [v[0], v[1], 0., 0.])
+fn view_pair(pair: [f64; 2]) -> [f32; 4] {
+    [pair[0] as f32, pair[1] as f32, 0., 0.]
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct ViewUniform {
     dimensions: [u32; 4],
-    origin: [[f32; 4]; 3],
-    dx: [[f32; 4]; 3],
-    dy: [[f32; 4]; 3],
+    origin: [f32; 4],
+    dx: [f32; 4],
+    dy: [f32; 4],
     gain: [f32; 4],
 }
 
@@ -1193,19 +1186,13 @@ impl ViewUniform {
         let y = frame.source_point([0.5, 1.5]).0;
         // Neutral acquisition omits the response's folded exposure. Restore that factor here;
         // any gain already packed into `post` must not be applied a second time.
-        let gain = (f64::from(parameters.anchor.w)
-            + f64::from(parameters.anchor_low.w)
-            + f64::from(parameters.anchor_tail.w))
-        .exp();
-        let high = gain as f32;
-        let low = (gain - f64::from(high)) as f32;
-        let tail = (gain - f64::from(high) - f64::from(low)) as f32;
+        let gain = parameters.anchor.w.exp();
         Self {
             dimensions: [frame.output[0], frame.output[1], 0, 0],
-            origin: split_pair(origin),
-            dx: split_pair(std::array::from_fn(|c| x[c] - origin[c])),
-            dy: split_pair(std::array::from_fn(|c| y[c] - origin[c])),
-            gain: [high, low, tail, 0.],
+            origin: view_pair(origin),
+            dx: view_pair(std::array::from_fn(|c| x[c] - origin[c])),
+            dy: view_pair(std::array::from_fn(|c| y[c] - origin[c])),
+            gain: [gain, 0., 0., 0.],
         }
     }
 }

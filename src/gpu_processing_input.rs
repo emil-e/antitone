@@ -86,10 +86,6 @@ impl ProcessingInput {
     }
 }
 
-#[cfg(any(
-    all(feature = "ui", feature = "render"),
-    all(feature = "raw", feature = "export")
-))]
 impl ProcessingInput {
     #[cfg(feature = "editor")]
     pub(crate) fn is_positive(&self) -> bool {

@@ -7,7 +7,7 @@ use crate::editor::{
 use std::sync::atomic::AtomicUsize;
 
 #[test]
-fn a_cached_export_kernel_failure_stops_before_acquiring_later_photos() {
+fn a_cached_renderer_failure_stops_before_acquiring_later_photos() {
     let mut editor = authored_fixture(&["roll-0.dng", "roll-1.dng"]);
     editor.set_dmin(Some(glam::DVec3::splat(0.8)));
     editor.set_dmax(Some(glam::DVec3::splat(0.02)));
@@ -36,10 +36,8 @@ fn a_cached_export_kernel_failure_stops_before_acquiring_later_photos() {
     let cache = Arc::new(crate::renderer::RendererCache::new(
         services.submissions.clone(),
     ));
-    let renderer = cache.get(&services.device, &services.queue).unwrap();
-    let injected =
-        crate::Error::Gpu("controlled cached export-kernel initialization failure".into());
-    renderer.fail_export_initialization(injected.clone());
+    let injected = crate::Error::Gpu("controlled cached renderer initialization failure".into());
+    cache.fail_initialization(injected.clone());
     services.renderers = cache;
     drop(editor);
     let summary = pollster::block_on(services.batch(request, Cancellation::default(), |_, _| {}));

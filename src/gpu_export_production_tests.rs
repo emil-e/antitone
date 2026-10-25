@@ -3,27 +3,26 @@ use crate::processing::Calibration;
 
 #[cfg(feature = "editor")]
 #[test]
-fn editor_background_renderer_prewarm_prepares_the_shared_export_kernel() {
+fn editor_background_prewarm_initializes_the_shared_renderer() {
     let (device, queue, _) = super::tests::context();
     let cache = Arc::new(crate::renderer::RendererCache::new(
         SubmissionGate::default(),
     ));
     cache.prewarm(device.clone(), queue.clone());
-    let renderer = cache.get(&device, &queue).unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while !renderer.export_initialized() && std::time::Instant::now() < deadline {
+    while !cache.is_initialized() && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     assert!(
-        renderer.export_initialized(),
-        "background prewarm must request export infrastructure without a job"
+        cache.is_initialized(),
+        "background prewarm must initialize processing without a foreground consumer"
     );
-    renderer.export_kernel(&device).unwrap();
+    let renderer = cache.get(&device, &queue).unwrap();
     assert!(Arc::ptr_eq(&renderer, &cache.get(&device, &queue).unwrap()));
 }
 
 #[test]
-fn exact_rotated_tiff_and_both_exr_precisions_share_one_lazy_kernel_and_stop_safely() {
+fn renderer_exports_exact_rotated_tiff_and_both_exr_precisions_and_stops_safely() {
     let (device, queue, renderer) = super::tests::context();
     let gate = SubmissionGate::default();
     let scan = Scan::open(
@@ -66,7 +65,6 @@ fn exact_rotated_tiff_and_both_exr_precisions_share_one_lazy_kernel_and_stop_saf
     let directory = tempfile::tempdir().unwrap();
     let keep = directory.path().join("keep.tif");
     std::fs::write(&keep, b"existing destination").unwrap();
-    assert!(!renderer.export_initialized());
     assert!(
         write_checked(
             &renderer,
@@ -79,14 +77,9 @@ fn exact_rotated_tiff_and_both_exr_precisions_share_one_lazy_kernel_and_stop_saf
         )
         .is_err()
     );
-    assert!(
-        !renderer.export_initialized(),
-        "early stop must not compile export infrastructure"
-    );
     assert_eq!(std::fs::read(&keep).unwrap(), b"existing destination");
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
 
-    let mut shared = None;
     for (name, composition) in [("exact", exact), ("rotated", rotated)] {
         for (suffix, format) in [
             ("srgb.tif", Format::Tiff(OutputTarget::Srgb)),
@@ -105,15 +98,8 @@ fn exact_rotated_tiff_and_both_exr_precisions_share_one_lazy_kernel_and_stop_saf
             )
             .unwrap();
             assert!(path.is_file());
-            let kernel = renderer.export_kernel(&device).unwrap() as *const ProcessingKernel;
-            if let Some(previous) = shared {
-                assert_eq!(kernel, previous);
-            } else {
-                shared = Some(kernel);
-            }
         }
     }
-    assert!(renderer.export_initialized());
     assert_eq!(std::fs::read(&keep).unwrap(), b"existing destination");
 
     let look = Arc::new(

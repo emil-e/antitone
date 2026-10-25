@@ -45,7 +45,7 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
         .unwrap(),
     );
     let scalar = crate::photographic::Grade::new(photo).unwrap();
-    let kernel = renderer.export_kernel(&device).unwrap();
+    let kernel = &renderer.kernel;
     let reconstruction = Reconstructor::new(&device).unwrap();
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: None,

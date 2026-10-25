@@ -124,10 +124,13 @@ fn physical_view_original_footprints_match_scalar_correction_signed_hdr_and_floo
         // A narrow density span makes the fixture's dark patches HDR, without clipping.
         anchors.dmax = anchors.dmin * 0.8;
         let cal = correction.processing_calibration(anchors).unwrap();
-        let roll = RollSettings {
+        let input = crate::processing::NegativeInput {
+            calibration: cal,
             gamma: 0.65,
-            ..RollSettings::new_grade()
+            response: crate::processing::Response::film(),
+            balance: Default::default(),
         };
+        let roll = RollSettings::default();
         let region = SourceRegion {
             x: area.x + area.width / 8,
             y: area.y + area.height / 8,
@@ -138,8 +141,7 @@ fn physical_view_original_footprints_match_scalar_correction_signed_hdr_and_floo
         let spec = ViewSourceSpec::new(
             1,
             frame,
-            cal,
-            roll,
+            input,
             scan.camera_to_ap1,
             Some(correction.clone()),
         )
@@ -158,7 +160,7 @@ fn physical_view_original_footprints_match_scalar_correction_signed_hdr_and_floo
         .unwrap()
         .unwrap();
         let scalar = crate::local_adjustments::SpatialPipeline::new(
-            cal,
+            input,
             roll,
             PhotoGradeSnapshot::new(PhotoSettings::default(), vec![]).unwrap(),
             scan.camera_to_ap1,
@@ -183,85 +185,6 @@ fn physical_view_original_footprints_match_scalar_correction_signed_hdr_and_floo
         assert!(actual.iter().any(|p| p[..3].iter().any(|v| *v < 0.)));
         assert!(actual.iter().any(|p| p[..3].iter().any(|v| *v > 1.)));
     });
-}
-
-fn raw_cases(region: SourceRegion) -> Vec<(&'static str, PhotoGradeSnapshot)> {
-    let simple = |photo| PhotoGradeSnapshot::new(photo, vec![]).unwrap();
-    let centre = [
-        region.x as f64 + region.width as f64 * 0.5,
-        region.y as f64 + region.height as f64 * 0.5,
-    ];
-    let locals = vec![
-        LocalAdjustment {
-            mask: GradientMask::Linear {
-                start: SourcePoint([centre[0] - region.width as f64 * 0.2, centre[1]]),
-                end: SourcePoint([centre[0] + region.width as f64 * 0.2, centre[1]]),
-            },
-            photo: PhotoSettings {
-                exposure: 1.,
-                wb: Balance {
-                    warmth: 0.02,
-                    tint: -0.01,
-                },
-                ..Default::default()
-            },
-            enabled: true,
-            invert: false,
-            strength: 0.7,
-        },
-        LocalAdjustment {
-            mask: GradientMask::Radial {
-                center: SourcePoint(centre),
-                radii: [region.width as f64 * 0.25, region.height as f64 * 0.3],
-                angle: 0.3,
-                feather: 0.,
-            },
-            photo: PhotoSettings {
-                exposure: -0.5,
-                saturation: 1.1,
-                ..Default::default()
-            },
-            enabled: true,
-            invert: false,
-            strength: 0.6,
-        },
-    ];
-    let mut feathered = locals.clone();
-    if let GradientMask::Radial { feather, .. } = &mut feathered[1].mask {
-        *feather = 0.5;
-    }
-    vec![
-        ("identity", simple(PhotoSettings::default())),
-        (
-            "exposure-wb",
-            simple(PhotoSettings {
-                exposure: 2.,
-                wb: Balance {
-                    warmth: 0.05,
-                    tint: -0.03,
-                },
-                ..Default::default()
-            }),
-        ),
-        (
-            "contrast-saturation",
-            simple(PhotoSettings {
-                contrast: 1.25,
-                contrast_colour_mix: 0.25,
-                saturation: 1.25,
-                saturation_density: 0.4,
-                ..Default::default()
-            }),
-        ),
-        (
-            "local-feathered",
-            PhotoGradeSnapshot::new(photo(), feathered).unwrap(),
-        ),
-        (
-            "local-hard-boundary",
-            PhotoGradeSnapshot::new(photo(), locals).unwrap(),
-        ),
-    ]
 }
 
 #[test]
@@ -289,17 +212,15 @@ fn physical_view_encoded_versions_survive_owner_release_and_abandoned_encoders_d
             ..Default::default()
         };
         let snapshot = PhotoGradeSnapshot::new(photo, vec![]).unwrap();
-        let roll = RollSettings {
-            gamma: 0.65,
-            ..RollSettings::new_grade()
-        };
+        let roll = RollSettings::default();
         let input = ProcessingInput::from(
-            ProcessingParameters::positive(calibration(), roll, photo, source.spec.matrix).unwrap(),
+            ProcessingParameters::interpret(negative(0.65), roll, photo, source.spec.matrix)
+                .unwrap(),
         );
         let view = RenderedView::new(
             &device,
             source.clone(),
-            calibration(),
+            negative(0.65),
             roll,
             snapshot,
             &input,

@@ -5,7 +5,7 @@ use crate::{
 };
 
 #[test]
-fn local_precision_budget_is_not_global_identity_and_mismatched_grades_still_reject() {
+fn working_view_requires_matching_global_and_local_grades() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
         let scan = scan();
@@ -55,10 +55,6 @@ fn local_precision_budget_is_not_global_identity_and_mismatched_grades_still_rej
             .unwrap(),
         ));
         let global = ProcessingParameters::positive(cal, roll, photo, scan.camera_to_ap1).unwrap();
-        assert!(
-            input.parameters().response_precision.x < global.response_precision.x,
-            "the fixture must exercise an active local precision adjustment"
-        );
         let admit = |snapshot: PhotoGradeSnapshot, input: &ProcessingInput| {
             RenderedView::new(
                 &device,

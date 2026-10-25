@@ -12,9 +12,6 @@ pub use local::GpuPhotoGrade;
 #[path = "gpu_processing_input.rs"]
 mod input;
 pub use input::{ProcessingInput, ProcessingSignature};
-#[cfg(all(test, target_os = "macos", feature = "raw", feature = "export"))]
-#[path = "gpu_export_arithmetic_research.rs"]
-pub(crate) mod arithmetic_research;
 #[path = "gpu_submission.rs"]
 mod submission;
 #[cfg(all(test, target_os = "macos", feature = "raw", feature = "export"))]
@@ -28,14 +25,14 @@ pub(crate) mod dust_screening;
 #[path = "gpu_working_view.rs"]
 pub(crate) mod view;
 
-use glam::{DMat3, DVec3, Vec4, Vec4Swizzles};
+use glam::{DMat3, DVec3, Vec4};
 use wgpu::util::DeviceExt;
 
 use crate::Error;
 use crate::color::{AP1_TO_XYZ, wb_matrix};
 use crate::processing::{
     InputSettings, Inversion, NegativeInput, PhotoSettings, RollSettings, exposure_multiplier,
-    log_abs_expm1, log_ratio, validate_camera_matrix,
+    log_abs_expm1, validate_camera_matrix,
 };
 
 #[repr(C)]
@@ -45,21 +42,8 @@ pub struct ProcessingParameters {
     gamma_mode: Vec4,
     anchor: Vec4,
     post: [Vec4; 3],
-    dmin_low: Vec4,
-    dmin_tail: Vec4,
-    gamma_low: Vec4,
     shape: Vec4,
-    anchor_low: Vec4,
-    post_low: [Vec4; 3],
     creative: [Vec4; 3],
-    creative_low: [Vec4; 3],
-    gamma_tail: Vec4,
-    shape_tail: Vec4,
-    anchor_tail: Vec4,
-    post_tail: [Vec4; 3],
-    creative_tail: [Vec4; 3],
-    // Inverse downstream sensitivity limits native magnitude in one-word response kernels.
-    response_precision: Vec4,
     /// Named input stage for the shader; `STAGE_SOURCE` also means "not graded".
     stage: u32,
     _stage_padding: [u32; 3],
@@ -125,9 +109,7 @@ impl ProcessingParameters {
         let matrix = DMat3::IDENTITY * gain;
         let post = CameraMatrix::new(matrix)?;
         Ok(Self {
-            post: post.high,
-            post_low: post.low,
-            post_tail: post.tail,
+            post: post.columns,
             ..Self::source()
         })
     }
@@ -197,76 +179,41 @@ impl ProcessingParameters {
                     .into(),
             ));
         }
-        let gammas = negative.channel_gammas()?;
+        let reference =
+            packed_constants(negative.calibration.dmin, negative.calibration.input_floor)?;
+        let gamma = packed_constants(negative.channel_gammas()?, 0.)?;
         for c in 0..3 {
-            let l = log_ratio(
-                negative.calibration.dmin[c],
-                negative.calibration.input_floor,
-            );
-            let a = toe * l / (gammas[c] - shoulder * l / std::f64::consts::LN_10);
-            if !a.is_finite() || a > 4096. {
+            let density = (reference[c] / reference.w).ln();
+            let denominator = gamma[c] - shoulder as f32 * density / std::f32::consts::LN_10;
+            if !denominator.is_finite() || denominator <= 0. {
                 return Err(Error::Gpu(
-                    "response exponent exceeds the supported GPU precision domain; reduce shoulder"
-                        .into(),
+                    "film response has a pole in its f32 sample domain".into(),
                 ));
             }
         }
-        let reference =
-            split_constants(negative.calibration.dmin, negative.calibration.input_floor)?;
-        let gamma = split_constants(gammas, toe)?;
-        let logs = split_constants(inversion.anchor_exponents.map(log_abs_expm1), gain.ln())?;
-        let shapes = split_constants(DVec3::new(toe, shoulder, 0.), 0.)?;
+        let anchor = packed_constants(inversion.anchor_exponents.map(log_abs_expm1), gain.ln())?;
         let post = CameraMatrix::new(matrix)?;
         let weights = AP1_TO_XYZ.transpose().y_axis;
-        let [contrast, colour, luminance] = [
-            [photo.contrast, grade.qp, grade.q0, grade.black],
-            [
-                photo.contrast_colour_mix,
-                photo.saturation,
-                photo.saturation_density,
+        let creative = [
+            packed_constants(DVec3::new(photo.contrast, grade.qp, grade.q0), grade.black)?,
+            packed_constants(
+                DVec3::new(
+                    photo.contrast_colour_mix,
+                    photo.saturation,
+                    photo.saturation_density,
+                ),
                 0.,
-            ],
-            [weights.x, weights.y, weights.z, 0.],
-        ]
-        .map(|v| split_constants(DVec3::new(v[0], v[1], v[2]), v[3]));
-        let controls = [contrast?, colour?, luminance?];
-        let (_, output, creative_sensitivity) = grade.weighted_bounds(bound.max_element(), 1.);
-        let camera_sensitivity =
-            camera_to_ap1.x_axis.abs() + camera_to_ap1.y_axis.abs() + camera_to_ap1.z_axis.abs();
-        let downstream_sensitivity = (matrix.x_axis.abs() * camera_sensitivity.x
-            + matrix.y_axis.abs() * camera_sensitivity.y
-            + matrix.z_axis.abs() * camera_sensitivity.z)
-            .max_element()
-            .max(1.)
-            * creative_sensitivity.max(1.);
+            )?,
+            packed_constants(weights, 0.)?,
+        ];
+        let (_, output) = grade.weighted_bounds(bound.max_element(), 1.);
         let result = Self {
-            dmin_floor: reference[0],
-            dmin_low: reference[1],
-            dmin_tail: reference[2],
-            gamma_mode: gamma[0].xyz().extend(0.),
-            gamma_low: gamma[1],
-            gamma_tail: gamma[2],
-            shape: Vec4::new(shapes[0].x, shapes[0].y, shapes[1].x, shapes[1].y),
-            shape_tail: shapes[2],
-            anchor: logs[0],
-            anchor_low: logs[1],
-            anchor_tail: logs[2],
-            post: post.high,
-            post_low: post.low,
-            post_tail: post.tail,
-            creative: std::array::from_fn(|c| controls[c][0]),
-            creative_low: std::array::from_fn(|c| controls[c][1]),
-            creative_tail: std::array::from_fn(|c| controls[c][2]),
-            response_precision: Vec4::new(
-                if downstream_sensitivity.is_finite() {
-                    (1. / downstream_sensitivity) as f32
-                } else {
-                    0.
-                },
-                0.,
-                0.,
-                0.,
-            ),
+            dmin_floor: reference,
+            gamma_mode: gamma,
+            shape: Vec4::new(toe as f32, shoulder as f32, 0., 0.),
+            anchor,
+            post: post.columns,
+            creative,
             stage: STAGE_NEGATIVE,
             _stage_padding: [0; 3],
         };
@@ -274,11 +221,7 @@ impl ProcessingParameters {
             || result.dmin_floor.w < f32::MIN_POSITIVE
             || !result.gamma_mode.is_finite()
             || !result.anchor.is_finite()
-            || result
-                .post
-                .iter()
-                .chain(result.post_low.iter())
-                .any(|v| !v.is_finite())
+            || result.post.iter().any(|v| !v.is_finite())
             || !result.shape.is_finite()
         {
             return Err(Error::Gpu(
@@ -338,60 +281,25 @@ impl ProcessingParameters {
             ));
         }
         let weights = AP1_TO_XYZ.transpose().y_axis;
-        let [contrast, colour, luminance] = [
-            [photo.contrast, grade.qp, grade.q0, grade.black],
-            [
-                photo.contrast_colour_mix,
-                photo.saturation,
-                photo.saturation_density,
+        let creative = [
+            packed_constants(DVec3::new(photo.contrast, grade.qp, grade.q0), grade.black)?,
+            packed_constants(
+                DVec3::new(
+                    photo.contrast_colour_mix,
+                    photo.saturation,
+                    photo.saturation_density,
+                ),
                 0.,
-            ],
-            [weights.x, weights.y, weights.z, 0.],
-        ]
-        .map(|v| split_constants(DVec3::new(v[0], v[1], v[2]), v[3]));
-        let controls = [contrast?, colour?, luminance?];
-        let (_, output, creative_sensitivity) = grade.weighted_bounds(bound.max_element(), 1.);
-        let camera_sensitivity =
-            camera_to_ap1.x_axis.abs() + camera_to_ap1.y_axis.abs() + camera_to_ap1.z_axis.abs();
-        let downstream_sensitivity = (matrix.x_axis.abs() * camera_sensitivity.x
-            + matrix.y_axis.abs() * camera_sensitivity.y
-            + matrix.z_axis.abs() * camera_sensitivity.z)
-            .max_element()
-            .max(1.)
-            * creative_sensitivity.max(1.);
+            )?,
+            packed_constants(weights, 0.)?,
+        ];
+        let (_, output) = grade.weighted_bounds(bound.max_element(), 1.);
         Ok((
             Self {
-                // Interpretation is identity for Digital, so the inversion constants are unused.
-                // Valid placeholders keep the f32 representation checks meaningful.
-                dmin_floor: Vec4::new(1., 0., 0., 1.),
-                dmin_low: Vec4::ZERO,
-                dmin_tail: Vec4::ZERO,
-                gamma_mode: Vec4::ZERO,
-                gamma_low: Vec4::ZERO,
-                gamma_tail: Vec4::ZERO,
-                shape: Vec4::ZERO,
-                shape_tail: Vec4::ZERO,
-                anchor: Vec4::ZERO,
-                anchor_low: Vec4::ZERO,
-                anchor_tail: Vec4::ZERO,
-                post: post.high,
-                post_low: post.low,
-                post_tail: post.tail,
-                creative: std::array::from_fn(|c| controls[c][0]),
-                creative_low: std::array::from_fn(|c| controls[c][1]),
-                creative_tail: std::array::from_fn(|c| controls[c][2]),
-                response_precision: Vec4::new(
-                    if downstream_sensitivity.is_finite() {
-                        (1. / downstream_sensitivity) as f32
-                    } else {
-                        0.
-                    },
-                    0.,
-                    0.,
-                    0.,
-                ),
+                post: post.columns,
+                creative,
                 stage: STAGE_DIGITAL,
-                _stage_padding: [0; 3],
+                ..Self::zeroed()
             },
             output.min(creative_bound),
         ))
@@ -447,26 +355,14 @@ impl ProcessingParameters {
     }
 }
 
-fn split_constants(value: DVec3, w: f64) -> Result<[Vec4; 3], Error> {
-    let values = [value.x, value.y, value.z, w];
-    let high = values.map(|v| v as f32);
-    let low = std::array::from_fn(|c| (values[c] - high[c] as f64) as f32);
-    let tail = std::array::from_fn(|c| (values[c] - high[c] as f64 - low[c] as f64) as f32);
-    if (0..4).any(|c| {
-        [high[c], low[c], tail[c]]
-            .iter()
-            .any(|v| !v.is_finite() || (*v != 0. && v.abs() < f32::MIN_POSITIVE))
-            || high[c] as f64 + low[c] as f64 + tail[c] as f64 != values[c]
-    }) {
+fn packed_constants(value: DVec3, w: f64) -> Result<Vec4, Error> {
+    let packed = value.as_vec3().extend(w as f32);
+    if !packed.is_finite() {
         return Err(Error::Gpu(
-            "processing constants cannot be represented for precise GPU inversion".into(),
+            "processing constants exceed the f32 range".into(),
         ));
     }
-    Ok([
-        Vec4::from_array(high),
-        Vec4::from_array(low),
-        Vec4::from_array(tail),
-    ])
+    Ok(packed)
 }
 
 fn matrix_columns(matrix: DMat3) -> [Vec4; 3] {
@@ -476,50 +372,22 @@ fn matrix_columns(matrix: DMat3) -> [Vec4; 3] {
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct CameraMatrix {
-    high: [Vec4; 3],
-    low: [Vec4; 3],
-    tail: [Vec4; 3],
+    columns: [Vec4; 3],
 }
 
 impl CameraMatrix {
     fn new(matrix: DMat3) -> Result<Self, Error> {
-        let columns = [matrix.x_axis, matrix.y_axis, matrix.z_axis];
-        let high = columns.map(|v| v.as_vec3().extend(0.));
-        let low =
-            std::array::from_fn(|c| (columns[c] - high[c].xyz().as_dvec3()).as_vec3().extend(0.));
-        let tail = std::array::from_fn(|c| {
-            (columns[c] - high[c].xyz().as_dvec3() - low[c].xyz().as_dvec3())
-                .as_vec3()
-                .extend(0.)
-        });
-        let result = Self { high, low, tail };
+        let columns = matrix_columns(matrix);
         let bound = matrix.x_axis.abs() + matrix.y_axis.abs() + matrix.z_axis.abs();
         if !bound.is_finite()
             || bound.max_element() > f32::MAX as f64 / 16.
-            || columns.iter().any(|v| {
-                v.to_array().into_iter().any(|value| {
-                    // The smallest nonzero camera code must not underflow a matrix product.
-                    value != 0. && value.abs() < f32::MIN_POSITIVE as f64 * 65535.
-                })
-            })
-            || [high, low, tail].into_iter().flatten().any(|v| {
-                v.to_array()
-                    .into_iter()
-                    .any(|value| value != 0. && value.abs() < f32::MIN_POSITIVE)
-            })
-            || columns.iter().enumerate().any(|(c, v)| {
-                !high[c].is_finite()
-                    || !low[c].is_finite()
-                    || !tail[c].is_finite()
-                    || high[c].xyz().as_dvec3() + low[c].xyz().as_dvec3() + tail[c].xyz().as_dvec3()
-                        != *v
-            })
+            || columns.iter().any(|v| !v.is_finite())
         {
             return Err(Error::Gpu(
                 "camera matrix cannot be represented for GPU conversion".into(),
             ));
         }
-        Ok(result)
+        Ok(Self { columns })
     }
 }
 
@@ -597,7 +465,7 @@ impl ProcessingSource {
             CameraMatrix::new(camera_to_ap1 * crate::processing::MAX_SOURCE_GAIN)?;
         }
         // xyz remain colour coefficients; w tags the storage format read by source_codes.
-        matrix.high[0].w = if continuous { 1. } else { 0. };
+        matrix.columns[0].w = if continuous { 1. } else { 0. };
         Ok(Self {
             input: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("camera source samples"),
@@ -679,6 +547,8 @@ impl ProcessingSource {
 }
 
 pub struct ProcessingKernel {
+    #[cfg(feature = "editor")]
+    module: wgpu::ShaderModule,
     pipeline: wgpu::ComputePipeline,
     repair: wgpu::ComputePipeline,
     output_binding: u32,
@@ -701,46 +571,24 @@ impl ProcessingKernel {
             include_str!("shaders/footprint.wgsl").to_owned(),
             include_str!("shaders/repairs.wgsl").to_owned(),
         ]
-        .join(
-            "
-",
-        )
+        .join("\n")
     }
 
     /// One implementation serves the viewport, export and analysis: the near-base ratio response
     /// and the f32 colour operators.
     pub(crate) fn kernel_shader() -> String {
-        Self::shader_with_response(
-            include_str!("shaders/film_inversion_export.wgsl"),
-            include_str!("shaders/photographic_export.wgsl"),
-        )
-    }
-
-    fn shader_with_response(response: &str, colour: &str) -> String {
         let common = [
             include_str!("shaders/camera_conversion.wgsl"),
             include_str!("shaders/flat_field.wgsl"),
             include_str!("shaders/film_response.wgsl"),
-            response,
-            include_str!("shaders/processing_math.wgsl"),
+            include_str!("shaders/film_inversion_export.wgsl"),
             include_str!("shaders/photographic.wgsl"),
             include_str!("shaders/local_adjustments.wgsl"),
             include_str!("shaders/photographic_colour.wgsl"),
-            colour,
+            include_str!("shaders/photographic_export.wgsl"),
         ]
         .join("\n");
         [common.as_str(), include_str!("shaders/processing.wgsl")].join("\n")
-    }
-
-    #[cfg(all(feature = "raw", feature = "export"))]
-    pub(crate) fn export_shader() -> String {
-        // Export and the viewport share one photographic implementation.
-        Self::kernel_shader()
-    }
-
-    #[cfg(all(feature = "raw", feature = "export"))]
-    pub(crate) async fn new_export(device: &wgpu::Device) -> Result<Self, Error> {
-        Self::build_pipeline(device, Self::module_shader()).await
     }
 
     async fn build_pipeline(device: &wgpu::Device, shader: String) -> Result<Self, Error> {
@@ -769,6 +617,8 @@ impl ProcessingKernel {
             return Err(Error::Gpu(error.to_string()));
         }
         Ok(Self {
+            #[cfg(feature = "editor")]
+            module,
             pipeline,
             repair,
             output_binding: 1,
@@ -975,9 +825,6 @@ mod execution_tests;
 #[cfg(test)]
 #[path = "gpu_flat_field_tests.rs"]
 mod flat_tests;
-#[cfg(all(test, target_os = "macos"))]
-#[path = "gpu_reuse_tests.rs"]
-mod reuse_tests;
 #[cfg(test)]
 #[path = "gpu_tests.rs"]
 mod tests;

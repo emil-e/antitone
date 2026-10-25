@@ -13,7 +13,6 @@ pub fn mean(pixels: &[DVec3]) -> Result<DVec3, Error> {
         return Err(Error::UnusableSample("empty patch"));
     }
     let mut sum = DVec3::ZERO;
-    let mut compensation = DVec3::ZERO;
     for &pixel in pixels {
         if !pixel.is_finite() {
             let channel = pixel
@@ -23,10 +22,7 @@ pub fn mean(pixels: &[DVec3]) -> Result<DVec3, Error> {
                 .unwrap();
             return Err(Error::NonFinitePixel { channel });
         }
-        let y = pixel - compensation;
-        let t = sum + y;
-        compensation = (t - sum) - y;
-        sum = t;
+        sum += pixel;
     }
     let result = sum / pixels.len() as f64;
     if !result.is_finite() {
@@ -43,9 +39,7 @@ pub fn weighted_mean_iter(
     pixels: impl IntoIterator<Item = Result<(DVec3, f64), Error>>,
 ) -> Result<DVec3, Error> {
     let mut sum = DVec3::ZERO;
-    let mut compensation = DVec3::ZERO;
     let mut total = 0.;
-    let mut weight_compensation = 0.;
     for sample in pixels {
         let (pixel, weight) = sample?;
         if !pixel.is_finite() {
@@ -59,14 +53,8 @@ pub fn weighted_mean_iter(
         if !weight.is_finite() || weight <= 0. {
             return Err(Error::UnusableSample("invalid coverage weight"));
         }
-        let value = pixel * weight - compensation;
-        let next = sum + value;
-        compensation = (next - sum) - value;
-        sum = next;
-        let value = weight - weight_compensation;
-        let next = total + value;
-        weight_compensation = (next - total) - value;
-        total = next;
+        sum += pixel * weight;
+        total += weight;
     }
     if total == 0. {
         return Err(Error::UnusableSample("empty patch"));
@@ -110,7 +98,6 @@ pub fn roll_dmin(pixels: &[DVec3], input_floor: f64) -> Result<DVec3, Error> {
         let mut values: Vec<_> = pixels.iter().map(|p| p[channel]).collect();
         values.sort_unstable_by(f64::total_cmp);
         let mut sum = 0.;
-        let mut compensation = 0.;
         for i in start.floor() as usize..end.ceil() as usize {
             let left = start.max(i as f64);
             let right = end.min((i + 1) as f64);
@@ -118,10 +105,7 @@ pub fn roll_dmin(pixels: &[DVec3], input_floor: f64) -> Result<DVec3, Error> {
             let a = values[i] + delta * (left - i as f64);
             let b = values[i] + delta * (right - i as f64);
             let term = (a * 0.5 + b * 0.5) * ((right - left) / (end - start));
-            let y = term - compensation;
-            let t = sum + y;
-            compensation = (t - sum) - y;
-            sum = t;
+            sum += term;
         }
         result[channel] = sum;
     }
@@ -194,12 +178,8 @@ fn fit_roll_neutral(
             ..negative
         })?;
         let mut sum = DVec3::ZERO;
-        let mut compensation = DVec3::ZERO;
         for (scan, weight) in scan_patch.clone() {
-            let y = inversion.apply(scan)?.rgb * weight - compensation;
-            let t = sum + y;
-            compensation = (t - sum) - y;
-            sum = t;
+            sum += inversion.apply(scan)?.rgb * weight;
         }
         let positive = sum / total;
         if !positive.is_finite() || positive.min_element() <= 1e-8 {

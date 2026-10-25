@@ -85,7 +85,7 @@ pub(super) fn reconstructed(
 }
 
 #[test]
-fn common_area_retains_small_signal_when_signed_hdr_samples_cancel() {
+fn common_area_averages_signed_hdr_samples_without_clipping() {
     let (device, queue, _) = super::super::tests::context();
     let engine = Reconstructor::new(&device).unwrap();
     let composition =
@@ -105,9 +105,9 @@ fn common_area_retains_small_signal_when_signed_hdr_samples_cancel() {
     };
     let pixel = |p: [u32; 2]| {
         let value = match p {
-            [0, 0] => 100_000_000.,
+            [0, 0] => 8.,
             [1, 0] | [1, 1] => 1.,
-            [0, 1] => -100_000_000.,
+            [0, 1] => -8.,
             _ => 0.,
         };
         [value, value, value, 0.]
@@ -134,7 +134,7 @@ fn common_area_retains_small_signal_when_signed_hdr_samples_cancel() {
         assert_eq!(
             actual,
             [0.5, 0.5, 0.5, 1.],
-            "signed HDR cancellation, linear space={space}"
+            "signed HDR reconstruction, linear space={space}"
         );
     }
 }

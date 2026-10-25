@@ -1,7 +1,5 @@
 struct LocalParameters {
-    high: array<vec4f, 5>,
-    low: array<vec4f, 5>,
-    tail: array<vec4f, 5>,
+    values: array<vec4f, 5>,
     flags: vec4u,
 }
 
@@ -16,19 +14,8 @@ var<storage, read> local_stages: array<LocalParameters>;
 @group(0) @binding(7)
 var<uniform> local_context: LocalContext;
 
-fn local_constant(stage: u32, row: u32, column: u32) -> Triple {
-    return Triple(
-            local_stages[stage].high[row][column],
-            local_stages[stage].low[row][column],
-            local_stages[stage].tail[row][column],
-        );
-}
-
-// FP32 mask evaluation for the shared colour stage: source-space coordinates are small
-// integers, so the compensated reference formulation buys no visible coverage precision.
 fn local_value(stage: u32, row: u32, column: u32) -> f32 {
-    return local_stages[stage].high[row][column]
-        + (local_stages[stage].low[row][column] + local_stages[stage].tail[row][column]);
+    return local_stages[stage].values[row][column];
 }
 
 fn local_projection32(delta: vec2f, axis: vec2f) -> f32 {

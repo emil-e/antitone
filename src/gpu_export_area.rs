@@ -430,7 +430,7 @@ pub(super) fn write(
             repairs.bound(),
         )?;
     }
-    let kernel = timed!(Setup, renderer.export_kernel(device))?;
+    let kernel = &renderer.kernel;
     let _look_resource = request
         .look
         .as_ref()

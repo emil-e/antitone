@@ -37,5 +37,9 @@ fn composed_photographic_kernel_validates() {
 #[cfg(feature = "editor")]
 #[test]
 fn composed_working_view_validates() {
-    validate("working view", &gpu::view::colour_shader(), &["view_main"]);
+    validate(
+        "working view",
+        &gpu::view::view_shader(),
+        &["view_main", "inspection_main"],
+    );
 }

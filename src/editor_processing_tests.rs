@@ -381,10 +381,10 @@ fn correction_changes_grade_preparation_but_empty_stacks_release_local_resources
             glam::DMat3::IDENTITY,
         )
         .unwrap();
-        assert_ne!(
+        assert_eq!(
             bytemuck::bytes_of(&corrected.parameters()),
             bytemuck::bytes_of(&global),
-            "active locals retain distinct shader precision constants"
+            "local stages must not change the global photographic parameters"
         );
         assert!(std::ptr::eq(
             corrected.grade().unwrap(),

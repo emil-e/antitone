@@ -556,13 +556,9 @@ impl Scan {
         self.checked_region(region)?;
         let mean = if self.flat_field().is_some() {
             let mut sum = DVec3::ZERO;
-            let mut compensation = DVec3::ZERO;
             for y in region.y..region.y + region.height {
                 for x in region.x..region.x + region.width {
-                    let corrected = self.pixel(x, y)? - compensation;
-                    let next = sum + corrected;
-                    compensation = (next - sum) - corrected;
-                    sum = next;
+                    sum += self.pixel(x, y)?;
                 }
             }
             sum / (region.width as f64 * region.height as f64)

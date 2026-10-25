@@ -79,6 +79,8 @@ async fn variant(
         name,
         global_only,
         kernel: ProcessingKernel {
+            #[cfg(feature = "editor")]
+            module,
             pipeline,
             // These dispatch-size/global-only diagnostics do not apply repairs.
             repair: baseline.repair.clone(),

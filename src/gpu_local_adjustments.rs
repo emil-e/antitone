@@ -1,8 +1,6 @@
 use super::{
-    CameraMatrix, ProcessingParameters, ProcessingSource, SourceGeometry, split_constants,
+    CameraMatrix, ProcessingParameters, ProcessingSource, SourceGeometry, packed_constants,
 };
-#[cfg(test)]
-use crate::processing::{Calibration, NegativeInput, Response};
 use crate::{
     Error,
     color::{Balance, ap1_to_cones},
@@ -18,9 +16,7 @@ use wgpu::util::DeviceExt;
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct LocalParameters {
-    high: [Vec4; 5],
-    low: [Vec4; 5],
-    tail: [Vec4; 5],
+    values: [Vec4; 5],
     flags: [u32; 4],
 }
 
@@ -33,7 +29,7 @@ struct LocalContext {
     count: [u32; 4],
 }
 
-/// Immutable global/local resources with constant, range and normal-precision validation.
+/// Immutable global/local resources with f32 constant and intermediate-range validation.
 /// Consumers own accepted-snapshot signatures and stale-result rejection.
 pub struct GpuPhotoGrade {
     pub(super) parameters: ProcessingParameters,
@@ -150,7 +146,7 @@ impl GpuPhotoGrade {
             return Err(Error::Gpu("invalid neutral repair bound".into()));
         }
         let area = area.validate()?;
-        let (mut parameters, mut bound) = ProcessingParameters::interpret_with_neutral_bound(
+        let (parameters, mut bound) = ProcessingParameters::interpret_with_neutral_bound(
             input,
             roll,
             snapshot.global(),
@@ -171,17 +167,12 @@ impl GpuPhotoGrade {
             ));
         }
         let mut packed = Vec::with_capacity(active.max(1) as usize);
-        let mut sensitivities = Vec::with_capacity(active as usize);
         for adjustment in snapshot.locals().iter().copied().filter(|a| a.is_active()) {
-            let (peak, output, sensitivity) = stage_bounds(adjustment, bound)?;
+            let (peak, output) = stage_bounds(adjustment, bound)?;
             supported(peak)?;
             bound = output;
-            sensitivities.push(sensitivity);
-            parameters.response_precision.x =
-                (f64::from(parameters.response_precision.x) / sensitivity.max(1.)) as f32;
             packed.push(LocalParameters::new(adjustment, area)?);
         }
-        require_normal_precision(&sensitivities)?;
         if packed.is_empty() {
             packed.push(LocalParameters::zeroed());
         }
@@ -261,27 +252,11 @@ fn absolute_product(matrix: DMat3, bound: DVec3) -> DVec3 {
     matrix.x_axis.abs() * bound.x + matrix.y_axis.abs() * bound.y + matrix.z_axis.abs() * bound.z
 }
 
-fn require_normal_precision(sensitivities: &[f64]) -> Result<(), Error> {
-    // Reserve part of the existing absolute tolerance for unsupported tiny
-    // signals. Every potentially observable value must retain all 53 bits in
-    // normal f32 words, including before a later stage amplifies it.
-    let mut observable = 2e-5 / 4.;
-    for &gain in sensitivities.iter().rev() {
-        observable /= gain;
-        if !gain.is_finite() || observable * (f64::EPSILON / 2.) < f64::from(f32::MIN_POSITIVE) {
-            return Err(Error::Gpu(
-                "local stack can amplify signals below the normal GPU precision domain".into(),
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn stage_bounds(adjustment: LocalAdjustment, input: f64) -> Result<(f64, f64, f64), Error> {
-    let mut sensitivity = (adjustment.photo.exposure * adjustment.strength)
+fn stage_bounds(adjustment: LocalAdjustment, input: f64) -> Result<(f64, f64), Error> {
+    let gain = (adjustment.photo.exposure * adjustment.strength)
         .max(0.)
         .exp2();
-    let mut bound = input * sensitivity;
+    let mut bound = input * gain;
     let mut peak = input.max(bound);
     if adjustment.photo.wb != Balance::default() {
         let cones = ap1_to_cones();
@@ -300,20 +275,15 @@ fn stage_bounds(adjustment: LocalAdjustment, input: f64) -> Result<(f64, f64, f6
         );
         let formation = absolute_product(inverse, absolute_product(cones, DVec3::ONE));
         let gain = (baseline + movement + 8. * f64::EPSILON * formation).max_element();
-        sensitivity *= gain;
         bound *= gain;
         peak = peak
             .max(cone_input.max_element())
             .max(cone_output.max_element())
             .max(bound);
     }
-    let (creative_peak, output, creative_sensitivity) =
+    let (creative_peak, output) =
         Grade::new(adjustment.photo)?.weighted_bounds(bound, adjustment.strength);
-    Ok((
-        peak.max(creative_peak),
-        output,
-        sensitivity * creative_sensitivity,
-    ))
+    Ok((peak.max(creative_peak), output))
 }
 
 impl LocalParameters {
@@ -377,16 +347,7 @@ impl LocalParameters {
         ];
         let mut result = Self::zeroed();
         for (i, row) in rows.into_iter().enumerate() {
-            let split =
-                split_constants(DVec3::new(row[0], row[1], row[2]), row[3]).map_err(|_| {
-                    Error::Gpu(
-                        "local controls or mask geometry cannot be represented precisely on the GPU"
-                        .into(),
-                    )
-                })?;
-            result.high[i] = split[0];
-            result.low[i] = split[1];
-            result.tail[i] = split[2];
+            result.values[i] = packed_constants(DVec3::new(row[0], row[1], row[2]), row[3])?;
         }
         result.flags = [
             kind,
@@ -448,7 +409,7 @@ mod tests {
                             ..PhotoSettings::default()
                         };
                         let grade = Grade::new(photo).unwrap();
-                        let (_, bound, _) = grade.weighted_bounds(input, 1.);
+                        let (_, bound) = grade.weighted_bounds(input, 1.);
                         for i in 0..=200 {
                             let weighted =
                                 Grade::new(weighted_settings(photo, i as f64 / 200.).unwrap())
@@ -474,56 +435,6 @@ mod tests {
     }
 
     #[test]
-    fn sensitivity_bounds_cover_fractional_controls_and_near_zero_y() {
-        let weights = crate::color::AP1_TO_XYZ.row(1);
-        for contrast in [0.4, 0.7, 1.6] {
-            for pivot in [0.01, 0.03, 0.18, 1.] {
-                for colour in [0., 0.5, 1.] {
-                    for input in [0.001, 0.01, 1., 100.] {
-                        let photo = PhotoSettings {
-                            contrast,
-                            pivot,
-                            contrast_colour_mix: colour,
-                            saturation: 1.73,
-                            saturation_density: colour,
-                            ..Default::default()
-                        };
-                        let (_, _, sensitivity) =
-                            Grade::new(photo).unwrap().weighted_bounds(input, 0.73);
-                        for i in 0..=20 {
-                            let grade = Grade::new(
-                                weighted_settings(photo, 0.73 * i as f64 / 20.).unwrap(),
-                            )
-                            .unwrap();
-                            let epsilon = input * 1e-7;
-                            for rgb in [
-                                DVec3::splat(input * 0.8),
-                                DVec3::splat(-input * 0.8),
-                                DVec3::new(input * 0.8, -weights.x / weights.y * input * 0.8, 0.),
-                            ] {
-                                let base = grade.apply(rgb).unwrap();
-                                for direction in
-                                    [DVec3::X, DVec3::Y, DVec3::Z, DVec3::new(1., -1., 1.)]
-                                {
-                                    let delta = (grade.apply(rgb + epsilon * direction).unwrap()
-                                        - base)
-                                        .abs()
-                                        .max_element();
-                                    assert!(
-                                        delta <= epsilon * sensitivity * 1.0001,
-                                        "{photo:?} B={input} weight={i}: {delta} > {}",
-                                        epsilon * sensitivity
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
     fn small_wb_bounds_preserve_the_signed_baseline_over_continuous_weights() {
         for warmth in [-1., -0.005, 0., 0.005, 1.] {
             for tint in [-1., -0.003, 0., 0.003, 1.] {
@@ -540,117 +451,21 @@ mod tests {
                     invert: false,
                     strength: 0.6,
                 };
-                let (_, output, sensitivity) = stage_bounds(adjustment, 100.).unwrap();
+                let (_, output) = stage_bounds(adjustment, 100.).unwrap();
                 for i in 0..=200 {
                     let weighted =
                         weighted_settings(adjustment.photo, 0.6 * i as f64 / 200.).unwrap();
                     let matrix = crate::color::wb_matrix(weighted.wb).unwrap();
                     let norm = absolute_product(matrix, DVec3::ONE).max_element();
-                    assert!(
-                        norm <= sensitivity,
-                        "WB={:?} weight={i}: {norm} > {sensitivity}",
-                        adjustment.photo.wb
-                    );
                     assert!(100. * norm <= output);
                 }
                 if warmth.abs() <= 0.005 && tint.abs() <= 0.003 {
                     assert!(
-                        sensitivity < 1.02,
+                        output < 102.,
                         "near-identity WB must not inherit cone-basis condition numbers"
                     );
                 }
             }
-        }
-    }
-
-    #[test]
-    fn modest_photographic_stack_remains_in_the_normal_precision_domain() {
-        let calibration = Calibration {
-            dmin: DVec3::new(0.19, 0.14, 0.12),
-            dmax: DVec3::new(0.008, 0.004, 0.002),
-            input_floor: 1. / 65535.,
-        };
-        let negative = NegativeInput {
-            calibration,
-            response: Response::film(),
-            gamma: 0.65,
-            balance: Balance::default(),
-        };
-        let roll = RollSettings::default();
-        let (_, mut bound) = ProcessingParameters::positive_with_bound(
-            negative,
-            roll,
-            PhotoSettings::default(),
-            DMat3::IDENTITY,
-        )
-        .unwrap();
-        let adjustment = LocalAdjustment {
-            mask: GradientMask::Linear {
-                start: SourcePoint([0., 0.]),
-                end: SourcePoint([1., 0.]),
-            },
-            photo: PhotoSettings {
-                exposure: 0.25,
-                wb: Balance {
-                    warmth: 0.005,
-                    tint: -0.003,
-                },
-                contrast: 1.01,
-                contrast_colour_mix: 0.25,
-                saturation: 1.02,
-                saturation_density: 0.4,
-                ..Default::default()
-            },
-            enabled: true,
-            invert: false,
-            strength: 0.6,
-        };
-        let mut sensitivities = Vec::new();
-        for _ in 0..3 {
-            let (peak, output, sensitivity) = stage_bounds(adjustment, bound).unwrap();
-            supported(peak).unwrap();
-            bound = output;
-            sensitivities.push(sensitivity);
-        }
-        assert!(require_normal_precision(&sensitivities).is_ok());
-        // A tighter bound does not waive the unchanged normal-precision gate.
-        let (_, _, sensitivity) = stage_bounds(adjustment, bound).unwrap();
-        sensitivities.push(sensitivity);
-        assert!(require_normal_precision(&sensitivities).is_err());
-
-        let global = PhotoSettings {
-            exposure: -2.,
-            contrast: 1.05,
-            saturation: 1.2,
-            ..Default::default()
-        };
-        let (_, input) = ProcessingParameters::positive_with_bound(
-            negative,
-            roll,
-            PhotoSettings {
-                exposure: global.exposure,
-                ..Default::default()
-            },
-            DMat3::IDENTITY,
-        )
-        .unwrap();
-        let scratch = Grade::new(global).unwrap().intermediate_bound(input);
-        let (_, output) =
-            ProcessingParameters::positive_with_bound(negative, roll, global, DMat3::IDENTITY)
-                .unwrap();
-        for (mut bound, accepted) in [(scratch, false), (output, true)] {
-            let mut sensitivities = Vec::new();
-            for _ in 0..4 {
-                let (peak, next, sensitivity) = stage_bounds(adjustment, bound).unwrap();
-                supported(peak).unwrap();
-                bound = next;
-                sensitivities.push(sensitivity);
-            }
-            assert_eq!(
-                require_normal_precision(&sensitivities).is_ok(),
-                accepted,
-                "input bound={bound}, sensitivities={sensitivities:?}"
-            );
         }
     }
 
@@ -675,7 +490,7 @@ mod tests {
             invert: false,
             strength: 0.73,
         };
-        let (_, bound, _) = stage_bounds(adjustment, 100.).unwrap();
+        let (_, bound) = stage_bounds(adjustment, 100.).unwrap();
         let grade = LocalGrade::new(vec![adjustment]).unwrap();
         for i in 0..=200 {
             for rgb in [

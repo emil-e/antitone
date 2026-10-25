@@ -7,7 +7,7 @@ use antitone::processing::{
     Calibration, DEFAULT_GAMMA, InputSettings, Inversion, NegativeInput, PhotoSettings, Pipeline,
     Response, RollSettings, exposure_multiplier,
 };
-use antitone::sampling::{mean, photo_neutral, roll_neutral};
+use antitone::sampling::{mean, photo_neutral, roll_neutral, weighted_mean, weighted_mean_iter};
 use glam::{DMat3, DVec3};
 
 /// A negative interpretation over measured anchors (the response is the film prior).
@@ -132,7 +132,7 @@ fn digital_input_is_already_positive_and_reuses_the_shared_grade() {
 
 #[test]
 fn weighted_neutral_picks_match_repeated_full_resolution_pixels_not_bounding_box_means() {
-    use antitone::sampling::{photo_neutral_weighted, roll_neutral_weighted, weighted_mean};
+    use antitone::sampling::{photo_neutral_weighted, roll_neutral_weighted};
     let cal = calibration();
     let correct = Balance {
         warmth: 0.21,
@@ -640,16 +640,74 @@ fn photo_pick_uses_ap1_after_the_inversion_conversion() {
 }
 
 #[test]
-fn compensated_patch_mean_preserves_small_contributions() {
-    close_rgb(
-        mean(&[
-            DVec3::splat(1e16),
-            DVec3::ONE,
-            DVec3::ONE,
-            DVec3::splat(-1e16),
-        ])
-        .unwrap(),
-        DVec3::splat(0.5),
+fn patch_mean_preserves_signed_hdr_channels() {
+    let pixels = [
+        DVec3::new(4., -1., 0.5),
+        DVec3::new(2., 0.5, -1.5),
+        DVec3::new(-3., 2., 4.),
+        DVec3::new(1., -0.5, 1.),
+    ];
+    assert_eq!(mean(&pixels).unwrap(), DVec3::new(1., 0.25, 1.));
+}
+
+#[test]
+fn weighted_patch_mean_normalizes_fractional_weights_without_clipping() {
+    let pixels = [
+        (DVec3::new(4., -2., 0.5), 0.5),
+        (DVec3::new(-2., 6., 4.5), 1.5),
+    ];
+    assert_eq!(weighted_mean(&pixels).unwrap(), DVec3::new(-0.5, 4., 3.5));
+}
+
+#[test]
+fn patch_means_reject_empty_inputs() {
+    assert!(matches!(mean(&[]), Err(Error::UnusableSample(_))));
+    assert!(matches!(weighted_mean(&[]), Err(Error::UnusableSample(_))));
+}
+
+#[test]
+fn patch_means_reject_nonfinite_pixels_in_each_channel() {
+    for channel in 0..3 {
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let mut pixel = DVec3::ONE;
+            pixel[channel] = value;
+            assert_eq!(mean(&[pixel]), Err(Error::NonFinitePixel { channel }));
+            assert_eq!(
+                weighted_mean(&[(pixel, 1.)]),
+                Err(Error::NonFinitePixel { channel })
+            );
+        }
+    }
+}
+
+#[test]
+fn patch_means_reject_overflow() {
+    let pixel = DVec3::splat(f64::MAX);
+    assert_eq!(mean(&[pixel, pixel]), Err(Error::NumericalOverflow));
+    assert_eq!(
+        weighted_mean(&[(pixel, 1.), (pixel, 1.)]),
+        Err(Error::NumericalOverflow)
     );
-    assert!(mean(&[DVec3::splat(f64::NAN)]).is_err());
+}
+
+#[test]
+fn weighted_patch_mean_rejects_nonpositive_or_nonfinite_weights() {
+    for weight in [0., -1., f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(matches!(
+            weighted_mean(&[(DVec3::ONE, weight)]),
+            Err(Error::UnusableSample(_))
+        ));
+    }
+}
+
+#[test]
+fn weighted_patch_mean_propagates_sample_read_failure() {
+    let samples = [
+        Ok((DVec3::ONE, 1.)),
+        Err(Error::InvalidParameter("sample read failed")),
+    ];
+    assert_eq!(
+        weighted_mean_iter(samples),
+        Err(Error::InvalidParameter("sample read failed"))
+    );
 }

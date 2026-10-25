@@ -1,7 +1,5 @@
 //! One bounded original-sample engine for TIFF and scene-linear EXR.
 use crate::export_timing::timed;
-#[cfg(all(test, target_os = "macos"))]
-use crate::gpu::ProcessingKernel;
 use crate::{
     Error,
     export::{self, ExrPrecision, ImageSize, Overwrite, ProcessingMetadata},
@@ -71,7 +69,7 @@ pub struct Request<'a> {
 }
 
 /// One bounded dispatch/readback outstanding; no CPU photographic rendering fallback.
-/// The shared export kernel is lazy for library callers and prewarmed by the editor.
+/// Uses the renderer's original-processing kernel, initialized with the shared renderer.
 pub fn write(
     renderer: &GpuRenderer,
     device: &wgpu::Device,
