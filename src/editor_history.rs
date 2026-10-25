@@ -1,4 +1,5 @@
 use super::*;
+use crate::processing::InputSettings;
 use crate::project::Project;
 
 const HISTORY_LIMIT: usize = 100;
@@ -36,6 +37,7 @@ pub(super) struct History {
 
 #[derive(Clone, Copy, PartialEq)]
 struct ControlState {
+    input: InputSettings,
     roll: RollSettings,
     photo: PhotoSettings,
     target: OutputTarget,
@@ -45,6 +47,7 @@ struct ControlState {
 impl ControlState {
     fn capture(editor: &Editor) -> Self {
         Self {
+            input: editor.input(),
             roll: editor.roll,
             photo: editor.photo,
             target: editor.target,
@@ -53,8 +56,9 @@ impl ControlState {
     }
 
     fn restore(self, project: &mut Project) {
+        project.input = self.input;
         project.roll = self.roll;
-        project.processing_model = self.roll.response.processing_model();
+        project.processing_model = self.input.processing_model();
         project.output.tiff = match self.target {
             OutputTarget::Srgb => crate::project::TiffTarget::Srgb,
             OutputTarget::DisplayP3 => crate::project::TiffTarget::DisplayP3,
@@ -293,7 +297,7 @@ impl Editor {
                     .label;
                 self.document.history.complete(direction);
                 self.working.clear();
-                self.source = self.calibration().is_none();
+                self.source = !self.input.ready();
                 self.document.dust.cleanup =
                     cleanup.is_some() && !self.source && self.document.visit.ready.is_some();
                 if let Some(show_masks) = cleanup {

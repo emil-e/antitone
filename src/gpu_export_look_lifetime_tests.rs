@@ -1,4 +1,5 @@
 use super::*;
+use crate::processing::Calibration;
 
 #[test]
 fn cold_job_retains_one_look_across_source_sizes_and_releases_it_on_success_or_stop() {
@@ -57,8 +58,8 @@ fn cold_job_retains_one_look_across_source_sizes_and_releases_it_on_success_or_s
     let request = |look| Request {
         scan: &scan,
         field: None,
-        calibration,
-        roll: RollSettings::new_grade(),
+        input: calibration.into(),
+        roll: RollSettings::default(),
         grade: grade.clone(),
         repairs: &[],
         composition,

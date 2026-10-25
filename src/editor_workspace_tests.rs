@@ -470,8 +470,8 @@ fn rendering_target_selector_and_reset_retain_grade_and_draft_guards() {
     let grade = (
         editor.roll,
         editor.photo,
-        editor.dmin,
-        editor.dmax,
+        editor.dmin(),
+        editor.dmax(),
         editor.crop,
     );
     let context = egui::Context::default();
@@ -500,8 +500,8 @@ fn rendering_target_selector_and_reset_retain_grade_and_draft_guards() {
         (
             editor.roll,
             editor.photo,
-            editor.dmin,
-            editor.dmax,
+            editor.dmin(),
+            editor.dmax(),
             editor.crop
         ),
         grade

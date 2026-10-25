@@ -43,9 +43,9 @@ fn authored_dust_workflow_slices_share_presentation_queue_and_retire_without_fai
         editor.id = 1;
         editor.source_epoch = epoch.clone();
         editor.document.visit.ready = Some(ready);
-        editor.dmin = Some(DVec3::splat(0.8));
-        editor.dmax = Some(DVec3::splat(0.02));
-        editor.floor = crate::processing::CAMERA_INPUT_FLOOR;
+        editor.set_dmin(Some(DVec3::splat(0.8)));
+        editor.set_dmax(Some(DVec3::splat(0.02)));
+        editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
         editor.dust_services = Some(dust_workflow::Services::new(
             editor.workflow_jobs.clone(),
             device.clone(),
@@ -81,8 +81,7 @@ fn authored_dust_workflow_slices_share_presentation_queue_and_retire_without_fai
             source: source_id,
             signature,
             repair: repair.clone(),
-            calibration: editor.calibration().unwrap(),
-            roll: editor.roll.inversion_only(),
+            input: editor.calibration().unwrap().into(),
             cancelled: Arc::new(AtomicBool::new(false)),
         };
         let before = editor.document.project.clone();

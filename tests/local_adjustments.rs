@@ -485,8 +485,8 @@ fn locals_follow_unchanged_global_pipeline_and_preserve_floor_flags() {
         ..PhotoSettings::default()
     };
     let pipeline = Pipeline::new(
-        calibration,
-        RollSettings::new_grade(),
+        input_for(calibration),
+        RollSettings::default(),
         photo,
         DMat3::IDENTITY,
     )
@@ -741,4 +741,15 @@ fn nonfinite_pixels_coordinates_and_arithmetic_overflow_reject_without_repair() 
         tiny.coverage(SourcePoint([f64::MAX, 0.])),
         Err(Error::NumericalOverflow)
     );
+}
+
+fn input_for(cal: antitone::processing::Calibration) -> antitone::processing::InputSettings {
+    antitone::processing::InputSettings::Negative {
+        dmin: Some(cal.dmin),
+        dmax: Some(cal.dmax),
+        input_floor: cal.input_floor,
+        response: antitone::processing::Response::Original,
+        gamma: antitone::processing::DEFAULT_GAMMA,
+        balance: antitone::color::Balance::default(),
+    }
 }

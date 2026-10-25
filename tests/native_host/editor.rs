@@ -9,17 +9,23 @@ pub(super) fn fixture_project(directory: &Path) -> host::Result<PathBuf> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
     let metadata = antitone::raw::RawFile::open(&path)?.metadata;
     let area = metadata.image_area()?;
+    let decode = metadata.development(metadata.as_shot_wb());
     let mut project = Project {
-        development: Some(metadata.development(metadata.as_shot_wb())),
-        input_floor: Some(antitone::processing::CAMERA_INPUT_FLOOR),
-        dmin: Some([3000. / 4031.; 3]),
-        dmax: Some([128. / 4031.; 3]),
+        input: antitone::processing::InputSettings::Negative {
+            dmin: Some(glam::DVec3::splat(3000. / 4031.)),
+            dmax: Some(glam::DVec3::splat(128. / 4031.)),
+            input_floor: antitone::processing::CAMERA_INPUT_FLOOR,
+            response: antitone::processing::Response::film(),
+            gamma: antitone::processing::DEFAULT_GAMMA,
+            balance: Default::default(),
+        },
         ..Default::default()
     };
     project.add_source(Source {
         id: SourceId(0),
         path,
         development: SourceDevelopment {
+            decode,
             lens_correction: None,
             dng_development: metadata.dng_identity(),
             dimensions: [metadata.width, metadata.height],

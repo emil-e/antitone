@@ -272,6 +272,7 @@ fn failed_open_after_successful_save_keeps_the_written_document_without_a_ui_pas
             assert_eq!(e.document.project, accepted);
             assert!(!e.document.dirty() && !e.allow_close);
             assert!(e.status.starts_with("Project: "), "{}", e.status);
+            assert!(!e.status.starts_with("Project: Project:"), "{}", e.status);
         });
         assert_eq!(crate::project::Project::load(&written).unwrap(), accepted);
     });

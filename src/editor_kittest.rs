@@ -15,6 +15,8 @@ mod analyze;
 mod auto_crop;
 #[path = "editor_kittest_correction.rs"]
 mod correction;
+#[path = "editor_kittest_crop.rs"]
+mod crop;
 #[path = "editor_kittest_dust.rs"]
 mod dust;
 #[path = "editor_kittest_export.rs"]
@@ -763,8 +765,10 @@ fn wait_for_with_timeout(
         harness.read(|editor| {
             assert!(
                 Instant::now() < deadline,
-                "Editor wait timed out: {}",
-                editor.status
+                "Editor wait timed out: {}; working updating={} error={:?}, dust error={:?}, evaluations={:?}, original pending={:?}, source epoch={}/{}",
+                editor.status, editor.working.updating, editor.working.error,
+                editor.document.dust.render_error, editor.dust_signature().map(|s| editor.dust_evaluations(s).len()), editor.original.refining,
+                editor.source_epoch.load(std::sync::atomic::Ordering::Relaxed), editor.id
             )
         });
         if harness.read(&done) {
@@ -831,7 +835,7 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| {
             assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
-            assert!(editor.dmin.is_none());
+            assert!(editor.dmin().is_none());
         });
         let project = harness.read(|editor| editor.document.project.clone());
         harness.get_by_label("Pick Dmin (film base)").scroll_to_me();
@@ -876,11 +880,11 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
             assert!(editor.pick.is_none());
             assert_eq!(editor.status, "Dmin measured");
         });
-        let measured = harness.read(|editor| editor.dmin.unwrap());
+        let measured = harness.read(|editor| editor.dmin().unwrap());
         assert!((measured - DVec3::splat(3000. / 4031.)).abs().max_element() <= 2. / 65535.);
         assert_eq!(harness.read(|editor| editor.roll), project.roll);
         let mut expected_project = project;
-        expected_project.dmin = Some(measured.to_array());
+        expected_project.set_dmin(Some(measured.to_array()));
         harness.read(|editor| {
             assert_eq!(editor.document.project, expected_project);
             assert!(editor.preference_store.is_none());
@@ -929,6 +933,15 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
         }
         save_capture(&png, "authored-dmin-offscreen");
     });
+}
+
+fn scan_setup(path: &std::path::Path, fixed_wb: [f64; 4]) -> crate::project::ScanSetup {
+    let source = document::read_source(path, Some(fixed_wb)).unwrap();
+    assert_eq!(source.development.decode.fixed_wb, fixed_wb);
+    crate::project::ScanSetup {
+        basis: crate::project::ScanBasis::new(&source),
+        flat_field: None,
+    }
 }
 
 fn fixture(name: &str) -> PathBuf {
@@ -1089,9 +1102,9 @@ fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
         harness.update(|editor| {
-            editor.dmin = Some(DVec3::splat(3000. / 4031.));
-            editor.dmax = Some(DVec3::splat(128. / 4031.));
-            editor.roll.gamma = 0.75;
+            editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
+            editor.set_dmax(Some(DVec3::splat(128. / 4031.)));
+            editor.set_gamma(0.75);
             editor.photo.exposure = 0.5;
             editor.photo.wb = Balance {
                 warmth: 0.1,

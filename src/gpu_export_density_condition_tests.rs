@@ -1,4 +1,5 @@
 use super::*;
+use crate::processing::Calibration;
 
 #[test]
 fn low_gamma_balanced_floor_anchor_survives_camera_cancellation() {
@@ -24,7 +25,8 @@ fn low_gamma_balanced_floor_anchor_survives_camera_cancellation() {
                 dmax: DVec3::splat(floor),
                 input_floor: floor,
             };
-            let roll = RollSettings {
+            let negative = NegativeInput {
+                calibration,
                 gamma: 0.1,
                 balance: crate::color::Balance {
                     warmth: -1.,
@@ -34,14 +36,16 @@ fn low_gamma_balanced_floor_anchor_survives_camera_cancellation() {
                     toe: 1.,
                     shoulder: 0.02,
                 },
+            };
+            let roll = RollSettings {
                 exposure: -1.,
-                ..RollSettings::new_grade()
+                ..RollSettings::default()
             };
             let matrix = DMat3::from_cols(DVec3::X, DVec3::new(-1., 1., 0.), DVec3::Z);
             let area = crate::geometry::SourceRegion::from([0, 0, 1, 1]);
             let grade = GpuPhotoGrade::new(
                 &device,
-                calibration,
+                negative,
                 roll,
                 crate::local_adjustments::PhotoGradeSnapshot::new(Default::default(), vec![])
                     .unwrap(),

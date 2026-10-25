@@ -403,9 +403,15 @@ pub(super) fn write(
     {
         return Err(Error::Gpu("export source/recipe mismatch".into()));
     }
+    let input = match request.input.calibration() {
+        Some(base) => request
+            .input
+            .with_calibration(request.scan.processing_calibration(base)?),
+        None => request.input,
+    };
     let grade = Arc::new(GpuPhotoGrade::new(
         device,
-        request.scan.processing_calibration(request.calibration)?,
+        input,
         request.roll,
         request.grade.clone(),
         request.scan.camera_to_ap1,
@@ -416,7 +422,7 @@ pub(super) fn write(
     if !repairs.0.is_empty() {
         GpuPhotoGrade::validate_repaired(
             device,
-            request.scan.processing_calibration(request.calibration)?,
+            input,
             request.roll,
             &request.grade,
             request.scan.camera_to_ap1,
@@ -460,13 +466,12 @@ pub(super) fn write(
             .clone()
             .map(|clock| crate::gpu::timestamp_ledger::TimestampProbe::new(device, clock)),
     );
-    let metadata = ProcessingMetadata::with_grade(request.roll.response, &request.grade).with_look(
-        if matches!(request.format, Format::Tiff(_)) {
+    let metadata = ProcessingMetadata::with_grade(request.input.response(), &request.grade)
+        .with_look(if matches!(request.format, Format::Tiff(_)) {
             request.look.as_ref().map(|a| a.lut().id().bytes())
         } else {
             None
-        },
-    );
+        });
     encode_with_checked(
         request.composition,
         request.format,

@@ -180,7 +180,7 @@ fn grade_follows_exposure_wb_and_preserves_camera_floor_flags() {
         dmax: DVec3::splat(0.02),
         input_floor: 1. / 65535.,
     };
-    let roll = RollSettings::new_grade();
+    let roll = RollSettings::default();
     let matrix = DMat3::from_cols(
         DVec3::new(1.2, -0.1, -0.1),
         DVec3::new(-0.1, 1.2, -0.1),
@@ -199,8 +199,8 @@ fn grade_follows_exposure_wb_and_preserves_camera_floor_flags() {
         saturation: 1.3,
         ..base
     };
-    let original = Pipeline::new(calibration, roll, base, matrix).unwrap();
-    let pipeline = Pipeline::new(calibration, roll, photo, matrix).unwrap();
+    let original = Pipeline::new(input_for(calibration), roll, base, matrix).unwrap();
+    let pipeline = Pipeline::new(input_for(calibration), roll, photo, matrix).unwrap();
     let grade = Grade::new(photo).unwrap();
     for scan in [DVec3::new(0., 0.05, 0.03), DVec3::new(0.3, 0.1, 0.05)] {
         let before = original.apply(scan).unwrap();
@@ -311,4 +311,15 @@ fn current_photo_json_defaults_old_fields_and_retains_new_fields_strictly() {
     assert!(
         serde_json::from_str::<PhotoSettings>(&old.replace("\"exposure\"", "\"unknown\"")).is_err()
     );
+}
+
+fn input_for(cal: antitone::processing::Calibration) -> antitone::processing::InputSettings {
+    antitone::processing::InputSettings::Negative {
+        dmin: Some(cal.dmin),
+        dmax: Some(cal.dmax),
+        input_floor: cal.input_floor,
+        response: antitone::processing::Response::Original,
+        gamma: antitone::processing::DEFAULT_GAMMA,
+        balance: antitone::color::Balance::default(),
+    }
 }

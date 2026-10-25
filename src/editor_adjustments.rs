@@ -149,7 +149,7 @@ impl Editor {
     fn adjustment_actions_available(&self) -> bool {
         !self.busy
             && self.document.visit.ready.is_some()
-            && self.calibration().is_some()
+            && self.input.ready()
             && self.pick.is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.auto_crop_edit.is_none()

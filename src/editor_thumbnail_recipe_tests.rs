@@ -21,9 +21,11 @@ fn document() -> Document {
     document
         .import(&[PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng")])
         .unwrap();
-    document.project.dmin = Some([0.8; 3]);
-    document.project.dmax = Some([0.02; 3]);
-    document.project.input_floor = Some(crate::processing::CAMERA_INPUT_FLOOR);
+    document.project.set_dmin(Some([0.8; 3]));
+    document.project.set_dmax(Some([0.02; 3]));
+    document
+        .project
+        .set_input_floor(Some(crate::processing::CAMERA_INPUT_FLOOR));
     document
 }
 
@@ -47,7 +49,7 @@ fn complete(
 }
 
 #[test]
-fn authored_positive_cards_ignore_dust_and_keep_grade_reuse_and_freshness() {
+fn authored_positive_cards_keep_grade_reuse_and_freshness() {
     let (device, queue) = gpu();
     let renderers = Arc::new(crate::renderer::RendererCache::default());
     let mut thumbnails = Thumbnails::with_disk(device, queue, renderers, None);
@@ -56,14 +58,13 @@ fn authored_positive_cards_ignore_dust_and_keep_grade_reuse_and_freshness() {
     let source = document.project.source(id).unwrap().clone();
     let scan = Scan::open(
         &document.source_path(id).unwrap(),
-        Some(document.project.development.as_ref().unwrap().fixed_wb),
+        Some(document.project.development().as_ref().unwrap().fixed_wb),
     )
     .unwrap();
     let proxy = Arc::new(Proxy::from_scan(&scan).unwrap());
     thumbnails.bind_sources(document.cache().clone());
     thumbnails.seed(
         &source,
-        document.project.development.as_ref().unwrap(),
         FileKey::new(&document.source_path(id).unwrap()),
         proxy,
     );
@@ -79,30 +80,9 @@ fn authored_positive_cards_ignore_dust_and_keep_grade_reuse_and_freshness() {
         plain.positive.is_some(),
         "the cached camera proxy must become a graded positive without original reconstruction"
     );
-    let repair = document
-        .project
-        .source_mut(id)
-        .unwrap()
-        .repairs
-        .insert(
-            SupportMask::new([120, 60], [3, 3], vec![true; 9]).unwrap(),
-            RepairOrigin::Manual,
-            DonorChoice::Offset([-64, 0]),
-        )
-        .unwrap();
-    let dust_key = tests::key(&document, id);
-    assert_eq!(
-        plain_key, dust_key,
-        "dust edits must not invalidate navigation pixels"
-    );
-    assert!(dust_key.current_recipe(&document));
-    assert_eq!(
-        document.project.image_recipe(id).unwrap().repairs().len(),
-        1,
-        "the viewer/export recipe must retain accepted repairs"
-    );
+    assert!(plain_key.current_recipe(&document));
     let neutral = plain.positive.as_ref().unwrap().0.clone();
-    thumbnails.protect_images(vec![dust_key.clone()]);
+    thumbnails.protect_images(vec![plain_key.clone()]);
     thumbnails.set_limits(cache_limits::CacheLimits {
         cpu_bytes: 0,
         gpu_bytes: 0,
@@ -142,7 +122,7 @@ fn authored_positive_cards_ignore_dust_and_keep_grade_reuse_and_freshness() {
     );
     thumbnails.protect_images(vec![graded_key.clone()]);
     assert!(
-        !thumbnails.cache.contains(&dust_key),
+        !thumbnails.cache.contains(&plain_key),
         "replacement completion must retire the carried old card at zero optional retention"
     );
     document.project.source_mut(id).unwrap().photo.exposure = 1.;
@@ -162,20 +142,11 @@ fn authored_positive_cards_ignore_dust_and_keep_grade_reuse_and_freshness() {
         &neutral,
         &readmitted.positive.as_ref().unwrap().0
     ));
-    let before_toggle = tests::key(&document, id);
-    document
-        .project
-        .source_mut(id)
-        .unwrap()
-        .repairs
-        .set_enabled(repair, false)
-        .unwrap();
-    assert!(before_toggle.current_recipe(&document));
+
     assert!(
         !graded_key.current_recipe(&document),
         "a changed grade must still reject stale results"
     );
-    assert_eq!(before_toggle, tests::key(&document, id));
 }
 
 #[test]
@@ -190,14 +161,15 @@ fn cached_proxy_finishes_repair_bearing_navigation_cards_without_a_developable_r
     // This document has locator-only files, not decodable RAWs: the published
     // camera proxy is the only available image source.
     let mut document = tests::fixture();
-    document.project.dmin = Some([0.8; 3]);
-    document.project.dmax = Some([0.02; 3]);
-    document.project.input_floor = Some(crate::processing::CAMERA_INPUT_FLOOR);
+    document.project.set_dmin(Some([0.8; 3]));
+    document.project.set_dmax(Some([0.02; 3]));
+    document
+        .project
+        .set_input_floor(Some(crate::processing::CAMERA_INPUT_FLOOR));
     let id = document.project.order[0];
     thumbnails.bind_sources(document.cache().clone());
     thumbnails.seed(
         document.project.source(id).unwrap(),
-        document.project.development.as_ref().unwrap(),
         FileKey::new(&document.source_path(id).unwrap()),
         Arc::new(Proxy {
             width: 8,
@@ -232,7 +204,7 @@ fn cached_proxy_finishes_repair_bearing_navigation_cards_without_a_developable_r
     let card = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
     assert!(
         card.positive.is_some(),
-        "repair-bearing navigation cards must stay on the camera-proxy path"
+        "accepted repairs must not prevent cached navigation feedback"
     );
 }
 
@@ -334,6 +306,7 @@ fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_v
     let mut editor = Editor::state();
     editor.document = document.into();
     editor.thumbnails = thumbnails;
+    editor.load_input(editor.document.project.input);
     editor.current_source = Some(id);
     // Hold asynchronous replacement so the composed filmstrip must use existing pixels.
     editor.busy = true;
@@ -353,7 +326,7 @@ fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_v
         output.textures_delta.clear();
         output
     };
-    let gamma = editor.document.project.roll.gamma;
+    let gamma = editor.document.project.input.gamma();
     for (index, (exposure, gamma)) in [(0.25, gamma), (0.5, gamma), (0.75, gamma), (1., 1.2)]
         .into_iter()
         .enumerate()
@@ -364,8 +337,8 @@ fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_v
                 gpu_bytes: 0,
             });
         }
-        editor.document.project.roll.gamma = gamma;
-        editor.roll.gamma = gamma;
+        editor.document.project.set_gamma(gamma);
+        editor.set_gamma(gamma);
         editor
             .document
             .project
@@ -474,14 +447,14 @@ fn replacing_a_grade_preserves_other_photos_in_the_roll_cache() {
 }
 
 #[test]
-fn previous_card_presentation_requires_matching_source_framing_and_target_not_dust() {
+fn previous_card_presentation_requires_matching_source_framing_and_target() {
     let mut document = document();
     let id = document.project.order[0];
     let original = tests::key(&document, id);
     document.project.source_mut(id).unwrap().photo.exposure = 0.5;
     let graded = tests::key(&document, id);
     assert!(original.same_presentation(&graded));
-    document.project.roll.gamma = 1.2;
+    document.project.set_gamma(1.2);
     let interpreted = tests::key(&document, id);
     assert!(!original.same_neutral(&interpreted));
     assert!(
@@ -500,21 +473,6 @@ fn previous_card_presentation_requires_matching_source_framing_and_target_not_du
     other = graded.clone();
     other.source.file = FileKey::new(std::path::Path::new("changed-source.ARW"));
     assert!(!original.same_presentation(&other));
-    document
-        .project
-        .source_mut(id)
-        .unwrap()
-        .repairs
-        .insert(
-            SupportMask::new([120, 60], [3, 3], vec![true; 9]).unwrap(),
-            RepairOrigin::Manual,
-            DonorChoice::Offset([-64, 0]),
-        )
-        .unwrap();
-    assert!(
-        original.same_presentation(&tests::key(&document, id)),
-        "dust does not change navigation presentation"
-    );
     let uncropped = tests::key(&document, id);
     document.project.source_mut(id).unwrap().crop = Some(crate::crop::Crop {
         center: [128., 96.],
@@ -543,9 +501,11 @@ fn previous_card_presentation_requires_matching_source_framing_and_target_not_du
 fn cpu_look_charges_follow_node_allocations_not_equal_contents_or_wrapper_identity() {
     use crate::looks::{LookAsset, LookOrigin, Lut3D};
     let mut document = tests::fixture();
-    document.project.dmin = Some([0.8; 3]);
-    document.project.dmax = Some([0.02; 3]);
-    document.project.input_floor = Some(crate::processing::CAMERA_INPUT_FLOOR);
+    document.project.set_dmin(Some([0.8; 3]));
+    document.project.set_dmax(Some([0.02; 3]));
+    document
+        .project
+        .set_input_floor(Some(crate::processing::CAMERA_INPUT_FLOOR));
     let asset = |lut| Arc::new(LookAsset::new("Shared".into(), LookOrigin::Imported, lut).unwrap());
     let lut = Arc::new(Lut3D::new(2, [-0.5; 3], [1.1; 3], vec![[0.4, 0.3, 0.2]; 8]).unwrap());
     document.project.output.look = Some(asset(lut.clone()));
@@ -600,9 +560,11 @@ fn authored_offscreen_cpu_completion_advances_to_positive_cards_when_the_view_be
         .collect();
     let mut document = Document::default();
     document.import(&paths).unwrap();
-    document.project.dmin = Some([0.8; 3]);
-    document.project.dmax = Some([0.02; 3]);
-    document.project.input_floor = Some(crate::processing::CAMERA_INPUT_FLOOR);
+    document.project.set_dmin(Some([0.8; 3]));
+    document.project.set_dmax(Some([0.02; 3]));
+    document
+        .project
+        .set_input_floor(Some(crate::processing::CAMERA_INPUT_FLOOR));
     let selected = document.project.order[0];
     let mut editor = Editor::state();
     editor.document = document.into();
@@ -697,9 +659,11 @@ fn authored_36_positive_cards_with_a_shared_full_size_look_survive_reverse_brows
         .collect();
     let mut document = Document::default();
     document.import(&paths).unwrap();
-    document.project.dmin = Some([0.8; 3]);
-    document.project.dmax = Some([0.02; 3]);
-    document.project.input_floor = Some(crate::processing::CAMERA_INPUT_FLOOR);
+    document.project.set_dmin(Some([0.8; 3]));
+    document.project.set_dmax(Some([0.02; 3]));
+    document
+        .project
+        .set_input_floor(Some(crate::processing::CAMERA_INPUT_FLOOR));
     // The production look grid is 129³. A constant authored LUT makes its resource
     // footprint realistic without bringing a built-in generator or photographs into this test.
     document.project.output.look = Some(Arc::new(

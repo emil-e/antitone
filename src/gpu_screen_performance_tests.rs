@@ -1,4 +1,9 @@
 use super::*;
+use crate::processing::Calibration;
+use crate::{
+    color::Balance,
+    processing::{DEFAULT_GAMMA, NegativeInput, Response},
+};
 use crate::{renderer::GpuRenderer, rendering::OutputTarget};
 use wgpu::util::DeviceExt;
 
@@ -334,15 +339,17 @@ impl ScreenProbe {
         }
     }
 
-    fn grade(
-        &self,
-        snapshot: PhotoGradeSnapshot,
-        roll: RollSettings,
-    ) -> Result<GpuPhotoGrade, Error> {
+    fn grade(&self, snapshot: PhotoGradeSnapshot, gamma: f64) -> Result<GpuPhotoGrade, Error> {
+        let input = NegativeInput {
+            calibration: self.calibration,
+            response: Response::film(),
+            gamma,
+            balance: Balance::default(),
+        };
         GpuPhotoGrade::new(
             &self.device,
-            self.calibration,
-            roll,
+            input,
+            RollSettings::default(),
             snapshot,
             self.source.camera_to_ap1,
             self.area,
@@ -421,7 +428,7 @@ impl ScreenProbe {
                     grade.snapshot().locals()[..1].to_vec(),
                 )
                 .unwrap();
-                let prefix = self.grade(prefix, RollSettings::new_grade()).unwrap();
+                let prefix = self.grade(prefix, DEFAULT_GAMMA).unwrap();
                 self.run(Some(&prefix), Some(&[0, 6]), None);
             }
             Cut::None => {}
@@ -437,7 +444,7 @@ impl ScreenProbe {
                         grade.snapshot().locals()[1..].to_vec(),
                     )
                     .unwrap(),
-                    RollSettings::new_grade(),
+                    DEFAULT_GAMMA,
                 )
                 .unwrap(),
             )
@@ -514,7 +521,7 @@ async fn measure(input: InputRaster, corrected: bool, kind: &str) {
                 Cut::Camera
             };
             let grades = (0..4)
-                .map(|i| harness.grade(edited(case, i), RollSettings::new_grade()))
+                .map(|i| harness.grade(edited(case, i), DEFAULT_GAMMA))
                 .collect::<Result<Vec<_>, _>>();
             let grades = match grades {
                 Ok(grades) => grades,
@@ -612,11 +619,9 @@ async fn measure(input: InputRaster, corrected: bool, kind: &str) {
         // An upstream gamma edit invalidates code tables and any response prefix.
         let mut churn = Vec::new();
         for i in 0..3 {
-            let roll = RollSettings {
-                gamma: 0.60 + i as f64 * 0.002,
-                ..RollSettings::new_grade()
-            };
-            let grade = harness.grade(edited("exposure", 0), roll).unwrap();
+            let grade = harness
+                .grade(edited("exposure", 0), 0.60 + i as f64 * 0.002)
+                .unwrap();
             churn.push(
                 harness
                     .run(Some(&grade), None, Some(&rendered))
@@ -638,16 +643,7 @@ fn screen_prefix_lifetime() {
     pollster::block_on(async {
         let input = InputRaster::synthetic([3840, 2160]);
         let mut h = ScreenProbe::new(&input, false).await;
-        let grade = |gamma| {
-            h.grade(
-                edited("exposure", 0),
-                RollSettings {
-                    gamma,
-                    ..RollSettings::new_grade()
-                },
-            )
-            .unwrap()
-        };
+        let grade = |gamma| h.grade(edited("exposure", 0), gamma).unwrap();
         let first = grade(0.60);
         let second = grade(0.65);
         let third = grade(0.70);

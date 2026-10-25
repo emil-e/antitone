@@ -1,5 +1,6 @@
 //! Selected-view ownership: one neutral acquisition, latest-request coalescing, immutable frames.
 use super::*;
+use crate::processing::InputSettings;
 use crate::{
     frame_raster::FrameRaster,
     gpu::view::{RenderedView, ViewKernels, ViewSource, ViewSourceSpec},
@@ -38,12 +39,12 @@ pub(super) struct Acquisition {
 
 #[derive(Default)]
 pub(super) struct WorkingView {
-    pub(super) device: Option<wgpu::Device>,
+    gpu: Option<(wgpu::Device, wgpu::Queue)>,
     intent: Option<(u64, FrameRaster, ProcessingSignature, OutputTarget)>,
     revision: u64,
     changed_at: Option<std::time::Instant>,
     mailbox: Arc<Mailbox>,
-    kernels: Arc<Mutex<Option<Arc<ViewKernels>>>>,
+    pub(super) kernels: Arc<Mutex<Option<Arc<ViewKernels>>>>,
     source: Option<Arc<ViewSource>>,
     underlay: Option<Arc<ViewSource>>,
     underlay_rendered: Option<Arc<RenderedView>>,
@@ -58,9 +59,9 @@ pub(super) struct WorkingView {
 }
 
 impl WorkingView {
-    pub(super) fn new(device: wgpu::Device) -> Self {
+    pub(super) fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
         let mut state = Self::default();
-        state.device = Some(device);
+        state.gpu = Some((device, queue));
         state
     }
 
@@ -116,7 +117,15 @@ impl WorkingView {
     }
 
     pub(super) fn enabled(&self) -> bool {
-        self.device.is_some()
+        self.gpu.is_some()
+    }
+
+    pub(super) fn device(&self) -> Option<&wgpu::Device> {
+        self.gpu.as_ref().map(|(device, _)| device)
+    }
+
+    pub(super) fn queue(&self) -> Option<&wgpu::Queue> {
+        self.gpu.as_ref().map(|(_, queue)| queue)
     }
 
     pub(super) fn reference_ready(&self) -> bool {
@@ -270,7 +279,7 @@ impl WorkingView {
 
     fn render(
         &mut self,
-        calibration: Calibration,
+        settings: &InputSettings,
         roll: RollSettings,
         snapshot: PhotoGradeSnapshot,
         input: &ProcessingInput,
@@ -283,7 +292,7 @@ impl WorkingView {
             RenderedView::new(
                 device,
                 source,
-                calibration,
+                settings,
                 roll,
                 snapshot.clone(),
                 &source_input,
@@ -322,8 +331,7 @@ impl WorkingView {
         };
 
         if self.colour_in_flight() {
-            self.device
-                .as_ref()
+            self.device()
                 .unwrap()
                 .poll(wgpu::PollType::Poll)
                 .map_err(|error| Error::Gpu(error.to_string()))?;
@@ -382,7 +390,7 @@ impl WorkingView {
                 }) {
                     return Ok(rendered.clone());
                 }
-                create(self.device.as_ref().unwrap(), source, previous)
+                create(self.device().unwrap(), source, previous)
             };
             let rendered_detail = render_source(source.clone(), self.rendered.as_ref())?;
             let rendered_underlay = underlay
@@ -436,7 +444,7 @@ impl WorkingView {
 
         match &self.underlay_rendered {
             Some(underlay) => RenderedView::composite(
-                self.device.as_ref().unwrap(),
+                self.device().unwrap(),
                 detail.clone(),
                 underlay.clone(),
                 frame,
@@ -785,10 +793,11 @@ impl Editor {
         }
 
         if self.pending_preview.is_some()
-            || self.pick.is_some()
-            || self.document.pick_return.is_some()
-            || self.document.visit.crop_edit.is_some()
-            || self.flat_edit.is_some()
+            || (input.repairs.0.is_empty()
+                && (self.pick.is_some()
+                    || self.document.pick_return.is_some()
+                    || self.document.visit.crop_edit.is_some()
+                    || self.flat_edit.is_some()))
         {
             self.working.clear();
             return Ok(None);
@@ -830,11 +839,15 @@ impl Editor {
             return Ok(self.working.displayed.clone());
         }
 
-        let Some(calibration) = self.calibration() else {
+        let base_input = self.input();
+        if base_input.is_negative() && base_input.calibration().is_none() {
             self.working.clear();
             return Ok(None);
+        }
+        let settings = match base_input.calibration() {
+            Some(base) => base_input.with_calibration(self.processing_calibration(base)?),
+            None => base_input,
         };
-        let calibration = self.processing_calibration(calibration)?;
         let matrix = glam::DMat3::from_cols_array_2d(&ready.record.development.camera_to_ap1);
         let snapshot = match input.grade() {
             Some(grade) => grade.snapshot().clone(),
@@ -843,44 +856,20 @@ impl Editor {
         let spec = ViewSourceSpec::new(
             self.id,
             frame,
-            calibration,
-            self.roll,
+            settings,
             matrix,
             self.correction
                 .as_ref()
                 .map(|correction| correction.gpu.field().clone()),
         )?
         .with_repairs(input.repairs.clone());
-        self.request_working(spec.clone(), source_input, cx);
-        self.working.render(
-            calibration,
-            self.roll,
-            snapshot,
-            input,
-            self.target,
-            context,
-        )?;
+        self.request_working(spec, source_input, cx);
+        self.working
+            .render(&settings, self.roll, snapshot, input, self.target, context)?;
 
-        let revision = self.original.revision();
-        let reference = self
-            .original
-            .settled
-            .as_ref()
-            .filter(|(reference_revision, view, _)| {
-                *reference_revision == revision && view.frame == Some(frame)
-            });
-        self.working.reference = match reference {
-            Some((_, _, image)) => match &self.working.reference {
-                Some(old) if Arc::ptr_eq(&old.image, image) => Some(old.clone()),
-                _ => Some(RenderedView::reference(
-                    image.clone(),
-                    spec,
-                    input.signature(),
-                    self.target,
-                )),
-            },
-            None => None,
-        };
+        self.working.reference = self
+            .original_rendered(OriginalPurpose::Reference, input, matrix)?
+            .filter(|rendered| rendered.spec.frame == frame);
 
         self.working.displayed =
             self.working

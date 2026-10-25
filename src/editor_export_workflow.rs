@@ -44,9 +44,12 @@ impl Editor {
         format: OutputFormat,
         overwrite: Overwrite,
     ) -> Result<Option<Request>, Error> {
-        let (Some(_), Some(ready)) = (self.calibration(), &self.document.visit.ready) else {
+        let Some(ready) = &self.document.visit.ready else {
             return Ok(None);
         };
+        if !self.input.ready() {
+            return Ok(None);
+        }
         self.validate_document_candidate(&self.document)?;
         let id = self
             .current_source

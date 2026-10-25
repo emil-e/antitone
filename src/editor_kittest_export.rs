@@ -12,8 +12,8 @@ fn fixture_editor(test: impl FnOnce(Harness<'_, Editor>, tempfile::TempDir)) {
             !editor.busy && editor.document_pending.is_none()
         });
         harness.update(|editor| {
-            editor.dmin = Some(DVec3::splat(0.8));
-            editor.dmax = Some(DVec3::splat(0.02));
+            editor.set_dmin(Some(DVec3::splat(0.8)));
+            editor.set_dmax(Some(DVec3::splat(0.02)));
             editor.target = OutputTarget::DisplayP3;
             editor.crop = Some(Crop {
                 center: [120., 100.],

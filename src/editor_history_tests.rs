@@ -77,8 +77,8 @@ fn authored_history_restores_import_crop_dust_local_and_analysis_through_the_rea
     editor = round_trip(editor, &empty, &imported);
     assert!(editor.document.visit.ready.is_some());
     // Calibration is fixture setup; accepted picks have independent controller coverage.
-    editor.dmin = Some(DVec3::splat(0.2));
-    editor.dmax = Some(DVec3::splat(0.005));
+    editor.set_dmin(Some(DVec3::splat(0.2)));
+    editor.set_dmax(Some(DVec3::splat(0.005)));
     editor.source = false;
     editor.tab = 1;
     let before_crop = editor.history_snapshot();
@@ -220,8 +220,8 @@ fn controller() -> Editor {
     let mut editor = crate::editor::tests::authored_fixture(&["roll-0.dng", "roll-1.dng"]);
     // The authored import is setup, not the edit under test.
     editor.document.history = History::default();
-    editor.dmin = Some(DVec3::new(0.2, 0.15, 0.1));
-    editor.dmax = Some(DVec3::new(0.008, 0.005, 0.002));
+    editor.set_dmin(Some(DVec3::new(0.2, 0.15, 0.1)));
+    editor.set_dmax(Some(DVec3::new(0.008, 0.005, 0.002)));
     editor.sync_document();
     editor
 }

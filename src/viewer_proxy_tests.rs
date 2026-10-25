@@ -101,3 +101,55 @@ fn selected_proxy_has_one_immutable_source_and_lazy_active_target_output() {
         assert!(last.set_flat_field(None, geometry).is_err());
     });
 }
+
+#[test]
+fn proxy_view_source_accepts_a_cropped_frame_output() {
+    pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
+        let kernels = crate::gpu::view::ViewKernels::new(&device).await.unwrap();
+        let size = [32, 16];
+        let proxy = GpuProxy::new_continuous(
+            renderer,
+            &device,
+            size,
+            &vec![[4000., 5000., 6000., 0.]; (size[0] * size[1]) as usize],
+            DMat3::IDENTITY,
+            None,
+            SourceGeometry::new([0, 0, size[0], size[1]], size).unwrap(),
+        )
+        .unwrap();
+        let area = crate::geometry::SourceRegion {
+            x: 0,
+            y: 0,
+            width: size[0],
+            height: size[1],
+        };
+        let composition = crate::geometry::Composition::with_crop(
+            area,
+            Default::default(),
+            Default::default(),
+            Some(crate::crop::Crop::from_region(crate::raw::Rect {
+                x: 8,
+                y: 4,
+                width: 16,
+                height: 8,
+            })),
+        )
+        .unwrap();
+        let frame = crate::frame_raster::FrameRaster::full(composition).unwrap();
+        let spec = crate::gpu::view::ViewSourceSpec::new(
+            1,
+            frame,
+            crate::processing::InputSettings::Digital,
+            DMat3::IDENTITY,
+            None,
+        )
+        .unwrap()
+        .with_repairs(Default::default());
+        let source = proxy.view_source(&queue, kernels, spec).unwrap();
+        assert_eq!(source.spec.frame.output, [16, 8]);
+    });
+}

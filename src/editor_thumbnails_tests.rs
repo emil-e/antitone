@@ -1,4 +1,5 @@
 use super::*;
+use crate::project::Development;
 
 fn controlled() -> (Thumbnails, mpsc::Receiver<workflow::Submission>) {
     let (commands, requests) = mpsc::channel();
@@ -103,11 +104,12 @@ pub(super) fn fixture() -> Document {
         let path = directory.path().join(format!("photo-{index}.ARW"));
         std::fs::write(&path, b"locator-only CPU/GPU fixture").unwrap();
         document
-            .register(
+            .register_with_development(
                 Source {
                     id: SourceId(0),
                     path,
                     development: SourceDevelopment {
+                        decode: Development::new("test-backend".into(), [1.; 4]),
                         lens_correction: None,
                         dng_development: None,
                         dimensions: [900, 600],
@@ -133,7 +135,7 @@ pub(super) fn fixture() -> Document {
 pub(super) fn key(document: &Document, id: SourceId) -> ImageKey {
     ImageKey {
         projection: None,
-        recipe: if document.project.calibration().unwrap().is_some() {
+        recipe: if document.project.input.ready() {
             document
                 .project
                 .thumbnail_recipe(id)
@@ -144,7 +146,6 @@ pub(super) fn key(document: &Document, id: SourceId) -> ImageKey {
         },
         source: SourceKey::new(
             document.project.source(id).unwrap(),
-            document.project.development.as_ref().unwrap(),
             FileKey::new(&document.source_path(id).unwrap()),
         ),
         target: OutputTarget::DisplayP3,
@@ -286,14 +287,14 @@ fn source_cache_key_excludes_grading_but_includes_locator_revision_matrix_wb_and
         height: 203,
     }));
     // Composition is applied on paint, so source/processed textures remain reusable.
-    assert_eq!(key(&document, id), original);
+    assert_eq!(key(&document, id).source, original.source);
     document.project.source_mut(id).unwrap().path = "moved.ARW".into();
     assert_ne!(key(&document, id), original);
     let mut candidate = original.clone();
     candidate.source.source.camera_to_ap1[0][0] += 0.1;
     assert_ne!(candidate, original);
     candidate = original.clone();
-    candidate.source.development.fixed_wb[0] += 0.1;
+    candidate.source.source.decode.fixed_wb[0] += 0.1;
     assert_ne!(candidate, original);
     candidate = original.clone();
     candidate.source.id = SourceId(42);
@@ -301,36 +302,6 @@ fn source_cache_key_excludes_grading_but_includes_locator_revision_matrix_wb_and
     candidate = original.clone();
     candidate.target = OutputTarget::Srgb;
     assert_ne!(candidate, original);
-}
-
-#[test]
-fn dust_masks_do_not_change_thumbnail_keys_or_retained_charges() {
-    let mut document = fixture();
-    document.project.dmin = Some([0.8; 3]);
-    document.project.dmax = Some([0.02; 3]);
-    document.project.input_floor = Some(crate::processing::CAMERA_INPUT_FLOOR);
-    let id = document.project.order[0];
-    let before = key(&document, id);
-    let before_bytes = before.retained_bytes();
-    document
-        .project
-        .source_mut(id)
-        .unwrap()
-        .repairs
-        .insert(
-            crate::dust_repair::SupportMask::new(
-                [60, 60],
-                [256, 192],
-                (0..256 * 192).map(|index| index % 2 == 0).collect(),
-            )
-            .unwrap(),
-            crate::dust_repair::RepairOrigin::Manual,
-            crate::dust_repair::DonorChoice::Automatic,
-        )
-        .unwrap();
-    let after = key(&document, id);
-    assert_eq!(before, after);
-    assert_eq!(before_bytes, after.retained_bytes());
 }
 
 #[test]
@@ -358,11 +329,9 @@ fn correction_changes_image_identity_without_invalidating_unconverted_raw_proxie
     let map = Arc::new(
         crate::flat_field::FlatField::from_nodes(a, [2, 2], vec![DVec3::splat(1.1); 4]).unwrap(),
     );
-    document.project.flat_field = Some(crate::project::FlatFieldSettings::new(
-        source,
-        map,
-        document.project.development.as_ref().unwrap(),
-    ));
+    document
+        .project
+        .set_flat_field(Some(crate::project::FlatFieldSettings::new(source, map)));
     let corrected = key(&document, id);
     assert_ne!(corrected, plain);
     assert_eq!(corrected.source, plain.source);
@@ -371,9 +340,9 @@ fn correction_changes_image_identity_without_invalidating_unconverted_raw_proxie
         (*corrected.field.as_ref().unwrap().0).clone(),
     )));
     assert_eq!(corrected, recreated);
-    document.project.flat_field.as_mut().unwrap().enabled = false;
+    document.project.flat_field_mut().unwrap().enabled = false;
     assert_eq!(key(&document, id), plain);
-    document.project.flat_field = None;
+    document.project.set_flat_field(None);
     assert_eq!(key(&document, id), plain);
 }
 
@@ -416,7 +385,7 @@ fn changed_document_identity_rejects_result_and_typed_worker_stop_clears_pending
     let id = document.project.order[0];
     let (mut thumbnails, _requests) = controlled();
     let (ticket, old_key) = typed_ticket(&mut thumbnails, key(&document, id));
-    document.project.development.as_mut().unwrap().fixed_wb[0] += 0.1;
+    document.project.development_mut().unwrap().fixed_wb[0] += 0.1;
     thumbnails.complete(
         Outcome {
             ticket,
@@ -440,7 +409,7 @@ fn filmstrip_resize_and_selection_preserve_project_state_and_loading_placeholder
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
             *editor.document = fixture();
-            editor.floor = editor.document.project.input_floor.unwrap();
+            editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
             let before = editor.document.project.clone();
             let context = egui::Context::default();
             let mut run = |events| {
@@ -590,9 +559,9 @@ fn thumbnail_grades_follow_roll_and_photo_without_inspection_gain_or_redecode() 
         bytemuck::bytes_of(&editor.thumbnail_parameters(&source).unwrap().parameters()),
         bytemuck::bytes_of(&ProcessingParameters::source_inspection(2.).unwrap())
     );
-    editor.dmin = Some(DVec3::new(0.2, 0.15, 0.1));
-    editor.dmax = Some(DVec3::new(0.008, 0.005, 0.002));
-    editor.floor = crate::processing::CAMERA_INPUT_FLOOR;
+    editor.set_dmin(Some(DVec3::new(0.2, 0.15, 0.1)));
+    editor.set_dmax(Some(DVec3::new(0.008, 0.005, 0.002)));
+    editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
     let first = editor.thumbnail_parameters(&source).unwrap().parameters();
     let expected = ProcessingParameters::positive(
         editor.calibration().unwrap(),
@@ -671,8 +640,8 @@ fn thumbnail_grades_follow_roll_and_photo_without_inspection_gain_or_redecode() 
 fn uncalibrated_thumbnails_share_source_default_but_not_transient_inspection_ev() {
     let mut editor = super::super::tests::fixture();
     *editor.document = fixture();
-    editor.dmin = None;
-    editor.dmax = None;
+    editor.set_dmin(None);
+    editor.set_dmax(None);
     let id = editor.document.project.order[0];
     let other = editor.document.project.order[1];
     editor.current_source = Some(id);
@@ -692,13 +661,7 @@ fn uncalibrated_thumbnails_share_source_default_but_not_transient_inspection_ev(
     }
     assert_eq!(editor.document.project, before);
     assert_eq!(key(&editor.document, id), original_key);
-    editor
-        .document
-        .project
-        .development
-        .as_mut()
-        .unwrap()
-        .fixed_wb = [1., 1., 1., 1.];
+    editor.document.project.development_mut().unwrap().fixed_wb = [1., 1., 1., 1.];
     let new_default = editor.source_parameters(0.).unwrap();
     let thumbnail = editor.thumbnail_parameters(&source).unwrap().parameters();
     assert_eq!(
@@ -707,11 +670,6 @@ fn uncalibrated_thumbnails_share_source_default_but_not_transient_inspection_ev(
     );
     assert_ne!(bytemuck::bytes_of(&thumbnail), bytemuck::bytes_of(&default));
     assert_ne!(key(&editor.document, id), original_key);
-    editor.document.project.development = None;
-    assert_eq!(
-        bytemuck::bytes_of(&editor.thumbnail_parameters(&source).unwrap().parameters()),
-        bytemuck::bytes_of(&ProcessingParameters::source_inspection(1.).unwrap()),
-    );
 }
 
 #[test]
@@ -1027,75 +985,14 @@ fn finish_submission(
 }
 
 #[test]
-fn dust_edits_do_not_retire_inflight_thumbnails_or_capture_repair_payloads() {
-    let mut editor = Editor::state();
-    *editor.document = fixture();
-    editor.document.project.dmin = Some([0.8; 3]);
-    editor.document.project.dmax = Some([0.02; 3]);
-    editor.document.project.input_floor = Some(crate::processing::CAMERA_INPUT_FLOOR);
-    let id = editor.document.project.order[0];
-    let source = editor.document.project.source_mut(id).unwrap();
-    source.photo.exposure = 0.4;
-    source
-        .repairs
-        .insert(
-            crate::dust_repair::SupportMask::new([60, 60], [16, 16], vec![true; 256]).unwrap(),
-            crate::dust_repair::RepairOrigin::Manual,
-            crate::dust_repair::DonorChoice::Automatic,
-        )
-        .unwrap();
-    let (thumbnails, requests) = controlled();
-    editor.thumbnails = thumbnails;
-    editor
-        .thumbnails
-        .bind_sources(editor.document.cache().clone());
-    crate::application::test_support::with_application(editor, |app| {
-        app.enter(|e, cx| {
-            e.thumbnails.demand = Demand::Visible(vec![id]);
-            e.advance_thumbnail_demand(cx);
-        });
-        let submitted = take_submission(app, &requests);
-        assert!(submitted.job.source.repairs.repairs().is_empty());
-        let recipe = submitted.job.key.recipe.as_ref().unwrap().as_ref().unwrap();
-        assert!(recipe.repairs().is_empty());
-        assert_eq!(
-            recipe.grade.global().exposure,
-            0.4,
-            "metadata-only source capture must not lose the captured grade"
-        );
-        app.enter(|e, cx| {
-            e.document
-                .project
-                .source_mut(id)
-                .unwrap()
-                .repairs
-                .insert(
-                    crate::dust_repair::SupportMask::new([120, 120], [3, 3], vec![true; 9])
-                        .unwrap(),
-                    crate::dust_repair::RepairOrigin::Manual,
-                    crate::dust_repair::DonorChoice::Offset([-32, 0]),
-                )
-                .unwrap();
-            e.advance_thumbnail_demand(cx);
-            assert_eq!(
-                e.thumbnails.pending.as_ref().map(|pending| pending.0),
-                Some(submitted.job.ticket)
-            );
-        });
-        app.pump();
-        assert!(
-            matches!(requests.try_recv(), Err(mpsc::TryRecvError::Empty)),
-            "repair changes must not resubmit navigation work"
-        );
-    });
-}
-
-#[test]
 fn offscreen_positive_demand_stays_cpu_only_without_space_for_its_neutral_and_graded_product() {
     let (mut editor, requests) = idle_prefetch_fixture();
-    editor.document.project.dmin = Some([0.8; 3]);
-    editor.document.project.dmax = Some([0.02; 3]);
-    editor.document.project.input_floor = Some(crate::processing::CAMERA_INPUT_FLOOR);
+    editor.document.project.set_dmin(Some([0.8; 3]));
+    editor.document.project.set_dmax(Some([0.02; 3]));
+    editor
+        .document
+        .project
+        .set_input_floor(Some(crate::processing::CAMERA_INPUT_FLOOR));
     editor.thumbnails.cache.retain(|_, _| false);
     let last = *editor.document.project.order.last().unwrap();
     for &id in &editor.document.project.order {
@@ -1332,7 +1229,7 @@ fn blocked_new_admission_preserves_the_existing_current_visible_ticket() {
 fn crop_draft_cancels_offscreen_prefetch_and_suspends_idle_admission() {
     let mut editor = Editor::state();
     *editor.document = fixture();
-    editor.floor = editor.document.project.input_floor.unwrap();
+    editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
     super::super::tests::add_ready_fixture(&mut editor);
     let last = *editor.document.project.order.last().unwrap();
     let image_key = key(&editor.document, last);
@@ -1514,7 +1411,6 @@ fn critical_pressure_releases_the_seed_when_the_working_source_is_gone() {
     thumbnails.sources.set_budget(0);
     thumbnails.seed(
         source,
-        document.project.development.as_ref().unwrap(),
         FileKey::new(&document.source_path(source.id).unwrap()),
         Arc::new(Proxy {
             width: 1,
@@ -1542,7 +1438,6 @@ fn obsolete_scroll_work_is_replaced_once_without_dropping_valid_source_seeds() {
         .bind_sources(editor.document.cache().clone());
     editor.thumbnails.seed(
         editor.document.project.source(id).unwrap(),
-        editor.document.project.development.as_ref().unwrap(),
         FileKey::new(&editor.document.source_path(id).unwrap()),
         Arc::new(Proxy {
             width: 1,
@@ -1598,11 +1493,21 @@ fn disk_worker_reuses_camera_pixels_for_source_and_positive_cards_and_rejects_st
         source.development.dimensions = [2, 1];
         source.development.active_area = [0, 0, 2, 1];
         let development = Development::new(crate::raw::version(), [1.; 4]);
-        let id = document.register(source, development.clone()).unwrap();
+        let id = document
+            .register_with_development(source, development.clone())
+            .unwrap();
+        document.project.input = crate::processing::InputSettings::Negative {
+            dmin: None,
+            dmax: None,
+            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
+            response: crate::processing::Response::film(),
+            gamma: crate::processing::DEFAULT_GAMMA,
+            balance: Default::default(),
+        };
         let source = document.project.source(id).unwrap().clone();
         let disk = disk::DiskCache::at(directory.path().join("cache"));
         disk.store(
-            &SourceKey::new(&source, &development, FileKey::new(&path)),
+            &SourceKey::new(&source, FileKey::new(&path)),
             &Proxy {
                 width: 2,
                 height: 1,
@@ -1627,9 +1532,11 @@ fn disk_worker_reuses_camera_pixels_for_source_and_positive_cards_and_rejects_st
             thumbnails.ready_count(&document, OutputTarget::DisplayP3),
             1
         );
-        document.project.dmin = Some([0.8; 3]);
-        document.project.dmax = Some([0.02; 3]);
-        document.project.input_floor = Some(crate::processing::CAMERA_INPUT_FLOOR);
+        document.project.set_dmin(Some([0.8; 3]));
+        document.project.set_dmax(Some([0.02; 3]));
+        document
+            .project
+            .set_input_floor(Some(crate::processing::CAMERA_INPUT_FLOOR));
         let mut positive = Thumbnails::with_disk(
             device.clone(),
             queue.clone(),

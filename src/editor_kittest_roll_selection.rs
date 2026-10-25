@@ -34,8 +34,8 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         let ids = harness.read(|editor| editor.document.project.order.clone());
         let project_path = directory.path().join("roll.antitone.json");
         harness.update(|e| {
-            e.dmin = Some(DVec3::new(0.2, 0.15, 0.1));
-            e.dmax = Some(DVec3::new(0.008, 0.005, 0.002));
+            e.set_dmin(Some(DVec3::new(0.2, 0.15, 0.1)));
+            e.set_dmax(Some(DVec3::new(0.008, 0.005, 0.002)));
             e.document
                 .project
                 .source_mut(ids[0])
@@ -238,8 +238,8 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
             .click_modifiers(egui::Modifiers::COMMAND);
         harness.step();
         harness.update(|e| {
-            e.dmin = Some(DVec3::new(0.2, 0.15, 0.1));
-            e.dmax = Some(DVec3::new(0.008, 0.005, 0.002));
+            e.set_dmin(Some(DVec3::new(0.2, 0.15, 0.1)));
+            e.set_dmax(Some(DVec3::new(0.008, 0.005, 0.002)));
         });
         stage(&mut harness, "Photo");
         let role = egui::accesskit::Role::SpinButton;
@@ -358,5 +358,64 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
         harness.get_by_label("Cancel").click();
         harness.step();
         harness.read(|editor| assert_eq!(editor.document.project, before));
+    });
+}
+
+#[test]
+fn switching_back_uses_source_crop_for_pending_and_ready_views() {
+    let directory = tempfile::tempdir().unwrap();
+    let paths: Vec<_> = ["roll-0.dng", "roll-1.dng"]
+        .iter()
+        .map(|name| {
+            let path = directory.path().join(name);
+            std::fs::copy(fixture(name), &path).unwrap();
+            path
+        })
+        .collect();
+    editor_harness_with_thumbnails(true, |mut h, _| {
+        h.enter(|editor, cx| editor.add_raws(paths, cx));
+        wait_for(&mut h, |e| !e.busy);
+        let first = h.read(|e| e.current_source.unwrap());
+        let crop = crate::crop::Crop::from_region(crate::raw::Rect {
+            x: 88,
+            y: 148,
+            width: 320,
+            height: 200,
+        })
+        .straightened(
+            crate::raw::Rect {
+                x: 0,
+                y: 0,
+                width: 496,
+                height: 496,
+            },
+            0.1,
+        )
+        .unwrap();
+        h.update(|e| {
+            e.set_dmin(Some(DVec3::splat(0.8)));
+            e.set_dmax(Some(DVec3::splat(0.02)));
+            e.crop = Some(crop);
+            e.sync_document();
+        });
+        h.step();
+        h.get_by_label("roll-1.dng").click();
+        h.step();
+        wait_for(&mut h, |e| !e.busy);
+        h.get_by_label("roll-0.dng").click();
+        h.step();
+        h.read(|e| {
+            assert_eq!(e.crop, Some(crop));
+            assert_eq!(e.document.project.source(first).unwrap().crop, Some(crop));
+            assert!(e.pending_preview.is_some());
+            assert_eq!(e.pending_preview.as_ref().unwrap().composition.crop(), crop);
+        });
+        wait_for(&mut h, |e| !e.busy);
+        h.read(|e| {
+            assert_eq!(
+                e.preview_rendered.as_ref().unwrap().2.composition.crop(),
+                crop
+            );
+        });
     });
 }

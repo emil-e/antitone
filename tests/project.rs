@@ -1,28 +1,32 @@
 #![cfg(feature = "project")]
 use antitone::{
     color::Balance,
-    processing::{InputKind, PhotoSettings, Pipeline},
+    processing::{
+        CAMERA_INPUT_FLOOR, DEFAULT_GAMMA, InputSettings, PhotoSettings, Pipeline, Response,
+    },
     project::*,
 };
 use glam::DVec3;
 
 fn fixture(directory: &std::path::Path) -> (Project, SourceId, SourceId) {
+    let decode = Development::new("0.22.0".into(), [2133., 1024., 1771., 1024.]);
     let mut project = Project {
-        development: Some(Development::new(
-            "0.22.0".into(),
-            [2133., 1024., 1771., 1024.],
-        )),
-        input_floor: Some(antitone::processing::CAMERA_INPUT_FLOOR),
-        dmin: Some([
-            0.16512039312008006,
-            0.13295850981449217,
-            0.11888115148085542,
-        ]),
-        dmax: Some([
-            0.008358001578451848,
-            0.003545242472549229,
-            0.001551173905987176,
-        ]),
+        input: InputSettings::Negative {
+            dmin: Some(DVec3::new(
+                0.16512039312008006,
+                0.13295850981449217,
+                0.11888115148085542,
+            )),
+            dmax: Some(DVec3::new(
+                0.008358001578451848,
+                0.003545242472549229,
+                0.001551173905987176,
+            )),
+            input_floor: CAMERA_INPUT_FLOOR,
+            response: Response::film(),
+            gamma: DEFAULT_GAMMA,
+            balance: Balance::default(),
+        },
         ..Default::default()
     };
     let source = |name: &str| {
@@ -32,6 +36,7 @@ fn fixture(directory: &std::path::Path) -> (Project, SourceId, SourceId) {
             id: SourceId(0),
             path: name.into(),
             development: SourceDevelopment {
+                decode: decode.clone(),
                 lens_correction: None,
                 dng_development: None,
                 dimensions: [900, 600],
@@ -50,10 +55,12 @@ fn fixture(directory: &std::path::Path) -> (Project, SourceId, SourceId) {
     };
     let dmin_source_id = project.add_source(source("dmin.ARW")).unwrap();
     let dmax_source_id = project.add_source(source("dmax.ARW")).unwrap();
-    project.roll.balance = Balance {
-        warmth: 0.12345678901234567,
-        tint: -0.23456789012345678,
-    };
+    if let InputSettings::Negative { balance, .. } = &mut project.input {
+        *balance = Balance {
+            warmth: 0.12345678901234567,
+            tint: -0.23456789012345678,
+        };
+    }
     project.source_mut(dmin_source_id).unwrap().photo = PhotoSettings {
         exposure: 0.5,
         wb: Balance {
@@ -138,15 +145,15 @@ fn accepted_per_source_analysis_support_roundtrips_and_rejects_invalid_associati
 fn input_stage_roundtrips() {
     let directory = tempfile::tempdir().unwrap();
     let (mut project, _id, _other) = fixture(directory.path());
-    // New projects default to Digital (already positive); the value persists exactly.
-    assert_eq!(project.input_stage, InputKind::Digital);
+    // The active stage persists and round-trips exactly.
+    assert!(project.input.is_negative());
     let roundtrip: Project =
         serde_json::from_value(serde_json::to_value(&project).unwrap()).unwrap();
-    assert_eq!(roundtrip.input_stage, InputKind::Digital);
-    project.input_stage = InputKind::Negative;
+    assert_eq!(roundtrip.input, project.input);
+    project.input = InputSettings::Digital;
     let roundtrip: Project =
         serde_json::from_value(serde_json::to_value(&project).unwrap()).unwrap();
-    assert_eq!(roundtrip.input_stage, InputKind::Negative);
+    assert_eq!(roundtrip.input, InputSettings::Digital);
 }
 
 #[test]
@@ -200,10 +207,11 @@ fn orientation_roundtrip_keeps_legacy_identity_and_numerical_state() {
     assert!(!legacy.contains("orientation"));
     assert!(!legacy.contains("crop"));
     assert_eq!(Project::load(&path).unwrap(), project);
+    let calibration = project.calibration().unwrap().unwrap();
     let numerical = (
         project.roll,
-        project.dmin,
-        project.dmax,
+        calibration.dmin.to_array(),
+        calibration.dmax.to_array(),
         project.source(one).unwrap().photo,
     );
     project.orientation = Flips {
@@ -231,8 +239,8 @@ fn orientation_roundtrip_keeps_legacy_identity_and_numerical_state() {
     assert_eq!(
         (
             restored.roll,
-            restored.dmin,
-            restored.dmax,
+            restored.calibration().unwrap().unwrap().dmin.to_array(),
+            restored.calibration().unwrap().unwrap().dmax.to_array(),
             restored.source(one).unwrap().photo
         ),
         numerical
@@ -298,14 +306,12 @@ fn roll_turns_preserve_flip_only_documents_and_roundtrip_without_changing_photos
                 assert_eq!(
                     (
                         loaded.roll,
-                        loaded.dmin,
-                        loaded.dmax,
+                        loaded.calibration().unwrap().unwrap(),
                         loaded.processing_model
                     ),
                     (
                         project.roll,
-                        project.dmin,
-                        project.dmax,
+                        project.calibration().unwrap().unwrap(),
                         project.processing_model
                     )
                 );
@@ -424,7 +430,7 @@ fn atomic_roundtrip_preserves_calibration_and_output_after_removal_and_missing_s
     let (mut project, dmin_source_id, dmax_source_id) = fixture(dir.path());
     let calibration = project.calibration().unwrap().unwrap();
     let before = Pipeline::new(
-        calibration,
+        project.input,
         project.roll,
         project.source(dmin_source_id).unwrap().photo,
         glam::DMat3::from_cols_array_2d(
@@ -449,7 +455,7 @@ fn atomic_roundtrip_preserves_calibration_and_output_after_removal_and_missing_s
     assert_eq!(restored, project);
     assert_eq!(restored.calibration().unwrap().unwrap(), calibration);
     let after = Pipeline::new(
-        restored.calibration().unwrap().unwrap(),
+        restored.input,
         restored.roll,
         restored.source(dmin_source_id).unwrap().photo,
         glam::DMat3::from_cols_array_2d(
@@ -475,15 +481,20 @@ fn references_are_rgb_only_and_survive_removal_of_all_source_records() {
     let (mut project, _, _) = fixture(dir.path());
     let calibration = project.calibration().unwrap();
     let mut value = serde_json::to_value(&project).unwrap();
-    assert_eq!(value["schema"], 6);
+    assert_eq!(value["schema"], antitone::project::SCHEMA_VERSION);
     assert_eq!(value["processing_model"], 4);
     assert!(value["sources"][0].get("fingerprint").is_none());
-    assert_eq!(value["dmin"], serde_json::json!(project.dmin));
-    assert_eq!(value["dmax"], serde_json::json!(project.dmax));
-    assert_eq!(value["dmin"].as_array().unwrap().len(), 3);
-    assert_eq!(value["dmax"].as_array().unwrap().len(), 3);
-    value["dmin"] =
-        serde_json::json!({"value": project.dmin, "source": 1, "region": [0, 0, 32, 32]});
+    assert_eq!(
+        value["input"]["dmin"],
+        serde_json::json!(project.calibration().unwrap().unwrap().dmin.to_array())
+    );
+    assert_eq!(
+        value["input"]["dmax"],
+        serde_json::json!(project.calibration().unwrap().unwrap().dmax.to_array())
+    );
+    assert_eq!(value["input"]["dmin"].as_array().unwrap().len(), 3);
+    assert_eq!(value["input"]["dmax"].as_array().unwrap().len(), 3);
+    value["input"]["dmin"] = serde_json::json!({"value": project.calibration().unwrap().unwrap().dmin.to_array(), "source": 1, "region": [0, 0, 32, 32]});
     assert!(serde_json::from_value::<Project>(value).is_err());
     project.sources.clear();
     project.order.clear();
@@ -544,9 +555,12 @@ fn source_locators_keep_stable_ids_and_runtime_identity_is_checked_at_roll_level
     project.source_mut(dmin_source_id).unwrap().path = moved.clone();
     assert_eq!(project.source(dmin_source_id).unwrap().path, moved);
     let calibration = project.calibration().unwrap();
-    project.development.as_mut().unwrap().contract = "different development contract".into();
+    project.sources[0].development.decode.contract = "different development contract".into();
     assert!(project.require_runtime("0.22.0").is_err());
     assert_eq!(project.calibration().unwrap(), calibration);
+    // A scan stage requires one shared acquisition basis, so a mixed decode contract is invalid.
+    assert!(project.validate().is_err());
+    project.sources[0].development.decode.contract = antitone::project::DEVELOPMENT_CONTRACT.into();
     project.validate().unwrap();
     project.processing_model += 1;
     assert!(project.require_runtime("0.22.0").is_err());
@@ -562,10 +576,14 @@ fn failed_save_and_unknown_schema_never_damage_the_previous_document() {
     project.roll.exposure = 1.;
     assert!(project.save(&path, Save::New).is_err());
     assert_eq!(std::fs::read(&path).unwrap(), original);
-    project.roll.gamma = f64::NAN;
+    if let InputSettings::Negative { gamma, .. } = &mut project.input {
+        *gamma = f64::NAN;
+    }
     assert!(project.save(&path, Save::Replace).is_err());
     assert_eq!(std::fs::read(&path).unwrap(), original);
-    project.roll.gamma = 0.75;
+    if let InputSettings::Negative { gamma, .. } = &mut project.input {
+        *gamma = 0.75;
+    }
     project.save(&path, Save::Replace).unwrap();
     assert_eq!(Project::load(&path).unwrap(), project);
     project.schema += 1;
@@ -597,20 +615,185 @@ fn malformed_source_identity_order_and_rgb_references_are_rejected_before_serial
     assert!(dimensions.validate().is_err());
     for rgb in [[f64::NAN, 0.1, 0.1], [0., 0.1, 0.1], [1e-8, 0.1, 0.1]] {
         let mut partial = project.clone();
-        partial.dmin = Some(rgb);
-        partial.dmax = None;
+        partial.input = InputSettings::Negative {
+            dmin: Some(DVec3::from_array(rgb)),
+            dmax: None,
+            input_floor: CAMERA_INPUT_FLOOR,
+            response: Response::film(),
+            gamma: DEFAULT_GAMMA,
+            balance: Balance::default(),
+        };
         assert!(partial.validate().is_err());
     }
     let mut ordering = project.clone();
-    ordering.dmax = ordering.dmin;
+    if let InputSettings::Negative { dmin, dmax, .. } = &mut ordering.input {
+        *dmax = *dmin;
+    }
     assert!(ordering.validate().is_err());
     let mut missing_floor = project.clone();
-    missing_floor.input_floor = None;
-    missing_floor.dmax = None;
+    if let InputSettings::Negative {
+        input_floor, dmax, ..
+    } = &mut missing_floor.input
+    {
+        *input_floor = 0.;
+        *dmax = None;
+    }
     assert!(missing_floor.validate().is_err());
-    let mut missing_development = project;
-    missing_development.development = None;
-    missing_development.sources.clear();
-    missing_development.order.clear();
-    assert!(missing_development.validate().is_err());
+}
+
+fn mixed_source(path: &str, camera: &str, fixed_wb: [f64; 4], matrix: [[f64; 3]; 3]) -> Source {
+    let path = std::path::PathBuf::from(path);
+    std::fs::write(&path, b"mixed source bytes").unwrap();
+    Source {
+        id: SourceId(0),
+        path,
+        development: SourceDevelopment {
+            decode: Development::new("0.22.0".into(), fixed_wb),
+            lens_correction: None,
+            dng_development: None,
+            dimensions: [900, 600],
+            active_area: [0, 0, 900, 600],
+            camera_model: camera.into(),
+            camera_to_ap1: matrix,
+            input_floor: CAMERA_INPUT_FLOOR,
+        },
+        reference_only: false,
+        photo: PhotoSettings::default(),
+        local_adjustments: None,
+        repairs: Default::default(),
+        orientation: Default::default(),
+        crop: None,
+    }
+}
+
+#[test]
+fn digital_accepts_mixed_cameras_with_per_source_recipes_but_scan_stage_refuses() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut project = Project {
+        input: InputSettings::Digital,
+        ..Default::default()
+    };
+    let first = project
+        .add_source(mixed_source(
+            directory.path().join("camera-a.ARW").to_str().unwrap(),
+            "camera-a",
+            [2., 1., 1.5, 1.],
+            [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+        ))
+        .unwrap();
+    let second = project
+        .add_source(mixed_source(
+            directory.path().join("camera-b.ARW").to_str().unwrap(),
+            "camera-b",
+            [1.4, 1., 2.1, 1.],
+            [[0.9, 0., 0.1], [0., 1.1, 0.], [0.05, 0., 0.95]],
+        ))
+        .unwrap();
+
+    assert_eq!(project.camera_basis().unwrap().camera_model, "camera-a");
+    assert_eq!(
+        project.source(second).unwrap().development.decode.fixed_wb,
+        [1.4, 1., 2.1, 1.]
+    );
+    assert_eq!(
+        project
+            .source(second)
+            .unwrap()
+            .development
+            .camera_basis()
+            .camera_model,
+        "camera-b"
+    );
+    let recipe = project.image_recipe(second).unwrap();
+    assert_eq!(
+        recipe.neutral.source_development,
+        project.source(second).unwrap().development
+    );
+    assert_eq!(
+        recipe.neutral.processing_input().unwrap(),
+        InputSettings::Digital
+    );
+    assert_eq!(
+        project
+            .image_recipe(first)
+            .unwrap()
+            .neutral
+            .source_development,
+        project.source(first).unwrap().development
+    );
+
+    project.input = InputSettings::Negative {
+        dmin: Some(DVec3::splat(0.8)),
+        dmax: Some(DVec3::splat(0.02)),
+        input_floor: CAMERA_INPUT_FLOOR,
+        response: Response::film(),
+        gamma: DEFAULT_GAMMA,
+        balance: Balance::default(),
+    };
+    let error = project.require_scan_sources().unwrap_err();
+    assert!(error.to_string().contains("one scanning setup"));
+    let third = mixed_source(
+        directory.path().join("camera-c.ARW").to_str().unwrap(),
+        "camera-c",
+        [1., 1., 1., 1.],
+        [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+    );
+    assert!(project.add_source(third).is_err());
+}
+
+#[test]
+fn default_negative_admits_one_scan_basis_and_rejects_mixed_wb_or_cameras() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut project = Project::default();
+    assert!(matches!(project.input, InputSettings::Negative { .. }));
+    assert!(project.scan.is_none());
+
+    let first = project
+        .add_source(mixed_source(
+            directory.path().join("roll-a.ARW").to_str().unwrap(),
+            "camera-a",
+            [2., 1., 1.5, 1.],
+            [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+        ))
+        .unwrap();
+    assert_eq!(
+        project.scan_basis().unwrap().development.decode.fixed_wb,
+        [2., 1., 1.5, 1.]
+    );
+    assert_eq!(
+        project.scan_basis().unwrap().development,
+        project.source(first).unwrap().development
+    );
+
+    project
+        .add_source(mixed_source(
+            directory.path().join("roll-b.ARW").to_str().unwrap(),
+            "camera-a",
+            [2., 1., 1.5, 1.],
+            [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+        ))
+        .unwrap();
+
+    let before = project.clone();
+    assert!(
+        project
+            .add_source(mixed_source(
+                directory.path().join("other-wb.ARW").to_str().unwrap(),
+                "camera-a",
+                [1.4, 1., 2.1, 1.],
+                [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+            ))
+            .is_err()
+    );
+    assert_eq!(project, before);
+    assert!(
+        project
+            .add_source(mixed_source(
+                directory.path().join("camera-b.ARW").to_str().unwrap(),
+                "camera-b",
+                [2., 1., 1.5, 1.],
+                [[0.9, 0., 0.1], [0., 1.1, 0.], [0.05, 0., 0.95]],
+            ))
+            .is_err()
+    );
 }

@@ -669,7 +669,7 @@ fn local_list_widgets_preserve_ids_processing_metadata_and_confirm_deletion() {
         let id = harness.read(|editor| editor.current_source.unwrap());
         let accepted = harness.read(|editor| {
             editor
-                .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+                .positive_processing(editor.input, editor.roll, editor.photo)
                 .unwrap()
         });
         rename_selected(&mut harness);
@@ -697,7 +697,7 @@ fn local_list_widgets_preserve_ids_processing_metadata_and_confirm_deletion() {
         harness.read(|editor| assert_eq!(locals(editor).adjustments[0].name, "Upper sky"));
         let renamed = harness.read(|editor| {
             editor
-                .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+                .positive_processing(editor.input, editor.roll, editor.photo)
                 .unwrap()
         });
         assert!(std::ptr::eq(

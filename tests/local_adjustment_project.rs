@@ -2,7 +2,9 @@
 use antitone::{
     geometry::SourcePoint,
     local_adjustments::{CONTRACT, GradientMask, LocalAdjustment, SpatialPipeline},
-    processing::{Calibration, PhotoSettings, Pipeline, RollSettings},
+    processing::{
+        Calibration, DEFAULT_GAMMA, InputSettings, PhotoSettings, Pipeline, Response, RollSettings,
+    },
     project::{
         AdjustmentId, Development, LocalAdjustments, Project, Save, Source, SourceDevelopment,
         SourceId,
@@ -28,15 +30,13 @@ fn adjustment() -> LocalAdjustment {
 }
 
 fn fixture() -> (Project, SourceId) {
-    let mut project = Project {
-        development: Some(Development::new("test-backend".into(), [2., 1., 1.5, 1.])),
-        ..Project::default()
-    };
+    let mut project = Project::default();
     let id = project
         .add_source(Source {
             id: SourceId(0),
             path: "one.ARW".into(),
             development: SourceDevelopment {
+                decode: Development::new("test-backend".into(), [2., 1., 1.5, 1.]),
                 lens_correction: None,
                 dng_development: None,
                 dimensions: [900, 600],
@@ -88,7 +88,7 @@ fn with_locals() -> (Project, SourceId) {
 fn absent_local_state_remains_optional_in_schema_six() {
     let (project, id) = fixture();
     let json = serde_json::to_value(&project).unwrap();
-    assert_eq!(json["schema"], 6);
+    assert_eq!(json["schema"], antitone::project::SCHEMA_VERSION);
     assert!(json["sources"][0].get("local_adjustments").is_none());
     let loaded: Project = serde_json::from_value(json).unwrap();
     loaded.validate().unwrap();
@@ -373,9 +373,17 @@ fn spatial_pipeline_uses_snapshot_and_full_source_pixel_centres() {
         dmax: DVec3::splat(0.02),
         input_floor: 1. / 65535.,
     };
-    let roll = RollSettings::new_grade();
-    let global = Pipeline::new(calibration, roll, snapshot.global(), DMat3::IDENTITY).unwrap();
-    let spatial = SpatialPipeline::new(calibration, roll, snapshot, DMat3::IDENTITY).unwrap();
+    let input = InputSettings::Negative {
+        dmin: Some(calibration.dmin),
+        dmax: Some(calibration.dmax),
+        input_floor: calibration.input_floor,
+        response: Response::film(),
+        gamma: DEFAULT_GAMMA,
+        balance: Default::default(),
+    };
+    let roll = RollSettings::default();
+    let global = Pipeline::new(input, roll, snapshot.global(), DMat3::IDENTITY).unwrap();
+    let spatial = SpatialPipeline::new(input, roll, snapshot, DMat3::IDENTITY).unwrap();
     project.source_mut(id).unwrap().local_adjustments = None;
     let scan = DVec3::new(0., 0.1, 0.3);
     let before = global.apply(scan).unwrap();
@@ -390,6 +398,6 @@ fn spatial_pipeline_uses_snapshot_and_full_source_pixel_centres() {
         assert_eq!(after.floored, before.floored);
     }
     let empty = project.source(id).unwrap().grade_snapshot().unwrap();
-    let empty = SpatialPipeline::new(calibration, roll, empty, DMat3::IDENTITY).unwrap();
+    let empty = SpatialPipeline::new(input, roll, empty, DMat3::IDENTITY).unwrap();
     assert_eq!(empty.apply(scan, [12, 7]).unwrap(), before);
 }

@@ -1,7 +1,9 @@
 use antitone::{
     Error,
     color::{AP1_TO_XYZ, Balance, wb_matrix},
-    processing::{Calibration, Inversion, PhotoSettings, Pipeline, Response, RollSettings},
+    processing::{
+        Calibration, DEFAULT_GAMMA, Inversion, NegativeInput, PhotoSettings, Pipeline, Response,
+    },
     roll_analysis::{FrameSamples, MAX_SAMPLES_PER_FRAME, estimate},
 };
 use glam::{DMat3, DVec3};
@@ -15,14 +17,39 @@ fn picture(n: usize, lo: f64, hi: f64) -> Vec<DVec3> {
         .collect()
 }
 
+fn current(gamma: f64, response: Response) -> NegativeInput {
+    NegativeInput {
+        calibration: Calibration {
+            dmin: BASE,
+            dmax: BASE * 0.02,
+            input_floor: FLOOR,
+        },
+        response,
+        gamma,
+        balance: Balance::default(),
+    }
+}
+
+fn default_current() -> NegativeInput {
+    current(DEFAULT_GAMMA, Response::film())
+}
+
 fn proposal(
     frames: &[FrameSamples<'_>],
     matrix: DMat3,
-    current: RollSettings,
+    current: NegativeInput,
 ) -> antitone::roll_analysis::Proposal {
     estimate(frames, FLOOR, matrix, current, || false)
         .unwrap()
         .unwrap()
+}
+
+fn negative(p: &antitone::roll_analysis::Proposal) -> NegativeInput {
+    p.input.negative_input().unwrap()
+}
+
+fn calibration(p: &antitone::roll_analysis::Proposal) -> Calibration {
+    p.input.calibration().unwrap()
 }
 
 fn close(a: DVec3, b: DVec3) {
@@ -34,11 +61,7 @@ fn usable_film_is_pooled_without_requiring_every_frame_to_supply_base() {
     let film = vec![BASE; 256];
     let a = picture(512, 0.05, 0.5);
     let b = picture(512, 0.1, 0.8);
-    let current = RollSettings {
-        gamma: 0.9,
-        response: Response::Original,
-        ..RollSettings::default()
-    };
+    let current = current(0.9, Response::Original);
     let p = proposal(
         &[
             FrameSamples {
@@ -53,27 +76,18 @@ fn usable_film_is_pooled_without_requiring_every_frame_to_supply_base() {
         DMat3::IDENTITY,
         current,
     );
-    close(p.dmin, BASE);
-    assert_eq!(p.roll.gamma, current.gamma);
-    assert_eq!(p.roll.response, current.response);
+    close(calibration(&p).dmin, BASE);
+    assert_eq!(negative(&p).gamma, current.gamma);
+    assert_eq!(negative(&p).response, current.response);
     assert_eq!(p.frames[1].film_samples, 0);
     assert!(
         p.frames
             .iter()
             .all(|s| s.balance_samples == 512 && s.exposure_samples == 512)
     );
-    assert!(p.roll.balance.warmth.abs() < 1e-9 && p.roll.balance.tint.abs() < 1e-9);
-    assert_eq!(current.exposure, 0.);
+    assert!(negative(&p).balance.warmth.abs() < 1e-9 && negative(&p).balance.tint.abs() < 1e-9);
     assert_ne!(p.roll.exposure, 0.);
-    let inv = Inversion::new(
-        Calibration {
-            dmin: p.dmin,
-            dmax: p.dmax,
-            input_floor: FLOOR,
-        },
-        p.roll,
-    )
-    .unwrap();
+    let inv = Inversion::new(negative(&p)).unwrap();
     let mut totals = Vec::new();
     for (index, pixels) in [&a, &b].into_iter().enumerate() {
         let mut y: Vec<_> = pixels
@@ -115,9 +129,9 @@ fn dmax_channels_select_separate_lower_quantiles_not_one_joint_pixel() {
             picture: &source,
         }],
         DMat3::IDENTITY,
-        RollSettings::new_grade(),
+        default_current(),
     );
-    close(p.dmax, BASE * 0.05375);
+    close(calibration(&p).dmax, BASE * 0.05375);
     assert!(!source.iter().any(|v| (*v / BASE).max_element() < 0.08));
 }
 
@@ -147,14 +161,16 @@ fn repeated_samples_do_not_increase_a_frames_endpoint_or_curve_influence() {
                 },
             ],
             matrix,
-            RollSettings::new_grade(),
+            default_current(),
         )
     };
     let original = fit(&b);
     let duplicated = fit(&repeated);
-    close(original.dmax, duplicated.dmax);
-    assert!((original.roll.balance.warmth - duplicated.roll.balance.warmth).abs() < 1e-11);
-    assert!((original.roll.balance.tint - duplicated.roll.balance.tint).abs() < 1e-11);
+    close(calibration(&original).dmax, calibration(&duplicated).dmax);
+    assert!(
+        (negative(&original).balance.warmth - negative(&duplicated).balance.warmth).abs() < 1e-11
+    );
+    assert!((negative(&original).balance.tint - negative(&duplicated).balance.tint).abs() < 1e-11);
     assert!((original.roll.wb.warmth - duplicated.roll.wb.warmth).abs() < 1e-11);
     assert!((original.roll.wb.tint - duplicated.roll.wb.tint).abs() < 1e-11);
     assert!(duplicated.frames.iter().all(|s| s.balance_samples == 512));
@@ -171,24 +187,16 @@ fn shared_wb_neutralizes_the_roll_mean_without_fitting_channel_curves_to_gray() 
             picture: &source,
         }],
         matrix,
-        RollSettings::new_grade(),
+        default_current(),
     );
-    let inv = Inversion::new(
-        Calibration {
-            dmin: p.dmin,
-            dmax: p.dmax,
-            input_floor: FLOOR,
-        },
-        p.roll,
-    )
-    .unwrap();
+    let inv = Inversion::new(negative(&p)).unwrap();
     let positives: Vec<_> = source
         .iter()
         .map(|&v| wb_matrix(p.roll.wb).unwrap() * matrix * inv.apply(v).unwrap().rgb)
         .collect();
     let m = antitone::sampling::mean(&positives).unwrap();
     assert!((m / m.y - DVec3::ONE).abs().max_element() < 1e-8);
-    assert!(p.roll.balance.warmth.abs() + p.roll.balance.tint.abs() < 1e-6);
+    assert!(negative(&p).balance.warmth.abs() + negative(&p).balance.tint.abs() < 1e-6);
     assert!(p.roll.wb.warmth.abs() + p.roll.wb.tint.abs() > 0.01);
 }
 
@@ -210,7 +218,7 @@ fn out_of_range_shared_wb_is_rejected_not_clamped_or_replaced_by_identity() {
             }],
             FLOOR,
             cast * cast,
-            RollSettings::new_grade(),
+            default_current(),
             || false
         ),
         Err(Error::UnusableSample(
@@ -230,33 +238,30 @@ fn one_hdr_outlier_does_not_move_the_p99_capped_exposure_prior_or_clamp_working_
                 picture: pixels,
             }],
             DMat3::IDENTITY,
-            RollSettings::default(),
+            default_current(),
         )
     };
     let before = fit(&source);
     // One sample cannot move either endpoint quantile; every channel stays above the floor.
     source[0] = BASE * 0.0001;
     let after = fit(&source);
-    close(before.dmin, after.dmin);
-    close(before.dmax, after.dmax);
+    close(calibration(&before).dmin, calibration(&after).dmin);
+    close(calibration(&before).dmax, calibration(&after).dmax);
     assert!((after.roll.exposure - before.roll.exposure).abs() < 1e-14);
     assert!((after.photos[0].exposure - before.photos[0].exposure).abs() < 1e-14);
-    let pipeline = Pipeline::new(
-        Calibration {
-            dmin: after.dmin,
-            dmax: after.dmax,
-            input_floor: FLOOR,
-        },
-        after.roll,
-        after.photos[0],
-        DMat3::IDENTITY,
-    )
-    .unwrap();
+    let pipeline =
+        Pipeline::new(after.input, after.roll, after.photos[0], DMat3::IDENTITY).unwrap();
     let y: Vec<_> = source
         .iter()
         .map(|&p| (AP1_TO_XYZ * pipeline.apply(p).unwrap().rgb).y)
         .collect();
-    assert!(y[0] > 65536.);
+    assert!(
+        y[0] > 65536.,
+        "y0={} y1={} cal={:?}",
+        y[0],
+        y[1],
+        calibration(&after)
+    );
     let uncapped_mean = y.iter().sum::<f64>() / y.len() as f64;
     assert!((uncapped_mean / y[1]).log2() * 0.5 > 2.);
     assert_eq!(after.frames[0].exposure_samples, source.len());
@@ -270,16 +275,7 @@ fn invalid_inputs_and_unusable_frames_do_not_produce_partial_proposals() {
         film: &film,
         picture: &source,
     };
-    assert!(
-        estimate(
-            &[],
-            FLOOR,
-            DMat3::IDENTITY,
-            RollSettings::new_grade(),
-            || false
-        )
-        .is_err()
-    );
+    assert!(estimate(&[], FLOOR, DMat3::IDENTITY, default_current(), || false).is_err());
     assert!(
         estimate(
             &[FrameSamples {
@@ -288,7 +284,7 @@ fn invalid_inputs_and_unusable_frames_do_not_produce_partial_proposals() {
             }],
             FLOOR,
             DMat3::IDENTITY,
-            RollSettings::new_grade(),
+            default_current(),
             || false
         )
         .is_err()
@@ -298,31 +294,13 @@ fn invalid_inputs_and_unusable_frames_do_not_produce_partial_proposals() {
             &[FrameSamples { film: &[], ..frame }],
             FLOOR,
             DMat3::IDENTITY,
-            RollSettings::new_grade(),
+            default_current(),
             || false
         )
         .is_err()
     );
-    assert!(
-        estimate(
-            &[frame],
-            0.,
-            DMat3::IDENTITY,
-            RollSettings::new_grade(),
-            || false
-        )
-        .is_err()
-    );
-    assert!(
-        estimate(
-            &[frame],
-            FLOOR,
-            DMat3::ZERO,
-            RollSettings::new_grade(),
-            || false
-        )
-        .is_err()
-    );
+    assert!(estimate(&[frame], 0., DMat3::IDENTITY, default_current(), || false).is_err());
+    assert!(estimate(&[frame], FLOOR, DMat3::ZERO, default_current(), || false).is_err());
     let too_many = vec![BASE; MAX_SAMPLES_PER_FRAME + 1];
     assert!(matches!(
         estimate(
@@ -332,7 +310,7 @@ fn invalid_inputs_and_unusable_frames_do_not_produce_partial_proposals() {
             }],
             FLOOR,
             DMat3::IDENTITY,
-            RollSettings::new_grade(),
+            default_current(),
             || false
         ),
         Err(Error::InvalidParameter(_))
@@ -347,7 +325,7 @@ fn invalid_inputs_and_unusable_frames_do_not_produce_partial_proposals() {
                 }],
                 FLOOR,
                 DMat3::IDENTITY,
-                RollSettings::new_grade(),
+                default_current(),
                 || false
             )
             .is_err()
@@ -365,7 +343,7 @@ fn invalid_inputs_and_unusable_frames_do_not_produce_partial_proposals() {
             ],
             FLOOR,
             DMat3::IDENTITY,
-            RollSettings::new_grade(),
+            default_current(),
             || false
         )
         .is_err()
@@ -381,12 +359,18 @@ fn cooperative_cancellation_at_start_during_fitting_and_before_completion_change
         film: &film,
         picture: &source,
     }];
-    let current = RollSettings {
+    let current = NegativeInput {
+        calibration: Calibration {
+            dmin: BASE,
+            dmax: BASE * 0.02,
+            input_floor: FLOOR,
+        },
+        response: Response::Original,
+        gamma: DEFAULT_GAMMA,
         balance: Balance {
             warmth: 0.1,
             tint: -0.05,
         },
-        ..RollSettings::new_grade()
     };
     let mut checkpoints = 0;
     assert!(
@@ -415,6 +399,5 @@ fn cooperative_cancellation_at_start_during_fitting_and_before_completion_change
         assert!(result.is_none(), "checkpoint {stop}");
     }
     assert_eq!(source, original);
-    assert_eq!(current.exposure, 0.);
     assert_eq!(film, vec![BASE; 256]);
 }

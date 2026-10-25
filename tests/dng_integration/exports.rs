@@ -7,7 +7,7 @@ use antitone::{
     gpu::SubmissionGate,
     gpu_export::{self, Format, Request},
     local_adjustments::{PhotoGradeSnapshot, SpatialPipeline},
-    processing::{Calibration, RollSettings},
+    processing::{Calibration, InputSettings, Response},
     renderer::GpuRenderer,
     rendering::OutputTarget,
 };
@@ -55,12 +55,8 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
         input_floor: CAMERA_INPUT_FLOOR,
     };
     let mut project = Project {
-        development: Some(scan.source().metadata().development(scan.fixed_wb)),
-        input_floor: Some(calibration.input_floor),
-        dmin: Some(calibration.dmin.to_array()),
-        dmax: Some(calibration.dmax.to_array()),
-        roll: RollSettings::new_grade(),
-        ..Default::default()
+        input: InputSettings::negative(calibration),
+        ..Project::default()
     };
     let id = project.add_source(record(file.path(), &scan)).unwrap();
     let directory = tempfile::tempdir().unwrap();
@@ -70,11 +66,7 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
     let loaded = Project::load(&project_path).unwrap();
     loaded.require_runtime(&antitone::raw::version()).unwrap();
     let source = loaded.source(id).unwrap();
-    let scan = Scan::open(
-        &source.path,
-        Some(loaded.development.as_ref().unwrap().fixed_wb),
-    )
-    .unwrap();
+    let scan = Scan::open(&source.path, Some(source.development.decode.fixed_wb)).unwrap();
     assert_eq!(record(file.path(), &scan).development, source.development);
     assert_eq!(source.development.input_floor, 1. / 4096.);
     for y in scan.area.y..scan.area.y + scan.area.height {
@@ -94,17 +86,13 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
         PhotoOrientation::default(),
     )
     .unwrap();
-    let oracle = SpatialPipeline::new(
-        Calibration {
-            input_floor: 1. / 4096.,
-            ..calibration
-        },
-        loaded.roll,
-        grade.clone(),
-        scan.camera_to_ap1,
-    )
-    .unwrap();
-    let metadata = ProcessingMetadata::with_grade(loaded.roll.response, &grade);
+    let oracle_input = InputSettings::negative(Calibration {
+        input_floor: 1. / 4096.,
+        ..calibration
+    });
+    let oracle =
+        SpatialPipeline::new(oracle_input, loaded.roll, grade.clone(), scan.camera_to_ap1).unwrap();
+    let metadata = ProcessingMetadata::with_grade(Response::film(), &grade);
     let (device, queue, renderer) = pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,
@@ -128,7 +116,7 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
             Request {
                 scan: &scan,
                 field: None,
-                calibration,
+                input: InputSettings::negative(calibration),
                 roll: loaded.roll,
                 grade: grade.clone(),
                 repairs: &[],

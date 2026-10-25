@@ -205,8 +205,8 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
                             };
                         }
                     } else {
-                        editor.dmin = None;
-                        editor.dmax = None;
+                        editor.set_dmin(None);
+                        editor.set_dmax(None);
                     }
                     editor.busy = true;
                     editor.preferences.filmstrip_height = height;

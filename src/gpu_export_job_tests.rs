@@ -11,7 +11,8 @@ mod corrected_source;
 fn fixture(scan: &Scan) -> (Project, SourceId) {
     let (width, height) = scan.dimensions().unwrap();
     let a = scan.area;
-    let source_development = SourceDevelopment {
+    let mut source_development = SourceDevelopment {
+        decode: Development::new("test-backend".into(), [1.; 4]),
         lens_correction: scan.source().metadata().lens_identity().unwrap(),
         dng_development: scan.source().metadata().dng_identity(),
         dimensions: [width, height],
@@ -20,12 +21,17 @@ fn fixture(scan: &Scan) -> (Project, SourceId) {
         camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
         input_floor: scan.source().input_floor(),
     };
+    source_development.decode = Development::for_source(&source_development, [1.; 4]);
     let mut project = Project {
-        development: Some(Development::for_source(&source_development, scan.fixed_wb)),
-        dmin: Some([0.8; 3]),
-        dmax: Some([0.02; 3]),
-        input_floor: Some(scan.input_floor),
-        roll: RollSettings::new_grade(),
+        input: crate::processing::InputSettings::Negative {
+            dmin: Some(DVec3::splat(0.8)),
+            dmax: Some(DVec3::splat(0.02)),
+            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
+            response: crate::processing::Response::film(),
+            gamma: crate::processing::DEFAULT_GAMMA,
+            balance: Default::default(),
+        },
+        roll: RollSettings::default(),
         ..Default::default()
     };
     let id = project
@@ -106,8 +112,7 @@ fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_hono
     assert!(
         crate::repair_source::evaluate(
             &scan,
-            recipe.neutral.processing_calibration().unwrap(),
-            recipe.roll,
+            &recipe.neutral.processing_input().unwrap(),
             &recipe.repairs()[1]
         )
         .is_err(),

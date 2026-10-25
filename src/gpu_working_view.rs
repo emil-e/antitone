@@ -1,5 +1,6 @@
 //! Immutable physical-view acquisition and rendering. Originals remain reference/export authority.
 use super::*;
+use crate::processing::InputSettings;
 use crate::{
     frame_raster::FrameRaster,
     geometry::{Composition, TextureMapping},
@@ -68,18 +69,18 @@ impl ViewSourceSpec {
         })
     }
 
-    // Calibration is already normalized by the correction owner, exactly as for the precise path.
+    // The input is already normalized by the correction owner, exactly as for the precise path.
     pub(crate) fn new(
         authority: u64,
         frame: FrameRaster,
-        calibration: Calibration,
-        roll: RollSettings,
+        input: impl Into<InputSettings>,
         matrix: DMat3,
         field: Option<Arc<crate::flat_field::FlatField>>,
     ) -> Result<Self, Error> {
-        let neutral = ProcessingParameters::positive(
-            calibration,
-            roll.inversion_only(),
+        let input = input.into();
+        let neutral = ProcessingParameters::interpret(
+            input,
+            RollSettings::default(),
             PhotoSettings::default(),
             matrix,
         )?;
@@ -295,12 +296,38 @@ impl ViewKernels {
         (lo, extent): crate::resample::windows::Window,
     ) -> Result<(), Error> {
         let bounds = frame.bounds()?;
-        let affine = frame.affine()?;
+        self.filter_raster(
+            device,
+            encoder,
+            image,
+            output,
+            [bounds.width, bounds.height],
+            frame.output,
+            frame.affine()?,
+            origin,
+            (lo, extent),
+        );
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn filter_raster(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        image: &wgpu::Texture,
+        output: &wgpu::Buffer,
+        source_size: [u32; 2],
+        output_size: [u32; 2],
+        affine: [[f32; 2]; 3],
+        origin: [i32; 2],
+        (lo, extent): crate::resample::windows::Window,
+    ) {
         let mut bytes = bytemuck::cast_slice(&[
-            bounds.width,
-            bounds.height,
-            frame.output[0],
-            frame.output[1],
+            source_size[0],
+            source_size[1],
+            output_size[0],
+            output_size[1],
             origin[0] as u32,
             origin[1] as u32,
             image.width(),
@@ -334,7 +361,6 @@ impl ViewKernels {
         pass.set_pipeline(&self.filter);
         pass.set_bind_group(0, &group, &[]);
         pass.dispatch_workgroups(extent[0].div_ceil(8), extent[1].div_ceil(8), 1);
-        Ok(())
     }
 
     fn grade(
@@ -475,6 +501,84 @@ impl ViewSource {
             pixels,
             renderer,
             kernels,
+        }))
+    }
+
+    /// Neutralise and compose an already-decoded camera proxy in original source coordinates.
+    /// Repaired previews use original-coordinate acquisition, not this reduced-raster adapter.
+    pub(crate) fn from_processing(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        renderer: Arc<crate::renderer::GpuRenderer>,
+        kernels: Arc<ViewKernels>,
+        source: Arc<ProcessingSource>,
+        spec: ViewSourceSpec,
+    ) -> Result<Arc<Self>, Error> {
+        if !spec.repairs.0.is_empty() {
+            return Err(Error::Gpu(
+                "repaired previews require original-coordinate acquisition".into(),
+            ));
+        }
+        let geometry = source
+            .geometry()
+            .ok_or_else(|| Error::Gpu("preview source has no geometry".into()))?;
+        if geometry.region() != [spec.area.x, spec.area.y, spec.area.width, spec.area.height].into()
+        {
+            return Err(Error::Gpu(
+                "preview source geometry differs from the view frame".into(),
+            ));
+        }
+        // Map accepted original-source footprints into the proxy's actual raster. Independent
+        // axis scales account for integer-rounded proxy dimensions without re-rounding a crop
+        // or assuming its bounding box starts at the texture origin.
+        let raster = crate::geometry::SourceRaster::new(spec.area, geometry.size())?;
+        let point = |p| raster.raster_point(spec.frame.source_point(p)).0;
+        let start = point([0., 0.]);
+        let x = point([1., 0.]);
+        let y = point([0., 1.]);
+        let affine = [
+            start.map(|v| v as f32),
+            std::array::from_fn(|i| (x[i] - start[i]) as f32),
+            std::array::from_fn(|i| (y[i] - start[i]) as f32),
+        ];
+        let working = float_buffer(device, geometry.size())?;
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("provisional neutral AP1 acquisition"),
+            size: wgpu::Extent3d {
+                width: geometry.size()[0],
+                height: geometry.size()[1],
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let pixels = float_buffer(device, spec.frame.output)?;
+        let mut encoder = device.create_command_encoder(&Default::default());
+        renderer
+            .kernel
+            .encode(device, &mut encoder, &source, &working, spec.neutral);
+        kernels.copy(device, &mut encoder, &working, &texture);
+        kernels.filter_raster(
+            device,
+            &mut encoder,
+            &texture,
+            &pixels,
+            geometry.size(),
+            spec.frame.output,
+            affine,
+            [0, 0],
+            ([0, 0], spec.frame.output),
+        );
+        queue.submit([encoder.finish()]);
+        Ok(Arc::new(Self {
+            spec,
+            renderer,
+            kernels,
+            pixels,
         }))
     }
 
@@ -746,19 +850,16 @@ impl RenderedView {
     pub(crate) fn new(
         device: &wgpu::Device,
         source: Arc<ViewSource>,
-        calibration: Calibration,
+        settings: impl Into<InputSettings>,
         roll: RollSettings,
         snapshot: PhotoGradeSnapshot,
         input: &ProcessingInput,
         target: OutputTarget,
         previous: Option<&Arc<Self>>,
     ) -> Result<Arc<Self>, Error> {
-        let mut expected = ProcessingParameters::positive(
-            calibration,
-            roll,
-            snapshot.global(),
-            source.spec.matrix,
-        )?;
+        let settings = settings.into();
+        let mut expected =
+            ProcessingParameters::interpret(settings, roll, snapshot.global(), source.spec.matrix)?;
         // Local preflight can tighten the original-response error budget. It does not change
         // photographic identity, and this colour pass does not evaluate the response.
         expected.response_precision.x = input.parameters().response_precision.x;
@@ -774,8 +875,7 @@ impl RenderedView {
         if ViewSourceSpec::new(
             source.spec.authority,
             source.spec.frame,
-            calibration,
-            roll,
+            settings,
             source.spec.matrix,
             source.spec.field.clone(),
         )?
@@ -793,7 +893,7 @@ impl RenderedView {
         // Validate the entire candidate even for target-only reuse, before allocating/publishing it.
         GpuPhotoGrade::validate_repaired(
             device,
-            calibration,
+            settings,
             roll,
             &snapshot,
             source.spec.matrix,
@@ -809,13 +909,13 @@ impl RenderedView {
                 pixels: float_buffer(device, source.spec.frame.output)?,
                 grade: Some(Arc::new(GpuPhotoGrade::new(
                     device,
-                    calibration,
+                    settings,
                     roll,
                     snapshot.clone(),
                     source.spec.matrix,
                     source.spec.area,
                 )?)),
-                view: ViewUniform::new(source.spec.frame, roll, snapshot.global())?,
+                view: ViewUniform::new(source.spec.frame, input.parameters()),
                 source: source.clone(),
                 submitted: Mutex::new(false),
             }),
@@ -1087,22 +1187,26 @@ struct ViewUniform {
 }
 
 impl ViewUniform {
-    fn new(frame: FrameRaster, roll: RollSettings, photo: PhotoSettings) -> Result<Self, Error> {
+    fn new(frame: FrameRaster, parameters: ProcessingParameters) -> Self {
         let origin = frame.source_point([0.5, 0.5]).0;
         let x = frame.source_point([1.5, 0.5]).0;
         let y = frame.source_point([0.5, 1.5]).0;
-        let gain = crate::processing::exposure_multiplier(roll.exposure)?
-            * crate::processing::exposure_multiplier(photo.exposure)?;
+        // Neutral acquisition omits the response's folded exposure. Restore that factor here;
+        // any gain already packed into `post` must not be applied a second time.
+        let gain = (f64::from(parameters.anchor.w)
+            + f64::from(parameters.anchor_low.w)
+            + f64::from(parameters.anchor_tail.w))
+        .exp();
         let high = gain as f32;
         let low = (gain - f64::from(high)) as f32;
         let tail = (gain - f64::from(high) - f64::from(low)) as f32;
-        Ok(Self {
+        Self {
             dimensions: [frame.output[0], frame.output[1], 0, 0],
             origin: split_pair(origin),
             dx: split_pair(std::array::from_fn(|c| x[c] - origin[c])),
             dy: split_pair(std::array::from_fn(|c| y[c] - origin[c])),
             gain: [high, low, tail, 0.],
-        })
+        }
     }
 }
 #[cfg(test)]

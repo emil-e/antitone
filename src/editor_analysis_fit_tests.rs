@@ -57,7 +57,7 @@ fn input(services: &Services, request: &Request) -> source::Context {
 fn captured_services_fit_reviewed_support_and_keep_only_bounded_statistics_per_frame() {
     let (mut request, _directory, device) = request();
     approved(&mut request);
-    request.document.project.roll.gamma = 0.7;
+    request.document.project.set_gamma(0.7);
     let before = request.document.project.clone();
     let (scheduler, _) = observed();
     let services = Services {
@@ -101,12 +101,12 @@ fn captured_services_fit_reviewed_support_and_keep_only_bounded_statistics_per_f
     // Authored camera codes: clean film is 3000 at a 4031 white level.
     assert!(
         after
-            .dmin
+            .dmin()
             .unwrap()
             .iter()
             .all(|v| (v - 3000. / 4031.).abs() <= 2. / 65535.)
     );
-    assert_eq!(after.roll.gamma, 0.7);
+    assert_eq!(after.input.gamma(), 0.7);
     assert_eq!(
         after.analysis_regions,
         request.areas.as_ref().unwrap().entries

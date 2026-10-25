@@ -6,20 +6,29 @@ use crate::Error;
 use std::sync::Arc;
 
 /// Immutable processing input shared by image consumers, never their mutable image storage.
+///
+/// A complete grade is always a [`GpuPhotoGrade`], which owns the semantic
+/// [`crate::local_adjustments::PhotoGradeSnapshot`] it was compiled from. Bare
+/// [`ProcessingParameters`] are reserved for source inspection and low-level GPU fixtures;
+/// they are not an alternative grade representation.
 #[derive(Clone)]
 pub struct ProcessingInput {
-    parameters: ProcessingParameters,
-    grade: Option<Arc<GpuPhotoGrade>>,
+    processing: Processing,
     look: Option<Arc<crate::looks::LookAsset>>,
     #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
     pub(crate) repairs: super::repairs::Snapshot,
 }
 
+#[derive(Clone)]
+enum Processing {
+    Parameters(Arc<ProcessingParameters>),
+    Grade(Arc<GpuPhotoGrade>),
+}
+
 impl From<ProcessingParameters> for ProcessingInput {
     fn from(parameters: ProcessingParameters) -> Self {
         Self {
-            parameters,
-            grade: None,
+            processing: Processing::Parameters(Arc::new(parameters)),
             look: None,
             #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
             repairs: super::repairs::Snapshot::default(),
@@ -30,8 +39,7 @@ impl From<ProcessingParameters> for ProcessingInput {
 impl From<Arc<GpuPhotoGrade>> for ProcessingInput {
     fn from(grade: Arc<GpuPhotoGrade>) -> Self {
         Self {
-            parameters: grade.parameters,
-            grade: Some(grade),
+            processing: Processing::Grade(grade),
             look: None,
             #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
             repairs: super::repairs::Snapshot::default(),
@@ -40,9 +48,9 @@ impl From<Arc<GpuPhotoGrade>> for ProcessingInput {
 }
 
 impl ProcessingInput {
-    /// Rendering is downstream of the photographic constants; inspection never adopts a look.
+    /// Rendering is downstream of the photographic constants; source inspection never adopts a look.
     pub fn with_look(mut self, look: Option<Arc<crate::looks::LookAsset>>) -> Self {
-        self.look = if self.parameters.gamma_mode.w > 0.5 {
+        self.look = if self.parameters().graded() {
             look
         } else {
             None
@@ -56,8 +64,11 @@ impl ProcessingInput {
 
     pub fn signature(&self) -> ProcessingSignature {
         ProcessingSignature {
-            parameters: bytemuck::bytes_of(&self.parameters).try_into().unwrap(),
-            grade: self.grade.clone(),
+            parameters: bytemuck::bytes_of(&self.parameters()).try_into().unwrap(),
+            grade: match &self.processing {
+                Processing::Parameters(_) => None,
+                Processing::Grade(grade) => Some(grade.clone()),
+            },
             look: self.look.as_ref().map(|look| look.lut().id()),
             #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
             repairs: self.repairs.clone(),
@@ -68,7 +79,7 @@ impl ProcessingInput {
 #[cfg(all(feature = "ui", feature = "render"))]
 impl ProcessingInput {
     pub(crate) fn require_source(&self, source: &ProcessingSource) -> Result<(), Error> {
-        if let Some(grade) = &self.grade {
+        if let Processing::Grade(grade) = &self.processing {
             grade.require_source(source)?;
         }
         Ok(())
@@ -82,15 +93,21 @@ impl ProcessingInput {
 impl ProcessingInput {
     #[cfg(feature = "editor")]
     pub(crate) fn is_positive(&self) -> bool {
-        self.parameters.gamma_mode.w > 0.5
+        self.parameters().graded()
     }
 
     pub(crate) fn parameters(&self) -> ProcessingParameters {
-        self.parameters
+        match &self.processing {
+            Processing::Parameters(parameters) => **parameters,
+            Processing::Grade(grade) => grade.parameters,
+        }
     }
 
     pub(crate) fn grade(&self) -> Option<&GpuPhotoGrade> {
-        self.grade.as_deref()
+        match &self.processing {
+            Processing::Parameters(_) => None,
+            Processing::Grade(grade) => Some(grade),
+        }
     }
 }
 

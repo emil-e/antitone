@@ -1,4 +1,5 @@
 use super::*;
+use crate::processing::Calibration;
 
 #[test]
 fn processing_assembles_one_precise_primitive_family() {
@@ -38,7 +39,7 @@ fn global_output_bounds_do_not_propagate_scratch_peaks_into_locals() {
         dmax: DVec3::new(0.008, 0.004, 0.002),
         input_floor: 1. / 65535.,
     };
-    let roll = RollSettings::new_grade();
+    let roll = RollSettings::default();
     let (_, input) = ProcessingParameters::positive_with_bound(
         calibration,
         roll,

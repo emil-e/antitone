@@ -1,6 +1,9 @@
 use antitone::{
     color::Balance,
-    processing::{Calibration, Inversion, PhotoSettings, Pipeline, Response, RollSettings},
+    processing::{
+        Calibration, DEFAULT_GAMMA, InputSettings, Inversion, NegativeInput, PhotoSettings,
+        Pipeline, Response, RollSettings,
+    },
     sampling::{mean, roll_neutral},
 };
 use glam::DVec3;
@@ -13,6 +16,26 @@ fn calibration() -> Calibration {
     }
 }
 
+fn negative(cal: Calibration, response: Response, gamma: f64, balance: Balance) -> NegativeInput {
+    NegativeInput {
+        calibration: cal,
+        response,
+        gamma,
+        balance,
+    }
+}
+
+fn input(negative: NegativeInput) -> InputSettings {
+    InputSettings::Negative {
+        dmin: Some(negative.calibration.dmin),
+        dmax: Some(negative.calibration.dmax),
+        input_floor: negative.calibration.input_floor,
+        response: negative.response,
+        gamma: negative.gamma,
+        balance: negative.balance,
+    }
+}
+
 fn close(a: DVec3, b: DVec3) {
     for c in 0..3 {
         assert!(
@@ -22,9 +45,9 @@ fn close(a: DVec3, b: DVec3) {
     }
 }
 
-fn forward(cal: Calibration, roll: RollSettings, exposure: DVec3) -> DVec3 {
-    let (toe, k) = roll.response.shape().unwrap();
-    let g = roll.channel_gammas().unwrap();
+fn forward(cal: Calibration, negative: NegativeInput, exposure: DVec3) -> DVec3 {
+    let (toe, k) = negative.response.shape().unwrap();
+    let g = negative.channel_gammas().unwrap();
     DVec3::from_array(std::array::from_fn(|c| {
         let l = (cal.dmin[c] / cal.dmax[c]).ln();
         let a = toe * l / (g[c] - k * l / std::f64::consts::LN_10);
@@ -35,10 +58,9 @@ fn forward(cal: Calibration, roll: RollSettings, exposure: DVec3) -> DVec3 {
 }
 
 #[test]
-fn new_grades_opt_into_film_and_original_settings_remain_original() {
-    assert_eq!(RollSettings::default().response, Response::Original);
+fn response_defaults_and_processing_models_are_explicit() {
     assert_eq!(
-        RollSettings::new_grade().response,
+        Response::film(),
         Response::Film {
             toe: 2.5,
             shoulder: 0.
@@ -46,31 +68,37 @@ fn new_grades_opt_into_film_and_original_settings_remain_original() {
     );
     assert_eq!(Response::Original.processing_model(), 4);
     assert_eq!(Response::film().processing_model(), 4);
+    assert_eq!(DEFAULT_GAMMA, 0.60);
 }
 
 #[test]
 fn film_one_zero_is_bit_identical_to_original_scalar_execution() {
     let cal = calibration();
     for gamma in [0.1, 0.65, 3.] {
-        let original = RollSettings {
-            gamma,
-            ..RollSettings::default()
-        };
-        let film = RollSettings {
-            response: Response::Film {
+        let original = negative(cal, Response::Original, gamma, Balance::default());
+        let film = negative(
+            cal,
+            Response::Film {
                 toe: 1.,
                 shoulder: 0.,
             },
-            ..original
-        };
+            gamma,
+            Balance::default(),
+        );
         let a = Pipeline::new(
-            cal,
-            original,
+            input(original),
+            RollSettings::default(),
             PhotoSettings::default(),
             glam::DMat3::IDENTITY,
         )
         .unwrap();
-        let b = Pipeline::new(cal, film, PhotoSettings::default(), glam::DMat3::IDENTITY).unwrap();
+        let b = Pipeline::new(
+            input(film),
+            RollSettings::default(),
+            PhotoSettings::default(),
+            glam::DMat3::IDENTITY,
+        )
+        .unwrap();
         for scan in [
             cal.dmin,
             cal.dmax,
@@ -89,16 +117,18 @@ fn film_anchors_forward_inverse_and_monotonic_floor_domain() {
     let cal = calibration();
     for toe in [1., 1.125, 2.5, 3.875, 4.] {
         for shoulder in [0., 0.005, 0.02] {
-            let roll = RollSettings {
-                response: Response::Film { toe, shoulder },
-                ..RollSettings::default()
-            };
-            let inv = Inversion::new(cal, roll).unwrap();
+            let neg = negative(
+                cal,
+                Response::Film { toe, shoulder },
+                DEFAULT_GAMMA,
+                Balance::default(),
+            );
+            let inv = Inversion::new(neg).unwrap();
             assert_eq!(inv.apply(cal.dmin).unwrap().rgb, DVec3::ZERO);
             assert_eq!(inv.apply(cal.dmax).unwrap().rgb, DVec3::ONE);
             for e in [0.002, 0.02, 0.2, 1., 2.] {
                 let e = DVec3::splat(e);
-                close(inv.apply(forward(cal, roll, e)).unwrap().rgb, e);
+                close(inv.apply(forward(cal, neg, e)).unwrap().rgb, e);
             }
             let mut previous = DVec3::ZERO;
             for i in 0..=256 {
@@ -106,7 +136,7 @@ fn film_anchors_forward_inverse_and_monotonic_floor_domain() {
                     cal.dmin * (DVec3::splat(cal.input_floor) / cal.dmin).powf(i as f64 / 256.);
                 let v = inv.apply(scan).unwrap().rgb;
                 assert!(v.is_finite() && v.cmpge(previous).all());
-                let recovered = forward(cal, roll, v);
+                let recovered = forward(cal, neg, v);
                 for c in 0..3 {
                     let density = (cal.dmin[c] / scan[c]).log10();
                     let recovered_density = (cal.dmin[c] / recovered[c]).log10();
@@ -127,14 +157,16 @@ fn film_anchors_forward_inverse_and_monotonic_floor_domain() {
 fn signed_continuation_has_no_pedestal_or_above_base_clamp() {
     let cal = calibration();
     for toe in [1., 2.5, 4.] {
-        let roll = RollSettings {
-            response: Response::Film {
+        let neg = negative(
+            cal,
+            Response::Film {
                 toe,
                 shoulder: 0.02,
             },
-            ..RollSettings::default()
-        };
-        let inv = Inversion::new(cal, roll).unwrap();
+            DEFAULT_GAMMA,
+            Balance::default(),
+        );
+        let inv = Inversion::new(neg).unwrap();
         for epsilon in [-1e-7, -1e-12, 0., 1e-12, 1e-7] {
             let scan = cal.dmin * (1. + epsilon);
             let v = inv.apply(scan).unwrap();
@@ -150,7 +182,7 @@ fn signed_continuation_has_no_pedestal_or_above_base_clamp() {
                     }
                 );
             }
-            close(forward(cal, roll, v.rgb), scan);
+            close(forward(cal, neg, v.rgb), scan);
         }
     }
 }
@@ -167,35 +199,37 @@ fn invalid_shapes_nonfinite_inputs_and_floor_poles_are_rejected() {
         (2.5, f64::INFINITY),
     ] {
         assert!(
-            Inversion::new(
+            Inversion::new(negative(
                 cal,
-                RollSettings {
-                    response: Response::Film { toe, shoulder },
-                    ..RollSettings::default()
-                }
-            )
+                Response::Film { toe, shoulder },
+                DEFAULT_GAMMA,
+                Balance::default()
+            ))
             .is_err()
         );
     }
     assert!(
-        Inversion::new(
+        Inversion::new(negative(
             cal,
-            RollSettings {
-                gamma: 0.1,
-                response: Response::Film {
-                    toe: 2.5,
-                    shoulder: 0.02
-                },
-                ..RollSettings::default()
-            }
-        )
+            Response::Film {
+                toe: 2.5,
+                shoulder: 0.02
+            },
+            0.1,
+            Balance::default()
+        ))
         .is_err()
     );
     assert!(
-        Inversion::new(cal, RollSettings::new_grade())
-            .unwrap()
-            .apply(DVec3::splat(f64::NAN))
-            .is_err()
+        Inversion::new(negative(
+            cal,
+            Response::Original,
+            DEFAULT_GAMMA,
+            Balance::default()
+        ))
+        .unwrap()
+        .apply(DVec3::splat(f64::NAN))
+        .is_err()
     );
 }
 
@@ -210,33 +244,32 @@ fn neutral_fit_uses_actual_response_and_keeps_unrelated_settings() {
             shoulder: 0.02,
         },
     ] {
-        let truth = RollSettings {
+        let truth = negative(
+            cal,
             response,
-            balance: Balance {
+            DEFAULT_GAMMA,
+            Balance {
                 warmth: 0.2,
                 tint: -0.1,
             },
-            exposure: 1.3,
-            ..RollSettings::default()
-        };
+        );
         let patch: Vec<_> = [0.02, 0.05, 0.1, 0.25]
             .map(|e| forward(cal, truth, DVec3::splat(e)))
             .into();
-        let initial = RollSettings {
-            balance: Balance::default(),
-            ..truth
-        };
-        let balance = roll_neutral(cal, initial, &patch, glam::DMat3::IDENTITY).unwrap();
+        let initial = negative(cal, response, DEFAULT_GAMMA, Balance::default());
+        let balance = roll_neutral(initial, &patch, glam::DMat3::IDENTITY).unwrap();
         assert!((balance.warmth - truth.balance.warmth).abs() < 1e-8);
         assert!((balance.tint - truth.balance.tint).abs() < 1e-8);
-        let inv = Inversion::new(cal, RollSettings { balance, ..initial }).unwrap();
-        let values: Vec<_> = patch.iter().map(|s| inv.apply(*s).unwrap().rgb).collect();
+        let fitted = negative(cal, response, DEFAULT_GAMMA, balance);
+        let values: Vec<_> = patch
+            .iter()
+            .map(|s| Inversion::new(fitted).unwrap().apply(*s).unwrap().rgb)
+            .collect();
         let rgb = mean(&values).unwrap();
         assert!((rgb.max_element() - rgb.min_element()).abs() < 1e-9);
         assert_eq!(initial.response, response);
-        assert_eq!(initial.gamma, truth.gamma);
-        assert_eq!(initial.exposure, truth.exposure);
-        assert!(roll_neutral(cal, initial, &[cal.dmin], glam::DMat3::IDENTITY).is_err());
-        assert!(roll_neutral(cal, initial, &[DVec3::ZERO], glam::DMat3::IDENTITY).is_err());
+        assert_eq!(initial.gamma, DEFAULT_GAMMA);
+        assert!(roll_neutral(initial, &[cal.dmin], glam::DMat3::IDENTITY).is_err());
+        assert!(roll_neutral(initial, &[DVec3::ZERO], glam::DMat3::IDENTITY).is_err());
     }
 }

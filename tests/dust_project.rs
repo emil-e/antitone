@@ -7,15 +7,13 @@ use antitone::{
 use serde_json::json;
 
 fn fixture() -> (Project, SourceId) {
-    let mut project = Project {
-        development: Some(Development::new("0.22.0".into(), [1.; 4])),
-        ..Default::default()
-    };
+    let mut project = Project::default();
     let id = project
         .add_source(Source {
             id: SourceId(0),
             path: "negative.ARW".into(),
             development: SourceDevelopment {
+                decode: Development::new("0.22.0".into(), [1.; 4]),
                 lens_correction: None,
                 dng_development: None,
                 dimensions: [900, 600],

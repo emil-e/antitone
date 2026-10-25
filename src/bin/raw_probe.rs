@@ -6,7 +6,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use antitone::processing::{Calibration, Inversion, RollSettings};
+use antitone::processing::{Calibration, Inversion, NegativeInput, Response};
 use antitone::raw::{Developed, RawFile, Rect, version};
 use antitone::sampling::mean;
 use glam::{DMat3, DVec3};
@@ -37,11 +37,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !ppm_ev.is_finite() || !ppm_gain.is_finite() || ppm_gain <= 0. {
         return Err("invalid diagnostic PPM exposure".into());
     }
-    let roll = RollSettings::default();
     println!(
         "LibRaw {} / processing model {}",
         version(),
-        roll.response.processing_model()
+        antitone::PROCESSING_MODEL_VERSION
     );
     let mut fixed_wb = None;
     for path in paths {
@@ -298,7 +297,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             dmax: DVec3::splat(0.002),
             input_floor: floor,
         };
-        let inversion = Inversion::new(synthetic_cal, roll)?;
+        let inversion = Inversion::new(NegativeInput {
+            calibration: synthetic_cal,
+            response: Response::film(),
+            gamma: antitone::processing::DEFAULT_GAMMA,
+            balance: antitone::color::Balance::default(),
+        })?;
         let mut affected = 0usize;
         for &(_, _, _, camera) in &points {
             affected += usize::from(inversion.apply(camera)?.floored.iter().any(|v| *v));

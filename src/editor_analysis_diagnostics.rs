@@ -45,11 +45,7 @@ fn render_roll(editor: &Editor, output: &Path) -> Result<Vec<Value>, Box<dyn std
     let project = &editor.document.project;
     let calibration = project.calibration()?.ok_or("no installed calibration")?;
     let picture = rect(project.analysis_area.ok_or("no installed picture area")?);
-    let wb = project
-        .development
-        .as_ref()
-        .ok_or("no development")?
-        .fixed_wb;
+    let wb = project.development().ok_or("no development")?.fixed_wb;
     let renderer = crate::rendering::CpuRenderer::new(OutputTarget::Srgb)?;
     let mut frames = Vec::new();
     for id in &project.order {
@@ -204,8 +200,8 @@ fn diagnose_sample_rolls() {
                     after.photo = prior.photo;
                     assert_eq!(&after, prior);
                 }
-                assert_eq!(editor.roll.gamma, before.roll.gamma);
-                assert_eq!(editor.roll.response, before.roll.response);
+                assert_eq!(before.input.gamma(), before.input.gamma());
+                assert_eq!(before.input.response(), before.input.response());
             } else {
                 assert_eq!(editor.document.project, before);
             }

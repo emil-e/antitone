@@ -9,7 +9,7 @@ use crate::{
     geometry::{Composition, SourceRegion},
     gpu::{GpuFlatField, GpuPhotoGrade, ProcessingSource, SourceGeometry, SubmissionGate},
     local_adjustments::PhotoGradeSnapshot,
-    processing::{Calibration, RollSettings},
+    processing::{InputSettings, RollSettings},
     renderer::GpuRenderer,
     rendering::OutputTarget,
     scan::Scan,
@@ -61,7 +61,7 @@ pub enum Format {
 pub struct Request<'a> {
     pub scan: &'a Scan,
     pub field: Option<Arc<GpuFlatField>>,
-    pub calibration: Calibration,
+    pub input: InputSettings,
     pub roll: RollSettings,
     pub grade: PhotoGradeSnapshot,
     pub repairs: &'a [Arc<crate::dust_repair::EvaluatedRepair>],

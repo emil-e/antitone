@@ -1,4 +1,5 @@
 use super::*;
+use crate::processing::InputSettings;
 use crate::{
     geometry::SourcePoint,
     local_adjustments::{GradientMask, LocalAdjustment},
@@ -54,7 +55,7 @@ pub(super) struct MaskEdit {
     loaded: u64,
     source: Source,
     roll: RollSettings,
-    calibration: Calibration,
+    input: InputSettings,
     id: Option<AdjustmentId>,
     mask: Option<GradientMask>,
     preview: Option<Source>,
@@ -272,7 +273,7 @@ impl Editor {
             && self.tab == 1
             && !self.busy
             && self.document.visit.ready.is_some()
-            && self.calibration().is_some()
+            && self.input.ready()
             && !self.source
             && self.pick.is_none()
             && self.document.visit.crop_edit.is_none()
@@ -348,7 +349,7 @@ impl Editor {
                     loaded: self.id,
                     source,
                     roll: self.roll,
-                    calibration: self.calibration().unwrap(),
+                    input: self.input,
                     id,
                     mask,
                     preview: None,
@@ -372,7 +373,7 @@ impl Editor {
         edit.loaded == self.id
             && self.mask_source().ok().as_ref() == Some(&edit.source)
             && self.roll == edit.roll
-            && self.calibration() == Some(edit.calibration)
+            && self.input == edit.input
     }
 
     pub(super) fn finish_mask(&mut self, accept: bool) {
@@ -438,14 +439,15 @@ impl Editor {
 
     pub(super) fn view_processing(
         &self,
-        calibration: Calibration,
+        input: impl Into<InputSettings>,
         roll: RollSettings,
         photo: PhotoSettings,
     ) -> Result<ProcessingInput, Error> {
+        let input = input.into();
         if let Some(source) = self.mask_preview_source() {
-            self.positive_processing_for_source(calibration, roll, source, photo)
+            self.positive_processing_for_source(input, roll, source, photo)
         } else {
-            self.positive_processing(calibration, roll, photo)
+            self.positive_processing(input, roll, photo)
         }
     }
 

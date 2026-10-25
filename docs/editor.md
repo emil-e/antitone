@@ -2,7 +2,7 @@
 
 The editor connects photographic settings, image tools and asynchronous work. Its central rule is simple: **a view may be temporary, but accepted photographic state must remain coherent**.
 
-Roll, Photo and Rendering are editing scopes, not separate pipelines. Roll owns shared scan setup and grading; Photo owns individual grading and composition — its turn/flip setting starts from the orientation the camera recorded, and saved projects keep their stored setting; Rendering owns the project-wide creative look and preview target, which also initializes rendered export. Changing tabs changes available controls, not the image's processing. [Architecture](architecture.md) describes how these scopes are owned and disposed.
+Roll, Photo and Rendering are editing scopes, not separate pipelines. Roll selects Negative or Digital interpretation and owns shared grading plus Negative's scan setup; Photo owns individual grading and composition — its turn/flip setting starts from the orientation the camera recorded, and saved projects keep their stored setting; Rendering owns the project-wide creative look and preview target, which also initializes rendered export. Changing tabs changes available controls, not the image's processing. [Architecture](architecture.md) describes how these scopes are owned and disposed.
 
 The editor uses a neutral dark workspace with amber identity and active-state accents. The shared application header presents the film-edge wordmark and project identity without making the wordmark an interactive control. [Branding assets](../assets/branding/README.md) explain the artwork and regeneration.
 
@@ -38,7 +38,7 @@ Dust is direct canvas work, not a per-repair Apply/Cancel transaction. An unmodi
 
 Mask admission is based on marked pixels and a bounded processing area, not a fixed side length. If a held stroke exceeds the budget, the draft and brush turn red and release discards the whole rejected stroke, preserving existing repairs rather than committing a truncated prefix.
 
-Repairs evaluate asynchronously from the same immutable, full-resolution **ungraded AP1**: correction and camera conversion are upstream; grading and locals are downstream. Source, correction or inversion changes invalidate evaluated values, which otherwise are reused across navigation and grading. Manual masks bypass detector thresholds; automatic proposals use conservative GPU screening. The workflow and admission lifecycle — document-owned tasks, cooperative cancellation, typed completion outside painting — is [the architecture's](architecture.md), not a per-tool mechanism.
+Repairs evaluate asynchronously from the same immutable, full-resolution **ungraded AP1**: correction and camera conversion are upstream; grading and locals are downstream. Source, input interpretation or correction changes invalidate evaluated values; downstream grading and navigation reuse them. Manual masks bypass detector thresholds; automatic proposals use conservative GPU screening. The workflow and admission lifecycle — document-owned tasks, cooperative cancellation, typed completion outside painting — is [the architecture's](architecture.md), not a per-tool mechanism.
 
 Accepted repair instructions participate in ordinary [project saving and dirty protection](projects.md#source-owned-dust-repairs); TIFF/EXR export consumes the accepted set, including before the photo has been viewed.
 
@@ -60,7 +60,7 @@ A continuous gesture is one action; numeric text commits, resets and commands ar
 
 A displayed number is not necessarily a rounded stored value. Controls preserve precise values while the user reads or redraws them; only a deliberate edit may change processing. Pending text commits before a stage switch, Analyze snapshot or file action, and discrete commands wait for that admission so they remain separately undoable. Escape cancels text editing before it can cancel an image tool.
 
-Colour wheels position the marker under the pointer; holding Shift gives ten-times finer motion, and changing Shift mid-drag keeps the marker continuous rather than snapping back. Popovers, numeric controls and toolbar gestures own input ahead of the canvas, so one action cannot also pan, pick or apply a draft.
+Colour wheels drag relative to the accepted value; holding Shift gives ten-times finer motion without a jump when Shift changes. Popovers, numeric controls and toolbar gestures own input ahead of the canvas, so one action cannot also pan, pick or apply a draft.
 
 ## Decisions are not operation failures
 
@@ -74,7 +74,7 @@ Working feedback answers two questions: **what is happening, and what can I stil
 
 | Work | Presentation and retained use |
 | --- | --- |
-| RAW import, project Open/New/Save, correction, undo/redo | A centred working modal after a brief delay; the transaction already blocks the workspace |
+| RAW import, project Open/New/Save, correction/context switches, undo/redo | A centred working modal after a brief delay; the transaction already blocks the workspace |
 | Export | A delayed working modal with finished-photo counts and Cancel; workspace, inspection and application panels stay blocked until completion or cancellation acknowledgement |
 | Selected RAW preparation | A spinner on the empty canvas; cached pending previews stay visible but never become the processing source |
 | Reference preparation, picker measurement | Local tool/viewer feedback; no extra global dialog |
@@ -97,7 +97,7 @@ The batch captures accepted crops and adjustments at full resolution, then proce
 
 Developed-source inspection uses the same automatically lens-corrected development as the positive. It bypasses inversion and photographic grading but retains camera-to-AP1 conversion and ACES; its [default display normalization](colour-and-output.md#source-inspection-has-its-own-exposure-convention) is shared with uncalibrated thumbnails. The exposure control adjusts the preview relative to that default — zero restores it, not the unscaled RAW buffer — and it does not alter development, calibration, fitting, exports or the project.
 
-Source and positive caches have distinct identities: switching modes reacquires the appropriate source rather than grading an inverted positive as source light. Missing calibration forces source-only presentation rather than an explicit inspection choice; once a usable Dmin/Dmax pair completes, the editor returns to the positive.
+Source and positive caches have distinct identities: switching modes reacquires the appropriate source rather than grading an inverted positive as source light. Missing Negative calibration forces source-only presentation; completing a usable Dmin/Dmax pair returns to the positive. Digital is ready without anchors.
 
 ## Immutable local-grade routing
 
@@ -113,7 +113,9 @@ The creation icons arm a one-shot gesture: a valid released stroke creates and s
 
 Grading is captured at frame boundaries rather than completed by a worker that could repeatedly lose a race with continuous controls: one submitted colour result stays immutable until completion, and subsequent input coalesces to the latest settings. Navigation replaces the source asynchronously through a photo-owned workflow, and replacements always come from originals — never recursive resampling of a preview. A coarse whole-composition neutral underlay fills newly exposed regions while regional support is missing. [Architecture](architecture.md) owns that workflow and admission model.
 
-The **Original-resolution reference** viewer toggle switches to original-sample GPU grading reconstructed at the same physical view. It is an explicit comparison task: it never silently sharpens the working view, and after comparison ends, completed references live in optional retention rather than mandatory state.
+All canvas images are presented as `RenderedView` products. Repaired crop and precision previews use the same bounded original-coordinate acquisition as the working view; a cold repaired preview shows updating feedback until suitable support is ready. Crop editing maps the whole native-axis source beneath its affine draft, retaining content outside the frame.
+
+The **Original-resolution reference** toggle requests original-sample GPU grading reconstructed at the physical view. Precision tools also present their completed original-sample images through the shared renderer, with native rectangular or affine framing as requested. These are purpose-bound products: leaving a tool or changing its inputs rejects stale results. Comparison never silently sharpens normal viewing; completed references enter optional retention after comparison ends.
 
 ## Photo-only fullscreen inspection
 
@@ -127,7 +129,7 @@ The editor uses several image representations for different jobs:
 | --- | --- |
 | Full developed `Scan` | Full-resolution measurement, refinement and export |
 | Camera-RGB proxy | Initial/pending feedback and uncalibrated/source-inspection thumbnails |
-| Proxy-derived neutral AP1 thumbnail | Calibrated navigation cards with current grading, look and framing |
+| Proxy-derived neutral AP1 thumbnail | Positive navigation cards with current grading, look and framing |
 | Filtered view-sized linear AP1 | Stable positive/source input at physical display density |
 | Accepted target-linear view | Shared viewer/scope input; never graded or composed again |
 | Original-sample regional result | Explicit same-position comparison or precision-tool refinement |
@@ -155,7 +157,7 @@ Two [native owners](../src/editor_development.rs) at most serve selected/referen
 
 ### Positive thumbnail reuse
 
-Calibrated navigation cards correct/invert a small camera-RGB proxy, then apply Global/local grading, look and output target. This finished navigation representation favors responsive browsing over original-sample fidelity: dust reconstruction is omitted, and repair edits leave ready and in-flight thumbnails usable.
+Positive navigation cards interpret a small camera-RGB proxy, then apply Global/local grading, look and output target. They favor responsive browsing and recognizable photographs over original-sample fidelity. Use the main viewer or exports to inspect Dust repairs rather than inferring their accuracy from a small navigation card.
 
 Compatible neutral products survive grade, look and target changes. While an update prepares, the previous card stays visible with an updating indicator if source, correction, framing and target match. Replacements retire older outputs for that source; shared look allocations are charged once across cards.
 

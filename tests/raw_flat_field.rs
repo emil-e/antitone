@@ -158,14 +158,21 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
     #[cfg(feature = "project")]
     {
         use antitone::{
-            processing::PhotoSettings,
+            processing::{
+                CAMERA_INPUT_FLOOR, DEFAULT_GAMMA, InputSettings, PhotoSettings, Response,
+            },
             project::{FlatFieldSettings, Project, Save, Source, SourceDevelopment, SourceId},
         };
+        let decode = scan.source().metadata().development(scan.fixed_wb);
         let mut project = Project {
-            development: Some(scan.source().metadata().development(scan.fixed_wb)),
-            input_floor: Some(scan.input_floor),
-            dmin: Some(anchors.dmin.to_array()),
-            dmax: Some(anchors.dmax.to_array()),
+            input: InputSettings::Negative {
+                dmin: Some(anchors.dmin),
+                dmax: Some(anchors.dmax),
+                input_floor: CAMERA_INPUT_FLOOR,
+                response: Response::film(),
+                gamma: DEFAULT_GAMMA,
+                balance: Default::default(),
+            },
             ..Project::default()
         };
         let mut reference_id = None;
@@ -176,6 +183,7 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
                     id: SourceId(0),
                     path: fixture(name),
                     development: SourceDevelopment {
+                        decode: decode.clone(),
                         lens_correction: None,
                         dng_development: scan.source().metadata().dng_identity(),
                         dimensions: [384, 320],
@@ -197,11 +205,10 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
                 reference_id = Some(id);
             }
         }
-        project.flat_field = Some(FlatFieldSettings::new(
+        project.set_flat_field(Some(FlatFieldSettings::new(
             project.source(reference_id.unwrap()).unwrap(),
             map.clone(),
-            project.development.as_ref().unwrap(),
-        ));
+        )));
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("corrected.antitone.json");
         project.save(&path, Save::New).unwrap();
@@ -213,7 +220,7 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
         );
         let mut restored = Scan::open(
             &fixture("illuminated-patches.dng"),
-            Some(reopened.development.as_ref().unwrap().fixed_wb),
+            Some(reopened.sources[0].development.decode.fixed_wb),
         )
         .unwrap();
         restored
@@ -239,20 +246,16 @@ fn authored_corrected_dng_exports_reopen_in_rgb16_and_ap0() {
     use antitone::{
         color::ap1_to_ap0,
         export::{self, ExrPrecision, ImageSize, Overwrite},
-        processing::{PhotoSettings, Pipeline, RollSettings},
+        processing::{InputSettings, PhotoSettings, Pipeline, Response, RollSettings},
         profiles,
         rendering::{CpuRenderer, OutputTarget},
     };
     let (mut scan, _, _) = corrected_scan();
     let anchors = calibration(&mut scan);
-    let roll = RollSettings::new_grade();
-    let pipeline = Pipeline::new(
-        scan.processing_calibration(anchors).unwrap(),
-        roll,
-        PhotoSettings::default(),
-        scan.camera_to_ap1,
-    )
-    .unwrap();
+    let roll = RollSettings::default();
+    let input = InputSettings::negative(scan.processing_calibration(anchors).unwrap());
+    let pipeline =
+        Pipeline::new(input, roll, PhotoSettings::default(), scan.camera_to_ap1).unwrap();
     let size = ImageSize {
         width: scan.area.width,
         height: scan.area.height,
@@ -272,7 +275,15 @@ fn authored_corrected_dng_exports_reopen_in_rgb16_and_ap0() {
     let directory = tempfile::tempdir().unwrap();
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
         let path = directory.path().join(format!("{target:?}.tif"));
-        export::tiff(&path, size, target, Overwrite::Refuse, roll.response, pixel).unwrap();
+        export::tiff(
+            &path,
+            size,
+            target,
+            Overwrite::Refuse,
+            Response::film(),
+            pixel,
+        )
+        .unwrap();
         let mut decoder = tiff::decoder::Decoder::new(fs::File::open(path).unwrap()).unwrap();
         assert_eq!(decoder.dimensions().unwrap(), (size.width, size.height));
         assert_eq!(
@@ -298,7 +309,7 @@ fn authored_corrected_dng_exports_reopen_in_rgb16_and_ap0() {
         size,
         ExrPrecision::Half,
         Overwrite::Refuse,
-        roll.response,
+        Response::film(),
         pixel,
     )
     .unwrap();

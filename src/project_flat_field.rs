@@ -9,18 +9,16 @@ pub struct FlatFieldSettings {
     pub enabled: bool,
     pub reference: SourceId,
     pub development: SourceDevelopment,
-    pub roll_development: Development,
     pub map: Arc<FlatField>,
 }
 
 impl FlatFieldSettings {
-    pub fn new(reference: &Source, map: Arc<FlatField>, roll_development: &Development) -> Self {
+    pub fn new(reference: &Source, map: Arc<FlatField>) -> Self {
         Self {
             contract: CONTRACT.into(),
             enabled: true,
             reference: reference.id,
             development: reference.development.clone(),
-            roll_development: roll_development.clone(),
             map,
         }
     }
@@ -32,14 +30,16 @@ impl FlatFieldSettings {
         )
     }
 
+    pub(super) fn require_photos(&self, project: &Project) -> Result<()> {
+        for id in &project.order {
+            self.require_source(&project.source(*id)?.development)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn validate(&self, project: &Project) -> Result<()> {
         require(self.contract == CONTRACT, "unsupported flat-field contract")?;
         self.map.validate()?;
-        self.roll_development.validate()?;
-        require(
-            project.development.as_ref() == Some(&self.roll_development),
-            "flat-field roll development or WB differs",
-        )?;
         self.development.validate()?;
         let reference = project.source(self.reference)?;
         require(
@@ -50,20 +50,16 @@ impl FlatFieldSettings {
             contains(self.development.active_area, self.map.area()),
             "flat-field support is outside the reference active area",
         )?;
-        require(
-            project.development.is_some(),
-            "flat-field requires RAW development identity",
-        )?;
-        if self.enabled {
-            for id in &project.order {
-                self.require_source(&project.source(*id)?.development)?;
-            }
-            if let Some(calibration) = project.calibration()? {
-                Inversion::new(
-                    self.development
-                        .processing_calibration(calibration, Some(&self.map))?,
-                    project.roll,
-                )?;
+        if self.enabled && project.input.capabilities().flat_field {
+            self.require_photos(project)?;
+            if let Some(negative) = project.input.negative_input() {
+                let calibration = self
+                    .development
+                    .processing_calibration(negative.calibration, Some(&self.map))?;
+                Inversion::new(crate::processing::NegativeInput {
+                    calibration,
+                    ..negative
+                })?;
             }
         }
         Ok(())

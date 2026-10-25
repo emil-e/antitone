@@ -4,9 +4,8 @@ use crate::{
     Error,
     color::{AP1_TO_XYZ, Balance, neutral_wb, wb_matrix},
     processing::{
-        Calibration, Inversion, InputSettings, NegativeInput, PhotoSettings, RollSettings,
-        exposure_multiplier,
-        validate_camera_matrix,
+        Calibration, InputSettings, Inversion, NegativeInput, PhotoSettings, RollSettings,
+        exposure_multiplier, validate_camera_matrix,
     },
     sampling,
 };
@@ -85,7 +84,7 @@ pub fn estimate(
     frames: &[FrameSamples<'_>],
     effective_floor: f64,
     camera_to_ap1: DMat3,
-    current: NegativeInput,
+    current: impl Into<InputSettings>,
     mut cancelled: impl FnMut() -> bool,
 ) -> Result<Option<Proposal>, Error> {
     if cancelled() {
@@ -95,7 +94,18 @@ pub fn estimate(
     if !effective_floor.is_finite() || effective_floor <= 0. {
         return Err(Error::InvalidParameter("invalid roll analysis floor"));
     }
-    current.channel_gammas()?;
+    let InputSettings::Negative {
+        input_floor,
+        response,
+        gamma,
+        balance,
+        ..
+    } = current.into()
+    else {
+        return Err(Error::InvalidParameter(
+            "roll analysis requires a negative input",
+        ));
+    };
     if frames.is_empty() {
         return Err(Error::UnusableSample("empty analysis roll"));
     }
@@ -135,8 +145,14 @@ pub fn estimate(
         input_floor: effective_floor,
     }
     .validate()?;
-    let initial = NegativeInput {
+    let current = NegativeInput {
         calibration,
+        response,
+        gamma,
+        balance,
+    };
+    current.channel_gammas()?;
+    let initial = NegativeInput {
         balance: Balance::default(),
         ..current
     };
@@ -179,7 +195,10 @@ pub fn estimate(
         })
         .collect();
     let Some(balance) = gamma::fit(
-        NegativeInput { calibration, ..current },
+        NegativeInput {
+            calibration,
+            ..current
+        },
         camera_to_ap1,
         &selected,
         &mut cancelled,
@@ -187,7 +206,7 @@ pub fn estimate(
     else {
         return Ok(None);
     };
-    let mut negative = NegativeInput {
+    let negative = NegativeInput {
         calibration,
         balance,
         ..initial
@@ -207,8 +226,10 @@ pub fn estimate(
                 )?,
         );
     }
-    let mut roll = RollSettings::default();
-    roll.wb = neutral_wb(sampling::mean(&means)?)?;
+    let mut roll = RollSettings {
+        wb: neutral_wb(sampling::mean(&means)?)?,
+        ..RollSettings::default()
+    };
     let post = wb_matrix(roll.wb)? * camera_to_ap1;
     let mut totals = Vec::with_capacity(frames.len());
     let mut statistics = Vec::with_capacity(frames.len());
@@ -272,7 +293,7 @@ pub fn estimate(
         input: InputSettings::Negative {
             dmin: Some(negative.calibration.dmin),
             dmax: Some(negative.calibration.dmax),
-            input_floor: negative.calibration.input_floor,
+            input_floor,
             response: negative.response,
             gamma: negative.gamma,
             balance: negative.balance,

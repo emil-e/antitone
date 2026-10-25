@@ -2,8 +2,31 @@
 
 use antitone::color::Balance;
 use antitone::gpu::{ProcessingKernel, ProcessingParameters, ProcessingSource};
-use antitone::processing::{Calibration, DEFAULT_GAMMA, PhotoSettings, Pipeline, RollSettings};
+use antitone::processing::{
+    Calibration, DEFAULT_GAMMA, InputSettings, NegativeInput, PhotoSettings, Pipeline, Response,
+    RollSettings,
+};
 use glam::{DMat3, DVec3, Vec4};
+
+fn negative(cal: Calibration, gamma: f64, balance: Balance) -> NegativeInput {
+    NegativeInput {
+        calibration: cal,
+        response: Response::film(),
+        gamma,
+        balance,
+    }
+}
+
+fn as_input(negative: NegativeInput) -> InputSettings {
+    InputSettings::Negative {
+        dmin: Some(negative.calibration.dmin),
+        dmax: Some(negative.calibration.dmax),
+        input_floor: negative.calibration.input_floor,
+        response: negative.response,
+        gamma: negative.gamma,
+        balance: negative.balance,
+    }
+}
 
 #[test]
 fn metal_processing_matches_the_cpu_model_and_source_bypass() {
@@ -81,9 +104,8 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
                     tint: -0.14,
                 },
             ] {
+                let interpretation = negative(cal, gamma, balance);
                 let roll = RollSettings {
-                    gamma,
-                    balance,
                     exposure: 1.5,
                     ..RollSettings::default()
                 };
@@ -95,9 +117,10 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
                     },
                     ..PhotoSettings::default()
                 };
-                let parameters = ProcessingParameters::positive(cal, roll, photo, matrix).unwrap();
+                let parameters =
+                    ProcessingParameters::positive(interpretation, roll, photo, matrix).unwrap();
                 configurations.push((
-                    Some(Pipeline::new(cal, roll, photo, matrix).unwrap()),
+                    Some(Pipeline::new(as_input(interpretation), roll, photo, matrix).unwrap()),
                     parameters,
                 ));
             }
@@ -106,8 +129,8 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
             input_floor: 1e-6,
             ..cal
         };
+        let attenuated = negative(attenuated_cal, 0.1, Balance::default());
         let attenuated_roll = RollSettings {
-            gamma: 0.1,
             exposure: -16.0,
             ..Default::default()
         };
@@ -116,14 +139,17 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
             ..Default::default()
         };
         configurations.push((
-            Some(Pipeline::new(attenuated_cal, attenuated_roll, attenuated_photo, matrix).unwrap()),
-            ProcessingParameters::positive(
-                attenuated_cal,
-                attenuated_roll,
-                attenuated_photo,
-                matrix,
-            )
-            .unwrap(),
+            Some(
+                Pipeline::new(
+                    as_input(attenuated),
+                    attenuated_roll,
+                    attenuated_photo,
+                    matrix,
+                )
+                .unwrap(),
+            ),
+            ProcessingParameters::positive(attenuated, attenuated_roll, attenuated_photo, matrix)
+                .unwrap(),
         ));
         for contrast in [0.4, 0.5, 0.8, 1.2, 1.5, 1.6] {
             for pivot in [0.01, 0.18, 1.] {
@@ -135,7 +161,7 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
                                     warmth: 0.14,
                                     tint: -0.18,
                                 },
-                                ..RollSettings::new_grade()
+                                ..RollSettings::default()
                             };
                             let photo = PhotoSettings {
                                 contrast,
@@ -149,9 +175,14 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
                                     tint: -0.1,
                                 },
                             };
+                            let interpretation = negative(cal, DEFAULT_GAMMA, Balance::default());
                             configurations.push((
-                                Some(Pipeline::new(cal, roll, photo, matrix).unwrap()),
-                                ProcessingParameters::positive(cal, roll, photo, matrix).unwrap(),
+                                Some(
+                                    Pipeline::new(as_input(interpretation), roll, photo, matrix)
+                                        .unwrap(),
+                                ),
+                                ProcessingParameters::positive(interpretation, roll, photo, matrix)
+                                    .unwrap(),
                             ));
                         }
                     }
@@ -255,23 +286,28 @@ fn metal_digital_processing_matches_the_cpu_model() {
         });
         let mut configurations = Vec::new();
         for exposure in [-16., 0., 1.5, 16.] {
-            for wb in [Balance::default(), Balance { warmth: 0.2, tint: -0.1 }] {
+            for wb in [
+                Balance::default(),
+                Balance {
+                    warmth: 0.2,
+                    tint: -0.1,
+                },
+            ] {
                 for contrast in [0.5, 1., 1.5] {
                     for saturation in [0., 1.3] {
-                        let roll = RollSettings {
-                            wb,
-                            exposure,
-                            ..RollSettings::default()
-                        };
+                        let roll = RollSettings { wb, exposure };
                         let photo = PhotoSettings {
                             contrast,
                             saturation,
                             exposure: -1.,
-                            wb: Balance { warmth: 0.1, tint: 0.05 },
+                            wb: Balance {
+                                warmth: 0.1,
+                                tint: 0.05,
+                            },
                             ..PhotoSettings::default()
                         };
                         configurations.push((
-                            Pipeline::digital(roll, photo, matrix).unwrap(),
+                            Pipeline::new(InputSettings::Digital, roll, photo, matrix).unwrap(),
                             ProcessingParameters::digital(roll, photo, matrix).unwrap(),
                         ));
                     }
@@ -295,13 +331,11 @@ fn metal_digital_processing_matches_the_cpu_model() {
                 let value = pipeline.apply(scan).unwrap();
                 // Digital never floors (the source is already a positive).
                 assert_eq!(value.floored, [false; 3]);
-                for c in 0..3 {
+                for (c, expected) in value.rgb.to_array().into_iter().enumerate() {
                     let gpu = f64::from(actual[i][c]);
                     assert!(
-                        gpu.is_finite()
-                            && (gpu - value.rgb[c]).abs() <= 2e-5 + 2e-4 * value.rgb[c].abs(),
-                        "pixel {i} channel {c}: GPU={gpu} CPU={}",
-                        value.rgb[c]
+                        gpu.is_finite() && (gpu - expected).abs() <= 2e-5 + 2e-4 * expected.abs(),
+                        "pixel {i} channel {c}: GPU={gpu} CPU={expected}",
                     );
                 }
                 assert_eq!(actual[i].w as u32, 0);
@@ -448,7 +482,7 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
                                 dmax: DVec3::splat(0.01),
                                 input_floor: 1e-5,
                             },
-                            RollSettings::new_grade(),
+                            RollSettings::default(),
                             photo,
                             DMat3::IDENTITY,
                         )
@@ -562,12 +596,12 @@ fn photographic_parameter_signatures_and_range_preflight_cover_the_new_stages() 
             ProcessingParameters::positive(cal, roll, changed, DMat3::IDENTITY).unwrap();
         assert_ne!(bytemuck::bytes_of(&parameters), bytemuck::bytes_of(&base));
     }
-    let extreme = RollSettings { gamma: 0.1, ..roll };
-    assert!(ProcessingParameters::positive(cal, extreme, photo, DMat3::IDENTITY).is_ok());
+    let extreme = negative(cal, 0.1, Balance::default());
+    assert!(ProcessingParameters::positive(extreme, roll, photo, DMat3::IDENTITY).is_ok());
     assert!(
         ProcessingParameters::positive(
-            cal,
             extreme,
+            roll,
             PhotoSettings {
                 contrast: 1.5,
                 ..photo
@@ -585,18 +619,21 @@ fn gpu_parameters_reject_overflow_instead_of_silent_cpu_fallback() {
         dmax: DVec3::splat(0.01),
         input_floor: 1e-6,
     };
-    let roll = RollSettings {
-        gamma: 0.1,
-        balance: Balance {
+    let interpretation = negative(
+        cal,
+        0.1,
+        Balance {
             warmth: -1.0,
             tint: 1.0,
         },
+    );
+    let roll = RollSettings {
         exposure: 16.0,
         ..RollSettings::default()
     };
     assert!(
         ProcessingParameters::positive(
-            cal,
+            interpretation,
             roll,
             PhotoSettings {
                 exposure: 16.0,
@@ -606,5 +643,5 @@ fn gpu_parameters_reject_overflow_instead_of_silent_cpu_fallback() {
         )
         .is_err()
     );
-    assert_eq!(std::mem::size_of::<ProcessingParameters>(), 480);
+    assert_eq!(std::mem::size_of::<ProcessingParameters>(), 496);
 }

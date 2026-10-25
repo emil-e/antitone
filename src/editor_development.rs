@@ -30,7 +30,6 @@ pub(super) struct Request {
     pub path: PathBuf,
     pub wb: Option<[f64; 4]>,
     pub expected: Option<Source>,
-    pub basis: Option<crate::project::CameraBasis>,
     pub file: thumbnails::FileKey,
     pub key: Option<SourceKey>,
     pub store: Option<Arc<SourceStore>>,
@@ -455,11 +454,6 @@ impl Scheduler {
                     // The bridge serializes SDK transactions process-wide, so the
                     // develop phase must not share native execution with anything.
                     task.sdk.store(raw.metadata.uses_sdk(), Ordering::Relaxed);
-                    if let Some(basis) = &task.request.basis {
-                        basis
-                            .require_source(&record.development)
-                            .map_err(|e| e.to_string())?;
-                    }
                     if let Some(expected) = &task.request.expected {
                         document::verify_source(expected, &record).map_err(|e| e.to_string())?;
                     }
@@ -815,14 +809,16 @@ fn run(
                         if !retain || store.is_closed() {
                             continue;
                         }
-                        let record =
-                            document::source_metadata(&task.request.path, &source.metadata())
-                                .map_err(|e| e.to_string())?;
+                        let record = document::source_metadata(
+                            &task.request.path,
+                            &source.metadata(),
+                            source.fixed_wb(),
+                        )
+                        .map_err(|e| e.to_string())?;
                         if let Some(key) = SourceKey::from_revision(
                             &task.request.path,
                             task.request.file.clone(),
                             &record.development,
-                            &source.metadata().development(source.fixed_wb()),
                         ) && let Some(canonical) = store
                             .publish_source(key, source.clone())
                             .map_err(|e| e.to_string())?

@@ -61,7 +61,6 @@ fn measurement_uses_the_captured_source_and_updates_history_without_receiving_or
             None,
             None,
             None,
-            None,
         )
         .unwrap();
         let region = Coverage::rectangle(Rect {
@@ -92,12 +91,12 @@ fn measurement_uses_the_captured_source_and_updates_history_without_receiving_or
         editor.current_source = Some(
             editor
                 .document
-                .register(ready.record.clone(), ready.development.clone())
+                .register_with_development(ready.record.clone(), ready.development().clone())
                 .unwrap(),
         );
-        editor.floor = crate::processing::CAMERA_INPUT_FLOOR;
-        editor.dmin = Some(expected * 1.05);
-        editor.dmax = Some(dark);
+        editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
+        editor.set_dmin(Some(expected * 1.05));
+        editor.set_dmax(Some(dark));
         editor.document.visit.ready = Some(ready);
         editor.sync_document();
         editor.document.cache().set_budget(0);
@@ -123,7 +122,7 @@ fn measurement_uses_the_captured_source_and_updates_history_without_receiving_or
             drop(hold);
             app.run_until(Duration::from_secs(5), |editor| !editor.busy);
             app.read(|editor| {
-                assert_eq!(editor.dmin, Some(expected), "{}", editor.status);
+                assert_eq!(editor.dmin(), Some(expected), "{}", editor.status);
                 assert!(editor.pick.is_none() && editor.document.visit.measurement.is_none());
                 assert_eq!(
                     editor.history_label(crate::editor::history::Direction::Undo),
@@ -281,8 +280,8 @@ fn cancelling_a_running_measurement_retains_its_source_until_the_computation_ret
         correction: None,
         kind: Pick::Dmin,
         region: Coverage::rectangle(scan.area),
-        calibration: None,
-        roll: RollSettings::new_grade(),
+        input: crate::processing::InputSettings::default(),
+        roll: RollSettings::default(),
         photo: PhotoSettings::default(),
     };
     drop(scan);
@@ -339,7 +338,6 @@ fn native_acquisition_wait_does_not_occupy_blocking_job_capacity() {
                 path: file.path().to_owned(),
                 wb: Some([1.; 4]),
                 expected: None,
-                basis: None,
                 file: thumbnails::FileKey::new(file.path()),
                 key: None,
                 store: Some(store.clone()),
@@ -370,8 +368,8 @@ fn native_acquisition_wait_does_not_occupy_blocking_job_capacity() {
             correction: None,
             kind: Pick::Dmin,
             region: Coverage::rectangle(region),
-            calibration: None,
-            roll: RollSettings::new_grade(),
+            input: crate::processing::InputSettings::default(),
+            roll: RollSettings::default(),
             photo: PhotoSettings::default(),
         };
         measurement_jobs
@@ -431,8 +429,8 @@ fn measurement_captures_correction_and_all_five_kinds_keep_their_declared_inputs
             correction: Some(correction.clone()),
             kind,
             region,
-            calibration: Some(calibration),
-            roll: RollSettings::new_grade(),
+            input: calibration.into(),
+            roll: RollSettings::default(),
             photo: PhotoSettings::default(),
         };
         let Measurement::Reference(value) = input.measure().unwrap() else {
@@ -453,7 +451,7 @@ fn measurement_captures_correction_and_all_five_kinds_keep_their_declared_inputs
                 warmth: 0.1,
                 tint: -0.05,
             },
-            ..RollSettings::new_grade()
+            ..RollSettings::default()
         };
         let photo = PhotoSettings {
             exposure: 0.25,
@@ -464,23 +462,23 @@ fn measurement_captures_correction_and_all_five_kinds_keep_their_declared_inputs
             correction: None,
             kind,
             region: middle,
-            calibration: Some(calibration),
+            input: calibration.into(),
             roll,
             photo,
         };
         let mut reference = Scan::from_source(source.clone());
         let expected = match kind {
-            Pick::Gamma => reference.roll_neutral_coverage(middle, calibration, roll),
+            Pick::Gamma => reference.roll_neutral_coverage(middle, &input.input),
             Pick::RollWb => reference.photo_neutral_coverage(
                 middle,
-                calibration,
+                &input.input,
                 RollSettings {
                     wb: Balance::default(),
                     ..roll
                 },
                 PhotoSettings::default(),
             ),
-            _ => reference.photo_neutral_coverage(middle, calibration, roll, photo),
+            _ => reference.photo_neutral_coverage(middle, &input.input, roll, photo),
         }
         .unwrap();
         let Measurement::Balance(value) = input.measure().unwrap() else {

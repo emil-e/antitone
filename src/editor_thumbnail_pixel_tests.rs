@@ -83,15 +83,14 @@ fn assert_rendered(actual: &[[f32; 4]], expected: &[Vec3]) {
 }
 
 #[test]
-fn navigation_pixels_keep_grade_locals_look_and_target_while_omitting_dust() {
+fn navigation_pixels_keep_global_local_grades_look_and_target() {
     let (device, queue) = gpu();
     let renderers = Arc::new(crate::renderer::RendererCache::default());
     let mut thumbnails =
         Thumbnails::with_disk(device.clone(), queue.clone(), renderers.clone(), None);
     let mut document = tests::fixture();
-    document.project.dmin = Some([0.8; 3]);
-    document.project.dmax = Some([0.02; 3]);
-    document.project.input_floor = Some(crate::processing::CAMERA_INPUT_FLOOR);
+    document.project.set_dmin(Some([0.8; 3]));
+    document.project.set_dmax(Some([0.02; 3]));
     let id = document.project.order[0];
     document.project.source_mut(id).unwrap().photo = PhotoSettings {
         exposure: 0.4,
@@ -119,17 +118,6 @@ fn navigation_pixels_keep_grade_locals_look_and_target_while_omitting_dust() {
         )
         .unwrap();
     document.project.source_mut(id).unwrap().local_adjustments = Some(locals);
-    document
-        .project
-        .source_mut(id)
-        .unwrap()
-        .repairs
-        .insert(
-            SupportMask::new([120, 60], [3, 3], vec![true; 9]).unwrap(),
-            RepairOrigin::Manual,
-            DonorChoice::Offset([-64, 0]),
-        )
-        .unwrap();
     let size = [8, 6];
     let pixels = (0..size[1])
         .flat_map(|y| {
@@ -150,7 +138,6 @@ fn navigation_pixels_keep_grade_locals_look_and_target_while_omitting_dust() {
     thumbnails.bind_sources(document.cache().clone());
     thumbnails.seed(
         document.project.source(id).unwrap(),
-        document.project.development.as_ref().unwrap(),
         FileKey::new(&document.source_path(id).unwrap()),
         Arc::new(Proxy {
             width: size[0],
@@ -183,45 +170,52 @@ fn navigation_pixels_keep_grade_locals_look_and_target_while_omitting_dust() {
         )
         .unwrap(),
     );
-    for target in [OutputTarget::DisplayP3, OutputTarget::Srgb] {
-        for selected in [None, Some(look.clone())] {
-            document.project.output.look = selected.clone();
-            let recipe = document.project.image_recipe(id).unwrap();
-            let pipeline = Pipeline::new(
-                recipe.neutral.processing_calibration().unwrap(),
-                recipe.roll,
-                recipe.grade.global(),
-                DMat3::IDENTITY,
-            )
-            .unwrap();
-            let locals =
-                crate::local_adjustments::LocalGrade::new(recipe.grade.locals().to_vec()).unwrap();
-            let expected = pixels
-                .iter()
-                .enumerate()
-                .map(|(index, p)| {
-                    let x = index as u32 % size[0];
-                    let y = index as u32 / size[0];
-                    let point = crate::geometry::SourcePoint([
-                        (f64::from(x) + 0.5) * 900. / f64::from(size[0]),
-                        (f64::from(y) + 0.5) * 600. / f64::from(size[1]),
-                    ]);
-                    let camera = DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.;
-                    let rgb = locals
-                        .apply(pipeline.apply(camera).unwrap(), point)
-                        .unwrap()
-                        .rgb;
-                    selected
-                        .as_ref()
-                        .map_or(rgb, |look| look.lut().apply(rgb).unwrap())
-                })
-                .collect::<Vec<_>>();
-            let expected = CpuRenderer::new(target).unwrap().render(&expected).unwrap();
-            let mut key = tests::key(&document, id);
-            key.target = target;
-            let image = complete(&mut thumbnails, &document, key).unwrap();
-            let actual = linear_pixels(&device, &queue, renderers.submissions(), &image);
-            assert_rendered(&actual, &expected);
+    for input in [
+        document.project.input,
+        crate::processing::InputSettings::Digital,
+    ] {
+        document.project.input = input;
+        for target in [OutputTarget::DisplayP3, OutputTarget::Srgb] {
+            for selected in [None, Some(look.clone())] {
+                document.project.output.look = selected.clone();
+                let recipe = document.project.image_recipe(id).unwrap();
+                let pipeline = Pipeline::new(
+                    recipe.neutral.processing_input().unwrap(),
+                    recipe.roll,
+                    recipe.grade.global(),
+                    DMat3::IDENTITY,
+                )
+                .unwrap();
+                let locals =
+                    crate::local_adjustments::LocalGrade::new(recipe.grade.locals().to_vec())
+                        .unwrap();
+                let expected = pixels
+                    .iter()
+                    .enumerate()
+                    .map(|(index, p)| {
+                        let x = index as u32 % size[0];
+                        let y = index as u32 / size[0];
+                        let point = crate::geometry::SourcePoint([
+                            (f64::from(x) + 0.5) * 900. / f64::from(size[0]),
+                            (f64::from(y) + 0.5) * 600. / f64::from(size[1]),
+                        ]);
+                        let camera = DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.;
+                        let rgb = locals
+                            .apply(pipeline.apply(camera).unwrap(), point)
+                            .unwrap()
+                            .rgb;
+                        selected
+                            .as_ref()
+                            .map_or(rgb, |look| look.lut().apply(rgb).unwrap())
+                    })
+                    .collect::<Vec<_>>();
+                let expected = CpuRenderer::new(target).unwrap().render(&expected).unwrap();
+                let mut key = tests::key(&document, id);
+                key.target = target;
+                let image = complete(&mut thumbnails, &document, key).unwrap();
+                let actual = linear_pixels(&device, &queue, renderers.submissions(), &image);
+                assert_rendered(&actual, &expected);
+            }
         }
     }
 }

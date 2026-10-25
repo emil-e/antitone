@@ -142,6 +142,7 @@ fn observe_spatial_metadata_cached_roll() {
         let evidence = Evidence::observe(size, &rgb).unwrap();
         // This fixture identity describes old cached camera codes, not current SDK/Sony acceptance.
         let development = SourceDevelopment {
+            decode: Development::new("frozen-RGB16-geometry-fixture".into(), fixed),
             lens_correction: None,
             dng_development: None,
             dimensions: serde_json::from_value(meta["developed_size"].clone()).unwrap(),

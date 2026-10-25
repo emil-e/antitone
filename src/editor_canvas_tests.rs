@@ -7,7 +7,7 @@ use crate::{
     scan_regions::{Areas, PictureGeometry},
 };
 
-fn mapping(app: &TestApplication<'_, Editor>) -> (TextureMapping, Option<FrameRaster>) {
+fn mapping(app: &TestApplication<'_, Editor>) -> (TextureMapping, FrameRaster, bool) {
     let context = egui::Context::default();
     let mut result = None;
     let mut output = context.run_ui(Default::default(), |ui| {
@@ -26,11 +26,8 @@ fn mapping(app: &TestApplication<'_, Editor>) -> (TextureMapping, Option<FrameRa
                 .unwrap();
             result = Some((
                 paint.texture_mapping(),
-                editor
-                    .working
-                    .displayed
-                    .as_ref()
-                    .map(|view| view.spec.frame),
+                paint.view_frame().expect("canvas presents a RenderedView"),
+                editor.working.displayed.is_some(),
             ));
         });
     });
@@ -38,7 +35,7 @@ fn mapping(app: &TestApplication<'_, Editor>) -> (TextureMapping, Option<FrameRa
     result.unwrap()
 }
 
-fn assert_source_corners(uv: TextureMapping, frame: Option<FrameRaster>, area: Rect, crop: Crop) {
+fn assert_source_corners(uv: TextureMapping, frame: FrameRaster, crop: Crop) {
     let (s, c) = crop.angle.sin_cos();
     for corner in [[0., 0.], [1., 0.], [1., 1.], [0., 1.]] {
         let texture: [f64; 2] = std::array::from_fn(|axis| {
@@ -46,21 +43,11 @@ fn assert_source_corners(uv: TextureMapping, frame: Option<FrameRaster>, area: R
                 + corner[0] * f64::from(uv.x_axis[axis])
                 + corner[1] * f64::from(uv.y_axis[axis])
         });
-        let actual = frame.map_or_else(
-            || {
-                [
-                    f64::from(area.x) + texture[0] * f64::from(area.width),
-                    f64::from(area.y) + texture[1] * f64::from(area.height),
-                ]
-            },
-            |frame| {
-                frame
-                    .source_point(std::array::from_fn(|axis| {
-                        texture[axis] * f64::from(frame.output[axis])
-                    }))
-                    .0
-            },
-        );
+        let actual = frame
+            .source_point(std::array::from_fn(|axis| {
+                texture[axis] * f64::from(frame.output[axis])
+            }))
+            .0;
         // Independent accepted-crop reference, not the composition/UV helper under test.
         let x = (corner[0] - 0.5) * f64::from(crop.size[0]);
         let y = (corner[1] - 0.5) * f64::from(crop.size[1]);
@@ -71,48 +58,41 @@ fn assert_source_corners(uv: TextureMapping, frame: Option<FrameRaster>, area: R
         for axis in 0..2 {
             assert!(
                 (actual[axis] - expected[axis]).abs() < 0.0002,
-                "preview must show the accepted source crop before physical acquisition: corner={corner:?}, actual={actual:?}, expected={expected:?}, physical={}",
-                frame.is_some()
+                "preview must show the accepted source crop: corner={corner:?}, actual={actual:?}, expected={expected:?}"
             );
         }
     }
 }
 
 fn provisional_then_physical(app: &mut TestApplication<'_, Editor>) {
-    let (jobs, crop, area) = app.read(|editor| {
-        (
-            editor.workflow_jobs.clone(),
-            editor.crop.unwrap(),
-            editor.document.visit.ready.as_ref().unwrap().area,
-        )
-    });
+    let (jobs, crop) = app.read(|editor| (editor.workflow_jobs.clone(), editor.crop.unwrap()));
     let admission = jobs.hold();
-    let (uv, physical) = mapping(app);
+    let (uv, frame, physical) = mapping(app);
     assert!(
-        physical.is_none(),
-        "exercise the actual proxy fallback before working acquisition"
+        !physical,
+        "exercise the provisional renderer before original acquisition"
     );
-    assert_source_corners(uv, physical, area, crop);
+    assert_source_corners(uv, frame, crop);
     app.pump();
     assert!(app.read(|editor| editor.document.visit.working.task.is_some()));
     drop(admission);
     app.run_until(Duration::from_secs(20), |editor| {
         editor.working.support_ready()
     });
-    let (uv, physical) = mapping(app);
+    let (uv, frame, physical) = mapping(app);
     assert!(
-        physical.is_some(),
-        "compare the actual accepted working-image path too"
+        physical,
+        "compare the accepted original-derived working view too"
     );
-    assert_source_corners(uv, physical, area, crop);
+    assert_source_corners(uv, frame, crop);
 }
 
 #[test]
 fn proxy_and_working_image_keep_the_same_crop_after_apply_and_source_revisit() {
     for (angle, inspection) in [(0., true), (2.5, true), (0., false), (2.5, false)] {
         let mut editor = super::super::tests::authored_fixture(&["roll-0.dng", "roll-1.dng"]);
-        editor.dmin = Some(DVec3::splat(3000. / 4031.));
-        editor.dmax = Some(DVec3::splat(128. / 4031.));
+        editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
+        editor.set_dmax(Some(DVec3::splat(128. / 4031.)));
         editor.source = inspection;
         editor.auto_crop_margin = 0.;
         // Declared frame measurements isolate the displayed geometry from detector discovery.

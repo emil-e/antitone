@@ -83,7 +83,7 @@ fn log_prefix_main(
     if index >= source_pixel_count() {
         return;
     }
-    if parameters.gamma_mode.w <= 0.5 {
+    if parameters.stage == STAGE_SOURCE {
         positives[index] = process_camera_source(convert_source(scans[index], index));
         return;
     }

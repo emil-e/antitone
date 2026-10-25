@@ -1,4 +1,5 @@
 use super::*;
+use crate::processing::InputSettings;
 use crate::{
     geometry::SourceRegion,
     gpu::{GpuPhotoGrade, ProcessingInput},
@@ -7,7 +8,7 @@ use std::cell::RefCell;
 
 #[derive(PartialEq)]
 struct Key {
-    calibration: Calibration,
+    input: InputSettings,
     roll: RollSettings,
     matrix: glam::DMat3,
     area: SourceRegion,
@@ -66,9 +67,9 @@ impl Grades {
             .ok_or_else(|| Error::Gpu("no editor GPU device".into()))?;
         let grade = Arc::new(GpuPhotoGrade::new(
             device,
-            key.calibration,
+            key.input,
             key.roll,
-            snapshot,
+            snapshot.clone(),
             key.matrix,
             key.area,
         )?);
@@ -86,7 +87,7 @@ fn snapshot(source: &Source, photo: PhotoSettings) -> Result<PhotoGradeSnapshot,
 
 pub(super) fn validate_source(
     device: Option<&wgpu::Device>,
-    calibration: Calibration,
+    input: &InputSettings,
     roll: RollSettings,
     source: &Source,
     photo: PhotoSettings,
@@ -94,13 +95,23 @@ pub(super) fn validate_source(
     let snapshot = snapshot(source, photo)?;
     let matrix = glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1);
     if snapshot.locals().is_empty() {
-        ProcessingParameters::positive(calibration, roll, photo, matrix).map(|_| ())
+        if input.is_negative() && input.calibration().is_none() {
+            // A fresh Negative project is valid before Dmin/Dmax are measured. Rendering
+            // reports the missing calibration; import/save/validation can still proceed.
+            return Ok(());
+        }
+        ProcessingParameters::interpret(input, roll, photo, matrix).map(|_| ())
     } else {
+        if input.is_negative() && input.calibration().is_none() {
+            return Err(Error::InvalidParameter(
+                "local adjustments require a calibrated processing basis",
+            ));
+        }
         let device = device
             .ok_or_else(|| Error::Gpu("local adjustments require an editor GPU device".into()))?;
         GpuPhotoGrade::validate(
             device,
-            calibration,
+            input,
             roll,
             &snapshot,
             matrix,
@@ -115,36 +126,38 @@ impl Editor {
     }
 
     pub(super) fn validate_source_candidate(&self, source: &Source) -> Result<(), Error> {
-        let calibration = self.calibration().ok_or(Error::InvalidParameter(
-            "local adjustments require calibration",
-        ))?;
+        let mut input = self.input();
+        if let Some(base) = input.calibration() {
+            input = input.with_calibration(source.development.processing_calibration(
+                base,
+                self.correction.as_ref().map(|c| c.settings.map.as_ref()),
+            )?);
+        }
         validate_source(
             self.grades.device.as_ref(),
-            source.development.processing_calibration(
-                calibration,
-                self.correction.as_ref().map(|c| c.settings.map.as_ref()),
-            )?,
+            &input,
             self.roll,
             source,
             source.photo,
         )?;
         if self.current_source == Some(source.id) {
-            self.dust_validate_snapshot(calibration, self.roll, &source.grade_snapshot()?)?;
+            self.dust_validate_snapshot(input, self.roll, &source.grade_snapshot()?)?;
         }
         Ok(())
     }
 
     pub(super) fn positive_processing_for_source(
         &self,
-        calibration: Calibration,
+        input: impl Into<InputSettings>,
         roll: RollSettings,
         source: &Source,
         photo: PhotoSettings,
     ) -> Result<ProcessingInput, Error> {
-        let mut recipe =
-            self.document
-                .project
-                .image_recipe_for_source(source, calibration, roll, photo)?;
+        let input = input.into();
+        let mut recipe = self
+            .document
+            .project
+            .image_recipe_for_source(source, &input, roll, photo)?;
         recipe.neutral.correction = self
             .correction
             .as_ref()
@@ -153,9 +166,11 @@ impl Editor {
         let look = recipe.look;
         let matrix =
             glam::DMat3::from_cols_array_2d(&recipe.neutral.source_development.camera_to_ap1);
-        let calibration = recipe.neutral.processing_calibration()?;
-        if snapshot.locals().is_empty() {
-            let parameters = ProcessingParameters::positive(calibration, roll, photo, matrix)?;
+        let input = recipe.neutral.processing_input()?;
+        if snapshot.locals().is_empty() && self.grades.device.is_none() {
+            // CPU-only fixtures have no GPU grade allocation; production always uses the
+            // complete grade path so local adjustments are never an optional suffix.
+            let parameters = ProcessingParameters::interpret(input, roll, photo, matrix)?;
             self.grades.remove(source.id);
             return Ok(ProcessingInput::from(parameters).with_look(look));
         }
@@ -163,7 +178,7 @@ impl Editor {
             .prepare(
                 source.id,
                 Key {
-                    calibration,
+                    input,
                     roll,
                     matrix,
                     area: source.development.active_area.into(),
@@ -175,19 +190,19 @@ impl Editor {
 
     pub(super) fn positive_processing(
         &self,
-        calibration: Calibration,
+        input: impl Into<InputSettings>,
         roll: RollSettings,
         photo: PhotoSettings,
     ) -> Result<ProcessingInput, Error> {
         match self.current_source {
             Some(id) => self.positive_processing_for_source(
-                calibration,
+                input,
                 roll,
                 self.document.project.source(id)?,
                 photo,
             ),
             None => self
-                .positive_parameters(calibration, roll, photo)
+                .positive_parameters(input, roll, photo)
                 .map(|parameters| {
                     ProcessingInput::from(parameters)
                         .with_look(self.document.project.output.look.clone())
@@ -195,27 +210,32 @@ impl Editor {
         }
     }
 
-    /// Roll/calibration candidates must support every source, without replacing accepted resources.
+    /// Roll/input candidates must support every source, without replacing accepted resources.
     pub(super) fn validate_processing(
         &self,
-        calibration: Calibration,
+        input: impl Into<InputSettings>,
         roll: RollSettings,
         photo: PhotoSettings,
     ) -> Result<(), Error> {
-        self.positive_parameters(calibration, roll, photo)?;
-        self.dust_validate_processing(calibration, roll, photo)?;
+        let input = input.into();
+        self.positive_parameters(input, roll, photo)?;
+        self.dust_validate_processing(input, roll, photo)?;
         for source in &self.document.project.sources {
             let photo = if self.current_source == Some(source.id) {
                 photo
             } else {
                 source.photo
             };
+            let source_input = match input.calibration() {
+                Some(base) => input.with_calibration(source.development.processing_calibration(
+                    base,
+                    self.correction.as_ref().map(|c| c.settings.map.as_ref()),
+                )?),
+                None => input,
+            };
             validate_source(
                 self.grades.device.as_ref(),
-                source.development.processing_calibration(
-                    calibration,
-                    self.correction.as_ref().map(|c| c.settings.map.as_ref()),
-                )?,
+                &source_input,
                 roll,
                 source,
                 photo,

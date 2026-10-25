@@ -1,4 +1,5 @@
 use super::*;
+use crate::processing::Calibration;
 
 #[test]
 fn dense_repaired_unit_accounts_host_and_gpu_uploads_separately_from_retained_results() {
@@ -67,8 +68,8 @@ fn dense_repaired_unit_accounts_host_and_gpu_uploads_separately_from_retained_re
         let request = Request {
             scan: &scan,
             field: None,
-            calibration,
-            roll: RollSettings::new_grade(),
+            input: calibration.into(),
+            roll: RollSettings::default(),
             grade: grade.clone(),
             repairs,
             composition,

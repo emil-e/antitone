@@ -1,4 +1,5 @@
 use super::*;
+use crate::editor::tests::UiFixture;
 
 fn source_input() -> source::Context {
     source::Context {
@@ -59,11 +60,11 @@ fn original_request_is_readonly_and_policy_rejects_departed_completion() {
 }
 
 #[test]
-fn ordinary_views_without_working_device_never_become_original_tool_requests() {
+fn ordinary_views_never_become_original_tool_requests() {
     let mut editor = super::super::tests::fixture();
     super::super::tests::add_ready_fixture(&mut editor);
     let context = egui::Context::default();
-    assert!(!editor.working.enabled());
+    assert!(editor.working.enabled());
     for source in [false, true] {
         editor.source = source;
         for _ in 0..3 {
@@ -72,6 +73,37 @@ fn ordinary_views_without_working_device_never_become_original_tool_requests() {
         }
         assert!(editor.original.signature.is_none() && editor.original.refining.is_none());
         assert!(editor.document.visit.grade.task.is_none());
+    }
+}
+
+#[test]
+fn an_uninitialized_viewer_does_not_paint_through_an_alternate_proxy_renderer() {
+    let mut editor = super::super::tests::fixture();
+    super::super::tests::add_ready_fixture(&mut editor);
+    editor.working = WorkingView::default();
+    editor.source = true;
+    editor.scopes.visible = false;
+    let context = egui::Context::default();
+    presentation::configure_fonts(&context);
+    for _ in 0..3 {
+        let mut output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1100., 800.),
+                )),
+                ..Default::default()
+            },
+            |ui| editor.ui(ui),
+        );
+        output.textures_delta.clear();
+        assert!(
+            !output
+                .shapes
+                .iter()
+                .any(|shape| matches!(shape.shape, egui::Shape::Callback(_))),
+            "an unavailable shared renderer must not silently select a second image-processing path"
+        );
     }
 }
 

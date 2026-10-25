@@ -45,7 +45,7 @@ fn idle_host_polling_completes_projected_look_admission_without_another_frame_or
                     dmax: DVec3::splat(0.003),
                     input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                 },
-                RollSettings::new_grade(),
+                RollSettings::default(),
                 PhotoSettings::default(),
                 DMat3::IDENTITY,
             )

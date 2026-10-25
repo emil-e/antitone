@@ -3,7 +3,7 @@
 use super::{Correction, Document, Editor, Ready, development, document, thumbnails};
 use crate::{
     Error,
-    project::{CameraBasis, Development, Source},
+    project::Source,
     scan::{DevelopedSource, Scan},
     source_store::{SourceKey, SourceStore},
 };
@@ -40,7 +40,10 @@ impl Context {
         if let Some(correction) = &self.correction {
             correction
                 .settings
-                .require_source(&document::metadata_development(&self.source.metadata())?)?;
+                .require_source(&document::metadata_development(
+                    &self.source.metadata(),
+                    self.source.fixed_wb(),
+                )?)?;
         }
         let mut scan = Scan::from_source(self.source.clone());
         scan.set_flat_field(
@@ -61,21 +64,10 @@ pub(super) struct Cache {
 }
 
 impl Cache {
-    pub fn new(
-        path: &Path,
-        expected: Option<&Source>,
-        wb: Option<[f64; 4]>,
-        document: &Document,
-    ) -> Self {
+    pub fn new(path: &Path, expected: Option<&Source>, document: &Document) -> Self {
         let file = thumbnails::FileKey::new(path);
-        let key = expected.zip(wb).and_then(|(source, wb)| {
-            SourceKey::from_revision(
-                path,
-                file.clone(),
-                &source.development,
-                &Development::for_source(&source.development, wb),
-            )
-        });
+        let key = expected
+            .and_then(|source| SourceKey::from_revision(path, file.clone(), &source.development));
         Self {
             store: document.cache().clone(),
             parent: document.parent_cache().cloned(),
@@ -89,7 +81,6 @@ pub(super) struct Request {
     pub path: PathBuf,
     pub wb: Option<[f64; 4]>,
     pub expected: Option<Source>,
-    pub basis: Option<CameraBasis>,
     pub cache: Option<Cache>,
     pub correction: Option<Arc<Correction>>,
 }
@@ -226,7 +217,6 @@ impl Request {
             path: self.path.clone(),
             wb: self.wb,
             expected: self.expected.clone(),
-            basis: self.basis.clone(),
             file: self.cache.as_ref().map_or_else(
                 || thumbnails::FileKey::new(&self.path),
                 |cache| cache.file.clone(),
@@ -324,11 +314,8 @@ impl Request {
     ) -> Result<Developed, Error> {
         self.require_live(cancelled)?;
         let tick = std::time::Instant::now();
-        let record = document::source_metadata(&self.path, &source.metadata())?;
+        let record = document::source_metadata(&self.path, &source.metadata(), source.fixed_wb())?;
         timing.registration_seconds = tick.elapsed().as_secs_f64();
-        if let Some(basis) = &self.basis {
-            basis.require_source(&record.development)?;
-        }
         if let Some(expected) = &self.expected {
             document::verify_source(expected, &record)?;
         }
@@ -339,12 +326,7 @@ impl Request {
         self.require_live(cancelled)?;
         // A captured revision can disable cache publication, never be refreshed to
         // relabel pixels developed from an earlier file version.
-        let key = SourceKey::from_revision(
-            &self.path,
-            file.clone(),
-            &record.development,
-            &scan.source().metadata().development(scan.fixed_wb),
-        );
+        let key = SourceKey::from_revision(&self.path, file.clone(), &record.development);
         if let Some(cache) = &self.cache
             && let Some(key) = &key
             && let Some(source) = cache
@@ -449,10 +431,8 @@ impl Developed {
             path: self.path,
             area: scan.area,
             analysis_support: None,
-            floor: scan.input_floor,
             proxy,
             record: self.record,
-            development: scan.source().metadata().development(scan.fixed_wb),
         })
     }
 }

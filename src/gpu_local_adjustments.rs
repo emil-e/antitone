@@ -1,13 +1,15 @@
 use super::{
     CameraMatrix, ProcessingParameters, ProcessingSource, SourceGeometry, split_constants,
 };
+#[cfg(test)]
+use crate::processing::{Calibration, NegativeInput, Response};
 use crate::{
     Error,
     color::{Balance, ap1_to_cones},
     geometry::SourceRegion,
     local_adjustments::{GradientMask, LocalAdjustment, PhotoGradeSnapshot},
     photographic::Grade,
-    processing::{Calibration, InputSettings, RollSettings},
+    processing::{InputSettings, RollSettings},
 };
 use bytemuck::Zeroable;
 use glam::{DMat3, DVec2, DVec3, Vec4};
@@ -54,18 +56,18 @@ impl GpuPhotoGrade {
     /// Check the complete candidate and adapter limits without allocating GPU resources.
     pub fn validate(
         device: &wgpu::Device,
-        input: &InputSettings,
+        input: impl Into<InputSettings>,
         roll: RollSettings,
         snapshot: &PhotoGradeSnapshot,
         camera_to_ap1: DMat3,
         area: SourceRegion,
     ) -> Result<(), Error> {
-        Self::prepare(device, input, roll, snapshot, camera_to_ap1, area).map(|_| ())
+        Self::prepare(device, &input.into(), roll, snapshot, camera_to_ap1, area).map(|_| ())
     }
 
     pub fn new(
         device: &wgpu::Device,
-        input: &InputSettings,
+        input: impl Into<InputSettings>,
         roll: RollSettings,
         snapshot: PhotoGradeSnapshot,
         camera_to_ap1: DMat3,
@@ -76,7 +78,7 @@ impl GpuPhotoGrade {
             packed,
             area,
             active,
-        } = Self::prepare(device, input, roll, &snapshot, camera_to_ap1, area)?;
+        } = Self::prepare(device, &input.into(), roll, &snapshot, camera_to_ap1, area)?;
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("immutable local photographic stages"),
             contents: bytemuck::cast_slice(&packed),
@@ -97,7 +99,7 @@ impl GpuPhotoGrade {
     #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
     pub(crate) fn validate_repaired(
         device: &wgpu::Device,
-        input: &InputSettings,
+        input: impl Into<InputSettings>,
         roll: RollSettings,
         snapshot: &PhotoGradeSnapshot,
         camera_to_ap1: DMat3,
@@ -106,7 +108,7 @@ impl GpuPhotoGrade {
     ) -> Result<(), Error> {
         Self::prepare_with_neutral_bound(
             device,
-            input,
+            &input.into(),
             roll,
             snapshot,
             camera_to_ap1,
@@ -568,12 +570,15 @@ mod tests {
             dmax: DVec3::new(0.008, 0.004, 0.002),
             input_floor: 1. / 65535.,
         };
-        let roll = RollSettings {
-            gamma: 0.65,
-            ..RollSettings::new_grade()
-        };
-        let (_, mut bound) = ProcessingParameters::positive_with_bound(
+        let negative = NegativeInput {
             calibration,
+            response: Response::film(),
+            gamma: 0.65,
+            balance: Balance::default(),
+        };
+        let roll = RollSettings::default();
+        let (_, mut bound) = ProcessingParameters::positive_with_bound(
+            negative,
             roll,
             PhotoSettings::default(),
             DMat3::IDENTITY,
@@ -620,7 +625,7 @@ mod tests {
             ..Default::default()
         };
         let (_, input) = ProcessingParameters::positive_with_bound(
-            calibration,
+            negative,
             roll,
             PhotoSettings {
                 exposure: global.exposure,
@@ -631,7 +636,7 @@ mod tests {
         .unwrap();
         let scratch = Grade::new(global).unwrap().intermediate_bound(input);
         let (_, output) =
-            ProcessingParameters::positive_with_bound(calibration, roll, global, DMat3::IDENTITY)
+            ProcessingParameters::positive_with_bound(negative, roll, global, DMat3::IDENTITY)
                 .unwrap();
         for (mut bound, accepted) in [(scratch, false), (output, true)] {
             let mut sensitivities = Vec::new();

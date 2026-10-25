@@ -1,6 +1,7 @@
 //! Bounded repeated real Editor input/paint/backend exercise. Offscreen, not physical paint.
 use super::observation::{self as calibration, Monitor};
 use super::*;
+use crate::project::Development;
 use std::{
     sync::atomic::{AtomicUsize, Ordering},
     time::Instant,
@@ -157,7 +158,7 @@ fn workload(
         calibration::source_bound(&raw.metadata)?;
         drop(raw);
         document
-            .register(source, Development::new(crate::raw::version(), wb))
+            .register_with_development(source, Development::new(crate::raw::version(), wb))
             .map_err(|e| e.to_string())?;
     }
     let count = Arc::new(AtomicUsize::new(0));
@@ -202,10 +203,10 @@ fn workload(
     editor
         .thumbnails
         .bind_sources(editor.document.cache().clone());
-    editor.dmin = Some(DVec3::new(0.28, 0.20, 0.14));
-    editor.dmax = Some(DVec3::new(0.028, 0.020, 0.014));
+    editor.set_dmin(Some(DVec3::new(0.28, 0.20, 0.14)));
+    editor.set_dmax(Some(DVec3::new(0.028, 0.020, 0.014)));
     editor.sync_document();
-    editor.working = WorkingView::new(device.clone());
+    editor.initialize_viewer(device, queue);
     let jobs = editor.workflow_jobs.clone();
     editor.source_services = Some(source::Services {
         developments: scheduler.clone(),

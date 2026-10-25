@@ -23,27 +23,16 @@ impl Acceptance {
         }
         let mut scan = self.source.scan()?;
         let map = Arc::new(scan.estimate_flat_field(self.region)?);
-        let reference = self.document.register_reference(
-            self.record,
-            scan.source().metadata().development(scan.fixed_wb),
-        )?;
+        let reference = self.document.register_reference(self.record)?;
         let enabled = self
             .document
             .project
-            .flat_field
-            .as_ref()
+            .flat_field()
             .is_none_or(|field| field.enabled);
-        let mut settings = crate::project::FlatFieldSettings::new(
-            self.document.project.source(reference)?,
-            map,
-            self.document
-                .project
-                .development
-                .as_ref()
-                .ok_or(Error::UnusableSample("flat-field roll development missing"))?,
-        );
+        let mut settings =
+            crate::project::FlatFieldSettings::new(self.document.project.source(reference)?, map);
         settings.enabled = enabled;
-        self.document.project.flat_field = Some(settings);
+        self.document.project.set_flat_field(Some(settings));
         Ok(document_services::Request {
             work: document_services::Preparation::Correction(self.document, self.selected),
             source: None,

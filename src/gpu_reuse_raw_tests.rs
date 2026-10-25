@@ -30,7 +30,7 @@ fn real_raw_response_and_prefix_reuse() {
             let grade = GpuPhotoGrade::new(
                 &device,
                 calibration,
-                RollSettings::new_grade(),
+                RollSettings::default(),
                 snapshot.clone(),
                 scan.camera_to_ap1,
                 a,
@@ -59,7 +59,7 @@ fn real_raw_response_and_prefix_reuse() {
             let expected = read_words(&device, &queue, &probe.output);
             let scalar = SpatialPipeline::new(
                 calibration,
-                RollSettings::new_grade(),
+                RollSettings::default(),
                 snapshot,
                 scan.camera_to_ap1,
             )

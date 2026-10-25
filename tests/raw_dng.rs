@@ -232,7 +232,7 @@ fn authored_dng_scan_keeps_crop_proxy_centres_and_original_reference_values() {
 
 #[test]
 fn authored_raw_keeps_the_measured_anchor_flooring_and_libraw_matrix_gates() {
-    use antitone::processing::{Calibration, Inversion, RollSettings};
+    use antitone::processing::{Calibration, Inversion, NegativeInput, Response};
     let mut scan = Scan::open(&fixture(), None).unwrap();
     let calibration = Calibration {
         dmin: scan
@@ -256,13 +256,12 @@ fn authored_raw_keeps_the_measured_anchor_flooring_and_libraw_matrix_gates() {
     .validate()
     .unwrap();
     for gamma in [0.1, 0.65, 1., 3.] {
-        let inversion = Inversion::new(
+        let inversion = Inversion::new(NegativeInput {
             calibration,
-            RollSettings {
-                gamma,
-                ..RollSettings::default()
-            },
-        )
+            response: Response::film(),
+            gamma,
+            balance: antitone::color::Balance::default(),
+        })
         .unwrap();
         assert!(
             inversion
@@ -370,7 +369,7 @@ fn authored_export_image() -> (
 ) {
     use antitone::{
         export::ImageSize,
-        processing::{Calibration, PhotoSettings, Pipeline, RollSettings},
+        processing::{Calibration, InputSettings, PhotoSettings, Pipeline, Response},
     };
     let mut scan = Scan::open(&fixture(), Some(WB)).unwrap();
     let calibration = Calibration {
@@ -392,14 +391,10 @@ fn authored_export_image() -> (
             .unwrap(),
         input_floor: scan.input_floor,
     };
-    let roll = RollSettings::new_grade();
-    let pipeline = Pipeline::new(
-        calibration,
-        roll,
-        PhotoSettings::default(),
-        scan.camera_to_ap1,
-    )
-    .unwrap();
+    let roll = antitone::processing::RollSettings::default();
+    let input = InputSettings::negative(calibration);
+    let pipeline =
+        Pipeline::new(input, roll, PhotoSettings::default(), scan.camera_to_ap1).unwrap();
     let mut working = Vec::new();
     for y in scan.area.y..scan.area.y + scan.area.height {
         for x in scan.area.x..scan.area.x + scan.area.width {
@@ -412,7 +407,7 @@ fn authored_export_image() -> (
         width: scan.area.width,
         height: scan.area.height,
     };
-    (size, roll.response, working)
+    (size, Response::film(), working)
 }
 
 #[cfg(all(feature = "export", feature = "ocio-reference"))]

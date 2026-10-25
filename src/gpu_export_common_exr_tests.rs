@@ -1,5 +1,6 @@
 use super::*;
 use crate::local_adjustments::SpatialPipeline;
+use crate::processing::Calibration;
 use crate::working_precision;
 use exr::prelude::*;
 
@@ -17,7 +18,7 @@ fn common_linear_engine_exr_matches_independent_scalar_with_shared_working_budge
         dmax: DVec3::splat(128. / 4031.),
         input_floor: scan.input_floor,
     };
-    let roll = RollSettings::new_grade();
+    let roll = RollSettings::default();
     let grade = PhotoGradeSnapshot::new(
         crate::processing::PhotoSettings {
             contrast: 0.8,
@@ -62,7 +63,7 @@ fn common_linear_engine_exr_matches_independent_scalar_with_shared_working_budge
                 Request {
                     scan: &scan,
                     field: None,
-                    calibration,
+                    input: calibration.into(),
                     roll,
                     grade: grade.clone(),
                     repairs: &[],
@@ -79,7 +80,7 @@ fn common_linear_engine_exr_matches_independent_scalar_with_shared_working_budge
                 composition,
                 precision,
                 Overwrite::Refuse,
-                ProcessingMetadata::with_grade(roll.response, &grade),
+                ProcessingMetadata::with_grade(crate::processing::Response::film(), &grade),
                 |x, y| scalar.apply(scan.pixel(x, y)?, [x, y]).map(|p| p.rgb),
             )
             .unwrap();

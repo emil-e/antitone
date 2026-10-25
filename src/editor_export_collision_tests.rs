@@ -9,8 +9,8 @@ use std::sync::{
 fn competing_destination_at_gpu_submission_is_preserved_for_skip_and_keep_both() {
     for collision in [Collision::Skip, Collision::KeepBoth] {
         let mut editor = authored_fixture(&["patches.dng"]);
-        editor.dmin = Some(glam::DVec3::splat(0.8));
-        editor.dmax = Some(glam::DVec3::splat(0.02));
+        editor.set_dmin(Some(glam::DVec3::splat(0.8)));
+        editor.set_dmax(Some(glam::DVec3::splat(0.02)));
         editor.crop = Some(crate::crop::Crop {
             center: [120., 100.],
             size: [16, 16],

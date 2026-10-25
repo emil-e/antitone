@@ -31,6 +31,7 @@ fn record(path: &Path, scan: &Scan) -> Source {
         id: SourceId(0),
         path: path.into(),
         development: SourceDevelopment {
+            decode: metadata.development(scan.source().fixed_wb()),
             lens_correction: metadata.lens_identity().unwrap(),
             dng_development: metadata.dng_identity(),
             dimensions: metadata.source_dimensions().unwrap(),
@@ -206,11 +207,8 @@ fn sdk_project_roundtrip_and_cache_keep_backend_precision_and_fixed_wb_identity(
     let scan = Scan::open(file.path(), Some(wb)).unwrap();
     let source = record(file.path(), &scan);
     let development = scan.source().metadata().development(wb);
-    let mut project = Project {
-        development: Some(development.clone()),
-        input_floor: Some(CAMERA_INPUT_FLOOR),
-        ..Default::default()
-    };
+    let mut project = Project::default();
+    let _ = CAMERA_INPUT_FLOOR;
     let id = project.add_source(source).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("sdk.antitone");
@@ -219,19 +217,14 @@ fn sdk_project_roundtrip_and_cache_keep_backend_precision_and_fixed_wb_identity(
     loaded.require_runtime(&antitone::raw::version()).unwrap();
     let reopened = Scan::open(
         &loaded.source(id).unwrap().path,
-        Some(loaded.development.as_ref().unwrap().fixed_wb),
+        Some(loaded.sources[0].development.decode.fixed_wb),
     )
     .unwrap();
     assert_eq!(
         record(file.path(), &reopened).development,
         loaded.source(id).unwrap().development
     );
-    let key = SourceKey::capture(
-        file.path(),
-        &loaded.source(id).unwrap().development,
-        &development,
-    )
-    .unwrap();
+    let key = SourceKey::capture(file.path(), &loaded.source(id).unwrap().development).unwrap();
     let store = SourceStore::new(u64::MAX);
     store
         .publish_source(key.clone(), scan.source().clone())
@@ -240,16 +233,21 @@ fn sdk_project_roundtrip_and_cache_keep_backend_precision_and_fixed_wb_identity(
     assert!(Arc::ptr_eq(&store.get(&key).unwrap(), scan.source()));
     let mut wrong = development.clone();
     wrong.backend_version.push_str("-different");
-    let stale =
-        SourceKey::capture(file.path(), &loaded.source(id).unwrap().development, &wrong).unwrap();
+    let stale = SourceKey::capture(
+        file.path(),
+        &antitone::project::SourceDevelopment {
+            decode: wrong,
+            ..loaded.source(id).unwrap().development.clone()
+        },
+    )
+    .unwrap();
     assert!(store.get(&stale).is_none());
     assert!(store.publish_source(stale, scan.source().clone()).is_err());
-    let mut legacy = loaded.clone();
-    legacy.development = Some(antitone::project::Development::new(
-        antitone::raw::version(),
-        wb,
-    ));
-    assert!(legacy.validate().is_err());
+    let legacy = antitone::project::Development::new(antitone::raw::version(), wb);
+    assert_ne!(
+        legacy.contract, loaded.sources[0].development.decode.contract,
+        "the DNG source keeps its own decode identity"
+    );
 }
 
 #[test]
@@ -281,11 +279,7 @@ fn sdk_flat_reference_requires_the_same_opcode_interpretation_not_just_geometry_
         vec![DVec3::ONE; 4],
     )
     .unwrap();
-    let settings = antitone::project::FlatFieldSettings::new(
-        &reference,
-        Arc::new(map),
-        &a.source().metadata().development(a.fixed_wb),
-    );
+    let settings = antitone::project::FlatFieldSettings::new(&reference, Arc::new(map));
     settings.require_source(&reference.development).unwrap();
     assert!(settings.require_source(&other.development).is_err());
 }
@@ -294,14 +288,10 @@ fn sdk_flat_reference_requires_the_same_opcode_interpretation_not_just_geometry_
 fn sdk_project_rejects_unequal_green_or_noncanonical_saved_wb_without_reinterpretation() {
     let file = Fixture::default().write();
     let scan = Scan::open(file.path(), None).unwrap();
-    let mut project = Project {
-        development: Some(scan.source().metadata().development(scan.fixed_wb)),
-        input_floor: Some(CAMERA_INPUT_FLOOR),
-        ..Default::default()
-    };
+    let mut project = Project::default();
     project.add_source(record(file.path(), &scan)).unwrap();
     for wb in [[2., 1., 1.5, 0.75], [4., 2., 3., 2.], [512., 1., 1., 1.]] {
-        project.development.as_mut().unwrap().fixed_wb = wb;
+        project.sources[0].development.decode.fixed_wb = wb;
         assert!(project.validate().is_err());
     }
     assert!(Scan::open(file.path(), Some([2., 1., 1.5, 0.75])).is_err());
@@ -355,11 +345,7 @@ fn supplied_cameras_share_editor_source_and_saved_project_contracts() {
         assert!(scan.source().metadata().dng_identity().is_some());
         let (w, h, proxy) = scan.preview_source(256).unwrap();
         assert_eq!(proxy.len(), w as usize * h as usize);
-        let mut project = Project {
-            development: Some(scan.source().metadata().development(wb)),
-            input_floor: Some(CAMERA_INPUT_FLOOR),
-            ..Default::default()
-        };
+        let mut project = Project::default();
         let id = project.add_source(record(&path, &scan)).unwrap();
         let temporary = tempfile::tempdir().unwrap();
         let destination = temporary.path().join("camera.antitone");
@@ -376,7 +362,7 @@ fn supplied_cameras_share_editor_source_and_saved_project_contracts() {
         let source = loaded.source(id).unwrap();
         let reopened = Scan::open(
             &source.path,
-            Some(loaded.development.as_ref().unwrap().fixed_wb),
+            Some(loaded.sources[0].development.decode.fixed_wb),
         )
         .unwrap();
         assert_eq!(record(&path, &reopened).development, source.development);
@@ -389,8 +375,7 @@ fn supplied_cameras_share_editor_source_and_saved_project_contracts() {
                 .unwrap(),
             before
         );
-        let development = loaded.development.as_ref().unwrap();
-        let key = SourceKey::capture(&source.path, &source.development, development).unwrap();
+        let key = SourceKey::capture(&source.path, &source.development).unwrap();
         let store = SourceStore::new(u64::MAX);
         store
             .publish_source(key.clone(), reopened.source().clone())
@@ -418,11 +403,7 @@ fn supplied_m9_shared_source_and_project_roundtrip() {
         .unwrap();
     let (w, h, proxy) = scan.preview_source(256).unwrap();
     assert_eq!(proxy.len(), w as usize * h as usize);
-    let mut project = Project {
-        development: Some(scan.source().metadata().development(wb)),
-        input_floor: Some(CAMERA_INPUT_FLOOR),
-        ..Default::default()
-    };
+    let mut project = Project::default();
     let id = project.add_source(record(path, &scan)).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let destination = directory.path().join("m9.antitone");
@@ -433,7 +414,7 @@ fn supplied_m9_shared_source_and_project_roundtrip() {
     let source = loaded.source(id).unwrap();
     let scan = Scan::open(
         &source.path,
-        Some(loaded.development.as_ref().unwrap().fixed_wb),
+        Some(loaded.sources[0].development.decode.fixed_wb),
     )
     .unwrap();
     assert_eq!(record(path, &scan).development, source.development);

@@ -4,9 +4,54 @@ use crate::viewport::CanvasLayout;
 #[cfg(test)]
 #[path = "editor_canvas_tests.rs"]
 mod tests;
+fn preview_frame(
+    composition: Composition,
+    proxy_size: [u32; 2],
+    native_axes: bool,
+) -> Result<crate::frame_raster::FrameRaster, Error> {
+    let composition = if native_axes {
+        // Crop artwork supplies the affine mapping; retain the source outside the draft frame.
+        Composition::new(
+            composition.area(),
+            RollOrientation::default(),
+            PhotoOrientation::default(),
+        )?
+    } else {
+        composition
+    };
+    let area = composition.area();
+    let scale = (f64::from(proxy_size[0]) / f64::from(area.width))
+        .min(f64::from(proxy_size[1]) / f64::from(area.height));
+    let mut frame = crate::frame_raster::FrameRaster::full(composition)?;
+    frame.output = composition
+        .size()
+        .map(|v| (f64::from(v) * scale).round().max(1.) as u32);
+    Ok(frame)
+}
 
 impl Editor {
-    fn canvas_composition(&self, area: Rect, active_pick: Option<Pick>) -> Composition {
+    /// The accepted source framing before any active crop draft, picker or review override.
+    pub(super) fn source_composition(&self, source: &Source) -> Composition {
+        let photo_orientation = if self.current_source == Some(source.id) {
+            self.photo_orientation
+        } else {
+            source.orientation
+        };
+        let crop = if self.current_source == Some(source.id) {
+            self.crop
+        } else {
+            source.crop
+        };
+        Composition::with_crop(
+            source.development.active_area.into(),
+            self.roll_orientation,
+            photo_orientation,
+            crop,
+        )
+        .expect("accepted source composition")
+    }
+
+    pub(super) fn canvas_composition(&self, area: Rect, active_pick: Option<Pick>) -> Composition {
         let crop = if self.auto_crop_context()
             || matches!(
                 active_pick,
@@ -138,11 +183,7 @@ impl Editor {
                 }
             }
         } else {
-            let Some(cal) = self.calibration() else {
-                ui.label("Positive preview requires valid calibration");
-                return None;
-            };
-            match self.view_processing(cal, self.roll, self.photo) {
+            match self.view_processing(self.input(), self.roll, self.photo) {
                 Ok(p) => p,
                 Err(error) => {
                     ui.label(format!("Positive preview unavailable: {error}"));
@@ -183,11 +224,10 @@ impl Editor {
         let active_pick = self.pick;
         let composition = geometry.composition;
         // The camera proxy covers the full source, not the crop's bounding region.
-        let proxy_area = composition.area();
         let rect = geometry.image.intersect(canvas);
         // An editing frame may be offscreen at explicit zoom; no refinement raster is requested.
         let physical_frame = if cropping {
-            crate::frame_raster::FrameRaster::full(composition).expect("accepted composition")
+            preview_frame(composition, proxy.size(), true).ok()?
         } else {
             geometry.physical_frame_raster(pixels_per_point)
         };
@@ -217,7 +257,7 @@ impl Editor {
         };
         let parameters = self.canvas_parameters(ui, cx)?;
         self.observe_grade(&parameters);
-        if working
+        if (working || !parameters.repairs.0.is_empty())
             && self
                 .working
                 .observe(self.id, physical_frame, parameters.signature(), self.target)
@@ -244,7 +284,6 @@ impl Editor {
             self.thumbnails.reserve_view(0);
             true
         };
-        let revision = self.original.revision();
         let rendered = match self.working_view(physical_frame, &parameters, ui.ctx(), cx) {
             Ok(view) => view,
             Err(error) => {
@@ -260,56 +299,180 @@ impl Editor {
         {
             self.request_original(&parameters, self.target, ui.ctx(), source, cx);
         }
+        let full_rect = geometry.screen_region(composition.area());
+        let display_rect = if cropping { full_rect } else { geometry.image };
         let draw = if cropping {
-            canvas
+            display_rect.intersect(canvas)
         } else if working {
             geometry.physical_draw(pixels_per_point)
         } else {
             rect
         };
-        let paint = if let Some(rendered) = rendered {
+        let rendered = rendered.filter(|rendered| {
+            !cropping
+                || (rendered.spec.frame.composition == physical_frame.composition
+                    && rendered.spec.frame.min == physical_frame.min
+                    && rendered.spec.frame.max == physical_frame.max
+                    && rendered.spec.repairs == parameters.repairs)
+        });
+        let tool = if purpose == Some(OriginalPurpose::Tool) {
+            match self.original_rendered(OriginalPurpose::Tool, &parameters, proxy.matrix()) {
+                Ok(view) => view,
+                Err(error) => {
+                    self.status = error.to_string();
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let paint = if let Some(rendered) = tool.or(rendered) {
+            self.preview_rendered = None;
             proxy.release_output();
-            let mapping = rendered.mapping(physical_frame);
+            let mapping = if cropping {
+                geometry.uv(draw, composition.area())
+            } else {
+                rendered.mapping(if working {
+                    physical_frame
+                } else {
+                    geometry.frame_raster(pixels_per_point)
+                })
+            };
             ImagePaint::rendered(
                 rendered,
                 mapping,
                 self.submissions.clone(),
                 ui.ctx().clone(),
             )
+        } else if let Some(paint) = self.preview_paint(&proxy, geometry, &parameters, ui.ctx()) {
+            paint
         } else {
-            let provisional = match proxy.image(self.target) {
-                Ok(image) => image,
-                Err(error) => {
-                    ui.label(format!("View unavailable: {error}"));
-                    return None;
-                }
-            };
-            if let Err(error) = provisional.require_processing(&parameters) {
-                ui.label(format!("Preview unavailable: {error}"));
-                return None;
-            }
-            let (image, parameters, mapping) = match &self.original.settled {
-                Some((settled_revision, settled_view, image))
-                    if *settled_revision == revision && !cropping =>
-                {
-                    let mapping = if settled_view.frame.is_some() {
-                        crate::geometry::TextureMapping::IDENTITY
-                    } else {
-                        geometry.uv(draw, settled_view.area)
-                    };
-                    (image.clone(), None, mapping)
-                }
-                _ => (provisional, Some(parameters), geometry.uv(draw, proxy_area)),
-            };
-            match processing::image_paint(image, parameters, mapping, ui.ctx()) {
-                Ok(paint) => paint,
-                Err(error) => {
-                    ui.label(format!("Preview unavailable: {error}"));
-                    return None;
-                }
-            }
+            ui.label(
+                if !parameters.repairs.0.is_empty() && self.working.error.is_none() {
+                    "Updating repairs…"
+                } else {
+                    "Preview unavailable"
+                },
+            );
+            return None;
         };
         Some((draw, paint))
+    }
+
+    /// Grade the camera proxy through the physical-view renderer. Crop editing retains the
+    /// whole source and maps it beneath the draft frame; other previews compose before grading.
+    fn preview_paint(
+        &mut self,
+        proxy: &crate::viewer::GpuProxy,
+        geometry: CanvasLayout,
+        parameters: &ProcessingInput,
+        context: &egui::Context,
+    ) -> Option<ImagePaint> {
+        // Sparse repairs need original-sample footprints. The shared acquisition worker supplies
+        // those views; do not stamp original coordinates into a reduced camera proxy.
+        if !parameters.repairs.0.is_empty() {
+            return None;
+        }
+        let device = self.working.device()?;
+        let queue = self.working.queue()?;
+        let kernels = self.working.kernels.lock().ok()?.clone()?;
+        let cropping = self.document.visit.crop_edit.is_some();
+        let frame = preview_frame(geometry.composition, proxy.size(), cropping).ok()?;
+        let composition = frame.composition;
+        let field = self
+            .correction
+            .as_ref()
+            .map(|correction| correction.settings.map.clone());
+        let inspection = parameters.grade().is_none();
+        let settings = match self.input.calibration().filter(|_| !inspection) {
+            Some(base) => {
+                let source = self.document.project.source(self.current_source?).ok()?;
+                self.input.with_calibration(
+                    source
+                        .development
+                        .processing_calibration(
+                            base,
+                            self.correction
+                                .as_ref()
+                                .map(|correction| correction.settings.map.as_ref()),
+                        )
+                        .ok()?,
+                )
+            }
+            None => self.input,
+        };
+        let display_rect = if cropping {
+            geometry.screen_region(composition.area())
+        } else {
+            geometry.image
+        };
+        let draw = display_rect.intersect(geometry.canvas);
+        let mapping = if cropping {
+            geometry.uv(draw, composition.area())
+        } else if draw == display_rect {
+            crate::geometry::TextureMapping::IDENTITY
+        } else {
+            let extent = display_rect.size();
+            let origin = (draw.min - display_rect.min) / extent;
+            let max = (draw.max - display_rect.min) / extent;
+            crate::geometry::TextureMapping {
+                origin: [origin.x, origin.y],
+                x_axis: [max.x - origin.x, 0.],
+                y_axis: [0., max.y - origin.y],
+            }
+        };
+        let signature = parameters.signature();
+        if let Some((id, cached_signature, cached_frame, cached_target, rendered)) =
+            &self.preview_rendered
+            && *id == self.id
+            && *cached_signature == signature
+            && *cached_frame == frame
+            && *cached_target == self.target
+        {
+            return Some(ImagePaint::rendered(
+                rendered.clone(),
+                mapping,
+                self.submissions.clone(),
+                context.clone(),
+            ));
+        }
+        let spec = if inspection {
+            crate::gpu::view::ViewSourceSpec::inspection(self.id, frame, proxy.matrix(), field)
+        } else {
+            crate::gpu::view::ViewSourceSpec::new(self.id, frame, settings, proxy.matrix(), field)
+        }
+        .ok()?
+        .with_repairs(parameters.repairs.clone());
+        let source = proxy.view_source(queue, kernels, spec).ok()?;
+        let previous = self.preview_rendered.as_ref().map(|entry| &entry.4);
+        let rendered = if inspection {
+            crate::gpu::view::RenderedView::inspection(
+                device,
+                source,
+                parameters,
+                self.target,
+                previous,
+            )
+        } else {
+            crate::gpu::view::RenderedView::new(
+                device,
+                source,
+                settings,
+                self.roll,
+                parameters.grade()?.snapshot().clone(),
+                parameters,
+                self.target,
+                previous,
+            )
+        }
+        .ok()?;
+        self.preview_rendered = Some((self.id, signature, frame, self.target, rendered.clone()));
+        Some(ImagePaint::rendered(
+            rendered.clone(),
+            mapping,
+            self.submissions.clone(),
+            context.clone(),
+        ))
     }
 
     fn canvas_pick(&mut self, ui: &egui::Ui, response: &egui::Response, geometry: CanvasLayout) {
@@ -406,7 +569,14 @@ impl Editor {
         let pixels_per_point = ui.ctx().pixels_per_point();
         let canvas_input = self.canvas_input_allowed(ui, canvas);
         let active_pick = self.pick;
-        let composition = self.canvas_composition(area, active_pick);
+        let composition = if pending {
+            self.pending_preview
+                .as_ref()
+                .map(|preview| preview.composition)
+                .unwrap_or_else(|| self.canvas_composition(area, active_pick))
+        } else {
+            self.canvas_composition(area, active_pick)
+        };
         let cropping = !fullscreen && self.document.visit.crop_edit.is_some();
         let geometry =
             self.canvas_layout(canvas, composition, pixels_per_point, zoom_action, cropping);

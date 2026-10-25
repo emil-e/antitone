@@ -9,8 +9,8 @@ fn setup<R>(test: impl FnOnce(Harness<'_, Editor>) -> R) -> R {
         wait_for(&mut h, |e| !e.busy);
         h.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
         h.update(|e| {
-            e.dmin = Some(DVec3::splat(0.2));
-            e.dmax = Some(DVec3::splat(0.005));
+            e.set_dmin(Some(DVec3::splat(0.2)));
+            e.set_dmax(Some(DVec3::splat(0.005)));
             e.source = false;
             e.sync_document();
         });
@@ -418,7 +418,7 @@ fn history_confirmed_multi_removal_can_restore_an_empty_roll_without_resetting_i
         wait_for(&mut h, |e| !e.busy);
         h.read(|editor| assert!(editor.document.project.order.is_empty()));
         h.read(|editor| assert_eq!(editor.document.project.sources, before.sources));
-        h.read(|editor| assert_eq!(editor.document.project.development, before.development));
+        h.read(|editor| assert_eq!(editor.document.project.development(), before.development()));
         let removed = h.read(|editor| editor.document.project.clone());
         shortcut(&mut h, false);
         h.read(|editor| assert_eq!(editor.document.project, before));

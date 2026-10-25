@@ -1,7 +1,7 @@
 //! Document-scoped camera data reuse; native and proxy ownership share one byte LRU.
 use crate::{
     Error,
-    project::{Development, SourceDevelopment},
+    project::SourceDevelopment,
     scan::{CameraProxy, DevelopedSource},
     source_revision::FileKey,
 };
@@ -18,35 +18,48 @@ pub struct SourceKey {
     locator: PathBuf,
     file: FileKey,
     source: SourceDevelopment,
-    development: Development,
+}
+
+#[cfg(test)]
+impl SourceKey {
+    pub fn capture_with_development(
+        path: &Path,
+        source: &SourceDevelopment,
+        _development: &crate::project::Development,
+    ) -> Option<Self> {
+        Self::capture(path, source)
+    }
+
+    pub(crate) fn from_revision_with_development(
+        path: &Path,
+        file: FileKey,
+        source: &SourceDevelopment,
+        _development: &crate::project::Development,
+    ) -> Option<Self> {
+        Self::from_revision(path, file, source)
+    }
 }
 
 impl SourceKey {
-    pub fn capture(
-        path: &Path,
-        source: &SourceDevelopment,
-        development: &Development,
-    ) -> Option<Self> {
+    pub fn capture(path: &Path, source: &SourceDevelopment) -> Option<Self> {
         let locator = if path.is_absolute() {
             path.to_path_buf()
         } else {
             std::env::current_dir().ok()?.join(path)
         };
-        Self::from_revision(&locator, FileKey::new(&locator), source, development)
+        Self::from_revision(&locator, FileKey::new(&locator), source)
     }
 
     pub(crate) fn from_revision(
         path: &Path,
         file: FileKey,
         source: &SourceDevelopment,
-        development: &Development,
     ) -> Option<Self> {
         file.revision.as_ref()?;
         Some(Self {
             locator: path.to_path_buf(),
             file,
             source: source.clone(),
-            development: development.clone(),
         })
     }
 
@@ -62,17 +75,17 @@ impl SourceKey {
         let Ok(lens_correction) = source.metadata().lens_identity() else {
             return false;
         };
-        self.development == source.metadata().development(source.fixed_wb())
-            && self.source
-                == SourceDevelopment {
-                    lens_correction,
-                    dng_development: source.metadata().dng_identity(),
-                    dimensions: [image.width, image.height],
-                    active_area: [area.x, area.y, area.width, area.height],
-                    camera_model: source.camera_model().to_owned(),
-                    camera_to_ap1: source.camera_to_ap1().to_cols_array_2d(),
-                    input_floor: source.input_floor(),
-                }
+        self.source
+            == SourceDevelopment {
+                decode: source.metadata().development(source.fixed_wb()),
+                lens_correction,
+                dng_development: source.metadata().dng_identity(),
+                dimensions: [image.width, image.height],
+                active_area: [area.x, area.y, area.width, area.height],
+                camera_model: source.camera_model().to_owned(),
+                camera_to_ap1: source.camera_to_ap1().to_cols_array_2d(),
+                input_floor: source.input_floor(),
+            }
     }
 
     fn matches_proxy(&self, proxy: &CameraProxy) -> bool {
@@ -87,9 +100,7 @@ impl SourceKey {
 
 impl PartialEq for SourceKey {
     fn eq(&self, other: &Self) -> bool {
-        self.file == other.file
-            && self.source == other.source
-            && self.development == other.development
+        self.file == other.file && self.source == other.source
     }
 }
 

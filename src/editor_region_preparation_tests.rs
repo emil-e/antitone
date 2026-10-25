@@ -21,6 +21,11 @@ pub(in crate::editor) fn request() -> (analysis::Request, tempfile::TempDir, wgp
         .collect();
     let mut document = Document::default();
     document.import(&paths).unwrap();
+    document.project.set_dmin(Some([0.8; 3]));
+    document.project.set_dmax(Some([0.02; 3]));
+    document
+        .project
+        .set_input_floor(Some(crate::processing::CAMERA_INPUT_FLOOR));
     let selected = document.project.order[0];
     (
         analysis::Request {

@@ -97,10 +97,13 @@ fn complete_private_roll_prepares_reviews_analyzes_and_round_trips() {
         assert_eq!(accepted.analysis_regions, approved);
         assert!(accepted.analysis_area.is_none());
         assert_eq!(accepted.orientation, before.orientation);
-        assert_eq!(accepted.flat_field, before.flat_field);
+        assert_eq!(accepted.flat_field(), before.flat_field());
         eprintln!(
             "{name}: {} photos; Dmin {:?}; Dmax {:?}; Roll EV {}",
-            count, accepted.dmin, accepted.dmax, accepted.roll.exposure
+            count,
+            accepted.dmin(),
+            accepted.dmax(),
+            accepted.roll.exposure
         );
         let temp =
             tempfile::tempdir_in(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".cache")).unwrap();

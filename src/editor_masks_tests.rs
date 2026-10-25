@@ -126,7 +126,7 @@ fn linear_paint_reverses_effective_endpoints_and_arrow_with_invert_and_coverage_
             assert_eq!(arrow[0], expected_tip);
         }
         let input = editor
-            .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+            .positive_processing(editor.input, editor.roll, editor.photo)
             .unwrap();
         editor.document.visit.adjustments.show_coverage = true;
         let mut output = context.run_ui(Default::default(), |ui| editor.paint_mask(ui, layout));
@@ -140,7 +140,7 @@ fn linear_paint_reverses_effective_endpoints_and_arrow_with_invert_and_coverage_
         assert_eq!(
             input.signature(),
             editor
-                .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+                .positive_processing(editor.input, editor.roll, editor.photo)
                 .unwrap()
                 .signature()
         );
@@ -167,7 +167,7 @@ fn closing_the_tool_cancels_preview_and_hides_handles_and_coverage_without_reset
         editor.working.compare = true;
         let before = editor.document.project.clone();
         let input = editor
-            .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+            .positive_processing(editor.input, editor.roll, editor.photo)
             .unwrap();
         editor.begin_linear_mask(Some(id));
         editor.document.visit.mask_edit.as_mut().unwrap().mask = Some(GradientMask::Linear {
@@ -197,7 +197,7 @@ fn closing_the_tool_cancels_preview_and_hides_handles_and_coverage_without_reset
         assert_eq!(
             input.signature(),
             editor
-                .view_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+                .view_processing(editor.input, editor.roll, editor.photo)
                 .unwrap()
                 .signature()
         );
@@ -327,7 +327,7 @@ fn accepted_mask_edit_retains_ids_numeric_controls_and_immutable_snapshots() {
             .clone();
         let id = records.adjustments[0].id;
         let input = editor
-            .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+            .positive_processing(editor.input, editor.roll, editor.photo)
             .unwrap();
         let snapshot = input.grade().unwrap().snapshot().clone();
         editor.begin_linear_mask(Some(id));

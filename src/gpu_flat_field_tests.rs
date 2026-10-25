@@ -1,4 +1,5 @@
 use super::*;
+use crate::processing::Calibration;
 
 #[cfg(all(feature = "raw", feature = "export"))]
 #[test]
@@ -331,7 +332,7 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                 (ProcessingParameters::source_inspection(0.).unwrap(), None),
                 (ProcessingParameters::source_inspection(16.).unwrap(), None),
             ];
-            for response in [
+            for _response in [
                 Response::Original,
                 Response::Film {
                     toe: 2.5,
@@ -343,7 +344,6 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                 },
             ] {
                 let roll = RollSettings {
-                    response,
                     exposure: 2.,
                     ..RollSettings::default()
                 };
@@ -361,7 +361,7 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                     dmin: expected[1] * (1. + offset),
                     ..calibration
                 };
-                let roll = RollSettings::new_grade();
+                let roll = RollSettings::default();
                 cases.push((
                     ProcessingParameters::positive(
                         anchored,

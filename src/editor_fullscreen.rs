@@ -50,7 +50,7 @@ impl Editor {
                 layout: self.last_layout,
                 source: self.source,
                 source_exposure: self.source_exposure,
-                calibrated: self.calibration().is_some(),
+                calibrated: self.input.ready(),
                 native_before,
                 restored: false,
                 exiting: false,
@@ -103,7 +103,7 @@ impl Editor {
             if !context_changed {
                 self.viewport = view.viewport;
                 self.last_layout = view.layout;
-                if self.calibration().is_some() == view.calibrated {
+                if self.input.ready() == view.calibrated {
                     self.source = view.source;
                 }
                 self.source_exposure = view.source_exposure;

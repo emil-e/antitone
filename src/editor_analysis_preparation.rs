@@ -30,10 +30,7 @@ impl Preparation {
     ) -> Result<Self, Error> {
         request.document.validate_for_device(device)?;
         let project = &request.document.project;
-        project
-            .development
-            .as_ref()
-            .ok_or(Error::UnusableSample("no roll development"))?;
+        project.require_scan_sources()?;
         // One shared scale preserves cross-frame appearance while fitting shading headroom into evidence.
         let code_scale = project.order.iter().try_fold(1f64, |scale, id| {
             Ok::<_, Error>(scale.max(
@@ -99,7 +96,8 @@ impl Preparation {
         let project = &self.request.document.project;
         let id = project.order[index];
         let path = self.request.document.source_path(id)?;
-        let actual = document::source_metadata(&path, &scan.source().metadata())?;
+        let actual =
+            document::source_metadata(&path, &scan.source().metadata(), scan.source().fixed_wb())?;
         document::verify_source(project.source(id)?, &actual)?;
         document::verify_scan(&actual, scan)?;
         Ok(actual)
@@ -116,7 +114,7 @@ impl Preparation {
             self.request
                 .document
                 .project
-                .require_camera_basis(&actual.development)?;
+                .require_scan_source(&actual.development)?;
             let (w, h, rgb) = timed!(
                 "coarse_preview",
                 scan.measurement_preview(768, self.code_scale)
@@ -443,9 +441,11 @@ pub(super) fn prepare_with_measurements(
     let mut state = Preparation::new(Arc::new(request.clone()), device, measurements)?;
     let project = &request.document.project;
     let wb = project
+        .sources
+        .first()
+        .expect("verified roll source")
         .development
-        .as_ref()
-        .expect("verified roll development")
+        .decode
         .fixed_wb;
     let total = project.order.len();
     for (index, id) in project.order.iter().enumerate() {

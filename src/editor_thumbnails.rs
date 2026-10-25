@@ -24,12 +24,11 @@ struct SourceKey {
     id: SourceId,
     file: FileKey,
     source: SourceDevelopment,
-    development: Development,
 }
 
 impl SourceKey {
     fn store_key_at(&self, path: &std::path::Path) -> Option<NativeKey> {
-        NativeKey::from_revision(path, self.file.clone(), &self.source, &self.development)
+        NativeKey::from_revision(path, self.file.clone(), &self.source)
     }
 
     fn store_key(&self) -> Option<NativeKey> {
@@ -51,12 +50,11 @@ impl SourceKey {
         }
     }
 
-    fn new(source: &Source, development: &Development, file: FileKey) -> Self {
+    fn new(source: &Source, file: FileKey) -> Self {
         Self {
             id: source.id,
             file,
             source: source.development.clone(),
-            development: development.clone(),
         }
     }
 }
@@ -145,7 +143,7 @@ impl ImageKey {
     }
 
     fn retained_bytes(&self) -> usize {
-        let development = &self.source.development;
+        let development = &self.source.source.decode;
         std::mem::size_of::<Self>()
             + self.source.file.path.capacity()
             + self.source.source.camera_model.capacity()
@@ -257,6 +255,7 @@ pub(super) struct SelectedPreview {
     request: u64,
     key: SourceKey,
     field: Option<FieldKey>,
+    pub(super) composition: crate::geometry::Composition,
     pub(super) proxy: crate::viewer::GpuProxy,
 }
 
@@ -279,11 +278,10 @@ impl SelectedPreview {
                 .project
                 .source(self.key.id)
                 .ok()
-                .zip(document.project.development.as_ref())
                 .zip(document.source_path(self.key.id).ok())
-                .is_some_and(|((source, development), path)| {
+                .is_some_and(|(source, path)| {
                     !source.reference_only
-                        && SourceKey::new(source, development, FileKey::new(&path)) == self.key
+                        && SourceKey::new(source, FileKey::new(&path)) == self.key
                 })
     }
 }
@@ -405,18 +403,12 @@ impl Thumbnails {
         request: u64,
         document: &Document,
         id: SourceId,
+        composition: crate::geometry::Composition,
         correction: Option<&Arc<Correction>>,
     ) -> Result<Option<SelectedPreview>, Error> {
         let started = std::time::Instant::now();
         let source = document.project.source(id)?;
-        let Some(development) = &document.project.development else {
-            return Ok(None);
-        };
-        let key = SourceKey::new(
-            source,
-            development,
-            FileKey::new(&document.source_path(id)?),
-        );
+        let key = SourceKey::new(source, FileKey::new(&document.source_path(id)?));
         if source.reference_only || key.file.revision.is_none() {
             return Ok(None);
         }
@@ -438,6 +430,7 @@ impl Thumbnails {
             request,
             key: key.clone(),
             field: correction.map(|c| FieldKey(c.settings.map.clone())),
+            composition,
             proxy: crate::viewer::GpuProxy::new_continuous(
                 renderer,
                 device,
@@ -472,26 +465,19 @@ impl Thumbnails {
     }
 
     #[cfg(test)]
-    pub fn seed(
-        &mut self,
-        source: &Source,
-        development: &Development,
-        file: FileKey,
-        proxy: Arc<Proxy>,
-    ) {
+    pub fn seed(&mut self, source: &Source, file: FileKey, proxy: Arc<Proxy>) {
         let path = file.path.clone();
-        self.seed_at(source, development, &path, file, proxy);
+        self.seed_at_path(source, &path, file, proxy);
     }
 
-    pub(super) fn seed_at(
+    pub(super) fn seed_at_path(
         &mut self,
         source: &Source,
-        development: &Development,
         path: &std::path::Path,
         file: FileKey,
         proxy: Arc<Proxy>,
     ) {
-        let source_key = SourceKey::new(source, development, file);
+        let source_key = SourceKey::new(source, file);
         let Some(key) = source_key.store_key_at(path) else {
             return;
         };
@@ -749,20 +735,19 @@ impl Thumbnails {
                     && key.target == target
                     && key.projection.is_none()
                     && key.current_recipe(document)
-                    && key.recipe.as_ref().is_ok_and(|recipe| {
-                        recipe.is_some() == document.project.calibration().ok().flatten().is_some()
-                    })
+                    && key
+                        .recipe
+                        .as_ref()
+                        .is_ok_and(|recipe| recipe.is_some() == document.project.input.ready())
                     && key.field.as_ref().map(|f| &f.0)
                         == document.project.active_flat_field().map(|f| &f.map)
                     && document
                         .project
                         .source(key.source.id)
                         .ok()
-                        .zip(document.project.development.as_ref())
-                        .is_some_and(|(source, development)| {
+                        .is_some_and(|source| {
                             SourceKey::new(
                                 source,
-                                development,
                                 FileKey::new(
                                     &document.source_path(source.id).expect("thumbnail locator"),
                                 ),
@@ -794,11 +779,9 @@ impl Thumbnails {
                 .project
                 .source(outcome.key.source.id)
                 .ok()
-                .zip(document.project.development.as_ref())
-                .is_some_and(|(source, development)| {
+                .is_some_and(|source| {
                     SourceKey::new(
                         source,
-                        development,
                         FileKey::new(&document.source_path(source.id).expect("thumbnail locator")),
                     ) == outcome.key.source
                 });
@@ -894,7 +877,6 @@ impl Editor {
         path: &std::path::Path,
         projected: bool,
     ) -> Option<ImageKey> {
-        let development = self.document.project.development.as_ref()?;
         let recipe = self.thumbnail_recipe(source.id);
         let projection = if projected {
             let composition = self.thumbnail_composition(source);
@@ -907,7 +889,7 @@ impl Editor {
             None
         };
         Some(ImageKey {
-            source: SourceKey::new(source, development, FileKey::new(path)),
+            source: SourceKey::new(source, FileKey::new(path)),
             recipe,
             projection,
             target: self.target,
@@ -937,13 +919,15 @@ impl Editor {
                 RollOrientation::default(),
                 PhotoOrientation::default(),
             )
-        } else {
+        } else if crop.is_some() {
             Composition::with_crop(
                 source.development.active_area.into(),
                 self.roll_orientation,
                 photo_orientation,
                 crop,
             )
+        } else {
+            Ok(self.source_composition(source))
         }
         .expect("document source has a valid active area")
     }
@@ -952,14 +936,7 @@ impl Editor {
         &self,
         id: SourceId,
     ) -> Result<Option<Arc<crate::image_recipe::ImageRecipe>>, String> {
-        if self.document.analysis_review.is_some()
-            || self
-                .document
-                .project
-                .calibration()
-                .map_err(|error| error.to_string())?
-                .is_none()
-        {
+        if self.document.analysis_review.is_some() || !self.document.project.input.ready() {
             Ok(None)
         } else {
             self.document
@@ -979,12 +956,12 @@ impl Editor {
         } else {
             source.photo
         };
-        self.calibration().map_or_else(
-            || self.source_parameters(0.).map(Into::into),
-            |calibration| {
-                self.positive_processing_for_source(calibration, self.roll, source, photo)
-            },
-        )
+        let input = self.input();
+        if input.ready() {
+            self.positive_processing_for_source(input, self.roll, source, photo)
+        } else {
+            self.source_parameters(0.).map(Into::into)
+        }
     }
 
     fn thumbnail_work_allowed(&self) -> bool {
@@ -1136,10 +1113,21 @@ impl Editor {
                             self.thumbnails
                                 .previous_product(key)
                                 .map(|(_, product)| Ok(product.clone()))
+                                .or_else(|| {
+                                    self.thumbnails.cache.entries.iter().rev().find_map(
+                                        |(old, value)| {
+                                            (key.same_presentation(old) && value.is_err())
+                                                .then(|| value.clone())
+                                        },
+                                    )
+                                })
                         })
                     });
                     let previous = pending && entry.as_ref().is_some_and(Result::is_ok);
                     let mut available = false;
+                    let camera_preview = key
+                        .as_ref()
+                        .is_some_and(|key| self.thumbnails.embedded.get(&key.source).is_some());
                     let parameters = if entry
                         .as_ref()
                         .and_then(|entry| entry.as_ref().ok())
@@ -1289,7 +1277,7 @@ impl Editor {
                             StatusLevel::Error,
                             format!("Thumbnail unavailable: {error}"),
                         ))
-                    } else if pending && (!available || previous) {
+                    } else if pending && !camera_preview && (!available || previous) {
                         Some(ContextualStatus::new(
                             StatusLevel::Activity,
                             "Preparing thumbnail; navigation preview may differ.",

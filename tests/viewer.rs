@@ -3,7 +3,9 @@ use antitone::{
     color::{Balance, ap1_to_ap0},
     flat_field::FlatField,
     gpu::{GpuFlatField, ProcessingParameters, SourceGeometry},
-    processing::{Calibration, PhotoSettings, Pipeline, Response, RollSettings},
+    processing::{
+        Calibration, DEFAULT_GAMMA, InputSettings, PhotoSettings, Pipeline, Response, RollSettings,
+    },
     rendering::{CpuRenderer, OutputTarget},
     viewer::GpuImage,
 };
@@ -68,16 +70,27 @@ fn corrected_viewer_shares_the_field_and_matches_both_cpu_output_targets() {
             scans.iter().map(|p| matrix * p).collect::<Vec<_>>(),
         )];
         for response in [Response::Original, Response::film()] {
-            let roll = RollSettings {
+            let input = InputSettings::Negative {
+                dmin: Some(calibration.dmin),
+                dmax: Some(calibration.dmax),
+                input_floor: calibration.input_floor,
                 response,
+                gamma: DEFAULT_GAMMA,
+                balance: Balance::default(),
+            };
+            let roll = RollSettings {
                 exposure: -2.,
                 ..RollSettings::default()
             };
-            let pipeline =
-                Pipeline::new(calibration, roll, PhotoSettings::default(), matrix).unwrap();
+            let pipeline = Pipeline::new(input, roll, PhotoSettings::default(), matrix).unwrap();
             cases.push((
-                ProcessingParameters::positive(calibration, roll, PhotoSettings::default(), matrix)
-                    .unwrap(),
+                ProcessingParameters::positive(
+                    input.negative_input().unwrap(),
+                    roll,
+                    PhotoSettings::default(),
+                    matrix,
+                )
+                .unwrap(),
                 scans
                     .iter()
                     .map(|p| pipeline.apply(*p).unwrap().rgb)
@@ -194,7 +207,7 @@ fn corrected_rotated_tiles_use_original_source_coordinates_before_native_camera_
         };
         let roll = RollSettings {
             exposure: -1.,
-            ..RollSettings::new_grade()
+            ..RollSettings::default()
         };
         let photo = PhotoSettings {
             wb: Balance {
@@ -209,7 +222,8 @@ fn corrected_rotated_tiles_use_original_source_coordinates_before_native_camera_
             } else {
                 base
             };
-            let pipeline = Pipeline::new(calibration, roll, photo, matrix).unwrap();
+            let input = InputSettings::negative(calibration);
+            let pipeline = Pipeline::new(input, roll, photo, matrix).unwrap();
             let parameters =
                 ProcessingParameters::positive(calibration, roll, photo, matrix).unwrap();
             let working: Vec<_> = (area.y..area.y + area.height)
@@ -395,12 +409,18 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
             dmax: DVec3::new(0.008, 0.005, 0.002),
             input_floor: 2.2e-5,
         };
-        let roll = RollSettings {
+        let input = InputSettings::Negative {
+            dmin: Some(calibration.dmin),
+            dmax: Some(calibration.dmax),
+            input_floor: calibration.input_floor,
+            response: Response::film(),
             gamma: 0.65,
             balance: Balance {
                 warmth: 0.2,
                 tint: -0.1,
             },
+        };
+        let roll = RollSettings {
             exposure: -2.,
             ..RollSettings::default()
         };
@@ -414,7 +434,7 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
             saturation: 1.3,
             ..PhotoSettings::default()
         };
-        let pipeline = Pipeline::new(calibration, roll, photo, matrix).unwrap();
+        let pipeline = Pipeline::new(input, roll, photo, matrix).unwrap();
         let positive: Vec<_> = scans
             .iter()
             .map(|p| pipeline.apply(*p).unwrap().rgb)
@@ -427,14 +447,30 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
             },
         ]
         .map(|response| {
-            let settings = RollSettings { response, ..roll };
-            let pipeline = Pipeline::new(calibration, settings, photo, matrix).unwrap();
+            let settings = InputSettings::Negative {
+                dmin: Some(calibration.dmin),
+                dmax: Some(calibration.dmax),
+                input_floor: calibration.input_floor,
+                response,
+                gamma: 0.65,
+                balance: Balance {
+                    warmth: 0.2,
+                    tint: -0.1,
+                },
+            };
+            let pipeline = Pipeline::new(settings, roll, photo, matrix).unwrap();
             let values: Vec<_> = scans
                 .iter()
                 .map(|s| pipeline.apply(*s).unwrap().rgb)
                 .collect();
             (
-                ProcessingParameters::positive(calibration, settings, photo, matrix).unwrap(),
+                ProcessingParameters::positive(
+                    settings.negative_input().unwrap(),
+                    roll,
+                    photo,
+                    matrix,
+                )
+                .unwrap(),
                 values,
             )
         })
@@ -456,7 +492,13 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
             for (parameters, working) in [
                 (ProcessingParameters::source(), &working),
                 (
-                    ProcessingParameters::positive(calibration, roll, photo, matrix).unwrap(),
+                    ProcessingParameters::positive(
+                        input.negative_input().unwrap(),
+                        roll,
+                        photo,
+                        matrix,
+                    )
+                    .unwrap(),
                     &positive,
                 ),
                 (films[0].0, &films[0].1),

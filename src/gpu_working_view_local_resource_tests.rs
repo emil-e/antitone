@@ -130,14 +130,7 @@ fn exercise(
             let cal = scan.processing_calibration(basis)?;
             let mut frame = frame(&scan);
             frame.output = [1920, 1080];
-            let spec = ViewSourceSpec::new(
-                1,
-                frame,
-                cal,
-                RollSettings::new_grade(),
-                scan.camera_to_ap1,
-                field.clone(),
-            )?;
+            let spec = ViewSourceSpec::new(1, frame, cal, scan.camera_to_ap1, field.clone())?;
             let specs = vec![spec.clone(), spec.underlay()?];
             let gpu_field = field
                 .as_ref()
@@ -177,21 +170,21 @@ fn exercise(
                     Arc::new(GpuPhotoGrade::new(
                         device,
                         cal,
-                        RollSettings::new_grade(),
+                        RollSettings::default(),
                         snapshot.clone(),
                         scan.camera_to_ap1,
                         scan.area,
                     )?)
                     .into()
                 } else {
-                    processing_input(cal, RollSettings::new_grade(), snapshot.global(), &scan)
+                    processing_input(cal, RollSettings::default(), snapshot.global(), &scan)
                 };
                 let make = |source, old| {
                     RenderedView::new(
                         device,
                         source,
                         cal,
-                        RollSettings::new_grade(),
+                        RollSettings::default(),
                         snapshot.clone(),
                         &input,
                         target,

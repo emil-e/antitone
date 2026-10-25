@@ -412,7 +412,7 @@ fn report(dataset: &Dataset, gpu: &Gpu, output_dir: &Path, csv: &mut fs::File) {
         &[0., 2., 4.]
     };
     for &exposure in exposures {
-        let roll = RollSettings::new_grade();
+        let roll = RollSettings::default();
         let photo = PhotoSettings {
             exposure,
             ..Default::default()

@@ -1,6 +1,6 @@
 use super::{
-    Balance, Calibration, Coverage, DVec3, Editor, Error, PhotoSettings, Pick, RollSettings, Scan,
-    Task, TaskRequest,
+    Balance, Calibration, Coverage, DVec3, Editor, Error, InputSettings, PhotoSettings, Pick,
+    RollSettings, Scan, Task, TaskRequest,
 };
 use crate::{flat_field::FlatField, scan::DevelopedSource};
 use std::sync::Arc;
@@ -19,7 +19,7 @@ pub(super) struct Input {
     pub correction: Option<Arc<FlatField>>,
     pub kind: Pick,
     pub region: Coverage,
-    pub calibration: Option<Calibration>,
+    pub input: InputSettings,
     pub roll: RollSettings,
     pub photo: PhotoSettings,
 }
@@ -33,18 +33,12 @@ impl Input {
                 .reference_coverage(self.region)
                 .map(Measurement::Reference),
             Pick::Gamma => scan
-                .roll_neutral_coverage(
-                    self.region,
-                    self.calibration
-                        .ok_or(Error::UnusableSample("both film references are required"))?,
-                    self.roll,
-                )
+                .roll_neutral_coverage(self.region, &self.input)
                 .map(Measurement::Balance),
             Pick::RollWb => scan
                 .photo_neutral_coverage(
                     self.region,
-                    self.calibration
-                        .ok_or(Error::UnusableSample("both film references are required"))?,
+                    &self.input,
                     RollSettings {
                         wb: Balance::default(),
                         ..self.roll
@@ -53,13 +47,7 @@ impl Input {
                 )
                 .map(Measurement::Balance),
             Pick::Wb => scan
-                .photo_neutral_coverage(
-                    self.region,
-                    self.calibration
-                        .ok_or(Error::UnusableSample("both film references are required"))?,
-                    self.roll,
-                    self.photo,
-                )
+                .photo_neutral_coverage(self.region, &self.input, self.roll, self.photo)
                 .map(Measurement::Balance),
             Pick::Flat | Pick::Analysis => Err(Error::InvalidParameter(
                 "area acceptance uses a separate transaction",
@@ -83,7 +71,7 @@ impl Editor {
                 .map(|correction| correction.settings.map.clone()),
             kind,
             region,
-            calibration: self.calibration(),
+            input: self.input(),
             roll: self.roll,
             photo: self.photo,
         })
@@ -161,57 +149,80 @@ impl Editor {
         let photo = (kind == Pick::Wb).then_some(self.current_source).flatten();
         match result {
             Ok(Measurement::Reference(value)) => {
-                let other = if kind == Pick::Dmin {
-                    self.dmax
-                } else {
-                    self.dmin
+                let InputSettings::Negative {
+                    dmin,
+                    dmax,
+                    input_floor,
+                    response,
+                    gamma,
+                    balance,
+                } = self.input
+                else {
+                    self.status = "Reference picks require a scan input".into();
+                    self.finish_pick(cx);
+                    return;
                 };
-                let valid = other
-                    .map(|other| {
-                        let (dmin, dmax) = if kind == Pick::Dmin {
-                            (value, other)
-                        } else {
-                            (other, value)
-                        };
-                        Calibration {
-                            dmin,
-                            dmax,
-                            input_floor: self.floor,
-                        }
-                        .validate()
-                        .and_then(|cal| {
-                            self.validate_processing(cal, self.roll, self.photo)
-                                .map(|_| cal)
-                        })
-                    })
-                    .transpose();
-                if let Err(error) = valid {
+                let other = if kind == Pick::Dmin { dmax } else { dmin };
+                let Some(other) = other else {
+                    set_reference(&mut self.input, kind, value);
+                    self.status = format!("{kind:?} measured");
+                    self.record_edit(before, "Calibration pick", photo);
+                    self.finish_pick(cx);
+                    return;
+                };
+                let (next_dmin, next_dmax) = if kind == Pick::Dmin {
+                    (value, other)
+                } else {
+                    (other, value)
+                };
+                let candidate = InputSettings::Negative {
+                    dmin: Some(next_dmin),
+                    dmax: Some(next_dmax),
+                    input_floor,
+                    response,
+                    gamma,
+                    balance,
+                };
+                let calibration = Calibration {
+                    dmin: next_dmin,
+                    dmax: next_dmax,
+                    input_floor,
+                };
+                if let Err(error) = calibration
+                    .validate()
+                    .and_then(|_| self.validate_processing(candidate, self.roll, self.photo))
+                {
                     self.status = error.to_string();
                     self.finish_pick(cx);
                     return;
                 }
-                if kind == Pick::Dmin {
-                    self.dmin = Some(value);
-                } else {
-                    self.dmax = Some(value);
-                }
+                self.input = candidate;
                 self.status = format!("{kind:?} measured");
             }
             Ok(Measurement::Balance(balance)) => {
-                let mut roll = self.roll;
-                let mut photo = self.photo;
+                let (mut roll, mut photo) = (self.roll, self.photo);
+                let mut input = self.input;
                 match kind {
-                    Pick::Gamma => roll.balance = balance,
+                    Pick::Gamma => {
+                        if let InputSettings::Negative {
+                            balance: gamma_balance,
+                            ..
+                        } = &mut input
+                        {
+                            *gamma_balance = balance;
+                        }
+                    }
                     Pick::RollWb => roll.wb = balance,
                     _ => photo.wb = balance,
                 }
-                if let Some(cal) = self.calibration()
-                    && let Err(error) = self.validate_processing(cal, roll, photo)
+                if input.calibration().is_some()
+                    && let Err(error) = self.validate_processing(input, roll, photo)
                 {
                     self.status = format!("Pick rejected: {error}");
                     self.finish_pick(cx);
                     return;
                 }
+                self.input = input;
                 self.roll = roll;
                 self.photo = photo;
                 self.status = format!("{kind:?} neutral correction applied");
@@ -220,5 +231,15 @@ impl Editor {
         }
         self.record_edit(before, "Calibration pick", photo);
         self.finish_pick(cx);
+    }
+}
+
+fn set_reference(input: &mut InputSettings, kind: Pick, value: DVec3) {
+    if let InputSettings::Negative { dmin, dmax, .. } = input {
+        match kind {
+            Pick::Dmin => *dmin = Some(value),
+            Pick::Dmax => *dmax = Some(value),
+            _ => {}
+        }
     }
 }

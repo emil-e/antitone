@@ -34,8 +34,8 @@ use wgpu::util::DeviceExt;
 use crate::Error;
 use crate::color::{AP1_TO_XYZ, wb_matrix};
 use crate::processing::{
-    Calibration, Inversion, InputSettings, NegativeInput, PhotoSettings, RollSettings,
-    exposure_multiplier, log_abs_expm1, log_ratio, validate_camera_matrix,
+    InputSettings, Inversion, NegativeInput, PhotoSettings, RollSettings, exposure_multiplier,
+    log_abs_expm1, log_ratio, validate_camera_matrix,
 };
 
 #[repr(C)]
@@ -60,7 +60,14 @@ pub struct ProcessingParameters {
     creative_tail: [Vec4; 3],
     // Inverse downstream sensitivity limits native magnitude in one-word response kernels.
     response_precision: Vec4,
+    /// Named input stage for the shader; `STAGE_SOURCE` also means "not graded".
+    stage: u32,
+    _stage_padding: [u32; 3],
 }
+
+pub(crate) const STAGE_SOURCE: u32 = 0;
+pub(crate) const STAGE_NEGATIVE: u32 = 1;
+pub(crate) const STAGE_DIGITAL: u32 = 2;
 
 // A common ACES source-display convention, not a camera exposure calibration or JPEG fit.
 const SOURCE_PREVIEW_EXPOSURE: f64 = 1.0;
@@ -87,6 +94,11 @@ fn source_preview_gain(fixed_wb: Option<[f64; 4]>) -> f64 {
 
 impl ProcessingParameters {
     pub const BYTE_LEN: usize = std::mem::size_of::<Self>();
+
+    /// A graded positive render; source inspection is not graded.
+    pub(crate) fn graded(&self) -> bool {
+        self.stage != STAGE_SOURCE
+    }
 
     pub fn source() -> Self {
         Self {
@@ -121,7 +133,7 @@ impl ProcessingParameters {
     }
 
     pub fn positive(
-        negative: NegativeInput,
+        negative: impl Into<NegativeInput>,
         roll: RollSettings,
         photo: PhotoSettings,
         camera_to_ap1: DMat3,
@@ -131,12 +143,12 @@ impl ProcessingParameters {
     }
 
     fn positive_with_bound(
-        negative: NegativeInput,
+        negative: impl Into<NegativeInput>,
         roll: RollSettings,
         photo: PhotoSettings,
         camera_to_ap1: DMat3,
     ) -> Result<(Self, f64), Error> {
-        Self::positive_with_neutral_bound(negative, roll, photo, camera_to_ap1, DVec3::ZERO)
+        Self::positive_with_neutral_bound(negative.into(), roll, photo, camera_to_ap1, DVec3::ZERO)
     }
 
     fn positive_with_neutral_bound(
@@ -187,7 +199,10 @@ impl ProcessingParameters {
         }
         let gammas = negative.channel_gammas()?;
         for c in 0..3 {
-            let l = log_ratio(negative.calibration.dmin[c], negative.calibration.input_floor);
+            let l = log_ratio(
+                negative.calibration.dmin[c],
+                negative.calibration.input_floor,
+            );
             let a = toe * l / (gammas[c] - shoulder * l / std::f64::consts::LN_10);
             if !a.is_finite() || a > 4096. {
                 return Err(Error::Gpu(
@@ -196,7 +211,8 @@ impl ProcessingParameters {
                 ));
             }
         }
-        let reference = split_constants(negative.calibration.dmin, negative.calibration.input_floor)?;
+        let reference =
+            split_constants(negative.calibration.dmin, negative.calibration.input_floor)?;
         let gamma = split_constants(gammas, toe)?;
         let logs = split_constants(inversion.anchor_exponents.map(log_abs_expm1), gain.ln())?;
         let shapes = split_constants(DVec3::new(toe, shoulder, 0.), 0.)?;
@@ -227,7 +243,7 @@ impl ProcessingParameters {
             dmin_floor: reference[0],
             dmin_low: reference[1],
             dmin_tail: reference[2],
-            gamma_mode: gamma[0].xyz().extend(1.),
+            gamma_mode: gamma[0].xyz().extend(0.),
             gamma_low: gamma[1],
             gamma_tail: gamma[2],
             shape: Vec4::new(shapes[0].x, shapes[0].y, shapes[1].x, shapes[1].y),
@@ -251,6 +267,8 @@ impl ProcessingParameters {
                 0.,
                 0.,
             ),
+            stage: STAGE_NEGATIVE,
+            _stage_padding: [0; 3],
         };
         if !result.dmin_floor.is_finite()
             || result.dmin_floor.w < f32::MIN_POSITIVE
@@ -341,65 +359,90 @@ impl ProcessingParameters {
             .max_element()
             .max(1.)
             * creative_sensitivity.max(1.);
-        Ok((Self {
-            // Interpretation is identity for Digital, so the inversion constants are unused.
-            // Valid placeholders keep the f32 representation checks meaningful.
-            dmin_floor: Vec4::new(1., 0., 0., 1.),
-            dmin_low: Vec4::ZERO,
-            dmin_tail: Vec4::ZERO,
-            gamma_mode: Vec4::new(0., 0., 0., 2.),
-            gamma_low: Vec4::ZERO,
-            gamma_tail: Vec4::ZERO,
-            shape: Vec4::ZERO,
-            shape_tail: Vec4::ZERO,
-            anchor: Vec4::ZERO,
-            anchor_low: Vec4::ZERO,
-            anchor_tail: Vec4::ZERO,
-            post: post.high,
-            post_low: post.low,
-            post_tail: post.tail,
-            creative: std::array::from_fn(|c| controls[c][0]),
-            creative_low: std::array::from_fn(|c| controls[c][1]),
-            creative_tail: std::array::from_fn(|c| controls[c][2]),
-            response_precision: Vec4::new(
-                if downstream_sensitivity.is_finite() {
-                    (1. / downstream_sensitivity) as f32
-                } else {
-                    0.
-                },
-                0.,
-                0.,
-                0.,
-            ),
-        }, output.min(creative_bound)))
+        Ok((
+            Self {
+                // Interpretation is identity for Digital, so the inversion constants are unused.
+                // Valid placeholders keep the f32 representation checks meaningful.
+                dmin_floor: Vec4::new(1., 0., 0., 1.),
+                dmin_low: Vec4::ZERO,
+                dmin_tail: Vec4::ZERO,
+                gamma_mode: Vec4::ZERO,
+                gamma_low: Vec4::ZERO,
+                gamma_tail: Vec4::ZERO,
+                shape: Vec4::ZERO,
+                shape_tail: Vec4::ZERO,
+                anchor: Vec4::ZERO,
+                anchor_low: Vec4::ZERO,
+                anchor_tail: Vec4::ZERO,
+                post: post.high,
+                post_low: post.low,
+                post_tail: post.tail,
+                creative: std::array::from_fn(|c| controls[c][0]),
+                creative_low: std::array::from_fn(|c| controls[c][1]),
+                creative_tail: std::array::from_fn(|c| controls[c][2]),
+                response_precision: Vec4::new(
+                    if downstream_sensitivity.is_finite() {
+                        (1. / downstream_sensitivity) as f32
+                    } else {
+                        0.
+                    },
+                    0.,
+                    0.,
+                    0.,
+                ),
+                stage: STAGE_DIGITAL,
+                _stage_padding: [0; 3],
+            },
+            output.min(creative_bound),
+        ))
     }
 
     /// Like `interpret`, but returns the f32 working bound (local-grade preflight).
     pub fn interpret_with_neutral_bound(
-        input: &InputSettings,
+        input: impl Into<InputSettings>,
         roll: RollSettings,
         photo: PhotoSettings,
         camera_to_ap1: DMat3,
         additional_neutral: DVec3,
     ) -> Result<(Self, f64), Error> {
-        match input.negative_input() {
-            Some(negative) => {
-                Self::positive_with_neutral_bound(negative, roll, photo, camera_to_ap1, additional_neutral)
+        let input = input.into();
+        match input {
+            InputSettings::Digital => {
+                Self::digital_with_neutral_bound(roll, photo, camera_to_ap1, additional_neutral)
             }
-            None => Self::digital_with_neutral_bound(roll, photo, camera_to_ap1, additional_neutral),
+            InputSettings::Negative { .. } => {
+                let negative = input.negative_input().ok_or(Error::InvalidCalibration {
+                    channel: 0,
+                    reason: "measure Dmin and Dmax",
+                })?;
+                Self::positive_with_neutral_bound(
+                    negative,
+                    roll,
+                    photo,
+                    camera_to_ap1,
+                    additional_neutral,
+                )
+            }
         }
     }
 
     /// Build packed parameters, interpreting source samples through `stage`.
     pub fn interpret(
-        input: &InputSettings,
+        input: impl Into<InputSettings>,
         roll: RollSettings,
         photo: PhotoSettings,
         camera_to_ap1: DMat3,
     ) -> Result<Self, Error> {
-        match input.negative_input() {
-            Some(negative) => Self::positive(negative, roll, photo, camera_to_ap1),
-            None => Self::digital(roll, photo, camera_to_ap1),
+        let input = input.into();
+        match input {
+            InputSettings::Digital => Self::digital(roll, photo, camera_to_ap1),
+            InputSettings::Negative { .. } => {
+                let negative = input.negative_input().ok_or(Error::InvalidCalibration {
+                    channel: 0,
+                    reason: "measure Dmin and Dmax",
+                })?;
+                Self::positive(negative, roll, photo, camera_to_ap1)
+            }
         }
     }
 }

@@ -4,7 +4,7 @@ use crate::{
     color::Balance,
     coverage::Coverage,
     geometry::SourceRaster,
-    processing::{Calibration, PhotoSettings, Pipeline, RollSettings},
+    processing::{Calibration, InputSettings, PhotoSettings, Pipeline, RollSettings},
     raw::{Developed, FrozenRaw, Metadata, RawFile, Rect, SensorDiagnostics},
     sampling,
 };
@@ -410,6 +410,9 @@ impl Scan {
 
     /// Stored calibration remains RGB-only; correction transforms its explicit precision bound.
     pub fn processing_calibration(&self, mut calibration: Calibration) -> Result<Calibration> {
+        if calibration.input_floor == self.corrected_floor {
+            return calibration.validate();
+        }
         if calibration.input_floor != self.input_floor {
             return Err(Error::InvalidParameter(
                 "scan calibration requires the native-code base floor",
@@ -417,6 +420,13 @@ impl Scan {
         }
         calibration.input_floor = self.corrected_floor;
         calibration.validate()
+    }
+
+    fn refined_input(&self, input: &InputSettings) -> Result<InputSettings> {
+        match input.calibration() {
+            Some(base) => Ok(input.with_calibration(self.processing_calibration(base)?)),
+            None => Ok(*input),
+        }
     }
 
     pub fn pixel(&self, x: u32, y: u32) -> Result<DVec3> {
@@ -544,7 +554,7 @@ impl Scan {
 
     pub fn reference(&mut self, region: Rect) -> Result<DVec3> {
         self.checked_region(region)?;
-        let mean = if self.flat_field.is_some() {
+        let mean = if self.flat_field().is_some() {
             let mut sum = DVec3::ZERO;
             let mut compensation = DVec3::ZERO;
             for y in region.y..region.y + region.height {
@@ -586,26 +596,26 @@ impl Scan {
         Ok(pixels)
     }
 
-    pub fn roll_neutral(
-        &mut self,
-        region: Rect,
-        calibration: Calibration,
-        roll: RollSettings,
-    ) -> Result<Balance> {
-        let calibration = self.processing_calibration(calibration)?;
+    pub fn roll_neutral(&mut self, region: Rect, input: &InputSettings) -> Result<Balance> {
+        let negative =
+            self.refined_input(input)?
+                .negative_input()
+                .ok_or(Error::InvalidParameter(
+                    "white-balance fitting requires a negative input",
+                ))?;
         let matrix = self.camera_to_ap1;
-        sampling::roll_neutral(calibration, roll, &self.patch(region)?, matrix)
+        sampling::roll_neutral(negative, &self.patch(region)?, matrix)
     }
 
     pub fn photo_neutral(
         &mut self,
         region: Rect,
-        calibration: Calibration,
+        input: &InputSettings,
         roll: RollSettings,
         photo: PhotoSettings,
     ) -> Result<Balance> {
         let pipeline = Pipeline::new(
-            self.processing_calibration(calibration)?,
+            self.refined_input(input)?,
             roll,
             photo.before_white_balance(),
             self.camera_to_ap1,
@@ -667,29 +677,33 @@ impl Scan {
     pub fn roll_neutral_coverage(
         &mut self,
         coverage: Coverage,
-        calibration: Calibration,
-        roll: RollSettings,
+        input: &InputSettings,
     ) -> Result<Balance> {
         if let Some(region) = coverage.exact_rectangle(self.area) {
-            return self.roll_neutral(region, calibration, roll);
+            return self.roll_neutral(region, input);
         }
-        let calibration = self.processing_calibration(calibration)?;
+        let negative =
+            self.refined_input(input)?
+                .negative_input()
+                .ok_or(Error::InvalidParameter(
+                    "white-balance fitting requires a negative input",
+                ))?;
         let matrix = self.camera_to_ap1;
-        sampling::roll_neutral_weighted(calibration, roll, &self.patch_coverage(coverage)?, matrix)
+        sampling::roll_neutral_weighted(negative, &self.patch_coverage(coverage)?, matrix)
     }
 
     pub fn photo_neutral_coverage(
         &mut self,
         coverage: Coverage,
-        calibration: Calibration,
+        input: &InputSettings,
         roll: RollSettings,
         photo: PhotoSettings,
     ) -> Result<Balance> {
         if let Some(region) = coverage.exact_rectangle(self.area) {
-            return self.photo_neutral(region, calibration, roll, photo);
+            return self.photo_neutral(region, input, roll, photo);
         }
         let pipeline = Pipeline::new(
-            self.processing_calibration(calibration)?,
+            self.refined_input(input)?,
             roll,
             photo.before_white_balance(),
             self.camera_to_ap1,

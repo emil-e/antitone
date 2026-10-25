@@ -1,4 +1,5 @@
 use super::*;
+use crate::project::Development;
 use crate::{color::Balance, processing::PhotoSettings};
 #[path = "editor_document_admission_tests.rs"]
 mod admission;
@@ -94,11 +95,12 @@ fn fixture(directory: &Path) -> Document {
         let path = directory.join(name);
         std::fs::write(&path, b"fixture source bytes").unwrap();
         document
-            .register(
+            .register_with_development(
                 Source {
                     id: SourceId(0),
                     path,
                     development: SourceDevelopment {
+                        decode: Development::new("test-backend".into(), [1.; 4]),
                         lens_correction: None,
                         dng_development: None,
                         dimensions: [900, 600],
@@ -128,31 +130,28 @@ fn authored_dng_import_selects_as_shot_wb_and_open_preserves_saved_gains() {
     document.import(std::slice::from_ref(&raw_path)).unwrap();
     assert_eq!(document.project.order.len(), 1);
     assert_eq!(
-        document.project.development.as_ref().unwrap().fixed_wb,
+        document.project.development().as_ref().unwrap().fixed_wb,
         [1.; 4]
     );
     let custom = [2., 1., 1.5, 1.];
-    document.project.development.as_mut().unwrap().fixed_wb = custom;
     // A saved SDK WB has a matching matrix/precision/program identity. Construct
     // that accepted basis rather than silently reinterpreting an older source record.
     let raw = RawFile::open_with_wb(&raw_path, Some(custom)).unwrap();
-    let actual = source_metadata(&raw_path, &raw.metadata).unwrap();
-    document.project.camera_basis = Some(actual.development.camera_basis());
+    let actual = source_metadata(&raw_path, &raw.metadata, raw.fixed_wb(custom)).unwrap();
+    document.project.scan.as_mut().unwrap().basis = crate::project::ScanBasis::new(&actual);
     document.project.sources[0].development = actual.development;
+    assert_eq!(document.project.acquisition_wb(None), Some(custom));
     let directory = tempfile::tempdir().unwrap();
     let project_path = directory.path().join("grade.antitone");
     let saved = document.save(&project_path, Save::New).unwrap();
     let mut reopened = Document::open(&project_path).unwrap();
     assert_eq!(reopened.project, saved.project);
     reopened.import(std::slice::from_ref(&raw_path)).unwrap();
-    assert_eq!(
-        reopened.project.development.as_ref().unwrap().fixed_wb,
-        custom
-    );
+    assert_eq!(reopened.project.development().unwrap().fixed_wb, custom);
     let source = reopened.project.order[0];
     let scan = Scan::open(&reopened.source_path(source).unwrap(), Some(custom)).unwrap();
     assert_eq!(scan.fixed_wb, custom);
-    reopened.project.development.as_mut().unwrap().fixed_wb[3] = 0.;
+    reopened.project.development_mut().unwrap().fixed_wb[3] = 0.;
     assert!(reopened.validate().is_err());
 }
 
@@ -364,10 +363,12 @@ fn oriented_imports_seed_the_photo_composition_setting() {
         let file = sony_fixture::source_oriented(Order::Little, vec![], false, false, tag);
         let mut document = Document::default();
         // The authored TIFF has no maker-note WB; declare fixed roll gains as kittests do.
-        document.project.development = Some(crate::project::Development::new(
-            crate::raw::version(),
-            [1.; 4],
-        ));
+        document.project.scan = Some(crate::project::ScanSetup {
+            basis: crate::project::ScanBasis {
+                development: read_source(file.path(), Some([1.; 4])).unwrap().development,
+            },
+            flat_field: None,
+        });
         let path = file.path().to_path_buf();
         document.import(std::slice::from_ref(&path)).unwrap();
         let id = document.project.order[0];
@@ -377,4 +378,180 @@ fn oriented_imports_seed_the_photo_composition_setting() {
             "orientation tag {tag}"
         );
     }
+}
+
+#[test]
+fn mixed_import_fallback_uses_batch_entry_and_restores_each_new_sources_as_shot_wb() {
+    let directory = tempfile::tempdir().unwrap();
+    let original =
+        std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"))
+            .unwrap();
+    let first = directory.path().join("first.dng");
+    let second = directory.path().join("different-wb.dng");
+    let other_camera = directory.path().join("other-camera.dng");
+    std::fs::write(&first, &original).unwrap();
+    let mut different_wb = original.clone();
+    assert_eq!(&different_wb[..2], b"II");
+    let ifd = u32::from_le_bytes(different_wb[4..8].try_into().unwrap()) as usize;
+    let count = u16::from_le_bytes(different_wb[ifd..ifd + 2].try_into().unwrap());
+    let entry = (0..usize::from(count))
+        .map(|i| ifd + 2 + i * 12)
+        .find(|&i| u16::from_le_bytes(different_wb[i..i + 2].try_into().unwrap()) == 50728)
+        .expect("authored AsShotNeutral");
+    assert_eq!(
+        u16::from_le_bytes(different_wb[entry + 2..entry + 4].try_into().unwrap()),
+        5
+    );
+    let offset =
+        u32::from_le_bytes(different_wb[entry + 8..entry + 12].try_into().unwrap()) as usize;
+    // Only the first neutral denominator changes: the declared as-shot red gain is now 2.
+    assert_eq!(&different_wb[offset..offset + 8], &[1, 0, 0, 0, 1, 0, 0, 0]);
+    different_wb[offset + 4..offset + 8].copy_from_slice(&2_u32.to_le_bytes());
+    std::fs::write(&second, different_wb).unwrap();
+    let mut different_camera = original.clone();
+    let locations: Vec<_> = original
+        .windows(b"Authored Bayer patches".len())
+        .enumerate()
+        .filter_map(|(i, bytes)| (bytes == b"Authored Bayer patches").then_some(i))
+        .collect();
+    assert_eq!(locations.len(), 2, "Model and UniqueCameraModel");
+    for i in locations {
+        different_camera[i..i + b"Modified Bayer patches".len()]
+            .copy_from_slice(b"Modified Bayer patches");
+    }
+    std::fs::write(&other_camera, different_camera).unwrap();
+    let expected_wb = read_source(&second, None)
+        .unwrap()
+        .development
+        .decode
+        .fixed_wb;
+    assert_ne!(
+        expected_wb,
+        read_source(&first, None)
+            .unwrap()
+            .development
+            .decode
+            .fixed_wb
+    );
+    assert_ne!(
+        read_source(&first, None).unwrap().development.camera_model,
+        read_source(&other_camera, None)
+            .unwrap()
+            .development
+            .camera_model
+    );
+
+    for paths in [
+        vec![first.clone(), second.clone(), other_camera.clone()],
+        vec![first.clone(), other_camera.clone(), second.clone()],
+    ] {
+        let mut document = Document::default();
+        document.import(&paths).unwrap();
+        assert_eq!(
+            document.project.input,
+            crate::processing::InputSettings::Digital
+        );
+        assert_eq!(document.project.order.len(), 3);
+        let second_id = document.find_source(&second).unwrap();
+        assert_eq!(
+            document
+                .project
+                .source(second_id)
+                .unwrap()
+                .development
+                .decode
+                .fixed_wb,
+            expected_wb
+        );
+    }
+    // A later batch must not reinterpret an already-established multi-source roll.
+    let mut established = Document::default();
+    established.import(&[first, second]).unwrap();
+    assert!(established.project.input.is_negative());
+    assert!(established.import(&[other_camera]).is_err());
+    assert!(established.project.input.is_negative());
+}
+
+#[test]
+fn automatic_import_fallback_does_not_discard_partial_or_nondefault_stage_settings() {
+    for case in 0..5 {
+        let mut document = Document::default();
+        assert!(document.auto_digital_available());
+        let crate::processing::InputSettings::Negative {
+            dmin,
+            dmax,
+            gamma,
+            balance,
+            response,
+            ..
+        } = &mut document.project.input
+        else {
+            unreachable!()
+        };
+        match case {
+            0 => *dmin = Some(glam::DVec3::splat(0.8)),
+            1 => *dmax = Some(glam::DVec3::splat(0.02)),
+            2 => *gamma = 0.9,
+            3 => balance.warmth = 0.1,
+            4 => *response = crate::processing::Response::Original,
+            _ => unreachable!(),
+        }
+        assert!(
+            !document.auto_digital_available(),
+            "stage edit {case} must require an explicit switch"
+        );
+    }
+}
+
+#[test]
+fn fresh_mixed_scan_import_switches_to_digital_only_before_calibration() {
+    fn source(
+        path: &std::path::Path,
+        camera: &str,
+        matrix: [[f64; 3]; 3],
+    ) -> crate::project::Source {
+        std::fs::write(path, b"scan fixture").unwrap();
+        crate::project::Source {
+            id: crate::project::SourceId(0),
+            path: path.into(),
+            development: crate::project::SourceDevelopment {
+                decode: Development::new("test-backend".into(), [2., 1., 1.5, 1.]),
+                lens_correction: None,
+                dng_development: None,
+                dimensions: [900, 600],
+                active_area: [0, 0, 900, 600],
+                camera_model: camera.into(),
+                camera_to_ap1: matrix,
+                input_floor: crate::processing::CAMERA_INPUT_FLOOR,
+            },
+            reference_only: false,
+            photo: PhotoSettings::default(),
+            local_adjustments: None,
+            repairs: Default::default(),
+            orientation: Default::default(),
+            crop: None,
+        }
+    }
+
+    let directory = tempfile::tempdir().unwrap();
+    let mut document = Document::default();
+    document
+        .project
+        .add_source(source(
+            &directory.path().join("a.ARW"),
+            "camera-a",
+            [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+        ))
+        .unwrap();
+    assert!(document.auto_digital_available());
+    let incompatible = source(
+        &directory.path().join("b.ARW"),
+        "camera-b",
+        [[0.9, 0., 0.1], [0., 1.1, 0.], [0.05, 0., 0.95]],
+    );
+    assert!(document.scan_source_incompatible(&incompatible));
+
+    document.project.set_dmin(Some([0.8; 3]));
+    document.project.set_dmax(Some([0.02; 3]));
+    assert!(!document.auto_digital_available());
 }

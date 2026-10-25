@@ -80,7 +80,7 @@ fn input(device: &wgpu::Device, cal: Calibration, locals: Vec<LocalAdjustment>) 
         GpuPhotoGrade::new(
             device,
             cal,
-            RollSettings::new_grade(),
+            RollSettings::default(),
             PhotoGradeSnapshot::new(PhotoSettings::default(), locals).unwrap(),
             DMat3::IDENTITY,
             AREA,
@@ -328,13 +328,13 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
             (
                 RollSettings {
                     exposure: 0.5,
-                    ..RollSettings::new_grade()
+                    ..RollSettings::default()
                 },
                 PhotoSettings::default(),
                 AREA,
             ),
             (
-                RollSettings::new_grade(),
+                RollSettings::default(),
                 PhotoSettings {
                     exposure: 0.5,
                     ..Default::default()
@@ -342,7 +342,7 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
                 AREA,
             ),
             (
-                RollSettings::new_grade(),
+                RollSettings::default(),
                 PhotoSettings::default(),
                 SourceRegion {
                     x: AREA.x - 1,
@@ -400,7 +400,7 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
             GpuPhotoGrade::new(
                 &device,
                 calibration(),
-                RollSettings::new_grade(),
+                RollSettings::default(),
                 PhotoGradeSnapshot::new(PhotoSettings::default(), adjustments()).unwrap(),
                 DMat3::from_diagonal(DVec3::splat(2.)),
                 AREA,
@@ -488,7 +488,7 @@ fn viewer_callbacks_apply_locals_at_proxy_source_centres_with_and_without_correc
             let processing = input(&device, cal, adjustments());
             let global = Pipeline::new(
                 cal,
-                RollSettings::new_grade(),
+                RollSettings::default(),
                 PhotoSettings::default(),
                 DMat3::IDENTITY,
             )
@@ -780,7 +780,7 @@ fn reusable_tiles_grade_original_pixels_before_rotated_target_averaging() {
             let processing = input(&device, cal, adjustments());
             let global = Pipeline::new(
                 cal,
-                RollSettings::new_grade(),
+                RollSettings::default(),
                 PhotoSettings::default(),
                 DMat3::IDENTITY,
             )

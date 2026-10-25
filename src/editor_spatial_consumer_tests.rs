@@ -44,7 +44,14 @@ fn supplied(editor: &mut Editor) -> Metadata {
     let metadata = Metadata {
         version: VERSION,
         groups: vec![Group {
-            development: editor.document.project.development.clone().unwrap(),
+            development: editor
+                .document
+                .project
+                .scan_basis()
+                .unwrap()
+                .development
+                .decode
+                .clone(),
             code_scale: editor.document.spatial_code_scale(),
             common_size: CommonSize::fit(&sources),
             sources,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::processing::InputSettings;
 #[cfg(test)]
 #[path = "editor_flat_field_tests.rs"]
 mod tests;
@@ -70,7 +71,7 @@ pub(super) struct FlatPreview {
 impl Editor {
     pub(super) fn flat_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
         let editing = self.pick == Some(Pick::Flat);
-        let settings = self.document.project.flat_field.as_ref();
+        let settings = self.document.project.flat_field();
         let configured = settings.is_some();
         let available = !self.busy
             && self.pick.is_none()
@@ -100,7 +101,7 @@ impl Editor {
                     return;
                 }
                 ui.add_enabled_ui(available, |ui| {
-                    if let Some(settings) = self.document.project.flat_field.as_ref() {
+                    if let Some(settings) = self.document.project.flat_field() {
                         let path = self.document.source_path(settings.reference).ok();
                         let mut enabled = settings.enabled;
                         if ui.checkbox(&mut enabled, "Enabled").changed() {
@@ -182,20 +183,14 @@ impl Editor {
             .find_source(&path)
             .and_then(|id| self.document.project.source(id).ok())
             .cloned();
-        let wb = self
-            .document
-            .project
-            .development
-            .as_ref()
-            .map(|d| d.fixed_wb);
+        let wb = self.document.project.acquisition_wb(expected.as_ref());
         let cache = expected
             .as_ref()
-            .map(|source| LoadCache::new(&path, Some(source), wb, &self.document));
+            .map(|source| LoadCache::new(&path, Some(source), &self.document));
         source::Request {
             path,
             wb,
             expected,
-            basis: self.document.project.camera_basis.clone(),
             cache,
             correction: None,
         }
@@ -290,33 +285,32 @@ impl Editor {
 
     pub(super) fn positive_parameters(
         &self,
-        calibration: Calibration,
+        input: impl Into<InputSettings>,
         roll: RollSettings,
         photo: PhotoSettings,
     ) -> Result<ProcessingParameters, Error> {
         let basis = self
             .document
             .project
-            .camera_basis
-            .as_ref()
+            .camera_basis()
             .ok_or(Error::UnusableSample("no native-camera basis identity"))?;
         let matrix = glam::DMat3::from_cols_array_2d(&basis.camera_to_ap1);
-        self.positive_parameters_for_matrix(calibration, roll, photo, matrix)
+        self.positive_parameters_for_matrix(input, roll, photo, matrix)
     }
 
     pub(super) fn positive_parameters_for_matrix(
         &self,
-        calibration: Calibration,
+        input: impl Into<InputSettings>,
         roll: RollSettings,
         photo: PhotoSettings,
         camera_to_ap1: glam::DMat3,
     ) -> Result<ProcessingParameters, Error> {
-        ProcessingParameters::positive(
-            self.processing_calibration(calibration)?,
-            roll,
-            photo,
-            camera_to_ap1,
-        )
+        let input = input.into();
+        let input = match input.calibration() {
+            Some(base) => input.with_calibration(self.processing_calibration(base)?),
+            None => input,
+        };
+        ProcessingParameters::interpret(input, roll, photo, camera_to_ap1)
     }
 
     pub(super) fn processing_calibration(

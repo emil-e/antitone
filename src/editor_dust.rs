@@ -3,6 +3,7 @@ use super::*;
 use crate::dust_repair::{
     AUTOMATIC_PADDING, CONTEXT_PADDING, MAX_MASK_PIXELS, MAX_MASK_WORK_PIXELS,
 };
+use crate::processing::InputSettings;
 use crate::{
     dust_repair::{
         DonorChoice, EvaluatedRepair, Repair, RepairId, RepairOrigin, RepairSet, SupportMask,
@@ -29,8 +30,7 @@ pub(super) struct Request {
     pub source: SourceId,
     pub signature: Signature,
     pub repair: Repair,
-    pub calibration: Calibration,
-    pub roll: RollSettings,
+    pub input: InputSettings,
     pub cancelled: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -446,8 +446,7 @@ pub(super) fn evaluate_with<'a>(
     }
     let Some(evaluated) = crate::repair_source::evaluate_with(
         scan,
-        scan.processing_calibration(request.calibration)?,
-        request.roll,
+        &request.input,
         &request.repair,
         &mut crate::dust_repair::Execution {
             screener,
@@ -1724,14 +1723,10 @@ impl Editor {
     }
 
     pub(super) fn dust_signature(&self) -> Option<Signature> {
-        self.dust_signature_for(self.calibration()?, self.roll).ok()
+        self.dust_signature_for(&self.input()).ok()
     }
 
-    fn dust_signature_for(
-        &self,
-        calibration: Calibration,
-        roll: RollSettings,
-    ) -> Result<Signature, Error> {
+    fn dust_signature_for(&self, input: &InputSettings) -> Result<Signature, Error> {
         let ready = self
             .document
             .visit
@@ -1739,9 +1734,13 @@ impl Editor {
             .as_ref()
             .ok_or(Error::InvalidParameter("dust source unavailable"))?;
         let matrix = glam::DMat3::from_cols_array_2d(&ready.record.development.camera_to_ap1);
-        let parameters = ProcessingParameters::positive(
-            self.processing_calibration(calibration)?,
-            roll.inversion_only(),
+        let input = match input.calibration() {
+            Some(base) => input.with_calibration(self.processing_calibration(base)?),
+            None => *input,
+        };
+        let parameters = ProcessingParameters::interpret(
+            input,
+            RollSettings::default(),
             PhotoSettings::default(),
             matrix,
         )?;
@@ -1750,26 +1749,28 @@ impl Editor {
 
     pub(super) fn dust_validate_processing(
         &self,
-        calibration: Calibration,
+        input: impl Into<InputSettings>,
         roll: RollSettings,
         photo: PhotoSettings,
     ) -> Result<(), Error> {
-        self.dust_validate_snapshot(calibration, roll, &self.dust_grade_snapshot(photo)?)
+        let input = input.into();
+        self.dust_validate_snapshot(input, roll, &self.dust_grade_snapshot(photo)?)
     }
 
     pub(super) fn dust_validate_snapshot(
         &self,
-        calibration: Calibration,
+        input: impl Into<InputSettings>,
         roll: RollSettings,
         snapshot: &PhotoGradeSnapshot,
     ) -> Result<(), Error> {
+        let input = input.into();
         if self.document.dust.gpu.is_empty() {
             return Ok(());
         }
         let Some(source) = self.current_source else {
             return Ok(());
         };
-        let signature = self.dust_signature_for(calibration, roll)?;
+        let signature = self.dust_signature_for(&input)?;
         let mut bound = DVec3::ZERO;
         for repair in self
             .effective_dust_repairs(source)
@@ -1802,7 +1803,7 @@ impl Editor {
                 bound = bound.max(cached.bound);
             }
         }
-        self.validate_dust_snapshot(calibration, roll, snapshot, bound)
+        self.validate_dust_snapshot(&input, roll, snapshot, bound)
     }
 
     fn dust_grade_snapshot(&self, photo: PhotoSettings) -> Result<PhotoGradeSnapshot, Error> {
@@ -1821,7 +1822,7 @@ impl Editor {
 
     fn validate_dust_snapshot(
         &self,
-        calibration: Calibration,
+        input: &InputSettings,
         roll: RollSettings,
         snapshot: &PhotoGradeSnapshot,
         bound: DVec3,
@@ -1829,12 +1830,17 @@ impl Editor {
         if bound == DVec3::ZERO {
             return Ok(());
         }
-        let (Some(device), Some(ready)) = (&self.working.device, &self.document.visit.ready) else {
+        let (Some(device), Some(ready)) = (self.working.device(), &self.document.visit.ready)
+        else {
             return Ok(());
+        };
+        let input = match input.calibration() {
+            Some(base) => input.with_calibration(self.processing_calibration(base)?),
+            None => *input,
         };
         crate::gpu::GpuPhotoGrade::validate_repaired(
             device,
-            self.processing_calibration(calibration)?,
+            input,
             roll,
             snapshot,
             glam::DMat3::from_cols_array_2d(&ready.record.development.camera_to_ap1),
@@ -1853,11 +1859,11 @@ impl Editor {
         let Some(source) = self.current_source else {
             return Ok(Default::default());
         };
-        let Some(device) = self.working.device.clone() else {
+        let Some(device) = self.working.device().cloned() else {
             return Ok(Default::default());
         };
         self.document.dust.render_error = None;
-        let calibration = self.calibration().expect("neutral repair signature");
+        let input = self.input();
         let snapshot = match grade {
             Some(grade) => grade.clone(),
             None => self.dust_grade_snapshot(self.photo)?,
@@ -1889,15 +1895,14 @@ impl Editor {
             .iter()
             .fold(DVec3::ZERO, |bound, (_, c)| bound.max(c.bound));
         let all_valid = self
-            .validate_dust_snapshot(calibration, self.roll, &snapshot, bound)
+            .validate_dust_snapshot(&input, self.roll, &snapshot, bound)
             .is_ok();
         let mut admitted_bound = DVec3::ZERO;
         let mut patches = Vec::new();
         for (id, cached) in candidates {
             let bound = admitted_bound.max(cached.bound);
             if !all_valid
-                && let Err(error) =
-                    self.validate_dust_snapshot(calibration, self.roll, &snapshot, bound)
+                && let Err(error) = self.validate_dust_snapshot(&input, self.roll, &snapshot, bound)
             {
                 self.document.dust.render_error = Some(error.to_string());
                 continue;
@@ -1933,7 +1938,7 @@ impl Editor {
         {
             return;
         }
-        let (Some(source), Some(calibration)) = (self.current_source, self.calibration()) else {
+        let Some(source) = self.current_source else {
             return;
         };
         let repairs = self.effective_dust_repairs(source);
@@ -1965,8 +1970,7 @@ impl Editor {
             source,
             signature,
             repair,
-            calibration,
-            roll: self.roll.inversion_only(),
+            input: self.input(),
             cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         self.document.dust.start(&request);
@@ -2346,12 +2350,12 @@ mod tests {
             source,
             signature: [3; ProcessingParameters::BYTE_LEN],
             repair: first,
-            calibration: Calibration {
+            input: Calibration {
                 dmin: DVec3::splat(0.5),
                 dmax: DVec3::splat(0.01),
                 input_floor: crate::processing::CAMERA_INPUT_FLOOR,
-            },
-            roll: Default::default(),
+            }
+            .into(),
         });
         assert!(state.fail(4));
         let repairs = committed.repairs().to_vec();

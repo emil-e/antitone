@@ -227,7 +227,7 @@ pub struct SpatialPipeline {
 
 impl SpatialPipeline {
     pub fn new(
-        input: &InputSettings,
+        input: impl Into<InputSettings>,
         roll: RollSettings,
         grade: PhotoGradeSnapshot,
         camera_to_ap1: DMat3,

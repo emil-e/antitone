@@ -102,7 +102,6 @@ fn browse(editor: &mut Editor, index: usize, cx: &UiContext<'_, Editor>) {
     ready.path = editor.document.source_path(id).unwrap();
     ready.file = thumbnails::FileKey::new(&ready.path);
     ready.area = source.development.active_area.into();
-    ready.development = editor.document.project.development.clone().unwrap();
     editor.source_result(editor.document.visit.view, Ok(Box::new(ready)));
 }
 
@@ -574,7 +573,7 @@ fn development_change_and_invalid_margins_do_not_mutate_the_draft_or_document() 
         assert_eq!(e.auto_crop_margin, framing::DEFAULT_MARGIN_PERCENT);
         assert_eq!(e.document.project, before);
     }
-    e.document.project.development.as_mut().unwrap().fixed_wb[0] *= 1.01;
+    e.document.project.development_mut().unwrap().fixed_wb[0] *= 1.01;
     let changed = e.document.project.clone();
     e.adjust_auto_crop_margin(2.);
     e.finish_auto_crop(true);

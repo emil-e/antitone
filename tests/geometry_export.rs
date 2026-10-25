@@ -4,7 +4,7 @@ use antitone::{
     crop::Crop,
     export::{self, ExrPrecision, Overwrite},
     geometry::{Composition, Flips, PhotoOrientation, QuarterTurns, RollOrientation, SourceRegion},
-    processing::Response,
+    processing::{InputSettings, Response},
     rendering::{CpuRenderer, OutputTarget},
 };
 use exr::prelude::*;
@@ -181,7 +181,7 @@ fn rotated_diamond_exports_filter_after_aces_and_preserve_signed_hdr_scene_data(
 fn native_camera_flat_field_compositions_reopen_with_source_anchored_correction() {
     use antitone::{
         flat_field::FlatField,
-        processing::{Calibration, PhotoSettings, Pipeline, RollSettings},
+        processing::{Calibration, PhotoSettings, Pipeline},
     };
     use glam::DMat3;
     let directory = tempfile::tempdir().unwrap();
@@ -212,10 +212,11 @@ fn native_camera_flat_field_compositions_reopen_with_source_anchored_correction(
         dmax: DVec3::new(0.003, 0.002, 0.001),
         input_floor: antitone::processing::CAMERA_INPUT_FLOOR,
     };
-    let roll = RollSettings {
+    let roll = antitone::processing::RollSettings {
         exposure: 1.2,
-        ..RollSettings::new_grade()
+        ..Default::default()
     };
+    let response = Response::film();
     let camera = |x: u32, y: u32| {
         DVec3::new(
             3000. + f64::from(x - 10) * 13000.,
@@ -234,7 +235,8 @@ fn native_camera_flat_field_compositions_reopen_with_source_anchored_correction(
             saturation: 1.3,
             ..PhotoSettings::default()
         };
-        let pipeline = Pipeline::new(calibration, roll, photo, matrix).unwrap();
+        let pipeline =
+            Pipeline::new(InputSettings::negative(calibration), roll, photo, matrix).unwrap();
         let source = |x: u32, y: u32| {
             pipeline
                 .apply(
@@ -282,7 +284,7 @@ fn native_camera_flat_field_compositions_reopen_with_source_anchored_correction(
                     composition,
                     target,
                     Overwrite::Refuse,
-                    roll.response,
+                    response,
                     source,
                 )
                 .unwrap();
@@ -323,7 +325,7 @@ fn native_camera_flat_field_compositions_reopen_with_source_anchored_correction(
                     composition,
                     precision,
                     Overwrite::Refuse,
-                    roll.response,
+                    response,
                     source,
                 )
                 .unwrap();

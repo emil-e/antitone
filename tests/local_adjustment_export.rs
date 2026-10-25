@@ -14,7 +14,7 @@ use antitone::{
         SourceRegion,
     },
     local_adjustments::{GradientMask, LocalAdjustment, SpatialPipeline},
-    processing::{Calibration, PhotoSettings, Pipeline, RollSettings},
+    processing::{Calibration, InputSettings, PhotoSettings, Pipeline, Response, RollSettings},
     project::{Development, LocalAdjustments, Project, Save, Source, SourceDevelopment, SourceId},
     rendering::{CpuRenderer, OutputTarget},
     sampling::weighted_mean_iter,
@@ -41,10 +41,7 @@ fn persisted_locals_export_at_source_centres_before_rotated_reconstruction() {
         input_floor: 1. / 65535.,
     };
     let mut project = Project {
-        development: Some(Development::new("test-backend".into(), [2., 1., 1.5, 1.])),
-        input_floor: Some(calibration.input_floor),
-        dmin: Some(calibration.dmin.to_array()),
-        dmax: Some(calibration.dmax.to_array()),
+        input: InputSettings::negative(calibration),
         ..Project::default()
     };
     let mut locals = LocalAdjustments::default();
@@ -92,6 +89,7 @@ fn persisted_locals_export_at_source_centres_before_rotated_reconstruction() {
             id: SourceId(0),
             path: "read-only-not-loaded.ARW".into(),
             development: SourceDevelopment {
+                decode: Development::new("test-backend".into(), [2., 1., 1.5, 1.]),
                 lens_correction: None,
                 dng_development: None,
                 dimensions: [20, 30],
@@ -133,11 +131,17 @@ fn persisted_locals_export_at_source_centres_before_rotated_reconstruction() {
     )
     .unwrap();
     let grade = source.grade_snapshot().unwrap();
-    let metadata = export::ProcessingMetadata::with_grade(loaded.roll.response, &grade);
-    let spatial = SpatialPipeline::new(calibration, loaded.roll, grade, DMat3::IDENTITY).unwrap();
+    let metadata = export::ProcessingMetadata::with_grade(Response::film(), &grade);
+    let spatial = SpatialPipeline::new(
+        InputSettings::negative(calibration),
+        loaded.roll,
+        grade,
+        DMat3::IDENTITY,
+    )
+    .unwrap();
     let global = Pipeline::new(
-        calibration,
-        RollSettings::new_grade(),
+        InputSettings::negative(calibration),
+        RollSettings::default(),
         source.photo,
         DMat3::IDENTITY,
     )
@@ -340,6 +344,7 @@ fn contract_metadata_tracks_snapshot_presence_including_inactive_records() {
             id: SourceId(1),
             path: "private-source.ARW".into(),
             development: SourceDevelopment {
+                decode: Development::new("test-backend".into(), [2., 1., 1.5, 1.]),
                 lens_correction: None,
                 dng_development: None,
                 dimensions: [1, 1],

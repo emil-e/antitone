@@ -88,9 +88,9 @@ fn unsupported_locals() -> LocalAdjustments {
 
 fn calibrated(directory: &Path) -> Document {
     let mut document = fixture(directory);
-    document.project.roll = RollSettings::new_grade();
-    document.project.dmin = Some([0.2, 0.15, 0.1]);
-    document.project.dmax = Some([0.008, 0.005, 0.002]);
+    document.project.roll = RollSettings::default();
+    document.project.set_dmin(Some([0.2, 0.15, 0.1]));
+    document.project.set_dmax(Some([0.008, 0.005, 0.002]));
     document.project.sources[0].local_adjustments = Some(locals());
     document
 }
@@ -115,8 +115,8 @@ fn device_preflight_is_read_only_and_missing_device_or_calibration_fails_closed(
                 .contains("GPU device")
         );
         let mut uncalibrated = document.clone();
-        uncalibrated.project.dmin = None;
-        uncalibrated.project.dmax = None;
+        uncalibrated.project.set_dmin(None);
+        uncalibrated.project.set_dmax(None);
         let error = uncalibrated.validate_for_device(&device).unwrap_err();
         assert!(error.to_string().contains("calibrated processing basis"));
         uncalibrated.project.sources[0]
@@ -189,16 +189,17 @@ fn document_device_preflight_uses_the_effective_correction_floor_and_runtime_bas
             )
             .unwrap(),
         );
-        document.project.flat_field = Some(crate::project::FlatFieldSettings::new(
-            source,
-            field.clone(),
-            document.project.development.as_ref().unwrap(),
-        ));
+        document
+            .project
+            .set_flat_field(Some(crate::project::FlatFieldSettings::new(
+                source,
+                field.clone(),
+            )));
         let calibration = document.project.processing_calibration().unwrap().unwrap();
         assert_eq!(calibration.input_floor, field.precision_floor().unwrap());
         document.validate_for_device(&device).unwrap();
         let before = document.project.clone();
-        document.project.development.as_mut().unwrap().fixed_wb[1] = 0.;
+        document.project.development_mut().unwrap().fixed_wb[1] = 0.;
         assert!(document.validate_for_device(&device).is_err());
         document.project = before;
         document.project.processing_model = 3;
@@ -268,7 +269,7 @@ fn unsupported_retired_grade_blocks_source_and_export_before_retiring_accepted_s
             .validate_document_candidate(&editor.document)
             .unwrap();
         let accepted = editor
-            .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+            .positive_processing(editor.input, editor.roll, editor.photo)
             .unwrap();
         let mut retired = editor
             .document
@@ -336,7 +337,7 @@ fn unsupported_retired_grade_blocks_source_and_export_before_retiring_accepted_s
         assert_eq!(std::fs::read(&destination).unwrap(), b"keep destination");
         assert_eq!(editor.document.project, before);
         let current = editor
-            .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+            .positive_processing(editor.input, editor.roll, editor.photo)
             .unwrap();
         assert!(std::ptr::eq(
             accepted.grade().unwrap(),
@@ -354,8 +355,8 @@ fn device_aware_authored_raw_open_and_duplicate_import_preserve_linear_radial_re
         document
             .import_with_progress(std::slice::from_ref(&raw), Some(&device), |_, _| {})
             .unwrap();
-        document.project.dmin = Some([0.2, 0.15, 0.1]);
-        document.project.dmax = Some([0.008, 0.005, 0.002]);
+        document.project.set_dmin(Some([0.2, 0.15, 0.1]));
+        document.project.set_dmax(Some([0.008, 0.005, 0.002]));
         document.project.sources[0].local_adjustments = Some(locals());
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("masks.json");

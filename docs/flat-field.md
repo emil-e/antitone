@@ -36,7 +36,7 @@ This is a precision constraint, not a noise measurement or a brightness pedestal
 
 ## Save the accepted result
 
-Projects save the map and its development identity, allowing correction to be used or reset even if the reference RAW is missing. Changing, enabling or resetting a map preserves the working composition and inspection mode, and removing it restores the developed-source floor, which can still include embedded shading. [Projects](projects.md) explains the compatibility boundary.
+Projects save the map and its development identity, allowing correction to be used or reset even if the reference RAW is missing. Digital retains this scan setup without applying the map or enforcing its compatibility on Digital sources. Switching back to Negative validates the setup before reactivating correction. Changing, enabling or resetting a map preserves composition and inspection mode; removing it restores the developed-source floor, which can still include embedded shading. [Projects](projects.md#compatibility-is-about-the-processing-basis) owns the switching and compatibility boundary.
 
 ## Working on this area
 

@@ -9,7 +9,7 @@ use crate::{
     gpu::{ProcessingInput, ProcessingParameters, ProcessingSignature},
     local_adjustments::PhotoGradeSnapshot,
     platform::host,
-    processing::{Calibration, PhotoSettings, RollSettings},
+    processing::{Calibration, InputSettings, PhotoSettings, RollSettings},
     raw::Rect,
     refinement::ViewRequest,
     rendering::OutputTarget,
@@ -50,7 +50,7 @@ mod menu;
 mod preferences;
 #[path = "editor_ui.rs"]
 mod presentation;
-use crate::project::{Development, Source, SourceId};
+use crate::project::{Source, SourceId};
 use document::Document;
 #[path = "editor_files.rs"]
 mod files;
@@ -212,10 +212,15 @@ struct Ready {
     area: Rect,
     // None: not requested; Some(None): no local hint (or explicit roll-search reset).
     analysis_support: Option<Option<Rect>>,
-    floor: f64,
     proxy: crate::viewer::GpuProxy,
     record: Source,
-    development: Development,
+}
+
+#[cfg(test)]
+impl Ready {
+    fn development(&self) -> &crate::project::Development {
+        &self.record.development.decode
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -234,10 +239,9 @@ fn prepare_source(
     wb: Option<[f64; 4]>,
     expected: Option<&Source>,
     correction: Option<&Arc<Correction>>,
-    basis: Option<&crate::project::CameraBasis>,
 ) -> Result<(Ready, Scan), Error> {
     prepare_source_cached(
-        renderers, device, queue, path, wb, expected, correction, basis, None,
+        renderers, device, queue, path, wb, expected, correction, None,
     )
 }
 
@@ -251,7 +255,6 @@ fn prepare_source_cached(
     wb: Option<[f64; 4]>,
     expected: Option<&Source>,
     correction: Option<&Arc<Correction>>,
-    basis: Option<&crate::project::CameraBasis>,
     cache: Option<&LoadCache>,
 ) -> Result<(Ready, Scan), Error> {
     prepare_source_scheduled(
@@ -262,7 +265,6 @@ fn prepare_source_cached(
         wb,
         expected,
         correction,
-        basis,
         cache,
         &development::Scheduler::new(),
         &|| false,
@@ -279,7 +281,6 @@ fn prepare_source_scheduled(
     wb: Option<[f64; 4]>,
     expected: Option<&Source>,
     correction: Option<&Arc<Correction>>,
-    basis: Option<&crate::project::CameraBasis>,
     cache: Option<&LoadCache>,
     developments: &development::Scheduler,
     cancelled: &dyn Fn() -> bool,
@@ -289,7 +290,6 @@ fn prepare_source_scheduled(
         wb,
         expected: expected.cloned(),
         correction: correction.cloned(),
-        basis: basis.cloned(),
         cache: cache.cloned(),
     }
     .load(developments, cancelled)?;
@@ -315,6 +315,13 @@ pub struct Editor {
     workflow_jobs: crate::blocking_jobs::BlockingJobs,
     id: u64,
     pending_preview: Option<thumbnails::SelectedPreview>,
+    preview_rendered: Option<(
+        u64,
+        crate::gpu::ProcessingSignature,
+        crate::frame_raster::FrameRaster,
+        OutputTarget,
+        Arc<crate::gpu::view::RenderedView>,
+    )>,
     selection_timing: Option<Arc<SelectionTiming>>,
     busy: bool,
     look_services: Option<look_workflow::Services>,
@@ -324,9 +331,8 @@ pub struct Editor {
     failure: Option<Failure>,
     document_failure: Option<FailureKind>,
     return_notice: Option<String>,
-    dmin: Option<DVec3>,
-    dmax: Option<DVec3>,
-    floor: f64,
+    input: InputSettings,
+    input_switch: Option<InputSettings>,
     roll: RollSettings,
     photo: PhotoSettings,
 
@@ -390,12 +396,12 @@ impl Editor {
         );
         let source_epoch = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let scopes = Scopes::new(device);
-        let grades = Grades::new(device.clone());
         let device = device.clone();
         let queue = queue.clone();
         let mut editor = Self::state();
+        editor.input = editor.document.project.input;
         editor.submissions = submissions.clone();
-        editor.working = WorkingView::new(device.clone());
+        editor.initialize_viewer(&device, &queue);
         let jobs = editor.workflow_jobs.clone();
         editor.look_services = Some(look_workflow::Services::new(
             jobs.clone(),
@@ -439,8 +445,17 @@ impl Editor {
             .bind_sources(editor.document.cache().clone());
         editor.preferences.cache_limits = Some(editor.thumbnails.limits);
         editor.scopes = scopes;
-        editor.grades = grades;
         editor
+    }
+
+    fn initialize_viewer(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        self.grades = Grades::new(device.clone());
+        self.working = WorkingView::new(device.clone(), queue.clone());
+        // Preview, thumbnail and viewport rendering share one lazy kernel set; initialising it
+        // here avoids a shader-compilation pause when the first provisional view is selected.
+        if let Ok(kernels) = pollster::block_on(crate::gpu::view::ViewKernels::new(device)) {
+            *self.working.kernels.lock().unwrap() = Some(kernels);
+        }
     }
 
     pub fn open_initial(&mut self, path: PathBuf, cx: &UiContext<'_, Self>) {
@@ -453,7 +468,16 @@ impl Editor {
     }
 
     fn state() -> Self {
-        let document = Document::default();
+        let mut document = Document::default();
+        let input = InputSettings::Negative {
+            dmin: None,
+            dmax: None,
+            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
+            response: crate::processing::Response::film(),
+            gamma: crate::processing::DEFAULT_GAMMA,
+            balance: Balance::default(),
+        };
+        let _ = &mut document;
         let mut thumbnails = Thumbnails::default();
         thumbnails.bind_sources(document.cache().clone());
         Self {
@@ -475,6 +499,7 @@ impl Editor {
             workflow_jobs: crate::blocking_jobs::BlockingJobs::new(1),
             id: 0,
             pending_preview: None,
+            preview_rendered: None,
             selection_timing: None,
             busy: false,
             look_services: None,
@@ -484,10 +509,9 @@ impl Editor {
             failure: None,
             document_failure: None,
             return_notice: None,
-            dmin: None,
-            dmax: None,
-            floor: 0.,
-            roll: RollSettings::new_grade(),
+            input,
+            input_switch: None,
+            roll: RollSettings::default(),
             photo: PhotoSettings::default(),
 
             roll_orientation: RollOrientation::default(),
@@ -622,14 +646,122 @@ impl Editor {
         }
     }
 
-    fn calibration(&self) -> Option<Calibration> {
-        Calibration {
-            dmin: self.dmin?,
-            dmax: self.dmax?,
-            input_floor: self.floor,
+    #[cfg(test)]
+    fn dmin(&self) -> Option<DVec3> {
+        match self.input {
+            InputSettings::Negative { dmin, .. } => dmin,
+            InputSettings::Digital => None,
         }
-        .validate()
-        .ok()
+    }
+
+    #[cfg(test)]
+    fn set_dmin(&mut self, value: Option<DVec3>) {
+        if let InputSettings::Negative { dmin, .. } = self.negative_mut() {
+            *dmin = value;
+        }
+        self.document.project.input = self.input;
+    }
+
+    #[cfg(test)]
+    fn dmax(&self) -> Option<DVec3> {
+        match self.input {
+            InputSettings::Negative { dmax, .. } => dmax,
+            InputSettings::Digital => None,
+        }
+    }
+
+    #[cfg(test)]
+    fn set_dmax(&mut self, value: Option<DVec3>) {
+        if let InputSettings::Negative { dmax, .. } = self.negative_mut() {
+            *dmax = value;
+        }
+        self.document.project.input = self.input;
+    }
+
+    #[cfg(test)]
+    fn floor(&self) -> f64 {
+        match self.input {
+            InputSettings::Negative { input_floor, .. } => input_floor,
+            InputSettings::Digital => 0.,
+        }
+    }
+
+    #[cfg(test)]
+    fn set_floor(&mut self, value: f64) {
+        if let InputSettings::Negative { input_floor, .. } = self.negative_mut() {
+            *input_floor = value;
+        }
+        self.document.project.input = self.input;
+    }
+
+    #[cfg(test)]
+    fn balance(&self) -> Balance {
+        match self.input {
+            InputSettings::Negative { balance, .. } => balance,
+            InputSettings::Digital => Balance::default(),
+        }
+    }
+
+    #[cfg(test)]
+    fn set_balance(&mut self, value: Balance) {
+        if let InputSettings::Negative { balance, .. } = self.negative_mut() {
+            *balance = value;
+        }
+        self.document.project.input = self.input;
+    }
+
+    #[cfg(test)]
+    fn set_gamma(&mut self, value: f64) {
+        if let InputSettings::Negative { gamma, .. } = self.negative_mut() {
+            *gamma = value;
+        }
+        self.document.project.input = self.input;
+    }
+
+    #[cfg(test)]
+    fn set_response(&mut self, value: crate::processing::Response) {
+        if let InputSettings::Negative { response, .. } = self.negative_mut() {
+            *response = value;
+        }
+        self.document.project.input = self.input;
+    }
+
+    #[cfg(test)]
+    fn negative_mut(&mut self) -> &mut InputSettings {
+        if !self.input.is_negative() {
+            self.input = InputSettings::Negative {
+                dmin: None,
+                dmax: None,
+                input_floor: crate::processing::CAMERA_INPUT_FLOOR,
+                response: crate::processing::Response::film(),
+                gamma: crate::processing::DEFAULT_GAMMA,
+                balance: Balance::default(),
+            };
+        }
+        &mut self.input
+    }
+
+    #[cfg(test)]
+    fn response(&self) -> crate::processing::Response {
+        match self.input {
+            InputSettings::Negative { response, .. } => response,
+            InputSettings::Digital => crate::processing::Response::Original,
+        }
+    }
+
+    #[cfg(test)]
+    fn gamma(&self) -> f64 {
+        match self.input {
+            InputSettings::Negative { gamma, .. } => gamma,
+            InputSettings::Digital => crate::processing::DEFAULT_GAMMA,
+        }
+    }
+
+    #[allow(dead_code)]
+    fn calibration(&self) -> Option<Calibration> {
+        self.input
+            .calibration()
+            .and_then(|calibration| calibration.validate().ok())
     }
 
     fn seed_thumbnail(&mut self) {
@@ -657,23 +789,116 @@ impl Editor {
             .expect("accepted source locator");
         if document::same_path(&path, &ready.record.path)
             && source.development == ready.record.development
-            && self.document.state.project.development.as_ref() == Some(&ready.development)
         {
             self.thumbnails
-                .seed_at(source, &ready.development, &ready.path, file, proxy);
+                .seed_at_path(source, &ready.path, file, proxy);
+        }
+    }
+
+    fn input(&self) -> InputSettings {
+        self.input
+    }
+
+    fn load_input(&mut self, input: InputSettings) {
+        self.input = input;
+    }
+
+    fn negative_input(&self) -> InputSettings {
+        InputSettings::Negative {
+            dmin: None,
+            dmax: None,
+            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
+            response: crate::processing::Response::film(),
+            gamma: crate::processing::DEFAULT_GAMMA,
+            balance: Balance::default(),
+        }
+    }
+
+    fn request_input(&mut self, target: InputSettings, cx: &UiContext<'_, Self>) {
+        if target.is_negative() == self.input.is_negative() {
+            return;
+        }
+        if self.input.has_stage_settings() && !target.is_negative() {
+            self.input_switch = Some(target);
+        } else {
+            self.apply_input(target, cx);
+        }
+    }
+
+    fn apply_input(&mut self, target: InputSettings, cx: &UiContext<'_, Self>) {
+        if target.requires_scan_sources()
+            && let Err(error) = self.document.project.require_scan_sources()
+        {
+            self.status = error.to_string();
+            return;
+        }
+        if self.input.is_negative() != target.is_negative()
+            && self
+                .document
+                .project
+                .flat_field()
+                .is_some_and(|field| field.enabled)
+        {
+            // The accepted map remains in the scan setup. Rebuild the live source context
+            // through normal document preparation so no proxy retains the outgoing field.
+            self.sync_document();
+            let mut candidate = self.document.capture();
+            candidate.project.input = target;
+            self.start_document(Preparation::Input(candidate, self.current_source), cx);
+            return;
+        }
+        if target.ready()
+            && !self.document.project.sources.is_empty()
+            && let Err(error) = self.validate_processing(target, self.roll, self.photo)
+        {
+            self.status = error.to_string();
+            return;
+        }
+        let before = self.history_snapshot();
+        self.input = target;
+        self.source = !target.ready();
+        self.record_edit(before, "Input stage", None);
+    }
+
+    fn input_stage_dialog(
+        &mut self,
+        context: &egui::Context,
+        escape_available: bool,
+        cx: &UiContext<'_, Self>,
+    ) {
+        let Some(target) = self.input_switch else {
+            return;
+        };
+        let choice = presentation::DecisionDialog::new(
+            "Switch input stage?",
+            "Switching stages discards the current stage's settings: calibration, gamma, balance and response. Your source files are not changed.",
+            "Switch stage",
+        )
+        .warning()
+        .show(
+            context,
+            egui::Id::new("Switch input stage?"),
+            escape_available,
+        );
+        match choice {
+            Some(presentation::DialogChoice::Confirm) => {
+                self.input_switch = None;
+                self.apply_input(target, cx);
+            }
+            Some(presentation::DialogChoice::Cancel)
+            | Some(presentation::DialogChoice::Alternative) => {
+                self.input_switch = None;
+            }
+            None => {}
         }
     }
 
     fn sync_document(&mut self) {
+        let input = self.input;
         let project = &mut self.document.project;
+        project.input = input;
         project.roll = self.roll;
         project.orientation = self.roll_orientation;
-        project.processing_model = self.roll.response.processing_model();
-        project.dmin = self.dmin.map(|value| value.to_array());
-        project.dmax = self.dmax.map(|value| value.to_array());
-        if project.input_floor.is_some() || self.dmin.is_some() || self.dmax.is_some() {
-            project.input_floor = (self.floor > 0.).then_some(self.floor);
-        }
         project.output.tiff = match self.target {
             OutputTarget::Srgb => crate::project::TiffTarget::Srgb,
             OutputTarget::DisplayP3 => crate::project::TiffTarget::DisplayP3,
@@ -716,6 +941,7 @@ impl Editor {
         }
         self.document.visit.support = Default::default();
         self.pending_preview = None;
+        self.preview_rendered = None;
         self.selection_timing = None;
         if self.document.analysis_pending.take().is_some() {
             self.cancel_analysis();
@@ -763,7 +989,7 @@ impl Editor {
             return;
         }
         let view = self.document.pick_view.take();
-        let source = view.map_or(self.calibration().is_none(), |view| view.source);
+        let source = view.map_or(!self.input.ready(), |view| view.source);
         let returning = self.document.pick_return.is_some();
         self.pick = None;
         self.region = None;
@@ -796,7 +1022,7 @@ impl Editor {
                     .reframe(layout, layout.composition, pixels_per_point);
             }
         }
-        self.source = self.calibration().is_none() || source;
+        self.source = !self.input.ready() || source;
     }
 
     fn begin_pick(&mut self, kind: Pick, cx: &UiContext<'_, Self>) {
@@ -814,7 +1040,7 @@ impl Editor {
         self.thumbnails.cancel();
         let viewport = self.viewport;
         // Missing calibration forces source display, not an explicit inspection choice.
-        let source = self.calibration().is_some() && self.source;
+        let source = self.input.ready() && self.source;
         self.pick = Some(kind);
         self.region = None;
         self.pick_drag = None;
@@ -923,6 +1149,7 @@ impl Editor {
         use presentation::SectionHeader;
 
         let reviewing = self.document.analysis_review.is_some();
+        let initial_input = self.input;
         let previous_orientation = (self.roll_orientation, self.photo_orientation);
         presentation::inspector_spacing(ui);
         // The inspector column width is authoritative; content must not widen the panel.
@@ -956,7 +1183,7 @@ impl Editor {
             && self.document.visit.mask_edit.is_none()
             && self.document.visit.crop_edit.is_none()
             && self.flat_edit.is_none()
-            && self.calibration().is_some();
+            && self.input.ready();
         let can_pick = !self.busy
             && !reviewing
             && self.document.auto_crop_edit.is_none()
@@ -976,136 +1203,186 @@ impl Editor {
             .show(ui, |ui| {
                 self.auto_crop_controls(ui);
                 if self.tab == 0 {
+                    let mut input = self.input;
+                    let mut stage_target = None;
                     ui.push_id("roll", |ui| {
-                        ui.add_enabled_ui(!reviewing, |ui| self.flat_controls(ui, cx));
-                        let calibration_summary = match (self.dmin.is_some(), self.dmax.is_some()) {
-                            (true, true) => "Dmin + Dmax measured",
-                            (false, false) => "Dmin + Dmax not measured",
-                            (false, true) => "Dmin not measured",
-                            (true, false) => "Dmax not measured",
-                        };
-                        presentation::section(
-                            ui,
-                            "roll-calibration",
-                            "Calibration",
-                            SectionHeader {
-                                summary: calibration_summary,
-                                changed: false,
-                                reset: None,
-                                tool: None,
-                                default_open: Some(true),
-                            },
-                            |ui| {
-                                if controls::calibration(
-                                    ui,
-                                    "dmin",
-                                    "Dmin (film base)",
-                                    self.dmin,
-                                    can_pick,
-                                    "Measure an unexposed area of film base.",
-                                ) {
-                                    start_pick = Some(Pick::Dmin);
-                                }
-                                if controls::calibration(
-                                    ui,
-                                    "dmax",
-                                    "Dmax",
-                                    self.dmax,
-                                    can_pick,
-                                    "Measure the densest film reference.",
-                                ) {
-                                    start_pick = Some(Pick::Dmax);
-                                }
-                            },
-                        );
-                        ui.add_enabled_ui(editable, |ui| {
-                            let inversion_changed = self.roll.gamma
-                                != crate::processing::DEFAULT_GAMMA
-                                || self.roll.balance != Balance::default();
-                            let (_, action) = presentation::section(
+                        let capabilities = input.capabilities();
+                        let scan = self.document.project.require_scan_sources();
+                        let scan_reason = scan
+                            .as_ref()
+                            .err()
+                            .map(ToString::to_string)
+                            .unwrap_or_default();
+                        ui.horizontal(|ui| {
+                            ui.label("Input stage");
+                            egui::ComboBox::from_id_salt("input-stage")
+                                .selected_text(if input.is_negative() {
+                                    "Negative"
+                                } else {
+                                    "Digital"
+                                })
+                                .show_ui(ui, |ui| {
+                                    if input.is_negative() {
+                                        let _ = ui.selectable_label(true, "Negative");
+                                    } else {
+                                        ui.add_enabled_ui(scan.is_ok(), |ui| {
+                                            if ui.selectable_label(false, "Negative").clicked() {
+                                                stage_target = Some(self.negative_input());
+                                            }
+                                        })
+                                        .response
+                                        .on_disabled_hover_text(scan_reason.clone());
+                                    }
+                                    if ui
+                                        .selectable_label(!input.is_negative(), "Digital")
+                                        .clicked()
+                                        && input.is_negative()
+                                    {
+                                        stage_target = Some(InputSettings::Digital);
+                                    }
+                                })
+                                .response
+                                .on_hover_text(
+                                    "How this roll's sources become a positive before grading.",
+                                );
+                        });
+                        if capabilities.flat_field {
+                            ui.add_enabled_ui(!reviewing, |ui| self.flat_controls(ui, cx));
+                        }
+                        if let InputSettings::Negative { dmin, dmax, .. } = input {
+                            let calibration_summary = match (dmin.is_some(), dmax.is_some()) {
+                                (true, true) => "Dmin + Dmax measured",
+                                (false, false) => "Dmin + Dmax not measured",
+                                (false, true) => "Dmin not measured",
+                                (true, false) => "Dmax not measured",
+                            };
+                            presentation::section(
                                 ui,
-                                "roll-gamma-balance",
-                                "Gamma & balance",
+                                "roll-calibration",
+                                "Calibration",
                                 SectionHeader {
-                                    summary: &format!(
-                                        "Gamma {:.2} · Balance {}",
-                                        self.roll.gamma,
-                                        if self.roll.balance == Balance::default() {
-                                            "neutral"
-                                        } else {
-                                            "adjusted"
-                                        }
-                                    ),
-                                    changed: inversion_changed,
-                                    reset: Some(inversion_changed),
-                                    tool: Some(controls::balance_pick_tool(
-                                        can_pick,
-                                        "Pick neutral for gamma balance",
-                                    )),
+                                    summary: calibration_summary,
+                                    changed: false,
+                                    reset: None,
+                                    tool: None,
                                     default_open: Some(true),
                                 },
                                 |ui| {
-                                    controls::parameter(ui, Parameter::Gamma, &mut self.roll.gamma);
-                                    controls::balance_body(
+                                    if controls::calibration(
                                         ui,
-                                        ColorControl::GammaBalance,
-                                        &mut self.roll.balance,
-                                    );
+                                        "dmin",
+                                        "Dmin (film base)",
+                                        dmin,
+                                        can_pick,
+                                        "Measure an unexposed area of film base.",
+                                    ) {
+                                        start_pick = Some(Pick::Dmin);
+                                    }
+                                    if controls::calibration(
+                                        ui,
+                                        "dmax",
+                                        "Dmax",
+                                        dmax,
+                                        can_pick,
+                                        "Measure the densest film reference.",
+                                    ) {
+                                        start_pick = Some(Pick::Dmax);
+                                    }
                                 },
                             );
-                            if action.tool {
-                                start_pick = Some(Pick::Gamma);
-                            }
-                            if action.reset && !controls::defer_reset(ui, controls::Reset::GammaAndBalance) {
-                                self.roll.gamma = crate::processing::DEFAULT_GAMMA;
-                                self.roll.balance = Balance::default();
-                            }
-                            let response_summary = match self.roll.response {
-                                crate::processing::Response::Original => "Classic curve".into(),
-                                crate::processing::Response::Film { toe, shoulder } => {
-                                    format!("Toe {toe:.2} · Shoulder {shoulder:.4}")
+                        }
+                        ui.add_enabled_ui(editable, |ui| {
+                            if let InputSettings::Negative {
+                                response,
+                                gamma,
+                                balance,
+                                ..
+                            } = &mut input
+                            {
+                                let inversion_changed = *gamma != crate::processing::DEFAULT_GAMMA
+                                    || *balance != Balance::default();
+                                let (_, reset) = presentation::section(
+                                    ui,
+                                    "roll-gamma-balance",
+                                    "Gamma & balance",
+                                    SectionHeader {
+                                        summary: &format!(
+                                            "Gamma {gamma:.2} · Balance {}",
+                                            if *balance == Balance::default() {
+                                                "neutral"
+                                            } else {
+                                                "adjusted"
+                                            }
+                                        ),
+                                        changed: inversion_changed,
+                                        reset: Some(inversion_changed),
+                                        tool: Some(controls::balance_pick_tool(can_pick, "Pick neutral for gamma balance")),
+                                        default_open: Some(true),
+                                    },
+                                    |ui| {
+                                        controls::parameter(ui, Parameter::Gamma, gamma);
+                                        controls::balance_body(ui, ColorControl::GammaBalance, balance);
+                                    },
+                                );
+                                if reset.tool { start_pick = Some(Pick::Gamma); }
+                                if reset.reset
+                                    && !controls::defer_reset(ui, controls::Reset::GammaAndBalance)
+                                {
+                                    *gamma = crate::processing::DEFAULT_GAMMA;
+                                    *balance = Balance::default();
                                 }
-                            };
-                            let (_, action) = presentation::section(
-                                ui,
-                                "roll-response",
-                                "Toe & shoulder",
-                                SectionHeader {
-                                    summary: &response_summary,
-                                    changed: self.roll.response
-                                        != crate::processing::Response::film(),
-                                    reset: Some(
-                                        !self.roll.response.is_original()
-                                            && self.roll.response
-                                                != crate::processing::Response::film(),
-                                    ),
-                                    tool: None,
-                                    default_open: Some(false),
-                                },
-                                |ui| match &mut self.roll.response {
-                                    crate::processing::Response::Original => {
-                                        ui.label("Classic curve · camera model 4");
-                                        if presentation::TextAction::new("Use adjustable response")
+                                let response_summary = match response {
+                                    crate::processing::Response::Original => "Classic curve".into(),
+                                    crate::processing::Response::Film { toe, shoulder } => {
+                                        format!("Toe {toe:.2} · Shoulder {shoulder:.4}")
+                                    }
+                                };
+                                let (_, reset) = presentation::section(
+                                    ui,
+                                    "roll-response",
+                                    "Toe & shoulder",
+                                    SectionHeader {
+                                        summary: &response_summary,
+                                        changed: *response != crate::processing::Response::film(),
+                                        reset: Some(
+                                            !response.is_original()
+                                                && *response != crate::processing::Response::film(),
+                                        ),
+                                        tool: None,
+                                        default_open: Some(false),
+                                    },
+                                    |ui| match response {
+                                        crate::processing::Response::Original => {
+                                            ui.label("Classic curve · camera model 4");
+                                            if presentation::TextAction::new(
+                                                "Use adjustable response",
+                                            )
                                             .help(
                                                 "Start with toe 2.5 and shoulder off; keep other adjustments.",
                                             )
                                             .show(ui)
                                             .clicked()
-                                        {
-                                            self.control_command(editing::Command::Reset(
-                                                editing::Scope::Roll,
-                                                controls::Reset::Response,
-                                            ), cx);
+                                            {
+                                                self.control_command(
+                                                    editing::Command::Reset(
+                                                        editing::Scope::Roll,
+                                                        controls::Reset::Response,
+                                                    ),
+                                                    cx,
+                                                );
+                                            }
                                         }
-                                    }
-                                    crate::processing::Response::Film { toe, shoulder } => {
-                                        controls::parameter(ui, Parameter::Toe, toe);
-                                        controls::parameter(ui, Parameter::Shoulder, shoulder);
-                                    }
-                                },
-                            );
-                            if action.reset && !controls::defer_reset(ui, controls::Reset::Response) {
-                                self.roll.response = crate::processing::Response::film();
+                                        crate::processing::Response::Film { toe, shoulder } => {
+                                            controls::parameter(ui, Parameter::Toe, toe);
+                                            controls::parameter(ui, Parameter::Shoulder, shoulder);
+                                        }
+                                    },
+                                );
+                                if reset.reset
+                                    && !controls::defer_reset(ui, controls::Reset::Response)
+                                {
+                                    *response = crate::processing::Response::film();
+                                }
                             }
                             if controls::white_balance(
                                 ui,
@@ -1139,6 +1416,13 @@ impl Editor {
                             }
                         });
                     });
+                    // A reset command may already have replaced the staged input for this frame.
+                    if self.input == initial_input {
+                        self.input = input;
+                    }
+                    if let Some(target) = stage_target {
+                        self.request_input(target, cx);
+                    }
                 } else if self.tab == 1 {
                     ui.add_enabled_ui(!reviewing, |ui| {
                         self.crop_controls(ui);
@@ -1327,12 +1611,11 @@ impl Editor {
             tool_escape_available,
         );
 
-        let previous_roll = self.roll;
-        let previous_photo = self.photo;
+        let previous_settings = editing::ControlSettings::capture(self);
         let was_dirty = self.document.dirty();
         self.disable_blocked_workspace(ui);
         let _menu_focus = self.workspace_chrome(ui, cx, &mut actions);
-        let (scope_slot, analyze) = self.edit_frame_controls(ui, cx, previous_roll, previous_photo);
+        let (scope_slot, analyze) = self.edit_frame_controls(ui, cx, previous_settings);
         if self.document.analysis_review.is_some() && self.document.analysis_pending.is_none() {
             self.stash_review_region();
         }

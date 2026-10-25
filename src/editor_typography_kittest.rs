@@ -8,9 +8,9 @@ fn typography_keeps_tabs_readouts_and_tool_actions_coherent_at_both_densities() 
         harness.enter(|editor, cx| editor.add_raws(vec![fixture], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.update(|editor| {
-            editor.dmin = Some(DVec3::splat(3000. / 4031.));
-            editor.dmax = Some(DVec3::splat(128. / 4031.));
-            editor.roll.gamma = 0.75;
+            editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
+            editor.set_dmax(Some(DVec3::splat(128. / 4031.)));
+            editor.set_gamma(0.75);
             editor.photo.exposure = 0.5;
             editor.scopes.visible = false;
             editor.sync_document();

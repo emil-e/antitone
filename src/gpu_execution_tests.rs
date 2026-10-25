@@ -1,4 +1,5 @@
 use super::*;
+use crate::processing::Calibration;
 use crate::{
     color::Balance,
     geometry::{SourcePoint, SourceRegion},
@@ -199,7 +200,7 @@ fn paired_kernel_variants() {
         };
         let parameters = ProcessingParameters::positive(
             calibration,
-            RollSettings::new_grade(),
+            RollSettings::default(),
             PhotoSettings::default(),
             DMat3::IDENTITY,
         )
@@ -258,7 +259,7 @@ fn paired_kernel_variants() {
                     GpuPhotoGrade::new(
                         &device,
                         calibration,
-                        RollSettings::new_grade(),
+                        RollSettings::default(),
                         PhotoGradeSnapshot::new(PhotoSettings::default(), locals).unwrap(),
                         DMat3::IDENTITY,
                         area,

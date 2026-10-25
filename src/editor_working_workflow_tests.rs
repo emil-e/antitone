@@ -47,12 +47,12 @@ fn fixture() -> (
     let scheduler = development::Scheduler::new();
     e.source_services = Some(source::Services {
         device: device.clone(),
-        queue,
+        queue: queue.clone(),
         developments: scheduler.clone(),
         jobs: e.workflow_jobs.clone(),
         renderers: Arc::default(),
     });
-    e.working = WorkingView::new(device);
+    e.working = WorkingView::new(device, queue.clone());
     e.source_epoch.store(e.id, Ordering::Relaxed);
     (e, input, spec, scheduler)
 }

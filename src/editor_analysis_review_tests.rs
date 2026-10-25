@@ -298,14 +298,6 @@ fn unavailable_analysis_services_tear_down_review_and_restore_working_photo() {
             prepared(editor);
             let before = editor.document.project.clone();
             let proxy = editor.document.visit.ready.as_ref().unwrap().proxy.clone();
-            let development = editor
-                .document
-                .visit
-                .ready
-                .as_ref()
-                .unwrap()
-                .development
-                .clone();
             editor.browse_analysis_review(other, cx);
             let record = editor.document.project.source(other).unwrap().clone();
             editor.document.visit.ready = Some(Ready {
@@ -315,10 +307,8 @@ fn unavailable_analysis_services_tear_down_review_and_restore_working_photo() {
                 path: record.path.clone(),
                 area: record.development.active_area.into(),
                 analysis_support: None,
-                floor: editor.floor,
                 proxy,
                 record,
-                development,
             });
             editor.busy = false;
             editor.confirm_analysis_review(cx);
@@ -392,7 +382,7 @@ fn change(editor: &mut Editor, kind: usize) {
         2 => editor.document.path = Some("other.antitone.json".into()),
         3 => editor.document.project.order.clear(),
         4 => editor.photo.pivot = 0.4,
-        5 => editor.roll.gamma = 0.8,
+        5 => editor.set_gamma(0.8),
         6 => {
             editor
                 .document

@@ -104,7 +104,7 @@ fn rejected_navigation_keeps_the_current_visit_and_its_measurement() {
             )
         });
         app.enter(|editor, cx| {
-            editor.roll.gamma = 0.;
+            editor.set_gamma(0.);
             editor.load("next.dng".into(), cx);
         });
         app.read(|editor| {

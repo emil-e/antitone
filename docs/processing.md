@@ -1,13 +1,13 @@
-# From a negative to a positive
+# From camera RGB to a graded photograph
 
-A camera scan records light passing through film. Dense parts of the negative transmit less light, but should become brighter parts of the positive. Antitone's processing model describes that transformation **given a calibration and grade**. [Roll analysis](roll-analysis.md) is a separate problem: choosing a useful starting calibration and grade from a set of scans.
+An input stage interprets developed camera RGB before shared photographic grading. **Negative** inverts light transmitted through film using measured calibration: denser film becomes a brighter positive. **Digital** treats the RAW as a scene-referred positive, without density inversion or anchors. [Roll analysis](roll-analysis.md) chooses starting calibration and grading for Negative.
 
 The processing pipeline is:
 
 ```text
 developed camera RGB
-  → optional scan-illumination correction
-  → per-channel negative inversion
+  → Negative: optional scan-illumination correction and per-channel inversion
+    Digital: scene-referred positive
   → camera-to-AP1 colour conversion
   → ungraded working positive (optional source-owned dust repair here)
   → exposure and photographic white balance
@@ -20,13 +20,13 @@ developed camera RGB
 
 ## Start with the camera's measurements
 
-LibRaw develops non-DNG RAWs; the editor routes supported DNGs through Adobe's SDK. Both produce linear camera RGB in an explicit fixed-roll WB basis. These are the camera's three channels, not sRGB and not three isolated film dyes: keeping development fixed means a roll's calibration refers to the same kind of measurement in every photo.
+LibRaw develops non-DNG RAWs; the editor routes supported DNGs through Adobe's SDK. Both produce linear camera RGB, not sRGB or three isolated film dyes. Each saved source retains its own development and WB identity; the native developer still enforces its supported sensor domain.
 
-The first scan selects its as-shot WB for the roll; later loads keep that choice. Decoded contents, the camera matrix and WB — not the filename — determine whether a source can be used. The accepted domain is three-colour integer Bayer without repeated black-level patterns: Sony ARW, Canon CR2/CR3 (including CRAW), Nikon NEF, Olympus ORF and Panasonic RW2 develop through it. LibRaw recognizes further formats (X-Trans, decimated sRAW/mRAW, others); broader compatibility is future work.
+Negative uses one shared scan basis: the first scan selects its as-shot WB, and later new scans use that fixed choice so calibration refers to comparable measurements. Digital admits mixed cameras and develops each new source in its own as-shot WB. Reloading a saved source preserves its accepted WB even after an input-stage switch. [Project compatibility](projects.md#compatibility-is-about-the-processing-basis) owns admission and switching.
 
-This model inverts before the camera-to-working-space matrix: a matrix mixes channels, while inversion applies a different nonlinear response to each channel. Mixing first would be a different model, not a reordering of this one.
+The accepted domain is three-colour integer Bayer without repeated black-level patterns: Sony ARW, Canon CR2/CR3 (including CRAW), Nikon NEF, Olympus ORF and Panasonic RW2 develop through it. LibRaw recognizes further formats (X-Trans, decimated sRAW/mRAW, others); broader compatibility is future work.
 
-An optional [flat-field map](flat-field.md) corrects scan illumination in these same camera coordinates before inversion.
+Negative inverts before the camera-to-working-space matrix: a matrix mixes channels, while inversion applies a different nonlinear response to each channel. An optional [flat-field map](flat-field.md) corrects scan illumination in these camera coordinates before inversion.
 
 ### Direct DNG development
 
@@ -57,7 +57,7 @@ New grades and gamma resets start at **0.60**, a shared practical response prior
 
 Gamma balance changes the **relative shapes** of the three native-channel curves while preserving their geometric-mean gamma. Its colour effect depends on negative density, so it can correct a colour trend that differs between shadows and highlights.
 
-Photographic WB instead acts on the inverted positive. Antitone uses Bradford adaptation: AP1 is converted to a cone-response basis, adjusted, and converted back; warmth/tint are coordinates for that operation, not Kelvin measurements.
+Photographic WB instead acts on the interpreted positive. Antitone uses Bradford adaptation: AP1 is converted to a cone-response basis, adjusted, and converted back; warmth/tint are coordinates for that operation, not Kelvin measurements.
 
 | Adjustment | Role |
 | --- | --- |
@@ -70,11 +70,11 @@ Manual gamma-neutral fitting uses individually inverted, full-resolution samples
 
 ## Grade in a common working space
 
-After inversion, the metadata-derived camera matrix maps the positive to AP1/ACEScg with a D60 white. This gives grading and rendering a common basis — a pragmatic colour conversion, not proof that the original scene's spectra or film dyes have been recovered. Roll and Photo exposure add in stops; the working result retains signed and above-one values, so a negative AP1 component is not by itself a failed scan.
+After input interpretation, each source's metadata-derived camera matrix maps the positive to AP1/ACEScg with a D60 white. This gives grading and rendering a common basis — a pragmatic colour conversion, not proof that the original scene's spectra or film dyes have been recovered. Roll and Photo exposure add in stops; the working result retains signed and above-one values, so a negative AP1 component is not by itself a failed scan.
 
 ### Ungraded positive and repair placement
 
-The ungraded positive is full-resolution signed/HDR AP1 after scan correction, calibrated inversion and camera conversion, but before photographic Roll or Photo controls. `RollSettings::inversion_only` makes that stage boundary explicit: adding a future Roll field requires a placement decision rather than silently changing repair input.
+The ungraded positive is full-resolution signed/HDR AP1 after input interpretation and camera conversion, but before photographic Roll or Photo controls. `Pipeline::ungraded` keeps that boundary explicit: Negative includes correction and calibrated inversion; Digital preserves scene-referred light.
 
 The provisional Dust tool heals here. Fixed RAW-development WB and gamma balance are upstream; exposure, photographic WB, contrast, saturation and locals are downstream. Calibration, response, correction or development changes legitimately require asynchronous reevaluation; downstream grading does not. Every independent repair reads the same unrepaired input and preserves signed/HDR values.
 
@@ -82,7 +82,7 @@ Healing and nonlinear grading do not commute, so pre-grade donor matching can di
 
 ### One accepted image recipe
 
-[Full image recipes](../src/image_recipe.rs) capture accepted source/development, correction, calibration/inversion, committed enabled repairs, Global/ordered-local grades, composition and the immutable creative-look asset. Navigation recipes retain grade/look/composition but omit repair payload. Numeric look identity affects rendering, not neutral healing or graded-AP1 reuse. Output target and format are consumer choices, including EXR's explicit look bypass; metadata-only repair IDs, look labels and disabled instructions do not change photographic identity. [Source-aware resolution](../src/repair_source.rs) shares the neutral sampling boundary across interactive and offscreen work.
+[Full image recipes](../src/image_recipe.rs) capture accepted source/development, input interpretation and active correction, committed enabled repairs, Global/ordered-local grades, composition and the immutable creative-look asset. Navigation recipes retain grade/look/composition but omit repair payload. Numeric look identity affects rendering, not neutral healing or graded-AP1 reuse. Output target and format are consumer choices, including EXR's explicit look bypass; metadata-only repair IDs, look labels and disabled instructions do not change photographic identity. [Source-aware resolution](../src/repair_source.rs) shares the neutral sampling boundary across interactive and offscreen work.
 
 ### Photo contrast and saturation
 
@@ -108,7 +108,7 @@ Filtering before nonlinear grading does **not** commute with original-sample gra
 
 ## Important boundaries
 
-The current model is **4**. Calibration must be finite and satisfy `Dmin > Dmax >= input_floor > 0` per camera channel. A roll retains its camera model and matrix; incompatible native-camera bases cannot share its calibration.
+The current model is **4**. Negative calibration must be finite and satisfy `Dmin > Dmax >= input_floor > 0` per camera channel. Its scan sources share one compatible acquisition basis; Digital has no calibration and uses each source's camera matrix.
 
 ## Working on this area
 

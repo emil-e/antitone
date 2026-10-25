@@ -1,5 +1,9 @@
 use super::*;
 use crate::{
+    color::Balance,
+    processing::{Calibration, DEFAULT_GAMMA},
+};
+use crate::{
     geometry::SourceRegion, local_adjustments::PhotoGradeSnapshot, processing::PhotoSettings,
 };
 
@@ -98,13 +102,16 @@ fn cancellation_aware_candidate_records_independent_working_errors_and_preserves
             mapped_at_creation: false,
         });
         for ev in [0., 4., 6.] {
-            let roll = RollSettings {
+            let negative = NegativeInput {
+                calibration,
                 response: crate::processing::Response::Film {
                     toe: 4.,
                     shoulder: 0.,
                 },
-                ..RollSettings::new_grade()
+                gamma: DEFAULT_GAMMA,
+                balance: Balance::default(),
             };
+            let roll = RollSettings::default();
             let snapshot = PhotoGradeSnapshot::new(
                 PhotoSettings {
                     exposure: ev,
@@ -115,7 +122,7 @@ fn cancellation_aware_candidate_records_independent_working_errors_and_preserves
             .unwrap();
             let grade = GpuPhotoGrade::new(
                 &device,
-                calibration,
+                negative,
                 roll,
                 snapshot.clone(),
                 DMat3::IDENTITY,
@@ -123,7 +130,7 @@ fn cancellation_aware_candidate_records_independent_working_errors_and_preserves
             )
             .unwrap();
             let scalar = crate::local_adjustments::SpatialPipeline::new(
-                calibration,
+                negative,
                 roll,
                 snapshot,
                 DMat3::IDENTITY,

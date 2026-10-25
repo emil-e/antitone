@@ -92,7 +92,7 @@ fn documented_states_render() {
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
             !e.busy && e.document.analysis_review.is_none()
         });
-        harness.read(|editor| assert!(editor.dmin.is_some(), "{}", editor.status));
+        harness.read(|editor| assert!(editor.dmin().is_some(), "{}", editor.status));
 
         // The Photo tab with the second photograph selected. The canvas shows
         // the developed, roll-graded photograph only once the visit is ready,
@@ -263,9 +263,7 @@ fn settle_view(harness: &mut Harness<'_, Editor>) {
         if e.working.revision().is_none() {
             return false;
         }
-        let expected = e
-            .positive_processing(e.calibration().unwrap(), e.roll, e.photo)
-            .unwrap();
+        let expected = e.positive_processing(e.input(), e.roll, e.photo).unwrap();
         !e.working.updating
             && e.working.displayed.as_ref().is_some_and(|view| {
                 view.processing == expected.signature() && view.target == e.target

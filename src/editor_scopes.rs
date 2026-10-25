@@ -277,9 +277,8 @@ impl Editor {
             return Err("Apply crop to update scopes");
         }
         let ready = self.document.visit.ready.as_ref().ok_or("No image")?;
-        let calibration = self.calibration().ok_or("Calibration required")?;
         let parameters = self
-            .view_processing(calibration, self.roll, self.photo)
+            .view_processing(self.input(), self.roll, self.photo)
             .map_err(|_| "Positive grade unavailable")?;
         let composition = Composition::with_crop(
             ready.area,

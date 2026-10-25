@@ -141,23 +141,23 @@ pub fn photo_neutral(pixels_before_wb: &[DVec3]) -> Result<Balance, Error> {
 }
 
 pub fn roll_neutral(
-    negative: NegativeInput,
+    negative: impl Into<NegativeInput>,
     scan_patch: &[DVec3],
     camera_to_ap1: DMat3,
 ) -> Result<Balance, Error> {
     fit_roll_neutral(
-        negative,
+        negative.into(),
         scan_patch.iter().map(|&p| (p, 1.)),
         camera_to_ap1,
     )
 }
 
 pub fn roll_neutral_weighted(
-    negative: NegativeInput,
+    negative: impl Into<NegativeInput>,
     scan_patch: &[(DVec3, f64)],
     camera_to_ap1: DMat3,
 ) -> Result<Balance, Error> {
-    fit_roll_neutral(negative, scan_patch.iter().copied(), camera_to_ap1)
+    fit_roll_neutral(negative.into(), scan_patch.iter().copied(), camera_to_ap1)
 }
 
 fn fit_roll_neutral(
@@ -189,7 +189,10 @@ fn fit_roll_neutral(
             warmth: coordinates.x,
             tint: coordinates.y,
         };
-        let inversion = Inversion::new(NegativeInput { balance, ..negative })?;
+        let inversion = Inversion::new(NegativeInput {
+            balance,
+            ..negative
+        })?;
         let mut sum = DVec3::ZERO;
         let mut compensation = DVec3::ZERO;
         for (scan, weight) in scan_patch.clone() {

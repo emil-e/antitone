@@ -25,15 +25,13 @@ fn request(name: &str) -> (Document, Request) {
         .clone();
     let wb = document
         .project
-        .development
-        .as_ref()
+        .development()
         .map(|development| development.fixed_wb);
-    let cache = Cache::new(&path, Some(&expected), wb, &document);
+    let cache = Cache::new(&path, Some(&expected), &document);
     let request = Request {
         path,
         wb,
         expected: Some(expected),
-        basis: document.project.camera_basis.clone(),
         cache: Some(cache),
         correction: None,
     };

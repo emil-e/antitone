@@ -1,4 +1,5 @@
 use super::*;
+use crate::project::Development;
 use crate::project::SourceDevelopment;
 
 #[test]
@@ -38,7 +39,11 @@ fn mixed_developed_floors_use_one_conservative_analysis_bound_and_recheck_sample
         &frames,
         floor,
         glam::DMat3::IDENTITY,
-        RollSettings::new_grade(),
+        crate::processing::NegativeInput::from(Calibration {
+            dmin: DVec3::splat(0.8),
+            dmax: DVec3::splat(0.02),
+            input_floor: floor,
+        }),
         || false,
     )
     .unwrap()
@@ -76,8 +81,11 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
         assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
         assert_eq!(editor.document.project.order.len(), 2);
         let selected = editor.current_source;
+        editor.set_dmin(Some(DVec3::splat(0.8)));
+        editor.set_dmax(Some(DVec3::splat(0.02)));
+        editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
         editor.document.project.analysis_area = Some([96, 96, 320, 320]);
-        editor.roll.gamma = 0.7;
+        editor.set_gamma(0.7);
         editor.roll_orientation.turn_clockwise();
         editor.photo_orientation.flips.horizontal = true;
         editor.crop = Some(crate::crop::Crop {
@@ -90,8 +98,8 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
         editor = click_analyze(editor, Duration::from_secs(60));
         assert!(editor.status.starts_with("Analyzed 2"), "{}", editor.status);
         assert_eq!(editor.current_source, selected);
-        assert_eq!(editor.roll.gamma, 0.7);
-        assert_eq!(editor.roll.response, before.roll.response);
+        assert_eq!(editor.gamma(), 0.7);
+        assert_eq!(editor.response(), before.input.response());
         assert_eq!(editor.document.project.orientation, before.orientation);
         for (source, prior) in editor.document.project.sources.iter().zip(&before.sources) {
             assert_eq!(source.orientation, prior.orientation);
@@ -103,7 +111,7 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
             editor
                 .document
                 .project
-                .dmin
+                .dmin()
                 .unwrap()
                 .iter()
                 .all(|v| (v - expected).abs() <= 2. / 65535.)
@@ -200,11 +208,12 @@ fn state() -> Editor {
     let mut editor = Editor::state();
     let id = editor
         .document
-        .register(
+        .register_with_development(
             Source {
                 id: SourceId(0),
                 path: "scene.ARW".into(),
                 development: SourceDevelopment {
+                    decode: Development::new("test-backend".into(), [1.; 4]),
                     lens_correction: None,
                     dng_development: None,
                     dimensions: [824, 624],
@@ -226,8 +235,8 @@ fn state() -> Editor {
     editor.id = 5;
     editor.next_request = 5;
     editor.current_source = Some(id);
-    editor.floor = crate::processing::CAMERA_INPUT_FLOOR;
-    editor.roll.gamma = 0.9;
+    editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
+    editor.set_gamma(0.9);
     editor.roll.exposure = 0.;
     editor.photo.exposure = 1.23456789;
     editor.photo.wb = Balance {
@@ -295,12 +304,12 @@ fn outcome(editor: &Editor) -> Outcome {
         .request
         .document
         .clone();
-    document.project.dmin = Some([0.8, 0.4, 0.2]);
-    document.project.dmax = Some([0.04, 0.02, 0.01]);
-    document.project.roll.balance = Balance {
+    document.project.set_dmin(Some([0.8, 0.4, 0.2]));
+    document.project.set_dmax(Some([0.04, 0.02, 0.01]));
+    document.project.set_balance(Balance {
         warmth: 0.1,
         tint: -0.05,
-    };
+    });
     document.project.roll.exposure = 2.1;
     document.project.roll.wb = Balance {
         warmth: -0.2,
@@ -363,11 +372,11 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
         &crate::application::UiContext::render_only(),
     );
     assert!(!editor.busy && editor.document.analysis_pending.is_none());
-    assert_eq!(editor.dmin.unwrap(), DVec3::new(0.8, 0.4, 0.2));
-    assert_eq!(editor.dmax.unwrap(), DVec3::new(0.04, 0.02, 0.01));
+    assert_eq!(editor.dmin().unwrap(), DVec3::new(0.8, 0.4, 0.2));
+    assert_eq!(editor.dmax().unwrap(), DVec3::new(0.04, 0.02, 0.01));
     assert_eq!(editor.roll.exposure, 2.1);
-    assert_eq!(editor.roll.gamma, before.roll.gamma);
-    assert_eq!(editor.roll.response, before.roll.response);
+    assert_eq!(editor.gamma(), before.input.gamma());
+    assert_eq!(editor.response(), before.input.response());
     assert_eq!(editor.roll.wb, expected.roll.wb);
     assert_eq!(editor.photo, expected.sources[0].photo);
     assert_ne!(editor.photo, before.sources[0].photo);
@@ -390,8 +399,11 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
         after.photo = prior.photo;
         assert_eq!(&after, prior);
     }
-    assert_eq!(editor.document.project.development, before.development);
-    assert_eq!(editor.document.project.camera_basis, before.camera_basis);
+    assert_eq!(editor.document.project.development(), before.development());
+    assert_eq!(
+        editor.document.project.camera_basis(),
+        before.camera_basis()
+    );
     assert_eq!(editor.viewport.zoom, Some(1.7));
     assert!(!editor.source);
     assert!(editor.working.revision().is_none());
@@ -425,15 +437,18 @@ fn failure_cancel_and_invalid_gpu_combination_preserve_all_processing_state() {
             editor.cancel_analysis();
         }
         if mode == 2 {
-            result.document.project.roll.gamma = 0.1;
-            result.document.project.roll.balance = Balance {
+            result.document.project.set_gamma(0.1);
+            result.document.project.set_balance(Balance {
                 warmth: 0.8,
                 tint: 0.8,
-            };
-            result.document.project.roll.response = crate::processing::Response::Film {
-                toe: 1.,
-                shoulder: 0.02,
-            };
+            });
+            result
+                .document
+                .project
+                .set_response(crate::processing::Response::Film {
+                    toe: 1.,
+                    shoulder: 0.02,
+                });
         }
         editor.analysis_result(
             id,
@@ -468,7 +483,7 @@ fn stale_request_generation_source_document_and_controls_cannot_install() {
                 editor.document.path = Some("other.antitone.json".into());
             }
             3 => {
-                editor.roll.gamma = 1.;
+                editor.set_gamma(1.);
                 editor.sync_document();
             }
             _ => {
@@ -518,22 +533,40 @@ fn area_accept_cancel_and_invalid_edits_do_not_change_calibration_or_exposure() 
         Some([52, 42, 720, 540])
     );
     assert_eq!(editor.roll, original.roll);
-    assert_eq!(editor.document.project.dmin, original.dmin);
-    assert_eq!(editor.document.project.dmax, original.dmax);
+    assert_eq!(editor.document.project.dmin(), original.dmin());
+    assert_eq!(editor.document.project.dmax(), original.dmax());
 }
 
 #[test]
 fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_requested_work() {
     for (settled, outstanding) in [(false, true), (true, true), (true, false)] {
         for cancel in [false, true] {
-            let editor =
-                super::super::tests::with_document_services(super::super::tests::fixture());
+            let mut editor = super::super::tests::authored_fixture(&["patches.dng"]);
+            editor.input = super::super::tests::fixture().input;
+            editor.source = false;
+            editor.working.compare = true;
+            editor.sync_document();
             crate::application::test_support::with_application(editor, |app| {
+                let ctx = egui::Context::default();
                 app.enter(|editor, cx| {
-                    super::super::tests::add_ready_fixture(editor);
-                    editor.source = false;
-                    editor.working.compare = true;
-                    let ctx = egui::Context::default();
+                    for _ in 0..4 {
+                        let mut output = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(egui::Rect::from_min_size(
+                                    egui::Pos2::ZERO,
+                                    egui::vec2(1100., 800.),
+                                )),
+                                ..Default::default()
+                            },
+                            |ui| editor.draw_ui(ui, cx),
+                        );
+                        output.textures_delta.clear();
+                    }
+                });
+                app.run_until(Duration::from_secs(15), |editor| {
+                    editor.working.support_ready()
+                });
+                app.enter(|editor, cx| {
                     let frame = |editor: &mut Editor| {
                         let mut output = ctx.run_ui(
                             egui::RawInput {
@@ -579,7 +612,6 @@ fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_reques
                         assert_eq!(editor.original.revision(), revision);
                     }
                     assert_eq!(editor.original.settled.is_some(), settled);
-                    frame(editor);
                     let pending = editor.document.analysis_pending.as_ref().unwrap().id;
                     if cancel {
                         editor.cancel_analysis();
@@ -782,8 +814,8 @@ fn real_ambiguous_first_frame_uses_roll_opening_instead_of_holder() {
             "{}",
             editor.status
         );
-        assert_eq!(editor.roll.gamma, before.roll.gamma);
-        assert_eq!(editor.roll.response, before.roll.response);
+        assert_eq!(editor.gamma(), before.input.gamma());
+        assert_eq!(editor.response(), before.input.response());
         for (mut after, prior) in editor
             .document
             .project
@@ -798,7 +830,7 @@ fn real_ambiguous_first_frame_uses_roll_opening_instead_of_holder() {
         }
         let [x, y, w, h] = editor.document.project.analysis_area.unwrap();
         assert!(x > 1600 && y > 300 && w < 5500 && h < 5200);
-        let dmax = editor.dmax.unwrap();
+        let dmax = editor.dmax().unwrap();
         assert!(
             dmax.x > 0.01 && dmax.y > 0.003 && dmax.z > 0.001,
             "holder tails returned: {dmax:?}"
@@ -810,8 +842,8 @@ fn real_ambiguous_first_frame_uses_roll_opening_instead_of_holder() {
         println!(
             "Feedback roll: shared opening recovered from later frame, area={:?}, Dmin={:?} Dmax={dmax:?} balance={:?} EV={}",
             editor.document.project.analysis_area,
-            editor.dmin,
-            editor.roll.balance,
+            editor.dmin(),
+            editor.balance(),
             editor.roll.exposure
         );
     });
@@ -979,7 +1011,9 @@ fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade(
             editor.source = false;
             editor.working.compare = true;
             let ctx = egui::Context::default();
-            super::super::tests::app_frame(editor, &ctx, vec![]);
+            for _ in 0..4 {
+                super::super::tests::app_frame(editor, &ctx, vec![]);
+            }
             let signature = editor.original.signature.clone();
             let revision = editor.original.revision();
             let view = signature.as_ref().unwrap().2.unwrap();
@@ -995,18 +1029,20 @@ fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade(
             editor.original.settled = Some((revision, view, image.clone()));
             editor.request_analysis(cx);
             let before = editor.document.project.clone();
-            super::super::tests::app_frame(editor, &ctx, vec![]);
-            super::super::tests::app_frame(
-                editor,
-                &ctx,
-                vec![egui::Event::Key {
-                    key: egui::Key::Escape,
-                    physical_key: None,
-                    pressed: true,
-                    repeat: false,
-                    modifiers: egui::Modifiers::NONE,
-                }],
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events: vec![egui::Event::Key {
+                        key: egui::Key::Escape,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                    ..Default::default()
+                },
+                |ui| editor.frame_shortcuts(ui, cx, &mut None, false, true),
             );
+            output.textures_delta.clear();
             assert!(editor.document.analysis_pending.is_none());
             assert!(editor.document.spatial_preparing.is_none());
             assert!(editor.document.analysis_preparing.is_none());

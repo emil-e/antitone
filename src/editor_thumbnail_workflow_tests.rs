@@ -27,8 +27,8 @@ fn editor(document: Document, disk: &std::path::Path, scheduler: development::Sc
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let mut editor = crate::editor::tests::fixture();
         editor.document = document.into();
-        editor.dmin = editor.document.project.dmin.map(DVec3::from_array);
-        editor.dmax = editor.document.project.dmax.map(DVec3::from_array);
+        editor.set_dmin(editor.document.project.dmin().map(DVec3::from_array));
+        editor.set_dmax(editor.document.project.dmax().map(DVec3::from_array));
         editor.roll = editor.document.project.roll;
         editor.roll_orientation = editor.document.project.orientation;
         editor.thumbnails = Thumbnails::with_developments(
@@ -67,7 +67,7 @@ fn gated(
     let path = document.source_path(document.project.order[0]).unwrap();
     let native = Scan::open(
         &path,
-        Some(document.project.development.as_ref().unwrap().fixed_wb),
+        Some(document.project.development().as_ref().unwrap().fixed_wb),
     )
     .unwrap()
     .source()

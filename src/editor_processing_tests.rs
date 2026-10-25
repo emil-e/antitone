@@ -1,4 +1,5 @@
 use super::*;
+use crate::project::Development;
 use crate::{
     geometry::SourcePoint,
     gpu::SourceGeometry,
@@ -14,11 +15,12 @@ pub(in crate::editor) async fn fixture() -> (Editor, wgpu::Device, wgpu::Queue) 
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
     let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
     let mut editor = super::super::tests::fixture();
-    editor.grades = Grades::new(device.clone());
+    editor.initialize_viewer(&device, &queue);
     let record = Source {
         id: SourceId(0),
         path: "local-fixture.ARW".into(),
         development: SourceDevelopment {
+            decode: Development::new("test-backend".into(), [1.; 4]),
             lens_correction: None,
             dng_development: None,
             dimensions: [150, 100],
@@ -34,10 +36,10 @@ pub(in crate::editor) async fn fixture() -> (Editor, wgpu::Device, wgpu::Queue) 
         orientation: Default::default(),
         crop: None,
     };
-    let development = editor.document.project.development.clone().unwrap();
+    let development = crate::project::Development::new(crate::raw::version(), [1.; 4]);
     let id = editor
         .document
-        .register(record.clone(), development.clone())
+        .register_with_development(record.clone(), development.clone())
         .unwrap();
     editor.current_source = Some(id);
     let renderer = crate::renderer::GpuRenderer::new(&device, &queue)
@@ -59,11 +61,9 @@ pub(in crate::editor) async fn fixture() -> (Editor, wgpu::Device, wgpu::Queue) 
         thumbnail: None,
         path: record.path.clone(),
         area: record.development.active_area.into(),
-        floor: editor.floor,
         analysis_support: None,
         proxy,
         record,
-        development,
     });
     editor.source = false;
     let mut locals = LocalAdjustments::default();
@@ -125,7 +125,7 @@ fn local(exposure: f64) -> LocalAdjustment {
 
 fn positive(editor: &Editor) -> ProcessingInput {
     editor
-        .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+        .positive_processing(editor.input, editor.roll, editor.photo)
         .unwrap()
 }
 
@@ -287,7 +287,7 @@ fn developed_floors_are_source_specific_in_editor_preparation_and_offscreen_admi
                 .validate_processing(near_floor, editor.roll, editor.photo)
                 .is_err()
         );
-        editor.dmax = Some(near_floor.dmax);
+        editor.set_dmax(Some(near_floor.dmax));
         assert!(
             editor
                 .validate_source_candidate(editor.document.project.source(second).unwrap())
@@ -298,10 +298,10 @@ fn developed_floors_are_source_specific_in_editor_preparation_and_offscreen_admi
             editor.processing_calibration(base).unwrap().input_floor,
             base.input_floor * 4.
         );
-        editor.dmax = Some(base.dmax);
+        editor.set_dmax(Some(base.dmax));
         editor.sync_document();
         editor.document.project.order = vec![second];
-        let record = editor.document.project.source(second).unwrap();
+        let record = editor.document.project.source(second).unwrap().clone();
         // A nonbinary bound exposes precision-floor round trips through an already scaled floor.
         let map = Arc::new(
             crate::flat_field::FlatField::from_nodes(
@@ -311,16 +311,20 @@ fn developed_floors_are_source_specific_in_editor_preparation_and_offscreen_admi
             )
             .unwrap(),
         );
-        editor.document.project.flat_field = Some(crate::project::FlatFieldSettings::new(
-            record,
-            map,
-            editor.document.project.development.as_ref().unwrap(),
-        ));
+        editor
+            .document
+            .project
+            .set_flat_field(Some(crate::project::FlatFieldSettings::new(&record, map)));
         editor.correction = Correction::prepare(&device, &editor.document, None).unwrap();
         let recipe = editor.document.project.image_recipe(second).unwrap();
         assert_eq!(
             editor.processing_calibration(base).unwrap(),
-            recipe.neutral.processing_calibration().unwrap()
+            recipe
+                .neutral
+                .processing_input()
+                .unwrap()
+                .calibration()
+                .unwrap()
         );
     });
 }
@@ -343,11 +347,12 @@ fn correction_changes_grade_preparation_but_empty_stacks_release_local_resources
             )
             .unwrap(),
         );
-        candidate.project.flat_field = Some(crate::project::FlatFieldSettings::new(
-            source,
-            field.clone(),
-            candidate.project.development.as_ref().unwrap(),
-        ));
+        candidate
+            .project
+            .set_flat_field(Some(crate::project::FlatFieldSettings::new(
+                source,
+                field.clone(),
+            )));
         editor.correction = Correction::prepare(&device, &candidate, None).unwrap();
         let corrected = positive(&editor);
         assert_ne!(first.signature(), corrected.signature());
@@ -398,8 +403,9 @@ fn correction_changes_grade_preparation_but_empty_stacks_release_local_resources
             .adjustments
             .clear();
         let empty = positive(&editor);
-        assert!(empty.grade().is_none());
-        assert!(editor.grades.entries.borrow().is_empty());
+        assert!(empty.grade().is_some());
+        assert_eq!(empty.grade().unwrap().snapshot().locals().len(), 0);
+        assert!(!editor.grades.entries.borrow().is_empty());
         assert_eq!(
             first.grade().unwrap().snapshot().locals().len(),
             2,
@@ -433,7 +439,7 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
         }
         validate_source(
             Some(&device),
-            editor.calibration().unwrap(),
+            &editor.input(),
             editor.roll,
             &disabled,
             disabled.photo,
@@ -442,7 +448,7 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
         assert!(
             validate_source(
                 Some(&device),
-                editor.calibration().unwrap(),
+                &editor.input(),
                 editor.roll,
                 &other,
                 other.photo
@@ -455,15 +461,15 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
         let before = (
             editor.roll,
             editor.photo,
-            editor.dmin,
-            editor.dmax,
+            editor.dmin(),
+            editor.dmax(),
             editor.document.project.clone(),
         );
         let generation = editor.original.revision();
         assert!(
             editor
                 .validate_processing(
-                    editor.calibration().unwrap(),
+                    editor.input,
                     RollSettings {
                         exposure: 1.,
                         ..editor.roll
@@ -487,8 +493,8 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
             (
                 editor.roll,
                 editor.photo,
-                editor.dmin,
-                editor.dmax,
+                editor.dmin(),
+                editor.dmax(),
                 editor.document.project.clone()
             ),
             before
@@ -657,7 +663,24 @@ fn captured_original_input_keeps_its_grade_alive_across_newer_ui_edits() {
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         drop(accepted);
 
-        frame(&mut editor, &context);
+        let observe = |editor: &mut Editor| {
+            let layout = editor.last_layout.unwrap().0;
+            let frame = layout.physical_frame_raster(1.);
+            editor.original.observe(
+                OriginalPurpose::Reference,
+                (
+                    positive(editor).signature(),
+                    editor.target,
+                    Some(ViewRequest {
+                        area: frame.bounds().unwrap(),
+                        output: frame.output,
+                        frame: Some(frame),
+                    }),
+                    layout.composition,
+                ),
+            );
+        };
+        observe(&mut editor);
         editor.original.last_edit = Instant::now() - Duration::from_secs(1);
         // Retain consumer input independently of newer UI demand. Actual task and
         // running-job admission are covered by the live workflow tests.
@@ -671,7 +694,7 @@ fn captured_original_input_keeps_its_grade_alive_across_newer_ui_edits() {
             .unwrap();
         for i in 1..=40 {
             editor.photo.exposure = f64::from(i) / 100.;
-            frame(&mut editor, &context);
+            observe(&mut editor);
             tracked.push(tracked_grade(&editor, id));
             editor.original.last_edit = Instant::now() - Duration::from_secs(1);
             let latest = editor

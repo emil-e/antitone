@@ -24,7 +24,6 @@ struct Entry {
 
 pub(super) struct Draft {
     document: std::sync::Weak<crate::source_store::SourceStore>,
-    development: Option<Development>,
     order: Vec<SourceId>,
     target: Target,
     attempted: usize,
@@ -44,7 +43,6 @@ impl Draft {
         self.document
             .upgrade()
             .is_some_and(|s| !s.is_closed() && Arc::ptr_eq(&s, editor.document.cache()))
-            && self.development == editor.document.project.development
             && self.order == editor.document.project.order
             && self
                 .entries
@@ -52,7 +50,12 @@ impl Draft {
                 .find_map(|entry| entry.spatial.as_ref())
                 .is_none_or(|metadata| {
                     metadata.groups.iter().all(|group| {
-                        Some(&group.development) == editor.document.project.development.as_ref()
+                        Some(&group.development)
+                            == editor
+                                .document
+                                .project
+                                .scan_basis()
+                                .map(|basis| &basis.development.decode)
                             && group.sources.iter().all(|row| {
                                 editor
                                     .document
@@ -153,6 +156,9 @@ impl Editor {
     }
 
     pub(super) fn auto_crop_controls(&mut self, ui: &mut egui::Ui) {
+        if !self.input.capabilities().auto_crop {
+            return;
+        }
         let Some(edit) = &mut self.document.auto_crop_edit else {
             return;
         };
@@ -256,7 +262,6 @@ impl Editor {
             self.document.project.source(id).is_ok_and(|s| {
                 r.record.development == s.development
                     && r.area == Rect::from(s.development.active_area)
-                    && self.document.project.development.as_ref() == Some(&r.development)
                     && &r.file == file
                     && self
                         .document
@@ -430,7 +435,6 @@ impl Editor {
             self.close_adjustments();
             self.document.auto_crop_edit = Some(Draft {
                 document: Arc::downgrade(self.document.cache()),
-                development: self.document.project.development.clone(),
                 order: self.document.project.order.clone(),
                 target,
                 attempted,

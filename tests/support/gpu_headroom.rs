@@ -2,7 +2,10 @@ use super::*;
 use antitone::{
     flat_field::FlatField,
     gpu::{GpuFlatField, SourceGeometry},
-    processing::{MAX_CAMERA_SOURCE_CODE, MAX_SOURCE_GAIN, Response},
+    processing::{
+        DEFAULT_GAMMA, InputSettings, MAX_CAMERA_SOURCE_CODE, MAX_SOURCE_GAIN, Response,
+        RollSettings,
+    },
 };
 use std::sync::Arc;
 
@@ -64,16 +67,20 @@ fn headroom_survives_gpu_inspection_inversion_and_residual_gains_without_lut_ind
                     shoulder: 0.02,
                 },
             ] {
-                let roll = RollSettings {
+                let input = InputSettings::Negative {
+                    dmin: Some(calibration.dmin),
+                    dmax: Some(calibration.dmax),
+                    input_floor: calibration.input_floor,
                     response,
-                    ..Default::default()
+                    gamma: DEFAULT_GAMMA,
+                    balance: Default::default(),
                 };
+                let roll = RollSettings::default();
                 let photo = PhotoSettings::default();
                 let parameters =
-                    ProcessingParameters::positive(calibration, roll, photo, DMat3::IDENTITY)
-                        .unwrap();
+                    ProcessingParameters::interpret(input, roll, photo, DMat3::IDENTITY).unwrap();
                 let output = process(&device, &queue, &kernel, &source, pixels.len(), parameters);
-                let scalar = Pipeline::new(calibration, roll, photo, DMat3::IDENTITY).unwrap();
+                let scalar = Pipeline::new(input, roll, photo, DMat3::IDENTITY).unwrap();
                 for (input, output) in pixels.iter().zip(output) {
                     let expected = scalar
                         .apply(

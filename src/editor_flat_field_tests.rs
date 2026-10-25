@@ -1,4 +1,5 @@
 use super::*;
+use crate::project::Development;
 use crate::{application::test_support::with_application, project::SourceDevelopment};
 
 fn record(path: &str) -> Source {
@@ -6,6 +7,7 @@ fn record(path: &str) -> Source {
         id: SourceId(0),
         path: path.into(),
         development: SourceDevelopment {
+            decode: Development::new("test-backend".into(), [1.; 4]),
             lens_correction: None,
             dng_development: None,
             dimensions: [824, 624],
@@ -28,16 +30,16 @@ fn reference_registration_does_not_add_a_photo_or_hide_an_existing_one() {
     let mut document = Document::default();
     let development = Development::new(crate::raw::version(), [2., 1., 1.7, 1.]);
     let photo = document
-        .register(record("photo.ARW"), development.clone())
+        .register_with_development(record("photo.ARW"), development.clone())
         .unwrap();
     let same = document
-        .register_reference(record("photo.ARW"), development.clone())
+        .register_reference_with_development(record("photo.ARW"), development.clone())
         .unwrap();
     assert_eq!(same, photo);
     assert_eq!(document.project.order, vec![photo]);
     assert!(!document.project.source(photo).unwrap().reference_only);
     let reference = document
-        .register_reference(record("light.ARW"), development)
+        .register_reference_with_development(record("light.ARW"), development)
         .unwrap();
     assert_eq!(document.project.order, vec![photo]);
     assert!(document.project.source(reference).unwrap().reference_only);
@@ -50,8 +52,8 @@ fn reference_rejection_cancel_and_stale_products_preserve_document_and_working_c
     editor.next_request = 12;
     editor.source = false;
     editor.roll.exposure = 2.123456789;
-    editor.dmin = Some(DVec3::splat(0.2));
-    editor.floor = 1. / 65535.;
+    editor.set_dmin(Some(DVec3::splat(0.2)));
+    editor.set_floor(1. / 65535.);
     editor.sync_document();
     let original = editor.document.project.clone();
     let roll = editor.roll;
@@ -89,9 +91,7 @@ fn reference_rejection_cancel_and_stale_products_preserve_document_and_working_c
 #[test]
 fn failed_map_acceptance_restores_transient_edit_without_accepting_document_changes() {
     let mut editor = Editor::state();
-    editor.floor = crate::processing::CAMERA_INPUT_FLOOR;
-    editor.document.project.development =
-        Some(Development::new(crate::raw::version(), [2., 1., 1.5, 1.]));
+    editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
     super::super::tests::add_ready_fixture(&mut editor);
     let ready = editor.document.visit.ready.as_ref().unwrap().clone();
     super::super::tests::paused_reference_fixture(&mut editor, ready, None);
@@ -124,12 +124,10 @@ fn failed_map_acceptance_restores_transient_edit_without_accepting_document_chan
 #[test]
 fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
     let mut editor = Editor::state();
-    editor.floor = crate::processing::CAMERA_INPUT_FLOOR;
-    editor.document.project.development =
-        Some(Development::new(crate::raw::version(), [2., 1., 1.5, 1.]));
+    editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
     super::super::tests::add_ready_fixture(&mut editor);
-    editor.dmin = Some(DVec3::splat(0.2));
-    editor.dmax = Some(DVec3::splat(0.01));
+    editor.set_dmin(Some(DVec3::splat(0.2)));
+    editor.set_dmax(Some(DVec3::splat(0.01)));
     editor.source = false;
     editor.roll_orientation.turn_clockwise();
     editor.roll_orientation.horizontal = true;
@@ -264,7 +262,7 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
             let selected = app.read(|e| e.current_source);
             let mut scan = Scan::open(&root.join("illuminated-patches.dng"), None).unwrap();
             let (rgb, original) = app.update(|e| {
-                e.dmin = Some(
+                e.set_dmin(Some(
                     scan.reference(Rect {
                         x: 16,
                         y: 16,
@@ -272,8 +270,8 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
                         height: 32,
                     })
                     .unwrap(),
-                );
-                e.dmax = Some(
+                ));
+                e.set_dmax(Some(
                     scan.reference(Rect {
                         x: 80,
                         y: 16,
@@ -281,9 +279,9 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
                         height: 32,
                     })
                     .unwrap(),
-                );
+                ));
                 e.sync_document();
-                ((e.dmin, e.dmax), e.document.project.clone())
+                ((e.dmin(), e.dmax()), e.document.project.clone())
             });
             app.enter(|e, cx| e.begin_flat_edit(root.join("bare-light.dng"), None, cx));
             app.run_until(Duration::from_secs(60), |e| !e.busy);
@@ -301,9 +299,9 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
             let settings = app.read(|e| {
                 assert!(e.correction.is_some(), "{}", e.status);
                 assert_eq!(e.document.project.order, original.order);
-                assert_eq!((e.dmin, e.dmax), rgb);
+                assert_eq!((e.dmin(), e.dmax()), rgb);
                 assert_eq!(e.current_source, selected);
-                let settings = e.document.project.flat_field.clone().unwrap();
+                let settings = e.document.project.flat_field().cloned().unwrap();
                 assert!(
                     e.document
                         .project

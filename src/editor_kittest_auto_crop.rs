@@ -22,9 +22,9 @@ fn setup<R>(test: impl FnOnce(Harness<'_, Editor>, tempfile::TempDir) -> R) -> R
         wait_for(&mut h, |e| !e.busy && e.document_pending.is_none());
         h.update(|e| {
             assert!(e.document.visit.ready.is_some(), "{}", e.status);
-            e.dmin = Some(DVec3::splat(3000. / 4031.));
-            e.dmax = Some(DVec3::splat(128. / 4031.));
-            e.roll.gamma = 0.75;
+            e.set_dmin(Some(DVec3::splat(3000. / 4031.)));
+            e.set_dmax(Some(DVec3::splat(128. / 4031.)));
+            e.set_gamma(0.75);
             e.photo.exposure = 0.5;
             e.source = false;
             e.roll_orientation.turn_clockwise();
@@ -95,7 +95,14 @@ fn setup<R>(test: impl FnOnce(Harness<'_, Editor>, tempfile::TempDir) -> R) -> R
             let metadata = crate::spatial_metadata::Metadata {
                 version: crate::spatial_metadata::VERSION,
                 groups: vec![crate::spatial_metadata::Group {
-                    development: e.document.project.development.clone().unwrap(),
+                    development: e
+                        .document
+                        .project
+                        .scan_basis()
+                        .unwrap()
+                        .development
+                        .decode
+                        .clone(),
                     code_scale: e.document.spatial_code_scale(),
                     common_size: crate::spatial_metadata::CommonSize::fit(&sources),
                     sources,

@@ -100,15 +100,8 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
         let mut scan = scan();
         let frame = frame(&scan);
         let spec = ViewSourceSpec::inspection(21, frame, scan.camera_to_ap1, None).unwrap();
-        let positive = ViewSourceSpec::new(
-            21,
-            frame,
-            calibration(),
-            RollSettings::new_grade(),
-            scan.camera_to_ap1,
-            None,
-        )
-        .unwrap();
+        let positive =
+            ViewSourceSpec::new(21, frame, calibration(), scan.camera_to_ap1, None).unwrap();
         assert!(!spec.same_source(&positive));
         let codes = scan
             .tile_region(scan.area, 0, 0, scan.area.width, scan.area.height)
@@ -248,7 +241,7 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
                     }
                     let positive_input = processing_input(
                         calibration(),
-                        RollSettings::new_grade(),
+                        RollSettings::default(),
                         PhotoSettings::default(),
                         &scan,
                     );
@@ -267,7 +260,7 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
                             &device,
                             source.clone(),
                             calibration(),
-                            RollSettings::new_grade(),
+                            RollSettings::default(),
                             PhotoGradeSnapshot::new(PhotoSettings::default(), vec![]).unwrap(),
                             &positive_input,
                             target,

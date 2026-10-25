@@ -84,12 +84,55 @@ fn reviewed_fit_returns_across_photo_visits_without_paint_and_undoes_support_and
             assert!(e.scopes.visible);
             assert!(e.roll_selection.contains(first) && e.roll_selection.contains(other));
             assert_eq!(e.document.project.analysis_regions.len(), 2);
-            assert_ne!(e.document.project.dmin, before.dmin);
+            assert_ne!(e.document.project.dmin(), before.dmin());
             assert!(e.history_label(Direction::Undo).is_some());
         });
         app.enter(|e, access| {
             e.restore_history(Direction::Undo, access);
         });
+        app.run_until(LIMIT, |e| !e.busy);
+        app.read(|e| assert_eq!(e.document.project, before));
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn fresh_negative_analysis_measures_both_anchors_and_undo_restores_the_uncalibrated_roll() {
+    let scheduler = development::Scheduler::new();
+    let mut editor = fixture(scheduler.clone());
+    let crate::processing::InputSettings::Negative { dmin, dmax, .. } = &mut editor.input else {
+        panic!("authored scan roll must use Negative");
+    };
+    *dmin = None;
+    *dmax = None;
+    editor.sync_document();
+    let before = editor.document.project.clone();
+    assert!(!before.input.ready());
+    assert!(before.input.calibration().is_none());
+    with_application(editor, |app| {
+        review(app);
+        confirm(app);
+        app.run_until(LIMIT, |e| e.document.analysis_pending.is_none() && !e.busy);
+        app.read(|e| {
+            assert!(e.status.starts_with("Analyzed 2"), "{}", e.status);
+            let calibration = e
+                .document
+                .project
+                .input
+                .calibration()
+                .unwrap()
+                .validate()
+                .unwrap();
+            assert!(
+                (calibration.dmin - glam::DVec3::splat(3000. / 4031.))
+                    .abs()
+                    .max_element()
+                    <= 2. / 65535.
+            );
+            assert!(e.input.ready());
+            assert_eq!(e.document.project.analysis_regions.len(), 2);
+        });
+        app.enter(|e, access| e.restore_history(Direction::Undo, access));
         app.run_until(LIMIT, |e| !e.busy);
         app.read(|e| assert_eq!(e.document.project, before));
     });
@@ -186,7 +229,7 @@ fn live_edits_during_fit_discard_the_entire_candidate_without_installing_reviewe
         confirm(app);
         await_native(app, &starts);
         app.update(|e| {
-            e.roll.gamma = 0.8;
+            e.set_gamma(0.8);
             e.sync_document();
         });
         let edited = app.read(|e| e.document.project.clone());

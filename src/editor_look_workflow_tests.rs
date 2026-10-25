@@ -31,9 +31,9 @@ fn asset(value: f32) -> Arc<LookAsset> {
 fn editor() -> (Editor, development::Scheduler) {
     let mut e = fixture();
     e.document = Document::default().into();
-    e.dmin = None;
-    e.dmax = None;
-    e.floor = 0.;
+    e.set_dmin(None);
+    e.set_dmax(None);
+    e.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
     e.sync_document();
     let (device, queue) = pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {

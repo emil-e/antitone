@@ -1,16 +1,21 @@
 #![cfg(feature = "project")]
 use antitone::{
+    color::Balance,
     dust_repair::{DonorChoice, RepairOrigin, SupportMask},
-    processing::CAMERA_INPUT_FLOOR,
+    processing::{CAMERA_INPUT_FLOOR, DEFAULT_GAMMA, InputSettings, Response},
     project::{Development, Project, Source, SourceDevelopment, SourceId},
 };
 
 fn project() -> (Project, SourceId) {
     let mut project = Project {
-        development: Some(Development::new("test".into(), [1.; 4])),
-        dmin: Some([0.8; 3]),
-        dmax: Some([0.02; 3]),
-        input_floor: Some(CAMERA_INPUT_FLOOR),
+        input: InputSettings::Negative {
+            dmin: Some(glam::DVec3::splat(0.8)),
+            dmax: Some(glam::DVec3::splat(0.02)),
+            input_floor: CAMERA_INPUT_FLOOR,
+            response: Response::film(),
+            gamma: DEFAULT_GAMMA,
+            balance: Balance::default(),
+        },
         ..Default::default()
     };
     let id = project
@@ -19,6 +24,7 @@ fn project() -> (Project, SourceId) {
             path: "negative.ARW".into(),
             reference_only: false,
             development: SourceDevelopment {
+                decode: Development::new("test".into(), [1.; 4]),
                 lens_correction: None,
                 dng_development: None,
                 dimensions: [900, 600],
@@ -65,9 +71,12 @@ fn accepted_recipes_separate_neutral_identity_from_grades_composition_and_repair
         0.,
         "captured recipe is immutable"
     );
-    project.roll.gamma = 0.7;
+    let original_gamma = project.input;
+    if let InputSettings::Negative { gamma, .. } = &mut project.input {
+        *gamma = 0.7;
+    }
     assert!(!graded.same_neutral_content(&project.image_recipe(id).unwrap()));
-    project.roll.gamma = graded.roll.gamma;
+    project.input = original_gamma;
     let mut metadata = serde_json::to_value(&project).unwrap();
     metadata["sources"][0]["repairs"]["repairs"][0]["id"] = 4.into();
     metadata["sources"][0]["repairs"]["repairs"][0]["origin"] = "detected".into();

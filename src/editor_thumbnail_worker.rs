@@ -92,9 +92,8 @@ impl Worker {
                 .submit(
                     development::Request {
                         path: job.path.clone(),
-                        wb: Some(job.key.source.development.fixed_wb),
+                        wb: Some(job.key.source.source.decode.fixed_wb),
                         expected: Some(job.source.clone()),
-                        basis: None,
                         file: job.key.source.file.clone(),
                         key: native_key,
                         store: Some(job.store.clone()),
@@ -157,8 +156,7 @@ impl Worker {
             let spec = ViewSourceSpec::new(
                 job.source.id.0,
                 frame,
-                recipe.neutral.processing_calibration()?,
-                recipe.roll,
+                recipe.neutral.processing_input()?,
                 proxy.matrix,
                 recipe.neutral.correction.clone(),
             )?;
@@ -184,7 +182,7 @@ impl Worker {
         let tick = std::time::Instant::now();
         let grade = Arc::new(crate::gpu::GpuPhotoGrade::new(
             &self.device,
-            recipe.neutral.processing_calibration()?,
+            recipe.neutral.processing_input()?,
             recipe.roll,
             recipe.grade.clone(),
             glam::DMat3::from_cols_array_2d(&recipe.neutral.source_development.camera_to_ap1),
@@ -194,7 +192,7 @@ impl Worker {
         let view = RenderedView::new(
             &self.device,
             source.clone(),
-            recipe.neutral.processing_calibration()?,
+            recipe.neutral.processing_input()?,
             recipe.roll,
             recipe.grade.clone(),
             &input,

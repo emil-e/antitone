@@ -168,7 +168,7 @@ fn selected_linear_handles_preview_commit_and_cancel_individual_gestures_through
             let before = harness.read(|editor| editor.document.project.clone());
             let (input, snapshot, layout, start) = harness.read(|editor| {
                 let input = editor
-                    .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+                    .positive_processing(editor.input, editor.roll, editor.photo)
                     .unwrap();
                 let snapshot = input.grade().unwrap().snapshot().clone();
                 let layout = editor.last_layout.unwrap().0;
@@ -183,7 +183,7 @@ fn selected_linear_handles_preview_commit_and_cancel_individual_gestures_through
             harness.read(|editor| assert_eq!(editor.document.project, before));
             let (preview, preview_end, original_end) = harness.read(|editor| {
                 let preview = editor
-                    .view_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+                    .view_processing(editor.input, editor.roll, editor.photo)
                     .unwrap();
                 assert_ne!(preview.signature(), input.signature());
                 assert_eq!(input.grade().unwrap().snapshot(), &snapshot);

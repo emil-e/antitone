@@ -261,7 +261,7 @@ fn profile_complete_roll_area_preparation() {
                 cache_observation::source_bound(&raw.metadata)?;
                 let wb = raw.metadata.as_shot_wb();
                 document
-                    .register(source, raw.metadata.development(wb))
+                    .register_with_development(source, raw.metadata.development(wb))
                     .map_err(|e| e.to_string())?;
             }
             document.validate().map_err(|e| e.to_string())
@@ -294,20 +294,15 @@ fn profile_complete_roll_area_preparation() {
                 document.cache().set_budget(WARM_BUDGET);
                 let id = *document.project.order.last().unwrap();
                 let path = document.source_path(id).map_err(|e| e.to_string())?;
-                let wb = document.project.development.as_ref().unwrap().fixed_wb;
-                let cache = LoadCache::new(
-                    &path,
-                    Some(document.project.source(id).unwrap()),
-                    Some(wb),
-                    &document,
-                );
+                let expected = document.project.source(id).unwrap();
+                let wb = expected.development.decode.fixed_wb;
+                let cache = LoadCache::new(&path, Some(expected), &document);
                 let source = monitor.phase("region_seed_one_source", || {
                     scheduler.load(
                         development::Request {
                             path,
                             wb: Some(wb),
                             expected: Some(document.project.source(id).unwrap().clone()),
-                            basis: document.project.camera_basis.clone(),
                             file: cache.file,
                             key: cache.key,
                             store: Some(cache.store),

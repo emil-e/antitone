@@ -1,4 +1,5 @@
 use super::*;
+use crate::processing::Calibration;
 
 #[path = "gpu_viewport_performance_tests.rs"]
 mod viewport_tests;
@@ -83,7 +84,7 @@ fn scalar_samples(
     let words = read_words(device, queue, &probe.output);
     let scalar = SpatialPipeline::new(
         calibration,
-        RollSettings::new_grade(),
+        RollSettings::default(),
         grade.snapshot().clone(),
         source.camera_to_ap1,
     )
@@ -162,7 +163,7 @@ async fn investigate(
         GpuPhotoGrade::new(
             &device,
             calibration,
-            RollSettings::new_grade(),
+            RollSettings::default(),
             snapshot,
             matrix,
             area,
@@ -547,7 +548,7 @@ fn paired_production_local_kernel() {
             let grade = GpuPhotoGrade::new(
                 &device,
                 calibration(),
-                RollSettings::new_grade(),
+                RollSettings::default(),
                 PhotoGradeSnapshot::new(PhotoSettings::default(), locals).unwrap(),
                 camera_matrix(),
                 area(),

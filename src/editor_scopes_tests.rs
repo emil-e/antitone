@@ -1,4 +1,5 @@
 use super::*;
+use crate::project::Development;
 
 #[test]
 fn vectorscope_is_the_initial_editor_plot() {
@@ -489,14 +490,13 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
             height: 3000,
         };
         let path = PathBuf::from("scope-fixture.ARW");
-        let ready = Ready {
+        let mut ready = Ready {
             developed: crate::editor::tests::developed_fixture(),
             file: thumbnails::FileKey::new(&path),
             thumbnail: None,
             path: path.clone(),
             area,
             analysis_support: None,
-            floor: crate::processing::CAMERA_INPUT_FLOOR,
             proxy: crate::viewer::GpuProxy::new(
                 shared_renderer,
                 &device,
@@ -511,6 +511,7 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
                 id: SourceId(0),
                 path,
                 development: crate::project::SourceDevelopment {
+                    decode: Development::new("test-backend".into(), [1.; 4]),
                     lens_correction: None,
                     dng_development: None,
                     dimensions: [7040, 3072],
@@ -526,17 +527,13 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
                 orientation: Default::default(),
                 crop: None,
             },
-            development: Development::new(crate::raw::version(), [2., 1., 1.5, 1.]),
         };
         let mut editor = super::super::tests::fixture();
+        editor.initialize_viewer(&device, &queue);
+        let id = editor.document.register(ready.record.clone()).unwrap();
+        ready.record = editor.document.project.source(id).unwrap().clone();
+        editor.current_source = Some(id);
         editor.document.visit.ready = Some(ready);
-        editor
-            .document
-            .project
-            .camera_basis
-            .as_mut()
-            .unwrap()
-            .camera_to_ap1 = matrix.to_cols_array_2d();
         editor.source = false;
         editor.scopes = Scopes::new(&device);
         let gpu = editor.scopes.gpu.as_ref().unwrap().clone();
@@ -662,7 +659,7 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
             ..Default::default()
         };
         assert_eq!(
-            gpu.status(&image, parameters, scope_frame, settings)
+            gpu.status_processing(&image, &input, scope_frame, settings)
                 .unwrap()
                 .unwrap()
                 .valid,
@@ -697,7 +694,7 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
             .unwrap()
         );
         assert!(
-            gpu.status(&image, parameters, composed_frame, settings)
+            gpu.status_processing(&image, &input, composed_frame, settings)
                 .is_none()
         );
         prepare(
@@ -705,19 +702,21 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
             egui::vec2(1100., 800.),
         );
         assert_eq!(
-            gpu.status(&image, parameters, composed_frame, settings)
+            gpu.status_processing(&image, &input, composed_frame, settings)
                 .unwrap()
                 .unwrap()
                 .valid,
             5
         );
         assert!(
-            gpu.status(&image, parameters, scope_frame, settings)
+            gpu.status_processing(&image, &input, scope_frame, settings)
                 .is_none()
         );
         let mut encoder = device.create_command_encoder(&Default::default());
         assert!(
-            !image.prepare(&device, &mut encoder, parameters),
+            !image
+                .prepare_processing(&device, &mut encoder, &input)
+                .unwrap(),
             "geometry must not rerender ACES"
         );
         editor.viewport.zoom = Some(3.);
@@ -732,7 +731,7 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
         );
         frame(&mut editor, egui::vec2(1100., 800.));
         assert!(
-            gpu.status(&image, parameters, composed_frame, settings)
+            gpu.status_processing(&image, &input, composed_frame, settings)
                 .is_none()
         );
         editor.finish_crop(false);
@@ -745,7 +744,7 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
         editor.source = true;
         frame(&mut editor, egui::vec2(800., 600.));
         assert!(
-            gpu.status(&image, parameters, composed_frame, settings)
+            gpu.status_processing(&image, &input, composed_frame, settings)
                 .is_none()
         );
         assert_eq!(editor.document.project, before);
