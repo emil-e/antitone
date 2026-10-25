@@ -3,7 +3,6 @@ use antitone::{
     Error,
     color::{ap0_to_ap1, ap1_to_ap0},
     export::{self, ExrPrecision, ImageSize, Overwrite},
-    processing::Response,
     profiles,
     rendering::{CpuRenderer, OutputTarget},
 };
@@ -25,14 +24,9 @@ fn tiff_reopens_with_exact_rendered_codes_lossless_compression_and_pinned_icc() 
     let pixel = |x: u32, y: u32| DVec3::new(f64::from(x) * 0.2 - 0.1, f64::from(y) * 0.1, 0.18);
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
         let path = directory.path().join(format!("{target:?}.tif"));
-        export::tiff(
-            &path,
-            size,
-            target,
-            Overwrite::Refuse,
-            Response::Original,
-            |x, y| Ok(pixel(x, y)),
-        )
+        export::tiff(&path, size, target, Overwrite::Refuse, |x, y| {
+            Ok(pixel(x, y))
+        })
         .unwrap();
         let mut decoder = Decoder::new(fs::File::open(&path).unwrap()).unwrap();
         assert_eq!(decoder.dimensions().unwrap(), (size.width, size.height));
@@ -48,6 +42,11 @@ fn tiff_reopens_with_exact_rendered_codes_lossless_compression_and_pinned_icc() 
             decoder.get_tag_u8_vec(Tag::Unknown(34675)).unwrap(),
             profiles::icc(target)
         );
+        assert_eq!(
+            decoder.get_tag_ascii_string(Tag::Software).unwrap(),
+            "Antitone 0.1"
+        );
+        assert!(decoder.get_tag_ascii_string(Tag::ImageDescription).is_err());
         let DecodingResult::U16(actual) = decoder.read_image().unwrap() else {
             panic!("not RGB16")
         };
@@ -68,7 +67,7 @@ fn tiff_reopens_with_exact_rendered_codes_lossless_compression_and_pinned_icc() 
 }
 
 #[test]
-fn exr_reopens_in_ap0_with_signed_hdr_and_correct_channel_precision_and_metadata() {
+fn exr_reopens_in_ap0_with_signed_hdr_correct_channel_precision_and_chromaticities() {
     let directory = tempfile::tempdir().unwrap();
     let inputs = [
         DVec3::ZERO,
@@ -86,7 +85,6 @@ fn exr_reopens_in_ap0_with_signed_hdr_and_correct_channel_precision_and_metadata
             },
             precision,
             Overwrite::Refuse,
-            Response::Original,
             |x, _| Ok(inputs[x as usize]),
         )
         .unwrap();
@@ -99,9 +97,19 @@ fn exr_reopens_in_ap0_with_signed_hdr_and_correct_channel_precision_and_metadata
             image
                 .layer_data
                 .attributes
+                .layer_name
+                .as_ref()
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("scene-linear AP0")
+        );
+        assert!(
+            image
+                .layer_data
+                .attributes
                 .other
-                .get(&Text::from("antitoneProcessingModel")),
-            Some(&AttributeValue::I32(4))
+                .keys()
+                .all(|key| !key.to_string().starts_with("antitone"))
         );
         for channel in &image.layer_data.channel_data.list {
             let index = match channel.name.to_string().as_str() {
@@ -142,7 +150,6 @@ fn export_errors_cancel_partial_output_and_never_replace_without_confirmation() 
             size,
             OutputTarget::Srgb,
             Overwrite::Refuse,
-            Response::Original,
             |_, _| Ok(DVec3::ONE)
         )
         .is_err()
@@ -161,24 +168,13 @@ fn export_errors_cancel_partial_output_and_never_replace_without_confirmation() 
             size,
             OutputTarget::Srgb,
             Overwrite::Confirmed,
-            Response::Original,
             cancel
         )
         .is_err()
     );
     assert_eq!(fs::read(&path).unwrap(), sentinel);
     let new = directory.path().join("new.tif");
-    assert!(
-        export::tiff(
-            &new,
-            size,
-            OutputTarget::Srgb,
-            Overwrite::Refuse,
-            Response::Original,
-            cancel
-        )
-        .is_err()
-    );
+    assert!(export::tiff(&new, size, OutputTarget::Srgb, Overwrite::Refuse, cancel).is_err());
     assert!(!new.exists());
     assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
     export::tiff(
@@ -186,7 +182,6 @@ fn export_errors_cancel_partial_output_and_never_replace_without_confirmation() 
         size,
         OutputTarget::Srgb,
         Overwrite::Confirmed,
-        Response::Original,
         |_, _| Ok(DVec3::ONE),
     )
     .unwrap();
@@ -207,14 +202,9 @@ fn exr_refuses_nonfinite_half_overflow_and_full_overflow_without_final_files() {
     ] {
         let path = directory.path().join("failed.exr");
         assert!(
-            export::exr(
-                &path,
-                size,
-                precision,
-                Overwrite::Refuse,
-                Response::Original,
-                |_, _| Ok(ap0_to_ap1() * ap0)
-            )
+            export::exr(&path, size, precision, Overwrite::Refuse, |_, _| Ok(
+                ap0_to_ap1() * ap0
+            ))
             .is_err()
         );
         assert!(!path.exists());
@@ -225,7 +215,6 @@ fn exr_refuses_nonfinite_half_overflow_and_full_overflow_without_final_files() {
         size,
         ExrPrecision::Full,
         Overwrite::Refuse,
-        Response::Original,
         |_, _| Ok(DVec3::splat(70000.0)),
     )
     .unwrap();

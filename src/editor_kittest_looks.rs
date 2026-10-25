@@ -1,5 +1,13 @@
 use super::*;
 use crate::looks::builtin::{Builtin, DEFAULT_GRID};
+fn tiff_codes(path: &std::path::Path) -> Vec<u16> {
+    let mut decoder = tiff::decoder::Decoder::new(std::fs::File::open(path).unwrap()).unwrap();
+    let tiff::decoder::DecodingResult::U16(codes) = decoder.read_image().unwrap() else {
+        panic!("not RGB16")
+    };
+    codes
+}
+
 fn paint_until(harness: &mut Harness<'_, Editor>, done: impl Fn(&Editor) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(45);
     loop {
@@ -842,7 +850,6 @@ fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapsh
                 }
                 paint_until(&mut reopened, positive_ready);
             }
-            let asset = harness.read(|editor| editor.document.project.output.look.clone().unwrap());
             let path = directory.path().join("snapshot.tif");
             harness.enter(|editor, cx| {
                 editor.export(
@@ -858,14 +865,20 @@ fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapsh
             });
             harness.read(|editor| assert!(editor.failure.is_none()));
             harness.read(|editor| assert!(editor.document.project.output.look.is_none()));
-            let mut decoder =
-                tiff::decoder::Decoder::new(std::fs::File::open(path).unwrap()).unwrap();
-            assert!(
-                decoder
-                    .get_tag_ascii_string(tiff::tags::Tag::ImageDescription)
-                    .unwrap()
-                    .contains(&asset.lut().id().to_string())
-            );
+            let cleared = directory.path().join("snapshot-without-look.tif");
+            harness.enter(|editor, cx| {
+                editor.export(
+                    cleared.clone(),
+                    OutputFormat::Tiff(OutputTarget::Srgb),
+                    Overwrite::Refuse,
+                    cx,
+                )
+            });
+            wait_for(&mut harness, |editor| {
+                editor.export_operation.pending.is_none()
+            });
+            harness.read(|editor| assert!(editor.failure.is_none()));
+            assert_ne!(tiff_codes(&path), tiff_codes(&cleared));
         });
     });
 }

@@ -1,7 +1,7 @@
 //! Test-only ready-to-encode sink. No file is opened and no codec/destination work is scored.
 use crate::{
     Error,
-    export::{self, ImageSize, ProcessingMetadata},
+    export::{self, ImageSize},
     rendering::OutputTarget,
 };
 use std::{cell::RefCell, time::Instant};
@@ -9,7 +9,6 @@ use std::{cell::RefCell, time::Instant};
 pub(crate) struct Pixels {
     pub size: ImageSize,
     pub target: OutputTarget,
-    pub metadata: ProcessingMetadata,
     pub codes: Vec<[u16; 3]>,
     pub ready: Instant,
 }
@@ -44,7 +43,6 @@ pub(crate) fn capture<T>(run: impl FnOnce() -> T) -> (T, Option<Pixels>) {
 pub(crate) fn intercept(
     size: ImageSize,
     target: OutputTarget,
-    metadata: ProcessingMetadata,
     order: export::BlockOrder,
     block: &mut impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<[u16; 3]>, Error>,
     before_complete: impl FnOnce() -> Result<(), Error>,
@@ -78,7 +76,6 @@ pub(crate) fn intercept(
             let previous = active.borrow_mut().as_mut().unwrap().replace(Pixels {
                 size,
                 target,
-                metadata,
                 codes,
                 ready: Instant::now(),
             });
@@ -98,7 +95,6 @@ impl Pixels {
             self.size,
             self.target,
             export::Overwrite::Confirmed,
-            self.metadata,
             |origin, extent| {
                 let mut block = Vec::with_capacity((extent[0] * extent[1]) as usize);
                 for y in origin[1]..origin[1] + extent[1] {
@@ -118,7 +114,6 @@ fn receipt_is_explicit_and_failure_or_unwind_cannot_publish_partial_pixels() {
         height: 3,
     };
     let target = OutputTarget::DisplayP3;
-    let metadata = crate::processing::Response::film().into();
     let make = |origin: [u32; 2], extent: [u32; 2]| {
         Ok((0..extent[0] * extent[1])
             .map(|i| {
@@ -134,7 +129,6 @@ fn receipt_is_explicit_and_failure_or_unwind_cannot_publish_partial_pixels() {
         intercept(
             size,
             target,
-            metadata,
             export::BlockOrder::RowMajor,
             &mut |_, _| unreachable!(),
             || Ok(())
@@ -146,7 +140,6 @@ fn receipt_is_explicit_and_failure_or_unwind_cannot_publish_partial_pixels() {
         intercept(
             size,
             target,
-            metadata,
             export::BlockOrder::Spatial2x2,
             &mut { make },
             || Ok(()),
@@ -187,7 +180,6 @@ fn receipt_is_explicit_and_failure_or_unwind_cannot_publish_partial_pixels() {
         intercept(
             size,
             target,
-            metadata,
             export::BlockOrder::RowMajor,
             &mut |_, _| Err(Error::Gpu("stop".into())),
             || Ok(()),

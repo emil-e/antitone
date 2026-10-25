@@ -47,7 +47,6 @@ fn spatial_block_visits_preserve_complete_files_and_public_row_major_order() {
             size,
             OutputTarget::Srgb,
             Overwrite::Refuse,
-            Response::film().into(),
             order,
             |origin, extent| {
                 Ok((origin[1]..origin[1] + extent[1])
@@ -99,19 +98,12 @@ fn encoded_blocks_reopen_exactly_with_bounded_inputs_and_partial_edges() {
     for (name, codes) in fixtures {
         for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
             let path = directory.path().join(format!("{name}-{target:?}.tif"));
-            tiff_encoded(
-                &path,
-                size,
-                target,
-                Overwrite::Refuse,
-                Response::film().into(),
-                |origin, extent| {
-                    assert!(extent[0] <= BLOCK[0] && extent[1] <= BLOCK[1]);
-                    Ok((origin[1]..origin[1] + extent[1])
-                        .flat_map(|y| (origin[0]..origin[0] + extent[0]).map(move |x| codes(x, y)))
-                        .collect())
-                },
-            )
+            tiff_encoded(&path, size, target, Overwrite::Refuse, |origin, extent| {
+                assert!(extent[0] <= BLOCK[0] && extent[1] <= BLOCK[1]);
+                Ok((origin[1]..origin[1] + extent[1])
+                    .flat_map(|y| (origin[0]..origin[0] + extent[0]).map(move |x| codes(x, y)))
+                    .collect())
+            })
             .unwrap();
             let mut decoder = Decoder::new(fs::File::open(path).unwrap()).unwrap();
             assert_eq!(decoder.dimensions().unwrap(), (size.width, size.height));
@@ -141,7 +133,6 @@ fn encoded_blocks_reopen_exactly_with_bounded_inputs_and_partial_edges() {
             size,
             precision,
             Overwrite::Refuse,
-            Response::film().into(),
             |origin, extent| {
                 assert!(extent[0] <= BLOCK[0] && extent[1] <= BLOCK[1]);
                 Ok((origin[1]..origin[1] + extent[1])
@@ -193,7 +184,6 @@ fn failed_blocks_and_competing_destinations_preserve_existing_files_and_clean_te
             },
             OutputTarget::Srgb,
             overwrite,
-            Response::film().into(),
             block,
         )
     }
@@ -232,7 +222,6 @@ fn failed_blocks_and_competing_destinations_preserve_existing_files_and_clean_te
                 size,
                 ExrPrecision::Full,
                 Overwrite::Confirmed,
-                Response::film(),
                 |_, _| Ok(pixel)
             )
             .is_err()
@@ -245,7 +234,6 @@ fn failed_blocks_and_competing_destinations_preserve_existing_files_and_clean_te
             size,
             ExrPrecision::Half,
             Overwrite::Confirmed,
-            Response::film(),
             |_, _| Ok(DVec3::splat(70000.))
         )
         .is_err()
@@ -256,7 +244,6 @@ fn failed_blocks_and_competing_destinations_preserve_existing_files_and_clean_te
             size,
             ExrPrecision::Full,
             Overwrite::Confirmed,
-            Response::film().into(),
             |_, _| Ok(Vec::new())
         )
         .is_err()

@@ -2,12 +2,12 @@ use super::*;
 #[path = "../support/working_precision.rs"]
 mod working_precision;
 use antitone::{
-    export::{self, ExrPrecision, Overwrite, ProcessingMetadata},
+    export::{self, ExrPrecision, Overwrite},
     geometry::{Composition, PhotoOrientation, RollOrientation},
     gpu::SubmissionGate,
     gpu_export::{self, Format, Request},
     local_adjustments::{PhotoGradeSnapshot, SpatialPipeline},
-    processing::{Calibration, InputSettings, Response},
+    processing::{Calibration, InputSettings},
     renderer::GpuRenderer,
     rendering::OutputTarget,
 };
@@ -92,7 +92,6 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
     });
     let oracle =
         SpatialPipeline::new(oracle_input, loaded.roll, grade.clone(), scan.camera_to_ap1).unwrap();
-    let metadata = ProcessingMetadata::with_grade(Response::film(), &grade);
     let (device, queue, renderer) = pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,
@@ -135,7 +134,6 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
                     composition,
                     target,
                     Overwrite::Refuse,
-                    metadata,
                     |x, y| oracle.apply(camera_pixel(x, y), [x, y]).map(|p| p.rgb),
                 )
                 .unwrap();
@@ -151,7 +149,6 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
                     composition,
                     precision,
                     Overwrite::Refuse,
-                    metadata,
                     |x, y| oracle.apply(camera_pixel(x, y), [x, y]).map(|p| p.rgb),
                 )
                 .unwrap();

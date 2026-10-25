@@ -2,8 +2,6 @@
 use crate::{Error, color::AP1_TO_XYZ, processing::PhotoSettings};
 use glam::DVec3;
 
-pub const CONTRACT: &str = "ap1-acescct-rgb-black-relative-contrast-y-max-saturation-blends-v1";
-
 const TOE: f64 = 0.0078125;
 const SLOPE: f64 = 10.5402377416545;
 const OFFSET: f64 = 0.0729055341958355;

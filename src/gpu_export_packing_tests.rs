@@ -101,7 +101,6 @@ fn invalid_readback_preserves_existing_destination_for_tiff_and_both_exr_precisi
         let result = encode_with_checked(
             composition,
             format,
-            crate::processing::Response::film().into(),
             (&path, Overwrite::Confirmed),
             |_, extent| {
                 assert_eq!(extent, [2, 1]);

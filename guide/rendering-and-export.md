@@ -62,4 +62,5 @@ exports use your applied settings.
 - Everything is colour-managed end to end: the preview, the TIFF (which carries its ICC
   profile) and the scopes all follow the chosen Target.
 - EXR output keeps headroom (values above white and below black survive), so a later
-  grade in another tool has room to work.
+  grade in another tool has room to work. The file declares its own colour space, so
+  the receiving application does not have to guess one.

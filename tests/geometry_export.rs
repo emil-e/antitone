@@ -4,7 +4,7 @@ use antitone::{
     crop::Crop,
     export::{self, ExrPrecision, Overwrite},
     geometry::{Composition, Flips, PhotoOrientation, QuarterTurns, RollOrientation, SourceRegion},
-    processing::{InputSettings, Response},
+    processing::InputSettings,
     rendering::{CpuRenderer, OutputTarget},
 };
 use exr::prelude::*;
@@ -44,14 +44,9 @@ fn rotated_diamond_exports_filter_after_aces_and_preserve_signed_hdr_scene_data(
     let raster = antitone::frame_raster::FrameRaster::full(composition).unwrap();
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
         let path = directory.path().join(format!("rotated-{target:?}.tif"));
-        export::tiff_composed(
-            &path,
-            composition,
-            target,
-            Overwrite::Refuse,
-            Response::film(),
-            |x, y| Ok(source(x, y)),
-        )
+        export::tiff_composed(&path, composition, target, Overwrite::Refuse, |x, y| {
+            Ok(source(x, y))
+        })
         .unwrap();
         let mut decoder = Decoder::new(std::fs::File::open(path).unwrap()).unwrap();
         assert_eq!(decoder.dimensions().unwrap(), (2, 2));
@@ -110,14 +105,9 @@ fn rotated_diamond_exports_filter_after_aces_and_preserve_signed_hdr_scene_data(
         |x: u32, y: u32| DVec3::new(-8. + f64::from(x - 10) * 0.2, 5. + f64::from(y - 20), -0.1);
     for precision in [ExrPrecision::Half, ExrPrecision::Full] {
         let path = directory.path().join(format!("rotated-{precision:?}.exr"));
-        export::exr_composed(
-            &path,
-            composition,
-            precision,
-            Overwrite::Refuse,
-            Response::film(),
-            |x, y| Ok(scene(x, y)),
-        )
+        export::exr_composed(&path, composition, precision, Overwrite::Refuse, |x, y| {
+            Ok(scene(x, y))
+        })
         .unwrap();
         let image = read_first_flat_layer_from_file(path).unwrap();
         assert_eq!(image.layer_data.size, Vec2(2, 2));
@@ -216,7 +206,6 @@ fn native_camera_flat_field_compositions_reopen_with_source_anchored_correction(
         exposure: 1.2,
         ..Default::default()
     };
-    let response = Response::film();
     let camera = |x: u32, y: u32| {
         DVec3::new(
             3000. + f64::from(x - 10) * 13000.,
@@ -279,15 +268,8 @@ fn native_camera_flat_field_compositions_reopen_with_source_anchored_correction(
                 let path = directory
                     .path()
                     .join(format!("camera-{corrected}-{angle}-{target:?}.tif"));
-                export::tiff_composed(
-                    &path,
-                    composition,
-                    target,
-                    Overwrite::Refuse,
-                    response,
-                    source,
-                )
-                .unwrap();
+                export::tiff_composed(&path, composition, target, Overwrite::Refuse, source)
+                    .unwrap();
                 let mut decoder = Decoder::new(std::fs::File::open(path).unwrap()).unwrap();
                 assert_eq!(decoder.dimensions().unwrap(), (2, 2));
                 let DecodingResult::U16(actual) = decoder.read_image().unwrap() else {
@@ -320,15 +302,8 @@ fn native_camera_flat_field_compositions_reopen_with_source_anchored_correction(
                 let path = directory
                     .path()
                     .join(format!("camera-{corrected}-{angle}-{precision:?}.exr"));
-                export::exr_composed(
-                    &path,
-                    composition,
-                    precision,
-                    Overwrite::Refuse,
-                    response,
-                    source,
-                )
-                .unwrap();
+                export::exr_composed(&path, composition, precision, Overwrite::Refuse, source)
+                    .unwrap();
                 let image = read_first_flat_layer_from_file(path).unwrap();
                 assert_eq!(image.layer_data.size, Vec2(2, 2));
                 for channel in &image.layer_data.channel_data.list {
@@ -441,15 +416,7 @@ fn check_exports(crop: Option<Crop>, turns: QuarterTurns) {
     let expected: Vec<_> = indices.into_iter().map(source).collect();
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
         let path = directory.path().join(format!("{target:?}.tif"));
-        export::tiff_composed(
-            &path,
-            composition,
-            target,
-            Overwrite::Refuse,
-            Response::film(),
-            pixel,
-        )
-        .unwrap();
+        export::tiff_composed(&path, composition, target, Overwrite::Refuse, pixel).unwrap();
         let mut decoder = Decoder::new(std::fs::File::open(&path).unwrap()).unwrap();
         assert_eq!(decoder.dimensions().unwrap(), (width, height));
         let DecodingResult::U16(actual) = decoder.read_image().unwrap() else {
@@ -466,15 +433,7 @@ fn check_exports(crop: Option<Crop>, turns: QuarterTurns) {
     }
     for precision in [ExrPrecision::Half, ExrPrecision::Full] {
         let path = directory.path().join(format!("{precision:?}.exr"));
-        export::exr_composed(
-            &path,
-            composition,
-            precision,
-            Overwrite::Refuse,
-            Response::film(),
-            pixel,
-        )
-        .unwrap();
+        export::exr_composed(&path, composition, precision, Overwrite::Refuse, pixel).unwrap();
         let image = read_first_flat_layer_from_file(&path).unwrap();
         assert_eq!(image.layer_data.size, Vec2(width as usize, height as usize));
         for channel in &image.layer_data.channel_data.list {

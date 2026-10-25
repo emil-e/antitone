@@ -548,7 +548,6 @@ fn write_reference(
         look,
         ..
     } = request;
-    let metadata = export::ProcessingMetadata::with_grade(input.response(), &grade);
     let pipeline =
         crate::local_adjustments::SpatialPipeline::new(input, roll, grade, scan.camera_to_ap1)?;
     let mut samples = 0_u64;
@@ -578,22 +577,12 @@ fn write_reference(
         }
     };
     match format {
-        Format::Tiff(target) => export::tiff_composed(
-            path,
-            composition,
-            target,
-            Overwrite::Refuse,
-            metadata,
-            pixel,
-        )?,
-        Format::Exr(precision) => export::exr_composed(
-            path,
-            composition,
-            precision,
-            Overwrite::Refuse,
-            metadata,
-            pixel,
-        )?,
+        Format::Tiff(target) => {
+            export::tiff_composed(path, composition, target, Overwrite::Refuse, pixel)?
+        }
+        Format::Exr(precision) => {
+            export::exr_composed(path, composition, precision, Overwrite::Refuse, pixel)?
+        }
     }
     check()?;
     Ok(samples)

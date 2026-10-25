@@ -95,7 +95,6 @@ fn common_worker_preserves_fractional_above_white_sony_sources_with_residual_cor
                 recipe.composition,
                 target,
                 Overwrite::Refuse,
-                ProcessingMetadata::with_grade(recipe.neutral.input.response(), &recipe.grade),
                 |x, y| {
                     let pixel = scan.pixel(x, y)?;
                     scalar

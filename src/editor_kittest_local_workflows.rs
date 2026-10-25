@@ -139,30 +139,12 @@ fn created_linear_and_radial_locals_survive_normal_save_open_source_return_and_g
                         tiff::decoder::Decoder::new(std::fs::File::open(destination).unwrap())
                             .unwrap();
                     assert_eq!(image.dimensions().unwrap(), (size[0], size[1]));
-                    assert!(
-                        image
-                            .get_tag_ascii_string(tiff::tags::Tag::ImageDescription)
-                            .unwrap()
-                            .contains(crate::local_adjustments::CONTRACT)
-                    );
                 }
                 OutputFormat::Exr(_) => {
                     let image = exr::prelude::read_first_flat_layer_from_file(destination).unwrap();
                     assert_eq!(
                         (image.layer_data.size.0, image.layer_data.size.1),
                         (size[0] as usize, size[1] as usize)
-                    );
-                    assert_eq!(
-                        image
-                            .layer_data
-                            .attributes
-                            .other
-                            .get(&exr::prelude::Text::from(
-                                "antitoneLocalAdjustmentProcessing"
-                            )),
-                        Some(&exr::prelude::AttributeValue::Text(
-                            exr::prelude::Text::from(crate::local_adjustments::CONTRACT)
-                        ))
                     );
                 }
             }

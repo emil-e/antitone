@@ -188,14 +188,6 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             match format {
                 OutputFormat::Tiff(_) => {
                     assert!(!tiff_pixels(&path).is_empty());
-                    let mut decoder =
-                        tiff::decoder::Decoder::new(std::fs::File::open(&path).unwrap()).unwrap();
-                    assert!(
-                        decoder
-                            .get_tag_ascii_string(tiff::tags::Tag::ImageDescription)
-                            .unwrap()
-                            .contains(&format!("creative-look-blake3={}", look.lut().id()))
-                    );
                 }
                 OutputFormat::Exr(precision) => {
                     let pixels = exr_pixels(&path, precision);

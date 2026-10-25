@@ -530,13 +530,13 @@ fn save_open_retains_lens_identity_and_flat_references_reject_different_maps_at_
 #[test]
 fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_flat_field() {
     use antitone::{
-        export::{self, ExrPrecision, Overwrite, ProcessingMetadata},
+        export::{self, ExrPrecision, Overwrite},
         flat_field::FlatField,
         geometry::{Composition, PhotoOrientation, RollOrientation},
         gpu::{GpuFlatField, SubmissionGate},
         gpu_export::{self, Format, Request},
         local_adjustments::{PhotoGradeSnapshot, SpatialPipeline},
-        processing::{Calibration, InputSettings, PhotoSettings, Response, RollSettings},
+        processing::{Calibration, InputSettings, PhotoSettings, RollSettings},
         renderer::GpuRenderer,
         rendering::OutputTarget,
     };
@@ -621,7 +621,6 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
                 Overwrite::Confirmed,
             )
             .unwrap();
-            let metadata = ProcessingMetadata::with_grade(Response::film(), &grade);
             match format {
                 Format::Tiff(target) => {
                     export::tiff_composed(
@@ -629,7 +628,6 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
                         composition,
                         target,
                         Overwrite::Confirmed,
-                        metadata,
                         |x, y| scalar.apply(scan.pixel(x, y)?, [x, y]).map(|p| p.rgb),
                     )
                     .unwrap();
@@ -657,7 +655,6 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
                         composition,
                         precision,
                         Overwrite::Confirmed,
-                        metadata,
                         |x, y| scalar.apply(scan.pixel(x, y)?, [x, y]).map(|p| p.rgb),
                     )
                     .unwrap();

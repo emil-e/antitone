@@ -1,7 +1,7 @@
 use crate::export_timing::timed;
 #[cfg(feature = "ocio-reference")]
 use crate::rendering::CpuRenderer;
-use crate::{Error, color::ap1_to_ap0, processing::Response, profiles, rendering::OutputTarget};
+use crate::{Error, color::ap1_to_ap0, profiles, rendering::OutputTarget};
 use exr::{meta::attribute::Chromaticities, prelude::*};
 use glam::DVec3;
 use std::{
@@ -56,42 +56,6 @@ pub enum Overwrite {
     #[default]
     Refuse,
     Confirmed,
-}
-
-/// Processing-contract identifiers, not a reconstructible grade recipe.
-#[derive(Debug, Clone, Copy)]
-pub struct ProcessingMetadata {
-    response: Response,
-    locals: bool,
-    look: Option<[u8; 32]>,
-}
-
-impl ProcessingMetadata {
-    pub fn with_grade(
-        response: Response,
-        grade: &crate::local_adjustments::PhotoGradeSnapshot,
-    ) -> Self {
-        Self {
-            response,
-            locals: !grade.locals().is_empty(),
-            look: None,
-        }
-    }
-
-    pub fn with_look(mut self, id: Option<[u8; 32]>) -> Self {
-        self.look = id;
-        self
-    }
-}
-
-impl From<Response> for ProcessingMetadata {
-    fn from(response: Response) -> Self {
-        Self {
-            response,
-            locals: false,
-            look: None,
-        }
-    }
 }
 
 struct Icc(&'static [u8]);
@@ -167,26 +131,18 @@ pub fn tiff(
     size: ImageSize,
     target: OutputTarget,
     overwrite: Overwrite,
-    response: impl Into<ProcessingMetadata>,
     mut pixel: impl FnMut(u32, u32) -> Result<DVec3>,
 ) -> Result<()> {
     let renderer = CpuRenderer::new(target)?;
-    tiff_encoded(
-        path,
-        size,
-        target,
-        overwrite,
-        response.into(),
-        |origin, extent| {
-            let mut working = Vec::with_capacity((extent[0] * extent[1]) as usize);
-            for row in origin[1]..origin[1] + extent[1] {
-                for x in origin[0]..origin[0] + extent[0] {
-                    working.push(pixel(x, row)?);
-                }
+    tiff_encoded(path, size, target, overwrite, |origin, extent| {
+        let mut working = Vec::with_capacity((extent[0] * extent[1]) as usize);
+        for row in origin[1]..origin[1] + extent[1] {
+            for x in origin[0]..origin[0] + extent[0] {
+                working.push(pixel(x, row)?);
             }
-            target.encode_u16(&renderer.render(&working)?)
-        },
-    )
+        }
+        target.encode_u16(&renderer.render(&working)?)
+    })
 }
 
 /// Scalar/OCIO original-sample reconstruction oracle.
@@ -196,21 +152,19 @@ pub fn tiff_composed(
     composition: crate::geometry::Composition,
     target: OutputTarget,
     overwrite: Overwrite,
-    response: impl Into<ProcessingMetadata>,
     mut pixel: impl FnMut(u32, u32) -> Result<DVec3>,
 ) -> Result<()> {
     let [width, height] = composition.size();
     let size = ImageSize { width, height };
-    let response = response.into();
     if composition.is_exact() {
-        return tiff(path, size, target, overwrite, response, |x, y| {
+        return tiff(path, size, target, overwrite, |x, y| {
             let [sx, sy] = composition.source_pixel([x, y])?;
             pixel(sx, sy)
         });
     }
     let raster = crate::frame_raster::FrameRaster::full(composition)?;
     let renderer = CpuRenderer::new(target)?;
-    tiff_encoded(path, size, target, overwrite, response, |origin, extent| {
+    tiff_encoded(path, size, target, overwrite, |origin, extent| {
         let mut working = Vec::new();
         let mut weights = Vec::new();
         let mut groups = Vec::new();
@@ -246,7 +200,6 @@ pub fn exr_composed(
     composition: crate::geometry::Composition,
     precision: ExrPrecision,
     overwrite: Overwrite,
-    response: impl Into<ProcessingMetadata>,
     mut pixel: impl FnMut(u32, u32) -> Result<DVec3>,
 ) -> Result<()> {
     let [width, height] = composition.size();
@@ -256,7 +209,6 @@ pub fn exr_composed(
         ImageSize { width, height },
         precision,
         overwrite,
-        response,
         |x, y| {
             if composition.is_exact() {
                 let [sx, sy] = composition.source_pixel([x, y])?;
@@ -336,18 +288,9 @@ pub fn tiff_encoded(
     size: ImageSize,
     target: OutputTarget,
     overwrite: Overwrite,
-    metadata: ProcessingMetadata,
     block: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<[u16; 3]>>,
 ) -> Result<()> {
-    tiff_encoded_ordered(
-        path,
-        size,
-        target,
-        overwrite,
-        metadata,
-        BlockOrder::RowMajor,
-        block,
-    )
+    tiff_encoded_ordered(path, size, target, overwrite, BlockOrder::RowMajor, block)
 }
 
 // Only the internal GPU producer selects spatial visits. Public callbacks remain row-major;
@@ -357,38 +300,26 @@ pub(crate) fn tiff_encoded_ordered(
     size: ImageSize,
     target: OutputTarget,
     overwrite: Overwrite,
-    metadata: ProcessingMetadata,
     order: BlockOrder,
     block: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<[u16; 3]>>,
 ) -> Result<()> {
-    tiff_encoded_checked(
-        (path, overwrite),
-        size,
-        target,
-        metadata,
-        order,
-        block,
-        || Ok(()),
-    )
+    tiff_encoded_checked((path, overwrite), size, target, order, block, || Ok(()))
 }
 
 pub(crate) fn tiff_encoded_checked(
     (path, overwrite): (&Path, Overwrite),
     size: ImageSize,
     target: OutputTarget,
-    metadata: ProcessingMetadata,
     order: BlockOrder,
     mut block: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<[u16; 3]>>,
     before_publish: impl FnOnce() -> Result<()>,
 ) -> Result<()> {
-    let response = metadata.response;
-    response.shape()?;
     let count = size.count()?;
     #[cfg(test)]
     let mut before_publish = Some(before_publish);
     #[cfg(test)]
     if let Some(result) =
-        crate::export_timing::pixels::intercept(size, target, metadata, order, &mut block, || {
+        crate::export_timing::pixels::intercept(size, target, order, &mut block, || {
             before_publish.take().expect("one completion check")()
         })
     {
@@ -423,32 +354,6 @@ pub(crate) fn tiff_encoded_checked(
                     .encoder()
                     .write_tag(Tag::Software, "Antitone 0.1")
                     .map_err(failure)?;
-                let model = response.processing_model();
-                let mut description = format!(
-                    "Antitone model {model}; native-camera RGB inversion to AP1; ACES 2 / OCIO 2.6.0; {target:?} v1 / 100-nit SDR; rendering and encoding in matching target RGB"
-                );
-                description.push_str(&format!("; photographic={}", crate::photographic::CONTRACT));
-                if let Some(id) = metadata.look {
-                    let hash = id.iter().map(|b| format!("{b:02x}")).collect::<String>();
-                    description.push_str(&format!(
-                        "; creative-look-blake3={hash}; creative-look-input-range=clip"
-                    ));
-                }
-                if metadata.locals {
-                    description.push_str(&format!(
-                        "; local-adjustments={}",
-                        crate::local_adjustments::CONTRACT
-                    ));
-                }
-                if let Response::Film { toe, shoulder } = response {
-                    description.push_str(&format!(
-                        "; film toe={toe}; shoulder={shoulder}; signed-root continuation above base"
-                    ));
-                }
-                image
-                    .encoder()
-                    .write_tag(Tag::ImageDescription, description.as_str())
-                    .map_err(failure)?;
                 // tiff 0.11.3 activates compression only in write_data, not write_strip.
                 let mut samples = timed!(FrameAllocation, vec![0; count * 3]);
                 for (origin, extent) in ordered_blocks(size, order) {
@@ -478,25 +383,17 @@ pub fn exr(
     size: ImageSize,
     precision: ExrPrecision,
     overwrite: Overwrite,
-    response: impl Into<ProcessingMetadata>,
     mut pixel: impl FnMut(u32, u32) -> Result<DVec3>,
 ) -> Result<()> {
-    exr_blocks(
-        path,
-        size,
-        precision,
-        overwrite,
-        response.into(),
-        |origin, extent| {
-            let mut values = Vec::with_capacity((extent[0] * extent[1]) as usize);
-            for row in origin[1]..origin[1] + extent[1] {
-                for x in origin[0]..origin[0] + extent[0] {
-                    values.push(pixel(x, row)?);
-                }
+    exr_blocks(path, size, precision, overwrite, |origin, extent| {
+        let mut values = Vec::with_capacity((extent[0] * extent[1]) as usize);
+        for row in origin[1]..origin[1] + extent[1] {
+            for x in origin[0]..origin[0] + extent[0] {
+                values.push(pixel(x, row)?);
             }
-            Ok(values)
-        },
-    )
+        }
+        Ok(values)
+    })
 }
 
 pub(crate) fn exr_blocks(
@@ -504,24 +401,18 @@ pub(crate) fn exr_blocks(
     size: ImageSize,
     precision: ExrPrecision,
     overwrite: Overwrite,
-    metadata: ProcessingMetadata,
     block: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<DVec3>>,
 ) -> Result<()> {
-    exr_blocks_checked((path, overwrite), size, precision, metadata, block, || {
-        Ok(())
-    })
+    exr_blocks_checked((path, overwrite), size, precision, block, || Ok(()))
 }
 
 pub(crate) fn exr_blocks_checked(
     (path, overwrite): (&Path, Overwrite),
     size: ImageSize,
     precision: ExrPrecision,
-    metadata: ProcessingMetadata,
     mut block: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<DVec3>>,
     before_publish: impl FnOnce() -> Result<()>,
 ) -> Result<()> {
-    let response = metadata.response;
-    response.shape()?;
     let count = size.count()?;
     let bytes_per_pixel = match precision {
         ExrPrecision::Half => 6,
@@ -586,50 +477,7 @@ pub(crate) fn exr_blocks_checked(
             .map(|(name, values)| AnyChannel::new(name, values))
             .collect(),
     );
-    let mut attributes = LayerAttributes::named("scene-linear AP0");
-    attributes.other.insert(
-        Text::from("antitoneProcessingModel"),
-        AttributeValue::I32(response.processing_model() as i32),
-    );
-    attributes.other.insert(
-        Text::from("antitoneInversionSpace"),
-        AttributeValue::Text(Text::from(
-            "native-camera RGB; post-inversion metadata camera-to-AP1",
-        )),
-    );
-    if let Response::Film { toe, shoulder } = response {
-        attributes.other.insert(
-            Text::from("antitoneFilmResponse"),
-            AttributeValue::Text(Text::from(
-                format!("toe={toe}; shoulder={shoulder}; signed-root continuation above base")
-                    .as_str(),
-            )),
-        );
-    }
-    attributes.other.insert(
-        Text::from("antitonePhotographicProcessing"),
-        AttributeValue::Text(Text::from(crate::photographic::CONTRACT)),
-    );
-    if metadata.locals {
-        attributes.other.insert(
-            Text::from("antitoneLocalAdjustmentProcessing"),
-            AttributeValue::Text(Text::from(crate::local_adjustments::CONTRACT)),
-        );
-    }
-    attributes.other.insert(
-        Text::from("antitoneColorSpace"),
-        AttributeValue::Text(Text::from(
-            "linear AP0 / ACES2065-1 primaries, D60; no output rendering",
-        )),
-    );
-    attributes.other.insert(
-        Text::from("antitoneExposureConvention"),
-        AttributeValue::Text(Text::from(if metadata.locals {
-            "global 2^(roll stops + photo stops) before global photographic Bradford WB; ordered mask-weighted local exposure/WB/contrast/saturation after the global grade"
-        } else {
-            "2^(roll stops + photo stops), applied before photographic Bradford WB"
-        })),
-    );
+    let attributes = LayerAttributes::named("scene-linear AP0");
     let layer = Layer::new(
         (size.width as usize, size.height as usize),
         attributes,

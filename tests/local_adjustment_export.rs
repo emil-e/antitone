@@ -14,17 +14,14 @@ use antitone::{
         SourceRegion,
     },
     local_adjustments::{GradientMask, LocalAdjustment, SpatialPipeline},
-    processing::{Calibration, InputSettings, PhotoSettings, Pipeline, Response, RollSettings},
+    processing::{Calibration, InputSettings, PhotoSettings, Pipeline, RollSettings},
     project::{Development, LocalAdjustments, Project, Save, Source, SourceDevelopment, SourceId},
     rendering::{CpuRenderer, OutputTarget},
     sampling::weighted_mean_iter,
 };
 use exr::prelude::*;
 use glam::{DMat3, DVec3};
-use tiff::{
-    decoder::{Decoder, DecodingResult},
-    tags::Tag,
-};
+use tiff::decoder::{Decoder, DecodingResult};
 
 #[test]
 fn persisted_locals_export_at_source_centres_before_rotated_reconstruction() {
@@ -131,7 +128,6 @@ fn persisted_locals_export_at_source_centres_before_rotated_reconstruction() {
     )
     .unwrap();
     let grade = source.grade_snapshot().unwrap();
-    let metadata = export::ProcessingMetadata::with_grade(Response::film(), &grade);
     let spatial = SpatialPipeline::new(
         InputSettings::negative(calibration),
         loaded.roll,
@@ -180,22 +176,12 @@ fn persisted_locals_export_at_source_centres_before_rotated_reconstruction() {
     let [width, height] = composition.size();
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
         let path = directory.path().join(format!("local-{target:?}.tif"));
-        export::tiff_composed(
-            &path,
-            composition,
-            target,
-            Overwrite::Refuse,
-            metadata,
-            |x, y| spatial.apply(camera(x, y), [x, y]).map(|pixel| pixel.rgb),
-        )
+        export::tiff_composed(&path, composition, target, Overwrite::Refuse, |x, y| {
+            spatial.apply(camera(x, y), [x, y]).map(|pixel| pixel.rgb)
+        })
         .unwrap();
         let mut decoder = Decoder::new(std::fs::File::open(path).unwrap()).unwrap();
         assert_eq!(decoder.dimensions().unwrap(), (width, height));
-        let description = decoder.get_tag_ascii_string(Tag::ImageDescription).unwrap();
-        assert!(description.contains(antitone::local_adjustments::CONTRACT));
-        assert!(description.contains(antitone::photographic::CONTRACT));
-        assert!(!description.contains("Linear exposure"));
-        assert!(!description.contains("Radial saturation"));
         let DecodingResult::U16(actual) = decoder.read_image().unwrap() else {
             panic!()
         };
@@ -229,26 +215,11 @@ fn persisted_locals_export_at_source_centres_before_rotated_reconstruction() {
     }
     for precision in [ExrPrecision::Half, ExrPrecision::Full] {
         let path = directory.path().join(format!("local-{precision:?}.exr"));
-        export::exr_composed(
-            &path,
-            composition,
-            precision,
-            Overwrite::Refuse,
-            metadata,
-            |x, y| spatial.apply(camera(x, y), [x, y]).map(|pixel| pixel.rgb),
-        )
+        export::exr_composed(&path, composition, precision, Overwrite::Refuse, |x, y| {
+            spatial.apply(camera(x, y), [x, y]).map(|pixel| pixel.rgb)
+        })
         .unwrap();
         let image = read_first_flat_layer_from_file(path).unwrap();
-        assert_eq!(
-            image
-                .layer_data
-                .attributes
-                .other
-                .get(&Text::from("antitoneLocalAdjustmentProcessing")),
-            Some(&AttributeValue::Text(Text::from(
-                antitone::local_adjustments::CONTRACT
-            )))
-        );
         let mut signed = false;
         let mut hdr = false;
         for channel in &image.layer_data.channel_data.list {
@@ -287,161 +258,5 @@ fn persisted_locals_export_at_source_centres_before_rotated_reconstruction() {
             signed && hdr,
             "fixture must exercise signed/HDR AP0: signed={signed}, hdr={hdr}"
         );
-    }
-}
-
-#[test]
-fn contract_metadata_tracks_snapshot_presence_including_inactive_records() {
-    use antitone::processing::Response;
-    let directory = tempfile::tempdir().unwrap();
-    let area = SourceRegion {
-        x: 0,
-        y: 0,
-        width: 1,
-        height: 1,
-    };
-    let composition = Composition::new(
-        area,
-        RollOrientation::default(),
-        PhotoOrientation::default(),
-    )
-    .unwrap();
-    for case in [
-        "absent",
-        "allocator-only",
-        "disabled",
-        "identity",
-        "zero-strength",
-        "active",
-    ] {
-        let present = !matches!(case, "absent" | "allocator-only");
-        let mut locals = LocalAdjustments::default();
-        if case != "absent" {
-            let id = locals
-                .add(
-                    "private recipe name".into(),
-                    LocalAdjustment {
-                        mask: GradientMask::Linear {
-                            start: SourcePoint([0., 0.]),
-                            end: SourcePoint([1., 0.]),
-                        },
-                        photo: PhotoSettings {
-                            exposure: if case == "identity" { 0. } else { 1. },
-                            ..Default::default()
-                        },
-                        enabled: case != "disabled",
-                        invert: false,
-                        strength: if case == "zero-strength" { 0. } else { 1. },
-                    },
-                )
-                .unwrap();
-            if case == "allocator-only" {
-                locals.remove(id).unwrap();
-                assert!(locals.next_id > 1);
-            }
-        }
-        let mut source = Source {
-            id: SourceId(1),
-            path: "private-source.ARW".into(),
-            development: SourceDevelopment {
-                decode: Development::new("test-backend".into(), [1.; 4]),
-                lens_correction: None,
-                dng_development: None,
-                dimensions: [1, 1],
-                active_area: [0, 0, 1, 1],
-                camera_model: "test-camera".into(),
-                camera_to_ap1: DMat3::IDENTITY.to_cols_array_2d(),
-                input_floor: 1. / 65535.,
-            },
-            reference_only: false,
-            photo: PhotoSettings::default(),
-            local_adjustments: (case != "absent").then_some(locals),
-            repairs: Default::default(),
-            orientation: PhotoOrientation::default(),
-            crop: None,
-        };
-        let grade = source.grade_snapshot().unwrap();
-        for response in [
-            Response::Original,
-            Response::Film {
-                toe: 2.54321,
-                shoulder: 0.00321,
-            },
-        ] {
-            let metadata = export::ProcessingMetadata::with_grade(response, &grade);
-            // Later document changes cannot relabel an already captured export snapshot.
-            source.local_adjustments = None;
-            for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-                let path = directory
-                    .path()
-                    .join(format!("{case}-{response:?}-{target:?}.tif"));
-                export::tiff_composed(
-                    &path,
-                    composition,
-                    target,
-                    Overwrite::Refuse,
-                    metadata,
-                    |_, _| Ok(DVec3::splat(0.18)),
-                )
-                .unwrap();
-                let mut decoder = Decoder::new(std::fs::File::open(path).unwrap()).unwrap();
-                let description = decoder.get_tag_ascii_string(Tag::ImageDescription).unwrap();
-                assert_eq!(
-                    description.contains(antitone::local_adjustments::CONTRACT),
-                    present,
-                    "{case}"
-                );
-                assert!(description.contains(antitone::photographic::CONTRACT));
-                assert!(description.contains("Antitone model 4"));
-                assert!(!description.contains("private recipe name"));
-                assert!(!description.contains("private-source.ARW"));
-                if let Response::Film { .. } = response {
-                    assert!(description.contains("toe=2.54321; shoulder=0.00321"));
-                }
-            }
-            for precision in [ExrPrecision::Half, ExrPrecision::Full] {
-                let path = directory
-                    .path()
-                    .join(format!("{case}-{response:?}-{precision:?}.exr"));
-                export::exr_composed(
-                    &path,
-                    composition,
-                    precision,
-                    Overwrite::Refuse,
-                    metadata,
-                    |_, _| Ok(DVec3::splat(0.18)),
-                )
-                .unwrap();
-                let image = read_first_flat_layer_from_file(path).unwrap();
-                let attrs = &image.layer_data.attributes.other;
-                let expected = present.then(|| {
-                    AttributeValue::Text(Text::from(antitone::local_adjustments::CONTRACT))
-                });
-                assert_eq!(
-                    attrs.get(&Text::from("antitoneLocalAdjustmentProcessing")),
-                    expected.as_ref(),
-                    "{case}"
-                );
-                assert_eq!(
-                    attrs.get(&Text::from("antitonePhotographicProcessing")),
-                    Some(&AttributeValue::Text(Text::from(
-                        antitone::photographic::CONTRACT
-                    )))
-                );
-                let Some(AttributeValue::Text(exposure)) =
-                    attrs.get(&Text::from("antitoneExposureConvention"))
-                else {
-                    panic!("missing exposure convention")
-                };
-                assert_eq!(
-                    exposure.to_string().contains("after the global grade"),
-                    present
-                );
-                assert_eq!(
-                    attrs.get(&Text::from("antitoneProcessingModel")),
-                    Some(&AttributeValue::I32(4))
-                );
-            }
-        }
     }
 }
