@@ -156,6 +156,12 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         wait_for(&mut harness, |e| !e.busy);
         let mut expected = before.clone();
         expected.order = vec![ids[1], ids[3], ids[4]];
+        expected
+            .sources
+            .retain(|source| source.id != ids[0] && source.id != ids[2]);
+        expected
+            .analysis_regions
+            .retain(|entry| entry.source != ids[0] && entry.source != ids[2]);
         harness.read(|editor| assert_eq!(editor.document.project, expected));
         harness.read(|editor| assert_eq!(editor.current_source, Some(ids[4])));
         harness.read(|editor| assert_eq!(editor.selected, 2));
@@ -187,6 +193,9 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         harness.get_by_label("Remove photos").click();
         harness.step();
         expected.order.clear();
+        let reference = before.flat_field().unwrap().reference;
+        expected.sources.retain(|source| source.id == reference);
+        expected.analysis_regions.clear();
         harness.read(|editor| assert_eq!(editor.document.project, expected));
         harness.read(|editor| {
             assert!(editor.document.visit.ready.is_none() && editor.current_source.is_none())
@@ -210,10 +219,25 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         });
         harness.enter(|editor, cx| editor.add_raws(vec![paths[0].clone()], cx));
         wait_for(&mut harness, |e| !e.busy);
-        expected.order = vec![ids[0]];
-        harness.read(|editor| assert_eq!(editor.document.project, expected));
-        harness.read(|editor| assert_eq!(editor.photo.exposure, 0.123456789012345));
-        harness.read(|editor| assert_eq!(editor.current_source, Some(ids[0])));
+        let new_id = harness.read(|editor| editor.current_source.unwrap());
+        assert_ne!(new_id, ids[0]);
+        harness.read(|editor| {
+            assert_eq!(editor.document.project.order, vec![new_id]);
+            let source = editor.document.project.source(new_id).unwrap();
+            assert_eq!(source.path, paths[0]);
+            assert_eq!(source.photo.exposure, 0.);
+            assert!(source.repairs.repairs().is_empty());
+            assert_eq!(editor.document.project.sources.len(), 2);
+            assert!(
+                editor
+                    .document
+                    .project
+                    .source(reference)
+                    .unwrap()
+                    .reference_only
+            );
+            assert_eq!(editor.photo.exposure, 0.);
+        });
         harness.read(|editor| assert!(editor.document.visit.ready.is_some()));
         for (path, bytes) in paths.iter().zip(originals) {
             assert_eq!(

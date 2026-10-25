@@ -201,14 +201,16 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
                 })
                 .unwrap();
             if reference_only {
-                project.remove_from_filmstrip(id).unwrap();
                 reference_id = Some(id);
             }
         }
+        let reference_id = reference_id.unwrap();
         project.set_flat_field(Some(FlatFieldSettings::new(
-            project.source(reference_id.unwrap()).unwrap(),
+            project.source(reference_id).unwrap(),
             map.clone(),
         )));
+        project.remove_from_filmstrip(reference_id).unwrap();
+        assert!(project.source(reference_id).unwrap().reference_only);
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("corrected.antitone.json");
         project.save(&path, Save::New).unwrap();

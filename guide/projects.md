@@ -33,9 +33,11 @@ exports.
 ## Managing the photos in a project
 
 - **File → Add Scans…** adds more RAW files (references only).
-- Select photos in the filmstrip and use the filmstrip's remove action to drop photos
-  **from the project** ("Remove N photos from project?") — this never deletes files from
-  disk. **Auto-crop selected photos** applies auto-crop to a selection.
+- Select photos in the filmstrip and use the filmstrip's remove action to remove them
+  **from the project** ("Remove N photos from project?") — this deletes their project
+  settings and dust repairs but never deletes RAW files from disk. An accepted flat-field
+  reference stays as a reference-only record until correction is cleared. **Auto-crop
+  selected photos** applies auto-crop to a selection.
 
 One project is one roll: scans that share a camera, lens and light. A project keeps its
 calibration basis, so scans made under a fundamentally different setup belong in a

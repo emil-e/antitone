@@ -145,7 +145,7 @@ Selection is temporary workspace state, separate from each source's accepted Pho
 - Plain click makes that photo active, retaining or replacing the selection; arrow navigation uses the same rule.
 - Cmd-click toggles membership without changing the active photo; Shift-click selects the contiguous range from the last plain-click anchor; Shift–Cmd–A reduces the selection to the active photo.
 
-**Remove selected photos…** (a selected card's context menu, or Delete/Backspace outside text editing) requires confirmation and participates in undo. It changes only filmstrip membership: RAW files, retained source settings, calibration and correction remain untouched, and the next active position is the old index in the shortened roll rather than the next surviving identity.
+**Remove selected photos…** (a selected card's context menu, or Delete/Backspace outside text editing) requires confirmation and participates in undo. It deletes each selected photo's source record and analysis support; RAW files stay on disk and project calibration and output remain. An accepted flat-field reference survives as a reference-only record until correction is cleared. Undo restores the removed records. The next active position is the old index in the shortened roll rather than the next surviving identity.
 
 ## Responsiveness and optional caches
 

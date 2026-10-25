@@ -130,16 +130,28 @@ fn device_preflight_is_read_only_and_missing_device_or_calibration_fails_closed(
 }
 
 #[test]
-fn device_preflight_includes_offscreen_and_nonfilmstrip_grades_and_validates_inactive_records() {
+fn device_preflight_includes_offscreen_photos_and_the_flat_field_reference_and_validates_inactive_records()
+ {
     pollster::block_on(async {
         let device = device().await;
         let directory = tempfile::tempdir().unwrap();
-        for nonfilmstrip in [false, true] {
+        for reference_only in [false, true] {
             let mut document = calibrated(directory.path());
             let id = document.project.sources[1].id;
-            if nonfilmstrip {
+            if reference_only {
                 document.project.order.retain(|source| *source != id);
-                document.project.source_mut(id).unwrap().reference_only = true;
+                let source = document.project.source(id).unwrap();
+                let map = Arc::new(
+                    crate::flat_field::FlatField::from_nodes(
+                        source.development.active_area,
+                        [2, 2],
+                        vec![DVec3::ONE; 4],
+                    )
+                    .unwrap(),
+                );
+                let field = crate::project::FlatFieldSettings::new(source, map);
+                document.project.set_flat_field(Some(field));
+                assert!(document.project.source(id).unwrap().reference_only);
             }
             document.project.source_mut(id).unwrap().local_adjustments = Some(unsupported_locals());
             let before = document.project.clone();
@@ -211,18 +223,55 @@ fn document_device_preflight_uses_the_effective_correction_floor_and_runtime_bas
 }
 
 #[test]
-fn device_aware_save_and_open_validate_retired_grades_before_io_and_preserve_rejected_candidates() {
+fn device_aware_save_and_open_validate_flat_field_reference_grades_before_io_and_preserve_rejected_candidates()
+ {
     pollster::block_on(async {
         let device = device().await;
         let directory = tempfile::tempdir().unwrap();
         let mut document = calibrated(directory.path());
-        document.project.order.clear();
-        let path = directory.path().join("retired.json");
+        let reference = document.project.sources[1].clone();
+        document
+            .project
+            .source_mut(reference.id)
+            .unwrap()
+            .local_adjustments = Some(locals());
+        let map = Arc::new(
+            crate::flat_field::FlatField::from_nodes(
+                reference.development.active_area,
+                [2, 2],
+                vec![DVec3::ONE; 4],
+            )
+            .unwrap(),
+        );
+        document
+            .project
+            .set_flat_field(Some(crate::project::FlatFieldSettings::new(
+                &reference, map,
+            )));
+        let ordered = document.project.order[0];
+        document.project.remove_from_filmstrip(ordered).unwrap();
+        document
+            .project
+            .remove_from_filmstrip(reference.id)
+            .unwrap();
+        assert!(document.project.order.is_empty());
+        assert_eq!(document.project.sources.len(), 1);
+        assert!(
+            document
+                .project
+                .source(reference.id)
+                .unwrap()
+                .reference_only
+        );
+        let path = directory.path().join("reference.json");
         let saved = document
             .save_with_device(&path, Save::New, Some(&device))
             .unwrap();
         assert!(document.dirty());
         assert!(!saved.dirty());
+        for name in ["one.ARW", "two.ARW"] {
+            std::fs::remove_file(directory.path().join(name)).unwrap();
+        }
         let opened = Document::open_with_progress(&path, Some(&device), |_, _| {}).unwrap();
         assert_eq!(opened.project, saved.project);
         assert_eq!(
@@ -234,7 +283,7 @@ fn device_aware_save_and_open_validate_retired_grades_before_io_and_preserve_rej
             30
         );
         let mut rejected = saved.clone();
-        rejected.project.sources[1].local_adjustments = Some(unsupported_locals());
+        rejected.project.sources[0].local_adjustments = Some(unsupported_locals());
         let before = rejected.project.clone();
         let bytes = std::fs::read(&path).unwrap();
         assert!(
@@ -261,7 +310,8 @@ fn device_aware_save_and_open_validate_retired_grades_before_io_and_preserve_rej
 }
 
 #[test]
-fn unsupported_retired_grade_blocks_source_and_export_before_retiring_accepted_state_or_dispatch() {
+fn unsupported_offscreen_grade_blocks_source_and_export_before_retiring_accepted_state_or_dispatch()
+{
     pollster::block_on(async {
         let (mut editor, _, _) = crate::editor::processing::tests::fixture().await;
         editor.sync_document();
@@ -281,7 +331,7 @@ fn unsupported_retired_grade_blocks_source_and_export_before_retiring_accepted_s
         retired.path = "retired.ARW".into();
         retired.local_adjustments = Some(unsupported_locals());
         let id = editor.document.project.add_source(retired).unwrap();
-        editor.document.project.order.retain(|source| *source != id);
+        assert!(editor.document.project.order.contains(&id));
         let before = editor.document.project.clone();
         let selected = editor.current_source;
         let loaded = editor.id;

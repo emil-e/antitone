@@ -132,8 +132,21 @@ fn retained_evidence_does_not_make_a_removed_or_reference_source_a_photo_proposa
     let id = cases[0].spec.source;
     let ordinary = cases[0].project.clone();
     assert!(proposal(&cases[0]).is_ok());
+    let source = cases[0].project.source(id).unwrap();
+    let map = std::sync::Arc::new(
+        crate::flat_field::FlatField::from_nodes(
+            source.development.active_area,
+            [2, 2],
+            vec![glam::DVec3::ONE; 4],
+        )
+        .unwrap(),
+    );
+    let field = crate::project::FlatFieldSettings::new(source, map);
+    cases[0].project.set_flat_field(Some(field));
     cases[0].project.remove_from_filmstrip(id).unwrap();
     cases[0].project.validate().unwrap();
+    assert!(!cases[0].project.order.contains(&id));
+    assert!(cases[0].project.source(id).unwrap().reference_only);
     assert_eq!(
         report(&cases, &margins).unwrap()["cases"][0]["proposals"][0]["status"],
         "abstain"

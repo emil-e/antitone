@@ -228,16 +228,19 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
                 .unwrap()
                 .local_adjustments = Some(locals.clone());
         }
-        let mut retired = editor
+        if let Some(reference_id) = editor
             .document
             .project
-            .source(editor.current_source.unwrap())
-            .unwrap()
-            .clone();
-        retired.id = SourceId(0);
-        retired.path = "retired-local-reference.dng".into();
-        retired.photo = PhotoSettings::default();
-        editor.document.register_reference(retired).unwrap();
+            .flat_field()
+            .map(|field| field.reference)
+        {
+            editor
+                .document
+                .project
+                .source_mut(reference_id)
+                .unwrap()
+                .local_adjustments = Some(locals);
+        }
         editor.select_adjustment(super::super::adjustments::Target::Local(ids[0]));
         editor.sync_document();
         editor

@@ -142,6 +142,48 @@ fn accepted_per_source_analysis_support_roundtrips_and_rejects_invalid_associati
 }
 
 #[test]
+fn load_prunes_legacy_nonordered_records_but_keeps_the_flat_field_reference() {
+    use antitone::{flat_field::FlatField, scan_regions::Areas};
+    let directory = tempfile::tempdir().unwrap();
+    let (mut project, kept, reference) = fixture(directory.path());
+    let map = std::sync::Arc::new(
+        FlatField::from_nodes(
+            project.source(reference).unwrap().development.active_area,
+            [2, 2],
+            vec![DVec3::ONE; 4],
+        )
+        .unwrap(),
+    );
+    project.set_flat_field(Some(FlatFieldSettings::new(
+        project.source(reference).unwrap(),
+        map,
+    )));
+    project.remove_from_filmstrip(reference).unwrap();
+    let mut dormant = project.source(kept).unwrap().clone();
+    dormant.id = SourceId(0);
+    dormant.path = "dormant.ARW".into();
+    let dormant_id = project.add_source(dormant).unwrap();
+    project.order.retain(|id| *id != dormant_id);
+    project.analysis_regions.push(SourceAnalysis {
+        source: dormant_id,
+        areas: Areas::default(),
+    });
+    project.analysis_regions.push(SourceAnalysis {
+        source: reference,
+        areas: Areas::default(),
+    });
+    let path = directory.path().join("legacy-dormant.antitone.json");
+    std::fs::write(&path, serde_json::to_vec_pretty(&project).unwrap()).unwrap();
+    let loaded = Project::load(&path).unwrap();
+    assert_eq!(loaded.order, vec![kept]);
+    assert!(loaded.source(dormant_id).is_err());
+    assert!(loaded.source(reference).unwrap().reference_only);
+    assert_eq!(loaded.flat_field().unwrap().reference, reference);
+    assert!(loaded.analysis_regions.is_empty());
+    loaded.validate().unwrap();
+}
+
+#[test]
 fn input_stage_roundtrips() {
     let directory = tempfile::tempdir().unwrap();
     let (mut project, _id, _other) = fixture(directory.path());
@@ -432,10 +474,10 @@ fn atomic_roundtrip_preserves_calibration_and_output_after_removal_and_missing_s
     let before = Pipeline::new(
         project.input,
         project.roll,
-        project.source(dmin_source_id).unwrap().photo,
+        project.source(dmax_source_id).unwrap().photo,
         glam::DMat3::from_cols_array_2d(
             &project
-                .source(dmin_source_id)
+                .source(dmax_source_id)
                 .unwrap()
                 .development
                 .camera_to_ap1,
@@ -445,6 +487,7 @@ fn atomic_roundtrip_preserves_calibration_and_output_after_removal_and_missing_s
     .apply(DVec3::new(0.08, 0.04, 0.015))
     .unwrap();
     project.remove_from_filmstrip(dmin_source_id).unwrap();
+    assert!(project.source(dmin_source_id).is_err());
     project.order.reverse();
     project.source_mut(dmax_source_id).unwrap().reference_only = true;
     let path = dir.path().join("roll.antitone.json");
@@ -457,10 +500,10 @@ fn atomic_roundtrip_preserves_calibration_and_output_after_removal_and_missing_s
     let after = Pipeline::new(
         restored.input,
         restored.roll,
-        restored.source(dmin_source_id).unwrap().photo,
+        restored.source(dmax_source_id).unwrap().photo,
         glam::DMat3::from_cols_array_2d(
             &restored
-                .source(dmin_source_id)
+                .source(dmax_source_id)
                 .unwrap()
                 .development
                 .camera_to_ap1,

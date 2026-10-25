@@ -26,7 +26,7 @@ fn record(path: &str) -> Source {
 }
 
 #[test]
-fn dormant_reference_preview_reacquires_for_the_current_stage() {
+fn removed_reference_preview_does_not_reuse_a_deleted_record() {
     let mut editor = Editor::state();
     let reference = editor.document.register(record("light.ARW")).unwrap();
     editor
@@ -34,6 +34,7 @@ fn dormant_reference_preview_reacquires_for_the_current_stage() {
         .project
         .remove_from_filmstrip(reference)
         .unwrap();
+    assert!(editor.document.project.source(reference).is_err());
 
     editor.document.project.input = crate::processing::InputSettings::Digital;
     let request = editor.reference_preview_input("light.ARW".into());
