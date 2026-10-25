@@ -144,7 +144,7 @@ fn nominal_crop_applies_across_missing_film_and_analyze_keeps_that_framing() {
                 crop.region([8, 8, 496, 496].into()).unwrap(),
                 analysis::rect([96, 96, 320, 320])
             );
-            assert_eq!(editor.document.project.dmin, before.dmin);
+            assert_eq!(editor.document.project.dmin(), before.dmin());
             assert_eq!(*editor.document.spatial.ready(), metadata);
             editor.document.project.clone()
         });
@@ -157,7 +157,7 @@ fn nominal_crop_applies_across_missing_film_and_analyze_keeps_that_framing() {
         app.run_until(LIMIT, |editor| !editor.busy);
         app.read(|editor| {
             assert!(editor.status.contains("Analyzed"), "{}", editor.status);
-            assert!(editor.document.project.dmin.is_some());
+            assert!(editor.document.project.dmin().is_some());
             assert_eq!(
                 editor.document.project.source(target).unwrap().crop,
                 accepted.source(target).unwrap().crop,

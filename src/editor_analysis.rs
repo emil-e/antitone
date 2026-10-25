@@ -143,9 +143,7 @@ fn proposed_document(
         return Err(Error::UnusableSample("analysis photo count changed"));
     }
     let mut candidate = document.clone();
-    candidate.project.dmin = Some(proposal.dmin.to_array());
-    candidate.project.dmax = Some(proposal.dmax.to_array());
-    candidate.project.input_floor = Some(crate::processing::CAMERA_INPUT_FLOOR);
+    candidate.project.input = proposal.input;
     candidate.project.roll = proposal.roll;
     for (id, photo) in document.project.order.iter().zip(proposal.photos) {
         let source = candidate.project.source_mut(*id)?;
@@ -168,13 +166,12 @@ pub(super) fn develop_scan(
     wb: [f64; 4],
     cancelled: impl Fn() -> bool,
 ) -> Result<Option<Scan>, Error> {
-    let cache = LoadCache::new(path, Some(expected), Some(wb), document);
+    let cache = LoadCache::new(path, Some(expected), document);
     let result = developments.load(
         development::Request {
             path: path.to_owned(),
             wb: Some(wb),
             expected: Some(expected.clone()),
-            basis: document.project.camera_basis.clone(),
             file: cache.file,
             key: cache.key,
             store: Some(cache.store),
@@ -265,6 +262,7 @@ impl Editor {
         use icons::Icon;
         use presentation::{ToolButton, ToolShelf};
         let reviewing = self.document.analysis_review.is_some();
+        let capabilities = self.input.capabilities();
         let commands = !self.busy
             && self.document.visit.ready.is_some()
             && self.pick.is_none()
@@ -322,38 +320,42 @@ impl Editor {
                     self.control_command(editing::Command::Roll(action), cx);
                 }
             }
-            ui.separator();
-            if ToolButton::tool(
-                Icon::Analyze,
-                "Analyze",
-                "Prepare and review sampling areas, then estimate the roll's starting grade.",
-                reviewing,
-            )
-            .enabled(!self.busy && (reviewing || commands))
-            .show(ui)
-            .clicked()
-            {
-                if reviewing {
-                    self.finish_pick(cx);
-                } else {
-                    analyze = true;
+            if capabilities.roll_analysis || reviewing {
+                ui.separator();
+                if ToolButton::tool(
+                    Icon::Analyze,
+                    "Analyze",
+                    "Prepare and review sampling areas, then estimate the roll's starting grade.",
+                    reviewing,
+                )
+                .enabled(!self.busy && (reviewing || commands))
+                .show(ui)
+                .clicked()
+                {
+                    if reviewing {
+                        self.finish_pick(cx);
+                    } else {
+                        analyze = true;
+                    }
                 }
             }
-            let cropping = self.document.auto_crop_edit.is_some();
-            if ToolButton::tool(
-                Icon::Crop,
-                "Auto-crop roll",
-                "Propose crop and straightening for the whole roll.",
-                cropping,
-            )
-            .enabled(cropping || self.auto_crop_entry_available())
-            .show(ui)
-            .clicked()
-            {
-                if cropping {
-                    self.finish_auto_crop(false);
-                } else {
-                    self.auto_crop_requested = Some(auto_crop::Target::Roll);
+            if capabilities.auto_crop {
+                let cropping = self.document.auto_crop_edit.is_some();
+                if ToolButton::tool(
+                    Icon::Crop,
+                    "Auto-crop roll",
+                    "Propose crop and straightening for the whole roll.",
+                    cropping,
+                )
+                .enabled(cropping || self.auto_crop_entry_available())
+                .show(ui)
+                .clicked()
+                {
+                    if cropping {
+                        self.finish_auto_crop(false);
+                    } else {
+                        self.auto_crop_requested = Some(auto_crop::Target::Roll);
+                    }
                 }
             }
         });
@@ -503,9 +505,7 @@ impl Editor {
                 self.document.install(outcome.document);
                 self.document.visit.adjustments = Adjustments::default();
                 self.grades.clear();
-                self.dmin = self.document.project.dmin.map(DVec3::from_array);
-                self.dmax = self.document.project.dmax.map(DVec3::from_array);
-                self.floor = self.document.project.input_floor.unwrap();
+                self.load_input(self.document.project.input);
                 self.roll = self.document.project.roll;
                 self.photo = photo;
                 self.source = false;

@@ -687,10 +687,8 @@ fn flat_fixture(editor: &mut Editor) {
         path: record.path.clone(),
         area: ready.area,
         analysis_support: None,
-        floor: ready.floor,
         proxy: ready.proxy.clone(),
         record,
-        development: ready.development.clone(),
     };
     crate::editor::tests::paused_reference_fixture(editor, reference, None);
 }
@@ -1012,6 +1010,7 @@ fn picker_bar_actions_preserve_cancel_and_measurement_transactions() {
                     height: 32,
                 }));
             });
+            warm(app, &context, size);
             let text = labels(app, &context, size, vec![]);
             click(
                 app,
@@ -1020,7 +1019,11 @@ fn picker_bar_actions_preserve_cancel_and_measurement_transactions() {
                 text.iter().find(|(s, _)| s == "Apply").unwrap().1.center(),
             );
             app.read(|editor| {
-                assert!(editor.busy);
+                assert!(
+                    editor.busy,
+                    "{pick:?}: {}; pick={:?}, region={:?}",
+                    editor.status, editor.pick, editor.region
+                );
                 assert_eq!(editor.document.project, project);
                 assert_eq!(
                     editor.document.visit.measurement.as_ref().unwrap().kind,
@@ -1082,7 +1085,7 @@ fn measurement_button_and_enter_register_and_finish_without_the_post_draw_launch
         )
         .reference_coverage(region)
         .unwrap();
-        editor.dmin = Some(expected * 1.05);
+        editor.set_dmin(Some(expected * 1.05));
         editor.sync_document();
         with_application(editor, |app| {
             let context = egui::Context::default();
@@ -1093,6 +1096,7 @@ fn measurement_button_and_enter_register_and_finish_without_the_post_draw_launch
                 editor.begin_pick(Pick::Dmin, &crate::application::UiContext::render_only());
                 editor.region = Some(region);
             });
+            warm(&mut feature, &context, size);
             if enter {
                 frame(&mut feature, &context, size, key(egui::Key::Enter));
             } else {
@@ -1119,7 +1123,11 @@ fn measurement_button_and_enter_register_and_finish_without_the_post_draw_launch
                 );
             }
             feature.0.read(|editor| {
-                assert!(editor.busy);
+                assert!(
+                    editor.busy,
+                    "enter={enter}: {}; pick={:?}, region={:?}",
+                    editor.status, editor.pick, editor.region
+                );
                 assert!(
                     !editor
                         .document
@@ -1130,7 +1138,7 @@ fn measurement_button_and_enter_register_and_finish_without_the_post_draw_launch
                         ._task
                         .is_finished()
                 );
-                assert_eq!(editor.dmin, Some(expected * 1.05));
+                assert_eq!(editor.dmin(), Some(expected * 1.05));
             });
             // This is a real application's first executor turn after input, not
             // an inert fixture. No other frame or central launch call follows.
@@ -1138,7 +1146,7 @@ fn measurement_button_and_enter_register_and_finish_without_the_post_draw_launch
                 .0
                 .run_until(Duration::from_secs(5), |editor| !editor.busy);
             feature.0.read(|editor| {
-                assert_eq!(editor.dmin, Some(expected), "{}", editor.status);
+                assert_eq!(editor.dmin(), Some(expected), "{}", editor.status);
                 assert!(editor.pick.is_none() && editor.document.visit.measurement.is_none());
                 assert!(editor.history_label(history::Direction::Undo).is_some());
             });
@@ -1296,8 +1304,8 @@ fn source_inspection_is_hidden_outside_source_view_without_losing_its_value() {
 #[test]
 fn uncalibrated_view_remains_source_only_with_the_positive_toggle_disabled() {
     let mut editor = fixture();
-    editor.dmin = None;
-    editor.dmax = None;
+    editor.set_dmin(None);
+    editor.set_dmax(None);
     editor.source = false;
     add_ready_fixture(&mut editor);
     let context = egui::Context::default();
@@ -1330,11 +1338,11 @@ fn sampling_rejects_sources_that_are_not_in_the_roll_without_changing_the_pick()
         .ready
         .as_ref()
         .unwrap()
-        .development
+        .development()
         .clone();
     let reference_id = editor
         .document
-        .register_reference(reference, development)
+        .register_reference_with_development(reference, development)
         .unwrap();
     editor.begin_pick(Pick::Dmin, &crate::application::UiContext::render_only());
     editor.region = Some(Coverage::rectangle(Rect {

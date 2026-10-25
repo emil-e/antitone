@@ -3,7 +3,7 @@ use antitone as api;
 use api::{
     color::Balance,
     gpu::{ProcessingKernel, ProcessingParameters, ProcessingSource},
-    processing::{PhotoSettings, Pipeline, RollSettings},
+    processing::{DEFAULT_GAMMA, InputSettings, PhotoSettings, Pipeline, Response, RollSettings},
 };
 use glam::Vec4;
 #[path = "support/train_raw.rs"]
@@ -16,11 +16,18 @@ fn train_native_source_and_gpu_match_scalar_with_unchanged_numerical_gate() {
     let (_, _, codes) = train.preview_source(512).unwrap();
     let roll = RollSettings {
         exposure: 0.5,
+        ..RollSettings::default()
+    };
+    let input = InputSettings::Negative {
+        dmin: Some(cal.dmin),
+        dmax: Some(cal.dmax),
+        input_floor: cal.input_floor,
+        response: Response::film(),
+        gamma: DEFAULT_GAMMA,
         balance: Balance {
             warmth: 0.17,
             tint: -0.11,
         },
-        ..RollSettings::new_grade()
     };
     let photo = PhotoSettings {
         exposure: 0.25,
@@ -30,8 +37,8 @@ fn train_native_source_and_gpu_match_scalar_with_unchanged_numerical_gate() {
         },
         ..PhotoSettings::default()
     };
-    let pipeline = Pipeline::new(cal, roll, photo, train.camera_to_ap1).unwrap();
-    let params = ProcessingParameters::positive(cal, roll, photo, train.camera_to_ap1).unwrap();
+    let pipeline = Pipeline::new(input, roll, photo, train.camera_to_ap1).unwrap();
+    let params = ProcessingParameters::interpret(input, roll, photo, train.camera_to_ap1).unwrap();
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,

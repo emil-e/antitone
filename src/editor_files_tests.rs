@@ -1,5 +1,6 @@
 use super::*;
 use crate::application::test_support::with_application;
+use crate::project::Development;
 
 #[test]
 fn project_save_names_use_antitone_without_duplicating_legacy_suffixes() {
@@ -546,8 +547,8 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
         OutputFormat::Exr(ExrPrecision::Full),
     ] {
         let mut editor = super::super::tests::authored_fixture(&["patches.dng"]);
-        editor.dmin = Some(DVec3::splat(0.8));
-        editor.dmax = Some(DVec3::splat(0.02));
+        editor.set_dmin(Some(DVec3::splat(0.8)));
+        editor.set_dmax(Some(DVec3::splat(0.02)));
         editor.photo.exposure = 1.25;
         editor.roll.exposure = -0.25;
         editor.crop = Some(Crop::from_region(Rect {
@@ -576,7 +577,7 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
             &editor.document.visit.ready.as_ref().unwrap().developed
         ));
         assert_eq!(
-            expected.recipe.neutral.calibration,
+            expected.recipe.neutral.input.calibration().unwrap(),
             editor.calibration().unwrap()
         );
         assert_eq!(expected.recipe.roll, editor.roll);
@@ -668,11 +669,12 @@ fn fixture() -> Editor {
     let mut editor = super::super::tests::with_document_services(Editor::state());
     editor
         .document
-        .register(
+        .register_with_development(
             Source {
                 id: SourceId(0),
                 path: "fixture.ARW".into(),
                 development: crate::project::SourceDevelopment {
+                    decode: Development::new("test-backend".into(), [1.; 4]),
                     lens_correction: None,
                     dng_development: None,
                     dimensions: [900, 600],
@@ -692,9 +694,9 @@ fn fixture() -> Editor {
         )
         .unwrap();
     editor.current_source = Some(editor.document.project.order[0]);
-    editor.floor = crate::processing::CAMERA_INPUT_FLOOR;
-    editor.dmin = Some(DVec3::new(0.2, 0.15, 0.1));
-    editor.dmax = Some(DVec3::new(0.008, 0.005, 0.002));
+    editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
+    editor.set_dmin(Some(DVec3::new(0.2, 0.15, 0.1)));
+    editor.set_dmax(Some(DVec3::new(0.008, 0.005, 0.002)));
     editor.sync_document();
     editor
 }
@@ -725,7 +727,7 @@ fn orientation_is_source_owned_and_restored_without_changing_grade_on_load() {
             }));
             let crop = editor.crop;
             let orientation = editor.photo_orientation;
-            let grade = (editor.roll, editor.photo, editor.dmin, editor.dmax);
+            let grade = (editor.roll, editor.photo, editor.dmin(), editor.dmax());
             editor.sync_document();
             assert_eq!(editor.document.project.orientation, editor.roll_orientation);
             assert_eq!(
@@ -750,7 +752,10 @@ fn orientation_is_source_owned_and_restored_without_changing_grade_on_load() {
             assert_eq!(editor.photo, other_photo);
             editor.load("fixture.ARW".into(), cx);
             assert_eq!(editor.current_source, Some(id));
-            assert_eq!((editor.roll, editor.photo, editor.dmin, editor.dmax), grade);
+            assert_eq!(
+                (editor.roll, editor.photo, editor.dmin(), editor.dmax()),
+                grade
+            );
             editor.load("temporary-reference.ARW".into(), cx);
             assert_eq!(editor.photo, PhotoSettings::default());
             assert_eq!(editor.photo_orientation, PhotoOrientation::default());
@@ -758,7 +763,10 @@ fn orientation_is_source_owned_and_restored_without_changing_grade_on_load() {
             editor.load("fixture.ARW".into(), cx);
             assert_eq!(editor.photo_orientation, orientation);
             assert_eq!(editor.crop, crop);
-            assert_eq!((editor.roll, editor.photo, editor.dmin, editor.dmax), grade);
+            assert_eq!(
+                (editor.roll, editor.photo, editor.dmin(), editor.dmax()),
+                grade
+            );
             assert_eq!(editor.roll_orientation, editor.document.project.orientation);
             assert!(editor.document.visit.source.pending());
         });
@@ -872,7 +880,7 @@ fn save_snapshot_flushes_current_photo_and_retains_other_source_settings() {
             PhotoSettings::default()
         );
         assert_eq!(snapshot.roll, roll);
-        assert_eq!(snapshot.processing_model, roll.response.processing_model());
+        assert_eq!(snapshot.processing_model, crate::PROCESSING_MODEL_VERSION);
     });
 }
 
@@ -885,8 +893,8 @@ fn new_resets_development_and_rejects_previous_document_messages() {
         app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
         app.enter(|e, cx| {
             assert_eq!(e.document.project, crate::project::Project::default());
-            assert!(e.document.project.development.is_none() && e.current_source.is_none());
-            assert_eq!(e.floor, 0.);
+            assert!(e.document.project.development().is_none() && e.current_source.is_none());
+            assert_eq!(e.floor(), crate::processing::CAMERA_INPUT_FLOOR);
             assert!(!e.document.dirty());
             e.measurement_result(
                 previous,
@@ -894,7 +902,7 @@ fn new_resets_development_and_rejects_previous_document_messages() {
                 Ok(Measurement::Reference(DVec3::ONE)),
                 cx,
             );
-            assert!(e.dmin.is_none());
+            assert!(e.dmin().is_none());
             assert!(e.id > previous);
         });
     });
@@ -933,8 +941,7 @@ fn navigation_and_view_state_do_not_dirty_a_saved_document() {
                 editor
                     .document
                     .project
-                    .development
-                    .as_ref()
+                    .development()
                     .map(|value| value.fixed_wb)
             );
             assert!(expected.is_some());

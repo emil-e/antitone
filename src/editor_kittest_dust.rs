@@ -277,7 +277,7 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
             panic!("scope forked from repaired viewer")
         };
         assert!(Arc::ptr_eq(&scope, &view));
-        h.update(|editor| editor.roll.gamma = 0.8);
+        h.update(|editor| editor.set_gamma(0.8));
         h.step();
         h.read(|editor| assert_ne!(editor.dust_signature(), Some(sig)));
         h.read(|editor| {

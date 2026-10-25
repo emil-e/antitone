@@ -40,8 +40,8 @@ fn common_worker_preserves_fractional_above_white_sony_sources_with_residual_cor
     let gpu_field = Arc::new(GpuFlatField::new(&device, field).unwrap());
     let (mut project, id) = fixture(&scan);
     // The shaded source exceeds nominal white; keep the response off the black plateau.
-    project.dmin = Some([4.; 3]);
-    project.dmax = Some([0.05; 3]);
+    project.set_dmin(Some([4.; 3]));
+    project.set_dmax(Some([0.05; 3]));
     project.source_mut(id).unwrap().crop = Some(crate::crop::Crop {
         center: [
             f64::from(a.x) + f64::from(a.width) / 2.,
@@ -52,13 +52,9 @@ fn common_worker_preserves_fractional_above_white_sony_sources_with_residual_cor
     });
     let mut recipe = project.image_recipe(id).unwrap();
     recipe.neutral.correction = scan.flat_field().cloned();
-    let scalar = SpatialPipeline::new(
-        recipe.neutral.processing_calibration().unwrap(),
-        recipe.roll,
-        recipe.grade.clone(),
-        scan.camera_to_ap1,
-    )
-    .unwrap();
+    let input = recipe.neutral.processing_input().unwrap();
+    let scalar =
+        SpatialPipeline::new(input, recipe.roll, recipe.grade.clone(), scan.camera_to_ap1).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("captured.tif");
     let read = |path: &Path| {
@@ -99,7 +95,7 @@ fn common_worker_preserves_fractional_above_white_sony_sources_with_residual_cor
                 recipe.composition,
                 target,
                 Overwrite::Refuse,
-                ProcessingMetadata::with_grade(recipe.roll.response, &recipe.grade),
+                ProcessingMetadata::with_grade(recipe.neutral.input.response(), &recipe.grade),
                 |x, y| {
                     let pixel = scan.pixel(x, y)?;
                     scalar

@@ -2,33 +2,35 @@
 use crate::{
     Error,
     dust_repair::{self, EvaluatedRepair, Execution, Repair},
-    processing::{Calibration, Pipeline, RollSettings},
+    processing::{InputSettings, Pipeline},
     scan::Scan,
 };
 
-/// Calibration is already normalized for this scan's correction context.
+/// The input is refined for this scan's correction context before interpreting.
 /// Every repair reads immutable unrepaired camera samples, evaluated in f64 then stored as f32.
 pub fn evaluate(
     scan: &Scan,
-    calibration: Calibration,
-    roll: RollSettings,
+    input: &InputSettings,
     repair: &Repair,
 ) -> Result<EvaluatedRepair, Error> {
-    evaluate_with(scan, calibration, roll, repair, &mut Execution::default())
+    evaluate_with(scan, input, repair, &mut Execution::default())
         .map(|result| result.expect("uncancelled repair evaluation"))
 }
 
 pub(crate) fn evaluate_with(
     scan: &Scan,
-    calibration: Calibration,
-    roll: RollSettings,
+    input: &InputSettings,
     repair: &Repair,
     execution: &mut Execution<'_>,
 ) -> Result<Option<EvaluatedRepair>, Error> {
     if (execution.cancelled)() {
         return Ok(None);
     }
-    let pipeline = Pipeline::ungraded(calibration, roll, scan.camera_to_ap1)?;
+    let input = match input.calibration() {
+        Some(base) => input.with_calibration(scan.processing_calibration(base)?),
+        None => *input,
+    };
+    let pipeline = Pipeline::ungraded(input, scan.camera_to_ap1)?;
     dust_repair::evaluate_with(
         repair,
         scan.area,
@@ -103,14 +105,9 @@ fn resolve_matching(
     recipe.neutral.require_scan(scan)?;
     let mut evaluated = Vec::new();
     for repair in recipe.repairs().iter().filter(|repair| applicable(repair)) {
-        let Some(result) = evaluate_with(
-            scan,
-            recipe.neutral.processing_calibration()?,
-            recipe.neutral.inversion,
-            repair,
-            execution,
-        )
-        .map_err(|error| Error::Raw(format!("repair {}: {error}", repair.id.0)))?
+        let Some(result) =
+            evaluate_with(scan, &recipe.neutral.processing_input()?, repair, execution)
+                .map_err(|error| Error::Raw(format!("repair {}: {error}", repair.id.0)))?
         else {
             return Ok(None);
         };
@@ -126,6 +123,10 @@ impl crate::image_recipe::NeutralRecipe {
         let (width, height) = scan.dimensions()?;
         let area = scan.area;
         let actual = crate::project::SourceDevelopment {
+            decode: scan
+                .source()
+                .metadata()
+                .development(scan.source().fixed_wb()),
             lens_correction: scan.source().metadata().lens_identity()?,
             dng_development: scan.source().metadata().dng_identity(),
             dimensions: [width, height],
@@ -134,10 +135,7 @@ impl crate::image_recipe::NeutralRecipe {
             camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
             input_floor: scan.source().input_floor(),
         };
-        if self.source_development != actual
-            || self.development != scan.source().metadata().development(scan.fixed_wb)
-            || self.correction.as_ref() != scan.flat_field()
-        {
+        if self.source_development != actual || self.correction.as_ref() != scan.flat_field() {
             return Err(Error::Raw(
                 "repair recipe differs from developed source".into(),
             ));

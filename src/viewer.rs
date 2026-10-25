@@ -17,6 +17,9 @@ pub(crate) use proxy::GpuProxy;
 #[cfg(test)]
 #[path = "viewer_look_tests.rs"]
 mod look_tests;
+#[cfg(test)]
+#[path = "viewer_readback_tests.rs"]
+pub(crate) mod readback;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -773,6 +776,11 @@ impl ImagePaint {
     #[cfg(all(test, feature = "editor"))]
     pub(crate) fn texture_mapping(&self) -> TextureMapping {
         self.uv
+    }
+
+    #[cfg(all(test, feature = "editor"))]
+    pub(crate) fn view_frame(&self) -> Option<crate::frame_raster::FrameRaster> {
+        self.rendered.as_ref().map(|(view, _, _)| view.spec.frame)
     }
 
     pub fn with_context(mut self, context: egui::Context) -> Self {

@@ -167,7 +167,7 @@ fn mapped_pixels(
 fn real_raw_local_preview_tiles_and_refinement() {
     let (scan, calibration) = train_raw::load();
     let area = scan.area;
-    let roll = RollSettings::new_grade();
+    let roll = RollSettings::default();
     let graded_global = PhotoSettings {
         exposure: -2.,
         contrast: 1.05,

@@ -122,7 +122,7 @@ fn local_stage_cost_at_live_preview_and_refinement_tile_sizes() {
             dmax: DVec3::new(0.008, 0.004, 0.002),
             input_floor: 1. / 65535.,
         };
-        let roll = RollSettings::new_grade();
+        let roll = RollSettings::default();
         let global = PhotoSettings::default();
         for &size in sizes {
             let n = size[0] * size[1];

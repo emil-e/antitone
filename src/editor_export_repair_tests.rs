@@ -74,8 +74,8 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
                 )
             },
         );
-        editor.dmin = Some(DVec3::splat(0.8));
-        editor.dmax = Some(DVec3::splat(0.02));
+        editor.set_dmin(Some(DVec3::splat(0.8)));
+        editor.set_dmax(Some(DVec3::splat(0.02)));
         editor.sync_document();
         let nodes = (0..8)
             .map(|i| {
@@ -130,11 +130,11 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
         let recipe = editor.document.project.image_recipe(id).unwrap();
         let scan = Scan::open(
             &editor.document.source_path(id).unwrap(),
-            Some(recipe.neutral.development.fixed_wb),
+            Some(recipe.neutral.source_development.decode.fixed_wb),
         )
         .unwrap();
         let pipeline = crate::local_adjustments::SpatialPipeline::new(
-            recipe.neutral.processing_calibration().unwrap(),
+            recipe.neutral.processing_input().unwrap(),
             recipe.roll,
             recipe.grade.clone(),
             scan.camera_to_ap1,
@@ -245,7 +245,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
         let recipe = editor.document.project.image_recipe(id).unwrap();
         let scan = Scan::open(
             &editor.document.source_path(id).unwrap(),
-            Some(recipe.neutral.development.fixed_wb),
+            Some(recipe.neutral.source_development.decode.fixed_wb),
         )
         .unwrap();
         assert!(

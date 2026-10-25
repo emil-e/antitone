@@ -1,4 +1,5 @@
 use super::*;
+use crate::processing::{NegativeInput, Response};
 
 fn source(
     device: &wgpu::Device,
@@ -112,15 +113,7 @@ fn physical_view_underlay_paired_acquisition_keeps_each_original_footprint_and_f
                 [35, 27],
             )
             .unwrap();
-            let spec = ViewSourceSpec::new(
-                7,
-                regional,
-                cal,
-                RollSettings::new_grade(),
-                scan.camera_to_ap1,
-                field,
-            )
-            .unwrap();
+            let spec = ViewSourceSpec::new(7, regional, cal, scan.camera_to_ap1, field).unwrap();
             let mut underlay = spec.underlay().unwrap();
             underlay.frame.output = [19, 17];
             let specs = vec![spec, underlay];
@@ -177,10 +170,13 @@ fn physical_view_underlay_chart_fills_only_missing_detail_with_one_coherent_targ
         let context = egui::Context::default();
         let scan = scan();
         let cal = calibration();
-        let roll = RollSettings {
+        let input = NegativeInput {
+            calibration: cal,
+            response: Response::film(),
             gamma: 0.75,
-            ..RollSettings::new_grade()
+            balance: Balance::default(),
         };
+        let roll = RollSettings::default();
         let mut full = frame(&scan);
         full.output = [16, 16];
         let detail_frame = FrameRaster::new(
@@ -190,8 +186,7 @@ fn physical_view_underlay_chart_fills_only_missing_detail_with_one_coherent_targ
             [8, 16],
         )
         .unwrap();
-        let spec =
-            ViewSourceSpec::new(11, detail_frame, cal, roll, scan.camera_to_ap1, None).unwrap();
+        let spec = ViewSourceSpec::new(11, detail_frame, input, scan.camera_to_ap1, None).unwrap();
         let mut base_spec = spec.underlay().unwrap();
         base_spec.frame.output = [8, 8];
         let detail_pixels = (0..128)
@@ -239,16 +234,16 @@ fn physical_view_underlay_chart_fills_only_missing_detail_with_one_coherent_targ
                 },
                 ..Default::default()
             };
-            let input = processing_input(cal, roll, photo, &scan);
+            let processing = processing_input(input, roll, photo, &scan);
             let snapshot = PhotoGradeSnapshot::new(photo, vec![]).unwrap();
             for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
                 let detail = RenderedView::new(
                     &device,
                     detail_source.clone(),
-                    cal,
+                    input,
                     roll,
                     snapshot.clone(),
-                    &input,
+                    &processing,
                     target,
                     previous_detail.as_ref(),
                 )
@@ -256,10 +251,10 @@ fn physical_view_underlay_chart_fills_only_missing_detail_with_one_coherent_targ
                 let base = RenderedView::new(
                     &device,
                     base_source.clone(),
-                    cal,
+                    input,
                     roll,
                     snapshot.clone(),
-                    &input,
+                    &processing,
                     target,
                     previous_base.as_ref(),
                 )
@@ -474,10 +469,13 @@ fn physical_view_underlay_constant_signed_hdr_charts_have_no_tone_or_colour_seam
         let context = egui::Context::default();
         let scan = scan();
         let cal = calibration();
-        let roll = RollSettings {
+        let input = NegativeInput {
+            calibration: cal,
+            response: Response::film(),
             gamma: 0.75,
-            ..RollSettings::new_grade()
+            balance: Balance::default(),
         };
+        let roll = RollSettings::default();
         let mut full = frame(&scan);
         full.output = [64, 64];
         let regional = FrameRaster::new(
@@ -487,7 +485,7 @@ fn physical_view_underlay_constant_signed_hdr_charts_have_no_tone_or_colour_seam
             [8, 16],
         )
         .unwrap();
-        let spec = ViewSourceSpec::new(13, regional, cal, roll, scan.camera_to_ap1, None).unwrap();
+        let spec = ViewSourceSpec::new(13, regional, input, scan.camera_to_ap1, None).unwrap();
         let mut base_spec = spec.underlay().unwrap();
         base_spec.frame.output = [8, 8];
         let photo = PhotoSettings {
@@ -500,7 +498,7 @@ fn physical_view_underlay_constant_signed_hdr_charts_have_no_tone_or_colour_seam
             },
             ..Default::default()
         };
-        let input = processing_input(cal, roll, photo, &scan);
+        let processing = processing_input(input, roll, photo, &scan);
         let mut worst = 0f32;
         for rgb in [[0.; 3], [0.18; 3], [-0.01, 1.5, 0.04]] {
             let value = [rgb[0], rgb[1], rgb[2], 8.];
@@ -517,10 +515,10 @@ fn physical_view_underlay_constant_signed_hdr_charts_have_no_tone_or_colour_seam
                     RenderedView::new(
                         &device,
                         s,
-                        cal,
+                        input,
                         roll,
                         PhotoGradeSnapshot::new(photo, vec![]).unwrap(),
-                        &input,
+                        &processing,
                         target,
                         None,
                     )
@@ -554,7 +552,7 @@ fn physical_view_underlay_in_flight_callbacks_do_not_retain_support_or_renderer_
         let context = egui::Context::default();
         let scan = scan();
         let cal = calibration();
-        let roll = RollSettings::new_grade();
+        let roll = RollSettings::default();
         let mut full = frame(&scan);
         full.output = [64, 64];
         let regional = FrameRaster::new(
@@ -564,7 +562,7 @@ fn physical_view_underlay_in_flight_callbacks_do_not_retain_support_or_renderer_
             [8, 16],
         )
         .unwrap();
-        let spec = ViewSourceSpec::new(17, regional, cal, roll, scan.camera_to_ap1, None).unwrap();
+        let spec = ViewSourceSpec::new(17, regional, cal, scan.camera_to_ap1, None).unwrap();
         let mut base_spec = spec.underlay().unwrap();
         base_spec.frame.output = [8, 8];
         let detail_source = source(
@@ -640,7 +638,7 @@ fn physical_view_underlay_texture_composition_does_not_inherit_storage_buffer_si
         let context = egui::Context::default();
         let scan = scan();
         let cal = calibration();
-        let roll = RollSettings::new_grade();
+        let roll = RollSettings::default();
         let mut full = frame(&scan);
         full.output = [1024, 512];
         assert!(
@@ -654,7 +652,7 @@ fn physical_view_underlay_texture_composition_does_not_inherit_storage_buffer_si
             [8, 16],
         )
         .unwrap();
-        let spec = ViewSourceSpec::new(19, regional, cal, roll, scan.camera_to_ap1, None).unwrap();
+        let spec = ViewSourceSpec::new(19, regional, cal, scan.camera_to_ap1, None).unwrap();
         let mut base_spec = spec.underlay().unwrap();
         base_spec.frame.output = [8, 8];
         let detail_source = source(

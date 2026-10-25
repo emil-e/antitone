@@ -23,9 +23,9 @@ fn path(name: &str) -> PathBuf {
 fn editor(scheduler: development::Scheduler) -> Editor {
     let mut editor = fixture();
     editor.document.install(Document::default());
-    editor.dmin = None;
-    editor.dmax = None;
-    editor.floor = 0.;
+    editor.set_dmin(None);
+    editor.set_dmax(None);
+    editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
     editor.sync_document();
     let (device, queue) = pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -117,6 +117,174 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
         assert!(cache.is_closed());
     });
     scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn input_switch_rebuilds_live_correction_atomically_and_history_restores_activation() {
+    use crate::{
+        flat_field::FlatField, gpu::ProcessingParameters, processing::InputSettings,
+        project::FlatFieldSettings,
+    };
+    let scheduler = development::Scheduler::new();
+    with_application(editor(scheduler.clone()), |app| {
+        app.enter(|e, cx| e.add_raws(vec![path("patches.dng")], cx));
+        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.enter(|e, cx| {
+            assert!(e.document.visit.ready.is_some(), "{}", e.status);
+            e.set_dmin(Some(glam::DVec3::splat(0.6)));
+            e.set_dmax(Some(glam::DVec3::splat(0.005)));
+            e.source = false;
+            e.sync_document();
+            let mut candidate = e.document.capture();
+            let source = candidate.project.source(e.current_source.unwrap()).unwrap();
+            let map = Arc::new(
+                FlatField::from_nodes(
+                    source.development.active_area,
+                    [2, 2],
+                    vec![glam::DVec3::splat(2.); 4],
+                )
+                .unwrap(),
+            );
+            let field = FlatFieldSettings::new(source, map);
+            candidate.project.set_flat_field(Some(field));
+            e.start_document(Preparation::Correction(candidate, e.current_source), cx);
+        });
+        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        let (negative, scan, expected_pixels) = app.read(|e| {
+            assert!(e.correction.is_some(), "{}", e.status);
+            let services = e.source_services.as_ref().unwrap();
+            let ready = e.document.visit.ready.as_ref().unwrap();
+            let (uncorrected, _) = crate::editor::prepare_source(
+                &services.renderers,
+                &services.device,
+                &services.queue,
+                ready.path.clone(),
+                Some(ready.record.development.decode.fixed_wb),
+                Some(&ready.record),
+                None,
+            )
+            .unwrap();
+            (
+                e.input,
+                e.document.project.scan.clone(),
+                digital_proxy_pixels(e, &uncorrected),
+            )
+        });
+        // The fixture really exercises an active GPU correction, not just saved settings.
+        let corrected_pixels =
+            app.read(|e| digital_proxy_pixels(e, e.document.visit.ready.as_ref().unwrap()));
+        assert!(
+            corrected_pixels
+                .iter()
+                .zip(&expected_pixels)
+                .any(|(a, b)| (a[0] - b[0]).abs() > 0.01)
+        );
+        app.enter(|e, cx| {
+            e.request_input(InputSettings::Digital, cx);
+            assert_eq!(e.input, negative);
+            assert_eq!(e.input_switch.take(), Some(InputSettings::Digital));
+            e.apply_input(InputSettings::Digital, cx);
+            assert!(e.busy && e.correction.is_some());
+            assert_eq!(
+                e.input, negative,
+                "old interpretation stays accepted until preparation completes"
+            );
+        });
+        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.read(|e| {
+            assert_eq!(e.input, InputSettings::Digital, "{}", e.status);
+            assert!(e.correction.is_none() && !e.source);
+            assert!(
+                e.source_context()
+                    .unwrap()
+                    .scan()
+                    .unwrap()
+                    .flat_field()
+                    .is_none()
+            );
+            assert_eq!(e.document.project.scan, scan);
+            assert_eq!(
+                e.history_label(history::Direction::Undo),
+                Some("Input stage")
+            );
+            let actual = digital_proxy_pixels(e, e.document.visit.ready.as_ref().unwrap());
+            assert_eq!(actual.len(), expected_pixels.len());
+            for (a, b) in actual.iter().zip(&expected_pixels) {
+                for channel in 0..3 {
+                    assert!((a[channel] - b[channel]).abs() < 3e-5, "{a:?} vs {b:?}");
+                }
+            }
+        });
+        app.enter(|e, cx| e.restore_history(history::Direction::Undo, cx));
+        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.read(|e| {
+            assert_eq!(e.input, negative, "{}", e.status);
+            assert!(e.correction.is_some() && !e.source);
+            assert_eq!(e.document.project.scan, scan);
+        });
+        app.enter(|e, cx| e.restore_history(history::Direction::Redo, cx));
+        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.enter(|e, cx| {
+            assert_eq!(e.input, InputSettings::Digital, "{}", e.status);
+            assert!(e.correction.is_none());
+            e.request_input(e.negative_input(), cx);
+        });
+        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.read(|e| {
+            assert!(
+                e.input.is_negative() && e.source && e.correction.is_some(),
+                "{}",
+                e.status
+            );
+            assert_eq!(e.document.project.scan, scan);
+        });
+    });
+    scheduler.close_and_wait().unwrap();
+
+    fn digital_proxy_pixels(e: &Editor, ready: &crate::editor::Ready) -> Vec<[f32; 4]> {
+        use crate::{
+            gpu::view::{RenderedView, ViewKernels, ViewSourceSpec},
+            local_adjustments::PhotoGradeSnapshot,
+        };
+        let services = e.source_services.as_ref().unwrap();
+        let (device, queue) = (&services.device, &services.queue);
+        let composition =
+            crate::geometry::Composition::new(ready.area, Default::default(), Default::default())
+                .unwrap();
+        let mut frame = crate::frame_raster::FrameRaster::full(composition).unwrap();
+        frame.output = ready.proxy.size();
+        let matrix = ready.proxy.matrix();
+        let spec = ViewSourceSpec::new(e.id, frame, InputSettings::Digital, matrix, None).unwrap();
+        let source = ready
+            .proxy
+            .view_source(
+                queue,
+                pollster::block_on(ViewKernels::new(device)).unwrap(),
+                spec,
+            )
+            .unwrap();
+        let parameters = ProcessingParameters::interpret(
+            InputSettings::Digital,
+            Default::default(),
+            Default::default(),
+            matrix,
+        )
+        .unwrap()
+        .into();
+        let view = RenderedView::new(
+            device,
+            source,
+            InputSettings::Digital,
+            Default::default(),
+            PhotoGradeSnapshot::new(Default::default(), vec![]).unwrap(),
+            &parameters,
+            e.target,
+            None,
+        )
+        .unwrap();
+        view.ensure_submitted(device, queue, &e.submissions, &egui::Context::default());
+        crate::viewer::readback::image_pixels(device, queue, &view.image)
+    }
 }
 
 #[test]

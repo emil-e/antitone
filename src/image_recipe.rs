@@ -5,8 +5,8 @@ use crate::{
     flat_field::FlatField,
     geometry::Composition,
     local_adjustments::PhotoGradeSnapshot,
-    processing::{Calibration, PhotoSettings, RollSettings},
-    project::{Development, Project, Source, SourceDevelopment, SourceId},
+    processing::{InputSettings, PhotoSettings, RollSettings},
+    project::{Project, Source, SourceDevelopment, SourceId},
 };
 use std::sync::Arc;
 
@@ -14,10 +14,8 @@ use std::sync::Arc;
 #[derive(Clone, Debug, PartialEq)]
 pub struct NeutralRecipe {
     pub source: SourceId,
-    pub development: Development,
     pub source_development: SourceDevelopment,
-    pub calibration: Calibration,
-    pub inversion: RollSettings,
+    pub input: InputSettings,
     pub correction: Option<Arc<FlatField>>,
 }
 
@@ -44,16 +42,21 @@ impl PartialEq for ImageRecipe {
 }
 
 impl NeutralRecipe {
-    pub fn processing_calibration(&self) -> Result<Calibration, Error> {
-        self.source_development
-            .processing_calibration(self.calibration, self.correction.as_deref())
+    pub fn processing_input(&self) -> Result<InputSettings, Error> {
+        match self.input.calibration() {
+            Some(base) => Ok(self.input.with_calibration(
+                self.source_development
+                    .processing_calibration(base, self.correction.as_deref())?,
+            )),
+            None => Ok(self.input),
+        }
     }
 }
 
 impl ImageRecipe {
     /// Conservative cache charge including referenced correction payload, without deduplicating Arcs.
     pub fn retained_bytes(&self) -> usize {
-        let development = &self.neutral.development;
+        let development = &self.neutral.source_development.decode;
         std::mem::size_of::<Self>()
             + development.backend_version.capacity()
             + development.contract.capacity()
@@ -110,22 +113,26 @@ impl Project {
     /// Capture one source's accepted photograph without acquiring pixels or resolving repairs.
     pub fn image_recipe(&self, id: SourceId) -> Result<ImageRecipe, Error> {
         let source = self.source(id)?;
-        let calibration = self
-            .calibration()?
-            .ok_or_else(|| Error::Project("positive recipe requires calibration".into()))?;
-        self.image_recipe_for_source(source, calibration, self.roll, source.photo)
+        if self.input.is_negative() && self.input.calibration().is_none() {
+            return Err(Error::Project(
+                "positive recipe requires calibration".into(),
+            ));
+        }
+        self.image_recipe_for_source(source, &self.input, self.roll, source.photo)
     }
 
     /// Navigation thumbnails capture grading and geometry without retaining or evaluating dust.
     #[cfg(feature = "editor")]
     pub(crate) fn thumbnail_recipe(&self, id: SourceId) -> Result<ImageRecipe, Error> {
         let source = self.source(id)?;
-        let calibration = self
-            .calibration()?
-            .ok_or_else(|| Error::Project("positive recipe requires calibration".into()))?;
+        if !self.input.ready() {
+            return Err(Error::Project(
+                "positive recipe requires calibration".into(),
+            ));
+        }
         self.capture_recipe(
             source,
-            calibration,
+            &self.input,
             self.roll,
             source.photo,
             RepairCapture::Omit,
@@ -136,24 +143,21 @@ impl Project {
     pub(crate) fn image_recipe_for_source(
         &self,
         source: &Source,
-        calibration: Calibration,
+        input: &InputSettings,
         roll: RollSettings,
         photo: PhotoSettings,
     ) -> Result<ImageRecipe, Error> {
-        self.capture_recipe(source, calibration, roll, photo, RepairCapture::Accepted)
+        self.capture_recipe(source, input, roll, photo, RepairCapture::Accepted)
     }
 
     fn capture_recipe(
         &self,
         source: &Source,
-        calibration: Calibration,
+        input: &InputSettings,
         roll: RollSettings,
         photo: PhotoSettings,
         repairs: RepairCapture,
     ) -> Result<ImageRecipe, Error> {
-        let development = self.development.clone().ok_or_else(|| {
-            Error::Project("positive recipe requires development identity".into())
-        })?;
         let include_repairs = matches!(repairs, RepairCapture::Accepted);
         if include_repairs {
             source
@@ -169,10 +173,8 @@ impl Project {
         Ok(ImageRecipe {
             neutral: NeutralRecipe {
                 source: source.id,
-                development,
                 source_development: source.development.clone(),
-                calibration,
-                inversion: roll.inversion_only(),
+                input: *input,
                 correction: self.active_flat_field().map(|field| field.map.clone()),
             },
             roll,

@@ -3,7 +3,7 @@ use crate::{
     dust_repair::{DonorChoice, Repair, RepairId, RepairOrigin, SupportMask},
     geometry::SourcePoint,
     local_adjustments::{GradientMask, LocalAdjustment, SpatialPipeline},
-    processing::{InvertedPixel, PhotoSettings},
+    processing::{Calibration, InvertedPixel, PhotoSettings},
 };
 
 #[test]
@@ -35,7 +35,7 @@ fn production_repairs_grades_look_and_area_match_independent_scalar_ocio_in_line
         dmax: DVec3::splat(0.02),
         input_floor: scan.input_floor,
     };
-    let roll = RollSettings::new_grade();
+    let roll = RollSettings::default();
     let grade = PhotoGradeSnapshot::new(
         PhotoSettings {
             exposure: 0.5,
@@ -132,7 +132,7 @@ fn production_repairs_grades_look_and_area_match_independent_scalar_ocio_in_line
             let request = Request {
                 scan: &scan,
                 field: None,
-                calibration,
+                input: calibration.into(),
                 roll,
                 grade: grade.clone(),
                 repairs: std::slice::from_ref(&evaluated),

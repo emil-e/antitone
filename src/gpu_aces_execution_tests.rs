@@ -524,7 +524,7 @@ fn performance_input(
         let grade = GpuPhotoGrade::new(
             device,
             calibration,
-            RollSettings::new_grade(),
+            RollSettings::default(),
             edited("global-photographic", 0),
             raster.matrix,
             raster.area,

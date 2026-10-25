@@ -63,7 +63,7 @@ fn lookup_main(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups
     if index >= source_pixel_count() {
         return;
     }
-    if parameters.gamma_mode.w <= 0.5 {
+    if parameters.stage == STAGE_SOURCE {
         positives[index] = process_camera_source(convert_source(scans[index], index));
         return;
     }
@@ -106,7 +106,7 @@ fn camera_prefix_main(
     if index >= source_pixel_count() {
         return;
     }
-    if parameters.gamma_mode.w <= 0.5 {
+    if parameters.stage == STAGE_SOURCE {
         positives[index] = process_camera_source(convert_source(scans[index], index));
         return;
     }
@@ -136,7 +136,7 @@ fn global_prefix_main(
     if index >= source_pixel_count() {
         return;
     }
-    if parameters.gamma_mode.w <= 0.5 {
+    if parameters.stage == STAGE_SOURCE {
         positives[index] = process_camera_source(convert_source(scans[index], index));
         return;
     }

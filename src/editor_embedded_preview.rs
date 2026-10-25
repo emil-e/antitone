@@ -163,10 +163,10 @@ impl EmbeddedPreviews {
                 .lens_correction
                 .as_ref()
                 .map_or(0, String::capacity)
-            + key.development.backend_version.capacity()
-            + key.development.contract.capacity()
-            + key.development.inversion_space.capacity()
-            + key.development.working_space.capacity()
+            + key.source.decode.backend_version.capacity()
+            + key.source.decode.contract.capacity()
+            + key.source.decode.inversion_space.capacity()
+            + key.source.decode.working_space.capacity()
             + 1024
             + texture.as_ref().map_or(0, |texture| {
                 let [width, height] = texture.size();
@@ -393,11 +393,9 @@ fn current(key: &SourceKey, document: &Document) -> bool {
             .project
             .source(key.id)
             .ok()
-            .zip(document.project.development.as_ref())
             .zip(document.source_path(key.id).ok())
-            .is_some_and(|((source, development), path)| {
-                !source.reference_only
-                    && SourceKey::new(source, development, FileKey::new(&path)) == *key
+            .is_some_and(|(source, path)| {
+                !source.reference_only && SourceKey::new(source, FileKey::new(&path)) == *key
             })
 }
 
@@ -406,7 +404,7 @@ fn load(request: &Request, active: &impl Fn() -> bool) -> Result<Option<egui::Co
         return Ok(None);
     }
     let (actual, mut raw) =
-        document::open_source(&request.path, Some(request.key.development.fixed_wb))
+        document::open_source(&request.path, Some(request.key.source.decode.fixed_wb))
             .map_err(|e| e.to_string())?;
     document::verify_source(&request.source, &actual).map_err(|e| e.to_string())?;
     let Some(thumbnail) = raw.embedded_thumbnail().map_err(|e| e.to_string())? else {

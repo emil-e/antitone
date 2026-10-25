@@ -29,13 +29,7 @@ fn source_readiness_leaves_support_lazy_and_explicit_service_preserves_exact_sam
                     wb: wb(&document),
                     expected: Some(source.clone()),
                     correction: None,
-                    basis: document.project.camera_basis.clone(),
-                    cache: Some(LoadCache::new(
-                        &path,
-                        Some(source),
-                        wb(&document),
-                        &document,
-                    )),
+                    cache: Some(LoadCache::new(&path, Some(source), &document)),
                 },
                 Arc::new(std::sync::atomic::AtomicBool::new(false)),
             )

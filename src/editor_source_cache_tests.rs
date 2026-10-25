@@ -1,4 +1,5 @@
 use super::*;
+use crate::project::Development;
 use crate::raw::fixture as raw_fixture;
 use crate::{scan::CameraProxy, source_store::SourceKey};
 
@@ -13,7 +14,9 @@ fn document(path: &std::path::Path) -> Document {
     let mut document = Document::default();
     let (source, _) = document::open_source(path, Some([1.; 4])).unwrap();
     let development = Development::for_source(&source.development, [1.; 4]);
-    document.register(source, development).unwrap();
+    document
+        .register_with_development(source, development)
+        .unwrap();
     document.cache().set_budget(BUDGET);
     document
 }
@@ -21,8 +24,7 @@ fn document(path: &std::path::Path) -> Document {
 fn wb(document: &Document) -> Option<[f64; 4]> {
     document
         .project
-        .development
-        .as_ref()
+        .development()
         .map(|development| development.fixed_wb)
 }
 
@@ -36,10 +38,10 @@ fn codes(scan: &Scan) -> Vec<[f32; 4]> {
 
 fn key(document: &Document) -> SourceKey {
     let id = document.project.order[0];
-    SourceKey::capture(
+    SourceKey::capture_with_development(
         &document.source_path(id).unwrap(),
         &document.project.source(id).unwrap().development,
-        document.project.development.as_ref().unwrap(),
+        document.project.development().as_ref().unwrap(),
     )
     .unwrap()
 }
@@ -68,7 +70,7 @@ fn prepare(
     let path = document.source_path(id).unwrap();
     let expected = document.project.source(id).unwrap();
     let wb = wb(document);
-    let cache = LoadCache::new(&path, Some(expected), wb, document);
+    let cache = LoadCache::new(&path, Some(expected), document);
     let prepared = prepare_source_cached(
         renderers,
         device,
@@ -77,7 +79,6 @@ fn prepare(
         wb,
         Some(expected),
         None,
-        document.project.camera_basis.as_ref(),
         Some(&cache),
     )
     .unwrap();
@@ -173,8 +174,13 @@ fn foreground_hits_reuse_native_owner_and_candidates_borrow_without_transfer() {
         assert!(Arc::ptr_eq(scan.source(), warm.source()));
         assert_eq!(codes(&scan), codes(&warm));
         assert_eq!(
-            first.development,
-            document.project.development.clone().unwrap()
+            first.development().clone(),
+            document
+                .project
+                .source(document.project.order[0])
+                .unwrap()
+                .development
+                .decode
         );
         let before = document.cache().charges();
         let mut candidate = document.clone();
@@ -214,11 +220,7 @@ fn cpu_only_proper_work_persists_disk_at_zero_limits_then_materializes_on_demand
         let source = document.project.source(id).unwrap();
         let path = document.source_path(id).unwrap();
         let image_key = thumbnails::ImageKey {
-            source: thumbnails::SourceKey::new(
-                source,
-                document.project.development.as_ref().unwrap(),
-                thumbnails::FileKey::new(&path),
-            ),
+            source: thumbnails::SourceKey::new(source, thumbnails::FileKey::new(&path)),
             target: OutputTarget::DisplayP3,
             field: None,
             recipe: Ok(None),
@@ -226,13 +228,7 @@ fn cpu_only_proper_work_persists_disk_at_zero_limits_then_materializes_on_demand
         };
         let scan = Scan::open(&path, wb(&document)).unwrap();
         let seed = Arc::new(CameraProxy::from_scan(&scan).unwrap());
-        thumbnails.seed_at(
-            source,
-            document.project.development.as_ref().unwrap(),
-            &path,
-            thumbnails::FileKey::new(&path),
-            seed.clone(),
-        );
+        thumbnails.seed_at_path(source, &path, thumbnails::FileKey::new(&path), seed.clone());
         assert!(
             !thumbnails.attempted_sources.contains(&image_key.source),
             "a seed is not yet a durable completed attempt"
@@ -285,7 +281,7 @@ fn changed_pre_work_revision_loads_authoritatively_without_publishing_a_fresh_ke
         let path = document.source_path(id).unwrap();
         let expected = document.project.source(id).unwrap();
         let wb = wb(&document);
-        let cache = LoadCache::new(&path, Some(expected), wb, &document);
+        let cache = LoadCache::new(&path, Some(expected), &document);
         file.write_all(b"freshness-only annotation").unwrap();
         file.flush().unwrap();
         let (ready, fresh) = prepare_source_cached(
@@ -296,7 +292,6 @@ fn changed_pre_work_revision_loads_authoritatively_without_publishing_a_fresh_ke
             wb,
             Some(expected),
             None,
-            document.project.camera_basis.as_ref(),
             Some(&cache),
         )
         .unwrap();
@@ -328,11 +323,7 @@ fn background_native_by_product_is_a_foreground_hit_under_the_shared_cpu_limit()
         let source = document.project.source(id).unwrap();
         let path = document.source_path(id).unwrap();
         let image_key = thumbnails::ImageKey {
-            source: thumbnails::SourceKey::new(
-                source,
-                document.project.development.as_ref().unwrap(),
-                thumbnails::FileKey::new(&path),
-            ),
+            source: thumbnails::SourceKey::new(source, thumbnails::FileKey::new(&path)),
             target: OutputTarget::DisplayP3,
             field: None,
             recipe: Ok(None),
@@ -400,11 +391,7 @@ fn cancelled_gpu_ticket_keeps_proper_disk_demand_and_shares_foreground_handoff()
         let path = document.source_path(id).unwrap();
         let expected = document.project.source(id).unwrap();
         let key = ImageKey {
-            source: thumbnails::SourceKey::new(
-                expected,
-                document.project.development.as_ref().unwrap(),
-                FileKey::new(&path),
-            ),
+            source: thumbnails::SourceKey::new(expected, FileKey::new(&path)),
             target: OutputTarget::Srgb,
             field: None,
             recipe: Ok(None),
@@ -423,7 +410,7 @@ fn cancelled_gpu_ticket_keeps_proper_disk_demand_and_shares_foreground_handoff()
             app.pump();
             starts.recv_timeout(Duration::from_secs(5)).unwrap();
             thumbnails.cancel();
-            let cache = LoadCache::new(&path, Some(expected), wb(&document), &document);
+            let cache = LoadCache::new(&path, Some(expected), &document);
             std::thread::scope(|scope| {
                 let foreground = scope.spawn(|| {
                     prepare_source_scheduled(
@@ -434,7 +421,6 @@ fn cancelled_gpu_ticket_keeps_proper_disk_demand_and_shares_foreground_handoff()
                         wb(&document),
                         Some(expected),
                         None,
-                        document.project.camera_basis.as_ref(),
                         Some(&cache),
                         &developments,
                         &|| false,
@@ -468,7 +454,9 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
         let mut document = document(a.path());
         let (record, _) = document::open_source(b.path(), Some([1.; 4])).unwrap();
         let development = Development::for_source(&record.development, [1.; 4]);
-        document.register(record, development).unwrap();
+        document
+            .register_with_development(record, development)
+            .unwrap();
         document.cache().set_budget(0);
         let native_a = Scan::open(a.path(), wb(&document))
             .unwrap()
@@ -528,11 +516,7 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
                 .unwrap();
             let path = document.source_path(source.id).unwrap();
             ImageKey {
-                source: thumbnails::SourceKey::new(
-                    source,
-                    document.project.development.as_ref().unwrap(),
-                    FileKey::new(&path),
-                ),
+                source: thumbnails::SourceKey::new(source, FileKey::new(&path)),
                 target: OutputTarget::Srgb,
                 field: None,
                 recipe: Ok(None),
@@ -599,6 +583,44 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
             ]
         );
     });
+}
+
+#[test]
+fn acquisition_requests_share_scan_wb_and_preserve_saved_source_wb_in_digital() {
+    let file = raw_fixture::bayer_dng();
+    let mut editor = Editor::state();
+    let scan_wb = [2., 1., 1.5, 1.];
+    editor
+        .document
+        .register(document::read_source(file.path(), Some(scan_wb)).unwrap())
+        .unwrap();
+    editor.document.validate().unwrap();
+    let fresh = file.path().with_file_name("new-reference.dng");
+    let saved_wb = [1.5, 1., 2., 1.];
+    for digital in [false, true] {
+        if digital {
+            editor.document.project.input = crate::processing::InputSettings::Digital;
+            editor.document.project.sources[0].development =
+                document::read_source(file.path(), Some(saved_wb))
+                    .unwrap()
+                    .development;
+            editor.document.validate().unwrap();
+        }
+        for request in [
+            editor.reference_preview_input(fresh.clone()),
+            editor.source_input(fresh.clone()),
+        ] {
+            assert_eq!(request.wb, if digital { None } else { Some(scan_wb) });
+            assert!(request.expected.is_none());
+        }
+        for request in [
+            editor.reference_preview_input(file.path().to_owned()),
+            editor.source_input(file.path().to_owned()),
+        ] {
+            assert_eq!(request.wb, Some(if digital { saved_wb } else { scan_wb }));
+            assert!(request.expected.is_some());
+        }
+    }
 }
 
 #[test]

@@ -10,8 +10,7 @@ fn sony_source_inspection_and_positive_share_automatic_development() {
     editor_harness(|mut h, _| {
         // The authored TIFF has sensor/lens data but no maker-note WB; declare fixed roll gains.
         h.update(|editor| {
-            editor.document.project.development =
-                Some(Development::new(crate::raw::version(), [1.; 4]))
+            editor.document.project.scan = Some(scan_setup(file.path(), [1.; 4]));
         });
         h.enter(|editor, cx| editor.add_raws(vec![file.path().into()], cx));
         wait_for(&mut h, |e| {
@@ -48,8 +47,8 @@ fn sony_source_inspection_and_positive_share_automatic_development() {
         h.read(|editor| assert!(editor.working.regional().unwrap().same_source_as(&original)));
         h.read(|editor| assert_eq!(editor.document.project, accepted));
 
-        h.update(|editor| editor.dmin = Some(DVec3::splat(0.7)));
-        h.update(|editor| editor.dmax = Some(DVec3::splat(0.01)));
+        h.update(|editor| editor.set_dmin(Some(DVec3::splat(0.7))));
+        h.update(|editor| editor.set_dmax(Some(DVec3::splat(0.01))));
         h.update(|editor| editor.sync_document());
         let calibrated = h.read(|editor| editor.document.project.clone());
         for source in [false, true] {

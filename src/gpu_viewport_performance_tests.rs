@@ -1,4 +1,5 @@
 use super::*;
+use crate::processing::Calibration;
 
 fn crop_pixels(
     pixels: &[[f32; 4]],
@@ -128,7 +129,7 @@ async fn viewport_probe(
     let grade = GpuPhotoGrade::new(
         &device,
         calibration,
-        RollSettings::new_grade(),
+        RollSettings::default(),
         snapshot(PhotoSettings::default(), 2, true),
         matrix,
         area,

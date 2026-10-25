@@ -1,6 +1,11 @@
 //! Original-footprint, scalar-mask and encoded-lifetime regressions on production objects.
 use super::*;
-use crate::{crop::Crop, geometry::Composition};
+use crate::{
+    color::Balance,
+    crop::Crop,
+    geometry::Composition,
+    processing::{NegativeInput, Response},
+};
 
 fn cropped(area: SourceRegion, region: SourceRegion, output: [u32; 2], angle: f64) -> FrameRaster {
     let composition = Composition::with_crop(
@@ -124,10 +129,13 @@ fn physical_view_original_footprints_match_scalar_correction_signed_hdr_and_floo
         // A narrow density span makes the fixture's dark patches HDR, without clipping.
         anchors.dmax = anchors.dmin * 0.8;
         let cal = correction.processing_calibration(anchors).unwrap();
-        let roll = RollSettings {
+        let input = NegativeInput {
+            calibration: cal,
+            response: Response::film(),
             gamma: 0.65,
-            ..RollSettings::new_grade()
+            balance: Balance::default(),
         };
+        let roll = RollSettings::default();
         let region = SourceRegion {
             x: area.x + area.width / 8,
             y: area.y + area.height / 8,
@@ -138,8 +146,7 @@ fn physical_view_original_footprints_match_scalar_correction_signed_hdr_and_floo
         let spec = ViewSourceSpec::new(
             1,
             frame,
-            cal,
-            roll,
+            input,
             scan.camera_to_ap1,
             Some(correction.clone()),
         )
@@ -158,7 +165,7 @@ fn physical_view_original_footprints_match_scalar_correction_signed_hdr_and_floo
         .unwrap()
         .unwrap();
         let scalar = crate::local_adjustments::SpatialPipeline::new(
-            cal,
+            input,
             roll,
             PhotoGradeSnapshot::new(PhotoSettings::default(), vec![]).unwrap(),
             scan.camera_to_ap1,
@@ -292,7 +299,7 @@ fn physical_view_colour_raw_correspondence() {
                 let gpu_field = field
                     .as_ref()
                     .map(|f| Arc::new(GpuFlatField::new(&device, f.clone()).unwrap()));
-                let roll = RollSettings::new_grade();
+                let roll = RollSettings::default();
                 for (label, size, angle) in [
                     ("native", [768, 512], 0.),
                     ("two-to-one", [384, 256], 0.),
@@ -300,7 +307,7 @@ fn physical_view_colour_raw_correspondence() {
                 ] {
                     let frame = cropped(scan.area, region, size, angle);
                     let spec =
-                        ViewSourceSpec::new(1, frame, cal, roll, scan.camera_to_ap1, field.clone())
+                        ViewSourceSpec::new(1, frame, cal, scan.camera_to_ap1, field.clone())
                             .unwrap();
                     let source = ViewSource::acquire(
                         &device,
@@ -376,17 +383,20 @@ fn physical_view_encoded_versions_survive_owner_release_and_abandoned_encoders_d
             ..Default::default()
         };
         let snapshot = PhotoGradeSnapshot::new(photo, vec![]).unwrap();
-        let roll = RollSettings {
+        let negative = NegativeInput {
+            calibration: calibration(),
+            response: Response::film(),
             gamma: 0.65,
-            ..RollSettings::new_grade()
+            balance: Balance::default(),
         };
+        let roll = RollSettings::default();
         let input = ProcessingInput::from(
-            ProcessingParameters::positive(calibration(), roll, photo, source.spec.matrix).unwrap(),
+            ProcessingParameters::positive(negative, roll, photo, source.spec.matrix).unwrap(),
         );
         let view = RenderedView::new(
             &device,
             source.clone(),
-            calibration(),
+            negative,
             roll,
             snapshot,
             &input,

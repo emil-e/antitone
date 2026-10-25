@@ -37,8 +37,14 @@ fn local_records() -> LocalAdjustments {
 
 fn proposal(document: &Document) -> roll_analysis::Proposal {
     roll_analysis::Proposal {
-        dmin: DVec3::new(0.8, 0.4, 0.2),
-        dmax: DVec3::new(0.04, 0.02, 0.01),
+        input: crate::processing::InputSettings::Negative {
+            dmin: Some(DVec3::new(0.8, 0.4, 0.2)),
+            dmax: Some(DVec3::new(0.04, 0.02, 0.01)),
+            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
+            response: crate::processing::Response::film(),
+            gamma: crate::processing::DEFAULT_GAMMA,
+            balance: Default::default(),
+        },
         roll: document.project.roll,
         photos: vec![
             PhotoSettings {
@@ -212,7 +218,7 @@ fn local_removal_is_installed_only_with_a_successful_current_analysis_candidate(
             editor.cancel_analysis();
         }
         if mode == 2 {
-            candidate.project.dmax = candidate.project.dmin;
+            candidate.project.set_dmax(candidate.project.dmin());
         }
         let result = if mode == 0 {
             Err("sampling failed".into())

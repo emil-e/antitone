@@ -1,6 +1,6 @@
 use crate::{
     Error,
-    project::{Development, Project, Save, Source, SourceDevelopment, SourceId},
+    project::{Project, Save, Source, SourceDevelopment, SourceId},
     raw::{Metadata, RawFile},
     scan::Scan,
     source_store::{SourceKey, SourceStore},
@@ -52,6 +52,28 @@ impl Default for Document {
     }
 }
 
+#[cfg(test)]
+impl Document {
+    /// Test fixtures predate per-source acquisition; the decode rides on the source record.
+    pub fn register_with_development(
+        &mut self,
+        mut source: Source,
+        development: crate::project::Development,
+    ) -> Result<SourceId> {
+        source.development.decode = development;
+        self.register(source)
+    }
+
+    pub fn register_reference_with_development(
+        &mut self,
+        mut source: Source,
+        development: crate::project::Development,
+    ) -> Result<SourceId> {
+        source.development.decode = development;
+        self.register_reference(source)
+    }
+}
+
 impl Document {
     pub fn cache(&self) -> &Arc<SourceStore> {
         &self.cache.0
@@ -72,22 +94,12 @@ impl Document {
         {
             let allowed = self
                 .project
-                .development
-                .as_ref()
-                .map(|development| {
-                    self.project
-                        .sources
-                        .iter()
-                        .filter_map(|source| {
-                            SourceKey::capture(
-                                &self.source_path(source.id).ok()?,
-                                &source.development,
-                                development,
-                            )
-                        })
-                        .collect::<Vec<_>>()
+                .sources
+                .iter()
+                .filter_map(|source| {
+                    SourceKey::capture(&self.source_path(source.id).ok()?, &source.development)
                 })
-                .unwrap_or_default();
+                .collect::<Vec<_>>();
 
             parent.transfer_to(&self.cache.0, &allowed);
         }
@@ -178,40 +190,41 @@ impl Document {
         {
             crate::gpu::look::Lut::require_limits(&device.limits(), asset.lut())?;
         }
-        let calibration = self.project.calibration()?;
+        let input = self.project.input;
         for source in &self.project.sources {
-            if let Some(calibration) = calibration {
+            {
+                let refined = match input.calibration() {
+                    Some(base) => input.with_calibration(
+                        source.development.processing_calibration(
+                            base,
+                            self.project
+                                .active_flat_field()
+                                .map(|field| field.map.as_ref()),
+                        )?,
+                    ),
+                    None => input,
+                };
                 super::processing::validate_source(
                     device,
-                    source.development.processing_calibration(
-                        calibration,
-                        self.project
-                            .active_flat_field()
-                            .map(|field| field.map.as_ref()),
-                    )?,
+                    &refined,
                     self.project.roll,
                     source,
                     source.photo,
                 )?;
-            } else if source
-                .local_adjustments
-                .as_ref()
-                .is_some_and(|locals| !locals.adjustments.is_empty())
-            {
-                return Err(failure(
-                    "local adjustments require a calibrated processing basis",
-                ));
             }
         }
-        if let Some(development) = &self.project.development
-            && development
+        for source in &self.project.sources {
+            if source
+                .development
+                .decode
                 .fixed_wb
                 .iter()
                 .any(|value| !(*value as f32).is_finite() || *value as f32 <= 0.)
-        {
-            return Err(failure(
-                "saved RAW white balance cannot be represented by the developer",
-            ));
+            {
+                return Err(failure(
+                    "saved RAW white balance cannot be represented by the developer",
+                ));
+            }
         }
         Ok(())
     }
@@ -243,9 +256,9 @@ impl Document {
         progress(0, total);
         for (index, id) in document.project.order.iter().enumerate() {
             let path = document.source_path(*id)?;
-            let (actual, _) = read_source(
+            let actual = read_source(
                 &path,
-                document.project.development.as_ref().map(|d| d.fixed_wb),
+                Some(document.project.source(*id)?.development.decode.fixed_wb),
             )?;
             verify_source(document.project.source(*id)?, &actual)?;
             progress(index + 1, total);
@@ -267,18 +280,44 @@ impl Document {
     ) -> Result<()> {
         let started = std::time::Instant::now();
         progress(0, paths.len());
+        let auto_digital = self.auto_digital_available();
+        let mut added = Vec::new();
+        // A scan-based stage decodes every new source in the scan's fixed WB basis; Digital
+        // uses each source's as-shot basis (mixed cameras are allowed). The first successful
+        // scan establishes that basis inside `add_source`, so read it again for every file.
         for (index, path) in paths.iter().enumerate() {
-            let (source, as_shot_wb) =
-                read_source(path, self.project.development.as_ref().map(|d| d.fixed_wb))?;
-            if let Some(id) = self.find_source(&source.path) {
+            let existing = self.find_source(path);
+            let wb = self
+                .project
+                .acquisition_wb(existing.and_then(|id| self.project.source(id).ok()));
+            let mut source = read_source(path, wb)?;
+            if let Some(id) = existing {
                 verify_source(self.project.source(id)?, &source)?;
                 if !self.project.order.contains(&id) {
                     self.project.order.push(id);
                 }
                 self.project.source_mut(id)?.reference_only = false;
             } else {
-                let development = Development::for_source(&source.development, as_shot_wb);
-                self.register(source, development)?;
+                // A fresh scan import may contain sources that cannot share one acquisition
+                // basis. In that case choose Digital for the batch; the first source remains
+                // valid in its own as-shot basis. An existing calibrated Negative project is
+                // never switched silently.
+                if auto_digital
+                    && self.project.input.requires_scan_sources()
+                    && self.scan_source_incompatible(&source)
+                {
+                    self.project.input = crate::processing::InputSettings::Digital;
+                    self.project.scan = None;
+                    // Earlier new files in this batch were admitted in the scan WB. Once the
+                    // whole batch becomes Digital, reacquire their metadata in their own WB;
+                    // saved sources keep their accepted development identity.
+                    for id in &added {
+                        let development = read_source(&self.source_path(*id)?, None)?.development;
+                        self.project.source_mut(*id)?.development = development;
+                    }
+                    source = read_source(path, None)?;
+                }
+                added.push(self.register(source)?);
             }
             progress(index + 1, paths.len());
         }
@@ -293,35 +332,39 @@ impl Document {
         Ok(())
     }
 
-    pub fn register(&mut self, source: Source, development: Development) -> Result<SourceId> {
-        if let Some(current) = &self.project.development {
-            if current.backend_version != development.backend_version
-                || current.contract != development.contract
-            {
-                return Err(failure(
-                    "RAW backend differs; use a separate roll/calibration",
-                ));
-            }
-        } else {
-            self.project.development = Some(development);
-        }
-        if self.project.input_floor.is_none() {
-            self.project.input_floor = Some(crate::processing::CAMERA_INPUT_FLOOR);
+    fn auto_digital_available(&self) -> bool {
+        self.project.input.requires_scan_sources()
+            && self.project.sources.len() <= 1
+            && !self.project.input.has_stage_settings()
+            && self.project.flat_field().is_none()
+    }
+
+    fn scan_source_incompatible(&self, source: &Source) -> bool {
+        self.project
+            .require_scan_source(&source.development)
+            .is_err()
+            || self.project.flat_field().is_some_and(|field| {
+                field.enabled && field.require_source(&source.development).is_err()
+            })
+    }
+
+    pub fn register(&mut self, source: Source) -> Result<SourceId> {
+        if let crate::processing::InputSettings::Negative { input_floor, .. } =
+            &mut self.project.input
+            && *input_floor == 0.
+        {
+            *input_floor = crate::processing::CAMERA_INPUT_FLOOR;
         }
         self.project.add_source(source)
     }
 
-    pub fn register_reference(
-        &mut self,
-        mut source: Source,
-        development: Development,
-    ) -> Result<SourceId> {
+    pub fn register_reference(&mut self, mut source: Source) -> Result<SourceId> {
         if let Some(id) = self.find_source(&source.path) {
             verify_source(self.project.source(id)?, &source)?;
             return Ok(id);
         }
         source.reference_only = true;
-        let id = self.register(source, development)?;
+        let id = self.register(source)?;
         self.project.remove_from_filmstrip(id)?;
         Ok(id)
     }
@@ -441,10 +484,14 @@ fn rebase_relative(path: &Path, old_parent: &Path, new_parent: &Path) -> Result<
     Ok(relative)
 }
 
-pub(super) fn metadata_development(metadata: &Metadata) -> Result<SourceDevelopment> {
+pub(super) fn metadata_development(
+    metadata: &Metadata,
+    fixed_wb: [f64; 4],
+) -> Result<SourceDevelopment> {
     let matrix = metadata.camera_to_ap1()?;
     let area = metadata.image_area()?;
     Ok(SourceDevelopment {
+        decode: metadata.development(fixed_wb),
         lens_correction: metadata.lens_identity()?,
         dng_development: metadata.dng_identity(),
         dimensions: metadata.source_dimensions()?,
@@ -455,12 +502,8 @@ pub(super) fn metadata_development(metadata: &Metadata) -> Result<SourceDevelopm
     })
 }
 
-pub(super) fn read_source(path: &Path, wb: Option<[f64; 4]>) -> Result<(Source, [f64; 4])> {
-    let (source, raw) = open_source(path, wb)?;
-    Ok((
-        source,
-        raw.fixed_wb(wb.unwrap_or_else(|| raw.metadata.as_shot_wb())),
-    ))
+pub(super) fn read_source(path: &Path, wb: Option<[f64; 4]>) -> Result<Source> {
+    open_source(path, wb).map(|(source, _)| source)
 }
 
 pub(super) fn open_source(path: &Path, wb: Option<[f64; 4]>) -> Result<(Source, RawFile)> {
@@ -469,14 +512,19 @@ pub(super) fn open_source(path: &Path, wb: Option<[f64; 4]>) -> Result<(Source, 
     let raw = RawFile::open_with_wb(&path, wb)
         .map_err(|error| failure(format!("{}: {error}", path.display())))?;
     log::debug!(header_seconds = started.elapsed().as_secs_f64(); "source_registration");
-    Ok((source_metadata(&path, &raw.metadata)?, raw))
+    let fixed_wb = raw.fixed_wb(wb.unwrap_or_else(|| raw.metadata.as_shot_wb()));
+    Ok((source_metadata(&path, &raw.metadata, fixed_wb)?, raw))
 }
 
-pub(super) fn source_metadata(path: &Path, metadata: &Metadata) -> Result<Source> {
+pub(super) fn source_metadata(
+    path: &Path,
+    metadata: &Metadata,
+    fixed_wb: [f64; 4],
+) -> Result<Source> {
     Ok(Source {
         id: SourceId(0),
         path: absolute(path)?,
-        development: metadata_development(metadata)?,
+        development: metadata_development(metadata, fixed_wb)?,
         reference_only: false,
         photo: Default::default(),
         local_adjustments: None,
@@ -500,6 +548,10 @@ pub(super) fn verify_scan(source: &Source, scan: &Scan) -> Result<()> {
     let (width, height) = scan.dimensions()?;
     let area = scan.area;
     let actual = SourceDevelopment {
+        decode: scan
+            .source()
+            .metadata()
+            .development(scan.source().fixed_wb()),
         lens_correction: scan.source().metadata().lens_identity()?,
         dng_development: scan.source().metadata().dng_identity(),
         dimensions: [width, height],

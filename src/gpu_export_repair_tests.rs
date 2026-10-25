@@ -1,4 +1,5 @@
 use super::*;
+use crate::processing::Calibration;
 use crate::{
     dust_repair::{DonorChoice, Repair, RepairId, RepairOrigin, SupportMask},
     processing::PhotoSettings,
@@ -36,7 +37,7 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
                 dmax: DVec3::splat(0.01),
                 input_floor: 1. / 65535.,
             },
-            RollSettings::new_grade(),
+            RollSettings::default(),
             PhotoGradeSnapshot::new(photo, vec![]).unwrap(),
             DMat3::IDENTITY,
             area,

@@ -45,6 +45,8 @@ This is an early public release, and it says so honestly:
 - Input is camera RAW from the accepted three-colour Bayer domain: Sony ARW (the
   ILCE-1M2 lossless-compressed baseline), Canon CR2/CR3 including CRAW, Nikon NEF,
   Olympus ORF and Panasonic RW2. Developed JPEG/TIFF/EXR import is not implemented.
+- Negative and Digital RAW input stages share grading and export. Digital photographs
+  need no negative calibration and can come from different cameras.
 - One project is one roll; there are no catalogs.
 - Dust cleanup is manual and provisional.
 - macOS on Apple Silicon only for now; broader device coverage is still being tested,

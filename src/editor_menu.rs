@@ -156,7 +156,7 @@ impl Editor {
         }
         if self.file_available() {
             state.enabled.extend([New, Open, AddScans, Close]);
-            if self.calibration().is_some() && self.document.visit.ready.is_some() {
+            if self.input.ready() && self.document.visit.ready.is_some() {
                 state.enabled.insert(Export);
             }
         }

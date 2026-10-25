@@ -1,4 +1,4 @@
-Antitone 0.1.0, captured 2026-10-23
+Antitone 0.1.0, captured 2026-10-25
 Window 1440x900, harness density
 Input: 36 real scans, DSC04379.ARW to DSC04414.ARW
 Regenerate with the procedure in assets/docs/README.md.

@@ -31,6 +31,7 @@ pub(super) struct OriginalView {
     pub signature: Option<Signature>,
     purpose: Option<OriginalPurpose>,
     pub settled: Option<(u64, ViewRequest, Arc<GpuImage>)>,
+    rendered: Option<Arc<crate::gpu::view::RenderedView>>,
     pub refining: Option<(u64, ViewRequest)>,
     pub last_edit: std::time::Instant,
     pub refinement_error: Option<u64>,
@@ -43,6 +44,7 @@ impl OriginalView {
             signature: None,
             purpose: None,
             settled: None,
+            rendered: None,
             refining: None,
             last_edit: std::time::Instant::now(),
             refinement_error: None,
@@ -58,6 +60,7 @@ impl OriginalView {
         self.signature = None;
         self.purpose = None;
         self.settled = None;
+        self.rendered = None;
         self.refinement_error = None;
         self.refining = None;
         // Physical admission belongs to the running service, not this logical demand.
@@ -155,5 +158,73 @@ impl OriginalView {
             }
         }
         None
+    }
+}
+
+impl Editor {
+    /// Both comparison and precision tools present the same accepted reconstruction product.
+    pub(super) fn original_rendered(
+        &mut self,
+        purpose: OriginalPurpose,
+        input: &ProcessingInput,
+        matrix: glam::DMat3,
+    ) -> Result<Option<Arc<crate::gpu::view::RenderedView>>, Error> {
+        use crate::{
+            frame_raster::FrameRaster,
+            gpu::view::{RenderedView, ViewSourceSpec},
+        };
+        let Some((revision, view, image)) = self.original.settled.as_ref() else {
+            return Ok(None);
+        };
+        if self.original.purpose != Some(purpose)
+            || *revision != self.original.revision()
+            || self.original.signature.as_ref().is_none_or(|signature| {
+                signature.0 != input.signature()
+                    || signature.1 != self.target
+                    || signature.2 != Some(*view)
+            })
+        {
+            return Ok(None);
+        }
+        // A rectangular tool request is sampled in native axes, even when the canvas has
+        // quarter-turns or reflections. A straightened request already carries its affine frame.
+        let frame = match view.frame {
+            Some(frame) => frame,
+            None => {
+                let composition =
+                    Composition::new(view.area, Default::default(), Default::default())?;
+                let mut frame = FrameRaster::full(composition)?;
+                frame.output = view.output;
+                frame
+            }
+        };
+        let field = if self.flat_edit.is_some() {
+            None
+        } else {
+            self.correction
+                .as_ref()
+                .map(|correction| correction.settings.map.clone())
+        };
+        let spec = if input.grade().is_none() {
+            ViewSourceSpec::inspection(self.id, frame, matrix, field)?
+        } else {
+            let settings = match self.input.calibration() {
+                Some(base) => self
+                    .input
+                    .with_calibration(self.processing_calibration(base)?),
+                None => self.input,
+            };
+            ViewSourceSpec::new(self.id, frame, settings, matrix, field)?
+        }
+        .with_repairs(input.repairs.clone());
+        if let Some(rendered) = &self.original.rendered
+            && Arc::ptr_eq(&rendered.image, image)
+            && rendered.matches(&spec, &input.signature(), self.target)
+        {
+            return Ok(Some(rendered.clone()));
+        }
+        let rendered = RenderedView::reference(image.clone(), spec, input.signature(), self.target);
+        self.original.rendered = Some(rendered.clone());
+        Ok(Some(rendered))
     }
 }

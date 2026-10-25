@@ -1,4 +1,5 @@
 use super::*;
+use crate::processing::Calibration;
 
 #[cfg(feature = "editor")]
 #[test]
@@ -49,12 +50,13 @@ fn exact_rotated_tiff_and_both_exr_precisions_share_one_lazy_kernel_and_stop_saf
     let request = |composition, format| Request {
         scan: &scan,
         field: None,
-        calibration: Calibration {
+        input: Calibration {
             dmin: DVec3::splat(0.8),
             dmax: DVec3::splat(0.02),
             input_floor: scan.input_floor,
-        },
-        roll: RollSettings::new_grade(),
+        }
+        .into(),
+        roll: RollSettings::default(),
         grade: PhotoGradeSnapshot::new(Default::default(), vec![]).unwrap(),
         repairs: &[],
         composition,

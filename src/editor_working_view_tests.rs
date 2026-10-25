@@ -72,8 +72,7 @@ fn navigation_reuses_underlay_until_basis_change_clear_or_drop() {
             dmax: DVec3::new(0.008, 0.004, 0.002),
             input_floor: crate::processing::CAMERA_INPUT_FLOOR,
         };
-        let roll = RollSettings::new_grade();
-        let first = ViewSourceSpec::new(7, frame, cal, roll, scan.camera_to_ap1, None).unwrap();
+        let first = ViewSourceSpec::new(7, frame, cal, scan.camera_to_ap1, None).unwrap();
 
         for retirement in ["basis", "clear", "drop"] {
             let mut sources = ViewSource::acquire_many(
@@ -109,8 +108,12 @@ fn navigation_reuses_underlay_until_basis_change_clear_or_drop() {
                     ViewSourceSpec::new(
                         7,
                         frame,
-                        cal,
-                        RollSettings { gamma: 0.7, ..roll },
+                        crate::processing::NegativeInput {
+                            calibration: cal,
+                            response: crate::processing::Response::film(),
+                            gamma: 0.7,
+                            balance: Default::default(),
+                        },
                         scan.camera_to_ap1,
                         None,
                     )
@@ -130,7 +133,7 @@ fn navigation_reuses_underlay_until_basis_change_clear_or_drop() {
     });
 }
 
-fn spec(roll: RollSettings, offset: f64) -> ViewSourceSpec {
+fn spec(offset: f64) -> ViewSourceSpec {
     let composition = Composition::new(
         Rect {
             x: 12,
@@ -157,7 +160,6 @@ fn spec(roll: RollSettings, offset: f64) -> ViewSourceSpec {
             dmax: DVec3::new(0.008, 0.004, 0.002),
             input_floor: crate::processing::CAMERA_INPUT_FLOOR,
         },
-        roll,
         glam::DMat3::IDENTITY,
         None,
     )
@@ -165,37 +167,19 @@ fn spec(roll: RollSettings, offset: f64) -> ViewSourceSpec {
 }
 
 #[test]
-fn demand_coalesces_navigation_ignores_grade_only_edits_and_rejects_stale_products() {
+fn demand_coalesces_navigation_and_rejects_stale_products() {
     let mut working = WorkingView::default();
-    let roll = RollSettings::new_grade();
     // These requests exercise mailbox coalescing, not acquisition of the synthetic view geometry.
     let input = source::Context {
         source: crate::editor::tests::developed_fixture(),
         correction: None,
     };
-    let first = spec(roll, 0.);
-
-    for n in 0..40 {
-        let grade_only_spec = spec(
-            RollSettings {
-                exposure: f64::from(n) / 10.,
-                wb: crate::color::Balance {
-                    warmth: f64::from(n) / 100.,
-                    tint: -0.1,
-                },
-                ..roll
-            },
-            0.,
-        );
-        assert!(grade_only_spec == first);
-        working.request(grade_only_spec, input.clone());
-        assert!(working.wanted.as_ref() == Some(&first));
-    }
-
+    let first = spec(0.);
+    working.request(first.clone(), input.clone());
     for n in 1..40 {
-        working.request(spec(roll, f64::from(n)), input.clone());
+        working.request(spec(f64::from(n)), input.clone());
     }
-    let last = spec(roll, 39.);
+    let last = spec(39.);
     assert!(working.mailbox.0.lock().unwrap().wanted.as_ref() == Some(&last));
 
     working.acquired(Completion {
@@ -230,7 +214,7 @@ fn reference_admission_respects_budget_inspection_and_explicit_comparison() {
         cpu_bytes: 0,
         gpu_bytes: 0,
     });
-    let frame = spec(RollSettings::new_grade(), 0.).frame;
+    let frame = spec(0.).frame;
     let view = ViewRequest {
         area: frame.bounds().unwrap(),
         frame: Some(frame),

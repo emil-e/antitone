@@ -50,7 +50,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
                 input_floor: scan.input_floor,
             })
             .unwrap();
-        let roll = RollSettings::new_grade();
+        let roll = RollSettings::default();
         let photo = PhotoSettings::default();
         let pipeline = Pipeline::new(calibration, roll, photo, scan.camera_to_ap1).unwrap();
         let parameters =
@@ -209,10 +209,9 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
             &device,
             &queue,
             paths[2].clone(),
-            Some(document.project.development.as_ref().unwrap().fixed_wb),
+            Some(document.project.development().as_ref().unwrap().fixed_wb),
             Some(source),
             None,
-            document.project.camera_basis.as_ref(),
         )
         .unwrap();
         assert!(ready.thumbnail.is_some());
@@ -224,14 +223,9 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
             Some(disk::DiskCache::at(directory.path().into())),
         );
         let (file, proxy) = ready.thumbnail.clone().unwrap();
-        seeded.seed(source, &ready.development, file.clone(), proxy);
-        let key = ImageKey {
-            projection: None,
-            recipe: Ok(None),
-            source: SourceKey::new(source, &ready.development, file),
-            target: OutputTarget::DisplayP3,
-            field: None,
-        };
+        seeded.seed(source, file.clone(), proxy);
+        let key = tests::key(&document, document.project.order[2]);
+        let _ = file;
         use egui_wgpu::CallbackTrait;
         let image = ready.proxy.image(OutputTarget::DisplayP3).unwrap();
         let parameters = ProcessingParameters::positive(
@@ -240,7 +234,7 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
                 dmax: DVec3::new(0.01, 0.005, 0.001),
                 input_floor: scan.input_floor,
             },
-            RollSettings::new_grade(),
+            RollSettings::default(),
             PhotoSettings::default(),
             scan.camera_to_ap1,
         )
@@ -365,17 +359,7 @@ fn authored_project_relative_locator_develops_a_cold_thumbnail() {
             Arc::new(RendererCache::default()),
             Some(disk::DiskCache::at(directory.path().join("cache"))),
         );
-        let key = ImageKey {
-            projection: None,
-            recipe: Ok(None),
-            source: SourceKey::new(
-                &source,
-                document.project.development.as_ref().unwrap(),
-                FileKey::new(&document.source_path(id).unwrap()),
-            ),
-            target: OutputTarget::DisplayP3,
-            field: None,
-        };
+        let key = tests::key(&document, id);
         let job = tests::service_job(
             &thumbnails,
             key,

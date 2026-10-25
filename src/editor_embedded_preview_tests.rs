@@ -359,7 +359,7 @@ fn stale_document_source_stats_and_development_reject_previews() {
             "document" => document = Document::default(),
             "source" => document.project.source_mut(id).unwrap().reference_only = true,
             "revision" => std::fs::write(&path, b"changed-bytes").unwrap(),
-            "development" => document.project.development.as_mut().unwrap().fixed_wb[0] += 0.5,
+            "development" => document.project.development_mut().unwrap().fixed_wb[0] += 0.5,
             "cancel" => previews.cancel(),
             "closed" => document.cache().close(),
             _ => unreachable!(),
@@ -746,9 +746,9 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
     assert!(editor.document.visit.ready.is_none() && editor.pending_preview.is_none());
     assert_eq!(editor.thumbnails.sources.proxy_count(), 0);
     assert_eq!(editor.document.project, original);
-    editor.floor = editor.document.project.input_floor.unwrap();
-    editor.dmin = Some(glam::DVec3::splat(0.5));
-    editor.dmax = Some(glam::DVec3::splat(0.02));
+    editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
+    editor.set_dmin(Some(glam::DVec3::splat(0.5)));
+    editor.set_dmax(Some(glam::DVec3::splat(0.02)));
     editor.source = false;
     editor.roll.exposure = 2.;
     editor
@@ -818,6 +818,7 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
         .await
         .unwrap()
     });
+    let image_key = key(&editor.document, editor.document.project.order[0]);
     editor
         .thumbnails
         .cache

@@ -93,7 +93,7 @@ fn fractional_camera_values_survive_source_inspection_and_continuous_inversion()
             dmax: DVec3::splat(0.01),
             input_floor: CAMERA_INPUT_FLOOR,
         };
-        let roll = RollSettings::new_grade();
+        let roll = RollSettings::default();
         let photo = PhotoSettings {
             exposure: 4.,
             ..Default::default()
@@ -200,7 +200,7 @@ fn integer_values_preserve_output_bits_in_native_and_continuous_transport() {
         };
         let parameters = ProcessingParameters::positive(
             calibration,
-            RollSettings::new_grade(),
+            RollSettings::default(),
             PhotoSettings::default(),
             DMat3::IDENTITY,
         )

@@ -23,9 +23,9 @@ fn path(name: &str) -> PathBuf {
 fn editor(scheduler: development::Scheduler) -> Editor {
     let mut e = fixture();
     e.document = Document::default().into();
-    e.dmin = None;
-    e.dmax = None;
-    e.floor = 0.;
+    e.set_dmin(None);
+    e.set_dmax(None);
+    e.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
     e.sync_document();
     let (device, queue) = pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -106,8 +106,8 @@ fn reference_proposal_and_correction_finish_without_backend_or_paint_and_keep_wo
             assert_eq!(e.document.project.order, before.order);
             assert_eq!(e.viewport.zoom, Some(1.375));
             assert_eq!(
-                (e.document.project.dmin, e.document.project.dmax),
-                (before.dmin, before.dmax)
+                (e.document.project.dmin(), e.document.project.dmax()),
+                (before.dmin(), before.dmax())
             );
             assert_eq!(
                 e.document.visit.ready.as_ref().unwrap().path,
@@ -178,7 +178,7 @@ fn retiring_queued_reference_stages_restores_context_and_cannot_finish_a_newer_o
             wait(app);
             app.read(|e| {
                 assert!(e.failure.is_none());
-                assert!(e.document.project.flat_field.is_none());
+                assert!(e.document.project.flat_field().is_none());
             });
         });
         scheduler.close_and_wait().unwrap();
@@ -268,7 +268,7 @@ fn departed_reference_waiter_keeps_native_admission_until_running_unpack_and_cle
         wait(app);
         app.read(|e| {
             assert!(e.document.visit.ready.is_some());
-            assert!(e.document.project.flat_field.is_none());
+            assert!(e.document.project.flat_field().is_none());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -503,8 +503,8 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
                 assert_eq!(e.source, source);
                 assert_eq!(e.document.project.order, before.order);
                 assert_eq!(
-                    (e.document.project.dmin, e.document.project.dmax),
-                    (before.dmin, before.dmax)
+                    (e.document.project.dmin(), e.document.project.dmax()),
+                    (before.dmin(), before.dmax())
                 );
                 assert_eq!(
                     e.document.visit.ready.as_ref().unwrap().path,

@@ -12,6 +12,7 @@ struct ProxyState {
     renderer: Arc<GpuRenderer>,
     source: Arc<ProcessingSource>,
     size: [u32; 2],
+    matrix: DMat3,
     active: std::sync::Mutex<Option<(OutputTarget, Arc<GpuImage>)>>,
 }
 
@@ -39,6 +40,7 @@ impl GpuProxy {
             renderer,
             source: Arc::new(source),
             size,
+            matrix,
             active: Default::default(),
         })))
     }
@@ -65,8 +67,33 @@ impl GpuProxy {
             renderer,
             source: Arc::new(source),
             size,
+            matrix,
             active: Default::default(),
         })))
+    }
+
+    pub(crate) fn size(&self) -> [u32; 2] {
+        self.0.size
+    }
+
+    pub(crate) fn matrix(&self) -> DMat3 {
+        self.0.matrix
+    }
+
+    pub(crate) fn view_source(
+        &self,
+        queue: &wgpu::Queue,
+        kernels: Arc<crate::gpu::view::ViewKernels>,
+        spec: crate::gpu::view::ViewSourceSpec,
+    ) -> Result<Arc<crate::gpu::view::ViewSource>, Error> {
+        crate::gpu::view::ViewSource::from_processing(
+            &self.0.device,
+            queue,
+            self.0.renderer.clone(),
+            kernels,
+            self.0.source.clone(),
+            spec,
+        )
     }
 
     pub(crate) fn image(&self, target: OutputTarget) -> Result<Arc<GpuImage>, Error> {

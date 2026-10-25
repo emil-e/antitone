@@ -1,5 +1,6 @@
 //! Identical canonical AP1 inputs exercise the actual viewer and export repair pipelines.
 use super::*;
+use crate::processing::{NegativeInput, Response};
 use crate::{
     dust_repair::{DonorChoice, Repair, RepairId, RepairOrigin, SupportMask},
     gpu::{ProcessingSource, flat::SourceGeometry},
@@ -133,12 +134,15 @@ fn shared_colour_preserves_signed_wb_and_luminance_cancellation_before_local_rec
                 .unwrap();
                 let source =
                     authored_source(&device, renderer.clone(), kernels.clone(), &values, frame);
-                let roll = RollSettings {
+                let input = NegativeInput {
+                    calibration: calibration(),
+                    response: Response::film(),
                     gamma: 0.65,
-                    ..RollSettings::new_grade()
+                    balance: Balance::default(),
                 };
+                let roll = RollSettings::default();
                 let scalar = crate::local_adjustments::SpatialPipeline::new(
-                    calibration(),
+                    input,
                     roll,
                     snapshot.clone(),
                     source.spec.matrix,

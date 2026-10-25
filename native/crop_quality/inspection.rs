@@ -1,8 +1,8 @@
 //! Original, uncorrected camera-code windows. This path never requests crop predictions.
 use super::*;
 use crate::{
-    project::SourceDevelopment, raw::RawFile, rendering::OutputTarget, scan::Scan,
-    source_revision::FileKey,
+    project::Development, project::SourceDevelopment, raw::RawFile, rendering::OutputTarget,
+    scan::Scan, source_revision::FileKey,
 };
 use image::{Rgb, RgbImage};
 
@@ -36,6 +36,7 @@ fn verify_development(expected: &SourceDevelopment, scan: &Scan) -> Result<()> {
     let (width, height) = scan.dimensions()?;
     let area = scan.area;
     let actual = SourceDevelopment {
+        decode: Development::new("test-backend".into(), [1.; 4]),
         lens_correction: scan.source().metadata().lens_identity()?,
         dng_development: scan.source().metadata().dng_identity(),
         dimensions: [width, height],
@@ -110,8 +111,7 @@ fn capture(
         original.verify()?;
         let wb = case
             .project
-            .development
-            .as_ref()
+            .development()
             .ok_or("fixed development WB unavailable")?
             .fixed_wb;
         let scan = monitor.phase("crop-quality-original", || {

@@ -1,9 +1,10 @@
 use super::*;
+use crate::processing::Calibration;
 use crate::{
     color::Balance,
     geometry::{SourcePoint, SourceRegion},
     local_adjustments::{GradientMask, LocalAdjustment, PhotoGradeSnapshot, SpatialPipeline},
-    processing::Response,
+    processing::{DEFAULT_GAMMA, NegativeInput, Response},
 };
 use std::time::Instant;
 
@@ -94,6 +95,15 @@ fn calibration() -> Calibration {
     }
 }
 
+fn negative(cal: Calibration, gamma: f64, response: Response, balance: Balance) -> NegativeInput {
+    NegativeInput {
+        calibration: cal,
+        response,
+        gamma,
+        balance,
+    }
+}
+
 fn camera_matrix() -> DMat3 {
     DMat3::from_cols(
         DVec3::new(0.6062, 0.0161, -0.0031),
@@ -103,7 +113,7 @@ fn camera_matrix() -> DMat3 {
 }
 
 fn zero_y_matrix() -> DMat3 {
-    let rgb = Inversion::new(calibration(), RollSettings::new_grade())
+    let rgb = Inversion::new(calibration())
         .unwrap()
         .apply(DVec3::ZERO)
         .unwrap()
@@ -177,7 +187,7 @@ fn snapshot(global: PhotoSettings, count: usize, nonlinear: bool) -> PhotoGradeS
 #[test]
 fn experimental_reuse_keys_preserve_response_and_prefix_dependencies() {
     let c = calibration();
-    let r = RollSettings::new_grade();
+    let r = RollSettings::default();
     let photo = PhotoSettings::default();
     let p = ProcessingParameters::positive(c, r, photo, camera_matrix()).unwrap();
     let field = || flat::FieldGeometry::uncorrected(Some(geometry()));
@@ -201,23 +211,28 @@ fn experimental_reuse_keys_preserve_response_and_prefix_dependencies() {
         assert_eq!(key(p, false), key(changed, false));
         assert_ne!(key(p, true), key(changed, true));
     }
-    for (calibration, roll, photo) in [
+    let base = negative(c, DEFAULT_GAMMA, Response::film(), Balance::default());
+    for (_calibration, interpretation, roll, photo) in [
         (
             c,
+            base,
             r,
             PhotoSettings {
                 exposure: 1.,
                 ..photo
             },
         ),
-        (c, RollSettings { exposure: 1., ..r }, photo),
-        (c, RollSettings { gamma: 0.7, ..r }, photo),
+        (c, base, RollSettings { exposure: 1., ..r }, photo),
         (
             c,
-            RollSettings {
-                response: Response::Original,
-                ..r
-            },
+            negative(c, 0.7, Response::film(), Balance::default()),
+            r,
+            photo,
+        ),
+        (
+            c,
+            negative(c, DEFAULT_GAMMA, Response::Original, Balance::default()),
+            r,
             photo,
         ),
         (
@@ -225,6 +240,15 @@ fn experimental_reuse_keys_preserve_response_and_prefix_dependencies() {
                 dmin: c.dmin * 1.01,
                 ..c
             },
+            negative(
+                Calibration {
+                    dmin: c.dmin * 1.01,
+                    ..c
+                },
+                DEFAULT_GAMMA,
+                Response::film(),
+                Balance::default(),
+            ),
             r,
             photo,
         ),
@@ -233,12 +257,21 @@ fn experimental_reuse_keys_preserve_response_and_prefix_dependencies() {
                 input_floor: c.input_floor * 2.,
                 ..c
             },
+            negative(
+                Calibration {
+                    input_floor: c.input_floor * 2.,
+                    ..c
+                },
+                DEFAULT_GAMMA,
+                Response::film(),
+                Balance::default(),
+            ),
             r,
             photo,
         ),
     ] {
         let changed =
-            ProcessingParameters::positive(calibration, roll, photo, camera_matrix()).unwrap();
+            ProcessingParameters::positive(interpretation, roll, photo, camera_matrix()).unwrap();
         assert_ne!(ResponseKey::new(p), ResponseKey::new(changed));
         assert_ne!(key(p, false), key(changed, false));
     }
@@ -484,7 +517,7 @@ fn reuse_probe_preserves_both_source_formats_and_fractional_samples() {
         let grade = GpuPhotoGrade::new(
             &device,
             calibration(),
-            RollSettings::new_grade(),
+            RollSettings::default(),
             snapshot(PhotoSettings::default(), 2, true),
             camera_matrix(),
             area(),
@@ -493,7 +526,7 @@ fn reuse_probe_preserves_both_source_formats_and_fractional_samples() {
         let identity_suffix = GpuPhotoGrade::new(
             &device,
             calibration(),
-            RollSettings::new_grade(),
+            RollSettings::default(),
             snapshot(PhotoSettings::default(), 0, false),
             camera_matrix(),
             area(),
@@ -586,7 +619,12 @@ fn exact_response_and_prefix_reuse() {
             (
                 "global-identity-matrix",
                 DMat3::IDENTITY,
-                RollSettings::new_grade(),
+                negative(
+                    calibration(),
+                    DEFAULT_GAMMA,
+                    Response::film(),
+                    Balance::default(),
+                ),
                 PhotoSettings::default(),
                 0,
                 false,
@@ -594,7 +632,12 @@ fn exact_response_and_prefix_reuse() {
             (
                 "global-camera",
                 camera_matrix(),
-                RollSettings::new_grade(),
+                negative(
+                    calibration(),
+                    DEFAULT_GAMMA,
+                    Response::film(),
+                    Balance::default(),
+                ),
                 PhotoSettings::default(),
                 0,
                 false,
@@ -602,7 +645,12 @@ fn exact_response_and_prefix_reuse() {
             (
                 "two-exposure",
                 camera_matrix(),
-                RollSettings::new_grade(),
+                negative(
+                    calibration(),
+                    DEFAULT_GAMMA,
+                    Response::film(),
+                    Balance::default(),
+                ),
                 PhotoSettings::default(),
                 2,
                 false,
@@ -610,7 +658,12 @@ fn exact_response_and_prefix_reuse() {
             (
                 "two-photographic",
                 camera_matrix(),
-                RollSettings::new_grade(),
+                negative(
+                    calibration(),
+                    DEFAULT_GAMMA,
+                    Response::film(),
+                    Balance::default(),
+                ),
                 PhotoSettings::default(),
                 2,
                 true,
@@ -618,7 +671,12 @@ fn exact_response_and_prefix_reuse() {
             (
                 "global-photographic",
                 camera_matrix(),
-                RollSettings::new_grade(),
+                negative(
+                    calibration(),
+                    DEFAULT_GAMMA,
+                    Response::film(),
+                    Balance::default(),
+                ),
                 photographic(),
                 0,
                 false,
@@ -626,7 +684,12 @@ fn exact_response_and_prefix_reuse() {
             (
                 "classic",
                 camera_matrix(),
-                RollSettings::default(),
+                negative(
+                    calibration(),
+                    DEFAULT_GAMMA,
+                    Response::film(),
+                    Balance::default(),
+                ),
                 PhotoSettings::default(),
                 0,
                 false,
@@ -634,14 +697,15 @@ fn exact_response_and_prefix_reuse() {
             (
                 "shoulder",
                 camera_matrix(),
-                RollSettings {
-                    response: Response::Film {
+                negative(
+                    calibration(),
+                    1.2,
+                    Response::Film {
                         toe: 3.,
                         shoulder: 0.01,
                     },
-                    gamma: 1.2,
-                    ..RollSettings::new_grade()
-                },
+                    Balance::default(),
+                ),
                 PhotoSettings::default(),
                 0,
                 false,
@@ -649,7 +713,12 @@ fn exact_response_and_prefix_reuse() {
             (
                 "amplified-zero-y-ratio-contrast",
                 zero_y_matrix(),
-                RollSettings::new_grade(),
+                negative(
+                    calibration(),
+                    DEFAULT_GAMMA,
+                    Response::film(),
+                    Balance::default(),
+                ),
                 PhotoSettings {
                     exposure: 16.,
                     contrast: 0.4,
@@ -661,10 +730,16 @@ fn exact_response_and_prefix_reuse() {
                 false,
             ),
         ] {
-            let c = calibration();
             let snapshot = snapshot(global, count, nonlinear);
-            let grade =
-                GpuPhotoGrade::new(&device, c, roll, snapshot.clone(), matrix, area()).unwrap();
+            let grade = GpuPhotoGrade::new(
+                &device,
+                roll,
+                RollSettings::default(),
+                snapshot.clone(),
+                matrix,
+                area(),
+            )
+            .unwrap();
             let mut source = ProcessingSource::new(&device, &pixels, matrix).unwrap();
             source.set_geometry(geometry()).unwrap();
             assert_eq!(source.byte_len(), pixels.len() as u64 * 8);
@@ -689,7 +764,8 @@ fn exact_response_and_prefix_reuse() {
             };
             run(None);
             let expected = read_words(&device, &queue, &probe.output);
-            let scalar = SpatialPipeline::new(c, roll, snapshot, matrix).unwrap();
+            let scalar =
+                SpatialPipeline::new(roll, RollSettings::default(), snapshot, matrix).unwrap();
             for i in (0..pixels.len()).step_by(257) {
                 let scan =
                     DVec3::from_array(std::array::from_fn(|ch| f64::from(pixels[i][ch]) / 65535.));
@@ -709,9 +785,9 @@ fn exact_response_and_prefix_reuse() {
             }
             let table_ms = run(Some(&[0]));
             let words = read_words(&device, &queue, &probe.response);
-            let inversion = Inversion::new(c, roll).unwrap();
-            let gain = exposure_multiplier(roll.exposure).unwrap()
-                * exposure_multiplier(global.exposure).unwrap();
+            let inversion = Inversion::new(roll).unwrap();
+            let gain =
+                exposure_multiplier(0.).unwrap() * exposure_multiplier(global.exposure).unwrap();
             for code in 0..65536 {
                 let reference = inversion.apply(DVec3::splat(code as f64 / 65535.)).unwrap();
                 for ch in 0..3 {
@@ -814,7 +890,7 @@ fn reuse_edits_and_bypasses() {
         let base = GpuPhotoGrade::new(
             &device,
             calibration(),
-            RollSettings::new_grade(),
+            RollSettings::default(),
             snapshot(PhotoSettings::default(), 2, true),
             matrix,
             area(),
@@ -872,7 +948,7 @@ fn reuse_edits_and_bypasses() {
                 let grade = GpuPhotoGrade::new(
                     &device,
                     calibration(),
-                    RollSettings::new_grade(),
+                    RollSettings::default(),
                     changed,
                     matrix,
                     area(),
@@ -942,7 +1018,7 @@ fn reuse_edits_and_bypasses() {
         let mut grade = GpuPhotoGrade::new(
             &device,
             corrected_calibration,
-            RollSettings::new_grade(),
+            RollSettings::default(),
             corrected_snapshot.clone(),
             matrix,
             area(),
@@ -952,7 +1028,7 @@ fn reuse_edits_and_bypasses() {
         let expected = read_words(&device, &queue, &probe.output);
         let scalar = SpatialPipeline::new(
             corrected_calibration,
-            RollSettings::new_grade(),
+            RollSettings::default(),
             corrected_snapshot,
             matrix,
         )

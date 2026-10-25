@@ -8,7 +8,7 @@ fn exact_values(repair: &crate::dust_repair::EvaluatedRepair) -> Vec<([u32; 2], 
 }
 
 #[test]
-fn dust_evaluation_and_failure_leave_the_navigation_card_ready() {
+fn repair_evaluation_failures_preserve_usable_navigation_previews() {
     tools::calibrated_harness_with_thumbnails(true, |mut h| {
         wait_for(&mut h, |editor| {
             editor
@@ -52,43 +52,15 @@ fn dust_evaluation_and_failure_leave_the_navigation_card_ready() {
                 .unwrap()
         });
         h.step();
-        h.read(|editor| {
-            assert_eq!(
-                editor
-                    .thumbnails
-                    .ready_count(&editor.document, editor.target),
-                1
-            );
-            assert!(
-                !editor.document.thumbnail_work.pending(),
-                "dust must not restart navigation work"
-            );
-        });
-        assert!(
-            h.query_by_role_and_label(egui::accesskit::Role::Image, "Photo updating")
-                .is_none()
-        );
+        assert_navigation_preview(&h);
         wait_for(&mut h, |editor| {
             editor.document.dust.has_failed_evaluation(source, repair)
         });
         for size in [egui::vec2(1100., 800.), egui::vec2(800., 600.)] {
             h.set_size(size);
             h.step();
-            assert!(
-                h.query_by_role_and_label(egui::accesskit::Role::Image, "Photo error")
-                    .is_none()
-            );
-            assert!(
-                h.query_by_role_and_label(egui::accesskit::Role::Image, "Photo updating")
-                    .is_none()
-            );
+            assert_navigation_preview(&h);
             h.read(|editor| {
-                assert_eq!(
-                    editor
-                        .thumbnails
-                        .ready_count(&editor.document, editor.target),
-                    1
-                );
                 assert!(
                     editor.document.dust.has_failed_evaluation(source, repair),
                     "keeping the navigation card must not clear the viewer's failed evaluation"
@@ -113,21 +85,29 @@ fn dust_evaluation_and_failure_leave_the_navigation_card_ready() {
                 .unwrap()
         });
         h.step();
-        wait_for(&mut h, |editor| {
-            editor
-                .thumbnails
-                .ready_count(&editor.document, editor.target)
-                == 1
-        });
-        assert!(
-            h.query_by_role_and_label(egui::accesskit::Role::Image, "Photo error")
-                .is_none()
-        );
-        assert!(
-            h.query_by_role_and_label(egui::accesskit::Role::Image, "Photo updating")
-                .is_none()
-        );
+        assert_navigation_preview(&h);
     });
+}
+
+fn assert_navigation_preview(h: &Harness<'_, Editor>) {
+    let name = h.read(|e| {
+        e.document
+            .source_path(e.current_source.unwrap())
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned()
+    });
+    let card = h.get_by_label(&name);
+    assert!(
+        !card.accesskit_node().is_disabled(),
+        "the photo remains selectable"
+    );
+    let rect = card.rect();
+    assert!(h.output().shapes.iter().any(|shape| matches!(&shape.shape,
+        egui::Shape::Callback(callback) if callback.rect.is_positive() && rect.contains(callback.rect.center())
+    )), "the navigation card retains an image while repair work changes");
 }
 
 #[test]
@@ -286,11 +266,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         ready(&mut h, 2);
 
         let raw_path = h.read(|editor| editor.document.source_path(source).unwrap());
-        let scan = Scan::open(
-            &raw_path,
-            Some(expected.development.as_ref().unwrap().fixed_wb),
-        )
-        .unwrap();
+        let scan = Scan::open(&raw_path, Some(expected.development().unwrap().fixed_wb)).unwrap();
         for repair in expected.source(source).unwrap().repairs.repairs() {
             let request = h.read(|editor| crate::editor::dust::Request {
                 request: 1,
@@ -298,8 +274,14 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
                 source,
                 signature,
                 repair: repair.clone(),
-                calibration: editor.calibration().unwrap(),
-                roll: editor.roll.inversion_only(),
+                input: editor
+                    .document
+                    .project
+                    .image_recipe(source)
+                    .unwrap()
+                    .neutral
+                    .processing_input()
+                    .unwrap(),
                 cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             });
             let cpu = crate::editor::dust::evaluate(&scan, &request).unwrap();

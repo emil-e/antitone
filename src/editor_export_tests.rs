@@ -89,13 +89,7 @@ fn supplied_m9_editor_import_save_open_and_bounded_exports() {
         );
         assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
         assert_eq!(
-            editor
-                .document
-                .project
-                .development
-                .as_ref()
-                .unwrap()
-                .contract,
+            editor.document.project.development().unwrap().contract,
             crate::project::DNG_DEVELOPMENT_CONTRACT
         );
         assert!(
@@ -104,9 +98,9 @@ fn supplied_m9_editor_import_save_open_and_bounded_exports() {
                 .dng_development
                 .is_some()
         );
-        editor.dmin = Some(DVec3::splat(0.75));
-        editor.dmax = Some(DVec3::splat(0.01));
-        editor.roll = RollSettings::new_grade();
+        editor.set_dmin(Some(DVec3::splat(0.75)));
+        editor.set_dmax(Some(DVec3::splat(0.01)));
+        editor.roll = RollSettings::default();
         // Exercise the real full-resolution source while keeping generated files tiny.
         // These declared anchors are plumbing inputs, not a grade of this camera photograph.
         editor.crop = Some(crate::crop::Crop {
@@ -186,9 +180,9 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
             },
         );
         assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
-        editor.dmin = Some(DVec3::splat(3000. / 4031.));
-        editor.dmax = Some(DVec3::splat(128. / 4031.));
-        editor.roll = RollSettings::new_grade();
+        editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
+        editor.set_dmax(Some(DVec3::splat(128. / 4031.)));
+        editor.roll = RollSettings::default();
         editor.photo = PhotoSettings {
             contrast: 0.8,
             saturation: 1.3,

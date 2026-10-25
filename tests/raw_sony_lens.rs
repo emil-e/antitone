@@ -432,6 +432,7 @@ fn resampled_picks_still_reject_clipped_original_cfa_support() {
 #[cfg(feature = "project")]
 fn development(scan: &antitone::scan::Scan) -> antitone::project::SourceDevelopment {
     antitone::project::SourceDevelopment {
+        decode: scan.source().metadata().development(scan.fixed_wb),
         lens_correction: scan.source().metadata().lens_identity().unwrap(),
         dng_development: scan.source().metadata().dng_identity(),
         dimensions: scan.source().metadata().source_dimensions().unwrap(),
@@ -447,7 +448,7 @@ fn development(scan: &antitone::scan::Scan) -> antitone::project::SourceDevelopm
 fn save_open_retains_lens_identity_and_flat_references_reject_different_maps_at_equal_dimensions() {
     use antitone::{
         flat_field::FlatField,
-        project::{Development, FlatFieldSettings, Project, Save, Source, SourceId},
+        project::{FlatFieldSettings, Project, Save, Source, SourceId},
     };
     use std::sync::Arc;
     let file = source(Order::Little, profile_tags(Order::Little), false, false);
@@ -470,10 +471,14 @@ fn save_open_retains_lens_identity_and_flat_references_reject_different_maps_at_
         "only lens provenance differs in this fixture"
     );
     let mut project = Project {
-        development: Some(Development::new(antitone::raw::version(), scan.fixed_wb)),
-        dmin: Some([0.7; 3]),
-        dmax: Some([0.01; 3]),
-        input_floor: Some(scan.input_floor),
+        input: antitone::processing::InputSettings::Negative {
+            dmin: Some(DVec3::splat(0.7)),
+            dmax: Some(DVec3::splat(0.01)),
+            input_floor: antitone::processing::CAMERA_INPUT_FLOOR,
+            response: antitone::processing::Response::film(),
+            gamma: antitone::processing::DEFAULT_GAMMA,
+            balance: Default::default(),
+        },
         ..Default::default()
     };
     let id = project
@@ -497,15 +502,11 @@ fn save_open_retains_lens_identity_and_flat_references_reject_different_maps_at_
         )
         .unwrap(),
     );
-    let field = FlatFieldSettings::new(
-        project.source(id).unwrap(),
-        map.clone(),
-        project.development.as_ref().unwrap(),
-    );
+    let field = FlatFieldSettings::new(project.source(id).unwrap(), map.clone());
     assert!(field.require_source(&second_development).is_err());
     scan.set_flat_field(Some(map.clone())).unwrap();
     other.set_flat_field(Some(map)).unwrap();
-    project.flat_field = Some(field);
+    project.set_flat_field(Some(field));
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("sony.antitone");
     project.save(&path, Save::New).unwrap();
@@ -519,8 +520,8 @@ fn save_open_retains_lens_identity_and_flat_references_reject_different_maps_at_
     missing.neutral.source_development.lens_correction = None;
     assert!(missing.neutral.require_scan(&scan).is_err());
     let mut old = reopened;
-    old.flat_field = None;
-    old.development.as_mut().unwrap().contract =
+    old.set_flat_field(None);
+    old.sources[0].development.decode.contract =
         "libraw-camera-ahd-u16-linear-camera-inversion-ap1-bradford-code-floor-v2".into();
     assert!(old.require_runtime(&antitone::raw::version()).is_err());
 }
@@ -535,7 +536,7 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
         gpu::{GpuFlatField, SubmissionGate},
         gpu_export::{self, Format, Request},
         local_adjustments::{PhotoGradeSnapshot, SpatialPipeline},
-        processing::{Calibration, PhotoSettings, RollSettings},
+        processing::{Calibration, InputSettings, PhotoSettings, Response, RollSettings},
         renderer::GpuRenderer,
         rendering::OutputTarget,
     };
@@ -578,7 +579,7 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
             dmax: DVec3::splat(0.01),
             input_floor: scan.input_floor,
         };
-        let roll = RollSettings::new_grade();
+        let roll = RollSettings::default();
         let grade = PhotoGradeSnapshot::new(
             PhotoSettings {
                 contrast: 1.1,
@@ -593,13 +594,8 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
             PhotoOrientation::default(),
         )
         .unwrap();
-        let scalar = SpatialPipeline::new(
-            scan.processing_calibration(calibration).unwrap(),
-            roll,
-            grade.clone(),
-            scan.camera_to_ap1,
-        )
-        .unwrap();
+        let input = InputSettings::negative(scan.processing_calibration(calibration).unwrap());
+        let scalar = SpatialPipeline::new(input, roll, grade.clone(), scan.camera_to_ap1).unwrap();
         for format in [
             Format::Tiff(OutputTarget::Srgb),
             Format::Exr(ExrPrecision::Full),
@@ -613,7 +609,7 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
                 Request {
                     scan: &scan,
                     field: field.clone(),
-                    calibration,
+                    input,
                     roll,
                     grade: grade.clone(),
                     repairs: &[],
@@ -625,7 +621,7 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
                 Overwrite::Confirmed,
             )
             .unwrap();
-            let metadata = ProcessingMetadata::with_grade(roll.response, &grade);
+            let metadata = ProcessingMetadata::with_grade(Response::film(), &grade);
             match format {
                 Format::Tiff(target) => {
                     export::tiff_composed(

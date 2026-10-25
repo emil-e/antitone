@@ -37,7 +37,7 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                     .unwrap();
                 let parameters = ProcessingParameters::positive(
                     calibration,
-                    RollSettings::new_grade(),
+                    RollSettings::default(),
                     PhotoSettings::default(),
                     DMat3::IDENTITY,
                 )
@@ -130,7 +130,7 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                 .unwrap();
                 let tile_parameters = ProcessingParameters::positive(
                     calibration,
-                    RollSettings::new_grade(),
+                    RollSettings::default(),
                     PhotoSettings {
                         wb: Balance {
                             warmth: 0.2,

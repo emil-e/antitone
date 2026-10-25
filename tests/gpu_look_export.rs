@@ -12,7 +12,7 @@ use antitone::{
     gpu_export::{self, Format, Request},
     local_adjustments::{PhotoGradeSnapshot, SpatialPipeline},
     looks::{LookAsset, LookOrigin, Lut3D},
-    processing::{Calibration, PhotoSettings, RollSettings},
+    processing::{Calibration, InputSettings, PhotoSettings, Response, RollSettings},
     renderer::GpuRenderer,
     rendering::OutputTarget,
     scan::Scan,
@@ -58,7 +58,7 @@ fn fixture() -> (
     (
         scan,
         calibration,
-        RollSettings::new_grade(),
+        RollSettings::default(),
         grade,
         composition,
     )
@@ -86,7 +86,6 @@ fn look(minimum: [f32; 3], maximum: [f32; 3]) -> Arc<LookAsset> {
 fn repairs(
     scan: &Scan,
     calibration: Calibration,
-    roll: RollSettings,
 ) -> Vec<Arc<antitone::dust_repair::EvaluatedRepair>> {
     use antitone::dust_repair::{DonorChoice, Repair, RepairId, RepairOrigin, SupportMask};
     let repair = Repair {
@@ -96,14 +95,9 @@ fn repairs(
         support: SupportMask::new([126, 62], [5, 5], vec![true; 25]).unwrap(),
         donor: DonorChoice::Offset([-64, 0]),
     };
+    let input = InputSettings::negative(scan.processing_calibration(calibration).unwrap());
     vec![Arc::new(
-        antitone::repair_source::evaluate(
-            scan,
-            scan.processing_calibration(calibration).unwrap(),
-            roll,
-            &repair,
-        )
-        .unwrap(),
+        antitone::repair_source::evaluate(scan, &input, &repair).unwrap(),
     )]
 }
 
@@ -128,13 +122,13 @@ fn compare_tiff(repaired: bool) {
     let (device, queue, renderer) = context();
     let (scan, calibration, roll, grade, composition) = fixture();
     let repairs = if repaired {
-        repairs(&scan, calibration, roll)
+        repairs(&scan, calibration)
     } else {
         vec![]
     };
     let asset = look([-2.; 3], [2.; 3]);
     let pipeline = SpatialPipeline::new(
-        scan.processing_calibration(calibration).unwrap(),
+        InputSettings::negative(scan.processing_calibration(calibration).unwrap()),
         roll,
         grade.clone(),
         scan.camera_to_ap1,
@@ -154,7 +148,7 @@ fn compare_tiff(repaired: bool) {
                 Request {
                     scan: &scan,
                     field: None,
-                    calibration,
+                    input: InputSettings::negative(calibration),
                     roll,
                     grade: grade.clone(),
                     composition,
@@ -172,7 +166,7 @@ fn compare_tiff(repaired: bool) {
             composition,
             target,
             Overwrite::Confirmed,
-            ProcessingMetadata::with_grade(roll.response, &grade),
+            ProcessingMetadata::with_grade(Response::film(), &grade),
             |x, y| {
                 let value = if let Some(repair) = repairs
                     .iter()
@@ -228,7 +222,7 @@ fn compare_exr(repaired: bool) {
     let (device, queue, renderer) = context();
     let (scan, calibration, roll, grade, composition) = fixture();
     let repairs = if repaired {
-        repairs(&scan, calibration, roll)
+        repairs(&scan, calibration)
     } else {
         vec![]
     };
@@ -246,7 +240,7 @@ fn compare_exr(repaired: bool) {
                 Request {
                     scan: &scan,
                     field: None,
-                    calibration,
+                    input: InputSettings::negative(calibration),
                     roll,
                     grade: grade.clone(),
                     composition,
@@ -289,7 +283,7 @@ fn narrow_lut_renders_crop_and_full_image_and_invalid_settings_preserve_destinat
     let (device, queue, renderer) = context();
     let (scan, calibration, roll, grade, composition) = fixture();
     let pipeline = SpatialPipeline::new(
-        scan.processing_calibration(calibration).unwrap(),
+        InputSettings::negative(scan.processing_calibration(calibration).unwrap()),
         roll,
         grade.clone(),
         scan.camera_to_ap1,
@@ -335,7 +329,7 @@ fn narrow_lut_renders_crop_and_full_image_and_invalid_settings_preserve_destinat
         Request {
             scan: &scan,
             field: None,
-            calibration,
+            input: InputSettings::negative(calibration),
             roll,
             grade: grade.clone(),
             composition: crop,
@@ -355,7 +349,7 @@ fn narrow_lut_renders_crop_and_full_image_and_invalid_settings_preserve_destinat
         Request {
             scan: &scan,
             field: None,
-            calibration,
+            input: InputSettings::negative(calibration),
             roll,
             grade: grade.clone(),
             composition,
@@ -373,7 +367,7 @@ fn narrow_lut_renders_crop_and_full_image_and_invalid_settings_preserve_destinat
         composition,
         OutputTarget::Srgb,
         Overwrite::Refuse,
-        ProcessingMetadata::with_grade(roll.response, &grade),
+        ProcessingMetadata::with_grade(Response::film(), &grade),
         |x, y| {
             asset
                 .lut()
@@ -400,7 +394,7 @@ fn narrow_lut_renders_crop_and_full_image_and_invalid_settings_preserve_destinat
             Request {
                 scan: &scan,
                 field: None,
-                calibration,
+                input: InputSettings::negative(calibration),
                 roll: invalid_roll,
                 repairs: &[],
                 grade,

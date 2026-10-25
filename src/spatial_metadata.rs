@@ -459,7 +459,7 @@ impl Metadata {
         }
         let mut result = self.clone();
         result.groups.retain(|group| {
-            project.development.as_ref() == Some(&group.development)
+            project.scan_basis().map(|basis| &basis.development.decode) == Some(&group.development)
                 && group.sources.iter().all(|source| {
                     project
                         .source(source.input.source)

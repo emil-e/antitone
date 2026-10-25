@@ -10,9 +10,8 @@ fn local_precision_budget_is_not_global_identity_and_mismatched_grades_still_rej
         let (device, queue, renderer, kernels) = context().await;
         let scan = scan();
         let cal = calibration();
-        let roll = RollSettings::new_grade();
-        let spec =
-            ViewSourceSpec::new(7, frame(&scan), cal, roll, scan.camera_to_ap1, None).unwrap();
+        let roll = RollSettings::default();
+        let spec = ViewSourceSpec::new(7, frame(&scan), cal, scan.camera_to_ap1, None).unwrap();
         let source = ViewSource::acquire(
             &device,
             &queue,

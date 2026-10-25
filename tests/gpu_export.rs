@@ -11,7 +11,7 @@ use antitone::{
     gpu::SubmissionGate,
     gpu_export::{self, Format, Request},
     local_adjustments::{PhotoGradeSnapshot, SpatialPipeline},
-    processing::{Calibration, PhotoSettings, RollSettings},
+    processing::{Calibration, InputSettings, PhotoSettings, Response, RollSettings},
     renderer::GpuRenderer,
     rendering::OutputTarget,
     scan::Scan,
@@ -52,7 +52,7 @@ fn source() -> (
         dmax: DVec3::splat(128. / 4031.),
         input_floor: scan.input_floor,
     };
-    let roll = RollSettings::new_grade();
+    let roll = RollSettings::default();
     let grade = PhotoGradeSnapshot::new(
         PhotoSettings {
             contrast: 0.8,
@@ -85,9 +85,14 @@ fn gpu_tiff_matches_scalar_ocio_within_one_rgb16_code_on_authored_patches() {
     let (device, queue, renderer) = context();
     let (scan, calibration, roll, grade, composition) = source();
     let directory = tempfile::tempdir().unwrap();
-    let pipeline =
-        SpatialPipeline::new(calibration, roll, grade.clone(), scan.camera_to_ap1).unwrap();
-    let metadata = ProcessingMetadata::with_grade(roll.response, &grade);
+    let pipeline = SpatialPipeline::new(
+        InputSettings::negative(calibration),
+        roll,
+        grade.clone(),
+        scan.camera_to_ap1,
+    )
+    .unwrap();
+    let metadata = ProcessingMetadata::with_grade(Response::film(), &grade);
     let mut differences = 0;
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
         let gpu = directory.path().join(format!("gpu-{target:?}.tif"));
@@ -99,7 +104,7 @@ fn gpu_tiff_matches_scalar_ocio_within_one_rgb16_code_on_authored_patches() {
             Request {
                 scan: &scan,
                 field: None,
-                calibration,
+                input: InputSettings::negative(calibration),
                 roll,
                 grade: grade.clone(),
                 repairs: &[],
@@ -149,9 +154,14 @@ fn gpu_exr_uses_shared_working_precision_through_linear_ap0_on_authored_patches(
     let (device, queue, renderer) = context();
     let (scan, calibration, roll, grade, composition) = source();
     let directory = tempfile::tempdir().unwrap();
-    let pipeline =
-        SpatialPipeline::new(calibration, roll, grade.clone(), scan.camera_to_ap1).unwrap();
-    let metadata = ProcessingMetadata::with_grade(roll.response, &grade);
+    let pipeline = SpatialPipeline::new(
+        InputSettings::negative(calibration),
+        roll,
+        grade.clone(),
+        scan.camera_to_ap1,
+    )
+    .unwrap();
+    let metadata = ProcessingMetadata::with_grade(Response::film(), &grade);
     let mut differences = 0;
     for precision in [ExrPrecision::Half, ExrPrecision::Full] {
         let gpu = directory.path().join(format!("gpu-{precision:?}.exr"));
@@ -163,7 +173,7 @@ fn gpu_exr_uses_shared_working_precision_through_linear_ap0_on_authored_patches(
             Request {
                 scan: &scan,
                 field: None,
-                calibration,
+                input: InputSettings::negative(calibration),
                 roll,
                 grade: grade.clone(),
                 repairs: &[],
@@ -381,7 +391,7 @@ fn corrected_ordered_locals_reopen_after_native_permutations_and_rotated_coverag
             )
             .unwrap();
             let raster = FrameRaster::full(composition).unwrap();
-            let metadata = ProcessingMetadata::with_grade(roll.response, &grade);
+            let metadata = ProcessingMetadata::with_grade(Response::film(), &grade);
             for format in [
                 Format::Tiff(OutputTarget::Srgb),
                 Format::Tiff(OutputTarget::DisplayP3),
@@ -397,7 +407,7 @@ fn corrected_ordered_locals_reopen_after_native_permutations_and_rotated_coverag
                         look: None,
                         scan: &scan,
                         field: gpu_field.clone(),
-                        calibration,
+                        input: InputSettings::negative(calibration),
                         roll,
                         grade: grade.clone(),
                         repairs: &[],

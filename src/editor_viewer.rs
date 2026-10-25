@@ -6,13 +6,23 @@ pub(super) fn surface() -> egui::Color32 {
 
 impl Editor {
     pub(super) fn source_parameters(&self, exposure: f64) -> Result<ProcessingParameters, Error> {
+        let decode = self
+            .document
+            .visit
+            .ready
+            .as_ref()
+            .map(|ready| &ready.record.development.decode)
+            .or_else(|| {
+                self.document
+                    .project
+                    .sources
+                    .first()
+                    .map(|source| &source.development.decode)
+            });
         ProcessingParameters::source_preview(
-            self.document
-                .project
-                .development
-                .as_ref()
-                // SDK camera-to-PCS already defines the balanced white scale; only
-                // LibRaw's max-gain normalization needs this preview compensation.
+            // SDK camera-to-PCS already defines the balanced white scale; only
+            // LibRaw's max-gain normalization needs this preview compensation.
+            decode
                 .filter(|d| d.contract != crate::project::DNG_DEVELOPMENT_CONTRACT)
                 .map(|d| d.fixed_wb),
             exposure,
@@ -126,7 +136,7 @@ impl Editor {
 
         let mut cancel = false;
         let mut apply = false;
-        let calibrated = self.calibration().is_some();
+        let calibrated = self.input.ready();
         if !calibrated {
             self.source = true;
         }

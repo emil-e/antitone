@@ -1,7 +1,9 @@
 use super::*;
+use crate::processing::Calibration;
 use crate::{
     color::Balance,
     geometry::{Composition, FramePoint},
+    viewer::readback::image_pixels as image,
 };
 use std::sync::atomic::AtomicU64;
 
@@ -59,18 +61,30 @@ fn calibration() -> Calibration {
     }
 }
 
+pub(super) fn negative(gamma: f64) -> InputSettings {
+    let calibration = calibration();
+    InputSettings::Negative {
+        dmin: Some(calibration.dmin),
+        dmax: Some(calibration.dmax),
+        input_floor: calibration.input_floor,
+        response: crate::processing::Response::film(),
+        gamma,
+        balance: crate::color::Balance::default(),
+    }
+}
+
 fn frame(scan: &Scan) -> FrameRaster {
     FrameRaster::full(Composition::new(scan.area, Default::default(), Default::default()).unwrap())
         .unwrap()
 }
 
 fn processing_input(
-    cal: Calibration,
+    input: impl Into<InputSettings>,
     roll: RollSettings,
     photo: PhotoSettings,
     scan: &Scan,
 ) -> ProcessingInput {
-    ProcessingParameters::positive(cal, roll, photo, scan.camera_to_ap1)
+    ProcessingParameters::interpret(input, roll, photo, scan.camera_to_ap1)
         .unwrap()
         .into()
 }
@@ -101,84 +115,29 @@ fn read(device: &wgpu::Device, queue: &wgpu::Queue, source: &wgpu::Buffer) -> Ve
     result
 }
 
-fn image(device: &wgpu::Device, queue: &wgpu::Queue, image: &GpuImage) -> Vec<[f32; 4]> {
-    let width = image.linear.width();
-    let height = image.linear.height();
-    let stride = (width * 16).div_ceil(256) * 256;
-    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size: u64::from(stride) * u64::from(height),
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
-    let mut encoder = device.create_command_encoder(&Default::default());
-    encoder.copy_texture_to_buffer(
-        image.linear.as_image_copy(),
-        wgpu::TexelCopyBufferInfo {
-            buffer: &buffer,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(stride),
-                rows_per_image: Some(height),
-            },
-        },
-        image.linear.size(),
-    );
-    queue.submit([encoder.finish()]);
-    let padded = read(device, queue, &buffer);
-    padded
-        .chunks(stride as usize / 16)
-        .flat_map(|r| r[..width as usize].iter().copied())
-        .collect()
-}
-
 #[test]
 fn acquisition_keys_track_authority_response_correction_and_view_but_not_grading() {
     let scan = scan();
     let frame = frame(&scan);
-    let roll = RollSettings::new_grade();
-    let spec =
-        ViewSourceSpec::new(7, frame, calibration(), roll, scan.camera_to_ap1, None).unwrap();
-    let key = |frame, cal, roll, field| {
-        ViewSourceSpec::new(7, frame, cal, roll, scan.camera_to_ap1, field).unwrap()
+    let settings = negative(0.6);
+    let spec = ViewSourceSpec::new(7, frame, settings, scan.camera_to_ap1, None).unwrap();
+    let key = |frame, settings: &InputSettings, field| {
+        ViewSourceSpec::new(7, frame, settings, scan.camera_to_ap1, field).unwrap()
     };
-    assert!(
-        spec == key(
-            frame,
-            calibration(),
-            RollSettings {
-                exposure: 3.,
-                wb: Balance {
-                    warmth: 0.4,
-                    tint: -0.3
-                },
-                ..roll
-            },
-            None
-        )
-    );
-    assert!(
-        spec != key(
-            frame,
-            calibration(),
-            RollSettings {
-                gamma: roll.gamma + 0.01,
-                ..roll
-            },
-            None
-        )
-    );
-    assert!(
-        spec != key(
-            frame,
-            Calibration {
-                dmin: calibration().dmin * 1.01,
-                ..calibration()
-            },
-            roll,
-            None
-        )
-    );
+    assert!(spec == key(frame, &settings, None));
+    let mut gamma_changed = settings;
+    if let InputSettings::Negative { gamma, .. } = &mut gamma_changed {
+        *gamma += 0.01;
+    }
+    assert!(spec != key(frame, &gamma_changed, None));
+    let mut calibration_changed = settings;
+    if let InputSettings::Negative {
+        dmin: Some(dmin), ..
+    } = &mut calibration_changed
+    {
+        *dmin *= 1.01;
+    }
+    assert!(spec != key(frame, &calibration_changed, None));
     let mut changed = spec.clone();
     changed.authority += 1;
     assert!(spec != changed);
@@ -187,8 +146,7 @@ fn acquisition_keys_track_authority_response_correction_and_view_but_not_grading
             output: frame.output.map(|v| v * 2),
             ..frame
         },
-        calibration(),
-        roll,
+        &settings,
         None,
     );
     assert!(spec != changed);
@@ -201,7 +159,7 @@ fn acquisition_keys_track_authority_response_correction_and_view_but_not_grading
         )
         .unwrap(),
     );
-    assert!(spec != key(frame, calibration(), roll, Some(field)));
+    assert!(spec != key(frame, &settings, Some(field)));
 }
 
 #[test]
@@ -253,8 +211,8 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
             } else {
                 frame(&scan)
             };
-            let roll = RollSettings::new_grade();
-            let spec = ViewSourceSpec::new(7, frame, cal, roll, scan.camera_to_ap1, field).unwrap();
+            let roll = RollSettings::default();
+            let spec = ViewSourceSpec::new(7, frame, cal, scan.camera_to_ap1, field).unwrap();
             let source = ViewSource::acquire(
                 &device,
                 &queue,

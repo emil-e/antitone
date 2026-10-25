@@ -1,6 +1,9 @@
 use antitone::{
     color::{Balance, wb_matrix},
-    processing::{Calibration, Inversion, PhotoSettings, Pipeline, Response, RollSettings},
+    processing::{
+        Calibration, DEFAULT_GAMMA, InputSettings, Inversion, NegativeInput, PhotoSettings,
+        Pipeline, Response, RollSettings,
+    },
     sampling::{mean, roll_neutral},
 };
 use glam::{DMat3, DVec3};
@@ -21,9 +24,29 @@ fn matrix() -> DMat3 {
     )
 }
 
-fn forward(cal: Calibration, roll: RollSettings, positive: DVec3) -> DVec3 {
-    let (toe, shoulder) = roll.response.shape().unwrap();
-    let gammas = roll.channel_gammas().unwrap();
+fn negative(cal: Calibration, response: Response, balance: Balance) -> NegativeInput {
+    NegativeInput {
+        calibration: cal,
+        response,
+        gamma: DEFAULT_GAMMA,
+        balance,
+    }
+}
+
+fn input(negative: NegativeInput) -> InputSettings {
+    InputSettings::Negative {
+        dmin: Some(negative.calibration.dmin),
+        dmax: Some(negative.calibration.dmax),
+        input_floor: negative.calibration.input_floor,
+        response: negative.response,
+        gamma: negative.gamma,
+        balance: negative.balance,
+    }
+}
+
+fn forward(cal: Calibration, negative: NegativeInput, positive: DVec3) -> DVec3 {
+    let (toe, shoulder) = negative.response.shape().unwrap();
+    let gammas = negative.channel_gammas().unwrap();
     DVec3::from_array(std::array::from_fn(|c| {
         let l = (cal.dmin[c] / cal.dmax[c]).ln();
         let anchor = toe * l / (gammas[c] - shoulder * l / std::f64::consts::LN_10);
@@ -43,13 +66,13 @@ fn close(a: DVec3, b: DVec3) {
 #[test]
 fn camera_matrix_follows_inversion_and_precedes_photographic_wb() {
     let cal = calibration();
+    let interpretation = negative(cal, Response::film(), Balance::default());
     let roll = RollSettings {
         exposure: 1.25,
         wb: Balance {
             warmth: -0.35,
             tint: 0.15,
         },
-        ..RollSettings::new_grade()
     };
     let photo = PhotoSettings {
         exposure: -0.5,
@@ -60,8 +83,11 @@ fn camera_matrix_follows_inversion_and_precedes_photographic_wb() {
         ..PhotoSettings::default()
     };
     let camera = DVec3::new(0.01, 0.1, 0.1);
-    let inverted = Inversion::new(cal, roll).unwrap().apply(camera).unwrap();
-    let actual = Pipeline::new(cal, roll, photo, matrix())
+    let inverted = Inversion::new(interpretation)
+        .unwrap()
+        .apply(camera)
+        .unwrap();
+    let actual = Pipeline::new(input(interpretation), roll, photo, matrix())
         .unwrap()
         .apply(camera)
         .unwrap();
@@ -79,11 +105,15 @@ fn camera_matrix_follows_inversion_and_precedes_photographic_wb() {
         dmax: matrix() * cal.dmax,
         ..cal
     };
-    let mixed = Inversion::new(mixed_calibration, roll)
-        .unwrap()
-        .apply(matrix() * camera)
-        .unwrap()
-        .rgb;
+    let mixed = Inversion::new(negative(
+        mixed_calibration,
+        Response::film(),
+        Balance::default(),
+    ))
+    .unwrap()
+    .apply(matrix() * camera)
+    .unwrap()
+    .rgb;
     assert!((mixed - matrix() * inverted.rgb).abs().max_element() > 0.01);
 }
 
@@ -94,20 +124,26 @@ fn photo_neutral_is_a_replacement_residual_after_roll_wb_not_a_second_total_corr
         warmth: 0.3,
         tint: -0.2,
     };
+    let interpretation = negative(cal, Response::film(), Balance::default());
     let roll = RollSettings {
         wb: Balance {
             warmth: 0.12,
             tint: -0.03,
         },
-        ..RollSettings::new_grade()
+        ..RollSettings::default()
     };
     let cast = wb_matrix(total).unwrap().inverse() * DVec3::splat(0.2);
-    let scan = forward(cal, roll, matrix().inverse() * cast);
-    let before_photo = Pipeline::new(cal, roll, PhotoSettings::default(), matrix())
-        .unwrap()
-        .apply(scan)
-        .unwrap()
-        .rgb;
+    let scan = forward(cal, interpretation, matrix().inverse() * cast);
+    let before_photo = Pipeline::new(
+        input(interpretation),
+        roll,
+        PhotoSettings::default(),
+        matrix(),
+    )
+    .unwrap()
+    .apply(scan)
+    .unwrap()
+    .rgb;
     let residual = antitone::sampling::photo_neutral(&[before_photo]).unwrap();
     assert!((residual.warmth - (total.warmth - roll.wb.warmth)).abs() < 1e-11);
     assert!((residual.tint - (total.tint - roll.wb.tint)).abs() < 1e-11);
@@ -116,7 +152,7 @@ fn photo_neutral_is_a_replacement_residual_after_roll_wb_not_a_second_total_corr
         ..PhotoSettings::default()
     };
     close(
-        Pipeline::new(cal, roll, photo, matrix())
+        Pipeline::new(input(interpretation), roll, photo, matrix())
             .unwrap()
             .apply(scan)
             .unwrap()
@@ -128,9 +164,16 @@ fn photo_neutral_is_a_replacement_residual_after_roll_wb_not_a_second_total_corr
 #[test]
 fn signed_working_values_do_not_set_camera_input_floor_flags() {
     let cal = calibration();
-    let roll = RollSettings::new_grade();
-    let camera = forward(cal, roll, DVec3::new(0., 0.5, 0.001));
-    let pipeline = Pipeline::new(cal, roll, PhotoSettings::default(), matrix()).unwrap();
+    let interpretation = negative(cal, Response::film(), Balance::default());
+    let roll = RollSettings::default();
+    let camera = forward(cal, interpretation, DVec3::new(0., 0.5, 0.001));
+    let pipeline = Pipeline::new(
+        input(interpretation),
+        roll,
+        PhotoSettings::default(),
+        matrix(),
+    )
+    .unwrap();
     let positive = pipeline.apply(camera).unwrap();
     assert!(positive.rgb.z < 0.);
     assert_eq!(positive.floored, [false; 3]);
@@ -153,31 +196,26 @@ fn roll_neutral_fits_actual_response_to_unequal_camera_white_not_equal_channels(
             shoulder: 0.02,
         },
     ] {
-        let truth = RollSettings {
+        let truth = negative(
+            cal,
             response,
-            balance: Balance {
+            Balance {
                 warmth: 0.2,
                 tint: -0.1,
             },
-            exposure: 1.3,
-            ..RollSettings::default()
-        };
+        );
         let patch = [0.02, 0.05, 0.1, 0.25].map(|e| forward(cal, truth, target * e));
-        let initial = RollSettings {
-            balance: Balance::default(),
-            ..truth
-        };
-        let balance = roll_neutral(cal, initial, &patch, matrix()).unwrap();
+        let initial = negative(cal, response, Balance::default());
+        let balance = roll_neutral(initial, &patch, matrix()).unwrap();
         assert!((balance.warmth - truth.balance.warmth).abs() < 1e-8);
         assert!((balance.tint - truth.balance.tint).abs() < 1e-8);
-        let inverse = Inversion::new(cal, RollSettings { balance, ..initial }).unwrap();
+        let fitted = negative(cal, response, balance);
         let values: Vec<_> = patch
             .iter()
-            .map(|p| inverse.apply(*p).unwrap().rgb)
+            .map(|p| Inversion::new(fitted).unwrap().apply(*p).unwrap().rgb)
             .collect();
         let neutral = matrix() * mean(&values).unwrap();
         assert!((neutral - DVec3::splat(0.105)).abs().max_element() < 1e-9);
-        assert_eq!(initial.exposure, truth.exposure);
         assert_eq!(initial.gamma, truth.gamma);
         assert_eq!(initial.response, truth.response);
     }
@@ -190,19 +228,17 @@ fn roll_neutral_recovers_the_same_balance_across_dark_middle_and_light_patches()
         dmax: DVec3::new(0.017, 0.0052, 0.0029),
         input_floor: 1. / 65535.,
     };
-    let truth = RollSettings {
-        balance: Balance {
+    let truth = negative(
+        cal,
+        Response::film(),
+        Balance {
             warmth: -0.56,
             tint: -0.03,
         },
-        ..RollSettings::new_grade()
-    };
-    let initial = RollSettings {
-        balance: Balance::default(),
-        ..truth
-    };
+    );
+    let initial = negative(cal, Response::film(), Balance::default());
     let target = matrix().inverse() * DVec3::ONE;
-    let inverse = Inversion::new(cal, truth).unwrap();
+    let inverse = Inversion::new(truth).unwrap();
     let points: [_; 90] = std::array::from_fn(|i| {
         let y = 2_f64.powf(-7. + i as f64 / 89. * 6.8);
         let p = forward(cal, truth, target * y);
@@ -221,7 +257,7 @@ fn roll_neutral_recovers_the_same_balance_across_dark_middle_and_light_patches()
         &points[30..60],
         &points[60..],
     ] {
-        let fitted = roll_neutral(cal, initial, patch, matrix()).unwrap();
+        let fitted = roll_neutral(initial, patch, matrix()).unwrap();
         assert!((fitted.warmth - truth.balance.warmth).abs() < 1e-8);
         assert!((fitted.tint - truth.balance.tint).abs() < 1e-8);
     }
@@ -236,7 +272,7 @@ fn gpu_range_gate_covers_above_base_continuation_after_camera_mapping() {
         input_floor: 0.001 * (1. - 1.1e-6),
     };
     let result = antitone::gpu::ProcessingParameters::positive(
-        cal,
+        negative(cal, Response::Original, Balance::default()),
         RollSettings::default(),
         PhotoSettings::default(),
         DMat3::from_diagonal(DVec3::splat(3e32)),
@@ -256,26 +292,17 @@ fn invalid_matrix_or_nonpositive_camera_neutral_is_rejected() {
         assert!(
             Pipeline::new(
                 calibration(),
-                RollSettings::new_grade(),
+                RollSettings::default(),
                 PhotoSettings::default(),
                 invalid
             )
             .is_err()
         );
-        assert!(
-            roll_neutral(
-                calibration(),
-                RollSettings::new_grade(),
-                &[DVec3::splat(0.05)],
-                invalid
-            )
-            .is_err()
-        );
+        assert!(roll_neutral(calibration(), &[DVec3::splat(0.05)], invalid).is_err());
     }
     assert!(
         roll_neutral(
             calibration(),
-            RollSettings::new_grade(),
             &[DVec3::splat(0.05)],
             DMat3::from_diagonal(DVec3::new(1., -1., 1.))
         )

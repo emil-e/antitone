@@ -323,7 +323,7 @@ fn positive_input_adopts_look_but_source_inspection_cannot() {
     let input = ProcessingInput::from(
         ProcessingParameters::positive(
             calibration,
-            RollSettings::new_grade(),
+            RollSettings::default(),
             PhotoSettings::default(),
             glam::DMat3::IDENTITY,
         )

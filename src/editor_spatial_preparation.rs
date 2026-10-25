@@ -56,10 +56,14 @@ pub(super) async fn prepare(
         let Some(frame) = services
             .cpu(&cancelled, move || {
                 let path = captured.source_path(input.source)?;
-                let actual = document::source_metadata(&path, &scan.source().metadata())?;
+                let actual = document::source_metadata(
+                    &path,
+                    &scan.source().metadata(),
+                    scan.source().fixed_wb(),
+                )?;
                 document::verify_source(captured.project.source(input.source)?, &actual)?;
                 document::verify_scan(&actual, &scan)?;
-                captured.project.require_camera_basis(&actual.development)?;
+                captured.project.require_scan_source(&actual.development)?;
                 if crate::source_revision::FileRevision::read(&path).ok()
                     != Some(input.revision.clone())
                 {
@@ -83,8 +87,8 @@ pub(super) async fn prepare(
         .cpu(&cancelled, move || {
             let development = document
                 .project
-                .development
-                .clone()
+                .scan_basis()
+                .map(|basis| basis.development.decode.clone())
                 .ok_or(Error::UnusableSample("no roll development"))?;
             let metadata =
                 prepare_spatial(frames, development, document.spatial_code_scale(), || {

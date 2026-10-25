@@ -14,6 +14,7 @@ pub(super) enum Task {
     New(u64),
     Save(u64),
     Correction(u64),
+    Input(u64),
     History(u64),
     Photo(u64),
     Reference(u64),
@@ -52,6 +53,7 @@ impl Task {
             | Self::New(id)
             | Self::Save(id)
             | Self::Correction(id)
+            | Self::Input(id)
             | Self::History(id) => TaskRequest::Document(id),
             Self::Photo(id) => TaskRequest::Photo(id),
             Self::Reference(id) => TaskRequest::Reference(id),
@@ -114,6 +116,7 @@ impl Task {
             Self::New(_) => "Creating project…".into(),
             Self::Save(_) => "Saving project…".into(),
             Self::Correction(_) => "Applying correction…".into(),
+            Self::Input(_) => "Switching input stage…".into(),
             Self::History(_) => "Restoring edit…".into(),
             Self::Photo(_) => "Loading photo…".into(),
             Self::Reference(_) => "Preparing reference…".into(),

@@ -64,14 +64,14 @@ fn cost_and_retirement(with_underlay: bool) {
             output,
         )
         .unwrap();
-        let roll = RollSettings::new_grade();
+        let roll = RollSettings::default();
         let native = || crate::gpu::allocated_resource_bytes(&device);
         eprintln!(
             "physical_view_gpu start output={output:?} corrected={corrected} underlay={with_underlay} correction=synthetic_2x2 native_bytes={:?}",
             native()
         );
         let start = Instant::now();
-        let spec = ViewSourceSpec::new(1, frame, cal, roll, scan.camera_to_ap1, field).unwrap();
+        let spec = ViewSourceSpec::new(1, frame, cal, scan.camera_to_ap1, field).unwrap();
         let specs = if with_underlay {
             vec![spec.clone(), spec.underlay().unwrap()]
         } else {

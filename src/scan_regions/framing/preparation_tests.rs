@@ -17,6 +17,7 @@ fn inputs() -> (tempfile::TempDir, Vec<Input>) {
                 correction: None,
                 code_scale: 1.,
                 development: SourceDevelopment {
+                    decode: crate::project::Development::new("test-backend".into(), [1.; 4]),
                     lens_correction: None,
                     dng_development: None,
                     dimensions: [1300, 1000],

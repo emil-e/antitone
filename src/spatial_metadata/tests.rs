@@ -17,15 +17,13 @@ fn region(bounds: [f64; 4]) -> Region {
 
 fn fixture() -> (TempDir, Project, Metadata, Vec<Input>) {
     let dir = tempfile::tempdir().unwrap();
-    let mut project = Project {
-        development: Some(Development::new("test-backend".into(), [1.; 4])),
-        ..Default::default()
-    };
+    let mut project = Project::default();
     let mut sources = vec![];
     for i in 0..3 {
         let path = dir.path().join(format!("source-{i}.raw"));
         std::fs::write(&path, [i as u8; 16]).unwrap();
         let development = SourceDevelopment {
+            decode: Development::new("test-backend".into(), [1.; 4]),
             lens_correction: None,
             dng_development: None,
             dimensions: [1300, 1960],
@@ -68,7 +66,7 @@ fn fixture() -> (TempDir, Project, Metadata, Vec<Input>) {
     let metadata = Metadata {
         version: VERSION,
         groups: vec![Group {
-            development: project.development.clone().unwrap(),
+            development: project.scan_basis().unwrap().development.decode.clone(),
             code_scale: 1.,
             sources,
             common_size,

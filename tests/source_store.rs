@@ -25,7 +25,7 @@ impl Input {
         let metadata = raw.metadata;
         assert_eq!(metadata.width, fixture::SIDE);
         let area = metadata.image_area().unwrap();
-        let record = Source {
+        let mut record = Source {
             id: SourceId(1),
             path: file.path().into(),
             reference_only: false,
@@ -35,6 +35,7 @@ impl Input {
             crop: None,
             orientation: Default::default(),
             development: SourceDevelopment {
+                decode: metadata.development(WB),
                 lens_correction: None,
                 dng_development: metadata.dng_identity(),
                 dimensions: [metadata.width, metadata.height],
@@ -45,7 +46,8 @@ impl Input {
             },
         };
         let development = metadata.development(WB);
-        let key = SourceKey::capture(file.path(), &record.development, &development).unwrap();
+        record.development.decode = development.clone();
+        let key = SourceKey::capture(file.path(), &record.development).unwrap();
         Self {
             file,
             record,
@@ -312,7 +314,7 @@ fn proxy_basis_rejection_does_not_replace_a_working_entry() {
         .unwrap();
     let mut expected = input.record.development.clone();
     expected.camera_to_ap1[0][0] += 0.01;
-    let wrong = SourceKey::capture(input.file.path(), &expected, &input.development).unwrap();
+    let wrong = SourceKey::capture(input.file.path(), &expected).unwrap();
     assert!(store.publish_proxy(wrong, proxy.clone()).is_err());
     assert!(Arc::ptr_eq(&store.get_proxy(&input.key).unwrap(), &proxy));
 }
@@ -325,12 +327,7 @@ fn exact_keys_exclude_grade_identity_and_fail_closed_without_stats() {
     input.record.reference_only = true;
     input.record.photo.exposure = 2.0;
     assert_eq!(
-        SourceKey::capture(
-            input.file.path(),
-            &input.record.development,
-            &input.development
-        )
-        .unwrap(),
+        SourceKey::capture(input.file.path(), &input.record.development).unwrap(),
         before
     );
     let directory = tempfile::tempdir().unwrap();
@@ -338,7 +335,6 @@ fn exact_keys_exclude_grade_identity_and_fail_closed_without_stats() {
         SourceKey::capture(
             &directory.path().join("missing.dng"),
             &input.record.development,
-            &input.development
         )
         .is_none()
     );
@@ -347,7 +343,7 @@ fn exact_keys_exclude_grade_identity_and_fail_closed_without_stats() {
         let alias = directory.path().join("alias.dng");
         std::os::unix::fs::symlink(input.file.path(), &alias).unwrap();
         assert_eq!(
-            SourceKey::capture(&alias, &input.record.development, &input.development).unwrap(),
+            SourceKey::capture(&alias, &input.record.development).unwrap(),
             before
         );
     }
@@ -379,7 +375,7 @@ fn mismatched_native_basis_geometry_wb_and_runtime_never_replace_working_entries
     source_key.input_floor *= 2.0;
     wrong_sources.push(source_key);
     for expected in wrong_sources {
-        let key = SourceKey::capture(input.file.path(), &expected, &input.development).unwrap();
+        let key = SourceKey::capture(input.file.path(), &expected).unwrap();
         assert!(store.publish(key, source.clone(), 10).is_err());
     }
     for field in 0..5 {
@@ -391,8 +387,14 @@ fn mismatched_native_basis_geometry_wb_and_runtime_never_replace_working_entries
             3 => development.inversion_space.push_str(" wrong"),
             _ => development.working_space.push_str(" wrong"),
         }
-        let key =
-            SourceKey::capture(input.file.path(), &input.record.development, &development).unwrap();
+        let key = SourceKey::capture(
+            input.file.path(),
+            &SourceDevelopment {
+                decode: development,
+                ..input.record.development.clone()
+            },
+        )
+        .unwrap();
         assert!(store.publish(key, source.clone(), 10).is_err());
     }
     assert_eq!(
@@ -670,7 +672,7 @@ fn restored_mtime_and_symlink_retargeting_do_not_make_old_keys_current() {
     let directory = tempfile::tempdir().unwrap();
     let alias = directory.path().join("alias.dng");
     std::os::unix::fs::symlink(a.file.path(), &alias).unwrap();
-    let captured = SourceKey::capture(&alias, &a.record.development, &a.development).unwrap();
+    let captured = SourceKey::capture(&alias, &a.record.development).unwrap();
     let source = a.source();
     std::fs::remove_file(&alias).unwrap();
     std::os::unix::fs::symlink(b.file.path(), &alias).unwrap();

@@ -261,7 +261,7 @@ fn live_edits_while_native_preparation_runs_discard_the_draft() {
         start(app);
         await_native(app, &starts);
         app.update(|e| {
-            e.roll.gamma = 0.8;
+            e.set_gamma(0.8);
             e.sync_document();
         });
         let edited = app.read(|e| e.document.project.clone());

@@ -1,6 +1,6 @@
 #![cfg(feature = "project")]
 use antitone::{
-    processing::CAMERA_INPUT_FLOOR,
+    processing::{CAMERA_INPUT_FLOOR, DEFAULT_GAMMA, InputSettings, Response},
     project::{Development, Project, Save, Source, SourceDevelopment, SourceId},
 };
 use glam::{DMat3, DVec3};
@@ -10,6 +10,7 @@ fn source(model: &str, matrix: DMat3) -> Source {
         id: SourceId(0),
         path: "test.ARW".into(),
         development: SourceDevelopment {
+            decode: Development::new("test-backend".into(), [2., 1., 1.7, 1.]),
             lens_correction: None,
             dng_development: None,
             dimensions: [900, 600],
@@ -29,10 +30,14 @@ fn source(model: &str, matrix: DMat3) -> Source {
 
 fn project() -> Project {
     let mut project = Project {
-        development: Some(Development::new("test-backend".into(), [2., 1., 1.7, 1.])),
-        dmin: Some([0.2; 3]),
-        dmax: Some([0.01; 3]),
-        input_floor: Some(CAMERA_INPUT_FLOOR),
+        input: InputSettings::Negative {
+            dmin: Some(DVec3::splat(0.2)),
+            dmax: Some(DVec3::splat(0.01)),
+            input_floor: CAMERA_INPUT_FLOOR,
+            response: Response::film(),
+            gamma: DEFAULT_GAMMA,
+            balance: Default::default(),
+        },
         ..Default::default()
     };
     project
@@ -43,34 +48,42 @@ fn project() -> Project {
 
 #[test]
 fn saved_gamma_is_explicit_and_preserved_independently_of_the_new_grade_default() {
-    use antitone::processing::{Pipeline, Response};
-    assert_eq!(Project::default().roll.gamma, 0.60);
+    use antitone::processing::Pipeline;
+    assert_eq!(
+        match Project::default().input {
+            InputSettings::Negative { gamma, .. } => gamma,
+            InputSettings::Digital => DEFAULT_GAMMA,
+        },
+        DEFAULT_GAMMA
+    );
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("roll.antitone.json");
     for response in [Response::Original, Response::film()] {
         let mut p = project();
-        p.roll.gamma = 0.65;
-        p.roll.response = response;
+        if let InputSettings::Negative {
+            gamma,
+            response: selected,
+            ..
+        } = &mut p.input
+        {
+            *gamma = 0.65;
+            *selected = response;
+        }
         let positive = |p: &Project| {
-            Pipeline::new(
-                p.calibration().unwrap().unwrap(),
-                p.roll,
-                p.sources[0].photo,
-                DMat3::IDENTITY,
-            )
-            .unwrap()
-            .apply(DVec3::new(0.02, 0.05, 0.08))
-            .unwrap()
-            .rgb
+            Pipeline::new(p.input, p.roll, p.sources[0].photo, DMat3::IDENTITY)
+                .unwrap()
+                .apply(DVec3::new(0.02, 0.05, 0.08))
+                .unwrap()
+                .rgb
         };
         let before = positive(&p);
         p.save(&path, Save::Replace).unwrap();
         let restored = Project::load(&path).unwrap();
-        assert_eq!(restored.roll.gamma, 0.65);
+        assert_eq!(restored.input, p.input);
         assert_eq!(restored, p);
         assert_eq!(positive(&restored), before);
         let mut missing = serde_json::to_value(&p).unwrap();
-        missing["roll"].as_object_mut().unwrap().remove("gamma");
+        missing["input"].as_object_mut().unwrap().remove("gamma");
         assert!(serde_json::from_value::<Project>(missing).is_err());
     }
 }
@@ -93,10 +106,7 @@ fn analysis_area_roundtrips_without_changing_processing_and_old_documents_defaul
     assert_eq!(serde_json::from_str::<Project>(&saved).unwrap(), p);
     assert_eq!(p.roll, before.roll);
     assert_eq!(p.sources, before.sources);
-    assert_eq!(
-        (p.dmin, p.dmax, p.input_floor),
-        (before.dmin, before.dmax, before.input_floor)
-    );
+    assert_eq!(p.calibration().unwrap(), before.calibration().unwrap());
     for area in [[40, 30, 7, 540], [0, 0, 901, 600], [u32::MAX, 0, 8, 8]] {
         p.analysis_area = Some(area);
         assert!(p.validate().is_err());
@@ -144,21 +154,17 @@ fn incompatible_native_camera_sources_and_reference_picks_reject_without_mutatio
     ] {
         assert!(
             project
-                .require_camera_basis(&incompatible.development)
-                .is_err()
-        );
-        assert!(
-            project
-                .camera_basis
-                .as_ref()
-                .unwrap()
-                .require_source(&incompatible.development)
+                .require_scan_source(&incompatible.development)
                 .is_err()
         );
         assert!(project.add_source(incompatible.clone()).is_err());
         assert_eq!(project, before);
         let mut invalid = project.clone();
-        invalid.sources[0].development = incompatible.development;
+        let mut second = incompatible.clone();
+        second.id = SourceId(2);
+        invalid.sources.push(second);
+        invalid.order.push(SourceId(2));
+        invalid.next_source_id = 3;
         assert!(invalid.validate().is_err());
     }
 }
@@ -168,19 +174,34 @@ fn camera_basis_survives_source_removal_roundtrip_and_rejects_later_camera_subst
     let mut project = project();
     project.sources.clear();
     project.order.clear();
+    project.scan = None;
     project.validate().unwrap();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("roll.antitone.json");
     project.save(&path, Save::New).unwrap();
     let mut restored = Project::load(&path).unwrap();
     assert_eq!(restored, project);
+    // Clearing the explicit acquisition setup permits a new camera basis.
+    restored
+        .add_source(source("camera B", DMat3::IDENTITY))
+        .unwrap();
+    assert!(restored.validate().is_ok());
     assert!(
         restored
-            .add_source(source("camera B", DMat3::IDENTITY))
+            .add_source(source(
+                "camera A",
+                DMat3::from_diagonal(DVec3::new(1.1, 1., 1.))
+            ))
             .is_err()
     );
-    restored.camera_basis = None;
-    assert!(restored.validate().is_err());
+    // A corrupted document that bypasses admission is still rejected by validation.
+    let mut mixed = restored.clone();
+    let mut other = source("camera A", DMat3::from_diagonal(DVec3::new(1.1, 1., 1.)));
+    other.id = SourceId(2);
+    mixed.sources.push(other);
+    mixed.order.push(SourceId(2));
+    mixed.next_source_id = 3;
+    assert!(mixed.validate().is_err());
 }
 
 #[test]

@@ -49,11 +49,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     codes.extend([[0, 0, 0, 0], [3, 0, 1, 0]]);
-    let roll = RollSettings {
+    let input = antitone::processing::InputSettings::Negative {
+        dmin: Some(calibration.dmin),
+        dmax: Some(calibration.dmax),
+        input_floor: calibration.input_floor,
+        response: antitone::processing::Response::film(),
+        gamma: antitone::processing::DEFAULT_GAMMA,
         balance: Balance {
             warmth: 0.2,
             tint: -0.1,
         },
+    };
+    let roll = RollSettings {
         exposure: 0.5,
         ..RollSettings::default()
     };
@@ -65,8 +72,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         ..PhotoSettings::default()
     };
-    let parameters = ProcessingParameters::positive(calibration, roll, photo, matrix)?;
-    let pipeline = Pipeline::new(calibration, roll, photo, matrix)?;
+    let parameters = ProcessingParameters::interpret(input, roll, photo, matrix)?;
+    let pipeline = Pipeline::new(input, roll, photo, matrix)?;
     let mut working = Vec::with_capacity(codes.len());
     let mut flags = Vec::with_capacity(codes.len());
     for &[r, g, b, _] in &codes {

@@ -1,4 +1,5 @@
 use super::*;
+use crate::processing::Calibration;
 
 const BUILD: usize = 7;
 const SUFFIX: usize = 8;
@@ -149,15 +150,18 @@ fn exposure_independent_log_prefix_preserves_codes_signs_zeros_flags_and_full_gr
     pollster::block_on(async {
         let (device, queue, kernel, probe, mut source, calibration, pixels) =
             setup([256, 256], true).await;
-        let roll = RollSettings {
+        let input = NegativeInput {
+            calibration,
+            response: Response::film(),
             gamma: 0.65,
-            ..RollSettings::new_grade()
+            balance: Balance::default(),
         };
-        let make = |calibration, roll, snapshot, matrix| {
-            GpuPhotoGrade::new(&device, calibration, roll, snapshot, matrix, area()).unwrap()
+        let roll = RollSettings::default();
+        let make = |input, roll, snapshot, matrix| {
+            GpuPhotoGrade::new(&device, input, roll, snapshot, matrix, area()).unwrap()
         };
         let base = make(
-            calibration,
+            input,
             roll,
             snapshot(PhotoSettings::default(), 0, false),
             camera_matrix(),
@@ -200,10 +204,9 @@ fn exposure_independent_log_prefix_preserves_codes_signs_zeros_flags_and_full_gr
                     warmth: -0.003,
                     tint: 0.002,
                 },
-                ..roll
             };
             let grade = make(
-                calibration,
+                input,
                 changed_roll,
                 snapshot(photo, 2, true),
                 camera_matrix(),
@@ -240,7 +243,7 @@ fn exposure_independent_log_prefix_preserves_codes_signs_zeros_flags_and_full_gr
                 );
             }
             let scalar = SpatialPipeline::new(
-                calibration,
+                input,
                 changed_roll,
                 grade.snapshot().clone(),
                 camera_matrix(),
@@ -294,7 +297,7 @@ fn exposure_independent_log_prefix_preserves_codes_signs_zeros_flags_and_full_gr
         .unwrap();
         source.set_geometry(geometry).unwrap();
         let mut grade = make(
-            calibration,
+            input,
             roll,
             snapshot(PhotoSettings::default(), 0, false),
             DMat3::IDENTITY,
@@ -351,7 +354,7 @@ fn log_prefix_keys_track_only_upstream_dependencies() {
     pollster::block_on(async {
         let (device, _queue, _kernel, _probe, mut source, calibration, _) =
             setup([8, 8], false).await;
-        let roll = RollSettings::new_grade();
+        let roll = RollSettings::default();
         let p = |calibration, roll, photo, matrix| {
             ProcessingParameters::positive(calibration, roll, photo, matrix).unwrap()
         };
@@ -412,20 +415,6 @@ fn log_prefix_keys_track_only_upstream_dependencies() {
                 },
                 roll,
             ),
-            (
-                calibration,
-                RollSettings {
-                    gamma: 0.65,
-                    ..roll
-                },
-            ),
-            (
-                calibration,
-                RollSettings {
-                    response: Response::Original,
-                    ..roll
-                },
-            ),
         ] {
             assert_ne!(
                 key,
@@ -433,6 +422,29 @@ fn log_prefix_keys_track_only_upstream_dependencies() {
                     [1, 0],
                     &source,
                     p(calibration, roll, photo, camera_matrix())
+                )
+            );
+        }
+        for negative in [
+            NegativeInput {
+                calibration,
+                response: Response::film(),
+                gamma: 0.65,
+                balance: Balance::default(),
+            },
+            NegativeInput {
+                calibration,
+                response: Response::Original,
+                gamma: crate::processing::DEFAULT_GAMMA,
+                balance: Balance::default(),
+            },
+        ] {
+            assert_ne!(
+                key,
+                LogPrefixKey::new(
+                    [1, 0],
+                    &source,
+                    ProcessingParameters::positive(negative, roll, photo, camera_matrix()).unwrap(),
                 )
             );
         }
@@ -474,11 +486,13 @@ fn evicted_log_prefixes_survive_deferred_and_abandoned_encoders() {
         let grade = |gamma| {
             GpuPhotoGrade::new(
                 &device,
-                calibration,
-                RollSettings {
+                NegativeInput {
+                    calibration,
+                    response: Response::film(),
                     gamma,
-                    ..RollSettings::new_grade()
+                    balance: Balance::default(),
                 },
+                RollSettings::default(),
                 snapshot(PhotoSettings::default(), 0, false),
                 camera_matrix(),
                 area(),
@@ -489,7 +503,19 @@ fn evicted_log_prefixes_survive_deferred_and_abandoned_encoders() {
         run(&device, &queue, &kernel, &probe, &source, &first, None);
         let expected = read_words(&device, &queue, &probe.output);
         let bytes = probe.prefix.size();
-        let baseline = allocated_resource_bytes(&device).unwrap();
+        let wait_for = |predicate: &dyn Fn(usize) -> bool| {
+            let mut value = allocated_resource_bytes(&device).unwrap();
+            for _ in 0..500 {
+                if predicate(value) {
+                    return value;
+                }
+                device.poll(wgpu::PollType::Poll).unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(1));
+                value = allocated_resource_bytes(&device).unwrap();
+            }
+            value
+        };
+        let baseline = wait_for(&|_| true);
         let fresh = || {
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("immutable experimental log prefix version"),
@@ -521,11 +547,11 @@ fn evicted_log_prefixes_survive_deferred_and_abandoned_encoders() {
                 timeout: None,
             })
             .unwrap();
-        let three = allocated_resource_bytes(&device).unwrap();
+        let three = wait_for(&|value| value >= baseline + 2 * bytes as usize);
         let complete = three >= baseline + 2 * bytes as usize;
         drop(abandoned);
-        device.poll(wgpu::PollType::Poll).unwrap();
-        let two = allocated_resource_bytes(&device).unwrap();
+        let two = wait_for(&|value| three.saturating_sub(value) >= bytes as usize);
+
         let abandoned = three.saturating_sub(two) >= bytes as usize;
         let submitted = queue.submit([deferred.finish()]);
         let retained = allocated_resource_bytes(&device).unwrap();
@@ -535,7 +561,8 @@ fn evicted_log_prefixes_survive_deferred_and_abandoned_encoders() {
                 timeout: None,
             })
             .unwrap();
-        let one = allocated_resource_bytes(&device).unwrap();
+        let one = wait_for(&|value| two.saturating_sub(value) >= bytes as usize);
+
         let released = two.saturating_sub(one) >= bytes as usize;
         exact(
             "evicted log prefix",
@@ -566,7 +593,7 @@ fn evicted_log_prefixes_survive_deferred_and_abandoned_encoders() {
 fn corrected_exposure_independent_prefix_performance() {
     pollster::block_on(async {
         let (device, queue, kernel, probe, source, calibration, _) = setup(SIZE, false).await;
-        let roll = RollSettings::new_grade();
+        let roll = RollSettings::default();
         let base = GpuPhotoGrade::new(
             &device,
             calibration,

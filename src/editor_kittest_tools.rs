@@ -13,9 +13,9 @@ pub(super) fn calibrated_harness_with_thumbnails<R>(
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
         harness.update(|editor| {
-            editor.dmin = Some(DVec3::splat(3000. / 4031.));
-            editor.dmax = Some(DVec3::splat(128. / 4031.));
-            editor.roll.gamma = 0.75;
+            editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
+            editor.set_dmax(Some(DVec3::splat(128. / 4031.)));
+            editor.set_gamma(0.75);
             editor.photo.exposure = 0.5;
             editor.photo.wb = Balance {
                 warmth: 0.1,
@@ -117,6 +117,115 @@ pub(super) fn crop_draft(harness: &mut Harness<'_, Editor>) -> Crop {
 }
 
 #[test]
+fn precision_tools_paint_completed_originals_in_native_and_straightened_frames() {
+    for angle in [0., 0.1] {
+        editor_harness(|mut h, capture| {
+            h.enter(|e, cx| e.add_raws(vec![fixture("patches.dng")], cx));
+            wait_for(&mut h, |e| !e.busy && e.document.visit.ready.is_some());
+            h.update(|e| {
+                e.set_dmin(Some(DVec3::splat(3000. / 4031.)));
+                e.set_dmax(Some(DVec3::splat(128. / 4031.)));
+                e.source = false;
+                // Cancel the documented +1 EV source-display baseline for the scalar oracle.
+                e.source_exposure = -1.;
+                e.photo_orientation.turn_clockwise();
+                e.roll_orientation.horizontal = true;
+                e.crop = Some(Crop {
+                    center: [128., 96.],
+                    size: [220, 140],
+                    angle,
+                });
+                e.sync_document();
+                // Make the coarse proxy deliberately distinguishable from real originals.
+                // The original service still reads the unchanged authored RAW.
+                let services = e.source_services.as_ref().unwrap();
+                let ready = e.document.visit.ready.as_mut().unwrap();
+                let renderer = services
+                    .renderers
+                    .get(&services.device, &services.queue)
+                    .unwrap();
+                ready.proxy = crate::viewer::GpuProxy::new_continuous(
+                    renderer,
+                    &services.device,
+                    [2, 2],
+                    &[[0.; 4]; 4],
+                    ready.proxy.matrix(),
+                    None,
+                    crate::gpu::SourceGeometry::new(ready.record.development.active_area, [2, 2])
+                        .unwrap(),
+                )
+                .unwrap();
+            });
+            let (tab, label, kind) = if angle == 0. {
+                ("Roll", "Pick Dmin (film base)", Pick::Dmin)
+            } else {
+                ("Photo", "Pick neutral for white balance", Pick::Wb)
+            };
+            stage(&mut h, tab);
+            h.get_by_label(label).scroll_to_me();
+            h.try_run_realtime().unwrap();
+            h.get_by_label(label).click();
+            h.step();
+            h.read(|e| assert_eq!(e.pick, Some(kind)));
+            wait_for(&mut h, |e| e.original.settled.is_some());
+            h.event(egui::Event::PointerGone);
+            h.step();
+            h.render().unwrap();
+            let (layout, target, matrix, pipeline) = h.read(|e| {
+                let (_, view, _) = e.original.settled.as_ref().unwrap();
+                assert_eq!(view.frame.is_some(), angle != 0.);
+                let matrix = e.document.visit.ready.as_ref().unwrap().proxy.matrix();
+                (
+                    e.last_layout.unwrap().0,
+                    e.target,
+                    matrix,
+                    (!e.source).then(|| {
+                        crate::processing::Pipeline::new(e.input, e.roll, e.photo, matrix).unwrap()
+                    }),
+                )
+            });
+            let cpu = crate::rendering::CpuRenderer::new(target).unwrap();
+            let pixels = capture.borrow();
+            for (point, code) in [([96., 32.], 128.), ([160., 96.], 3200.)] {
+                let position = layout.screen_point(egui::pos2(point[0], point[1]));
+                assert!(
+                    layout.image.shrink(4.).contains(position) && layout.canvas.contains(position)
+                );
+                let camera = DVec3::splat(code / 4031.);
+                let working = match &pipeline {
+                    Some(pipeline) => pipeline.apply(camera).unwrap().rgb,
+                    None => matrix * camera,
+                };
+                let linear =
+                    target.linear_to_srgb() * cpu.render(&[working]).unwrap()[0].as_dvec3();
+                let actual = pixels.pixels[position.y.floor() as usize * pixels.size[0] as usize
+                    + position.x.floor() as usize];
+                for c in 0..3 {
+                    let expected = if linear[c] <= 0.0031308 {
+                        linear[c] * 12.92
+                    } else {
+                        1.055 * linear[c].powf(1. / 2.4) - 0.055
+                    };
+                    assert!(
+                        (f64::from(actual[c]) - expected).abs() < 0.004,
+                        "angle={angle}, point={point:?}: {actual:?} vs {expected}"
+                    );
+                }
+            }
+            drop(pixels);
+            h.get_by_label("Cancel").click();
+            h.step();
+            h.read(|e| {
+                assert!(
+                    e.original.settled.is_none(),
+                    "departed tool must not retain its image"
+                )
+            });
+        });
+    }
+}
+
+#[test]
 fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
     for (layout, size, width) in [
         ("normal", egui::vec2(1100., 800.), 315.),
@@ -186,11 +295,11 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
                 harness.read(|editor| assert!(editor.pick.is_none(), "{}", editor.status));
                 let mut expected = before;
                 if kind == Pick::Dmin {
-                    let measured = harness.read(|editor| editor.dmin.unwrap());
+                    let measured = harness.read(|editor| editor.dmin().unwrap());
                     assert!(
                         (measured - DVec3::splat(3000. / 4031.)).abs().max_element() <= 2. / 65535.
                     );
-                    expected.dmin = Some(measured.to_array());
+                    expected.set_dmin(Some(measured.to_array()));
                 } else {
                     harness.read(|editor| {
                         assert_ne!(
@@ -378,8 +487,8 @@ fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
         harness.read(|editor| assert!(editor.flat_edit.is_none()));
         harness.read(|editor| assert_eq!(editor.current_source, selected));
         harness.read(|editor| assert_eq!(editor.document.project.order, before.order));
-        harness.read(|editor| assert_eq!(editor.document.project.dmin, before.dmin));
-        harness.read(|editor| assert_eq!(editor.document.project.dmax, before.dmax));
+        harness.read(|editor| assert_eq!(editor.document.project.dmin(), before.dmin()));
+        harness.read(|editor| assert_eq!(editor.document.project.dmax(), before.dmax()));
         harness.read(|editor| assert!(editor.preference_store.is_none()));
     });
 }

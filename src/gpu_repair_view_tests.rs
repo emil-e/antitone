@@ -4,13 +4,14 @@ use crate::{
     dust_repair::{DonorChoice, Repair, RepairId, RepairOrigin, SupportMask},
     gpu::repairs::{Patch, Snapshot},
     local_adjustments::PhotoGradeSnapshot,
+    processing::{NegativeInput, Response},
 };
 
 fn repaired(
     scan: &Scan,
     device: &wgpu::Device,
 ) -> (Snapshot, Arc<crate::dust_repair::EvaluatedRepair>) {
-    let roll = RollSettings::new_grade();
+    let roll = RollSettings::default();
     let scalar = crate::processing::Pipeline::new(
         calibration(),
         roll,
@@ -261,12 +262,15 @@ fn sparse_repair_projection_retains_signed_hdr_and_repair_values_extend_range_pr
                 );
             }
         }
-        let roll = RollSettings {
+        let negative = NegativeInput {
+            calibration: calibration(),
+            response: Response::film(),
             gamma: 0.65,
-            ..RollSettings::new_grade()
+            balance: Balance::default(),
         };
+        let roll = RollSettings::default();
         let mut input: ProcessingInput = ProcessingParameters::positive(
-            calibration(),
+            negative,
             roll,
             PhotoSettings::default(),
             source.spec.matrix,
@@ -277,7 +281,7 @@ fn sparse_repair_projection_retains_signed_hdr_and_repair_values_extend_range_pr
         let view = RenderedView::new(
             &device,
             source.clone(),
-            calibration(),
+            negative,
             roll,
             PhotoGradeSnapshot::new(PhotoSettings::default(), vec![]).unwrap(),
             &input,
@@ -341,7 +345,7 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
         let (patches, evaluated) = repaired(&scan, &device);
         let scalar = crate::processing::Pipeline::new(
             calibration(),
-            RollSettings::new_grade(),
+            RollSettings::default(),
             PhotoSettings::default(),
             scan.camera_to_ap1,
         )
@@ -362,15 +366,8 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
         rotated = FrameRaster::full(rotated.composition).unwrap();
         rotated.output = [31, 23];
         for frame in [native, rotated] {
-            let spec = ViewSourceSpec::new(
-                1,
-                frame,
-                calibration(),
-                RollSettings::new_grade(),
-                scan.camera_to_ap1,
-                None,
-            )
-            .unwrap();
+            let spec =
+                ViewSourceSpec::new(1, frame, calibration(), scan.camera_to_ap1, None).unwrap();
             let source = ViewSource::acquire(
                 &device,
                 &queue,
@@ -390,7 +387,7 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
                 &queue,
                 (source.clone(), &scan),
                 &patches,
-                (RollSettings::new_grade(), PhotoSettings::default()),
+                (RollSettings::default(), PhotoSettings::default()),
                 OutputTarget::Srgb,
                 None,
             );
@@ -436,7 +433,6 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
                     warmth: 0.07,
                     tint: -0.03,
                 },
-                ..RollSettings::new_grade()
             };
             let photo = PhotoSettings {
                 exposure: 0.4,
@@ -509,12 +505,8 @@ fn repaired_region_updates_compose_independently_restore_removed_support_and_can
         let (device, queue, renderer, kernels) = context().await;
         let scan = scan();
         let (first, _) = repaired(&scan, &device);
-        let scalar = crate::processing::Pipeline::ungraded(
-            calibration(),
-            RollSettings::new_grade(),
-            scan.camera_to_ap1,
-        )
-        .unwrap();
+        let scalar =
+            crate::processing::Pipeline::ungraded(calibration(), scan.camera_to_ap1).unwrap();
         let second_repair = Repair {
             id: RepairId(2),
             enabled: true,
@@ -546,15 +538,7 @@ fn repaired_region_updates_compose_independently_restore_removed_support_and_can
             kernels,
             &scan,
             None,
-            ViewSourceSpec::new(
-                1,
-                frame,
-                calibration(),
-                RollSettings::new_grade(),
-                scan.camera_to_ap1,
-                None,
-            )
-            .unwrap(),
+            ViewSourceSpec::new(1, frame, calibration(), scan.camera_to_ap1, None).unwrap(),
             || false,
         )
         .unwrap()
@@ -667,7 +651,6 @@ fn original_reference_repairs_are_pre_grade_and_leave_other_rendered_pixels_bit_
                 warmth: 0.06,
                 tint: -0.04,
             },
-            ..RollSettings::new_grade()
         };
         let photo = PhotoSettings {
             exposure: 0.3,

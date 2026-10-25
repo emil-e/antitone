@@ -12,6 +12,7 @@ pub(super) enum Preparation {
     Open(PathBuf),
     New,
     Correction(Document, Option<SourceId>),
+    Input(Document, Option<SourceId>),
     History(Document, Option<SourceId>, history::Direction),
 }
 
@@ -60,11 +61,14 @@ pub(super) fn candidate(
         source: previous,
         correction: previous_correction,
     } = request;
-    let preserve_view = matches!(work, Preparation::Correction(..) | Preparation::History(..));
+    let preserve_view = matches!(
+        work,
+        Preparation::Correction(..) | Preparation::Input(..) | Preparation::History(..)
+    );
     let selected_override = match &work {
-        Preparation::Correction(_, selected) | Preparation::History(_, selected, _) => {
-            Some(*selected)
-        }
+        Preparation::Correction(_, selected)
+        | Preparation::Input(_, selected)
+        | Preparation::History(_, selected, _) => Some(*selected),
         _ => None,
     };
     let (document, reuse) = match work {
@@ -78,7 +82,7 @@ pub(super) fn candidate(
             None,
         ),
         Preparation::New => (Document::default(), None),
-        Preparation::Correction(mut document, _) => {
+        Preparation::Correction(mut document, _) | Preparation::Input(mut document, _) => {
             document.fork_cache();
             (document, None)
         }
@@ -86,11 +90,12 @@ pub(super) fn candidate(
             document.fork_cache();
             document.validate_for_device(device)?;
             for id in &document.project.order {
-                let (actual, _) = super::document::read_source(
+                let expected = document.project.source(*id)?;
+                let actual = super::document::read_source(
                     &document.source_path(*id)?,
-                    document.project.development.as_ref().map(|d| d.fixed_wb),
+                    Some(expected.development.decode.fixed_wb),
                 )?;
-                super::document::verify_source(document.project.source(*id)?, &actual)?;
+                super::document::verify_source(expected, &actual)?;
             }
             (document, None)
         }
@@ -142,13 +147,12 @@ fn source_request(
 ) -> Result<source::Request, Error> {
     let path = document.source_path(id)?;
     let expected = document.project.source(id)?.clone();
-    let wb = document.project.development.as_ref().map(|d| d.fixed_wb);
-    let cache = source::Cache::new(&path, Some(&expected), wb, document);
+    let wb = Some(expected.development.decode.fixed_wb);
+    let cache = source::Cache::new(&path, Some(&expected), document);
     Ok(source::Request {
         path,
         expected: Some(expected),
         wb,
-        basis: document.project.camera_basis.clone(),
         cache: Some(cache),
         correction,
     })

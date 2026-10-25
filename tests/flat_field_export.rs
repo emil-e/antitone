@@ -2,7 +2,7 @@
 use antitone::{
     color::ap1_to_ap0,
     export::{self, ExrPrecision, ImageSize, Overwrite},
-    processing::{Calibration, PhotoSettings, Pipeline, RollSettings},
+    processing::{Calibration, InputSettings, PhotoSettings, Pipeline, Response, RollSettings},
     profiles,
     raw::Rect,
     rendering::{CpuRenderer, OutputTarget},
@@ -40,15 +40,11 @@ fn corrected_full_size_tiff_and_ap0_exr_reopen() {
         .unwrap();
     let roll = RollSettings {
         exposure: 2.,
-        ..RollSettings::new_grade()
+        ..RollSettings::default()
     };
-    let pipeline = Pipeline::new(
-        calibration,
-        roll,
-        PhotoSettings::default(),
-        scan.camera_to_ap1,
-    )
-    .unwrap();
+    let input = InputSettings::negative(calibration);
+    let pipeline =
+        Pipeline::new(input, roll, PhotoSettings::default(), scan.camera_to_ap1).unwrap();
     let size = ImageSize {
         width: a.width,
         height: a.height,
@@ -65,7 +61,15 @@ fn corrected_full_size_tiff_and_ap0_exr_reopen() {
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
         let start = Instant::now();
         let path = directory.path().join(format!("{target:?}.tif"));
-        export::tiff(&path, size, target, Overwrite::Refuse, roll.response, pixel).unwrap();
+        export::tiff(
+            &path,
+            size,
+            target,
+            Overwrite::Refuse,
+            Response::film(),
+            pixel,
+        )
+        .unwrap();
         let mut limits = tiff::decoder::Limits::default();
         limits.decoding_buffer_size = a.width as usize * a.height as usize * 6;
         let mut decoder = tiff::decoder::Decoder::new(std::fs::File::open(&path).unwrap())
@@ -112,7 +116,7 @@ fn corrected_full_size_tiff_and_ap0_exr_reopen() {
             size,
             precision,
             Overwrite::Refuse,
-            roll.response,
+            Response::film(),
             pixel,
         )
         .unwrap();

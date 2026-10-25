@@ -75,8 +75,8 @@ fn gpu_editor() -> Editor {
     let mut e = editor();
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
-    let (device, _) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
-    e.working = WorkingView::new(device);
+    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+    e.working = WorkingView::new(device, queue);
     e
 }
 
@@ -88,8 +88,7 @@ fn high_response(e: &mut Editor) -> Response {
         source: e.current_source.unwrap(),
         signature: e.dust_signature().unwrap(),
         repair: e.dust_repairs(e.current_source.unwrap()).unwrap().repairs()[0].clone(),
-        calibration: e.calibration().unwrap(),
-        roll: e.roll.inversion_only(),
+        input: e.calibration().unwrap().into(),
     };
     let evaluated = Arc::new(
         crate::dust_repair::evaluate(
@@ -335,8 +334,7 @@ fn dust_cursor_matches_selection_paint_and_donor_action_precedence() {
         signature: e.dust_signature().unwrap(),
         repair: e.dust_repairs(source).unwrap().repairs()[0].clone(),
         cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        calibration: e.calibration().unwrap(),
-        roll: e.roll.inversion_only(),
+        input: e.calibration().unwrap().into(),
     };
     e.document.dust.start(&request);
     e.receive_dust(
@@ -652,8 +650,7 @@ fn disconnected_automatic_donors_use_their_own_supports_offsets_and_drag_origin(
         signature: e.dust_signature().unwrap(),
         repair: repair.clone(),
         cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        calibration: e.calibration().unwrap(),
-        roll: e.roll,
+        input: e.calibration().unwrap().into(),
     };
     // Constant input permits distinct, equally valid donors; author their resolved geometry.
     let mut evaluated = crate::dust_repair::evaluate(
@@ -757,37 +754,22 @@ fn corrected_repair_evaluation_uses_only_the_ungraded_positive_and_retains_signe
         .unwrap(),
         donor: DonorChoice::Offset([-45, 25]),
     };
-    let mut request = Request {
+    let request = Request {
         request: 1,
         loaded: 1,
         source: SourceId(1),
         cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         signature: [0; ProcessingParameters::BYTE_LEN],
         repair,
-        calibration,
-        roll: RollSettings {
-            exposure: 3.,
-            wb: Balance {
-                warmth: 0.1,
-                tint: -0.1,
-            },
-            ..RollSettings::new_grade()
-        },
+        input: calibration.into(),
     };
     let result = evaluate(&scan, &request).unwrap();
-    request.roll.exposure = -2.;
-    request.roll.wb = Balance::default();
     let other = evaluate(&scan, &request).unwrap();
     assert_eq!(
         result.evaluated.pixels().collect::<Vec<_>>(),
         other.evaluated.pixels().collect::<Vec<_>>()
     );
-    let pipeline = Pipeline::ungraded(
-        scan.processing_calibration(calibration).unwrap(),
-        request.roll,
-        scan.camera_to_ap1,
-    )
-    .unwrap();
+    let pipeline = Pipeline::ungraded(request.input, scan.camera_to_ap1).unwrap();
     let expected = crate::dust_repair::evaluate(&request.repair, scan.area, |p| {
         Ok(pipeline
             .apply(scan.pixel(p[0], p[1])?)?
@@ -839,11 +821,13 @@ fn repair_identity_excludes_roll_photo_grades_but_tracks_negative_interpretation
     e.target = OutputTarget::Srgb;
     e.viewport.zoom = Some(2.);
     assert_eq!(e.dust_signature(), Some(before));
-    e.roll.gamma = 0.8;
+    e.set_gamma(0.8);
     assert_ne!(e.dust_signature(), Some(before));
-    e.roll.gamma = RollSettings::new_grade().gamma;
+    e.set_gamma(crate::processing::DEFAULT_GAMMA);
     assert_eq!(e.dust_signature(), Some(before));
-    e.roll.balance.warmth = 0.05;
+    let mut balance = e.balance();
+    balance.warmth = 0.05;
+    e.set_balance(balance);
     assert_ne!(e.dust_signature(), Some(before));
 }
 
@@ -857,7 +841,7 @@ fn obsolete_heal_cancels_without_releasing_admission_or_memoizing_failure() {
                 e.schedule_dust(signature, cx);
                 let first = captured_request(e);
                 if upstream {
-                    e.roll.gamma = 0.8;
+                    e.set_gamma(0.8);
                 } else {
                     let source = e.current_source.unwrap();
                     e.dust_repairs_mut(source)
@@ -926,7 +910,7 @@ fn cancellation_and_obsolete_replies_neither_fail_current_repairs_nor_steal_admi
                 second.request
             );
             assert!(e.document.dust.cached.is_empty());
-            e.roll.gamma = 0.8;
+            e.set_gamma(0.8);
             e.receive_dust(second.request, Ok(Some(response(&second, active))));
             assert!(e.document.dust.pending.is_none());
             assert!(e.document.dust.cached.is_empty());

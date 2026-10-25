@@ -230,13 +230,12 @@ impl Stages {
                 warmth: 0.002,
                 tint: -0.001,
             },
-            ..RollSettings::new_grade()
         };
         let photo = grade.global();
         let gain = exposure_multiplier(roll.exposure).unwrap()
             * exposure_multiplier(photo.exposure).unwrap();
         Self {
-            inversion: Inversion::new(source.calibration, roll).unwrap(),
+            inversion: Inversion::new(source.calibration).unwrap(),
             // Match the scalar Pipeline's exposure and white-balance ordering.
             matrix: wb_matrix(photo.wb).unwrap()
                 * wb_matrix(roll.wb).unwrap()

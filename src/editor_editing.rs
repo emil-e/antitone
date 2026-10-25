@@ -1,4 +1,28 @@
 use super::*;
+use crate::processing::InputSettings;
+
+#[derive(Clone, Copy, PartialEq)]
+pub(super) struct ControlSettings {
+    pub input: InputSettings,
+    pub roll: RollSettings,
+    pub photo: PhotoSettings,
+}
+
+impl ControlSettings {
+    pub(super) fn capture(editor: &Editor) -> Self {
+        Self {
+            input: editor.input,
+            roll: editor.roll,
+            photo: editor.photo,
+        }
+    }
+
+    pub(super) fn apply(self, editor: &mut Editor) {
+        editor.input = self.input;
+        editor.roll = self.roll;
+        editor.photo = self.photo;
+    }
+}
 
 fn reset_photo(photo: &mut PhotoSettings, reset: controls::Reset) {
     use controls::{Parameter as P, Reset as R};
@@ -33,45 +57,55 @@ fn reset_photo(photo: &mut PhotoSettings, reset: controls::Reset) {
     }
 }
 
-fn reset_roll(roll: &mut RollSettings, reset: controls::Reset) {
+fn reset_roll(input: &mut InputSettings, roll: &mut RollSettings, reset: controls::Reset) {
     use controls::{ColorControl as C, Parameter as P, Reset as R};
+    // Shared grade (both stages).
     match reset {
-        R::Parameter(kind, balance) => {
+        R::Parameter(P::Exposure, _) => roll.exposure = P::Exposure.default(),
+        R::Parameter(P::Warmth, C::WhiteBalance) => roll.wb.warmth = P::Warmth.default(),
+        R::Parameter(P::Tint, C::WhiteBalance) => roll.wb.tint = P::Tint.default(),
+        R::Exposure => roll.exposure = 0.,
+        R::Balance(C::WhiteBalance) => roll.wb = Balance::default(),
+        _ => {}
+    }
+    // Negative interpretation (absent for Digital).
+    let InputSettings::Negative {
+        response,
+        gamma,
+        balance,
+        ..
+    } = input
+    else {
+        return;
+    };
+    match reset {
+        R::Parameter(kind, bal) => {
             let value = kind.default();
             match kind {
-                P::Gamma => roll.gamma = value,
-                P::Exposure => roll.exposure = value,
+                P::Gamma => *gamma = value,
                 P::Toe => {
-                    if let crate::processing::Response::Film { toe, .. } = &mut roll.response {
+                    if let crate::processing::Response::Film { toe, .. } = response {
                         *toe = value;
                     }
                 }
                 P::Shoulder => {
-                    if let crate::processing::Response::Film { shoulder, .. } = &mut roll.response {
+                    if let crate::processing::Response::Film { shoulder, .. } = response {
                         *shoulder = value;
                     }
                 }
-                P::Warmth | P::Tint => {
-                    let balance = match balance {
-                        C::GammaBalance => &mut roll.balance,
-                        C::WhiteBalance => &mut roll.wb,
-                    };
-                    match kind {
-                        P::Warmth => balance.warmth = value,
-                        _ => balance.tint = value,
-                    }
-                }
+                P::Warmth | P::Tint if matches!(bal, C::GammaBalance) => match kind {
+                    P::Warmth => balance.warmth = value,
+                    _ => balance.tint = value,
+                },
                 _ => {}
             }
         }
-        R::Exposure => roll.exposure = 0.,
-        R::Balance(C::GammaBalance) => roll.balance = Balance::default(),
-        R::Balance(C::WhiteBalance) => roll.wb = Balance::default(),
+        R::Balance(C::GammaBalance) => *balance = Balance::default(),
         R::GammaAndBalance => {
-            roll.gamma = crate::processing::DEFAULT_GAMMA;
-            roll.balance = Balance::default();
+            *gamma = crate::processing::DEFAULT_GAMMA;
+            *balance = Balance::default();
         }
-        R::Response => roll.response = crate::processing::Response::film(),
+        R::Response => *response = crate::processing::Response::film(),
         _ => {}
     }
 }
@@ -103,6 +137,23 @@ pub(super) enum Command {
 }
 
 impl Editor {
+    pub(super) fn validate_control_edit(
+        &self,
+        previous: ControlSettings,
+        candidate: ControlSettings,
+    ) -> Result<(), Error> {
+        if candidate == previous || !candidate.input.ready() {
+            return Ok(());
+        }
+        if candidate.input != previous.input || candidate.roll != previous.roll {
+            self.validate_processing(candidate.input, candidate.roll, candidate.photo)
+        } else {
+            self.dust_validate_processing(candidate.input, candidate.roll, candidate.photo)?;
+            self.positive_processing(candidate.input, candidate.roll, candidate.photo)
+                .map(|_| ())
+        }
+    }
+
     // Numeric widgets must resolve focus loss and pass admission before a separate
     // command takes its snapshot or changes the controls' availability.
     pub(super) fn control_command(&mut self, command: Command, cx: &UiContext<'_, Self>) {
@@ -117,23 +168,19 @@ impl Editor {
         let before = self.history_snapshot();
         let result = match scope {
             Scope::Roll => {
-                let mut roll = self.roll;
-                reset_roll(&mut roll, reset);
-                self.calibration()
-                    .map_or(Ok(()), |cal| {
-                        self.validate_processing(cal, roll, self.photo)
-                    })
-                    .map(|()| self.roll = roll)
+                let previous = ControlSettings::capture(self);
+                let mut candidate = previous;
+                reset_roll(&mut candidate.input, &mut candidate.roll, reset);
+                self.validate_control_edit(previous, candidate)
+                    .map(|()| candidate.apply(self))
             }
             Scope::Photo(source, target) if Some(source) == self.current_source => match target {
                 adjustments::Target::Global => {
-                    let mut photo = self.photo;
-                    reset_photo(&mut photo, reset);
-                    self.calibration()
-                        .map_or(Ok(()), |cal| {
-                            self.validate_processing(cal, self.roll, photo)
-                        })
-                        .map(|()| self.photo = photo)
+                    let previous = ControlSettings::capture(self);
+                    let mut candidate = previous;
+                    reset_photo(&mut candidate.photo, reset);
+                    self.validate_control_edit(previous, candidate)
+                        .map(|()| candidate.apply(self))
                 }
                 adjustments::Target::Local(id) => self.edit_adjustments(|locals| {
                     let record = locals
@@ -225,12 +272,11 @@ impl Editor {
                 if let Some(enabled) = enabled {
                     candidate
                         .project
-                        .flat_field
-                        .as_mut()
+                        .flat_field_mut()
                         .expect("accepted correction")
                         .enabled = enabled;
                 } else {
-                    candidate.project.flat_field = None;
+                    candidate.project.set_flat_field(None);
                 }
                 self.start_document(Preparation::Correction(candidate, self.current_source), cx);
             }

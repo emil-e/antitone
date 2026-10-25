@@ -55,14 +55,10 @@ impl Fit {
                 "analysis correction snapshot changed",
             ));
         }
-        project
-            .development
-            .as_ref()
-            .ok_or(Error::UnusableSample("no roll development"))?;
+        project.require_scan_sources()?;
         let matrix = glam::DMat3::from_cols_array_2d(
             &project
-                .camera_basis
-                .as_ref()
+                .camera_basis()
                 .ok_or(Error::UnusableSample("no roll camera basis"))?
                 .camera_to_ap1,
         );
@@ -87,7 +83,8 @@ impl Fit {
         let project = &self.request.document.project;
         let id = project.order[index];
         let path = self.request.document.source_path(id)?;
-        let actual = document::source_metadata(&path, &scan.source().metadata())?;
+        let actual =
+            document::source_metadata(&path, &scan.source().metadata(), scan.source().fixed_wb())?;
         document::verify_source(project.source(id)?, &actual)?;
         document::verify_scan(&actual, scan)?;
         Ok(actual)
@@ -134,7 +131,7 @@ impl Fit {
         self.request
             .document
             .project
-            .require_camera_basis(&actual.development)?;
+            .require_scan_source(&actual.development)?;
         if let Some(correction) = &self.correction {
             correction.settings.require_source(&actual.development)?;
             scan.set_flat_field(Some(correction.settings.map.clone()))?;
@@ -242,7 +239,7 @@ impl Fit {
             })
             .collect();
         let Some(proposal) =
-            roll_analysis::estimate(&frames, floor, self.matrix, project.roll, &cancelled)?
+            roll_analysis::estimate(&frames, floor, self.matrix, project.input, &cancelled)?
         else {
             return Ok(None);
         };

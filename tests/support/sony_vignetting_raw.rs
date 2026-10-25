@@ -1,5 +1,7 @@
 use super::*;
-use antitone::processing::{CAMERA_INPUT_FLOOR, Calibration};
+use antitone::processing::{
+    CAMERA_INPUT_FLOOR, Calibration, DEFAULT_GAMMA, InputSettings, Response,
+};
 
 fn vignette(order: Order, coefficients: &[i16]) -> Entry {
     (0x7032, 8, order.signed(coefficients))
@@ -72,7 +74,7 @@ fn selected_ifd_shading_is_signed_bounded_independent_and_padding_is_not_data() 
 fn shading_curve_provenance_differs_even_with_equal_geometry_and_precision_floor() {
     use antitone::{
         flat_field::FlatField,
-        project::{Development, FlatFieldSettings, Source, SourceId},
+        project::{FlatFieldSettings, Source, SourceId},
     };
     use std::sync::Arc;
     let a = source(
@@ -106,11 +108,7 @@ fn shading_curve_provenance_differs_even_with_equal_geometry_and_precision_floor
         crop: None,
     };
     let map = Arc::new(FlatField::from_nodes([0, 0, 64, 64], [2, 2], vec![DVec3::ONE; 4]).unwrap());
-    let field = FlatFieldSettings::new(
-        &reference,
-        map,
-        &Development::new(antitone::raw::version(), a.fixed_wb),
-    );
+    let field = FlatFieldSettings::new(&reference, map);
     assert!(field.require_source(&second).is_err());
 }
 
@@ -183,7 +181,7 @@ fn gains_are_applied_at_original_sites_before_the_combined_channel_reconstructio
 fn headroom_is_not_capture_clipping_and_source_floor_composes_with_residual_flat_field() {
     use antitone::{
         flat_field::FlatField,
-        project::{Development, FlatFieldSettings, Project, Save, Source, SourceId},
+        project::{FlatFieldSettings, Project, Save, Source, SourceId},
     };
     use std::sync::Arc;
     let file = source(
@@ -220,10 +218,14 @@ fn headroom_is_not_capture_clipping_and_source_floor_composes_with_residual_flat
     let neutral = scan.camera_to_ap1 * (center_camera * estimated.gain([32., 32.]).unwrap());
     assert!((neutral - DVec3::splat(neutral.y)).abs().max_element() < 1e-12);
     let mut project = Project {
-        development: Some(Development::new(antitone::raw::version(), scan.fixed_wb)),
-        dmin: Some([0.7; 3]),
-        dmax: Some([0.01; 3]),
-        input_floor: Some(CAMERA_INPUT_FLOOR),
+        input: InputSettings::Negative {
+            dmin: Some(DVec3::splat(0.7)),
+            dmax: Some(DVec3::splat(0.01)),
+            input_floor: CAMERA_INPUT_FLOOR,
+            response: Response::film(),
+            gamma: DEFAULT_GAMMA,
+            balance: Default::default(),
+        },
         ..Default::default()
     };
     let id = project
@@ -244,7 +246,9 @@ fn headroom_is_not_capture_clipping_and_source_floor_composes_with_residual_flat
             .image_recipe(id)
             .unwrap()
             .neutral
-            .processing_calibration()
+            .processing_input()
+            .unwrap()
+            .calibration()
             .unwrap()
             .input_floor,
         developed_floor
@@ -252,15 +256,19 @@ fn headroom_is_not_capture_clipping_and_source_floor_composes_with_residual_flat
     let field =
         Arc::new(FlatField::from_nodes([0, 0, 64, 64], [2, 2], vec![DVec3::splat(3.); 4]).unwrap());
     scan.set_flat_field(Some(field.clone())).unwrap();
-    project.flat_field = Some(FlatFieldSettings::new(
+    project.set_flat_field(Some(FlatFieldSettings::new(
         project.source(id).unwrap(),
         field,
-        project.development.as_ref().unwrap(),
-    ));
+    )));
     let recipe = project.image_recipe(id).unwrap();
     assert_eq!(
         scan.processing_calibration(base).unwrap(),
-        recipe.neutral.processing_calibration().unwrap()
+        recipe
+            .neutral
+            .processing_input()
+            .unwrap()
+            .calibration()
+            .unwrap()
     );
     assert_eq!(scan.effective_floor(), developed_floor * 3.);
     recipe.neutral.require_scan(&scan).unwrap();
@@ -275,7 +283,7 @@ fn headroom_is_not_capture_clipping_and_source_floor_composes_with_residual_flat
         .require_scan(&scan)
         .unwrap();
     let mut changed = reopened.clone();
-    changed.flat_field = None;
+    changed.set_flat_field(None);
     changed.source_mut(id).unwrap().development.input_floor *= 2.;
     assert!(
         changed
@@ -287,7 +295,9 @@ fn headroom_is_not_capture_clipping_and_source_floor_composes_with_residual_flat
     );
     // A calibration admissible at the native floor must not bypass a developed-source floor.
     let mut invalid = reopened;
-    invalid.dmax = Some([CAMERA_INPUT_FLOOR; 3]);
+    if let InputSettings::Negative { dmax, .. } = &mut invalid.input {
+        *dmax = Some(DVec3::splat(CAMERA_INPUT_FLOOR));
+    }
     assert!(invalid.validate().is_err());
     scan.set_flat_field(None).unwrap();
     assert_eq!(scan.effective_floor(), developed_floor);

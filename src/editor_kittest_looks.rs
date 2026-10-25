@@ -24,7 +24,7 @@ fn positive_ready(editor: &Editor) -> bool {
     !editor.busy
         && editor.working.displayed.as_ref().is_some_and(|view| {
             let mut expected = editor
-                .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+                .positive_processing(editor.input, editor.roll, editor.photo)
                 .unwrap();
             expected.repairs = crate::gpu::repairs::Snapshot::logical(
                 editor
@@ -55,8 +55,8 @@ fn fixture_editor_gpu<R>(
             !editor.busy && editor.document.visit.ready.is_some()
         });
         harness.update(|editor| {
-            editor.dmin = Some(DVec3::splat(3000. / 4031.));
-            editor.dmax = Some(DVec3::splat(128. / 4031.));
+            editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
+            editor.set_dmax(Some(DVec3::splat(128. / 4031.)));
             editor.source = false;
             editor.scopes.visible = true;
             editor.sync_document();

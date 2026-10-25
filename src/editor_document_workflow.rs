@@ -3,10 +3,11 @@
 mod tests;
 
 use super::{
-    Adjustments, DVec3, DocumentRequest, Editor, FailureKind, OutputTarget, Preparation, Prepared,
+    Adjustments, DocumentRequest, Editor, FailureKind, OutputTarget, Preparation, Prepared,
     RollSelection, Task, TaskProgress, TaskRequest, document_services::PreparationServices, dust,
     history, source_workflow,
 };
+use crate::processing::InputSettings;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -48,15 +49,19 @@ impl Editor {
         self.document.history.finish_group();
         self.history_pending = match &work {
             Preparation::New | Preparation::Open(_) => Some(history::Pending::Reset),
-            Preparation::Import(..) | Preparation::Correction(..) => Some(history::Pending::Edit {
-                before: Box::new(self.document.project.clone()),
-                label: if matches!(&work, Preparation::Import(..)) {
-                    "Import photos"
-                } else {
-                    "Correction"
-                },
-                photo: None,
-            }),
+            Preparation::Import(..) | Preparation::Correction(..) | Preparation::Input(..) => {
+                Some(history::Pending::Edit {
+                    before: Box::new(self.document.project.clone()),
+                    label: if matches!(&work, Preparation::Import(..)) {
+                        "Import photos"
+                    } else if matches!(&work, Preparation::Input(..)) {
+                        "Input stage"
+                    } else {
+                        "Correction"
+                    },
+                    photo: None,
+                })
+            }
             Preparation::History(_, _, direction) => Some(history::Pending::Restore {
                 direction: *direction,
                 cleanup: self
@@ -73,6 +78,7 @@ impl Editor {
             Preparation::Open(_) => Task::Open(id),
             Preparation::New => Task::New(id),
             Preparation::Correction(..) => Task::Correction(id),
+            Preparation::Input(..) => Task::Input(id),
             Preparation::History(..) => Task::History(id),
         });
         self.document_failure =
@@ -155,6 +161,8 @@ impl Editor {
         self.busy = false;
         match result {
             Ok(mut prepared) => {
+                let input_changed =
+                    self.input.is_negative() != prepared.document.project.input.is_negative();
                 let flat_context = self.flat_edit.take();
                 let previous_cache = self.document.cache().clone();
                 self.thumbnails
@@ -212,16 +220,12 @@ impl Editor {
                     .unwrap_or(0);
                 self.roll = self.document.project.roll;
                 self.roll_orientation = self.document.project.orientation;
-                self.dmin = self.document.project.dmin.map(DVec3::from_array);
-                self.dmax = self.document.project.dmax.map(DVec3::from_array);
-                self.floor = self.document.project.input_floor.unwrap_or_else(|| {
-                    prepared
-                        .ready
-                        .as_ref()
-                        .map_or(self.floor, |ready| ready.floor)
-                });
-                if prepared.selected.is_none() {
-                    self.floor = self.document.project.input_floor.unwrap_or(0.);
+                self.load_input(self.document.project.input);
+                if let InputSettings::Negative { input_floor, .. } = &mut self.input
+                    && *input_floor == 0.
+                {
+                    *input_floor = crate::processing::CAMERA_INPUT_FLOOR;
+                    self.document.project.input = self.input;
                 }
                 self.photo = prepared
                     .selected
@@ -246,7 +250,10 @@ impl Editor {
                 self.document.visit.ready = prepared.ready;
                 if !prepared.reuse_ready && !prepared.preserve_view {
                     self.viewport.fit();
-                    self.source = self.calibration().is_none();
+                    self.source = !self.input.ready();
+                }
+                if input_changed {
+                    self.source = !self.input.ready();
                 }
                 self.pick = None;
                 self.document.pick_view = None;
@@ -261,8 +268,7 @@ impl Editor {
                     self.viewport = context.viewport;
                     self.source = context.source;
                 }
-                self.status = if self.document.project.flat_field.is_some()
-                    || prepared.preserve_view
+                self.status = if !input_changed && self.document.project.active_flat_field().is_some()
                 {
                     "Project ready. Flat-field changes keep Dmin/Dmax RGB; re-pick calibration for this setup."
                 } else {
@@ -283,7 +289,7 @@ impl Editor {
                 );
                 self.history_failed(pending_history);
                 self.resume_source_after_document();
-                self.status = format!("Project: {error}");
+                self.status = error.to_string();
                 if self.document.visit.source.pending() {
                     self.return_notice = Some(self.status.clone());
                 }

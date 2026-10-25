@@ -70,8 +70,8 @@ fn fixture() -> Editor {
                 cx,
             )
         });
-        editor.dmin = Some(DVec3::splat(0.8));
-        editor.dmax = Some(DVec3::splat(0.02));
+        editor.set_dmin(Some(DVec3::splat(0.8)));
+        editor.set_dmax(Some(DVec3::splat(0.02)));
         let area = editor.document.visit.ready.as_ref().unwrap().area;
         editor.crop = Some(Crop {
             center: [

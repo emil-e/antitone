@@ -26,7 +26,7 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
         editor.apply_adjustment_action(Action::Select(Target::Local(order[0])));
         assert_eq!(editor.adjustment_target(), Target::Local(order[0]));
         let accepted = editor
-            .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+            .positive_processing(editor.input, editor.roll, editor.photo)
             .unwrap();
         let revision = editor.original.revision();
         editor.apply_adjustment_action(Action::Rename(order[0], "Sky".into()));
@@ -36,7 +36,7 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
             "metadata must not invalidate processing"
         );
         let renamed = editor
-            .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+            .positive_processing(editor.input, editor.roll, editor.photo)
             .unwrap();
         assert!(std::ptr::eq(
             accepted.grade().unwrap(),
@@ -47,7 +47,7 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
         assert_eq!(editor.adjustment_target(), Target::Local(order[0]));
         assert_ne!(
             editor
-                .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+                .positive_processing(editor.input, editor.roll, editor.photo)
                 .unwrap()
                 .signature(),
             accepted.signature()
@@ -143,7 +143,7 @@ fn drop_positions_insert_without_swapping_neighbours_or_consuming_ids() {
         let order = ids(&editor);
         editor.select_adjustment(Target::Local(order[0]));
         let input = editor
-            .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+            .positive_processing(editor.input, editor.roll, editor.photo)
             .unwrap();
         let snapshot = input.grade().unwrap().snapshot().clone();
         let next_id = editor
@@ -201,14 +201,14 @@ fn stale_drops_reject_changed_records_and_source_generations_atomically() {
             let before = editor.document.project.clone();
             let revision = editor.original.revision();
             let input = editor
-                .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+                .positive_processing(editor.input, editor.roll, editor.photo)
                 .unwrap();
             assert!(editor.reorder_adjustment(drag, 2).is_err());
             assert_eq!(editor.document.project, before);
             assert_eq!(editor.original.revision(), revision);
             assert_eq!(editor.adjustment_target(), Target::Local(id));
             let current = editor
-                .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+                .positive_processing(editor.input, editor.roll, editor.photo)
                 .unwrap();
             assert!(std::ptr::eq(
                 input.grade().unwrap(),
@@ -227,7 +227,7 @@ fn drawer_visibility_routes_global_and_reopening_validates_source_owned_selectio
         editor.select_adjustment(Target::Local(order[1]));
         let before = editor.document.project.clone();
         let input = editor
-            .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+            .positive_processing(editor.input, editor.roll, editor.photo)
             .unwrap();
         editor.close_adjustments();
         assert_eq!(editor.adjustment_target(), Target::Global);
@@ -237,7 +237,7 @@ fn drawer_visibility_routes_global_and_reopening_validates_source_owned_selectio
         assert_eq!(
             input.signature(),
             editor
-                .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+                .positive_processing(editor.input, editor.roll, editor.photo)
                 .unwrap()
                 .signature()
         );
@@ -332,7 +332,7 @@ fn unsupported_local_edit_preserves_grade_view_revision_and_allocator() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
         let accepted = editor
-            .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+            .positive_processing(editor.input, editor.roll, editor.photo)
             .unwrap();
         let before = editor.document.project.clone();
         let revision = editor.original.revision();
@@ -352,7 +352,7 @@ fn unsupported_local_edit_preserves_grade_view_revision_and_allocator() {
         assert_eq!(editor.original.revision(), revision);
         assert_eq!(editor.viewport, viewport);
         let current = editor
-            .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+            .positive_processing(editor.input, editor.roll, editor.photo)
             .unwrap();
         assert!(std::ptr::eq(
             accepted.grade().unwrap(),
@@ -366,9 +366,9 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
     pollster::block_on(async {
         for reorder in [false, true] {
             let (mut editor, _, _) = processing::tests::fixture().await;
-            editor.roll = RollSettings::new_grade();
+            editor.roll = RollSettings::default();
             editor.photo = PhotoSettings::default();
-            assert_eq!(editor.roll.gamma, 0.6);
+            assert_eq!(editor.gamma(), 0.6);
             let source = editor
                 .document
                 .project
@@ -419,7 +419,7 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
             editor.sync_document();
             editor.select_adjustment(Target::Local(subject));
             let accepted = editor
-                .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+                .positive_processing(editor.input, editor.roll, editor.photo)
                 .unwrap();
             let before = editor.document.project.clone();
             let revision = editor.original.revision();
@@ -439,7 +439,7 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
             assert_eq!(editor.original.revision(), revision);
             assert_eq!(editor.viewport, viewport);
             let current = editor
-                .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+                .positive_processing(editor.input, editor.roll, editor.photo)
                 .unwrap();
             assert!(std::ptr::eq(
                 accepted.grade().unwrap(),

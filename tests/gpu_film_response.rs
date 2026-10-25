@@ -2,9 +2,31 @@
 use antitone::{
     color::Balance,
     gpu::{ProcessingKernel, ProcessingParameters, ProcessingSource},
-    processing::{Calibration, PhotoSettings, Pipeline, Response, RollSettings},
+    processing::{
+        Calibration, InputSettings, NegativeInput, PhotoSettings, Pipeline, Response, RollSettings,
+    },
 };
 use glam::{DMat3, DVec3};
+
+fn negative(cal: Calibration, response: Response, gamma: f64, balance: Balance) -> NegativeInput {
+    NegativeInput {
+        calibration: cal,
+        response,
+        gamma,
+        balance,
+    }
+}
+
+fn as_input(negative: NegativeInput) -> InputSettings {
+    InputSettings::Negative {
+        dmin: Some(negative.calibration.dmin),
+        dmax: Some(negative.calibration.dmax),
+        input_floor: negative.calibration.input_floor,
+        response: negative.response,
+        gamma: negative.gamma,
+        balance: negative.balance,
+    }
+}
 
 fn camera(code: [u16; 4]) -> DVec3 {
     DVec3::new(code[0] as f64, code[1] as f64, code[2] as f64) / 65535.
@@ -130,10 +152,13 @@ fn film_gpu_matches_full_f64_for_shapes_matrices_balances_wb_and_exposure_extrem
                     dmax: DVec3::new(0.008061, 0.003409, 0.001442),
                     input_floor: 2.1630933622265155e-5,
                 };
-                let roll = RollSettings {
-                    response: Response::Film { toe, shoulder },
+                let interpretation = negative(
+                    cal,
+                    Response::Film { toe, shoulder },
                     gamma,
-                    balance: balances[case / 13 % 4],
+                    balances[case / 13 % 4],
+                );
+                let roll = RollSettings {
                     wb: balances[case / 19 % 4],
                     exposure: ev / 2.,
                 };
@@ -142,14 +167,16 @@ fn film_gpu_matches_full_f64_for_shapes_matrices_balances_wb_and_exposure_extrem
                     wb: balances[case / 17 % 4],
                     ..PhotoSettings::default()
                 };
-                let params = match ProcessingParameters::positive(cal, roll, photo, matrix) {
-                    Ok(p) => p,
-                    Err(_) => {
-                        rejected += 1;
-                        continue;
-                    }
-                };
-                let pipeline = Pipeline::new(cal, roll, photo, matrix).unwrap();
+                let params =
+                    match ProcessingParameters::positive(interpretation, roll, photo, matrix) {
+                        Ok(p) => p,
+                        Err(_) => {
+                            rejected += 1;
+                            continue;
+                        }
+                    };
+                let pipeline =
+                    Pipeline::new(as_input(interpretation), roll, photo, matrix).unwrap();
                 let gpu = read(&device, &queue, &kernel, &source, params, codes.len());
                 accepted += 1;
                 for (i, s) in scans.iter().enumerate() {
@@ -174,7 +201,7 @@ fn film_gpu_matches_full_f64_for_shapes_matrices_balances_wb_and_exposure_extrem
                 dmax: scans[7],
                 input_floor: 2.1630933622265155e-5,
             };
-            let roll = RollSettings::new_grade();
+            let roll = RollSettings::default();
             let params =
                 ProcessingParameters::positive(cal, roll, PhotoSettings::default(), matrix)
                     .unwrap();
@@ -201,13 +228,15 @@ fn film_gpu_matches_full_f64_for_shapes_matrices_balances_wb_and_exposure_extrem
                 dmax: DVec3::splat(floor),
                 input_floor: floor,
             };
-            let roll = RollSettings {
-                gamma,
-                response: Response::Film { toe, shoulder },
-                ..RollSettings::default()
-            };
-            let parameters = ProcessingParameters::positive(
+            let interpretation = negative(
                 cal,
+                Response::Film { toe, shoulder },
+                gamma,
+                Balance::default(),
+            );
+            let roll = RollSettings::default();
+            let parameters = ProcessingParameters::positive(
+                interpretation,
                 roll,
                 PhotoSettings::default(),
                 DMat3::IDENTITY,
@@ -242,24 +271,35 @@ fn inverse_pole_cannot_hide_behind_a_floor_anchored_dmax() {
         dmax: DVec3::splat(floor),
         input_floor: floor,
     };
-    let roll = RollSettings {
-        response: Response::Film {
+    let interpretation = negative(
+        cal,
+        Response::Film {
             toe: 2.5,
             shoulder: k,
         },
         gamma,
-        ..RollSettings::default()
-    };
-    assert!(
-        Pipeline::new(cal, roll, PhotoSettings::default(), DMat3::IDENTITY)
-            .unwrap()
-            .apply(DVec3::splat(floor))
-            .unwrap()
-            .rgb
-            .is_finite()
+        Balance::default(),
     );
     assert!(
-        ProcessingParameters::positive(cal, roll, PhotoSettings::default(), DMat3::IDENTITY)
-            .is_err()
+        Pipeline::new(
+            as_input(interpretation),
+            RollSettings::default(),
+            PhotoSettings::default(),
+            DMat3::IDENTITY
+        )
+        .unwrap()
+        .apply(DVec3::splat(floor))
+        .unwrap()
+        .rgb
+        .is_finite()
+    );
+    assert!(
+        ProcessingParameters::positive(
+            interpretation,
+            RollSettings::default(),
+            PhotoSettings::default(),
+            DMat3::IDENTITY,
+        )
+        .is_err()
     );
 }

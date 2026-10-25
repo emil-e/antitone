@@ -56,12 +56,13 @@ fn deferred_counters_preserve_common_pixels_and_reject_final_collection_before_p
     let request = || Request {
         scan: &scan,
         field: None,
-        calibration: Calibration {
+        input: Calibration {
             dmin: DVec3::splat(0.8),
             dmax: DVec3::splat(0.02),
             input_floor: scan.input_floor,
-        },
-        roll: RollSettings::new_grade(),
+        }
+        .into(),
+        roll: RollSettings::default(),
         grade: PhotoGradeSnapshot::new(Default::default(), vec![]).unwrap(),
         repairs: &[],
         composition,

@@ -1,6 +1,7 @@
 use super::{
     Adjustments, Editor, LoadCache, Ready, SelectionTiming, Task, TaskRequest, UiContext, source,
 };
+use crate::processing::InputSettings;
 use crate::source_store::SourceKey;
 use std::path::PathBuf;
 use std::sync::{
@@ -32,7 +33,6 @@ impl State {
                     &ready.path,
                     ready.file.clone(),
                     &ready.record.development,
-                    &ready.development,
                 )
                 .as_ref(),
             )
@@ -54,19 +54,13 @@ impl Editor {
             .find_source(&path)
             .and_then(|id| self.document.project.source(id).ok())
             .cloned();
-        let wb = self
-            .document
-            .project
-            .development
-            .as_ref()
-            .map(|value| value.fixed_wb);
-        let cache = LoadCache::new(&path, expected.as_ref(), wb, &self.document);
+        let wb = self.document.project.acquisition_wb(expected.as_ref());
+        let cache = LoadCache::new(&path, expected.as_ref(), &self.document);
         source::Request {
             path,
             wb,
             expected,
             correction: self.correction.clone(),
-            basis: self.document.project.camera_basis.clone(),
             cache: Some(cache),
         }
     }
@@ -137,7 +131,7 @@ impl Editor {
             .document
             .auto_crop_edit
             .as_ref()
-            .map_or(self.calibration().is_none(), |d| d.source_view);
+            .map_or(!self.input.ready(), |d| d.source_view);
         self.busy = true;
         self.status = "Developing full-resolution RAW…".into();
         self.tasks.begin(Task::Photo(self.id));
@@ -164,28 +158,25 @@ impl Editor {
             && self.flat_edit.is_none()
             && let Some(source) = self.current_source
         {
-            match self.thumbnails.selected_preview(
-                self.id,
-                &self.document,
-                source,
-                self.correction.as_ref(),
-            ) {
-                Ok(preview) => {
-                    log::debug!(
-                        request = self.id,
-                        cache_hit = preview.is_some(),
-                        boundary = "admission",
-                        elapsed_ms = started.elapsed().as_secs_f64() * 1000.;
-                        "selected_switch"
-                    );
-                    self.pending_preview = preview;
-                }
-                Err(error) => {
-                    log::debug!(
-                        request = self.id,
-                        error = error.to_string().as_str();
-                        "selected_preview_unavailable"
-                    )
+            let composition =
+                self.document.project.source(source).ok().map(|source| {
+                    self.canvas_composition(source.development.active_area.into(), None)
+                });
+            if let Some(composition) = composition {
+                match self.thumbnails.selected_preview(
+                    self.id,
+                    &self.document,
+                    source,
+                    composition,
+                    self.correction.as_ref(),
+                ) {
+                    Ok(preview) => {
+                        log::debug!(request = self.id, cache_hit = preview.is_some(), boundary = "admission", elapsed_ms = started.elapsed().as_secs_f64() * 1000.; "selected_switch");
+                        self.pending_preview = preview;
+                    }
+                    Err(error) => {
+                        log::debug!(request = self.id, error = error.to_string().as_str(); "selected_preview_unavailable")
+                    }
                 }
             }
         }
@@ -229,15 +220,18 @@ impl Editor {
                     height = ready.area.height;
                     "source_ready"
                 );
-                if self.floor == 0. {
-                    self.floor = ready.floor;
+                if let InputSettings::Negative { input_floor, .. } = &mut self.input
+                    && *input_floor == 0.
+                {
+                    *input_floor = crate::processing::CAMERA_INPUT_FLOOR;
+                    self.document.project.input = self.input;
                 }
                 if self.current_source.is_none() {
                     let mut record = ready.record.clone();
                     record.photo = self.photo;
                     record.orientation = self.photo_orientation;
                     record.crop = self.crop;
-                    match self.document.register(record, ready.development.clone()) {
+                    match self.document.register(record) {
                         Ok(id) => self.current_source = Some(id),
                         Err(error) => {
                             self.status = error.to_string();

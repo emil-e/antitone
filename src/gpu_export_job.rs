@@ -37,7 +37,7 @@ pub(crate) fn write(
     let request = Request {
         scan: job.scan,
         field: job.field,
-        calibration: job.recipe.neutral.calibration,
+        input: job.recipe.neutral.input,
         roll: job.recipe.roll,
         grade: job.recipe.grade.clone(),
         repairs: &repairs,

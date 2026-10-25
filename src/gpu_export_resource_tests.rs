@@ -131,7 +131,7 @@ fn exercise(
         let adjusted = scan
             .processing_calibration(calibration)
             .map_err(|e| e.to_string())?;
-        let roll = RollSettings::new_grade();
+        let roll = RollSettings::default();
         let photo = PhotoSettings {
             contrast: 0.8,
             saturation: 1.1,
@@ -182,7 +182,7 @@ fn exercise(
         frame.output = frame
             .output
             .map(|n| (n as f64 * 3072. / max_side).ceil() as u32);
-        let spec = ViewSourceSpec::new(1, frame, adjusted, roll, scan.camera_to_ap1, field)
+        let spec = ViewSourceSpec::new(1, frame, adjusted, scan.camera_to_ap1, field)
             .map_err(|e| e.to_string())?;
         let underlay_spec = spec.underlay().map_err(|e| e.to_string())?;
         let underlay_size = underlay_spec.frame.output;
@@ -266,7 +266,7 @@ fn exercise(
                         look: None,
                         scan: &scan,
                         field: gpu_field.clone(),
-                        calibration,
+                        input: calibration.into(),
                         roll,
                         grade: snapshot.clone(),
                         repairs: &[],
@@ -501,8 +501,8 @@ fn reference_benchmark_counts_samples_and_preserves_bounded_stop_checks() {
         look: None,
         scan: &scan,
         field: None,
-        calibration,
-        roll: RollSettings::new_grade(),
+        input: calibration.into(),
+        roll: RollSettings::default(),
         grade: PhotoGradeSnapshot::new(PhotoSettings::default(), vec![]).unwrap(),
         repairs: &[],
         composition,
@@ -539,7 +539,7 @@ fn write_reference(
 ) -> Result<u64, Error> {
     let Request {
         scan,
-        calibration,
+        input,
         roll,
         grade,
         repairs,
@@ -548,13 +548,9 @@ fn write_reference(
         look,
         ..
     } = request;
-    let metadata = export::ProcessingMetadata::with_grade(roll.response, &grade);
-    let pipeline = crate::local_adjustments::SpatialPipeline::new(
-        scan.processing_calibration(calibration)?,
-        roll,
-        grade,
-        scan.camera_to_ap1,
-    )?;
+    let metadata = export::ProcessingMetadata::with_grade(input.response(), &grade);
+    let pipeline =
+        crate::local_adjustments::SpatialPipeline::new(input, roll, grade, scan.camera_to_ap1)?;
     let mut samples = 0_u64;
     check()?;
     let pixel = |x, y| {
@@ -567,12 +563,8 @@ fn write_reference(
             .iter()
             .find(|repair| repair.support().contains([x, y]))
         {
-            let mut pixel = crate::processing::Pipeline::ungraded(
-                scan.processing_calibration(calibration)?,
-                roll,
-                scan.camera_to_ap1,
-            )?
-            .apply(sample)?;
+            let mut pixel =
+                crate::processing::Pipeline::ungraded(input, scan.camera_to_ap1)?.apply(sample)?;
             pixel.rgb = glam::DVec3::from_array(repair.pixel([x, y], [0.; 3]).map(f64::from));
             pipeline.grade_neutral(pixel, [x, y])?.rgb
         } else {

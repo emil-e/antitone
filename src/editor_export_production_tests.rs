@@ -25,9 +25,9 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
                 )
             },
         );
-        editor.dmin = Some(DVec3::splat(0.8));
-        editor.dmax = Some(DVec3::splat(0.02));
-        editor.roll = RollSettings::new_grade();
+        editor.set_dmin(Some(DVec3::splat(0.8)));
+        editor.set_dmax(Some(DVec3::splat(0.02)));
+        editor.roll = RollSettings::default();
         let area = editor.document.visit.ready.as_ref().unwrap().area;
         editor.crop = Some(Crop {
             center: [

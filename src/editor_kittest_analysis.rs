@@ -187,9 +187,13 @@ fn settled_targets(harness: &mut Harness<'_, Editor>, case: &str) {
 
 fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str) {
     harness.update(|editor| {
-        editor.roll.gamma = 0.7;
-        editor.dmin.get_or_insert(DVec3::new(0.2, 0.15, 0.1));
-        editor.dmax.get_or_insert(DVec3::new(0.008, 0.005, 0.002));
+        editor.set_gamma(0.7);
+        let crate::processing::InputSettings::Negative { dmin, dmax, .. } = &mut editor.input
+        else {
+            panic!("Analyze fixture must use Negative");
+        };
+        dmin.get_or_insert(DVec3::new(0.2, 0.15, 0.1));
+        dmax.get_or_insert(DVec3::new(0.008, 0.005, 0.002));
         editor.source = false;
         editor.roll_orientation.turn_clockwise();
         editor.photo_orientation.flips.horizontal = true;
@@ -233,11 +237,7 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
         retired.id = SourceId(0);
         retired.path = "retired-local-reference.dng".into();
         retired.photo = PhotoSettings::default();
-        let development = editor.document.project.development.clone().unwrap();
-        editor
-            .document
-            .register_reference(retired, development)
-            .unwrap();
+        editor.document.register_reference(retired).unwrap();
         editor.select_adjustment(super::super::adjustments::Target::Local(ids[0]));
         editor.sync_document();
         editor
@@ -333,10 +333,10 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
                 .all(|e| e.areas.picture
                     == Some(Coverage::rectangle(picture).corners().map(|p| p.0)))
         );
-        assert_eq!(after.roll.gamma, before.roll.gamma);
-        assert_eq!(after.roll.response, before.roll.response);
+        assert_eq!(after.input.gamma(), before.input.gamma());
+        assert_eq!(after.input.response(), before.input.response());
         assert_eq!(after.orientation, before.orientation);
-        assert_eq!(after.flat_field, before.flat_field);
+        assert_eq!(after.flat_field(), before.flat_field());
         assert_eq!(editor.current_source, selected);
         for (mut source, prior) in after.sources.clone().into_iter().zip(&before.sources) {
             if after.order.contains(&source.id) {
@@ -366,7 +366,7 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
         } else {
             assert!(
                 after
-                    .dmin
+                    .dmin()
                     .unwrap()
                     .into_iter()
                     .all(|value| (value - 3000. / 4031.).abs() <= 2. / 65535.)

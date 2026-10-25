@@ -4,34 +4,53 @@ use antitone::color::{
     wb_matrix,
 };
 use antitone::processing::{
-    Calibration, DEFAULT_GAMMA, Inversion, PhotoSettings, Pipeline, RollSettings,
-    exposure_multiplier,
+    Calibration, DEFAULT_GAMMA, InputSettings, Inversion, NegativeInput, PhotoSettings, Pipeline,
+    Response, RollSettings, exposure_multiplier,
 };
 use antitone::sampling::{mean, photo_neutral, roll_neutral};
 use glam::{DMat3, DVec3};
+
+/// A negative interpretation over measured anchors (the response is the film prior).
+fn neg(cal: Calibration, gamma: f64, balance: Balance) -> NegativeInput {
+    NegativeInput {
+        calibration: cal,
+        response: Response::Original,
+        gamma,
+        balance,
+    }
+}
+
+/// The same interpretation as a source input stage (owns the anchors).
+fn inp(cal: Calibration, gamma: f64, balance: Balance) -> InputSettings {
+    InputSettings::Negative {
+        dmin: Some(cal.dmin),
+        dmax: Some(cal.dmax),
+        input_floor: cal.input_floor,
+        response: Response::Original,
+        gamma,
+        balance,
+    }
+}
 
 #[test]
 fn ungraded_positive_excludes_photographic_roll_controls_but_preserves_inversion_and_signed_hdr() {
     let cal = calibration();
     let matrix = DMat3::from_diagonal(DVec3::new(0.8, 1.1, 1.3));
-    let interpretation = RollSettings {
-        gamma: 0.75,
-        balance: Balance {
-            warmth: 0.06,
-            tint: -0.03,
-        },
-        ..RollSettings::new_grade()
+    let gamma = 0.75;
+    let balance = Balance {
+        warmth: 0.06,
+        tint: -0.03,
     };
+    // The grade (roll exposure + WB) must not reach the ungraded positive.
     let graded_roll = RollSettings {
         exposure: 3.,
         wb: Balance {
             warmth: -0.2,
             tint: 0.1,
         },
-        ..interpretation
     };
-    let neutral = Pipeline::ungraded(cal, graded_roll, matrix).unwrap();
-    let reference = Inversion::new(cal, interpretation).unwrap();
+    let neutral = Pipeline::ungraded(inp(cal, gamma, balance), matrix).unwrap();
+    let reference = Inversion::new(neg(cal, gamma, balance)).unwrap();
     for input in [cal.dmin * 1.1, cal.dmin, cal.dmax, cal.dmax * 0.5] {
         let actual = neutral.apply(input).unwrap();
         let inverted = reference.apply(input).unwrap();
@@ -39,30 +58,90 @@ fn ungraded_positive_excludes_photographic_roll_controls_but_preserves_inversion
         assert_eq!(actual.rgb, matrix * inverted.rgb);
         assert_eq!(
             actual,
-            Pipeline::ungraded(cal, interpretation, matrix)
+            Pipeline::ungraded(inp(cal, gamma, balance), matrix)
                 .unwrap()
                 .apply(input)
                 .unwrap()
         );
     }
+    // The grade is wired separately and does reach the graded pipeline.
+    let graded = Pipeline::new(
+        inp(cal, gamma, balance),
+        graded_roll,
+        PhotoSettings::default(),
+        matrix,
+    )
+    .unwrap();
+    let mid = cal.dmax * 0.5;
+    assert_ne!(
+        graded.apply(mid).unwrap().rgb,
+        neutral.apply(mid).unwrap().rgb
+    );
     assert!(neutral.apply(cal.dmin * 1.1).unwrap().rgb.min_element() < 0.);
     assert!(neutral.apply(cal.dmax * 0.5).unwrap().rgb.max_element() > 1.);
+}
+
+#[test]
+fn digital_input_is_already_positive_and_reuses_the_shared_grade() {
+    let matrix = DMat3::from_diagonal(DVec3::new(0.8, 1.1, 1.3));
+    // Identity grade + neutral roll WB + zero exposure: apply is camera→AP1 only,
+    // with no polarity flip (the sample is already a scene-referred positive).
+    let pipeline = Pipeline::new(
+        InputSettings::Digital,
+        RollSettings::default(),
+        PhotoSettings::default(),
+        matrix,
+    )
+    .unwrap();
+    for input in [
+        DVec3::splat(0.18),
+        DVec3::new(-0.02, 0.5, 1.7),
+        DVec3::splat(0.0),
+    ] {
+        let actual = pipeline.apply(input).unwrap();
+        assert_eq!(actual.floored, [false; 3]);
+        assert_eq!(actual.rgb, matrix * input);
+    }
+    // Ungraded digital positive is camera→AP1, before roll/photo controls.
+    let neutral = Pipeline::ungraded(InputSettings::Digital, matrix).unwrap();
+    assert_eq!(
+        neutral.apply(DVec3::splat(0.18)).unwrap().rgb,
+        matrix * DVec3::splat(0.18)
+    );
+    // The shared grade reaches the digital positive: roll exposure scales the working value.
+    let stops = 1.5;
+    let graded = Pipeline::new(
+        InputSettings::Digital,
+        RollSettings {
+            exposure: stops,
+            ..RollSettings::default()
+        },
+        PhotoSettings::default(),
+        matrix,
+    )
+    .unwrap();
+    let input = DVec3::splat(0.18);
+    close_rgb(
+        graded.apply(input).unwrap().rgb,
+        matrix * input * exposure_multiplier(stops).unwrap(),
+    );
+    // Non-finite samples reject rather than becoming an edge colour.
+    assert!(pipeline.apply(DVec3::splat(f64::NAN)).is_err());
+    assert!(pipeline.apply(DVec3::new(f64::INFINITY, 0., 0.)).is_err());
 }
 
 #[test]
 fn weighted_neutral_picks_match_repeated_full_resolution_pixels_not_bounding_box_means() {
     use antitone::sampling::{photo_neutral_weighted, roll_neutral_weighted, weighted_mean};
     let cal = calibration();
-    let correct = RollSettings {
-        balance: Balance {
-            warmth: 0.21,
-            tint: -0.14,
-        },
-        ..RollSettings::default()
+    let correct = Balance {
+        warmth: 0.21,
+        tint: -0.14,
     };
     let matrix = DMat3::from_diagonal(DVec3::new(0.8, 1.1, 1.3));
     let target = matrix.inverse() * DVec3::ONE;
-    let patch = [0.025, 0.09, 0.4].map(|v| scan_for_positive(cal, correct, target * v));
+    let patch = [0.025, 0.09, 0.4]
+        .map(|v| scan_for_positive(cal, neg(cal, DEFAULT_GAMMA, correct), target * v));
     let weighted = [(patch[0], 0.5), (patch[1], 1.), (patch[2], 0.5)];
     let repeated = [patch[0], patch[1], patch[1], patch[2]];
     assert!((weighted_mean(&weighted).unwrap() - mean(&repeated).unwrap()).length() < 1e-15);
@@ -72,13 +151,13 @@ fn weighted_neutral_picks_match_repeated_full_resolution_pixels_not_bounding_box
     assert!((weighted_balance.warmth - repeated_balance.warmth).abs() < 1e-14);
     assert!((weighted_balance.tint - repeated_balance.tint).abs() < 1e-14);
 
-    let roll = RollSettings::default();
-    let weighted_roll_balance = roll_neutral_weighted(cal, roll, &weighted, matrix).unwrap();
-    let repeated_roll_balance = roll_neutral(cal, roll, &repeated, matrix).unwrap();
+    let interpretation = neg(cal, DEFAULT_GAMMA, Balance::default());
+    let weighted_roll_balance = roll_neutral_weighted(interpretation, &weighted, matrix).unwrap();
+    let repeated_roll_balance = roll_neutral(interpretation, &repeated, matrix).unwrap();
     assert!((weighted_roll_balance.warmth - repeated_roll_balance.warmth).abs() < 1e-9);
     assert!((weighted_roll_balance.tint - repeated_roll_balance.tint).abs() < 1e-9);
-    assert!((weighted_roll_balance.warmth - correct.balance.warmth).abs() < 1e-8);
-    assert!((weighted_roll_balance.tint - correct.balance.tint).abs() < 1e-8);
+    assert!((weighted_roll_balance.warmth - correct.warmth).abs() < 1e-8);
+    assert!((weighted_roll_balance.tint - correct.tint).abs() < 1e-8);
 
     assert!(weighted_mean(&[(patch[0], 0.)]).is_err());
     assert!(weighted_mean(&[(patch[0], f64::NAN)]).is_err());
@@ -108,8 +187,12 @@ fn calibration() -> Calibration {
     }
 }
 
-fn scan_for_positive(calibration: Calibration, roll: RollSettings, value: DVec3) -> DVec3 {
-    let gamma = roll.channel_gammas().unwrap();
+fn scan_for_positive(
+    calibration: Calibration,
+    interpretation: NegativeInput,
+    value: DVec3,
+) -> DVec3 {
+    let gamma = interpretation.channel_gammas().unwrap();
     DVec3::from_array(std::array::from_fn(|c| {
         let denominator = (calibration.dmin[c] / calibration.dmax[c]).powf(1.0 / gamma[c]) - 1.0;
         calibration.dmin[c] / (1.0 + value[c] * denominator).powf(gamma[c])
@@ -119,10 +202,9 @@ fn scan_for_positive(calibration: Calibration, roll: RollSettings, value: DVec3)
 #[test]
 fn roll_defaults_use_a_shared_gamma_of_point_six() {
     assert_eq!(DEFAULT_GAMMA, 0.60);
-    assert_eq!(RollSettings::default().gamma, 0.60);
-    let grade = RollSettings::new_grade();
-    assert_eq!(grade.gamma, 0.60);
-    assert_eq!(grade.channel_gammas().unwrap(), DVec3::splat(0.60));
+    let interpretation = neg(calibration(), DEFAULT_GAMMA, Balance::default());
+    assert_eq!(interpretation.gamma, 0.60);
+    assert_eq!(interpretation.channel_gammas().unwrap(), DVec3::splat(0.60));
 }
 
 #[test]
@@ -140,16 +222,7 @@ fn anchors_hold_for_all_supported_global_gammas_and_balances() {
                 tint: -0.4,
             },
         ] {
-            let inversion = Inversion::new(
-                cal,
-                RollSettings {
-                    gamma,
-                    balance,
-                    exposure: 0.0,
-                    ..RollSettings::default()
-                },
-            )
-            .unwrap();
+            let inversion = Inversion::new(neg(cal, gamma, balance)).unwrap();
             close_rgb(inversion.apply(cal.dmin).unwrap().rgb, DVec3::ZERO);
             close_rgb(inversion.apply(cal.dmax).unwrap().rgb, DVec3::ONE);
         }
@@ -159,16 +232,16 @@ fn anchors_hold_for_all_supported_global_gammas_and_balances() {
 #[test]
 fn matches_direct_formula_in_the_well_conditioned_domain() {
     let cal = calibration();
-    let roll = RollSettings::default();
-    let inversion = Inversion::new(cal, roll).unwrap();
+    let gamma = DEFAULT_GAMMA;
+    let inversion = Inversion::new(neg(cal, gamma, Balance::default())).unwrap();
     for scan in [
         DVec3::new(0.05, 0.06, 0.04),
         DVec3::new(0.9, 0.55, 0.3),
         DVec3::splat(0.001),
     ] {
         let expected = DVec3::from_array(std::array::from_fn(|c| {
-            ((cal.dmin[c] / scan[c]).powf(1.0 / roll.gamma) - 1.0)
-                / ((cal.dmin[c] / cal.dmax[c]).powf(1.0 / roll.gamma) - 1.0)
+            ((cal.dmin[c] / scan[c]).powf(1.0 / gamma) - 1.0)
+                / ((cal.dmin[c] / cal.dmax[c]).powf(1.0 / gamma) - 1.0)
         }));
         close_rgb(inversion.apply(scan).unwrap().rgb, expected);
     }
@@ -177,7 +250,7 @@ fn matches_direct_formula_in_the_well_conditioned_domain() {
 #[test]
 fn preserves_negative_outputs_and_values_above_one() {
     let cal = calibration();
-    let inversion = Inversion::new(cal, RollSettings::default()).unwrap();
+    let inversion = Inversion::new(neg(cal, DEFAULT_GAMMA, Balance::default())).unwrap();
     assert!(inversion.apply(cal.dmin * 1.1).unwrap().rgb.max_element() < 0.0);
     assert!(inversion.apply(cal.dmax / 2.0).unwrap().rgb.min_element() > 1.0);
 }
@@ -185,7 +258,7 @@ fn preserves_negative_outputs_and_values_above_one() {
 #[test]
 fn floors_only_scan_inputs_and_reports_each_affected_channel() {
     let cal = calibration();
-    let inversion = Inversion::new(cal, RollSettings::default()).unwrap();
+    let inversion = Inversion::new(neg(cal, DEFAULT_GAMMA, Balance::default())).unwrap();
     let result = inversion.apply(DVec3::new(0.0, -0.01, 0.02)).unwrap();
     assert_eq!(result.floored, [true, true, false]);
     close_rgb(
@@ -238,16 +311,7 @@ fn invalid_references_and_parameters_are_not_repaired() {
         assert!(invalid.validate().is_err());
     }
     for gamma in [0.0, -1.0, f64::NAN, 3.1] {
-        assert!(
-            Inversion::new(
-                cal,
-                RollSettings {
-                    gamma,
-                    ..RollSettings::default()
-                }
-            )
-            .is_err()
-        );
+        assert!(Inversion::new(neg(cal, gamma, Balance::default())).is_err());
     }
     assert!(exposure_multiplier(f64::INFINITY).is_err());
     assert!(
@@ -266,37 +330,24 @@ fn ratio_evaluation_avoids_overflow_when_the_result_is_finite() {
         dmax: DVec3::splat(1e-200),
         input_floor: 1e-250,
     };
-    let inversion = Inversion::new(
-        cal,
-        RollSettings {
-            gamma: 1.0,
-            ..RollSettings::default()
-        },
-    )
-    .unwrap();
+    let inversion = Inversion::new(neg(cal, 1.0, Balance::default())).unwrap();
     close_rgb(inversion.apply(cal.dmax).unwrap().rgb, DVec3::ONE);
     close_rgb(
         inversion.apply(DVec3::splat(1e-201)).unwrap().rgb,
         DVec3::splat(10.0),
     );
     assert!(
-        Inversion::new(
-            cal,
-            RollSettings {
-                gamma: 0.1,
-                ..RollSettings::default()
-            }
-        )
-        .unwrap()
-        .apply(DVec3::splat(1e-250))
-        .is_err()
+        Inversion::new(neg(cal, 0.1, Balance::default()))
+            .unwrap()
+            .apply(DVec3::splat(1e-250))
+            .is_err()
     );
 }
 
 #[test]
 fn near_dmin_is_not_rounded_to_zero_by_power_subtraction() {
     let cal = calibration();
-    let inversion = Inversion::new(cal, RollSettings::default()).unwrap();
+    let inversion = Inversion::new(neg(cal, DEFAULT_GAMMA, Balance::default())).unwrap();
     let result = inversion.apply(cal.dmin * (1.0 - 1e-12)).unwrap();
     assert!(result.rgb.min_element() > 0.0 && result.rgb.max_element() < 1e-10);
 }
@@ -305,16 +356,20 @@ fn near_dmin_is_not_rounded_to_zero_by_power_subtraction() {
 fn exposure_scopes_combine_without_changing_inversion() {
     let cal = calibration();
     let scan = DVec3::new(0.06, 0.08, 0.04);
-    let roll = RollSettings::default();
-    let base = Pipeline::new(cal, roll, PhotoSettings::default(), ap0_to_ap1())
-        .unwrap()
-        .apply(scan)
-        .unwrap();
+    let base = Pipeline::new(
+        inp(cal, DEFAULT_GAMMA, Balance::default()),
+        RollSettings::default(),
+        PhotoSettings::default(),
+        ap0_to_ap1(),
+    )
+    .unwrap()
+    .apply(scan)
+    .unwrap();
     let combined = Pipeline::new(
-        cal,
+        inp(cal, DEFAULT_GAMMA, Balance::default()),
         RollSettings {
             exposure: 2.0,
-            ..roll
+            ..RollSettings::default()
         },
         PhotoSettings {
             exposure: -0.5,
@@ -331,15 +386,16 @@ fn exposure_scopes_combine_without_changing_inversion() {
 
 #[test]
 fn gamma_balance_preserves_the_geometric_mean_global_gamma() {
-    let roll = RollSettings {
-        balance: Balance {
+    let interpretation = neg(
+        calibration(),
+        DEFAULT_GAMMA,
+        Balance {
             warmth: 0.7,
             tint: -0.3,
         },
-        ..RollSettings::default()
-    };
-    let gammas = roll.channel_gammas().unwrap();
-    close(gammas.x * gammas.y * gammas.z, roll.gamma.powi(3));
+    );
+    let gammas = interpretation.channel_gammas().unwrap();
+    close(gammas.x * gammas.y * gammas.z, interpretation.gamma.powi(3));
 }
 
 #[test]
@@ -408,25 +464,21 @@ fn roll_pick_solves_the_mean_of_inverted_full_resolution_pixels() {
         warmth: 0.21,
         tint: -0.14,
     };
-    let correct_roll = RollSettings {
-        balance: expected,
-        ..RollSettings::default()
-    };
-    let patch = [0.025, 0.09, 0.4].map(|v| scan_for_positive(cal, correct_roll, DVec3::splat(v)));
-    let initial = RollSettings {
-        exposure: 3.0,
-        balance: Balance {
+    let correct = neg(cal, DEFAULT_GAMMA, expected);
+    let patch = [0.025, 0.09, 0.4].map(|v| scan_for_positive(cal, correct, DVec3::splat(v)));
+    let initial = neg(
+        cal,
+        DEFAULT_GAMMA,
+        Balance {
             warmth: -0.12,
             tint: 0.11,
         },
-        ..RollSettings::default()
-    };
-    let solved = roll_neutral(cal, initial, &patch, DMat3::IDENTITY).unwrap();
+    );
+    let solved = roll_neutral(initial, &patch, DMat3::IDENTITY).unwrap();
     assert!((solved.warmth - expected.warmth).abs() < 1e-8);
     assert!((solved.tint - expected.tint).abs() < 1e-8);
-    assert_eq!(initial.exposure, 3.0);
-    assert_eq!(initial.gamma, correct_roll.gamma);
-    let inversion = Inversion::new(cal, correct_roll).unwrap();
+    assert_eq!(initial.gamma, correct.gamma);
+    let inversion = Inversion::new(correct).unwrap();
     let inverted: Vec<_> = patch
         .into_iter()
         .map(|p| inversion.apply(p).unwrap().rgb)
@@ -439,7 +491,7 @@ fn roll_pick_solves_the_mean_of_inverted_full_resolution_pixels() {
 #[test]
 fn roll_pick_rejects_both_anchors_and_unusable_inputs_without_mutation() {
     let cal = calibration();
-    let roll = RollSettings::default();
+    let interpretation = neg(cal, DEFAULT_GAMMA, Balance::default());
     for patch in [
         vec![cal.dmin],
         vec![cal.dmax],
@@ -448,11 +500,10 @@ fn roll_pick_rejects_both_anchors_and_unusable_inputs_without_mutation() {
         vec![],
     ] {
         assert!(
-            roll_neutral(cal, roll, &patch, DMat3::IDENTITY).is_err(),
+            roll_neutral(interpretation, &patch, DMat3::IDENTITY).is_err(),
             "accepted {patch:?}"
         );
     }
-    assert_eq!(roll, RollSettings::default());
     assert_eq!(cal, calibration());
 }
 
@@ -477,14 +528,19 @@ fn ap0_ap1_conversion_preserves_xyz_white_and_signed_hdr_values() {
 #[test]
 fn pipeline_maps_camera_positive_to_ap1_and_ap0_export_preserves_xyz() {
     let cal = calibration();
-    let roll = RollSettings::default();
+    let interpretation = neg(cal, DEFAULT_GAMMA, Balance::default());
     let original = DVec3::new(4.0, 0.03, 0.1);
-    let scan = scan_for_positive(cal, roll, original);
-    let inverted = Inversion::new(cal, roll).unwrap().apply(scan).unwrap();
-    let processed = Pipeline::new(cal, roll, PhotoSettings::default(), ap0_to_ap1())
-        .unwrap()
-        .apply(scan)
-        .unwrap();
+    let scan = scan_for_positive(cal, interpretation, original);
+    let inverted = Inversion::new(interpretation).unwrap().apply(scan).unwrap();
+    let processed = Pipeline::new(
+        inp(cal, DEFAULT_GAMMA, Balance::default()),
+        RollSettings::default(),
+        PhotoSettings::default(),
+        ap0_to_ap1(),
+    )
+    .unwrap()
+    .apply(scan)
+    .unwrap();
     close_rgb(inverted.rgb, original);
     close_rgb(processed.rgb, ap0_to_ap1() * inverted.rgb);
     assert!(processed.rgb.min_element() < 0.0);
@@ -509,11 +565,17 @@ fn moving_bradford_wb_to_ap1_preserves_the_xyz_operation() {
         ..PhotoSettings::default()
     };
     let scan = DVec3::new(0.05, 0.07, 0.02);
-    let inverted = Inversion::new(cal, roll).unwrap().apply(scan).unwrap();
-    let processed = Pipeline::new(cal, roll, photo, ap0_to_ap1())
-        .unwrap()
-        .apply(scan)
-        .unwrap();
+    let interpretation = neg(cal, DEFAULT_GAMMA, Balance::default());
+    let inverted = Inversion::new(interpretation).unwrap().apply(scan).unwrap();
+    let processed = Pipeline::new(
+        inp(cal, DEFAULT_GAMMA, Balance::default()),
+        roll,
+        photo,
+        ap0_to_ap1(),
+    )
+    .unwrap()
+    .apply(scan)
+    .unwrap();
     let previous_cones = BRADFORD * AP0_TO_XYZ;
     let previous_wb = previous_cones.inverse()
         * DMat3::from_diagonal(photo.wb.offsets().unwrap().exp())
@@ -543,23 +605,28 @@ fn photo_neutral_accepts_outside_ap1_rgb_when_cone_responses_are_usable() {
 #[test]
 fn photo_pick_uses_ap1_after_the_inversion_conversion() {
     let cal = calibration();
-    let roll = RollSettings::default();
+    let interpretation = neg(cal, DEFAULT_GAMMA, Balance::default());
     let correction = Balance {
         warmth: 0.24,
         tint: -0.17,
     };
     let cast_ap1 = wb_matrix(correction).unwrap().inverse() * DVec3::splat(0.2);
-    let scan = scan_for_positive(cal, roll, ap1_to_ap0() * cast_ap1);
-    let before_wb = Pipeline::new(cal, roll, PhotoSettings::default(), ap0_to_ap1())
-        .unwrap()
-        .apply(scan)
-        .unwrap();
+    let scan = scan_for_positive(cal, interpretation, ap1_to_ap0() * cast_ap1);
+    let before_wb = Pipeline::new(
+        inp(cal, DEFAULT_GAMMA, Balance::default()),
+        RollSettings::default(),
+        PhotoSettings::default(),
+        ap0_to_ap1(),
+    )
+    .unwrap()
+    .apply(scan)
+    .unwrap();
     let solved = photo_neutral(&[before_wb.rgb]).unwrap();
     close(solved.warmth, correction.warmth);
     close(solved.tint, correction.tint);
     let positive = Pipeline::new(
-        cal,
-        roll,
+        inp(cal, DEFAULT_GAMMA, Balance::default()),
+        RollSettings::default(),
         PhotoSettings {
             wb: solved,
             ..PhotoSettings::default()

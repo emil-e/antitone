@@ -1,4 +1,5 @@
 use super::*;
+use crate::project::Development;
 
 fn fixture(index: usize) -> Editor {
     let mut editor = crate::editor::tests::fixture();
@@ -6,11 +7,12 @@ fn fixture(index: usize) -> Editor {
         editor
             .document
             .state
-            .register(
+            .register_with_development(
                 Source {
                     id: SourceId(0),
                     path: format!("photo-{index}.ARW").into(),
                     development: crate::project::SourceDevelopment {
+                        decode: Development::new("test-backend".into(), [1.; 4]),
                         lens_correction: None,
                         dng_development: None,
                         dimensions: [900, 600],
@@ -26,7 +28,7 @@ fn fixture(index: usize) -> Editor {
                     orientation: PhotoOrientation::default(),
                     crop: None,
                 },
-                editor.document.project.development.clone().unwrap(),
+                crate::project::Development::new(crate::raw::version(), [1.; 4]),
             )
             .unwrap();
     }

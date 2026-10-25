@@ -30,8 +30,8 @@ fn fixture() -> Editor {
             );
         });
         assert_eq!(editor.document.project.order.len(), 2, "{}", editor.status);
-        editor.dmin = Some(glam::DVec3::splat(0.8));
-        editor.dmax = Some(glam::DVec3::splat(0.02));
+        editor.set_dmin(Some(glam::DVec3::splat(0.8)));
+        editor.set_dmax(Some(glam::DVec3::splat(0.02)));
         editor.sync_document();
         for (index, id) in editor
             .document

@@ -22,7 +22,7 @@ fn grade_owner_survives_output_and_ui_changes_but_retires_for_effective_preview_
         ProcessingInput::from(
             ProcessingParameters::positive(
                 e.calibration().unwrap(),
-                RollSettings::new_grade(),
+                RollSettings::default(),
                 PhotoSettings {
                     exposure: ev,
                     ..Default::default()

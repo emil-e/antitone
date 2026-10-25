@@ -1,5 +1,7 @@
 use super::{FileKey, Proxy, SOURCE_SIZE, SourceKey};
-use crate::project::{Development, SourceDevelopment};
+#[cfg(test)]
+use crate::project::Development;
+use crate::project::SourceDevelopment;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -16,7 +18,6 @@ const LIMIT: u64 = 128 << 20;
 struct Header {
     file: FileKey,
     source: SourceDevelopment,
-    development: Development,
     width: u32,
     height: u32,
     checksum: String,
@@ -54,7 +55,6 @@ impl DiskCache {
             Proxy::SAMPLING_VERSION,
             &key.file,
             &key.source,
-            &key.development,
         ))?;
         Ok(self
             .root
@@ -88,7 +88,6 @@ impl DiskCache {
         ];
         if header.file != key.file
             || header.source != key.source
-            || header.development != key.development
             || [header.width, header.height] != dimensions
             || dimensions.iter().any(|n| *n == 0 || *n > SOURCE_SIZE)
         {
@@ -129,7 +128,6 @@ impl DiskCache {
         let header = serde_json::to_vec(&Header {
             file: key.file.clone(),
             source: key.source.clone(),
-            development: key.development.clone(),
             width: proxy.width,
             height: proxy.height,
             checksum: blake3::hash(bytes).to_hex().to_string(),
@@ -194,6 +192,7 @@ mod tests {
                 }),
             },
             source: SourceDevelopment {
+                decode: Development::new("test".into(), [1.; 4]),
                 lens_correction: Some("00".repeat(32)),
                 dng_development: None,
                 dimensions: [2, 1],
@@ -202,7 +201,6 @@ mod tests {
                 camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
                 input_floor: crate::processing::CAMERA_INPUT_FLOOR,
             },
-            development: Development::new("test".into(), [1.; 4]),
         };
         let proxy = Proxy {
             width: 2,
@@ -236,7 +234,7 @@ mod tests {
             budget: LIMIT,
         };
         assert_eq!(cache.load(&key).unwrap().unwrap().pixels, proxy.pixels);
-        key.development.fixed_wb[0] = 2.;
+        key.source.decode.fixed_wb[0] = 2.;
         assert!(cache.load(&key).unwrap().is_none());
     }
 
@@ -247,9 +245,7 @@ mod tests {
         let (key, proxy) = fixture();
         cache.store(&key, &proxy).unwrap();
         // The preceding derivation identity had no camera-proxy sampling revision.
-        let legacy =
-            serde_json::to_vec(&(3, SOURCE_SIZE, &key.file, &key.source, &key.development))
-                .unwrap();
+        let legacy = serde_json::to_vec(&(3, SOURCE_SIZE, &key.file, &key.source)).unwrap();
         let legacy_path = directory
             .path()
             .join(format!("{}.camera32", blake3::hash(&legacy).to_hex()));

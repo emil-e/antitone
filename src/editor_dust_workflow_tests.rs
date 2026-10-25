@@ -44,13 +44,11 @@ fn fixture(
     let ready = futures_lite::future::block_on(services.clone().prepare(
         source::Request {
             path: path.clone(),
-            wb: Some(document.project.development.as_ref().unwrap().fixed_wb),
+            wb: Some(document.project.development().as_ref().unwrap().fixed_wb),
             expected: Some(document.project.source(source_id).unwrap().clone()),
-            basis: document.project.camera_basis.clone(),
             cache: Some(source::Cache::new(
                 &path,
                 Some(document.project.source(source_id).unwrap()),
-                Some(document.project.development.as_ref().unwrap().fixed_wb),
                 &document,
             )),
             correction: None,
@@ -72,9 +70,9 @@ fn fixture(
         gate,
         screening,
     ));
-    e.dmin = Some(glam::DVec3::splat(0.8));
-    e.dmax = Some(glam::DVec3::splat(0.02));
-    e.floor = crate::processing::CAMERA_INPUT_FLOOR;
+    e.set_dmin(Some(glam::DVec3::splat(0.8)));
+    e.set_dmax(Some(glam::DVec3::splat(0.02)));
+    e.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
     e.source = false;
     e.sync_document();
     (e, scheduler)

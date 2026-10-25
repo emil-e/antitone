@@ -1,4 +1,5 @@
 use super::*;
+use crate::processing::Calibration;
 use crate::{
     geometry::SourceRegion,
     local_adjustments::{PhotoGradeSnapshot, SpatialPipeline},
@@ -84,21 +85,19 @@ fn independent_continuous_inputs_cover_dense_camera_cancellation_and_response_ma
                 1.2,
             ),
         ] {
-            let roll = RollSettings {
+            let negative = NegativeInput {
+                calibration,
                 response,
                 gamma,
-                ..RollSettings::new_grade()
+                balance: Default::default(),
             };
+            let roll = RollSettings::default();
             let sample = DVec3::new(
                 f64::from(pivot[0]),
                 f64::from(pivot[1]),
                 f64::from(pivot[2]),
             ) / 65535.;
-            let native = Inversion::new(calibration, roll)
-                .unwrap()
-                .apply(sample)
-                .unwrap()
-                .rgb;
+            let native = Inversion::new(negative).unwrap().apply(sample).unwrap().rgb;
             // This admitted matrix cancels one independently evaluated camera-positive pair
             // at the pivot, exposing errors hidden by relative gates on large native values.
             let cancellation =
@@ -108,7 +107,7 @@ fn independent_continuous_inputs_cover_dense_camera_cancellation_and_response_ma
                 DVec3::new(0.301847779, 1.388610987, -0.152684962),
                 DVec3::new(-0.178565331, -0.361455645, 1.150792743),
             );
-            let middle = Inversion::new(calibration, roll)
+            let middle = Inversion::new(negative)
                 .unwrap()
                 .apply(DVec3::new(1000.125, 5000.375, 9000.5) / 65535.)
                 .unwrap()
@@ -145,16 +144,10 @@ fn independent_continuous_inputs_cover_dense_camera_cancellation_and_response_ma
                         },
                     )
                     .unwrap();
-                    let grade = GpuPhotoGrade::new(
-                        &device,
-                        calibration,
-                        roll,
-                        snapshot.clone(),
-                        matrix,
-                        area,
-                    )
-                    .unwrap();
-                    let scalar = SpatialPipeline::new(calibration, roll, snapshot, matrix).unwrap();
+                    let grade =
+                        GpuPhotoGrade::new(&device, negative, roll, snapshot.clone(), matrix, area)
+                            .unwrap();
+                    let scalar = SpatialPipeline::new(negative, roll, snapshot, matrix).unwrap();
                     let mut source =
                         ProcessingSource::new_continuous(&device, &pixels, matrix).unwrap();
                     source

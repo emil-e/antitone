@@ -24,7 +24,7 @@ fn cold_batch_pixels_match_each_sources_accepted_grade_not_active_or_later_setti
     let mut editor = fixture();
     let directory = tempfile::tempdir().unwrap();
     let project = editor.document.project.clone();
-    let wb = project.development.as_ref().unwrap().fixed_wb;
+    let wb = project.development().as_ref().unwrap().fixed_wb;
     let calibration = project.calibration().unwrap().unwrap();
     let mut scans = Vec::new();
     let mut grades = Vec::new();

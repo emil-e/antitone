@@ -7,17 +7,12 @@ fn source_input(document: &Document, id: SourceId) -> Result<development::Reques
     let project = &document.project;
     let expected = project.source(id)?;
     let path = document.source_path(id)?;
-    let wb = project
-        .development
-        .as_ref()
-        .ok_or(Error::UnusableSample("no roll development"))?
-        .fixed_wb;
-    let cache = source::Cache::new(&path, Some(expected), Some(wb), document);
+    let wb = expected.development.decode.fixed_wb;
+    let cache = source::Cache::new(&path, Some(expected), document);
     Ok(development::Request {
         path,
         wb: Some(wb),
         expected: Some(expected.clone()),
-        basis: project.camera_basis.clone(),
         file: cache.file,
         key: cache.key,
         store: Some(cache.store),

@@ -411,8 +411,7 @@ impl Editor {
         &mut self,
         ui: &mut egui::Ui,
         cx: &UiContext<'_, Self>,
-        previous_roll: RollSettings,
-        previous_photo: PhotoSettings,
+        previous: editing::ControlSettings,
     ) -> (Option<ScopeSlot>, bool) {
         self.begin_control_history(match self.tab {
             0 => "Roll settings",
@@ -428,7 +427,7 @@ impl Editor {
             .data_mut(|data| data.insert_temp(egui::Id::new("defer-control-resets"), true));
         let controls_photo = (self.tab == 1).then_some(self.current_source).flatten();
         let controls = self.workspace_controls(ui, cx);
-        self.validate_frame_edits(previous_roll, previous_photo);
+        self.validate_frame_edits(previous);
         self.record_controls(controls_photo, ui);
         let resets = ui.ctx().data_mut(|data| {
             data.remove::<bool>(egui::Id::new("defer-control-resets"));
@@ -466,25 +465,10 @@ impl Editor {
         }
     }
 
-    pub(super) fn validate_frame_edits(
-        &mut self,
-        previous_roll: RollSettings,
-        previous_photo: PhotoSettings,
-    ) {
-        if (self.roll != previous_roll || self.photo != previous_photo)
-            && let Some(calibration) = self.calibration()
-            && let Err(error) = if self.roll != previous_roll {
-                self.validate_processing(calibration, self.roll, self.photo)
-            } else {
-                self.dust_validate_processing(calibration, self.roll, self.photo)
-                    .and_then(|()| {
-                        self.positive_processing(calibration, self.roll, self.photo)
-                            .map(|_| ())
-                    })
-            }
-        {
-            self.roll = previous_roll;
-            self.photo = previous_photo;
+    pub(super) fn validate_frame_edits(&mut self, previous: editing::ControlSettings) {
+        let candidate = editing::ControlSettings::capture(self);
+        if let Err(error) = self.validate_control_edit(previous, candidate) {
+            previous.apply(self);
             self.status = format!("Edit rejected: {error}");
         }
     }
@@ -537,6 +521,7 @@ impl Editor {
             return;
         }
         self.document_dialogs(ui.ctx(), dialog_escape_available, cx);
+        self.input_stage_dialog(ui.ctx(), dialog_escape_available, cx);
         self.removal_dialog(ui.ctx(), dialog_escape_available, cx);
         self.adjustment_dialog(ui.ctx(), dialog_escape_available);
         self.export_dialogs(ui.ctx(), dialog_escape_available, cx);

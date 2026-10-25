@@ -197,11 +197,7 @@ impl Editor {
         let crop_enabled =
             cropping || auto_cropping || ready && self.pick.is_none() && !tool_active;
         let dust_enabled = dusting
-            || ready
-                && self.calibration().is_some()
-                && !self.source
-                && self.pick.is_none()
-                && !tool_active;
+            || ready && self.input.ready() && !self.source && self.pick.is_none() && !tool_active;
         let repairs_changed = self
             .current_source
             .and_then(|source| self.dust_repairs(source))
@@ -284,10 +280,7 @@ impl Editor {
             {
                 action = Some(Action::Dust);
             }
-            self.adjustment_launcher(
-                ui,
-                commands_enabled && self.calibration().is_some() && !self.source,
-            );
+            self.adjustment_launcher(ui, commands_enabled && self.input.ready() && !self.source);
         });
 
         if let Some(action) = action {

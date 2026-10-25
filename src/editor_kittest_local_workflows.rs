@@ -5,7 +5,7 @@ fn created_linear_and_radial_locals_survive_normal_save_open_source_return_and_g
     workflow::calibrated_workflow(|mut harness, _, directory| {
         stage(&mut harness, "Roll");
         workflow::enter_numeric(&mut harness, "Gamma", "0.6");
-        harness.read(|editor| assert_eq!(editor.roll.gamma, 0.6));
+        harness.read(|editor| assert_eq!(editor.gamma(), 0.6));
         stage(&mut harness, "Photo");
         let selected = harness.read(|editor| editor.current_source.unwrap());
         for (radial, exposure) in [(false, "0.35"), (true, "-0.125")] {

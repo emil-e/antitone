@@ -7,7 +7,6 @@ use crate::{
 
 fn fixture(directory: &Path) -> PathBuf {
     let mut project = Project {
-        development: Some(Development::new("authored".into(), [1.; 4])),
         ..Default::default()
     };
     let id = project
@@ -16,6 +15,7 @@ fn fixture(directory: &Path) -> PathBuf {
             path: "unavailable.ARW".into(),
             reference_only: false,
             development: SourceDevelopment {
+                decode: Development::new("test-backend".into(), [1.; 4]),
                 lens_correction: None,
                 dng_development: None,
                 dimensions: [256, 160],

@@ -94,9 +94,9 @@ pub(super) fn calibrated_workflow<R>(
             harness.read(|editor| assert!(editor.pick.is_none()));
             let measured = harness.read(|editor| {
                 if expected == 3000. {
-                    editor.dmin
+                    editor.dmin()
                 } else {
-                    editor.dmax
+                    editor.dmax()
                 }
                 .unwrap()
             });
@@ -132,7 +132,7 @@ pub(super) fn calibrated_workflow<R>(
             harness.step();
         }
         enter_numeric(&mut harness, "Gamma", "0.75");
-        harness.read(|editor| assert_eq!(editor.roll.gamma, 0.75));
+        harness.read(|editor| assert_eq!(editor.gamma(), 0.75));
         stage(&mut harness, "Photo");
         enter_numeric(&mut harness, "Exposure", "0.5");
         harness.read(|editor| assert_eq!(editor.photo.exposure, 0.5, "{}", editor.status));
@@ -161,7 +161,7 @@ pub(super) fn wait_settled(harness: &mut Harness<'_, Editor>) {
                 e.source_parameters(e.source_exposure)
                     .map(ProcessingInput::from)
             } else {
-                e.positive_processing(e.calibration().unwrap(), e.roll, e.photo)
+                e.positive_processing(e.input, e.roll, e.photo)
             }
             .unwrap();
             !e.working.updating
@@ -188,13 +188,27 @@ fn uncalibrated_source_working_view_uses_saved_roll_wb_in_both_targets_without_i
     let directory = tempfile::tempdir().unwrap();
     editor_harness_with_thumbnails(true, |mut harness, capture| {
         let wb = [2., 1., 1.5, 1.];
-        let raw = crate::raw::RawFile::open_with_wb(&fixture("patches.dng"), Some(wb)).unwrap();
         harness.update(|editor| {
-            editor.document.project.development = Some(raw.metadata.development(wb))
+            editor.document.project.scan = Some(scan_setup(&fixture("patches.dng"), wb));
         });
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-        harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
+        harness.read(|editor| {
+            assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
+            assert_eq!(
+                editor
+                    .document
+                    .visit
+                    .ready
+                    .as_ref()
+                    .unwrap()
+                    .record
+                    .development
+                    .decode
+                    .fixed_wb,
+                wb
+            );
+        });
         let path = directory.path().join("source.antitone.json");
         let saved = harness.read(|editor| {
             editor
@@ -511,7 +525,7 @@ fn physical_view_local_edits_use_current_input_and_clear_recovered_render_errors
                     .validate_document_candidate(&editor.document)
                     .unwrap();
                 editor
-                    .positive_processing(editor.calibration().unwrap(), editor.roll, editor.photo)
+                    .positive_processing(editor.input, editor.roll, editor.photo)
                     .unwrap()
             });
             harness.step();
@@ -538,7 +552,7 @@ fn physical_view_local_edits_use_current_input_and_clear_recovered_render_errors
         harness.enter(|editor, cx| {
             let bad = editor
                 .positive_processing(
-                    editor.calibration().unwrap(),
+                    editor.input,
                     editor.roll,
                     PhotoSettings {
                         exposure: editor.photo.exposure + 1.,

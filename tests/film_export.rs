@@ -1,8 +1,10 @@
 #![cfg(all(feature = "export", feature = "ocio-reference", target_os = "macos"))]
 use antitone::{
-    color::ap1_to_ap0,
+    color::{Balance, ap1_to_ap0},
     export::{self, ExrPrecision, ImageSize, Overwrite},
-    processing::{Calibration, PhotoSettings, Pipeline, Response, RollSettings},
+    processing::{
+        Calibration, DEFAULT_GAMMA, InputSettings, PhotoSettings, Pipeline, Response, RollSettings,
+    },
     rendering::{CpuRenderer, OutputTarget},
 };
 use exr::prelude::*;
@@ -20,22 +22,29 @@ fn film_exports_reopen_with_actual_response_and_unchanged_target_and_ap0_pixels(
         toe: 2.543210987654321,
         shoulder: 0.003210987654321,
     };
-    let roll = RollSettings {
-        response,
-        exposure: 2.345678901,
-        ..RollSettings::default()
-    };
     let cal = Calibration {
         dmin: DVec3::new(0.1685663501546697, 0.13359162596075455, 0.11715123642832656),
         dmax: DVec3::new(0.008061, 0.003409, 0.001442),
         input_floor: 2.1630933622265155e-5,
+    };
+    let roll = RollSettings {
+        exposure: 2.345678901,
+        ..RollSettings::default()
+    };
+    let input = InputSettings::Negative {
+        dmin: Some(cal.dmin),
+        dmax: Some(cal.dmax),
+        input_floor: cal.input_floor,
+        response,
+        gamma: DEFAULT_GAMMA,
+        balance: Balance::default(),
     };
     let photo = PhotoSettings {
         contrast: 1.2,
         saturation: 1.3,
         ..PhotoSettings::default()
     };
-    let pipeline = Pipeline::new(cal, roll, photo, glam::DMat3::IDENTITY).unwrap();
+    let pipeline = Pipeline::new(input, roll, photo, glam::DMat3::IDENTITY).unwrap();
     let scans = [
         cal.dmin * (1. - 1e-12),
         cal.dmin * (1. + 1e-12),

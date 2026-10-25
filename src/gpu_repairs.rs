@@ -259,7 +259,7 @@ impl Kernels {
         input: &ProcessingInput,
         geometry: SourceGeometry,
     ) -> Result<(), Error> {
-        if input.parameters().gamma_mode.w <= 0.5 {
+        if !input.parameters().graded() {
             return Ok(());
         }
         encode_original(

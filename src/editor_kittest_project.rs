@@ -2,13 +2,13 @@ use super::workflow::{enter_numeric, wait_settled};
 use super::*;
 
 fn compare_pixel(harness: &Harness<'_, Editor>) -> (DVec3, Vec<glam::Vec3>, Vec<glam::Vec3>) {
-    let (path, wb, calibration, roll, photo) = harness.read(|editor| {
+    let (path, wb, input, roll, photo) = harness.read(|editor| {
         let document = &editor.document;
         let id = editor.current_source.unwrap();
         (
             document.source_path(id).unwrap(),
-            document.project.development.as_ref().unwrap().fixed_wb,
-            document.project.calibration().unwrap().unwrap(),
+            document.project.development().as_ref().unwrap().fixed_wb,
+            document.project.input,
             document.project.roll,
             document.project.source(id).unwrap().photo,
         )
@@ -20,7 +20,7 @@ fn compare_pixel(harness: &Harness<'_, Editor>) -> (DVec3, Vec<glam::Vec3>, Vec<
             scan.area.y + scan.area.height / 2,
         )
         .unwrap();
-    let working = crate::processing::Pipeline::new(calibration, roll, photo, scan.camera_to_ap1)
+    let working = crate::processing::Pipeline::new(input, roll, photo, scan.camera_to_ap1)
         .unwrap()
         .apply(pixel)
         .unwrap()
@@ -38,6 +38,100 @@ fn compare_pixel(harness: &Harness<'_, Editor>) -> (DVec3, Vec<glam::Vec3>, Vec<
     )
 }
 
+fn reset_shared_balance_component(harness: &mut Harness<'_, Editor>, label: &str, before: f64) {
+    for click in [false, true] {
+        // Gamma balance has the same axis labels. The fixture changes only photographic WB.
+        let mut controls = harness
+            .get_all_by_role_and_label(egui::accesskit::Role::SpinButton, label)
+            .filter(|node| node.accesskit_node().numeric_value() == Some(before));
+        let control = controls.next().expect("changed shared WB component");
+        assert!(controls.next().is_none(), "only shared WB has this value");
+        if click {
+            control.click_secondary();
+        } else {
+            control.scroll_to_me();
+        }
+        drop(controls);
+        harness.try_run_realtime().unwrap();
+    }
+    harness.get_by_label("Reset to default").click();
+    harness.step();
+}
+
+#[test]
+fn individual_roll_white_balance_resets_work_in_both_input_stages() {
+    for digital in [false, true] {
+        tools::calibrated_harness(|mut harness| {
+            harness.update(|editor| {
+                if digital {
+                    editor.input = crate::processing::InputSettings::Digital;
+                }
+                editor.roll.wb = Balance {
+                    warmth: 0.2,
+                    tint: -0.15,
+                };
+                editor.sync_document();
+            });
+            let input = harness.read(|editor| editor.input);
+            stage(&mut harness, "Roll");
+            reset_shared_balance_component(&mut harness, "Warmth", 0.2);
+            harness.read(|editor| {
+                assert_eq!(
+                    editor.roll.wb,
+                    Balance {
+                        warmth: 0.,
+                        tint: -0.15
+                    }
+                );
+                assert_eq!(editor.input, input);
+                assert_eq!(editor.document.project.roll, editor.roll);
+            });
+            reset_shared_balance_component(&mut harness, "Tint", -0.15);
+            harness.read(|editor| {
+                assert_eq!(editor.roll.wb, Balance::default());
+                assert_eq!(editor.input, input);
+            });
+        });
+    }
+}
+
+#[test]
+fn interpretation_numeric_edits_reject_unsupported_processing_before_accepting_the_document() {
+    tools::calibrated_harness(|mut harness| {
+        harness.update(|editor| {
+            let crate::processing::InputSettings::Negative { response, .. } = &mut editor.input
+            else {
+                panic!("calibrated negative fixture");
+            };
+            *response = crate::processing::Response::Film {
+                toe: 2.5,
+                shoulder: 0.02,
+            };
+            editor.sync_document();
+            editor
+                .validate_processing(editor.input, editor.roll, editor.photo)
+                .unwrap();
+        });
+        let before = harness.read(|editor| editor.document.project.clone());
+        stage(&mut harness, "Roll");
+        enter_numeric(&mut harness, "Gamma", "0.1");
+        harness.read(|editor| {
+            assert!(
+                editor.status.starts_with("Edit rejected:"),
+                "{}",
+                editor.status
+            );
+            assert_eq!(editor.document.project, before);
+            assert_eq!(editor.input, before.input);
+        });
+        enter_numeric(&mut harness, "Gamma", "0.7");
+        harness.read(|editor| {
+            assert_eq!(editor.input.gamma(), 0.7);
+            assert_eq!(editor.document.project.input, editor.input);
+        });
+    });
+}
+
 #[test]
 fn project_widgets_save_precision_order_wb_and_reject_open_atomically() {
     let directory = tempfile::tempdir().unwrap();
@@ -50,16 +144,24 @@ fn project_widgets_save_precision_order_wb_and_reject_open_atomically() {
         .into();
     editor_harness_with_thumbnails(true, |mut harness, _| {
         let custom = [2., 1., 1.5, 1.];
-        let raw = crate::raw::RawFile::open_with_wb(&paths[0], Some(custom)).unwrap();
         harness.update(|editor| {
-            editor.document.project.development = Some(raw.metadata.development(custom))
+            editor.document.project.scan = Some(scan_setup(&paths[0], custom));
         });
         harness.enter(|editor, cx| editor.add_raws(paths.clone(), cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-        harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
+        harness.read(|editor| {
+            assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
+            assert!(
+                editor.document.project.sources.iter().all(|source| source
+                    .development
+                    .decode
+                    .fixed_wb
+                    == custom)
+            );
+        });
         let mut scan = Scan::open(&paths[0], Some(custom)).unwrap();
         harness.update(|e| {
-            e.dmin = Some(
+            e.set_dmin(Some(
                 scan.reference(Rect {
                     x: 16,
                     y: 16,
@@ -67,8 +169,8 @@ fn project_widgets_save_precision_order_wb_and_reject_open_atomically() {
                     height: 32,
                 })
                 .unwrap(),
-            );
-            e.dmax = Some(
+            ));
+            e.set_dmax(Some(
                 scan.reference(Rect {
                     x: 80,
                     y: 16,
@@ -76,7 +178,7 @@ fn project_widgets_save_precision_order_wb_and_reject_open_atomically() {
                     height: 32,
                 })
                 .unwrap(),
-            );
+            ));
             e.source = false;
             e.sync_document();
         });
@@ -102,7 +204,7 @@ fn project_widgets_save_precision_order_wb_and_reject_open_atomically() {
         enter_numeric(&mut harness, "Shoulder", "0.003123456789");
         harness.read(|editor| {
             assert_eq!(
-                editor.roll.response,
+                editor.response(),
                 crate::processing::Response::Film {
                     toe: 2.789123456789,
                     shoulder: 0.003123456789
@@ -131,7 +233,7 @@ fn project_widgets_save_precision_order_wb_and_reject_open_atomically() {
         save_existing_project(&mut harness);
         file_menu(&mut harness, "New");
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-        harness.read(|editor| assert!(editor.document.project.development.is_none()));
+        harness.read(|editor| assert!(editor.document.project.development().is_none()));
         harness.read(|editor| assert!(editor.document.visit.ready.is_none()));
         harness.enter(|editor, cx| editor.add_raws(vec![paths[0].clone()], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
@@ -144,7 +246,7 @@ fn project_widgets_save_precision_order_wb_and_reject_open_atomically() {
                 editor
                     .document
                     .project
-                    .development
+                    .development()
                     .as_ref()
                     .unwrap()
                     .fixed_wb,
@@ -173,7 +275,7 @@ fn project_widgets_save_precision_order_wb_and_reject_open_atomically() {
                     .ready
                     .as_ref()
                     .unwrap()
-                    .development
+                    .development()
                     .fixed_wb,
                 custom
             )
@@ -201,7 +303,7 @@ fn project_widgets_save_precision_order_wb_and_reject_open_atomically() {
         }
         save_existing_project(&mut harness);
         let mut classic = harness.read(|editor| editor.document.project.clone());
-        classic.roll.response = crate::processing::Response::Original;
+        classic.set_response(crate::processing::Response::Original);
         let classic_path = directory.path().join("classic.antitone.json");
         classic
             .save(&classic_path, crate::project::Save::New)
@@ -218,7 +320,7 @@ fn project_widgets_save_precision_order_wb_and_reject_open_atomically() {
         save_existing_project(&mut harness);
         open_project(&mut harness, directory.path().join("classic.antitone.json"));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-        harness.read(|editor| assert!(editor.roll.response.is_original()));
+        harness.read(|editor| assert!(editor.response().is_original()));
         harness.read(|editor| assert_eq!(editor.document.project, classic));
         harness.read(|editor| assert!(!editor.document.dirty()));
         wait_settled(&mut harness);

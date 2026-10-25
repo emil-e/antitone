@@ -1,6 +1,8 @@
 #![cfg(all(feature = "raw", target_os = "macos"))]
 use antitone::{
-    processing::RollSettings,
+    processing::{
+        CAMERA_INPUT_FLOOR, Calibration, DEFAULT_GAMMA, InputSettings, NegativeInput, Response,
+    },
     raw::Rect,
     roll_analysis::{self, FrameSamples, MAX_SAMPLES_PER_FRAME},
     scan::Scan,
@@ -61,26 +63,42 @@ fn authored_roll_samples_real_capture_footprints_and_estimates_a_shared_baseline
         .iter()
         .map(|(film, picture)| FrameSamples { film, picture })
         .collect();
-    let roll = RollSettings::new_grade();
+    let negative = NegativeInput {
+        calibration: Calibration {
+            dmin: DVec3::splat(0.8),
+            dmax: DVec3::splat(0.02),
+            input_floor: CAMERA_INPUT_FLOOR,
+        },
+        response: Response::film(),
+        gamma: DEFAULT_GAMMA,
+        balance: Default::default(),
+    };
     let proposal = roll_analysis::estimate(
         &frames,
-        antitone::processing::CAMERA_INPUT_FLOOR,
+        CAMERA_INPUT_FLOOR,
         matrix.unwrap(),
-        roll,
+        negative,
         || false,
     )
     .unwrap()
     .unwrap();
+    let calibration = proposal.input.calibration().unwrap();
     assert!(
-        (proposal.dmin - DVec3::splat(3000. / 4031.))
+        (calibration.dmin - DVec3::splat(3000. / 4031.))
             .abs()
             .max_element()
             <= 2. / 65535.
     );
-    assert!(proposal.dmax.min_element() > 192. / 4031.);
-    assert!(proposal.dmax.max_element() < 300. / 4031.);
-    assert_eq!(proposal.roll.gamma, roll.gamma);
-    assert_eq!(proposal.roll.response, roll.response);
+    assert!(calibration.dmax.min_element() > 192. / 4031.);
+    assert!(calibration.dmax.max_element() < 300. / 4031.);
+    let InputSettings::Negative {
+        gamma, response, ..
+    } = proposal.input
+    else {
+        panic!("roll analysis proposes a negative input");
+    };
+    assert_eq!(gamma, DEFAULT_GAMMA);
+    assert_eq!(response, Response::film());
     assert_eq!(proposal.photos.len(), 2);
     for statistics in &proposal.frames {
         assert!(statistics.balance_samples >= 256);
@@ -92,9 +110,9 @@ fn authored_roll_samples_real_capture_footprints_and_estimates_a_shared_baseline
     assert!(
         roll_analysis::estimate(
             &frames,
-            antitone::processing::CAMERA_INPUT_FLOOR,
+            CAMERA_INPUT_FLOOR,
             matrix.unwrap(),
-            roll,
+            negative,
             || true
         )
         .unwrap()

@@ -22,7 +22,14 @@ fn attach_film(request: &mut Request, index: usize, boundaries: [Boundary; 4]) {
         .collect();
     let metadata = Metadata {
         groups: vec![Group {
-            development: request.document.project.development.clone().unwrap(),
+            development: request
+                .document
+                .project
+                .scan_basis()
+                .unwrap()
+                .development
+                .decode
+                .clone(),
             code_scale: sources[0].input.code_scale,
             common_size: CommonSize::fit(&sources),
             sources,
@@ -179,7 +186,7 @@ fn measured_film_edge_filters_both_populations_without_rephasing_or_dropping_the
             outcome
                 .document
                 .project
-                .dmin
+                .dmin()
                 .unwrap()
                 .iter()
                 .all(|v| (v - 3000. / 4031.).abs() <= 2. / 65535.),
@@ -323,7 +330,7 @@ fn nominal_crop_and_authored_areas_do_not_admit_light_into_either_analysis_popul
         outcome
             .document
             .project
-            .dmin
+            .dmin()
             .unwrap()
             .iter()
             .all(|v| (v - 3000. / 4031.).abs() <= 2. / 65535.),

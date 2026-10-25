@@ -21,7 +21,7 @@ fn authored_raw_byte_edits_reopen_without_identity_rejection_and_old_seed_keeps_
         document.import(std::slice::from_ref(&path)).unwrap();
         let id = document.project.order[0];
         let source = document.project.source(id).unwrap();
-        let wb = document.project.development.as_ref().unwrap().fixed_wb;
+        let wb = document.project.development().as_ref().unwrap().fixed_wb;
         let (before, _) = prepare_source(
             &renderers,
             &device,
@@ -30,7 +30,6 @@ fn authored_raw_byte_edits_reopen_without_identity_rejection_and_old_seed_keeps_
             Some(wb),
             Some(source),
             None,
-            document.project.camera_basis.as_ref(),
         )
         .unwrap();
         let saved = document
@@ -45,11 +44,11 @@ fn authored_raw_byte_edits_reopen_without_identity_rejection_and_old_seed_keeps_
         let reopened = Document::open(saved.path.as_ref().unwrap()).unwrap();
         assert_eq!(reopened.project, saved.project);
         assert!(!reopened.dirty());
-        let (file, proxy) = before.thumbnail.unwrap();
-        let current = SourceKey::new(source, &before.development, FileKey::new(&path));
+        let (file, proxy) = before.thumbnail.clone().unwrap();
+        let current = SourceKey::new(source, FileKey::new(&path));
         assert_ne!(file, current.file);
         let mut thumbnails = Thumbnails::default();
-        thumbnails.seed(source, &before.development, file, proxy.clone());
+        thumbnails.seed(source, file, proxy.clone());
         assert!(
             thumbnails
                 .sources
@@ -64,7 +63,6 @@ fn authored_raw_byte_edits_reopen_without_identity_rejection_and_old_seed_keeps_
             Some(wb),
             Some(source),
             None,
-            document.project.camera_basis.as_ref(),
         )
         .unwrap();
         assert_eq!(after.thumbnail.unwrap().1.pixels, proxy.pixels);

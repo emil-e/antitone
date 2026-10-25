@@ -291,23 +291,16 @@ impl Editor {
             }
             .unwrap_or_else(|| {
                 let expected = expected.clone();
-                let wb = self
-                    .document
-                    .project
-                    .development
-                    .as_ref()
-                    .map(|d| d.fixed_wb);
+                let wb = Some(expected.development.decode.fixed_wb);
                 Input::Acquire(Box::new(source::Request {
                     cache: Some(source::Cache::new(
                         &source_path,
                         Some(&expected),
-                        wb,
                         &self.document,
                     )),
                     path: source_path,
                     wb,
                     expected: Some(expected),
-                    basis: self.document.project.camera_basis.clone(),
                     correction: self.correction.clone(),
                 }))
             });
