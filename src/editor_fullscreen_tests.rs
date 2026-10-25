@@ -56,7 +56,12 @@ fn fullscreen_hides_workspace_and_restores_view_after_window_return() {
     let viewport = editor.viewport;
     let preferences = editor.preferences.clone();
     let project = editor.document.project.clone();
-    let before = (editor.source, editor.source_exposure, editor.tab);
+    let before = (
+        editor.source,
+        editor.source_exposure,
+        editor.source_white_balance,
+        editor.tab,
+    );
     let output = frame(&mut editor, &context, Some(false), key(egui::Key::F));
     assert!(editor.fullscreen_requested());
     assert!(
@@ -82,6 +87,7 @@ fn fullscreen_hides_workspace_and_restores_view_after_window_return() {
     editor.viewport.fit();
     editor.source = !editor.source;
     editor.source_exposure = 2.;
+    editor.source_white_balance = crate::raw::SourceWhiteBalance::AsShot;
     frame_with_size(
         &mut editor,
         &context,
@@ -98,7 +104,15 @@ fn fullscreen_hides_workspace_and_restores_view_after_window_return() {
     frame(&mut editor, &context, Some(false), vec![]);
     assert!(editor.fullscreen.is_none());
     assert_eq!(editor.viewport, viewport);
-    assert_eq!((editor.source, editor.source_exposure, editor.tab), before);
+    assert_eq!(
+        (
+            editor.source,
+            editor.source_exposure,
+            editor.source_white_balance,
+            editor.tab
+        ),
+        before
+    );
     assert_eq!(editor.preferences, preferences);
     assert_eq!(editor.document.project, project);
 }

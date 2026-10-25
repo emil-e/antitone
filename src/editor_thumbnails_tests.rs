@@ -557,7 +557,7 @@ fn thumbnail_grades_follow_roll_and_photo_without_inspection_gain_or_redecode() 
     let source = editor.document.project.source(id).unwrap().clone();
     assert_eq!(
         bytemuck::bytes_of(&editor.thumbnail_parameters(&source).unwrap().parameters()),
-        bytemuck::bytes_of(&editor.source_parameters(0.).unwrap())
+        bytemuck::bytes_of(&editor.source_parameters(editor.source_exposure).unwrap())
     );
     editor.set_dmin(Some(DVec3::new(0.2, 0.15, 0.1)));
     editor.set_dmax(Some(DVec3::new(0.008, 0.005, 0.002)));
@@ -572,6 +572,11 @@ fn thumbnail_grades_follow_roll_and_photo_without_inspection_gain_or_redecode() 
     .unwrap();
     assert_eq!(bytemuck::bytes_of(&first), bytemuck::bytes_of(&expected));
     let unchanged_key = key(&editor.document, id);
+    editor.source_white_balance = crate::raw::SourceWhiteBalance::AsShot;
+    editor.source_exposure = -2.;
+    let inspected = editor.thumbnail_parameters(&source).unwrap().parameters();
+    assert_eq!(bytemuck::bytes_of(&inspected), bytemuck::bytes_of(&first));
+    assert_eq!(key(&editor.document, id), unchanged_key);
     editor.photo = PhotoSettings {
         exposure: 1.25,
         contrast: 1.2,
@@ -637,7 +642,7 @@ fn thumbnail_grades_follow_roll_and_photo_without_inspection_gain_or_redecode() 
 }
 
 #[test]
-fn uncalibrated_thumbnails_share_source_default_but_not_transient_inspection_ev() {
+fn uncalibrated_thumbnails_share_inspection_ev_without_changing_grade_or_cache_identity() {
     let mut editor = super::super::tests::fixture();
     *editor.document = fixture();
     editor.set_dmin(None);
@@ -647,19 +652,111 @@ fn uncalibrated_thumbnails_share_source_default_but_not_transient_inspection_ev(
     editor.current_source = Some(id);
     let before = editor.document.project.clone();
     let original_key = key(&editor.document, id);
-    let default = editor.source_parameters(0.).unwrap();
     for ev in [-16., 0., 2., 16.] {
         editor.source_exposure = ev;
+        let expected = ProcessingParameters::source_preview(Some([1.; 4]), ev).unwrap();
         for id in [id, other] {
             let thumbnail = editor
                 .thumbnail_parameters(editor.document.project.source(id).unwrap())
                 .unwrap()
                 .parameters();
-            assert_eq!(bytemuck::bytes_of(&thumbnail), bytemuck::bytes_of(&default));
+            assert_eq!(
+                bytemuck::bytes_of(&thumbnail),
+                bytemuck::bytes_of(&expected)
+            );
         }
     }
     assert_eq!(editor.document.project, before);
     assert_eq!(key(&editor.document, id), original_key);
+}
+
+#[test]
+fn source_thumbnails_use_each_photos_viewing_white_and_share_canvas_exposure() {
+    use crate::raw::SourceWhiteBalance;
+    let directory = tempfile::tempdir().unwrap();
+    let original = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
+    )
+    .unwrap();
+    let neutral = directory.path().join("neutral.dng");
+    let red = directory.path().join("red.dng");
+    std::fs::write(&neutral, &original).unwrap();
+    std::fs::write(&red, super::super::tests::dng_with_red_as_shot(&original)).unwrap();
+    let mut document = Document::default();
+    document.import(&[neutral, red]).unwrap();
+    let mut editor = Editor::state();
+    *editor.document = document;
+    let ids = editor.document.project.order.clone();
+    let before = editor.document.project.clone();
+    let keys = ids
+        .iter()
+        .map(|id| key(&editor.document, *id))
+        .collect::<Vec<_>>();
+    let parameters = |editor: &Editor, id| {
+        editor
+            .thumbnail_parameters(editor.document.project.source(id).unwrap())
+            .unwrap()
+            .parameters()
+    };
+    editor.source_exposure = 0.75;
+    let daylight = parameters(&editor, ids[0]);
+    assert_eq!(
+        bytemuck::bytes_of(&daylight),
+        bytemuck::bytes_of(&parameters(&editor, ids[1]))
+    );
+    editor.source_white_balance = SourceWhiteBalance::AsShot;
+    let neutral = parameters(&editor, ids[0]);
+    let red = parameters(&editor, ids[1]);
+    assert_ne!(bytemuck::bytes_of(&neutral), bytemuck::bytes_of(&red));
+    for id in &ids {
+        editor.current_source = Some(*id);
+        let selected = editor.source_parameters(editor.source_exposure).unwrap();
+        assert_eq!(
+            bytemuck::bytes_of(&selected),
+            bytemuck::bytes_of(&parameters(&editor, *id))
+        );
+        assert_eq!(
+            bytemuck::bytes_of(&neutral),
+            bytemuck::bytes_of(&parameters(&editor, ids[0]))
+        );
+    }
+    editor.source_exposure = -1.;
+    assert_ne!(
+        bytemuck::bytes_of(&red),
+        bytemuck::bytes_of(&parameters(&editor, ids[1]))
+    );
+    assert_eq!(editor.document.project, before);
+    assert_eq!(
+        ids.iter()
+            .map(|id| key(&editor.document, *id))
+            .collect::<Vec<_>>(),
+        keys
+    );
+}
+
+#[test]
+fn digital_source_inspection_does_not_balance_as_shot_development_twice() {
+    use crate::raw::SourceWhiteBalance;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("digital.dng");
+    let original = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
+    )
+    .unwrap();
+    std::fs::write(&path, super::super::tests::dng_with_red_as_shot(&original)).unwrap();
+    let mut editor = Editor::state();
+    editor.document.project.input = InputSettings::Digital;
+    editor.document.import(&[path]).unwrap();
+    editor.input = InputSettings::Digital;
+    let id = editor.document.project.order[0];
+    let source = editor.document.project.source(id).unwrap();
+    assert_ne!(source.development.decode.fixed_wb, crate::project::UNITY_WB);
+    let expected = ProcessingParameters::source_preview(None, 0.37).unwrap();
+    for white in [SourceWhiteBalance::Daylight, SourceWhiteBalance::AsShot] {
+        editor.source_white_balance = white;
+        let actual = editor.source_parameters_for(source, 0.37).unwrap();
+        assert_eq!(bytemuck::bytes_of(&actual), bytemuck::bytes_of(&expected));
+    }
 }
 
 #[test]

@@ -16,6 +16,11 @@ pub use sony::{SonyLensData, SonyLensDataStatus};
 mod eligibility;
 #[path = "raw_lens.rs"]
 mod lens_source;
+#[cfg(feature = "editor")]
+#[path = "raw_source_preview.rs"]
+mod source_preview;
+#[cfg(feature = "editor")]
+pub(crate) use source_preview::{SourcePreview, SourceWhiteBalance};
 
 #[cfg(all(test, feature = "project"))]
 #[path = "../tests/support/raw_fixture.rs"]

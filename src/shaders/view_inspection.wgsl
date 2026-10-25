@@ -1,5 +1,5 @@
 // The cached input is corrected camera-to-AP1 source light, without photographic inversion.
-// Apply only the display-only source convention and transient inspection EV, before normal ACES.
+// Apply viewing WB and exposure in AP1 before normal ACES.
 @compute @workgroup_size(64)
 fn inspection_main(
     @builtin(global_invocation_id) id: vec3u,
@@ -14,5 +14,10 @@ fn inspection_main(
         positives[index] = vec4f(0.);
         return;
     }
-    positives[index] = vec4f(input.xyz * view.gain.x, input.w);
+    let transform = mat3x3f(
+            view.source_transform[0].xyz,
+            view.source_transform[1].xyz,
+            view.source_transform[2].xyz,
+        );
+    positives[index] = vec4f(transform * input.xyz, input.w);
 }

@@ -23,6 +23,7 @@ struct AntitoneDngView {
     uint32_t crop_left, crop_top, crop_width, crop_height, orientation, cfa_pattern;
     uint32_t applied[3], skipped[3];
     double black, white, wb[3], as_shot_wb[3], camera_to_xyz_d50[9], input_floor;
+    double daylight_to_xyz_d50[9], as_shot_to_xyz_d50[9];
     uint64_t retained_bytes;
     // Wall timings are diagnostic only and do not participate in interpretation identity.
     double sdk_area_seconds, warp_sdk_seconds;

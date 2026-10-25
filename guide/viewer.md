@@ -22,15 +22,15 @@ a macOS fullscreen Space.
 
 ## Comparing and inspecting
 
-- **View source** flips between your graded positive and the developed source (as the
-  camera recorded it). Useful while grading; the positive requires Dmin/Dmax calibration
-  to exist.
+- **View source** flips between your graded positive and the developed source.
+  Negative's positive view requires Dmin/Dmax calibration.
 - **Original-resolution reference** compares the working preview against full-resolution
   processing — export is unchanged either way, so this is purely a preview-sharpness
   check.
-- **Source inspection** adjusts the source preview's brightness only ("relative to
-  default source preview · not saved") — it is an inspection aid, not a photographic
-  setting.
+- **Source inspection** adjusts viewing brightness and, for negatives, **Viewing WB**:
+  Daylight by default, or As shot. Canvas and source-preview thumbnails share these
+  settings; graded thumbnails stay positive. Inspection settings are not saved and do
+  not affect calibration, grades or export.
 
 ## Selecting photos (filmstrip)
 

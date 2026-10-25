@@ -949,7 +949,9 @@ impl Editor {
 
     fn thumbnail_parameters(&self, source: &Source) -> Result<ProcessingInput, Error> {
         if self.document.analysis_review.is_some() {
-            return self.source_parameters(0.).map(Into::into);
+            return self
+                .source_parameters_for(source, self.source_exposure)
+                .map(Into::into);
         }
         let photo = if self.current_source == Some(source.id) {
             self.photo
@@ -960,7 +962,8 @@ impl Editor {
         if input.ready() {
             self.positive_processing_for_source(input, self.roll, source, photo)
         } else {
-            self.source_parameters(0.).map(Into::into)
+            self.source_parameters_for(source, self.source_exposure)
+                .map(Into::into)
         }
     }
 

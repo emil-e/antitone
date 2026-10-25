@@ -462,7 +462,7 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
 }
 
 #[test]
-fn source_inspection_is_transient_and_measurement_inputs_exclude_its_gain() {
+fn source_inspection_is_transient_and_measurements_exclude_viewing_white_and_exposure() {
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
     editor.sync_document();
@@ -471,7 +471,17 @@ fn source_inspection_is_transient_and_measurement_inputs_exclude_its_gain() {
     let expected_dmax = editor.dmax();
     let expected_roll = editor.roll;
     let expected_photo = editor.photo;
+    let baseline = match editor
+        .measurement_input(Pick::Dmin, patch())
+        .unwrap()
+        .measure()
+        .unwrap()
+    {
+        Measurement::Reference(value) => value,
+        _ => panic!("expected reference measurement"),
+    };
 
+    editor.source_white_balance = crate::raw::SourceWhiteBalance::AsShot;
     editor.source_exposure = 2.3456789;
     editor.source = true;
     editor.sync_document();
@@ -482,6 +492,10 @@ fn source_inspection_is_transient_and_measurement_inputs_exclude_its_gain() {
     let input = editor.measurement_input(Pick::Dmin, patch()).unwrap();
     assert_eq!(input.roll, expected_roll);
     assert_eq!(input.photo, expected_photo);
+    match input.measure().unwrap() {
+        Measurement::Reference(value) => assert_eq!(value, baseline),
+        _ => panic!("expected reference measurement"),
+    }
     editor.measurement_result(
         editor.document.visit.view,
         Pick::Dmin,
@@ -493,6 +507,10 @@ fn source_inspection_is_transient_and_measurement_inputs_exclude_its_gain() {
     assert_eq!(editor.roll, expected_roll);
     assert_eq!(editor.photo, expected_photo);
     assert_eq!(editor.source_exposure, 2.3456789);
+    assert_eq!(
+        editor.source_white_balance,
+        crate::raw::SourceWhiteBalance::AsShot
+    );
     editor.sync_document();
     assert_eq!(editor.document.project, project);
 }

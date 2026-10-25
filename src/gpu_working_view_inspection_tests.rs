@@ -276,6 +276,58 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
 }
 
 #[test]
+fn source_view_applies_camera_white_balance_after_acquisition_without_changing_support() {
+    pollster::block_on(async {
+        let (device, queue, renderer, kernels) = context().await;
+        let gate = SubmissionGate::default();
+        let ctx = egui::Context::default();
+        let scan = scan();
+        let spec = ViewSourceSpec::inspection(27, frame(&scan), scan.camera_to_ap1, None).unwrap();
+        let source = ViewSource::acquire(
+            &device,
+            &queue,
+            &gate,
+            renderer,
+            kernels,
+            &scan,
+            None,
+            spec,
+            || false,
+        )
+        .unwrap()
+        .unwrap();
+        let neutral = read(&device, &queue, &source.pixels);
+        let gains = DVec3::new(2., 1., 0.5);
+        let transform =
+            scan.camera_to_ap1 * DMat3::from_diagonal(gains) * scan.camera_to_ap1.inverse();
+        let ev = 0.37_f64;
+        let input = ProcessingInput::from(
+            ProcessingParameters::source_preview_with_transform(Some([1.; 4]), ev, transform)
+                .unwrap(),
+        );
+        for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
+            let view =
+                RenderedView::inspection(&device, source.clone(), &input, target, None).unwrap();
+            view.ensure_submitted(&device, &queue, &gate, &ctx);
+            let actual = read(&device, &queue, &view.graded.as_ref().unwrap().pixels);
+            for (actual, neutral) in actual.iter().zip(&neutral) {
+                let working = DVec3::new(neutral[0] as f64, neutral[1] as f64, neutral[2] as f64);
+                let camera = scan.camera_to_ap1.inverse() * working;
+                let expected = scan.camera_to_ap1 * (camera * gains) * 2. * ev.exp2();
+                for c in 0..3 {
+                    assert!(
+                        (f64::from(actual[c]) - expected[c]).abs()
+                            <= 2e-5 + 2e-4 * expected[c].abs()
+                    );
+                }
+                assert_eq!(actual[3], neutral[3]);
+            }
+        }
+        assert_eq!(read(&device, &queue, &source.pixels), neutral);
+    });
+}
+
+#[test]
 fn physical_view_source_inspection_composite_covers_missing_regional_support() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;

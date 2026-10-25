@@ -248,6 +248,13 @@ impl Editor {
                 if let Some(notice) = self.return_notice.take() {
                     self.status = notice;
                 }
+                if let Some(id) = self.current_source {
+                    self.document.remember_source_preview(
+                        id,
+                        &ready.developed.metadata(),
+                        ready.developed.fixed_wb(),
+                    );
+                }
                 self.document.visit.ready = Some(*ready);
             }
             Err(error) => {

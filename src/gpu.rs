@@ -97,8 +97,16 @@ impl ProcessingParameters {
     /// Display-only source convention; inspection EV is relative to the preview baseline.
     /// `fixed_wb` must describe the development, not each photo's as-shot WB.
     pub fn source_preview(fixed_wb: Option<[f64; 4]>, exposure: f64) -> Result<Self, Error> {
+        Self::source_preview_with_transform(fixed_wb, exposure, DMat3::IDENTITY)
+    }
+
+    pub(crate) fn source_preview_with_transform(
+        fixed_wb: Option<[f64; 4]>,
+        exposure: f64,
+        transform: DMat3,
+    ) -> Result<Self, Error> {
         let gain = source_preview_gain(fixed_wb) * exposure_multiplier(exposure)?;
-        Self::source_with_gain(gain)
+        Self::source_with_matrix(transform * gain)
     }
 
     pub fn source_inspection(exposure: f64) -> Result<Self, Error> {
@@ -106,7 +114,10 @@ impl ProcessingParameters {
     }
 
     fn source_with_gain(gain: f64) -> Result<Self, Error> {
-        let matrix = DMat3::IDENTITY * gain;
+        Self::source_with_matrix(DMat3::IDENTITY * gain)
+    }
+
+    fn source_with_matrix(matrix: DMat3) -> Result<Self, Error> {
         let post = CameraMatrix::new(matrix)?;
         Ok(Self {
             post: post.columns,
