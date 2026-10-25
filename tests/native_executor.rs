@@ -4,10 +4,15 @@
 #[path = "native_executor/macos.rs"]
 mod macos;
 
-fn main() {
+fn main() -> antitone::platform::host::Result<()> {
     #[cfg(target_os = "macos")]
-    macos::main();
+    {
+        macos::main()
+    }
 
     #[cfg(not(target_os = "macos"))]
-    eprintln!("this check requires macOS");
+    {
+        eprintln!("this check requires macOS");
+        Ok(())
+    }
 }

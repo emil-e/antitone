@@ -1,8 +1,6 @@
 //! Authored CFA TIFF with selected-IFD Sony lens data, not a proprietary decoder fixture.
 #![allow(dead_code)]
-#[path = "fixture_path.rs"]
-mod fixture_path;
-use fixture_path::FixturePath;
+use crate::fixture_path::FixturePath;
 
 #[derive(Clone, Copy)]
 pub(crate) enum Order {

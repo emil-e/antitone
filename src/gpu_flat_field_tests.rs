@@ -1,5 +1,9 @@
 use super::*;
-use crate::processing::Calibration;
+#[cfg(target_os = "macos")]
+use crate::{
+    flat_field::FlatField,
+    processing::{Calibration, Pipeline, Response},
+};
 
 #[cfg(all(feature = "raw", feature = "export"))]
 #[test]

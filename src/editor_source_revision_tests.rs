@@ -1,3 +1,6 @@
+#[cfg(target_os = "macos")]
+use super::*;
+
 // Gated to macOS: LibRaw holds an open RAW with write sharing denied on Windows, so the test cannot
 // append to the loaded file.
 #[cfg(target_os = "macos")]

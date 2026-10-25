@@ -99,6 +99,12 @@ pub mod viewer;
 #[cfg(all(test, feature = "editor", target_os = "macos"))]
 #[path = "../native/cache_observation.rs"]
 pub(crate) mod cache_observation;
+#[cfg(all(
+    test,
+    any(feature = "dng-sdk", all(feature = "raw", feature = "project"))
+))]
+#[path = "../tests/support/fixture_path.rs"]
+mod fixture_path;
 #[cfg(all(test, feature = "raw", feature = "gpu"))]
 mod raw_test_support;
 

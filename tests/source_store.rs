@@ -9,6 +9,8 @@ use std::sync::Arc;
 
 #[path = "support/raw_fixture.rs"]
 mod fixture;
+#[path = "support/fixture_path.rs"]
+mod fixture_path;
 const WB: [f64; 4] = [1.0; 4];
 
 struct Input {

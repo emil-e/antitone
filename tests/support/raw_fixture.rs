@@ -1,6 +1,4 @@
-#[path = "fixture_path.rs"]
-mod fixture_path;
-pub use fixture_path::FixturePath;
+pub use crate::fixture_path::FixturePath;
 
 pub const SIDE: u32 = 64;
 

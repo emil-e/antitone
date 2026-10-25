@@ -1,8 +1,6 @@
 //! Authored SDK-adapter DNGs: explicit sensor codes and opcode bytes, no photographed input.
 
-#[path = "fixture_path.rs"]
-mod fixture_path;
-use fixture_path::FixturePath;
+use crate::fixture_path::FixturePath;
 
 pub struct Opcode {
     pub id: u32,

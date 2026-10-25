@@ -270,9 +270,8 @@ fn cpu_only_proper_work_persists_disk_at_zero_limits_then_materializes_on_demand
 #[cfg(target_os = "macos")]
 #[test]
 fn changed_pre_work_revision_loads_authoritatively_without_publishing_a_fresh_key() {
-    use std::io::Write;
     pollster::block_on(async {
-        let mut file = raw_fixture::bayer_dng();
+        let file = raw_fixture::bayer_dng();
         let document = document(file.path());
         let (device, queue) = gpu().await;
         let renderers = crate::renderer::RendererCache::default();
