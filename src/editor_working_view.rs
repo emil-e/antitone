@@ -5,7 +5,7 @@ use crate::{
     frame_raster::FrameRaster,
     gpu::view::{RenderedView, ViewKernels, ViewSource, ViewSourceSpec},
 };
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 #[cfg(test)]
 #[path = "editor_working_view_tests.rs"]
@@ -34,7 +34,7 @@ pub(super) struct Completion {
 
 pub(super) struct Acquisition {
     pub mailbox: Arc<Mailbox>,
-    pub kernels: Arc<Mutex<Option<Arc<ViewKernels>>>>,
+    pub kernels: Arc<OnceLock<Arc<ViewKernels>>>,
 }
 
 #[derive(Default)]
@@ -44,7 +44,7 @@ pub(super) struct WorkingView {
     revision: u64,
     changed_at: Option<std::time::Instant>,
     mailbox: Arc<Mailbox>,
-    pub(super) kernels: Arc<Mutex<Option<Arc<ViewKernels>>>>,
+    pub(super) kernels: Arc<OnceLock<Arc<ViewKernels>>>,
     source: Option<Arc<ViewSource>>,
     underlay: Option<Arc<ViewSource>>,
     underlay_rendered: Option<Arc<RenderedView>>,
@@ -475,7 +475,7 @@ impl Drop for WorkingView {
 pub(super) fn acquire(
     mailbox: &Mailbox,
     renderers: &crate::renderer::RendererCache,
-    kernels: &mut Option<Arc<ViewKernels>>,
+    kernels: &OnceLock<Arc<ViewKernels>>,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     submissions: &crate::gpu::SubmissionGate,
@@ -549,9 +549,14 @@ pub(super) fn acquire(
         let result =
             (|| {
                 let renderer = renderers.get(device, queue)?;
-                if kernels.is_none() {
-                    *kernels = Some(pollster::block_on(ViewKernels::new(device))?);
-                }
+                // Compile off-thread, then publish immutable pipelines independently of
+                // acquisition. Painting reads only an already-published handle.
+                let kernels = if let Some(kernels) = kernels.get() {
+                    kernels.clone()
+                } else {
+                    let prepared = pollster::block_on(ViewKernels::new(device))?;
+                    kernels.get_or_init(|| prepared).clone()
+                };
 
                 let specs = if needs_underlay {
                     vec![spec.clone(), spec.underlay()?]
@@ -583,7 +588,7 @@ pub(super) fn acquire(
                             queue,
                             submissions,
                             renderer,
-                            kernels.as_ref().unwrap().clone(),
+                            kernels.clone(),
                             &scan,
                             correction.map(|correction| correction.gpu.clone()),
                             missing_specs,

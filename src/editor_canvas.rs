@@ -375,7 +375,7 @@ impl Editor {
         }
         let device = self.working.device()?;
         let queue = self.working.queue()?;
-        let kernels = self.working.kernels.lock().ok()?.clone()?;
+        let kernels = self.working.kernels.get()?.clone();
         let cropping = self.document.visit.crop_edit.is_some();
         let frame = preview_frame(geometry.composition, proxy.size(), cropping).ok()?;
         let composition = frame.composition;

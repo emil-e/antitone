@@ -454,7 +454,7 @@ impl Editor {
         // Preview, thumbnail and viewport rendering share one lazy kernel set; initialising it
         // here avoids a shader-compilation pause when the first provisional view is selected.
         if let Ok(kernels) = pollster::block_on(crate::gpu::view::ViewKernels::new(device)) {
-            *self.working.kernels.lock().unwrap() = Some(kernels);
+            let _ = self.working.kernels.set(kernels);
         }
     }
 
