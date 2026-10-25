@@ -149,10 +149,16 @@ reports `authenticated: false`, blocking PR creation and CI inspection until acc
 
 ## Delivery in progress
 
-- Fetched latest main: `bfcc7bf` (#59 source-record retirement; #60 source-view white balance).
-  Inspecting/rebasing semantic interactions; Windows seam/queries must coexist with these changes.
-- Checkpoint the agreed follow-up, rebase linearly, re-run Windows checks and packaging, remove
-  this execution plan before the final PR (retaining a disposable checkpoint under `.cache/`).
+- Rebased all seven task commits onto latest fetched main `bfcc7bf` (#59 source-record retirement;
+  #60 source-view white balance), preserving both changes. Range-diff shows no dropped port changes.
+- Main's new SDK viewing-white fixture wrote through NamedTempFile::reopen; its setup now uses
+  std::fs::write on the port's ordinary fixture path, before opening native readers. Assertions
+  and intended input data are unchanged.
+- Rebased release editor library: 1,161 passed, 0 failed, 19 ignored. Editor all-target clippy
+  completes with existing warnings. Release editor rebuilt and ZIP smoke/hash verification passed
+  (13.8 MB). Seven release-assembly tests, Rust formatting, whitespace and docs links pass.
+- Keep this plan until GitHub access/delivery is unblocked; remove it before the final PR,
+  retaining a disposable copy under `.cache/`.
 - Preserve the old remote `port/windows`; publish `port/windows-supported` without force-pushing.
 - Remaining remote prerequisite: restore the pinned GitHub API authentication, then create PR and
   watch Windows/macOS hosted CI. Do not create a release tag or merge the PR.
