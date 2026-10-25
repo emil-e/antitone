@@ -10,6 +10,7 @@ mod lines;
 mod material;
 mod opening;
 mod rectangles;
+mod sampler;
 pub use lines::{Capture, Evidence};
 pub use material::RollModel;
 pub use material::framing::{FrameInput, prepare_spatial};

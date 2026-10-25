@@ -95,27 +95,13 @@ pub struct Evidence {
 }
 
 impl Evidence {
-    #[cfg(feature = "raw")]
     pub fn observe(size: [u32; 2], rgb: &[[u16; 3]]) -> Result<Self, Error> {
-        unsafe extern "C" {
-            fn antitone_scan_region_lines(rgb: *const u16, w: u32, h: u32)
-            -> *mut std::ffi::c_char;
-            fn antitone_scan_region_lines_free(data: *mut std::ffi::c_char);
-        }
         if size.iter().any(|&v| !(16..=768).contains(&v))
             || rgb.len() != size[0] as usize * size[1] as usize
         {
             return Err(invalid("invalid region camera raster"));
         }
-        // Native code reads only this immutable, length-checked RGB16 view and returns owned JSON.
-        let data = unsafe { antitone_scan_region_lines(rgb.as_ptr().cast(), size[0], size[1]) };
-        if data.is_null() {
-            return Err(invalid("cannot observe scan-region lines"));
-        }
-        let result = serde_json::from_slice(unsafe { std::ffi::CStr::from_ptr(data) }.to_bytes())
-            .map_err(|_| invalid("invalid native region evidence"));
-        unsafe { antitone_scan_region_lines_free(data) };
-        result
+        Ok(super::sampler::observe(size, rgb))
     }
 }
 

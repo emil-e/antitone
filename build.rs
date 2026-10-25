@@ -106,22 +106,6 @@ fn main() {
             );
             println!("cargo:rustc-link-arg=-mmacosx-version-min=14.0");
         }
-        #[cfg(feature = "project")]
-        {
-            for file in [
-                "native/scan_regions.cpp",
-                "native/scan_region_lines.h",
-                "native/scan_region_json.h",
-            ] {
-                println!("cargo:rerun-if-changed={file}");
-            }
-            let mut build = cpp_bridge();
-            build.include("native").file("native/scan_regions.cpp");
-            if target_os == "macos" {
-                build.flag("-mmacosx-version-min=14.0");
-            }
-            build.compile("antitone_scan_regions");
-        }
     }
     #[cfg(feature = "dng-sdk")]
     build_dng();

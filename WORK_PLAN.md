@@ -1,11 +1,11 @@
 # Windows port
 
-Worktree: `.worktrees/windows-port`, branch `port/windows` (rebased onto `origin/main` @ `432c3a8` via merge `7c02bcf`).
+Worktree: `.worktrees/windows-port`, branch `port/windows`: linear history on `origin/main` @ `820cfb3`, rewritten after the shader merge so the branch carries no merge commits.
 
 ## Status: working port on the acceptance hardware (2026-10-25)
 
 The editor builds, opens, develops, analyses, displays and exports 61 MP scans on the RTX 2080 Ti
-through Vulkan, and the library test suite passes on Windows (1123 passed, 0 failed, 20 ignored).
+through Vulkan, and the library test suite passes on Windows (1148 passed, 0 failed, 19 ignored).
 
 Delivered in this session: presentation made correct for the Vulkan swapchain; DX12 retired after
 measurement; the photographic arithmetic reduced to one f32 implementation per stage with the
@@ -29,10 +29,21 @@ replaces the scope. `document_prepared` currently clears the pending visit uncon
 same-key preparation still cancels and re-acquires; retaining the visit there is the change to
 make if that duplicated development is worth removing.
 
-Open judgement call: `photographic_precise.wgsl`, `film_inversion_precise.wgsl` and the compensated
-arithmetic library are composed by nothing, but the colour oracle tests still compare the shipped
-implementation against them. They are a second implementation kept only as a test reference;
-delete them together with those oracle comparisons if one implementation is preferred.
+Resolved on `main`: the second photographic implementation and its oracle comparisons are gone, so
+the kernel is one plain-f32 implementation per stage with a composed-module validation test.
+
+Resolved here: the scan-region sampler (`Evidence::observe`) is Rust (`src/scan_regions/sampler.rs`)
+instead of the former `native/scan_regions.mm`/`.cpp` bridge. Bit-identical evidence to the C++
+observer across 2106 compared fields on 12 scans from three rolls, measured at 47 ms per 768-pixel
+tile against the bridge's 94 ms; the JSON round trip, the `extern "C"` ABI and 83 lines of
+hand-written serialiser went with it. `Cargo` no longer compiles a scan-region translation unit.
+
+## Remaining
+
+- GPU memory readback: `sys::windows::gpu_memory` answers `Unknown`, so the default GPU cache budget
+  is a flat 256 MiB instead of a discrete card's dedicated/4 (2.7 GB on the acceptance card). The
+  fix is `VK_EXT_memory_budget` through the HAL device already passed to the seam.
+- macOS compilation is unverified on this machine; `platform/macos.rs` changes need the hosted CI run.
 
 ## Status: resumed on acceptance hardware (2026-10-24)
 
