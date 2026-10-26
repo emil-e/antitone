@@ -3,7 +3,8 @@
 A working positive and a displayed photograph are not the same representation. The working image needs room for grading; the displayed image must fit a particular output. Antitone keeps those responsibilities separate.
 
 ```text
-signed/HDR AP1 working positive
+signed/HDR AP1 photographic grade
+  → optional Film Emulation (image MTF → grain)
   ├→ AP1-to-AP0 → scene-linear EXR
   └→ optional ACEScct/AP1 creative LUT → ACES output transform → linear sRGB or Display P3
        ├→ target encoding + ICC → TIFF
@@ -11,7 +12,7 @@ signed/HDR AP1 working positive
        └→ extended-sRGB presentation → OS monitor conversion
 ```
 
-[Processing](processing.md) explains how the working positive is made.
+[Processing](processing.md) explains the working positive and [Film Emulation](processing.md#film-emulation).
 
 ## A working space is not a display gamut
 
@@ -45,15 +46,15 @@ The preview converts linear target RGB to extended-sRGB and encodes it once. Pre
 
 ## TIFF and EXR serve different purposes
 
-**TIFF** is a rendered photograph: full-resolution processing, ACES, the selected target transfer and RGB16 quantization, with the matching ICC profile — suitable for viewing in colour-managed applications. **EXR** retains a scene-linear-style working positive: the accepted grade converted from signed/HDR AP1 to AP0/D60, bypassing both the creative look and ACES, without display transfer or SDR clipping, and it declares its linear AP0/D60 chromaticities. Half and full precision are available; half overflow rejects rather than silently clipping. Both declare their colour space in the file, so a reader needs no external convention.
+**TIFF** is a rendered photograph: full-resolution processing, ACES, the selected target transfer and RGB16 quantization, with the matching ICC profile — suitable for viewing in colour-managed applications. **EXR** retains a scene-linear-style working positive: the accepted grade and enabled Film Emulation converted from signed/HDR AP1 to AP0/D60, bypassing both the creative look and ACES, without display transfer or SDR clipping, and it declares its linear AP0/D60 chromaticities. Half and full precision are available; half overflow rejects rather than silently clipping. Both declare their colour space in the file, so a reader needs no external convention.
 
-Both outputs use accepted composition and full-resolution source pixels, never a preview buffer or tool draft. One bounded GPU engine processes originals into FP32 linear pixels, reconstructs with source-cell area weights and reads back only destination pixels; TIFF applies the captured creative LUT and pinned GPU ACES per original, while EXR bypasses those stages and converts to AP0 only at serialization. The engine plans conservative source bounds plus a real-cell halo per destination block; repaired edges need no alternate engine, and cold repair relevance uses the same whole-composition authority as output. Excluded supports must have zero exact composition coverage. An applicable no-donor or evaluation failure fails export without replacing the destination — there is no implicit unrepaired fallback.
+Both outputs use accepted composition and full-resolution source pixels, never a preview buffer or tool draft. One bounded GPU engine processes originals into FP32 linear pixels, reconstructs with source-cell area weights and reads back only destination pixels; TIFF applies the captured creative LUT and pinned GPU ACES per original, while EXR bypasses those stages and converts to AP0 only at serialization. The engine reads real source neighbours for the image-MTF halo as well as reconstruction roundoff; tile edges never become filter boundaries. Cold repair relevance includes the MTF neighbourhood of the captured composition, so an otherwise cropped-out repair can still affect its blurred edge. An applicable no-donor or evaluation failure fails export without replacing the destination — there is no implicit unrepaired fallback.
 
 RGB16 quantization uses a [codec-independent GPU stage](../src/gpu_rgb16.rs) after reconstruction, recording transfer and packing in the same GPU submission and validating the complete block's status on the CPU. RGB16 colour target, encoded sample representation and file codec are separate choices; sRGB and Display P3 currently share their transfer curve.
 
 Quality means preserving the photographic model and reconstruction, with additional arithmetic cost justified by meaningful differences in real photographs. Scalar/OCIO comparisons check the model and expose differences for investigation; their numerical tolerances are not visibility thresholds. Encoder tests separately require exact serialization of supplied samples. [Processing](processing.md#one-f32-photographic-implementation) explains the shared f32 arithmetic; [encoding observations](diagnostics.md#tiff-encoding-cost) cover Deflate cost and compatibility; [geometry](geometry.md#process-before-averaging) explains rotated and reduced reconstruction.
 
-Exports use immutable settings snapshots, including ordered adjustment layers and the accepted look, so subsequent editor changes cannot affect an in-flight file. Same-directory temporary writes protect existing destinations, and replacement needs explicit confirmation. Worker stop tokens cover repair preparation, bounded source work and the final publication barrier; a stop observed before publication leaves the destination unchanged, while a stop after successful publication does not turn a committed file into a cancellation. This is not a complete power-loss durability guarantee.
+Exports use immutable settings snapshots, including ordered adjustment layers, Film Emulation and the accepted look, so subsequent editor changes cannot affect an in-flight file. Same-directory temporary writes protect existing destinations, and replacement needs explicit confirmation. Worker stop tokens cover repair preparation, bounded source work and the final publication barrier; a stop observed before publication leaves the destination unchanged, while a stop after successful publication does not turn a committed file into a cancellation. This is not a complete power-loss durability guarantee.
 
 Selected/all-filmstrip exports run sequentially from captured recipes and source specifications, independently of viewing history. Each photo resolves applicable repairs, renders, encodes and publishes before the next original is acquired. Keep both/Skip use exclusive publication and handle competing destination creation; confirmed Replace permits atomic replacement. Duplicate and filesystem-equivalent batch names are disambiguated so one photo cannot replace an earlier output. Source/project destinations are protected. Individual-photo failures continue; shared renderer/kernel initialization failure or worker panic stops the batch. Completed files survive cancellation and are counted in the partial summary. [Editor](editor.md#export-photographs) owns the dialog and progress interaction.
 

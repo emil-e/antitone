@@ -42,4 +42,9 @@ fn composed_working_view_validates() {
         &gpu::view::view_shader(),
         &["view_main", "inspection_main"],
     );
+    validate(
+        "film emulation",
+        &gpu::view::film_shader(),
+        &["film_field", "film_horizontal", "film_vertical"],
+    );
 }

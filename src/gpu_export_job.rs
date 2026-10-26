@@ -49,6 +49,8 @@ pub(crate) fn write(
         composition: job.recipe.composition,
         format: job.format,
         look: job.recipe.look.clone(),
+        film_emulation: job.recipe.film_emulation,
+        film_seed: job.recipe.neutral.source.0,
     };
     super::write_checked(
         renderer,

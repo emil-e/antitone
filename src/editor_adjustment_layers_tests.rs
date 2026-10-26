@@ -1,6 +1,33 @@
 use super::*;
 use crate::adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage};
 
+#[test]
+fn film_seed_routing_uses_source_identity_not_visit_identity() {
+    pollster::block_on(async {
+        let (mut editor, _, _) = processing::tests::fixture().await;
+        let source = editor.current_source.unwrap();
+        let first = editor
+            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+            .unwrap();
+        assert_eq!(first.film_seed(), Some(source.0));
+        editor.id = editor.id.wrapping_add(123);
+        let reacquired = editor
+            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+            .unwrap();
+        assert_eq!(first.film_seed(), reacquired.film_seed());
+        let mut other = editor.document.project.source(source).unwrap().clone();
+        other.id = SourceId(0);
+        other.path = "another-film-seed.ARW".into();
+        let other = editor.document.project.add_source(other).unwrap();
+        editor.current_source = Some(other);
+        let changed = editor
+            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+            .unwrap();
+        assert_eq!(changed.film_seed(), Some(other.0));
+        assert_ne!(first.film_seed(), changed.film_seed());
+    });
+}
+
 fn ids(editor: &Editor) -> Vec<AdjustmentLayerId> {
     editor
         .document

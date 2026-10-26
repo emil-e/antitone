@@ -190,6 +190,9 @@ impl ImageKey {
         let positive = matches!(&self.recipe, Ok(Some(_)));
         let mut bytes = 256_u64 * 256 * 48 + Product::overhead(positive) as u64;
         if let Ok(Some(recipe)) = &self.recipe {
+            if recipe.film_emulation.enabled {
+                bytes = bytes.checked_add(256 * 256 * 16)?;
+            }
             if let Some(look) = &recipe.look {
                 bytes = bytes.checked_add(256 * 256 * 16)?.checked_add(
                     (look.lut().nodes().len() * std::mem::size_of::<[f32; 4]>()) as u64,

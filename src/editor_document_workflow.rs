@@ -251,6 +251,7 @@ impl Editor {
                     .and_then(|source| source.crop);
                 self.document.visit.crop_edit = None;
                 self.last_layout = None;
+                self.film_emulation = self.document.project.output.film_emulation;
                 self.target = match self.document.project.output.tiff {
                     crate::project::TiffTarget::Srgb => OutputTarget::Srgb,
                     crate::project::TiffTarget::DisplayP3 => OutputTarget::DisplayP3,

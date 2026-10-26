@@ -26,6 +26,7 @@ pub struct ImageRecipe {
     pub roll: RollSettings,
     pub grade: AdjustmentLayerSnapshot,
     pub composition: Composition,
+    pub film_emulation: crate::film_emulation::FilmEmulationSettings,
     pub look: Option<Arc<crate::looks::LookAsset>>,
     repairs: Vec<Repair>,
 }
@@ -35,6 +36,7 @@ impl PartialEq for ImageRecipe {
         self.roll == other.roll
             && self.grade == other.grade
             && self.composition == other.composition
+            && self.film_emulation == other.film_emulation
             && self.look.as_ref().map(|look| look.lut().id())
                 == other.look.as_ref().map(|look| look.lut().id())
             && self.same_neutral_content(other)
@@ -173,6 +175,7 @@ impl Project {
             roll,
             grade: source.grade_snapshot()?,
             composition,
+            film_emulation: self.output.film_emulation,
             look: self.output.look.clone(),
             repairs: if include_repairs {
                 source

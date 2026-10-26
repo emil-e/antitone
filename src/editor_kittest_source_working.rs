@@ -180,6 +180,15 @@ fn negative_viewing_white_and_exposure_update_canvas_and_source_card_without_red
 
 #[test]
 fn selecting_and_zooming_a_calibrated_photo_paints_proxy_while_acquisition_is_running() {
+    selecting_and_zooming_with_blocked_acquisition(false);
+}
+
+#[test]
+fn film_emulation_navigation_waits_for_rendered_scopes_while_acquisition_is_running() {
+    selecting_and_zooming_with_blocked_acquisition(true);
+}
+
+fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
     use std::sync::{
         atomic::{AtomicBool, Ordering},
         mpsc,
@@ -194,12 +203,32 @@ fn selecting_and_zooming_a_calibrated_photo_paints_proxy_while_acquisition_is_ru
 
     editor_harness(|mut harness, _| {
         let first = fixture("roll-0.dng");
-        let second = fixture("roll-1.dng");
+        let large = film.then(|| {
+            crate::dng_fixture::Fixture {
+                side: 1280,
+                ..Default::default()
+            }
+            .write()
+        });
+        let second = large
+            .as_ref()
+            .map_or_else(|| fixture("roll-1.dng"), |file| file.path().to_owned());
         harness.enter(|editor, cx| editor.add_raws(vec![first, second.clone()], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        if film {
+            harness.enter(|editor, cx| {
+                editor.apply_input(crate::processing::InputSettings::Digital, cx)
+            });
+            wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        }
         harness.update(|editor| {
-            editor.set_dmin(Some(DVec3::splat(0.7)));
-            editor.set_dmax(Some(DVec3::splat(0.01)));
+            if film {
+                editor.film_emulation = FilmEmulationPreset::Medium.settings();
+                editor.scopes.visible = true;
+            } else {
+                editor.set_dmin(Some(DVec3::splat(0.7)));
+                editor.set_dmax(Some(DVec3::splat(0.01)));
+            }
             editor.source = false;
             editor.sync_document();
         });
@@ -211,7 +240,18 @@ fn selecting_and_zooming_a_calibrated_photo_paints_proxy_while_acquisition_is_ru
         harness.read(|editor| {
             assert_ne!(editor.current_source.unwrap(), previous);
             assert!(editor.document.visit.ready.is_some());
-            assert!(editor.input.is_negative() && editor.input.calibration().is_some());
+            if film {
+                assert_eq!(editor.input, crate::processing::InputSettings::Digital);
+                assert!(editor.film_emulation.enabled);
+                let ready = editor.document.visit.ready.as_ref().unwrap();
+                let proxy = ready.proxy.image(editor.target).unwrap();
+                assert!(
+                    proxy.linear.width() < ready.area.width,
+                    "fixture must exercise a reduced camera proxy"
+                );
+            } else {
+                assert!(editor.input.is_negative() && editor.input.calibration().is_some());
+            }
             assert!(!editor.source && editor.working.displayed.is_none());
         });
 
@@ -251,6 +291,9 @@ fn selecting_and_zooming_a_calibrated_photo_paints_proxy_while_acquisition_is_ru
         harness.read(|editor| {
             assert_eq!(editor.viewport.zoom, Some(1.));
             assert!(!editor.working.support_ready() && editor.working.displayed.is_none());
+            if film {
+                assert!(matches!(editor.scope_request(), Err("Waiting for view")));
+            }
             let preview = editor
                 .preview_rendered
                 .as_ref()
@@ -273,7 +316,24 @@ fn selecting_and_zooming_a_calibrated_photo_paints_proxy_while_acquisition_is_ru
         harness.render().unwrap();
         harness.read(|editor| {
             assert!(editor.preview_rendered.is_none());
-            assert!(editor.working.displayed.is_some());
+            let displayed = editor.working.displayed.as_ref().unwrap();
+            let scopes::ScopeInput::Rendered(view, _) = editor.scope_request().unwrap() else {
+                panic!("scopes must resume from the accepted rendered view");
+            };
+            assert!(Arc::ptr_eq(&view, displayed));
+            if film {
+                assert_eq!(
+                    view.processing,
+                    editor
+                        .positive_processing(
+                            editor.input,
+                            editor.roll,
+                            editor.adjustment_layer_settings
+                        )
+                        .unwrap()
+                        .signature()
+                );
+            }
         });
     });
 }

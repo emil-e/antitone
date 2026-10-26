@@ -305,6 +305,11 @@ pub struct Output {
     pub contract: String,
     pub tiff: TiffTarget,
     pub exr: ExrPrecision,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::film_emulation::FilmEmulationSettings::is_default"
+    )]
+    pub film_emulation: crate::film_emulation::FilmEmulationSettings,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub look: Option<std::sync::Arc<crate::looks::LookAsset>>,
 }
@@ -315,6 +320,7 @@ impl Default for Output {
             contract: OUTPUT_CONTRACT.into(),
             tiff: TiffTarget::DisplayP3,
             exr: ExrPrecision::Half,
+            film_emulation: Default::default(),
             look: None,
         }
     }
@@ -845,6 +851,7 @@ impl Project {
         if let Some(negative) = self.input.negative_input() {
             negative.channel_gammas()?;
         }
+        self.output.film_emulation.validate()?;
         wb_matrix(self.roll.wb)?;
         exposure_multiplier(self.roll.exposure)?;
         require(

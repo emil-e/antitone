@@ -7,6 +7,7 @@ use crate::{
     coverage::Coverage,
     crop::Crop,
     export::ExrPrecision,
+    film_emulation::{FilmEmulationPreset, FilmEmulationSettings},
     geometry::{Composition, PhotoOrientation, RollOrientation},
     gpu::{ProcessingInput, ProcessingParameters, ProcessingSignature},
     platform::host,
@@ -340,6 +341,7 @@ pub struct Editor {
     input_switch: Option<InputSettings>,
     roll: RollSettings,
     adjustment_layer_settings: AdjustmentLayerSettings,
+    film_emulation: FilmEmulationSettings,
 
     roll_orientation: RollOrientation,
     photo_orientation: PhotoOrientation,
@@ -519,6 +521,7 @@ impl Editor {
             input_switch: None,
             roll: RollSettings::default(),
             adjustment_layer_settings: AdjustmentLayerSettings::default(),
+            film_emulation: FilmEmulationSettings::default(),
 
             roll_orientation: RollOrientation::default(),
             photo_orientation: PhotoOrientation::default(),
@@ -578,6 +581,49 @@ impl Editor {
                 }
             }
             Err(error) => log::warn!(error = error.to_string().as_str(); "preferences_load_failed"),
+        }
+    }
+
+    fn film_emulation_controls(&mut self, ui: &mut egui::Ui) {
+        let settings = &mut self.film_emulation;
+        let changed = *settings != FilmEmulationSettings::default();
+        let summary = if settings.enabled {
+            format!("{:.3}% · a {:.3}", settings.size, settings.amount)
+        } else {
+            "Off".to_owned()
+        };
+        let (_, action) = presentation::section(
+            ui,
+            "film-emulation",
+            "Film Emulation",
+            presentation::SectionHeader {
+                summary: &summary,
+                changed,
+                reset: Some(changed),
+                tool: None,
+                default_open: Some(true),
+            },
+            |ui| {
+                ui.checkbox(&mut settings.enabled, "Enable");
+                controls::parameter(ui, controls::Parameter::FilmAmount, &mut settings.amount);
+                controls::parameter(ui, controls::Parameter::FilmSize, &mut settings.size);
+                controls::parameter(ui, controls::Parameter::FilmColour, &mut settings.colour);
+                ui.horizontal(|ui| {
+                    if ui.button("Fine").clicked() {
+                        *settings = FilmEmulationPreset::Fine.settings();
+                    }
+                    if ui.button("Medium").clicked() {
+                        *settings = FilmEmulationPreset::Medium.settings();
+                    }
+                    if ui.button("Coarse").clicked() {
+                        *settings = FilmEmulationPreset::Coarse.settings();
+                    }
+                });
+                ui.small("Source-anchored MTF and grain, before the creative look.");
+            },
+        );
+        if action.reset {
+            *settings = FilmEmulationSettings::default();
         }
     }
 
@@ -903,6 +949,7 @@ impl Editor {
         project.input = input;
         project.roll = self.roll;
         project.orientation = self.roll_orientation;
+        project.output.film_emulation = self.film_emulation;
         project.output.tiff = match self.target {
             OutputTarget::Srgb => crate::project::TiffTarget::Srgb,
             OutputTarget::DisplayP3 => crate::project::TiffTarget::DisplayP3,
@@ -1427,6 +1474,15 @@ impl Editor {
                         start_pick = Some(Pick::Wb);
                     }
                 } else {
+                    if self.input.capabilities().film_emulation {
+                        let allowed = !self.busy
+                            && !reviewing
+                            && self.document.visit.crop_edit.is_none()
+                            && self.document.auto_crop_edit.is_none()
+                            && self.flat_edit.is_none()
+                            && self.document.visit.mask_edit.is_none();
+                        ui.add_enabled_ui(allowed, |ui| self.film_emulation_controls(ui));
+                    }
                     self.look_controls(ui, cx);
                     ui.add_enabled_ui(
                         !reviewing

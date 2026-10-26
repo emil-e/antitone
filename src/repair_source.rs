@@ -70,7 +70,7 @@ pub(crate) fn resolve_with(
     resolve_matching(scan, recipe, execution, |_| true)
 }
 
-/// Resolve only supports with positive exact coverage in the captured output composition.
+/// Resolve supports influencing the captured output, including the film image-MTF neighbourhood.
 #[cfg(feature = "project")]
 pub fn resolve_output(
     scan: &Scan,
@@ -91,11 +91,32 @@ pub(crate) fn resolve_output_with(
     let coverage = recipe
         .composition
         .coverage(FramePoint([0.; 2]), FramePoint(size.map(f64::from)))?;
+    let radius = recipe
+        .film_emulation
+        .parameters(scan.area.height)?
+        .map_or(0, |parameters| parameters.support_radius());
     resolve_matching(scan, recipe, execution, |repair| {
-        repair
-            .support
-            .selected_points()
-            .any(|point| coverage.weight(point) > 0.)
+        repair.support.selected_points().any(|point| {
+            if radius == 0 {
+                return coverage.weight(point) > 0.;
+            }
+            let x = point[0].saturating_sub(radius).max(scan.area.x);
+            let y = point[1].saturating_sub(radius).max(scan.area.y);
+            let right = point[0]
+                .saturating_add(radius)
+                .saturating_add(1)
+                .min(scan.area.x + scan.area.width);
+            let bottom = point[1]
+                .saturating_add(radius)
+                .saturating_add(1)
+                .min(scan.area.y + scan.area.height);
+            coverage.intersection_area(crate::geometry::SourceRegion {
+                x,
+                y,
+                width: right - x,
+                height: bottom - y,
+            }) > 0.
+        })
     })
 }
 

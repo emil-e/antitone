@@ -18,6 +18,8 @@ Completed [Digital starting exposures](processing.md#digital-starting-brightness
 
 It does not retain active/multi-selection, canvas navigation, source-inspection WB/exposure, picker return context, tool drafts, GPU objects or caches. This distinction defines dirty state: accepted project changes are compared with the last successful Save/Open snapshot, and session-only [undo/redo](editor.md#undo-and-redo) preserves that baseline. Looking around, selecting a photo or cancelling a draft does not make a project modified; Auto-crop margin changes are drafts until Apply and never dirty project geometry. Export scope, filenames, format and target overrides belong to the export operation; the last destination folder is an application preference. Choosing another TIFF target in Export leaves the project's Rendering target unchanged.
 
+Film Emulation belongs to project output state and undo history. Its optional saved record carries the model contract and all controls, including custom values while disabled. Absent settings retain the clean plate; unsupported contracts and malformed values reject. Image recipes capture these settings with the persistent source identity used for the grain seed.
+
 ## Embed the accepted look, not a catalog reference
 
 The project optionally owns one immutable [creative-look asset](colour-and-output.md#creative-looks-precede-output-rendering). Built-ins and imports both store resolved numeric samples with their domain, dimension, contract and provenance — not `.cube` text, a source pathname or a catalog reference. Catalog upgrades, missing source files and deleted derived caches therefore cannot silently change a saved look; choosing a newer built-in is an explicit accepted edit.

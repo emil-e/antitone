@@ -15,6 +15,9 @@ use wgpu::util::DeviceExt;
 mod proxy;
 pub(crate) use proxy::GpuProxy;
 #[cfg(test)]
+#[path = "viewer_film_tests.rs"]
+mod film_tests;
+#[cfg(test)]
 #[path = "viewer_look_tests.rs"]
 mod look_tests;
 #[cfg(test)]
@@ -256,7 +259,8 @@ impl GpuImage {
             format: wgpu::TextureFormat::Rgba32Float,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
         let matrix = target.linear_to_srgb();
@@ -385,7 +389,22 @@ impl GpuImage {
         if let Some(asset) = input.look() {
             crate::gpu::look::Lut::require_limits(&self.device_limits, asset.lut())?;
         }
-        input.require_source(&processing.source)
+        input.require_source(&processing.source)?;
+        if input.film_emulation().enabled {
+            input
+                .grade()
+                .ok_or_else(|| Error::Gpu("native film requires a source-owned grade".into()))?;
+            let geometry = processing.source.geometry().ok_or_else(|| {
+                Error::Gpu("native film requires original source geometry".into())
+            })?;
+            let bounds = geometry.region();
+            if geometry.size() != [bounds.width, bounds.height] {
+                return Err(Error::Gpu(
+                    "native film requires original source samples".into(),
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Prepare an immutable adjustment-layer input; invalid inputs leave the prior preparation intact.
@@ -440,6 +459,37 @@ impl GpuImage {
             .processing
             .as_ref()
             .expect("validated processing source");
+        let film = if input.film_emulation().enabled {
+            let grade = input.grade().expect("validated native film grade");
+            let geometry = processing
+                .source
+                .geometry()
+                .expect("validated native film geometry");
+            let bounds = geometry.region();
+            let parameters = input
+                .film_emulation()
+                .parameters(grade.area().height)?
+                .expect("enabled film");
+            #[cfg(feature = "editor")]
+            let neutral_bound = input.repairs.bound();
+            #[cfg(not(feature = "editor"))]
+            let neutral_bound = glam::DVec3::ZERO;
+            let bound = grade.output_bound(device, neutral_bound)?;
+            parameters.require_output_bound(bound, 1.)?;
+            Some((
+                processing.renderer.film_kernels(device)?,
+                crate::gpu::film_emulation::Workspace::new(device, geometry.size())?,
+                crate::gpu::film_emulation::ViewUniform::native(
+                    bounds,
+                    grade.area().height,
+                    input.film_emulation(),
+                    input.film_seed().unwrap_or(0),
+                )?
+                .buffer(device),
+            ))
+        } else {
+            None
+        };
         match input.grade() {
             Some(grade) => processing.renderer.kernel.encode_grade(
                 device,
@@ -473,6 +523,20 @@ impl GpuImage {
                     geometry,
                 )?;
             }
+        }
+        if let Some((kernels, workspace, uniform)) = film {
+            kernels.encode(
+                device,
+                encoder,
+                crate::gpu::film_emulation::Dispatch {
+                    uniform: &uniform,
+                    working: &processing.working,
+                    scratch: &workspace.scratch,
+                    grain: &workspace.grain,
+                    generate_grain: input.film_emulation().amount > 0.,
+                    apply_grain: input.film_emulation().amount > 0.,
+                },
+            );
         }
         let mut binding = processing.aces_group.lock().unwrap();
         let id = input.look().map(|asset| asset.lut().id());

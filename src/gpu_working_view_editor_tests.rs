@@ -13,6 +13,8 @@ use std::sync::atomic::AtomicU64;
 mod adjustment_layer_resources;
 #[path = "gpu_working_view_colour_tests.rs"]
 mod colour;
+#[path = "gpu_film_emulation_tests.rs"]
+mod film_emulation;
 #[path = "gpu_working_view_identity_tests.rs"]
 mod identity;
 #[path = "gpu_working_view_inspection_tests.rs"]

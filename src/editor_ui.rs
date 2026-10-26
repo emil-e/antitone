@@ -38,6 +38,7 @@ pub(super) const INSPECTOR_SECTION_GAP: f32 = 5.;
 pub(super) const INSPECTOR_BODY_GAP: f32 = 3.;
 pub(super) const PARAMETER_SLIDER_HEIGHT: f32 = 20.;
 pub(super) const PARAMETER_NUMERIC_WIDTH: f32 = 52.;
+pub(super) const PARAMETER_UNIT_WIDTH: f32 = 22.;
 /// Shared name column so every parameter track starts at the same x.
 pub(super) const PARAMETER_LABEL_WIDTH: f32 = 76.;
 /// Adjacent value rows sit closer together than sections or shelves.

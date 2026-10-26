@@ -105,6 +105,8 @@ fn gpu_tiff_matches_scalar_ocio_within_one_rgb16_code_on_authored_patches() {
             &device,
             (&queue, &SubmissionGate::default()),
             Request {
+                film_emulation: Default::default(),
+                film_seed: 17,
                 scan: &scan,
                 field: None,
                 input: InputSettings::negative(calibration),
@@ -168,6 +170,8 @@ fn gpu_exr_uses_shared_working_precision_through_linear_ap0_on_authored_patches(
             &device,
             (&queue, &SubmissionGate::default()),
             Request {
+                film_emulation: Default::default(),
+                film_seed: 17,
                 scan: &scan,
                 field: None,
                 input: InputSettings::negative(calibration),
@@ -392,6 +396,8 @@ fn corrected_ordered_locals_reopen_after_native_permutations_and_rotated_coverag
                     &device,
                     (&queue, &SubmissionGate::default()),
                     Request {
+                        film_emulation: Default::default(),
+                        film_seed: 17,
                         look: None,
                         scan: &scan,
                         field: gpu_field.clone(),

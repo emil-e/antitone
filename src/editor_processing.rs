@@ -242,6 +242,7 @@ impl Editor {
             .document
             .project
             .image_recipe_for_source(&candidate, &input, roll)?;
+        recipe.film_emulation = self.film_emulation;
         recipe.neutral.correction = self
             .correction
             .as_ref()
@@ -261,7 +262,12 @@ impl Editor {
                 },
                 snapshot,
             )
-            .map(|input| input.with_look(look))
+            .map(|input| {
+                input
+                    .with_look(look)
+                    .with_film_emulation(recipe.film_emulation)
+                    .with_film_seed(source.id.0)
+            })
     }
 
     pub(super) fn positive_processing(
@@ -280,8 +286,20 @@ impl Editor {
             None => self.positive_parameters(input, roll).map(|parameters| {
                 ProcessingInput::from(parameters)
                     .with_look(self.document.project.output.look.clone())
+                    .with_film_emulation(self.film_emulation)
             }),
         }
+    }
+
+    pub(super) fn validate_processing_with_film(
+        &self,
+        input: InputSettings,
+        roll: RollSettings,
+        photo: AdjustmentLayerSettings,
+        film: FilmEmulationSettings,
+    ) -> Result<(), Error> {
+        film.validate()?;
+        self.validate_processing(input, roll, photo)
     }
 
     /// Roll/input candidates must support every source, without replacing accepted resources.

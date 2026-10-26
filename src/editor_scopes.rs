@@ -243,6 +243,10 @@ impl Editor {
                 ..visible
             };
             Ok(ScopeInput::Rendered(view.clone(), frame))
+        } else if parameters.film_emulation().enabled {
+            // Camera proxies can lose original-sample detail; wait for the same
+            // source-anchored emulation raster as the viewer rather than reprocessing that proxy.
+            Err("Waiting for view")
         } else {
             let (image, parameters, frame) =
                 self.proxy_scope_input(ready, parameters, composition)?;

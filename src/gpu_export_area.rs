@@ -3,6 +3,10 @@ use super::*;
 use crate::geometry::FramePoint;
 use wgpu::util::DeviceExt;
 
+#[cfg(all(test, target_os = "macos"))]
+#[path = "gpu_export_film_emulation_tests.rs"]
+mod film_tests;
+
 // A rotated 128-square spans at most 128*sqrt(2) source units. Fractional placement
 // can cover 183 cells, plus the two real-cell halo edges: 185, not 184.
 const MAX_SOURCE_SIDE: u32 = 185;
@@ -24,10 +28,20 @@ pub(super) struct Unit {
 }
 
 impl Unit {
+    #[cfg(test)]
     pub fn new(
         composition: Composition,
         origin: [u32; 2],
         extent: [u32; 2],
+    ) -> Result<Self, Error> {
+        Self::with_margin(composition, origin, extent, 0)
+    }
+
+    fn with_margin(
+        composition: Composition,
+        origin: [u32; 2],
+        extent: [u32; 2],
+        margin: u32,
     ) -> Result<Self, Error> {
         if extent.contains(&0) || (0..2).any(|i| extent[i] > TILE[i]) {
             return Err(Error::InvalidParameter("invalid export destination unit"));
@@ -44,16 +58,20 @@ impl Unit {
         let exact = raster.bounds()?;
         // One real-cell halo absorbs native mapping roundoff without omitting support/repairs.
         // Composition maps the developed source at unit pitch; lens development is upstream.
-        let x = exact.x.saturating_sub(1).max(area.x);
-        let y = exact.y.saturating_sub(1).max(area.y);
+        let halo = margin
+            .checked_add(1)
+            .ok_or(Error::InvalidParameter("film halo overflow"))?;
+        let x = exact.x.saturating_sub(halo).max(area.x);
+        let y = exact.y.saturating_sub(halo).max(area.y);
         let right = (exact.x + exact.width)
-            .saturating_add(1)
+            .saturating_add(halo)
             .min(area.x + area.width);
         let bottom = (exact.y + exact.height)
-            .saturating_add(1)
+            .saturating_add(halo)
             .min(area.y + area.height);
         let bounds = SourceRegion::from([x, y, right - x, bottom - y]).validate()?;
-        if bounds.width > MAX_SOURCE_SIDE || bounds.height > MAX_SOURCE_SIDE {
+        let max_side = MAX_SOURCE_SIDE.saturating_add(margin.saturating_mul(2));
+        if bounds.width > max_side || bounds.height > max_side {
             return Err(Error::Gpu(
                 "affine source unit exceeds bounded export scratch".into(),
             ));
@@ -309,6 +327,7 @@ struct Originals {
     working: wgpu::Buffer,
     texture: wgpu::Texture,
     binding: Option<crate::renderer::RenderBinding>,
+    film: Option<crate::gpu::film_emulation::Workspace>,
 }
 
 impl Originals {
@@ -362,6 +381,11 @@ impl Originals {
             working,
             texture,
             binding,
+            film: request
+                .film_emulation
+                .enabled
+                .then(|| crate::gpu::film_emulation::Workspace::new(device, size))
+                .transpose()?,
         })
     }
 }
@@ -417,6 +441,13 @@ pub(super) fn write(
         request.scan.positive_matrix(&input)?,
         request.scan.area,
     )?);
+    let film_parameters = request
+        .film_emulation
+        .parameters(request.scan.area.height)?;
+    let margin = film_parameters.map_or(0, |parameters| parameters.support_radius());
+    let film_kernels = film_parameters
+        .map(|_| renderer.film_kernels(device))
+        .transpose()?;
     let repairs = crate::gpu::repairs::Snapshot::logical(request.repairs.to_vec())?;
     repairs.require_area(request.scan.area)?;
     if !repairs.0.is_empty() {
@@ -429,6 +460,18 @@ pub(super) fn write(
             request.scan.area,
             repairs.bound(),
         )?;
+    }
+    if let Some(parameters) = film_parameters {
+        let bound = GpuAdjustmentLayers::repaired_output_bound(
+            device,
+            input,
+            request.roll,
+            &request.grade,
+            request.scan.camera_to_ap1,
+            request.scan.area,
+            repairs.bound(),
+        )?;
+        parameters.require_output_bound(bound, 1.)?;
     }
     let kernel = &renderer.kernel;
     let _look_resource = request
@@ -474,7 +517,10 @@ pub(super) fn write(
             check()?;
             #[cfg(all(test, target_os = "macos"))]
             let mut timing = timestamps.borrow_mut();
-            let mut unit = timed!(CoveragePlan, Unit::new(request.composition, origin, extent))?;
+            let mut unit = timed!(
+                CoveragePlan,
+                Unit::with_margin(request.composition, origin, extent, margin)
+            )?;
             unit.mapping.space[0] = u32::from(matches!(request.format, Format::Exr(_)));
             let size = [unit.bounds.width, unit.bounds.height];
             if originals.as_ref().is_none_or(|s| s.size != size) {
@@ -557,6 +603,29 @@ pub(super) fn write(
                         geometry,
                     )?;
                 }
+                if let (Some(kernels), Some(workspace)) =
+                    (film_kernels.as_ref(), source.film.as_ref())
+                {
+                    let parameters = crate::gpu::film_emulation::ViewUniform::native(
+                        unit.bounds,
+                        request.scan.area.height,
+                        request.film_emulation,
+                        request.film_seed,
+                    )?
+                    .buffer(device);
+                    kernels.encode(
+                        device,
+                        &mut encoder,
+                        crate::gpu::film_emulation::Dispatch {
+                            uniform: &parameters,
+                            working: &source.working,
+                            scratch: &workspace.scratch,
+                            grain: &workspace.grain,
+                            generate_grain: request.film_emulation.amount > 0.,
+                            apply_grain: request.film_emulation.amount > 0.,
+                        },
+                    );
+                }
                 if let (Format::Tiff(target), Some(binding)) =
                     (request.format, source.binding.as_ref())
                 {
@@ -631,6 +700,7 @@ pub(super) fn write(
                             + 16
                             + 16
                             + 16
+                            + if source.film.is_some() { 32 } else { 0 }
                             + if request.look.is_some() && matches!(request.format, Format::Tiff(_))
                             {
                                 16

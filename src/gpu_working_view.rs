@@ -1,5 +1,7 @@
 //! Immutable physical-view acquisition and rendering. Originals remain reference/export authority.
 use super::*;
+#[cfg(test)]
+use crate::film_emulation::FilmEmulationSettings;
 use crate::processing::InputSettings;
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
@@ -150,8 +152,13 @@ pub(crate) fn view_shader() -> String {
     .join("\n")
 }
 
+use super::film_emulation::ViewUniform;
+#[cfg(test)]
+pub(crate) use super::film_emulation::shader as film_shader;
+
 pub(crate) struct ViewKernels {
     grade: wgpu::ComputePipeline,
+    film: super::film_emulation::Kernels,
     inspection: wgpu::ComputePipeline,
     filter: wgpu::ComputePipeline,
     proxy_coverage: wgpu::ComputePipeline,
@@ -192,6 +199,7 @@ impl ViewKernels {
         };
         let inspection = photographic("physical-view linear source inspection", "inspection_main");
         let grade = photographic("stable physical-view colour", "view_main");
+        let film = super::film_emulation::Kernels::new(device).await?;
         let filter = compute(
             "original-cell physical-view acquisition",
             [
@@ -217,6 +225,7 @@ impl ViewKernels {
         }
         Ok(Arc::new(Self {
             grade,
+            film,
             inspection,
             filter,
             proxy_coverage,
@@ -373,6 +382,7 @@ impl ViewKernels {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         graded: &GradedView,
+        grain_ready: bool,
     ) {
         let Some(grade) = &graded.grade else {
             let view = uniform(device, bytemuck::bytes_of(&graded.view));
@@ -440,6 +450,24 @@ impl ViewKernels {
         pass.set_pipeline(&self.grade);
         pass.set_bind_group(0, &group, &[]);
         pass.dispatch_workgroups(x, groups.div_ceil(x), 1);
+        drop(pass);
+        if graded.view.film[0] > 0.5 {
+            let scratch = float_buffer(device, graded.source.spec.frame.output)
+                .expect("same dimensions as validated graded pixels");
+            let grain = graded.grain.as_ref().expect("enabled film field");
+            self.film.encode(
+                device,
+                encoder,
+                super::film_emulation::Dispatch {
+                    uniform: &view,
+                    working: &graded.pixels,
+                    scratch: &scratch,
+                    grain: &grain.pixels,
+                    generate_grain: !grain_ready && graded.view.film[1] > 0.,
+                    apply_grain: graded.view.film[1] > 0.,
+                },
+            );
+        }
     }
 }
 
@@ -816,10 +844,27 @@ impl ViewSource {
     }
 }
 
+struct GrainField {
+    view: ViewUniform,
+    pixels: wgpu::Buffer,
+    submitted: Mutex<bool>,
+}
+
+impl GrainField {
+    fn matches(&self, view: &ViewUniform) -> bool {
+        self.view.dimensions == view.dimensions
+            && self.view.origin == view.origin
+            && self.view.dx == view.dx
+            && self.view.dy == view.dy
+            && self.view.film[2..] == view.film[2..]
+    }
+}
+
 struct GradedView {
     source: Arc<ViewSource>,
     // None is the linear source-inspection bypass, never an identity photographic grade.
     grade: Option<Arc<GpuAdjustmentLayers>>,
+    grain: Option<Arc<GrainField>>,
     pixels: wgpu::Buffer,
     view: ViewUniform,
     submitted: Mutex<bool>,
@@ -851,6 +896,7 @@ impl RenderedView {
             + self.graded.as_ref().map_or(0, |graded| {
                 graded.source.pixels.size()
                     + graded.pixels.size()
+                    + graded.grain.as_ref().map_or(0, |grain| grain.pixels.size())
                     + graded.source.spec.repairs.byte_len()
                     + (self.spec.repairs.0.capacity() + graded.source.spec.repairs.0.len()) as u64
                         * std::mem::size_of::<Arc<super::repairs::Patch>>() as u64
@@ -902,7 +948,7 @@ impl RenderedView {
         }
         let processing = input.signature();
         // Validate the entire candidate even for target-only reuse, before allocating/publishing it.
-        GpuAdjustmentLayers::validate_repaired(
+        let output_bound = GpuAdjustmentLayers::repaired_output_bound(
             device,
             settings,
             roll,
@@ -911,25 +957,62 @@ impl RenderedView {
             source.spec.area,
             input.repairs.bound(),
         )?;
+        if let Some(film) = input
+            .film_emulation()
+            .parameters(source.spec.frame.composition.area().height)?
+        {
+            let affine = source.spec.frame.affine()?;
+            let footprint = affine[1..]
+                .iter()
+                .map(|v| f64::from(v[0]).hypot(f64::from(v[1])))
+                .fold(0., f64::max);
+            film.require_output_bound(output_bound, footprint)?;
+        }
         let graded = previous
             .filter(|p| p.spec == source.spec && p.processing.same_photographic(&processing))
             .and_then(|p| p.graded.clone());
         let graded = match graded {
             Some(graded) => graded,
-            None => Arc::new(GradedView {
-                pixels: float_buffer(device, source.spec.frame.output)?,
-                grade: Some(Arc::new(GpuAdjustmentLayers::new(
-                    device,
-                    settings,
-                    roll,
-                    snapshot.clone(),
-                    source.spec.matrix,
-                    source.spec.area,
-                )?)),
-                view: ViewUniform::new(source.spec.frame, input.parameters()),
-                source: source.clone(),
-                submitted: Mutex::new(false),
-            }),
+            None => {
+                let view = ViewUniform::new(
+                    source.spec.frame,
+                    input.parameters(),
+                    input.film_emulation(),
+                    input.film_seed().unwrap_or(0),
+                );
+                let grain = if view.film[0] > 0.5 {
+                    let cached = previous
+                        .filter(|p| p.spec.authority == source.spec.authority)
+                        .and_then(|p| p.graded.as_ref())
+                        .and_then(|g| g.grain.clone())
+                        .filter(|grain| grain.matches(&view));
+                    Some(match cached {
+                        Some(grain) => grain,
+                        None => Arc::new(GrainField {
+                            view,
+                            pixels: float_buffer(device, source.spec.frame.output)?,
+                            submitted: Mutex::new(false),
+                        }),
+                    })
+                } else {
+                    None
+                };
+                Arc::new(GradedView {
+                    pixels: float_buffer(device, source.spec.frame.output)?,
+                    grade: Some(Arc::new(GpuAdjustmentLayers::new(
+                        device,
+                        settings,
+                        roll,
+                        snapshot.clone(),
+                        source.spec.matrix,
+                        source.spec.area,
+                    )?)),
+                    grain,
+                    view,
+                    source: source.clone(),
+                    submitted: Mutex::new(false),
+                })
+            }
         };
         Self::from_graded(device, source, input, target, graded)
     }
@@ -966,6 +1049,7 @@ impl RenderedView {
                 Ok::<_, Error>(Arc::new(GradedView {
                     pixels: float_buffer(device, source.spec.frame.output)?,
                     grade: None,
+                    grain: None,
                     view: ViewUniform {
                         dimensions: [
                             source.spec.frame.output[0],
@@ -1081,6 +1165,11 @@ impl RenderedView {
             return;
         }
         let mut initialized = self.graded.as_ref().map(|g| g.submitted.lock().unwrap());
+        let mut grain_initialized = self
+            .graded
+            .as_ref()
+            .and_then(|g| g.grain.as_ref())
+            .map(|g| g.submitted.lock().unwrap());
         let mut encoder = device.create_command_encoder(&Default::default());
         if let Some(composite) = &self.composite {
             composite.ensure_parents(device, queue, submissions, context);
@@ -1092,7 +1181,12 @@ impl RenderedView {
         } else {
             let graded = self.graded.as_ref().expect("unsubmitted working view");
             if !**initialized.as_ref().unwrap() {
-                graded.source.kernels.grade(device, &mut encoder, graded);
+                graded.source.kernels.grade(
+                    device,
+                    &mut encoder,
+                    graded,
+                    grain_initialized.as_ref().is_some_and(|g| **g),
+                );
             }
             let binding = self.group.as_ref().unwrap();
             self.image.set_look_check(
@@ -1130,6 +1224,11 @@ impl RenderedView {
         self.image
             .begin_look_check_tracked(submissions, move || repaint.request_repaint());
         if let Some(initialized) = initialized.as_mut() {
+            **initialized = true;
+        }
+        if self.graded.as_ref().is_some_and(|g| g.view.film[1] > 0.0)
+            && let Some(initialized) = grain_initialized.as_mut()
+        {
             **initialized = true;
         }
         *submitted = true;
@@ -1178,39 +1277,6 @@ fn float_buffer(device: &wgpu::Device, size: [u32; 2]) -> Result<wgpu::Buffer, E
     }))
 }
 
-fn view_pair(pair: [f64; 2]) -> [f32; 4] {
-    [pair[0] as f32, pair[1] as f32, 0., 0.]
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct ViewUniform {
-    dimensions: [u32; 4],
-    origin: [f32; 4],
-    dx: [f32; 4],
-    dy: [f32; 4],
-    gain: [f32; 4],
-    source_transform: [Vec4; 3],
-}
-
-impl ViewUniform {
-    fn new(frame: FrameRaster, parameters: ProcessingParameters) -> Self {
-        let origin = frame.source_point([0.5, 0.5]).0;
-        let x = frame.source_point([1.5, 0.5]).0;
-        let y = frame.source_point([0.5, 1.5]).0;
-        // Neutral acquisition omits the response's folded exposure. Restore that factor here;
-        // any gain already packed into `post` must not be applied a second time.
-        let gain = parameters.anchor.w.exp();
-        Self {
-            dimensions: [frame.output[0], frame.output[1], 0, 0],
-            origin: view_pair(origin),
-            dx: view_pair(std::array::from_fn(|c| x[c] - origin[c])),
-            dy: view_pair(std::array::from_fn(|c| y[c] - origin[c])),
-            gain: [gain, 0., 0., 0.],
-            source_transform: parameters.post,
-        }
-    }
-}
 #[cfg(test)]
 #[path = "gpu_working_view_editor_tests.rs"]
 mod tests;

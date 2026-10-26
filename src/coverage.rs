@@ -100,7 +100,18 @@ impl Coverage {
 
     /// Piecewise-constant source pixels contribute their exact positive intersection area.
     pub fn weight(self, pixel: [u32; 2]) -> f64 {
-        let origin = pixel.map(f64::from);
+        self.rectangle_weight(pixel.map(f64::from), [1.; 2])
+    }
+
+    /// Exact positive overlap with a source-cell rectangle, for nonlocal effect support.
+    pub fn intersection_area(self, region: SourceRegion) -> f64 {
+        self.rectangle_weight(
+            [region.x as f64, region.y as f64],
+            [region.width as f64, region.height as f64],
+        )
+    }
+
+    fn rectangle_weight(self, origin: [f64; 2], size: [f64; 2]) -> f64 {
         let mut first = [[0.; 2]; 8];
         let mut second = [[0.; 2]; 8];
         for (dst, point) in first.iter_mut().zip(self.corners) {
@@ -108,8 +119,12 @@ impl Coverage {
         }
         let (mut vertices, mut next) = (&mut first, &mut second);
         let mut count = 4;
-        for (axis, edge, greater) in [(0, 0., true), (0, 1., false), (1, 0., true), (1, 1., false)]
-        {
+        for (axis, edge, greater) in [
+            (0, 0., true),
+            (0, size[0], false),
+            (1, 0., true),
+            (1, size[1], false),
+        ] {
             if count == 0 {
                 return 0.;
             }
@@ -153,7 +168,7 @@ impl Coverage {
             std::mem::swap(&mut vertices, &mut next);
             count = n;
         }
-        polygon_area(&vertices[..count]).min(1.)
+        polygon_area(&vertices[..count]).min(size[0] * size[1])
     }
 
     pub fn pixels(

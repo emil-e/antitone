@@ -183,7 +183,7 @@ fn synthetic(near_base: bool) -> Dataset {
 
 enum ProcessingCase {
     Source(ProcessingParameters),
-    Layers(antitone::gpu::GpuAdjustmentLayers),
+    Layers(Box<antitone::gpu::GpuAdjustmentLayers>),
 }
 
 struct Gpu {
@@ -563,6 +563,7 @@ fn report(dataset: &Dataset, gpu: &Gpu, output_dir: &Path, csv: &mut fs::File) {
                     [0, 0, dataset.size[0], dataset.size[1]].into(),
                 )
             })
+            .map(Box::new)
             .map(ProcessingCase::Layers),
             None => ProcessingParameters::source_inspection(exposure).map(ProcessingCase::Source),
         };

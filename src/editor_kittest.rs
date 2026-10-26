@@ -24,6 +24,8 @@ mod export;
 #[cfg(feature = "ocio-reference")]
 #[path = "editor_kittest_exposure.rs"]
 mod exposure;
+#[path = "editor_kittest_film_emulation.rs"]
+mod film_emulation;
 #[path = "editor_kittest_fullscreen.rs"]
 mod fullscreen;
 #[path = "editor_kittest_guide_shots.rs"]

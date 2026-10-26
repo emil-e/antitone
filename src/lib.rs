@@ -12,6 +12,9 @@ pub mod coverage;
 pub mod crop;
 #[cfg(feature = "dng-sdk")]
 pub mod dng;
+#[cfg(all(test, feature = "dng-sdk"))]
+#[path = "../tests/support/dng_fixture.rs"]
+mod dng_fixture;
 pub mod dust_repair;
 #[cfg(feature = "editor")]
 pub mod editor;
@@ -24,6 +27,7 @@ mod export_timing;
 #[cfg(feature = "project")]
 pub mod exposure_metadata;
 pub mod exposure_reference;
+pub mod film_emulation;
 pub mod flat_field;
 pub mod frame_raster;
 pub mod geometry;

@@ -44,26 +44,39 @@ pub fn refine(
     ))?;
     let tile_width = 512;
     let tile_height = 128;
-    let zeros = vec![[0.; 4]; tile_width as usize * tile_height as usize];
-    let mut tile = pollster::block_on(GpuImage::new_continuous_shared(
-        renderer,
-        device,
-        tile_width,
-        tile_height,
-        &zeros,
-        input
-            .grade()
-            .map_or(scan.camera_to_ap1, |grade| grade.source_matrix()),
-        target,
-    ))?;
-    tile.set_flat_field(
-        field.clone(),
-        SourceGeometry::new(
-            [view.area.x, view.area.y, tile_width, tile_height],
-            [tile_width, tile_height],
-        )?,
-    )?;
-    tile.require_processing(&input)?;
+    let film = input.film_emulation().parameters(scan.area.height)?;
+    let mut expanded: Option<GpuImage> = None;
+    let mut tile = if film.is_some() {
+        pollster::block_on(GpuImage::new_rendered_shared(
+            renderer,
+            device,
+            tile_width,
+            tile_height,
+            target,
+        ))?
+    } else {
+        let zeros = vec![[0.; 4]; tile_width as usize * tile_height as usize];
+        let mut tile = pollster::block_on(GpuImage::new_continuous_shared(
+            renderer,
+            device,
+            tile_width,
+            tile_height,
+            &zeros,
+            input
+                .grade()
+                .map_or(scan.camera_to_ap1, |grade| grade.source_matrix()),
+            target,
+        ))?;
+        tile.set_flat_field(
+            field.clone(),
+            SourceGeometry::new(
+                [view.area.x, view.area.y, tile_width, tile_height],
+                [tile_width, tile_height],
+            )?,
+        )?;
+        tile.require_processing(&input)?;
+        tile
+    };
     let average = if let Some(frame) = view.frame {
         if frame.bounds()? != view.area || frame.output != view.output {
             return Err(Error::InvalidParameter(
@@ -87,14 +100,85 @@ pub fn refine(
                 return Ok(None);
             }
             let tick = std::time::Instant::now();
-            let pixels = scan.tile_region(view.area, x, y, tile_width, tile_height)?;
+            let central = crate::geometry::SourceRegion::from([
+                view.area.x + x,
+                view.area.y + y,
+                tile_width.min(view.area.width - x),
+                tile_height.min(view.area.height - y),
+            ]);
+            let film_bounds = if let Some(parameters) = film {
+                let radius = parameters.support_radius();
+                let left = central.x.saturating_sub(radius).max(scan.area.x);
+                let top = central.y.saturating_sub(radius).max(scan.area.y);
+                let right = (central.x + central.width)
+                    .saturating_add(radius)
+                    .min(scan.area.x + scan.area.width);
+                let bottom = (central.y + central.height)
+                    .saturating_add(radius)
+                    .min(scan.area.y + scan.area.height);
+                Some(crate::geometry::SourceRegion::from([
+                    left,
+                    top,
+                    right - left,
+                    bottom - top,
+                ]))
+            } else {
+                None
+            };
+            if let Some(bounds) = film_bounds {
+                let size = [bounds.width, bounds.height];
+                let bytes = u64::from(size[0]) * u64::from(size[1]) * 16;
+                if size
+                    .into_iter()
+                    .any(|n| n > device.limits().max_texture_dimension_2d)
+                    || bytes > device.limits().max_storage_buffer_binding_size
+                {
+                    return Err(Error::Gpu(
+                        "film refinement support exceeds GPU limits".into(),
+                    ));
+                }
+                let pixels = scan.tile_region(
+                    scan.area,
+                    bounds.x - scan.area.x,
+                    bounds.y - scan.area.y,
+                    size[0],
+                    size[1],
+                )?;
+                if expanded.as_ref().is_none_or(|image| {
+                    image.linear.width() != size[0] || image.linear.height() != size[1]
+                }) {
+                    expanded = Some(pollster::block_on(GpuImage::new_continuous_shared(
+                        renderer,
+                        device,
+                        size[0],
+                        size[1],
+                        &pixels,
+                        scan.camera_to_ap1,
+                        target,
+                    ))?);
+                } else {
+                    expanded
+                        .as_ref()
+                        .unwrap()
+                        .write_source_continuous(queue, &pixels)?;
+                }
+                expanded.as_mut().unwrap().set_flat_field(
+                    field.clone(),
+                    SourceGeometry::original_tile(
+                        [bounds.x, bounds.y, bounds.width, bounds.height],
+                        size,
+                    )?,
+                )?;
+            } else {
+                let pixels = scan.tile_region(view.area, x, y, tile_width, tile_height)?;
+                tile.write_source_continuous(queue, &pixels)?;
+                tile.set_geometry(SourceGeometry::new(
+                    [view.area.x + x, view.area.y + y, tile_width, tile_height],
+                    [tile_width, tile_height],
+                )?)?;
+            }
             sampling += tick.elapsed();
             let tick = std::time::Instant::now();
-            tile.write_source_continuous(queue, &pixels)?;
-            tile.set_geometry(SourceGeometry::new(
-                [view.area.x + x, view.area.y + y, tile_width, tile_height],
-                [tile_width, tile_height],
-            )?)?;
             for (index, window) in average
                 .windows(&tile.linear, [x, y])
                 .into_iter()
@@ -105,7 +189,30 @@ pub fn refine(
                 }
                 let mut encoder = device.create_command_encoder(&Default::default());
                 if index == 0 {
-                    tile.encode_processing(device, &mut encoder, &input)?;
+                    if let Some(bounds) = film_bounds {
+                        let source = expanded.as_ref().unwrap();
+                        source.encode_processing(device, &mut encoder, &input)?;
+                        encoder.copy_texture_to_texture(
+                            wgpu::TexelCopyTextureInfo {
+                                texture: &source.linear,
+                                mip_level: 0,
+                                origin: wgpu::Origin3d {
+                                    x: central.x - bounds.x,
+                                    y: central.y - bounds.y,
+                                    z: 0,
+                                },
+                                aspect: wgpu::TextureAspect::All,
+                            },
+                            tile.linear.as_image_copy(),
+                            wgpu::Extent3d {
+                                width: central.width,
+                                height: central.height,
+                                depth_or_array_layers: 1,
+                            },
+                        );
+                    } else {
+                        tile.encode_processing(device, &mut encoder, &input)?;
+                    }
                 }
                 average.accumulate_window(device, &mut encoder, &tile.linear, [x, y], window);
                 wait_for(device, submissions.submit(queue, [encoder.finish()]))?;

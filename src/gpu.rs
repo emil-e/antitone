@@ -9,6 +9,15 @@ pub use flat::{GpuFlatField, SourceGeometry};
 #[path = "gpu_adjustment_layers.rs"]
 mod adjustment_layers;
 pub use adjustment_layers::GpuAdjustmentLayers;
+
+#[cfg(any(
+    feature = "editor",
+    all(feature = "ui", feature = "render"),
+    all(feature = "raw", feature = "export")
+))]
+#[path = "gpu_film_emulation.rs"]
+pub(crate) mod film_emulation;
+
 #[path = "gpu_processing_input.rs"]
 mod input;
 pub use input::{ProcessingInput, ProcessingSignature};
@@ -524,7 +533,7 @@ impl ProcessingSource {
         self.input.size()
     }
 
-    #[cfg(feature = "editor")]
+    #[cfg(all(feature = "ui", feature = "render"))]
     pub(crate) fn geometry(&self) -> Option<SourceGeometry> {
         self.geometry
     }
