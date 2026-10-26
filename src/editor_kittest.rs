@@ -1005,13 +1005,9 @@ fn set_layout(harness: &mut Harness<'_, Editor>, size: egui::Vec2, width: f32) {
     harness.step();
 }
 
-fn file_menu(harness: &mut Harness<'_, Editor>, action: &str) {
-    harness.get_by_label("File").click();
-    harness.step();
-    harness.step();
-    harness
-        .get_by_role_and_label(egui::accesskit::Role::Button, action)
-        .click();
+/// Deliver a File command the way the native menu bar does; the editor draws no menu of its own.
+fn native_file_action(harness: &mut Harness<'_, Editor>, action: crate::platform::menu::Action) {
+    harness.update(|editor| host::App::menu_action(editor, action));
     harness.step();
 }
 
@@ -1026,7 +1022,7 @@ fn save_existing_project(harness: &mut Harness<'_, Editor>) {
     let project = harness.read(|editor| editor.document.project.clone());
     let metadata = harness.read(|editor| editor.document.capture().ready_spatial_metadata());
     let request = harness.read(|editor| editor.next_request);
-    file_menu(harness, "Save");
+    native_file_action(harness, crate::platform::menu::Action::Save);
     harness.read(|editor| assert!(editor.next_request > request, "Save did not dispatch"));
     wait_for(harness, |e| !e.busy && e.document_pending.is_none());
     harness.read(|editor| assert!(!editor.document.dirty(), "{}", editor.status));

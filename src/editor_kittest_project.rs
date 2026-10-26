@@ -227,7 +227,7 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
         let expected = harness.read(|editor| editor.document.project.clone());
         let pixel = compare_pixel(&harness);
         save_existing_project(&mut harness);
-        file_menu(&mut harness, "New");
+        native_file_action(&mut harness, crate::platform::menu::Action::New);
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| assert!(editor.document.project.development().is_none()));
         harness.read(|editor| assert!(editor.document.visit.ready.is_none()));
@@ -373,7 +373,7 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
         let failed = directory.path().join("unwritable.antitone.json");
         std::fs::create_dir(&failed).unwrap();
         harness.update(|editor| editor.document.path = Some(failed));
-        file_menu(&mut harness, "New");
+        native_file_action(&mut harness, crate::platform::menu::Action::New);
         harness.step();
         harness.read(|editor| assert!(editor.transition.is_some()));
         let request = harness.read(|editor| editor.next_request);
