@@ -149,7 +149,7 @@ Selection is temporary workspace state, separate from each source's accepted Pho
 
 ## Responsiveness and optional caches
 
-Demanded immutable full-resolution developments, uncorrected proxies and decoded camera references share fixed optional CPU byte limits; [retention settings](#retention-settings-and-pressure) control those limits in whole MiB, including zero. A compatible native hit avoids LibRaw development, while correction, grade and crop remain independent consumer state. File revisions are cache freshness checks, [not photographic identity](projects.md#compatibility-is-about-the-processing-basis).
+Optional reuse of immutable full-resolution developments, uncorrected proxies and decoded camera references shares a byte-bounded CPU store; [retention settings](#retention-settings-and-pressure) control its limit in whole MiB, including zero. [Async acquisition](architecture.md#source-acquisition-and-retention) separates consumer leases from cache ownership. A compatible source hit avoids development, while correction, grade and crop remain independent consumer state. File revisions are cache freshness checks, [not photographic identity](projects.md#compatibility-is-about-the-processing-basis).
 
 ### Scheduling and readiness
 

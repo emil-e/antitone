@@ -128,7 +128,7 @@ cargo test --locked --features editor --lib editor::document_workflow::
 # Captured writes, baseline/history/visit preservation and guarded continuation retirement.
 cargo test --locked --features editor --lib editor::save::
 
-# Visit-owned source workflow and native physical admission, including pending candidates.
+# Visit-owned source workflow and native lifetimes, including pending candidates.
 cargo test --locked --features editor --lib editor::source_workflow::
 
 # Authored import/correction/Analyze/JPEG/cache workers; native setup and GPU, no desktop window.
@@ -175,7 +175,7 @@ The opt-in [ImageIO export check](diagnostics.md#export) independently reopens T
 
 ## Cancellation checks
 
-Exercise the [shared cancellation pattern](architecture.md#cooperative-cancellation) before the first poll, with parked waiters, queued admission and admitted work. Observe actual wake/submission boundaries, retain cancelling feedback until acknowledgement, and verify physical resources survive owner retirement through cleanup. A stop after publication must preserve success; export can finish its current photo before stopping.
+Exercise the [shared cancellation pattern](architecture.md#cooperative-cancellation) before the first poll, with parked waiters, before worker dispatch and during running work. Observe actual wake/submission boundaries, retain cancelling feedback until acknowledgement, and verify physical resources survive owner retirement through cleanup. A stop after publication must preserve success; export can finish its current photo before stopping.
 
 ```sh
 cargo test --locked --features editor --lib -- \
@@ -307,11 +307,11 @@ cargo test --locked --features editor --lib editor::thumbnails
 cargo clippy --locked --features editor --lib --tests -- -D warnings
 ```
 
-For scoped execution, admission, source demand and measurement:
+For scoped execution, source acquisition and measurement:
 
 ```sh
-for module in application:: blocking_jobs:: editor::development:: editor::measurement:: editor::photo_scope::; do
-  cargo test --locked --features editor --lib "$module" -- || break
+for module in application:: background:: source_provider:: editor::development:: editor::measurement:: editor::photo_scope::; do
+  cargo test --locked --features editor --lib "$module" || break
 done
 ```
 

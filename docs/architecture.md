@@ -34,17 +34,37 @@ Navigation creates fresh visits. Retiring one discards its transient tools witho
 
 Export instead owns an application-level batch: fixed recipes, resolved paths, correction and service handles. It acquires one original at a time without preparing viewer resources. Document caches supply optional reuse, not execution authority; closing one cannot retire the batch. Blocking workspace interaction during export is a separate UI choice.
 
-## Services, workers and admission
+## Services and workers
 
 Workflows never block; services run the work off the UI thread and workflows await typed results:
 
-- **Blocking admission.** Synchronous foreground jobs share one editor-owned permit ([`blocking_jobs.rs`](../src/blocking_jobs.rs)), serializing conservative physical work across visits. A source wait occupies neither a blocking worker nor an additional permit.
+- **Synchronous work** runs on the shared blocking pool through [`background.rs`](../src/background.rs), with worker panics returned as errors. Each job owns its captured inputs; unrelated features can proceed concurrently.
 - **Two native owners at most** ([`editor_development.rs`](../src/editor/development.rs)) serve foreground, visible and eager development; each runs one non-interruptible call with worker-local mutable RAW handles, background work yields to foreground demand, and the pair collapses to one owner under memory pressure. [Scheduling rationale](native-development.md#editor-scheduling) describes the tradeoff.
 - **Thumbnail and embedded-preview processing** ([`editor_thumbnail_worker.rs`](../src/editor/thumbnails/production_worker.rs)) is a background path, not another RAW development pool: it never borrows the selected `Scan` from foreground operations, GPU processing is serial, and obsolete tickets never install images.
 - **Lazy photo preparation** ([`source_store.rs`](../src/source_store.rs)) resolves Digital starting exposure during native/proxy acquisition, before processed-positive publication. Camera preview display shares decoded leases and in-flight work across same-document candidates. These candidates share immutable metering results while isolating pixel publication. AP1 production folds the completed gain into its source transform; consumers use normalized pixels and source identity rather than handling exposure readiness.
 - **The CPU store** is a byte-bounded, oldest-unprotected LRU for native data, proxies and decoded camera references: active leases survive eviction, selected/visible proxies are protected separately, and native cache ownership is always optional. Retention settings and pressure behavior: [editor](editor.md#retention-settings-and-pressure).
 
+
 Presentation follows the same separation: [`editor_activity.rs`](../src/editor/activity.rs) owns one foreground task-activity lifecycle (typed requests, progress, cancellation state), and [`editor_ui_dialogs.rs`](../src/editor/presentation/dialogs.rs) owns decision framing, button focus and dismissal — controllers keep the payloads and dispatch.
+
+## Source acquisition and retention
+
+[`SourceProvider`](../src/source_provider.rs) asynchronously returns an `Arc<DevelopedSource>` lease. Selected views, analysis, thumbnails and export use the same acquisition boundary:
+
+```mermaid
+flowchart LR
+    Consumer[Consumers] -->|await source key| Cache[SourceCache]
+    Cache -->|lookup / publish| Store[SourceStore]
+    Cache -->|miss| Loader[SourceLoader]
+    Loader --> Native[Native owners]
+    Cache -->|owning source lease| Consumer
+```
+
+`SourceLoader` owns native execution, independently of document stores. Matching current, versioned requests join; weak discovery of completed live results covers the handoff before cache publication. Waiting occupies no blocking-pool thread.
+
+`SourceCache` wraps a provider using the existing [CPU store](../src/source_store.rs): weak live lookup plus optional strong ownership under an LRU byte budget. Candidate stores can reuse a parent. Eviction preserves consumer leases; zero retention still permits live reuse. Cache closure disables lookup/publication; document consumers retire their own loading futures. After every strong reference disappears, reacquisition can develop again. Selected/visible protection applies to proxies, not full-resolution sources. [Retention settings](editor.md#retention-settings-and-pressure) govern optional ownership.
+
+Analysis owns measured samples through fitting rather than a full-roll set of source leases.
 
 ## Results are proposals
 
@@ -54,7 +74,7 @@ Every awaited result carries request IDs, generations and input snapshots. Valid
 
 Use the shared [cancellation signal](../src/cancellation.rs) for new cancellable workflows. Each operation gets a fresh, one-way signal with polling and async wakeup; capture its cancel-on-drop guard in the continuation so retirement before the first poll also signals stop. Analysis, region preparation and export use this pattern.
 
-User Cancel keeps the continuation and cancelling feedback until acknowledgement. Owner retirement drops continuation rights while running work retains its inputs and physical admission through cleanup. Queued work can use `BlockingJobs::run_admitted_cancellable`; running work chooses its own safe checkpoints. Return cancellation distinctly from failure, never by parsing diagnostic text, and preserve already-committed side effects as successes. [Development checks](development.md#cancellation-checks) exercise these boundaries.
+User Cancel keeps the continuation and cancelling feedback until acknowledgement. Owner retirement drops continuation rights while running work retains its inputs through cleanup. Dropping a source future retires that demand independently of joined consumers; running native calls finish on their owner. CPU work checks cancellation at its safe checkpoints. Return cancellation distinctly from failure, never by parsing diagnostic text, and preserve already-committed side effects as successes. [Development checks](development.md#cancellation-checks) exercise these boundaries.
 
 ## Native and GPU ownership
 

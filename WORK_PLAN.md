@@ -3,46 +3,37 @@
 ## Agreed scope
 - Async source acquisition returns existing immutable developed-source leases.
 - Cache wraps loading, reusing SourceStore's weak/live and optional strong ownership; no parallel pixel or derived-artifact cache.
-- Remove BlockingJobs and speculative cross-feature admission/thumbnail-idleness policy, preserving cancellation acknowledgement, stale-result rejection and worker-owned inputs through physical completion.
-- Preserve bounded native execution and SDK ownership/synchronization. Leave GPU submission/configuration synchronization and GPU internals untouched.
-- Address demonstrated responsiveness issues specifically; do not add replacement throttles.
+- Remove BlockingJobs and speculative cross-feature admission/thumbnail-idleness policy while preserving cancellation acknowledgement, stale-result rejection and worker-owned inputs through physical completion.
+- Preserve native ownership and SDK synchronization. Leave GPU submission/configuration synchronization and GPU internals untouched; add no replacement throttles/frameworks.
 - Separate worktree and coherent local commits. No push, PR or integration authorized.
 
-## Acceptance
-Consumers acquire sources asynchronously without native/cache-policy requests. Cache owns retention; analysis owns its intermediate measurements. Synchronous CPU work runs off the UI thread without a global foreground semaphore. Source/output correctness and actual cancellation/resource lifetimes remain protected.
+## Acceptance / outcome
+Implemented on fetched main 6cd71b3; refreshed upstream/guidance at the execution and final-review milestones with no relevant upstream changes.
 
-## Current state
-Based on fetched main 6cd71b3; refreshed upstream and guidance at the CPU-execution milestone, with no relevant upstream changes.
+SourceProvider is async at the root. SourceCache wraps SourceLoader using the existing SourceStore. Editor/source, analysis, thumbnails and export acquire existing Arc leases; native requests contain no stores, parent caches, retention choices or admission permits. Weak completed-result discovery covers the native-completion/publication handoff without retaining pixels strongly. Analysis owns its measured samples.
 
-Completed commits:
-1. Async SourceProvider, SourceLoader and SourceCache boundary, with ownership/reuse tests.
-2. Editor/source/analysis/thumbnail consumers use providers. Native requests contain no stores, parent caches, retention choices or admission permits. Weak completed-result discovery covers the native-completion/cache-publication handoff without retaining pixels strongly.
-3. BlockingJobs and editor/service plumbing removed. Shared blocking-pool execution captures panics without global admission. Thumbnail scheduling no longer reads foreground-pool idleness or polls for that permit. Lifecycle tests use explicit native/GPU barriers or a test-only pre-dispatch pause; serialization-policy assertions were removed or replaced with actual resource/publication checks.
+BlockingJobs and global service plumbing are removed. Synchronous CPU jobs use the shared blocking pool with panic reporting; thumbnail eligibility no longer reads foreground-pool idleness or polls for its permit. The embedded-preview worker uses its serial execution directly, removing an extra semaphore and the async-lock dependency. GPU implementation files are unchanged.
 
-4. Embedded-preview requests use their existing single worker directly; its extra semaphore was redundant with serial execution. Cancelled queued work checks its stop flag before IO. Removed the unused async-lock dependency; preview lifecycle tests protect cancellation and stale publication rather than a producer permit.
+Owning guides explain acquisition, retention and execution, including one compact provider/cache diagram. The older architecture-walkthrough worktree remains untouched.
 
-Prior architecture diagrams remain isolated in the architecture-walkthrough worktree.
+## Independent review
+One fresh-context review covered the full change, owning guides and test quality at whole-case, assertion and fixture/control-discovery levels. Three findings were confirmed and fixed:
+- Native retirement atomically excludes unwanted tasks from joining before worker-local cleanup; a late replacement starts fresh.
+- Closed-document thumbnail consumers drop pending provider futures; disposable GPU-ticket changes still preserve useful CPU/disk work.
+- The private throughput diagnostic isolates measured schedules from completed-result discovery and asserts actual native-call counts, preventing oracle leases from turning native timings into cache-hit timings.
 
-## Verification and limits
-- Editor production check and editor library/test clippy with warnings denied passed.
-- Complete affected editor domain, native development, provider and blocking-execution tests: 766 passed, 9 existing opt-in diagnostics ignored.
-- UI-test build passed; 17 composed activity, Analyze, export, dust-persistence, source-working and underlay tests passed on Metal.
-- Embedded-preview worker checks: production editor check and all 18 embedded-preview unit/workflow tests passed after removing its redundant semaphore.
-- Earlier focused acquisition, joining, cache/thumbnail and cancellation suites passed.
-- Full editor-feature library attempt reached unrelated spatial-math tests before a five-minute timeout. Its one editor cancellation-fixture failure was corrected; the completed editor-domain run includes that case. No full-library pass claimed.
-- No Windows runtime or native-window automation performed. GPU implementation files remain unchanged.
-- Shared checkout-local native dependencies; offline builds, no downloads/system installs. Disposable artifacts are in .cache/.
+Both retirement regression tests fail with their fixes disabled and pass when restored. No second review was requested after addressing findings.
 
-## Review and finishing state
-One independent fresh-context review examined the complete change, owning guides and test quality at case/assertion/fixture level. Its three actionable findings were confirmed and addressed:
-- Native retirement now removes unwanted tasks from join discovery atomically before worker-local cleanup; a late replacement starts fresh.
-- Thumbnail consumers drop pending provider futures when their document store closes, without using GPU-ticket changes to retire useful CPU/disk work.
-- The private native throughput diagnostic clears completed-result discovery between measured schedules and asserts actual native-call counts, keeping its oracle leases from turning execution measurements into cache-hit timing.
+## Verification
+- Final debug editor/provider/store/revision/cancellation/application suite: 784 passed, 9 existing opt-in diagnostics ignored.
+- Release native/provider/thumbnail workflows plus composed activity, Analyze, export, dust-persistence, source-working and underlay: 54 passed, 1 opt-in diagnostic ignored. The 17 composed UI cases also passed in debug on Metal.
+- Authored source-store/DNG integration: 27 passed, 2 existing opt-in checks ignored.
+- Core no-default-features suite passed.
+- UI-feature library/test clippy with warnings denied and separate production editor check passed after lifecycle fixes.
+- Focused native/provider/thumbnail lifecycle suite: 37 passed, 1 ignored. Negative controls: both new retirement regressions fail as intended without their fixes.
+- Final formatting, documentation links and diff checks passed. Shared checkout-local native dependencies; offline builds, no downloads/system installs. Disposable logs/artifacts are under .cache/.
 
-Both retirement regressions fail with their respective fixes disabled and pass after restoration. Combined native/provider/thumbnail workflow checks: 37 passed, 1 opt-in diagnostic ignored. No private diagnostic workload was run. Owning documentation now explains the provider/cache boundary with one compact diagram; format/link checks pass. UI-feature clippy with warnings denied, separate production editor check, core tests and authored source/DNG integrations also passed before the final retirement fixes.
+## Limits / handoff
+The whole editor-feature library debug attempt reached unrelated spatial-math tests before a five-minute timeout. Its one editor cancellation-fixture failure was fixed and included in the completed final editor-domain suite; no full-library pass is claimed. No Windows runtime, private throughput workload or native-window automation was performed.
 
-The final editor/provider/store/revision/cancellation/application regression sweep after these fixes passed: 784 tests, 9 opt-in diagnostics ignored. UI-feature clippy with warnings denied and the separate production editor check also passed.
-
-## Remaining / next actions
-1. Run the focused composed UI/source lifecycle checks in release; finish final format/documentation checks and record limits.
-2. Commit owning documentation and the final plan state. Do not push or open a PR.
+Implementation and local handoff are complete. Six coherent local commits cover foundation, consumer migration, global admission removal, embedded-preview simplification, reviewed retirement fixes and owning documentation. No push or PR performed. Await an explicit integration request before remote delivery.

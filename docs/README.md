@@ -31,7 +31,7 @@ Where each area's implementation lives — navigation, not specification. Follow
 | --- | --- | --- |
 | Processing | [processing](../src/processing.rs), [photographic](../src/photographic.rs), [colour](../src/color.rs) | Scalar reference, response and positive grading |
 | Adjustment layers | [scalar processing](../src/adjustment_layers.rs), [GPU grades](../src/gpu/adjustment_layers.rs), [editor routing](../src/editor/processing.rs) | Immutable snapshots, analytic masks, source-owned layers, whole-document admission |
-| RAW source | [raw](../src/raw.rs), [scan](../src/scan.rs), [source preparation](../src/editor/source.rs), [native bridge](../native/raw_bridge.cpp) | LibRaw ownership, camera RGB and capture diagnostics |
+| RAW source | [raw](../src/raw.rs), [scan](../src/scan.rs), [async acquisition/cache](../src/source_provider.rs), [source preparation](../src/editor/source.rs), [native bridge](../native/raw_bridge.cpp) | LibRaw ownership, camera RGB and capture diagnostics |
 | DNG backend | [adapter](../src/dng.rs), [native owner](../native/dng_bridge.cpp) | Direct SDK development and decode-free inspection in the shared source model |
 | Scan correction | [flat-field](../src/flat_field.rs), [GPU map](../src/gpu/flat.rs) | Source-coordinate illumination gains |
 | Image recipe and repairs | [accepted recipe](../src/image_recipe.rs), [source evaluator](../src/repair_source.rs), [repair model](../src/dust_repair.rs), [controller](../src/editor/dust.rs), [GPU patches](../src/gpu/repairs.rs) | Shared accepted recipe; consumer-owned repair execution |
@@ -44,8 +44,9 @@ Where each area's implementation lives — navigation, not specification. Follow
 | Viewer | [working owner](../src/editor/working_view.rs), [GPU view](../src/gpu/view.rs), [viewer](../src/viewer.rs), [original-view owner](../src/editor/original_view.rs), [refinement](../src/refinement.rs), [viewport](../src/viewport.rs) | Physical-view grading/inspection, original comparison, refinement |
 | Scopes | [measurement](../src/scopes.rs), [GPU reduction](../src/gpu_scopes.rs) | Approximate visible-image output statistics |
 | Editor | [editor](../src/editor.rs) and its feature modules | Live state, controls and transactions |
-| Workflows | [application](../src/application.rs), [blocking admission](../src/blocking_jobs.rs), [measurement](../src/editor/measurement.rs), [workflow modules](../src/editor/export_workflow.rs) | UI-thread async execution, borrowed UI context, off-thread services |
+| Workflows | [application](../src/application.rs), [blocking execution](../src/background.rs), [measurement](../src/editor/measurement.rs), [workflow modules](../src/editor/export_workflow.rs) | UI-thread async execution, borrowed UI context, off-thread services |
 | Persistence | [project](../src/project.rs), [document](../src/editor/document.rs), [document owner](../src/editor/document_scope.rs) | Accepted state, history and cache lifetime, compatibility |
+
 | Host | [host](../src/platform/host.rs), [macOS](../src/platform/macos.rs), [Windows](../src/platform/windows.rs), [full-display inspection](../src/platform/fullscreen.rs) | Event loop, surface, presentation, native menus, window coverage |
 | Branding | [assets](../assets/branding/README.md), [generator](../native/branding_assets.swift), [macOS packaging](../scripts/package-macos.py) | Portable artwork and relocatable local-test application bundle |
 
