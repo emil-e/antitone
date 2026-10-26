@@ -7,7 +7,11 @@ fn branded_header_preserves_menu_availability_and_processing_state() {
             for busy in [false, true] {
                 let mut editor = fixture();
                 editor.busy = busy;
-                let before = (editor.roll, editor.photo, editor.document.dirty());
+                let before = (
+                    editor.roll,
+                    editor.adjustment_layer_settings,
+                    editor.document.dirty(),
+                );
                 let context = egui::Context::default();
                 context.enable_accesskit();
                 let mut input = egui::RawInput {
@@ -52,7 +56,14 @@ fn branded_header_preserves_menu_availability_and_processing_state() {
                     !busy
                 );
                 assert!(!availability.enabled(crate::platform::menu::Action::Export));
-                assert_eq!((editor.roll, editor.photo, editor.document.dirty()), before);
+                assert_eq!(
+                    (
+                        editor.roll,
+                        editor.adjustment_layer_settings,
+                        editor.document.dirty()
+                    ),
+                    before
+                );
                 assert!(editor.pick.is_none());
                 assert!(editor.document.visit.crop_edit.is_none());
                 assert!(editor.document_pending.is_none());
@@ -273,6 +284,9 @@ fn section_scope_and_filmstrip_preferences_restore_in_a_fresh_context_without_pr
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("ui-preferences.json");
     let mut editor = fixture();
+    with_camera_basis(&mut editor);
+    editor.current_source = editor.document.project.order.first().copied();
+    editor.refresh_adjustment_layer_selection();
     editor.roll.exposure = 1.23456789;
     editor.sync_document();
     *editor.document = editor
@@ -304,6 +318,9 @@ fn section_scope_and_filmstrip_preferences_restore_in_a_fresh_context_without_pr
     let (store, restored) = preferences::Store::open(path).unwrap();
     assert_eq!(restored, editor.preferences);
     let mut reopened = fixture();
+    with_camera_basis(&mut reopened);
+    reopened.current_source = reopened.document.project.order.first().copied();
+    reopened.refresh_adjustment_layer_selection();
     reopened.apply_preferences(restored);
     reopened.preference_store = Some(store);
     let fresh = egui::Context::default();
@@ -459,7 +476,7 @@ fn rendering_target_selector_and_reset_retain_grade_and_draft_guards() {
     editor.tab = 2;
     let grade = (
         editor.roll,
-        editor.photo,
+        editor.adjustment_layer_settings,
         editor.dmin(),
         editor.dmax(),
         editor.crop,
@@ -489,7 +506,7 @@ fn rendering_target_selector_and_reset_retain_grade_and_draft_guards() {
     assert_eq!(
         (
             editor.roll,
-            editor.photo,
+            editor.adjustment_layer_settings,
             editor.dmin(),
             editor.dmax(),
             editor.crop

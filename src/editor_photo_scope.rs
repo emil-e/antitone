@@ -17,7 +17,7 @@ pub(super) struct PhotoScope {
     pub support: super::support_workflow::State,
     pub crop_edit: Option<super::CropEdit>,
     pub mask_edit: Option<super::MaskEdit>,
-    pub adjustments: super::Adjustments,
+    pub adjustment_layers: super::AdjustmentLayerEditor,
 }
 
 impl PhotoScope {
@@ -32,7 +32,7 @@ impl PhotoScope {
             support: Default::default(),
             crop_edit: None,
             mask_edit: None,
-            adjustments: Default::default(),
+            adjustment_layers: Default::default(),
         }
     }
 
@@ -51,10 +51,13 @@ impl PhotoScope {
 impl Editor {
     pub(super) fn replace_photo_scope(&mut self, view: u64) {
         let activity = self.document.visit.activity();
+        let layers = self.document.visit.adjustment_layers.selection_only();
         self.invalidate_original();
         self.working.clear();
         // Replacing the owner drops its task handles, cancelling their continuations.
         self.document.visit = PhotoScope::new(view);
+        // Temporary reference views retire gestures, not the selected layer's identity.
+        self.document.visit.adjustment_layers = layers;
         if let Some(activity) = activity
             && self.tasks.finish(activity)
         {

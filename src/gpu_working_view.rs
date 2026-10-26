@@ -2,9 +2,9 @@
 use super::*;
 use crate::processing::InputSettings;
 use crate::{
+    adjustment_layers::AdjustmentLayerSnapshot,
     frame_raster::FrameRaster,
     geometry::{Composition, TextureMapping},
-    local_adjustments::PhotoGradeSnapshot,
     rendering::OutputTarget,
     scan::Scan,
     viewer::GpuImage,
@@ -78,12 +78,7 @@ impl ViewSourceSpec {
         field: Option<Arc<crate::flat_field::FlatField>>,
     ) -> Result<Self, Error> {
         let input = input.into();
-        let neutral = ProcessingParameters::interpret(
-            input,
-            RollSettings::default(),
-            PhotoSettings::default(),
-            matrix,
-        )?;
+        let neutral = ProcessingParameters::interpret(input, RollSettings::default(), matrix)?;
         Self::with_parameters(authority, frame, matrix, neutral, field, false)
     }
 
@@ -811,7 +806,7 @@ impl ViewSource {
 struct GradedView {
     source: Arc<ViewSource>,
     // None is the linear source-inspection bypass, never an identity photographic grade.
-    grade: Option<Arc<GpuPhotoGrade>>,
+    grade: Option<Arc<GpuAdjustmentLayers>>,
     pixels: wgpu::Buffer,
     view: ViewUniform,
     submitted: Mutex<bool>,
@@ -858,18 +853,18 @@ impl RenderedView {
         source: Arc<ViewSource>,
         settings: impl Into<InputSettings>,
         roll: RollSettings,
-        snapshot: PhotoGradeSnapshot,
+        snapshot: AdjustmentLayerSnapshot,
         input: &ProcessingInput,
         target: OutputTarget,
         previous: Option<&Arc<Self>>,
     ) -> Result<Arc<Self>, Error> {
         let settings = settings.into();
-        let expected =
-            ProcessingParameters::interpret(settings, roll, snapshot.global(), source.spec.matrix)?;
+        let expected = ProcessingParameters::interpret(settings, roll, source.spec.matrix)?;
         if bytemuck::bytes_of(&expected) != bytemuck::bytes_of(&input.parameters())
-            || input
-                .grade()
-                .map_or(!snapshot.locals().is_empty(), |g| g.snapshot() != &snapshot)
+            || input.grade().map_or(
+                snapshot.layers().iter().any(|layer| layer.is_active()),
+                |g| g.snapshot() != &snapshot,
+            )
         {
             return Err(Error::Gpu(
                 "physical-view grade and processing identity differ".into(),
@@ -894,7 +889,7 @@ impl RenderedView {
         }
         let processing = input.signature();
         // Validate the entire candidate even for target-only reuse, before allocating/publishing it.
-        GpuPhotoGrade::validate_repaired(
+        GpuAdjustmentLayers::validate_repaired(
             device,
             settings,
             roll,
@@ -910,7 +905,7 @@ impl RenderedView {
             Some(graded) => graded,
             None => Arc::new(GradedView {
                 pixels: float_buffer(device, source.spec.frame.output)?,
-                grade: Some(Arc::new(GpuPhotoGrade::new(
+                grade: Some(Arc::new(GpuAdjustmentLayers::new(
                     device,
                     settings,
                     roll,

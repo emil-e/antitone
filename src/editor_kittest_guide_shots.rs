@@ -263,7 +263,9 @@ fn settle_view(harness: &mut Harness<'_, Editor>) {
         if e.working.revision().is_none() {
             return false;
         }
-        let expected = e.positive_processing(e.input(), e.roll, e.photo).unwrap();
+        let expected = e
+            .positive_processing(e.input(), e.roll, e.adjustment_layer_settings)
+            .unwrap();
         !e.working.updating
             && e.working.displayed.as_ref().is_some_and(|view| {
                 view.processing == expected.signature() && view.target == e.target

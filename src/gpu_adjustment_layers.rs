@@ -3,9 +3,9 @@ use super::{
 };
 use crate::{
     Error,
+    adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSnapshot},
     color::{Balance, ap1_to_cones},
     geometry::SourceRegion,
-    local_adjustments::{GradientMask, LocalAdjustment, PhotoGradeSnapshot},
     photographic::Grade,
     processing::{InputSettings, RollSettings},
 };
@@ -15,57 +15,68 @@ use wgpu::util::DeviceExt;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct LocalParameters {
+struct AdjustmentLayerParameters {
     values: [Vec4; 5],
     flags: [u32; 4],
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct LocalContext {
+struct AdjustmentLayerContext {
     cones: CameraMatrix,
     inverse: CameraMatrix,
     area: [u32; 4],
     count: [u32; 4],
 }
 
-/// Immutable global/local resources with f32 constant and intermediate-range validation.
+/// Immutable adjustment-layer resources with f32 constant and intermediate-range validation.
 /// Consumers own accepted-snapshot signatures and stale-result rejection.
-pub struct GpuPhotoGrade {
+pub struct GpuAdjustmentLayers {
     pub(super) parameters: ProcessingParameters,
     pub(super) buffer: wgpu::Buffer,
     pub(super) context: wgpu::Buffer,
-    snapshot: PhotoGradeSnapshot,
+    snapshot: AdjustmentLayerSnapshot,
     camera_to_ap1: DMat3,
     area: SourceRegion,
-    active: u32,
+    spatial: bool,
 }
 
 struct Prepared {
     parameters: ProcessingParameters,
-    packed: Vec<LocalParameters>,
+    packed: Vec<AdjustmentLayerParameters>,
     area: SourceRegion,
     active: u32,
 }
 
-impl GpuPhotoGrade {
+impl GpuAdjustmentLayers {
     /// Check the complete candidate and adapter limits without allocating GPU resources.
     pub fn validate(
         device: &wgpu::Device,
         input: impl Into<InputSettings>,
         roll: RollSettings,
-        snapshot: &PhotoGradeSnapshot,
+        snapshot: &AdjustmentLayerSnapshot,
         camera_to_ap1: DMat3,
         area: SourceRegion,
     ) -> Result<(), Error> {
-        Self::prepare(device, &input.into(), roll, snapshot, camera_to_ap1, area).map(|_| ())
+        Self::validate_limits(&device.limits(), input, roll, snapshot, camera_to_ap1, area)
+    }
+
+    pub fn validate_limits(
+        limits: &wgpu::Limits,
+        input: impl Into<InputSettings>,
+        roll: RollSettings,
+        snapshot: &AdjustmentLayerSnapshot,
+        camera_to_ap1: DMat3,
+        area: SourceRegion,
+    ) -> Result<(), Error> {
+        Self::prepare(limits, &input.into(), roll, snapshot, camera_to_ap1, area).map(|_| ())
     }
 
     pub fn new(
         device: &wgpu::Device,
         input: impl Into<InputSettings>,
         roll: RollSettings,
-        snapshot: PhotoGradeSnapshot,
+        snapshot: AdjustmentLayerSnapshot,
         camera_to_ap1: DMat3,
         area: SourceRegion,
     ) -> Result<Self, Error> {
@@ -74,13 +85,24 @@ impl GpuPhotoGrade {
             packed,
             area,
             active,
-        } = Self::prepare(device, &input.into(), roll, &snapshot, camera_to_ap1, area)?;
+        } = Self::prepare(
+            &device.limits(),
+            &input.into(),
+            roll,
+            &snapshot,
+            camera_to_ap1,
+            area,
+        )?;
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("immutable local photographic stages"),
+            label: Some("immutable photographic adjustment layers"),
             contents: bytemuck::cast_slice(&packed),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let context = context_buffer(device, active, [area.x, area.y, area.width, area.height])?;
+        let spatial = snapshot
+            .layers()
+            .iter()
+            .any(|layer| layer.is_active() && layer.mask != (AdjustmentLayerCoverage::Global {}));
         Ok(Self {
             parameters,
             buffer,
@@ -88,7 +110,7 @@ impl GpuPhotoGrade {
             snapshot,
             camera_to_ap1,
             area,
-            active,
+            spatial,
         })
     }
 
@@ -97,13 +119,13 @@ impl GpuPhotoGrade {
         device: &wgpu::Device,
         input: impl Into<InputSettings>,
         roll: RollSettings,
-        snapshot: &PhotoGradeSnapshot,
+        snapshot: &AdjustmentLayerSnapshot,
         camera_to_ap1: DMat3,
         area: SourceRegion,
         neutral_bound: DVec3,
     ) -> Result<(), Error> {
         Self::prepare_with_neutral_bound(
-            device,
+            &device.limits(),
             &input.into(),
             roll,
             snapshot,
@@ -115,15 +137,15 @@ impl GpuPhotoGrade {
     }
 
     fn prepare(
-        device: &wgpu::Device,
+        limits: &wgpu::Limits,
         input: &InputSettings,
         roll: RollSettings,
-        snapshot: &PhotoGradeSnapshot,
+        snapshot: &AdjustmentLayerSnapshot,
         camera_to_ap1: DMat3,
         area: SourceRegion,
     ) -> Result<Prepared, Error> {
         Self::prepare_with_neutral_bound(
-            device,
+            limits,
             input,
             roll,
             snapshot,
@@ -134,10 +156,10 @@ impl GpuPhotoGrade {
     }
 
     fn prepare_with_neutral_bound(
-        device: &wgpu::Device,
+        limits: &wgpu::Limits,
         input: &InputSettings,
         roll: RollSettings,
-        snapshot: &PhotoGradeSnapshot,
+        snapshot: &AdjustmentLayerSnapshot,
         camera_to_ap1: DMat3,
         area: SourceRegion,
         neutral_bound: DVec3,
@@ -149,32 +171,30 @@ impl GpuPhotoGrade {
         let (parameters, mut bound) = ProcessingParameters::interpret_with_neutral_bound(
             input,
             roll,
-            snapshot.global(),
             camera_to_ap1,
             neutral_bound,
         )?;
-        let active = u32::try_from(snapshot.locals().iter().filter(|a| a.is_active()).count())
-            .map_err(|_| Error::Gpu("too many local adjustments".into()))?;
+        let active = u32::try_from(snapshot.layers().iter().filter(|a| a.is_active()).count())
+            .map_err(|_| Error::Gpu("too many adjustment layers".into()))?;
         if active != 0 {
             SourceGeometry::new([area.x, area.y, area.width, area.height], [1, 1])?;
         }
-        let bytes = u64::from(active.max(1)) * std::mem::size_of::<LocalParameters>() as u64;
-        if bytes > device.limits().max_storage_buffer_binding_size
-            || bytes > device.limits().max_buffer_size
-        {
+        let bytes =
+            u64::from(active.max(1)) * std::mem::size_of::<AdjustmentLayerParameters>() as u64;
+        if bytes > limits.max_storage_buffer_binding_size || bytes > limits.max_buffer_size {
             return Err(Error::Gpu(
-                "local adjustments exceed GPU buffer limits".into(),
+                "adjustment layers exceed GPU buffer limits".into(),
             ));
         }
         let mut packed = Vec::with_capacity(active.max(1) as usize);
-        for adjustment in snapshot.locals().iter().copied().filter(|a| a.is_active()) {
+        for adjustment in snapshot.layers().iter().copied().filter(|a| a.is_active()) {
             let (peak, output) = stage_bounds(adjustment, bound)?;
             supported(peak)?;
             bound = output;
-            packed.push(LocalParameters::new(adjustment, area)?);
+            packed.push(AdjustmentLayerParameters::new(adjustment, area)?);
         }
         if packed.is_empty() {
-            packed.push(LocalParameters::zeroed());
+            packed.push(AdjustmentLayerParameters::zeroed());
         }
         Ok(Prepared {
             parameters,
@@ -184,21 +204,21 @@ impl GpuPhotoGrade {
         })
     }
 
-    pub fn snapshot(&self) -> &PhotoGradeSnapshot {
+    pub fn snapshot(&self) -> &AdjustmentLayerSnapshot {
         &self.snapshot
     }
 
     /// Retained local constants and context; excludes per-dispatch uniforms and driver overhead.
     #[cfg(feature = "editor")]
-    pub(crate) fn byte_len_for(snapshot: &PhotoGradeSnapshot) -> u64 {
+    pub(crate) fn byte_len_for(snapshot: &AdjustmentLayerSnapshot) -> u64 {
         let active = snapshot
-            .locals()
+            .layers()
             .iter()
             .filter(|local| local.is_active())
             .count()
             .max(1);
-        (active * std::mem::size_of::<LocalParameters>() + std::mem::size_of::<LocalContext>())
-            as u64
+        (active * std::mem::size_of::<AdjustmentLayerParameters>()
+            + std::mem::size_of::<AdjustmentLayerContext>()) as u64
     }
 
     pub fn byte_len(&self) -> u64 {
@@ -214,12 +234,12 @@ impl GpuPhotoGrade {
     pub(super) fn require_source(&self, source: &ProcessingSource) -> Result<(), Error> {
         if source.camera_to_ap1 != self.camera_to_ap1 {
             return Err(Error::Gpu(
-                "local grade and RGB16 source camera matrices differ".into(),
+                "adjustment layer grade and RGB16 source camera matrices differ".into(),
             ));
         }
-        if self.active != 0 || source.geometry.is_some_and(|g| g.is_pair()) {
+        if self.spatial || source.geometry.is_some_and(|g| g.is_pair()) {
             let geometry = source.geometry.ok_or_else(|| {
-                Error::Gpu("local grade requires original-source geometry".into())
+                Error::Gpu("adjustment layer grade requires original-source geometry".into())
             })?;
             // Refinement can pad a final tile; every real member still starts in this source.
             for region in geometry.regions() {
@@ -229,7 +249,7 @@ impl GpuPhotoGrade {
                     || region.y >= self.area.y + self.area.height
                 {
                     return Err(Error::Gpu(
-                        "local grade and source geometry regions differ".into(),
+                        "adjustment layer grade and source geometry regions differ".into(),
                     ));
                 }
             }
@@ -241,7 +261,7 @@ impl GpuPhotoGrade {
 fn supported(bound: f64) -> Result<(), Error> {
     if !bound.is_finite() || bound > f32::MAX as f64 / 4. {
         Err(Error::Gpu(
-            "local adjustments can exceed the f32 intermediate working range".into(),
+            "adjustment layers can exceed the f32 intermediate working range".into(),
         ))
     } else {
         Ok(())
@@ -252,7 +272,7 @@ fn absolute_product(matrix: DMat3, bound: DVec3) -> DVec3 {
     matrix.x_axis.abs() * bound.x + matrix.y_axis.abs() * bound.y + matrix.z_axis.abs() * bound.z
 }
 
-fn stage_bounds(adjustment: LocalAdjustment, input: f64) -> Result<(f64, f64), Error> {
+fn stage_bounds(adjustment: AdjustmentLayer, input: f64) -> Result<(f64, f64), Error> {
     let gain = (adjustment.photo.exposure * adjustment.strength)
         .max(0.)
         .exp2();
@@ -286,16 +306,19 @@ fn stage_bounds(adjustment: LocalAdjustment, input: f64) -> Result<(f64, f64), E
     Ok((peak.max(creative_peak), output))
 }
 
-impl LocalParameters {
-    fn new(adjustment: LocalAdjustment, area: SourceRegion) -> Result<Self, Error> {
+impl AdjustmentLayerParameters {
+    fn new(adjustment: AdjustmentLayer, area: SourceRegion) -> Result<Self, Error> {
         let (kind, origin, x_axis, y_axis, radii, feather) = match adjustment.mask {
-            GradientMask::Linear { start, end } => {
+            AdjustmentLayerCoverage::Global {} => {
+                (0, DVec2::ZERO, DVec2::ZERO, DVec2::ZERO, [1., 1.], 0.)
+            }
+            AdjustmentLayerCoverage::Linear { start, end } => {
                 let origin = DVec2::from_array(start.0);
                 let delta = DVec2::from_array(end.0) - origin;
                 let length = delta.x.hypot(delta.y);
                 (1, origin, delta / length, DVec2::ZERO, [length, 1.], 0.)
             }
-            GradientMask::Radial {
+            AdjustmentLayerCoverage::Radial {
                 center,
                 radii,
                 angle,
@@ -361,8 +384,8 @@ impl LocalParameters {
 
 pub(super) fn empty_buffer(device: &wgpu::Device) -> wgpu::Buffer {
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("empty local grade"),
-        contents: bytemuck::bytes_of(&LocalParameters::zeroed()),
+        label: Some("empty adjustment layer grade"),
+        contents: bytemuck::bytes_of(&AdjustmentLayerParameters::zeroed()),
         usage: wgpu::BufferUsages::STORAGE,
     })
 }
@@ -375,8 +398,8 @@ pub(super) fn context_buffer(
     let cones = ap1_to_cones();
     Ok(
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("local grade cone basis and source bounds"),
-            contents: bytemuck::bytes_of(&LocalContext {
+            label: Some("adjustment layer grade cone basis and source bounds"),
+            contents: bytemuck::bytes_of(&AdjustmentLayerContext {
                 cones: CameraMatrix::new(cones)?,
                 inverse: CameraMatrix::new(cones.inverse())?,
                 area,
@@ -390,10 +413,11 @@ pub(super) fn context_buffer(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adjustment_layers::AdjustmentLayerSettings;
     use crate::{
+        adjustment_layers::{AdjustmentLayerStack, weighted_settings},
         geometry::SourcePoint,
-        local_adjustments::{LocalGrade, weighted_settings},
-        processing::{InvertedPixel, PhotoSettings},
+        processing::InvertedPixel,
     };
 
     #[test]
@@ -402,11 +426,11 @@ mod tests {
             for contrast in [0.4, 0.65, 1.6] {
                 for saturation in [0., 1., 2.] {
                     for input in [0.00001, 0.0078125, 0.1, 1., 100.] {
-                        let photo = PhotoSettings {
+                        let photo = AdjustmentLayerSettings {
                             contrast,
                             pivot,
                             saturation,
-                            ..PhotoSettings::default()
+                            ..AdjustmentLayerSettings::default()
                         };
                         let grade = Grade::new(photo).unwrap();
                         let (_, bound) = grade.weighted_bounds(input, 1.);
@@ -438,12 +462,12 @@ mod tests {
     fn small_wb_bounds_preserve_the_signed_baseline_over_continuous_weights() {
         for warmth in [-1., -0.005, 0., 0.005, 1.] {
             for tint in [-1., -0.003, 0., 0.003, 1.] {
-                let adjustment = LocalAdjustment {
-                    mask: GradientMask::Linear {
+                let adjustment = AdjustmentLayer {
+                    mask: AdjustmentLayerCoverage::Linear {
                         start: SourcePoint([0., 0.]),
                         end: SourcePoint([1., 0.]),
                     },
-                    photo: PhotoSettings {
+                    photo: AdjustmentLayerSettings {
                         wb: Balance { warmth, tint },
                         ..Default::default()
                     },
@@ -471,12 +495,12 @@ mod tests {
 
     #[test]
     fn stage_bounds_cover_continuous_exposure_wb_and_creative_controls() {
-        let adjustment = LocalAdjustment {
-            mask: GradientMask::Linear {
+        let adjustment = AdjustmentLayer {
+            mask: AdjustmentLayerCoverage::Linear {
                 start: SourcePoint([0., 0.]),
                 end: SourcePoint([1., 0.]),
             },
-            photo: crate::processing::PhotoSettings {
+            photo: crate::adjustment_layers::AdjustmentLayerSettings {
                 exposure: 2.,
                 wb: Balance {
                     warmth: -1.,
@@ -491,7 +515,7 @@ mod tests {
             strength: 0.73,
         };
         let (_, bound) = stage_bounds(adjustment, 100.).unwrap();
-        let grade = LocalGrade::new(vec![adjustment]).unwrap();
+        let grade = AdjustmentLayerStack::new(vec![adjustment]).unwrap();
         for i in 0..=200 {
             for rgb in [
                 DVec3::splat(100.),

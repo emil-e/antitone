@@ -324,8 +324,8 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
 
     fn digital_proxy_pixels(e: &Editor, ready: &crate::editor::Ready) -> Vec<[f32; 4]> {
         use crate::{
+            adjustment_layers::AdjustmentLayerSnapshot,
             gpu::view::{RenderedView, ViewKernels, ViewSourceSpec},
-            local_adjustments::PhotoGradeSnapshot,
         };
         let services = e.source_services.as_ref().unwrap();
         let (device, queue) = (&services.device, &services.queue);
@@ -344,20 +344,19 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
                 spec,
             )
             .unwrap();
-        let parameters = ProcessingParameters::interpret(
-            InputSettings::Digital,
-            Default::default(),
-            Default::default(),
-            matrix,
-        )
-        .unwrap()
-        .into();
+        let parameters =
+            ProcessingParameters::interpret(InputSettings::Digital, Default::default(), matrix)
+                .unwrap()
+                .into();
         let view = RenderedView::new(
             device,
             source,
             InputSettings::Digital,
             Default::default(),
-            PhotoGradeSnapshot::new(Default::default(), vec![]).unwrap(),
+            AdjustmentLayerSnapshot::new(vec![crate::adjustment_layers::AdjustmentLayer::global(
+                Default::default(),
+            )])
+            .unwrap(),
             &parameters,
             e.target,
             None,

@@ -64,8 +64,9 @@ fn add_source(editor: &mut Editor, path: PathBuf) -> SourceId {
                     input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                 },
                 reference_only: false,
-                photo: PhotoSettings::default(),
-                local_adjustments: None,
+                adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
+                    AdjustmentLayerSettings::default(),
+                )),
                 repairs: Default::default(),
                 orientation: Default::default(),
                 crop: None,
@@ -182,8 +183,18 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                         height: 400,
                     }));
                 editor.roll.exposure = 1.25;
-                editor.photo.exposure = 0.75;
-                editor.document.project.source_mut(id).unwrap().photo = editor.photo;
+                editor.adjustment_layer_settings.exposure = 0.75;
+                editor
+                    .document
+                    .project
+                    .source_mut(id)
+                    .unwrap()
+                    .adjustment_layers
+                    .as_mut()
+                    .unwrap()
+                    .layers[0]
+                    .adjustment
+                    .photo = editor.adjustment_layer_settings;
                 editor.sync_document();
                 let before = editor.document.project.clone();
 
@@ -241,7 +252,11 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                             editor.source_parameters(2.).unwrap().into()
                         } else {
                             editor
-                                .positive_processing(editor.input, editor.roll, editor.photo)
+                                .positive_processing(
+                                    editor.input,
+                                    editor.roll,
+                                    editor.adjustment_layer_settings,
+                                )
                                 .unwrap()
                         };
                         let image = preview_image(editor, &expected);
@@ -306,7 +321,7 @@ fn cached_selected_images_do_not_alias_filmstrip_processing() {
                 let mut encoder = device.create_command_encoder(&Default::default());
                 let source = editor.source_parameters(2.).unwrap();
                 let positive = editor
-                    .positive_parameters(editor.input, editor.roll, editor.photo)
+                    .positive_parameters(editor.input, editor.roll)
                     .unwrap();
                 assert!(selected.prepare(&device, &mut encoder, source));
                 assert!(image.prepare(&device, &mut encoder, positive));
@@ -326,6 +341,7 @@ fn pending_replacements_ignore_old_ready_and_clear_on_failure_or_document_work()
         let editor = super::super::tests::fixture();
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
+                editor.initialize_viewer(&device, &queue);
                 editor.thumbnails = Thumbnails::with_disk(device, queue, Arc::default(), None);
                 let a = directory.path().join("a.ARW");
                 let b = directory.path().join("b.ARW");
@@ -461,6 +477,7 @@ fn authoritative_ready_replaces_pending_and_active_proxy_survives_optional_press
         let editor = super::super::tests::fixture();
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
+                editor.initialize_viewer(&device, &queue);
                 editor.thumbnails = Thumbnails::with_disk(device, queue, Arc::default(), None);
                 let path = directory.path().join("selected.ARW");
                 let id = add_source(editor, path.clone());
@@ -490,6 +507,13 @@ fn authoritative_ready_replaces_pending_and_active_proxy_survives_optional_press
                 assert!(!editor.busy);
                 assert!(!editor.selected_view().unwrap().2);
                 editor.source = false;
+                editor
+                    .view_processing(
+                        editor.input(),
+                        editor.roll,
+                        editor.adjustment_layer_settings,
+                    )
+                    .unwrap();
                 assert_eq!(editor.scope_input().err(), Some("Waiting for view"));
                 editor.last_layout = Some((
                     editor.viewport.layout(
@@ -508,9 +532,9 @@ fn authoritative_ready_replaces_pending_and_active_proxy_survives_optional_press
 #[test]
 fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
     use crate::{
+        adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
         geometry::SourcePoint,
-        local_adjustments::{GradientMask, LocalAdjustment},
-        project::LocalAdjustments,
+        project::AdjustmentLayers,
     };
     pollster::block_on(async {
         let (device, queue) = gpu().await;
@@ -535,16 +559,16 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                     .get_proxy(&source_key.store_key_at(&path).unwrap())
                     .unwrap();
 
-                let mut locals = LocalAdjustments::default();
-                locals
+                let mut layers = AdjustmentLayers::default();
+                layers
                     .add(
                         "Linear".into(),
-                        LocalAdjustment {
-                            mask: GradientMask::Linear {
+                        AdjustmentLayer {
+                            mask: AdjustmentLayerCoverage::Linear {
                                 start: SourcePoint([12., 7.]),
                                 end: SourcePoint([876., 583.]),
                             },
-                            photo: PhotoSettings {
+                            photo: AdjustmentLayerSettings {
                                 exposure: 1.,
                                 ..Default::default()
                             },
@@ -559,7 +583,7 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                     .project
                     .source_mut(id)
                     .unwrap()
-                    .local_adjustments = Some(locals);
+                    .adjustment_layers = Some(layers);
 
                 editor.load(path.clone(), cx);
                 assert!(editor.document.visit.source.pending());
@@ -567,7 +591,11 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                 assert!(editor.busy);
                 assert!(editor.document.visit.ready.is_none());
                 let captured = editor
-                    .positive_processing(editor.input, editor.roll, editor.photo)
+                    .positive_processing(
+                        editor.input,
+                        editor.roll,
+                        editor.adjustment_layer_settings,
+                    )
                     .unwrap();
                 let context = egui::Context::default();
                 let mut renderer = egui_wgpu::Renderer::new(
@@ -629,10 +657,10 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                         .project
                         .source_mut(id)
                         .unwrap()
-                        .local_adjustments
+                        .adjustment_layers
                         .as_mut()
                         .unwrap()
-                        .adjustments[0]
+                        .layers[0]
                         .adjustment
                         .invert = true;
                     draw(
@@ -675,10 +703,10 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                         .project
                         .source_mut(id)
                         .unwrap()
-                        .local_adjustments
+                        .adjustment_layers
                         .as_mut()
                         .unwrap()
-                        .adjustments[0]
+                        .layers[0]
                         .adjustment
                         .invert = false;
                 }

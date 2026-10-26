@@ -5,14 +5,15 @@
     feature = "ocio-reference",
     target_os = "macos"
 ))]
+use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
+    adjustment_layers::{AdjustmentLayerPipeline, AdjustmentLayerSnapshot},
     export::{self, ExrPrecision, Overwrite},
     geometry::{Composition, PhotoOrientation, RollOrientation},
     gpu::SubmissionGate,
     gpu_export::{self, Format, Request},
-    local_adjustments::{PhotoGradeSnapshot, SpatialPipeline},
     looks::{LookAsset, LookOrigin, Lut3D},
-    processing::{Calibration, InputSettings, PhotoSettings, RollSettings},
+    processing::{Calibration, InputSettings, RollSettings},
     renderer::GpuRenderer,
     rendering::OutputTarget,
     scan::Scan,
@@ -35,7 +36,7 @@ fn fixture() -> (
     Scan,
     Calibration,
     RollSettings,
-    PhotoGradeSnapshot,
+    AdjustmentLayerSnapshot,
     Composition,
 ) {
     let scan = Scan::open(
@@ -48,7 +49,11 @@ fn fixture() -> (
         dmax: DVec3::splat(128. / 4031.),
         input_floor: scan.input_floor,
     };
-    let grade = PhotoGradeSnapshot::new(PhotoSettings::default(), vec![]).unwrap();
+    let grade =
+        AdjustmentLayerSnapshot::new(vec![antitone::adjustment_layers::AdjustmentLayer::global(
+            AdjustmentLayerSettings::default(),
+        )])
+        .unwrap();
     let composition = Composition::new(
         scan.area,
         RollOrientation::default(),
@@ -127,7 +132,7 @@ fn compare_tiff(repaired: bool) {
         vec![]
     };
     let asset = look([-2.; 3], [2.; 3]);
-    let pipeline = SpatialPipeline::new(
+    let pipeline = AdjustmentLayerPipeline::new(
         InputSettings::negative(scan.processing_calibration(calibration).unwrap()),
         roll,
         grade.clone(),
@@ -274,7 +279,7 @@ fn compare_exr(repaired: bool) {
 fn narrow_lut_renders_crop_and_full_image_and_invalid_settings_preserve_destination() {
     let (device, queue, renderer) = context();
     let (scan, calibration, roll, grade, composition) = fixture();
-    let pipeline = SpatialPipeline::new(
+    let pipeline = AdjustmentLayerPipeline::new(
         InputSettings::negative(scan.processing_calibration(calibration).unwrap()),
         roll,
         grade.clone(),

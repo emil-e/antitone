@@ -27,6 +27,7 @@ fn headroom_survives_gpu_inspection_inversion_and_residual_gains_without_lut_ind
             &source,
             pixels.len(),
             ProcessingParameters::source(),
+            None,
         );
         for (input, output) in pixels.iter().zip(inspected) {
             for c in 0..3 {
@@ -79,16 +80,36 @@ fn headroom_survives_gpu_inspection_inversion_and_residual_gains_without_lut_ind
                     balance: Default::default(),
                 };
                 let roll = RollSettings::default();
-                let photo = PhotoSettings::default();
+                let photo = AdjustmentLayerSettings::default();
                 let parameters =
-                    ProcessingParameters::interpret(input, roll, photo, DMat3::IDENTITY).unwrap();
-                let output = process(&device, &queue, &kernel, &source, pixels.len(), parameters);
-                let scalar = Pipeline::new(input, roll, photo, DMat3::IDENTITY).unwrap();
+                    ProcessingParameters::interpret(input, roll, DMat3::IDENTITY).unwrap();
+                let output = process(
+                    &device,
+                    &queue,
+                    &kernel,
+                    &source,
+                    pixels.len(),
+                    parameters,
+                    None,
+                );
+                let scalar = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+                    antitone::adjustment_layers::AdjustmentLayer::global(photo),
+                ])
+                .and_then(|layers| {
+                    antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+                        input,
+                        roll,
+                        layers,
+                        DMat3::IDENTITY,
+                    )
+                })
+                .unwrap();
                 for (input, output) in pixels.iter().zip(output) {
                     let expected = scalar
                         .apply(
                             DVec3::new(input[0] as f64, input[1] as f64, input[2] as f64) / 65535.
                                 * gain,
+                            [0, 0],
                         )
                         .unwrap();
                     for c in 0..3 {

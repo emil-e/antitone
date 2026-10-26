@@ -20,8 +20,9 @@ fn source(model: &str, matrix: DMat3) -> Source {
             input_floor: CAMERA_INPUT_FLOOR,
         },
         reference_only: false,
-        photo: Default::default(),
-        local_adjustments: None,
+        adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
+            Default::default(),
+        )),
         repairs: Default::default(),
         orientation: Default::default(),
         crop: None,
@@ -48,7 +49,6 @@ fn project() -> Project {
 
 #[test]
 fn saved_gamma_is_explicit_and_preserved_independently_of_the_new_grade_default() {
-    use antitone::processing::Pipeline;
     assert_eq!(
         match Project::default().input {
             InputSettings::Negative { gamma, .. } => gamma,
@@ -76,11 +76,25 @@ fn saved_gamma_is_explicit_and_preserved_independently_of_the_new_grade_default(
             *selected = response;
         }
         let positive = |p: &Project| {
-            Pipeline::new(p.input, p.roll, p.sources[0].photo, DMat3::IDENTITY)
-                .unwrap()
-                .apply(DVec3::new(0.02, 0.05, 0.08))
-                .unwrap()
-                .rgb
+            antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+                antitone::adjustment_layers::AdjustmentLayer::global(
+                    p.sources[0].adjustment_layers.as_ref().unwrap().layers[0]
+                        .adjustment
+                        .photo,
+                ),
+            ])
+            .and_then(|layers| {
+                antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+                    p.input,
+                    p.roll,
+                    layers,
+                    DMat3::IDENTITY,
+                )
+            })
+            .unwrap()
+            .apply(DVec3::new(0.02, 0.05, 0.08), [0, 0])
+            .unwrap()
+            .rgb
         };
         let before = positive(&p);
         p.save(&path, Save::Replace).unwrap();

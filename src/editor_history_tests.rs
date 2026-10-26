@@ -53,8 +53,8 @@ fn round_trip(mut editor: Editor, before: &Project, after: &Project) -> Editor {
 #[test]
 fn authored_history_restores_import_crop_dust_local_and_analysis_through_the_real_worker() {
     use crate::{
+        adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
         geometry::SourcePoint,
-        local_adjustments::{GradientMask, LocalAdjustment},
     };
     let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default()))
@@ -123,15 +123,15 @@ fn authored_history_restores_import_crop_dust_local_and_analysis_through_the_rea
     editor.finish_dust_cleanup();
 
     editor
-        .edit_adjustments(|locals| {
-            locals.add(
+        .edit_adjustment_layers(|layers| {
+            layers.add(
                 "Gradient".into(),
-                LocalAdjustment {
-                    mask: GradientMask::Linear {
+                AdjustmentLayer {
+                    mask: AdjustmentLayerCoverage::Linear {
                         start: SourcePoint([128., 128.]),
                         end: SourcePoint([320., 128.]),
                     },
-                    photo: PhotoSettings::default(),
+                    photo: AdjustmentLayerSettings::default(),
                     enabled: true,
                     invert: false,
                     strength: 1.,
@@ -148,12 +148,12 @@ fn authored_history_restores_import_crop_dust_local_and_analysis_through_the_rea
             .project
             .source(id)
             .unwrap()
-            .local_adjustments
+            .adjustment_layers
             .as_ref()
             .unwrap()
-            .adjustments
+            .layers
             .len(),
-        1
+        2
     );
 
     editor.document.project.analysis_area = Some([96, 96, 320, 320]);
@@ -235,21 +235,21 @@ fn accepted_history_restores_exact_settings_and_activates_the_edited_photo_witho
     let mut editor = controller();
     let ids = editor.document.project.order.clone();
     let before = editor.history_snapshot();
-    editor.photo.exposure = 7.123456789012345;
+    editor.adjustment_layer_settings.exposure = 7.123456789012345;
     editor.record_edit(before.clone(), "Photo exposure", Some(ids[0]));
     let after = editor.document.project.clone();
     editor.current_source = Some(ids[1]);
-    editor.photo = PhotoSettings::default();
+    editor.adjustment_layer_settings = AdjustmentLayerSettings::default();
     editor.viewport.zoom = Some(1.75);
     let viewport = editor.viewport;
     editor = accept_history(editor, Direction::Undo);
     assert_eq!(editor.document.project, before);
     assert_eq!(editor.current_source, Some(ids[0]));
-    assert_eq!(editor.photo.exposure, 0.);
+    assert_eq!(editor.adjustment_layer_settings.exposure, 0.);
     assert_eq!(editor.viewport, viewport);
     editor = accept_history(editor, Direction::Redo);
     assert_eq!(editor.document.project, after);
-    assert_eq!(editor.photo.exposure, 7.123456789012345);
+    assert_eq!(editor.adjustment_layer_settings.exposure, 7.123456789012345);
     assert_eq!(editor.viewport, viewport);
 }
 
@@ -261,7 +261,7 @@ fn save_as_rebases_both_sides_of_history_and_preserves_the_written_dirty_baselin
     let mut editor = controller();
     editor.document.path = Some(old.clone());
     let before = editor.history_snapshot();
-    editor.photo.exposure = 1.;
+    editor.adjustment_layer_settings.exposure = 1.;
     editor.record_edit(before, "Exposure", editor.current_source);
     let saved = editor.document.save(&new, crate::project::Save::New);
     // The destination directory is intentionally absent: ordinary failed writes do not
@@ -402,9 +402,13 @@ fn unchanged_control_passes_do_not_clone_projects_and_local_edits_capture_their_
     assert!(editor.document.history.undo.is_empty());
 
     editor.begin_control_history("Photo settings");
-    // A saved empty local collection is a metadata edit even though its processing
-    // and all scalar controls are unchanged. It must retain the pre-edit project.
-    editor.edit_adjustments(|_| Ok(())).unwrap();
+    // Renaming changes saved metadata without changing photographic controls.
+    editor
+        .edit_adjustment_layers(|layers| {
+            layers.layers[0].name = "Renamed".into();
+            Ok(())
+        })
+        .unwrap();
     assert_eq!(editor.history_snapshot_clones, 1);
     assert!(
         editor.document.history.undo.is_empty(),
@@ -418,7 +422,7 @@ fn unchanged_control_passes_do_not_clone_projects_and_local_edits_capture_their_
             .after
             .source(editor.current_source.unwrap())
             .unwrap()
-            .local_adjustments
+            .adjustment_layers
             .is_some()
     );
 
@@ -435,7 +439,7 @@ fn scalar_control_edits_materialize_exact_before_and_after_projects_only_after_a
     let original = editor.history_snapshot();
     editor.history_snapshot_clones = 0;
     editor.begin_control_history("Photo settings");
-    editor.photo.exposure = 7.123456789012345;
+    editor.adjustment_layer_settings.exposure = 7.123456789012345;
     assert_eq!(
         editor.history_snapshot_clones, 0,
         "capture contains only small control values"
@@ -449,6 +453,11 @@ fn scalar_control_edits_materialize_exact_before_and_after_projects_only_after_a
             .after
             .source(source)
             .unwrap()
+            .adjustment_layers
+            .as_ref()
+            .unwrap()
+            .layers[0]
+            .adjustment
             .photo
             .exposure,
         7.123456789012345

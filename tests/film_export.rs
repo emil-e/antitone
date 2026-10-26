@@ -1,10 +1,9 @@
 #![cfg(all(feature = "export", feature = "ocio-reference", target_os = "macos"))]
+use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
     color::{Balance, ap1_to_ap0},
     export::{self, ExrPrecision, ImageSize, Overwrite},
-    processing::{
-        Calibration, DEFAULT_GAMMA, InputSettings, PhotoSettings, Pipeline, Response, RollSettings,
-    },
+    processing::{Calibration, DEFAULT_GAMMA, InputSettings, Response, RollSettings},
     rendering::{CpuRenderer, OutputTarget},
 };
 use exr::prelude::*;
@@ -36,12 +35,23 @@ fn film_exports_reopen_with_unchanged_target_and_ap0_pixels() {
         gamma: DEFAULT_GAMMA,
         balance: Balance::default(),
     };
-    let photo = PhotoSettings {
+    let photo = AdjustmentLayerSettings {
         contrast: 1.2,
         saturation: 1.3,
-        ..PhotoSettings::default()
+        ..AdjustmentLayerSettings::default()
     };
-    let pipeline = Pipeline::new(input, roll, photo, glam::DMat3::IDENTITY).unwrap();
+    let pipeline = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+        antitone::adjustment_layers::AdjustmentLayer::global(photo),
+    ])
+    .and_then(|layers| {
+        antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+            input,
+            roll,
+            layers,
+            glam::DMat3::IDENTITY,
+        )
+    })
+    .unwrap();
     let scans = [
         cal.dmin * (1. - 1e-12),
         cal.dmin * (1. + 1e-12),
@@ -51,7 +61,7 @@ fn film_exports_reopen_with_unchanged_target_and_ap0_pixels() {
     ];
     let working: Vec<_> = scans
         .into_iter()
-        .map(|s| pipeline.apply(s).unwrap().rgb)
+        .map(|s| pipeline.apply(s, [0, 0]).unwrap().rgb)
         .collect();
     let size = ImageSize {
         width: 5,

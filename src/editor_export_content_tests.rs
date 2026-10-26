@@ -38,7 +38,7 @@ fn cold_batch_pixels_match_each_sources_accepted_grade_not_active_or_later_setti
     }
     let scalar = |source: usize, grade: usize| {
         let scan = &scans[source];
-        let pipeline = crate::local_adjustments::SpatialPipeline::new(
+        let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
             scan.processing_calibration(calibration).unwrap(),
             project.roll,
             grades[grade].clone(),
@@ -62,13 +62,18 @@ fn cold_batch_pixels_match_each_sources_accepted_grade_not_active_or_later_setti
     settings.precision = ExrPrecision::Full;
     let request = editor.batch_input(&settings).unwrap();
     editor.roll.exposure += 1.;
-    editor.photo.exposure += 2.;
+    editor.adjustment_layer_settings.exposure += 2.;
     editor.sync_document();
     editor
         .document
         .project
         .source_mut(project.order[1])
         .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .layers[0]
+        .adjustment
         .photo
         .exposure = -2.;
     let services = editor.export_services.take().unwrap();

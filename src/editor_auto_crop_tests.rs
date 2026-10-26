@@ -61,7 +61,10 @@ pub(super) fn fixture() -> (Editor, tempfile::TempDir) {
         let mut s = editor.document.project.source(id).unwrap().clone();
         s.id = SourceId(0);
         s.path = directory.path().join(format!("photo-{i}.ARW"));
-        s.photo.exposure = i as f64 / 10.;
+        s.adjustment_layers.as_mut().unwrap().layers[0]
+            .adjustment
+            .photo
+            .exposure = i as f64 / 10.;
         std::fs::write(&s.path, b"metadata-only source fixture").unwrap();
         editor.document.project.add_source(s).unwrap();
     }
@@ -112,16 +115,16 @@ fn batch_crop_closes_local_editing_and_preserves_masks_on_apply_and_cancel() {
         e.tab = 1;
         e.source = false;
         let id = e.current_source.unwrap();
-        let mut locals = crate::project::LocalAdjustments::default();
-        let local = locals
+        let mut layers = crate::project::AdjustmentLayers::default();
+        let local = layers
             .add(
                 "Sky".into(),
-                crate::local_adjustments::LocalAdjustment {
-                    mask: crate::local_adjustments::GradientMask::Linear {
+                crate::adjustment_layers::AdjustmentLayer {
+                    mask: crate::adjustment_layers::AdjustmentLayerCoverage::Linear {
                         start: crate::geometry::SourcePoint([100., 80.]),
                         end: crate::geometry::SourcePoint([650., 450.]),
                     },
-                    photo: PhotoSettings {
+                    photo: AdjustmentLayerSettings {
                         exposure: 0.25,
                         ..Default::default()
                     },
@@ -131,33 +134,37 @@ fn batch_crop_closes_local_editing_and_preserves_masks_on_apply_and_cancel() {
                 },
             )
             .unwrap();
-        e.document.project.source_mut(id).unwrap().local_adjustments = Some(locals.clone());
-        e.select_adjustment(adjustments::Target::Local(local));
+        e.document.project.source_mut(id).unwrap().adjustment_layers = Some(layers.clone());
+        e.refresh_adjustment_layer_selection();
+        e.select_adjustment_layer(adjustment_layers::Target::Layer(local));
         assert!(e.mask_handles_available());
         let before = e.document.project.clone();
         e.auto_crop(Target::Roll);
         assert!(e.auto_crop_valid());
-        assert!(!e.document.visit.adjustments.drawer_open());
-        assert_eq!(e.adjustment_target(), adjustments::Target::Global);
+        assert!(e.document.visit.mask_edit.is_none());
+        assert_eq!(
+            e.adjustment_layer_target(),
+            adjustment_layers::Target::Layer(local)
+        );
         assert_eq!(e.document.project, before);
 
-        // A late local action cannot compete even if its previous drawer state returns.
-        e.open_adjustments();
+        // A late layer action cannot compete with the active crop draft.
+        e.reveal_adjustment_layers();
         assert!(!e.mask_handles_available());
-        assert!(!e.adjustment_owns_delete());
+        assert!(!e.adjustment_layer_owns_delete());
         e.begin_linear_mask(None);
         e.begin_radial_mask(None);
-        e.delete_selected_adjustment();
+        e.delete_selected_adjustment_layer();
         assert!(e.document.visit.mask_edit.is_none());
-        assert!(!e.document.visit.adjustments.confirming());
+        assert!(!e.document.visit.adjustment_layers.confirming());
         assert_eq!(e.document.project, before);
-        e.close_adjustments();
+        e.finish_adjustment_layer_interaction();
 
         e.finish_auto_crop(apply);
         assert!(e.document.auto_crop_edit.is_none(), "{}", e.status);
         assert_eq!(
-            e.document.project.source(id).unwrap().local_adjustments,
-            Some(locals)
+            e.document.project.source(id).unwrap().adjustment_layers,
+            Some(layers)
         );
         let mut expected = before;
         if apply {

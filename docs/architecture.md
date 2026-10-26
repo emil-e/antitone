@@ -27,7 +27,7 @@ Editor state is nested scopes rather than one flat struct ([`editor_document_sco
 | Scope | Owns |
 | --- | --- |
 | [`DocumentScope`](../src/editor_document_scope.rs) | Accepted document data, history, [derived spatial metadata](spatial-metadata.md), cache lifetime and the dependent photo visit |
-| [`PhotoScope`](../src/editor_photo_scope.rs) | One visit: source demand/readiness, measurement and working-source tasks, manual Crop drafts, local mask gestures, the Adjustments UI context |
+| [`PhotoScope`](../src/editor_photo_scope.rs) | One visit: source demand/readiness, measurement and working-source tasks, manual Crop drafts, local mask gestures, the adjustment-layer selection |
 | [`GradeScope`](../src/editor_grade_scope.rs) | The effective processing identity and the purpose-bound original-reconstruction task |
 
 Navigation creates fresh visits. Retiring one discards its transient tools without accepting geometry or changing source-owned adjustments; a rejected navigation or failed candidate preserves the current visit. A captured document is a data snapshot, not a cloned owner or history: retiring the owner closes publication even while snapshots and pixel leases stay alive. Accepted state, drafts and durable preferences are separated in [editor](editor.md#accepted-state-and-drafts).
@@ -59,7 +59,7 @@ User Cancel keeps the continuation and cancelling feedback until acknowledgement
 
 - **Native development is consumed, not shared.** A mutable `RawFile` stays worker-local; a successful development becomes private frozen native ownership. A [`Scan`](../src/scan.rs) leases an immutable `DevelopedSource` — native RGB16, Sony-corrected f32 or direct-SDK DNG f32 samples with original CFA and metadata — keeping its own illumination-correction context. Leases share sample storage, and final destruction follows the last lease, including synchronized transfer to another thread.
 - **One wgpu device/queue and one export engine** ([`gpu_export_area.rs`](../src/gpu_export_area.rs)) serve TIFF and EXR, view rendering and repairs; mutable processing state stays image/job-owned. The shared submission gate ([`gpu_submission.rs`](../src/gpu_submission.rs)) excludes new submissions while wgpu drains GPU work during a resize.
-- **Grade routing reuses immutable constants by complete processing content** — roll WB plus ordered locals — so view state and metadata never recreate grades. [Output](colour-and-output.md#tiff-and-exr-serve-different-purposes) owns reconstruction and lifetime detail.
+- **Grade routing reuses immutable constants by complete processing content** — roll WB plus ordered adjustment layers — so view state and metadata never recreate grades. [Output](colour-and-output.md#tiff-and-exr-serve-different-purposes) owns reconstruction and lifetime detail.
 - **Image recipes capture accepted intent** ([processing](processing.md#one-accepted-image-recipe)): viewer, reference, scopes and export share accepted repairs; [navigation thumbnails](editor.md#positive-thumbnail-reuse) prioritize inexpensive proxy rendering.
 
 ## UI test boundary

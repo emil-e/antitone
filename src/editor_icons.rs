@@ -25,6 +25,8 @@ pub(super) enum Icon {
     Analyze,
     LinearGradient,
     RadialGradient,
+    GlobalAdjustmentLayer,
+    AddGlobalAdjustmentLayer,
     AddLinearGradient,
     AddRadialGradient,
     Pick,
@@ -207,11 +209,17 @@ impl Icon {
                 line(&[[4., 1.], [4., 12.], [15., 12.]]);
                 line(&[[1., 4.], [12., 4.], [12., 15.]]);
             }
-            Self::AddLinearGradient | Self::AddRadialGradient => {
+            Self::GlobalAdjustmentLayer => {
+                line(&[[2., 2.], [14., 2.], [14., 14.], [2., 14.], [2., 2.]]);
+                line(&[[5., 8.], [11., 8.]]);
+            }
+            Self::AddGlobalAdjustmentLayer | Self::AddLinearGradient | Self::AddRadialGradient => {
                 let base = if matches!(self, Self::AddLinearGradient) {
                     Self::LinearGradient
-                } else {
+                } else if matches!(self, Self::AddRadialGradient) {
                     Self::RadialGradient
+                } else {
+                    Self::GlobalAdjustmentLayer
                 };
                 base.paint(ui, rect.translate(egui::vec2(-2., -2.)), stroke);
                 line(&[[10., 13.], [16., 13.]]);

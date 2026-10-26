@@ -1,12 +1,17 @@
 #![cfg(all(feature = "gpu", target_os = "macos"))]
+use antitone::adjustment_layers::{
+    AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
+};
+use antitone::{geometry::SourceRegion, gpu::GpuAdjustmentLayers};
 
 use antitone::color::Balance;
 use antitone::gpu::{ProcessingKernel, ProcessingParameters, ProcessingSource};
 use antitone::processing::{
-    Calibration, DEFAULT_GAMMA, InputSettings, NegativeInput, PhotoSettings, Pipeline, Response,
-    RollSettings,
+    Calibration, DEFAULT_GAMMA, InputSettings, NegativeInput, Response, RollSettings,
 };
 use glam::{DMat3, DVec3, Vec4};
+#[path = "support/photographic_reference.rs"]
+mod reference;
 
 fn negative(cal: Calibration, gamma: f64, balance: Balance) -> NegativeInput {
     NegativeInput {
@@ -95,7 +100,7 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        let mut configurations = vec![(None, ProcessingParameters::source())];
+        let mut configurations = vec![(None, None)];
         for gamma in [0.1, DEFAULT_GAMMA, 0.65, 1.0, 3.0] {
             for balance in [
                 Balance::default(),
@@ -109,18 +114,47 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
                     exposure: 1.5,
                     ..RollSettings::default()
                 };
-                let photo = PhotoSettings {
+                let photo = AdjustmentLayerSettings {
                     exposure: -1.0,
                     wb: Balance {
                         warmth: 0.2,
                         tint: -0.1,
                     },
-                    ..PhotoSettings::default()
+                    ..AdjustmentLayerSettings::default()
                 };
-                let parameters =
-                    ProcessingParameters::positive(interpretation, roll, photo, matrix).unwrap();
+                let parameters = AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(photo)])
+                    .and_then(|snapshot| {
+                        GpuAdjustmentLayers::new(
+                            &device,
+                            interpretation,
+                            roll,
+                            snapshot,
+                            matrix,
+                            SourceRegion {
+                                x: 0,
+                                y: 0,
+                                width: pixels.len() as u32,
+                                height: 1,
+                            },
+                        )
+                    })
+                    .map(Some)
+                    .unwrap();
                 configurations.push((
-                    Some(Pipeline::new(as_input(interpretation), roll, photo, matrix).unwrap()),
+                    Some(
+                        antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+                            antitone::adjustment_layers::AdjustmentLayer::global(photo),
+                        ])
+                        .and_then(|layers| {
+                            antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+                                as_input(interpretation),
+                                roll,
+                                layers,
+                                matrix,
+                            )
+                        })
+                        .unwrap(),
+                    ),
                     parameters,
                 ));
             }
@@ -134,21 +168,42 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
             exposure: -16.0,
             ..Default::default()
         };
-        let attenuated_photo = PhotoSettings {
+        let attenuated_photo = AdjustmentLayerSettings {
             exposure: -16.0,
             ..Default::default()
         };
         configurations.push((
             Some(
-                Pipeline::new(
-                    as_input(attenuated),
-                    attenuated_roll,
-                    attenuated_photo,
-                    matrix,
-                )
+                antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+                    antitone::adjustment_layers::AdjustmentLayer::global(attenuated_photo),
+                ])
+                .and_then(|layers| {
+                    antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+                        as_input(attenuated),
+                        attenuated_roll,
+                        layers,
+                        matrix,
+                    )
+                })
                 .unwrap(),
             ),
-            ProcessingParameters::positive(attenuated, attenuated_roll, attenuated_photo, matrix)
+            AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(attenuated_photo)])
+                .and_then(|snapshot| {
+                    GpuAdjustmentLayers::new(
+                        &device,
+                        attenuated,
+                        attenuated_roll,
+                        snapshot,
+                        matrix,
+                        SourceRegion {
+                            x: 0,
+                            y: 0,
+                            width: pixels.len() as u32,
+                            height: 1,
+                        },
+                    )
+                })
+                .map(Some)
                 .unwrap(),
         ));
         for contrast in [0.4, 0.5, 0.8, 1.2, 1.5, 1.6] {
@@ -163,7 +218,7 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
                                 },
                                 ..RollSettings::default()
                             };
-                            let photo = PhotoSettings {
+                            let photo = AdjustmentLayerSettings {
                                 contrast,
                                 pivot,
                                 contrast_colour_mix: colour,
@@ -178,10 +233,38 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
                             let interpretation = negative(cal, DEFAULT_GAMMA, Balance::default());
                             configurations.push((
                                 Some(
-                                    Pipeline::new(as_input(interpretation), roll, photo, matrix)
-                                        .unwrap(),
+                                    antitone::adjustment_layers::AdjustmentLayerSnapshot::new(
+                                        vec![antitone::adjustment_layers::AdjustmentLayer::global(
+                                            photo,
+                                        )],
+                                    )
+                                    .and_then(|layers| {
+                                        antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+                                            as_input(interpretation),
+                                            roll,
+                                            layers,
+                                            matrix,
+                                        )
+                                    })
+                                    .unwrap(),
                                 ),
-                                ProcessingParameters::positive(interpretation, roll, photo, matrix)
+                                AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(photo)])
+                                    .and_then(|snapshot| {
+                                        GpuAdjustmentLayers::new(
+                                            &device,
+                                            interpretation,
+                                            roll,
+                                            snapshot,
+                                            matrix,
+                                            SourceRegion {
+                                                x: 0,
+                                                y: 0,
+                                                width: pixels.len() as u32,
+                                                height: 1,
+                                            },
+                                        )
+                                    })
+                                    .map(Some)
                                     .unwrap(),
                             ));
                         }
@@ -191,7 +274,18 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
         }
         for (pipeline, parameters) in configurations {
             let mut encoder = device.create_command_encoder(&Default::default());
-            kernel.encode(&device, &mut encoder, &input, &output, parameters);
+            match parameters {
+                Some(grade) => kernel
+                    .encode_grade(&device, &mut encoder, &input, &output, &grade)
+                    .unwrap(),
+                None => kernel.encode(
+                    &device,
+                    &mut encoder,
+                    &input,
+                    &output,
+                    ProcessingParameters::source(),
+                ),
+            }
             encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, output.size());
             queue.submit([encoder.finish()]);
             let (sender, receiver) = std::sync::mpsc::channel();
@@ -204,7 +298,7 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
             let actual: &[Vec4] = bytemuck::cast_slice(&mapped);
             for (i, &scan) in scans.iter().enumerate() {
                 let (expected, flags) = if let Some(pipeline) = &pipeline {
-                    let value = pipeline.apply(scan).unwrap();
+                    let value = pipeline.apply(scan, [0, 0]).unwrap();
                     let flags = value
                         .floored
                         .iter()
@@ -297,7 +391,7 @@ fn metal_digital_processing_matches_the_cpu_model() {
                 for contrast in [0.5, 1., 1.5] {
                     for saturation in [0., 1.3] {
                         let roll = RollSettings { wb, exposure };
-                        let photo = PhotoSettings {
+                        let photo = AdjustmentLayerSettings {
                             contrast,
                             saturation,
                             exposure: -1.,
@@ -305,11 +399,39 @@ fn metal_digital_processing_matches_the_cpu_model() {
                                 warmth: 0.1,
                                 tint: 0.05,
                             },
-                            ..PhotoSettings::default()
+                            ..AdjustmentLayerSettings::default()
                         };
                         configurations.push((
-                            Pipeline::new(InputSettings::Digital, roll, photo, matrix).unwrap(),
-                            ProcessingParameters::digital(roll, photo, matrix).unwrap(),
+                            antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+                                antitone::adjustment_layers::AdjustmentLayer::global(photo),
+                            ])
+                            .and_then(|layers| {
+                                antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+                                    InputSettings::Digital,
+                                    roll,
+                                    layers,
+                                    matrix,
+                                )
+                            })
+                            .unwrap(),
+                            AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(photo)])
+                                .and_then(|snapshot| {
+                                    GpuAdjustmentLayers::new(
+                                        &device,
+                                        InputSettings::Digital,
+                                        roll,
+                                        snapshot,
+                                        matrix,
+                                        SourceRegion {
+                                            x: 0,
+                                            y: 0,
+                                            width: pixels.len() as u32,
+                                            height: 1,
+                                        },
+                                    )
+                                })
+                                .map(Some)
+                                .unwrap(),
                         ));
                     }
                 }
@@ -317,7 +439,18 @@ fn metal_digital_processing_matches_the_cpu_model() {
         }
         for (pipeline, parameters) in configurations {
             let mut encoder = device.create_command_encoder(&Default::default());
-            kernel.encode(&device, &mut encoder, &input, &output, parameters);
+            match parameters {
+                Some(grade) => kernel
+                    .encode_grade(&device, &mut encoder, &input, &output, &grade)
+                    .unwrap(),
+                None => kernel.encode(
+                    &device,
+                    &mut encoder,
+                    &input,
+                    &output,
+                    ProcessingParameters::source(),
+                ),
+            }
             encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, output.size());
             queue.submit([encoder.finish()]);
             let (sender, receiver) = std::sync::mpsc::channel();
@@ -329,7 +462,7 @@ fn metal_digital_processing_matches_the_cpu_model() {
             let mapped = readback.slice(..).get_mapped_range().unwrap();
             let actual: &[Vec4] = bytemuck::cast_slice(&mapped);
             for (i, &scan) in scans.iter().enumerate() {
-                let value = pipeline.apply(scan).unwrap();
+                let value = pipeline.apply(scan, [0, 0]).unwrap();
                 // Digital never floors (the source is already a positive).
                 assert_eq!(value.floored, [false; 3]);
                 for (c, expected) in value.rgb.to_array().into_iter().enumerate() {
@@ -366,18 +499,21 @@ fn metal_creative_controls_preserve_signed_hdr_model_samples() {
                     include_str!("../src/shaders/film_response.wgsl"),
                     include_str!("../src/shaders/film_inversion_export.wgsl"),
                     include_str!("../src/shaders/photographic.wgsl"),
-                    include_str!("../src/shaders/local_adjustments.wgsl"),
+                    include_str!("../src/shaders/adjustment_layers.wgsl"),
                     include_str!("../src/shaders/photographic_colour.wgsl"),
                     include_str!("../src/shaders/photographic_export.wgsl"),
                     include_str!("../src/shaders/processing.wgsl"),
                     r#"
+struct PrimitiveParameters { amounts: vec4f, density: vec4f }
+@group(0) @binding(2) var<uniform> primitive: PrimitiveParameters;
 @group(0) @binding(8) var<storage, read> grade_input: array<vec4f>;
 @group(0) @binding(9) var<storage, read_write> grade_output: array<vec4f>;
 @compute @workgroup_size(64)
 fn grade_test(@builtin(global_invocation_id) id: vec3u) {
     if id.x >= arrayLength(&grade_input) { return; }
     let input = grade_input[id.x];
-    let rgb = colour_global(array<f32, 3>(input.x, input.y, input.z));
+    let rgb = colour_apply(array<f32, 3>(input.x, input.y, input.z),
+        primitive.amounts.x, primitive.amounts.y, primitive.amounts.z, primitive.amounts.w, primitive.density.x);
     grade_output[id.x] = finish_pixel(ProcessedPixel(rgb, 0u));
 }
 "#,
@@ -433,26 +569,23 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
             for pivot in [0.01, 0.18, 1., toe_pivot] {
                 for mix in [0., 0.5, 1.] {
                     for saturation in [0., 1., 2.] {
-                        let photo = PhotoSettings {
+                        let photo = AdjustmentLayerSettings {
                             contrast,
                             pivot,
                             contrast_colour_mix: mix,
                             saturation,
                             saturation_density: mix,
-                            ..PhotoSettings::default()
+                            ..AdjustmentLayerSettings::default()
                         };
-                        let grade = antitone::photographic::Grade::new(photo).unwrap();
-                        let parameters = ProcessingParameters::positive(
-                            Calibration {
-                                dmin: DVec3::splat(0.75),
-                                dmax: DVec3::splat(0.01),
-                                input_floor: 1e-5,
-                            },
-                            RollSettings::default(),
-                            photo,
-                            DMat3::IDENTITY,
-                        )
-                        .unwrap();
+                        let parameters = [
+                            Vec4::new(
+                                (photo.contrast - 1.) as f32,
+                                reference::encode(photo.pivot) as f32 - 0.072_905_53_f32,
+                                photo.contrast_colour_mix as f32,
+                                (photo.saturation - 1.) as f32,
+                            ),
+                            Vec4::new(photo.saturation_density as f32, 0., 0., 0.),
+                        ];
                         let uniform =
                             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                                 label: Some("creative parameters"),
@@ -490,7 +623,40 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
                         let data = slice.get_mapped_range().unwrap();
                         let actual: &[Vec4] = bytemuck::cast_slice(&data);
                         for (i, input) in inputs.iter().enumerate() {
-                            let expected = grade.apply(*input).unwrap();
+                            let contrasted = reference::blend(
+                                reference::contrast(
+                                    *input,
+                                    photo.contrast,
+                                    photo.pivot,
+                                    reference::Contrast::Rgb,
+                                )
+                                .unwrap(),
+                                reference::contrast(
+                                    *input,
+                                    photo.contrast,
+                                    photo.pivot,
+                                    reference::Contrast::BlackOffsetRatios,
+                                )
+                                .unwrap(),
+                                photo.contrast_colour_mix,
+                            )
+                            .unwrap();
+                            let expected = reference::blend(
+                                reference::saturation(
+                                    contrasted,
+                                    photo.saturation,
+                                    reference::Saturation::ConstantY,
+                                )
+                                .unwrap(),
+                                reference::saturation(
+                                    contrasted,
+                                    photo.saturation,
+                                    reference::Saturation::Maximum,
+                                )
+                                .unwrap(),
+                                photo.saturation_density,
+                            )
+                            .unwrap();
                             let error = (actual[i].truncate().as_dvec3() - expected).abs();
                             let allowed = DVec3::splat(2e-5) + expected.abs() * 2e-4;
                             assert!(
@@ -508,52 +674,49 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
 }
 
 #[test]
-fn photographic_parameter_signatures_and_range_preflight_cover_the_new_stages() {
+fn layer_range_preflight_covers_creative_stages() {
     let cal = Calibration {
         dmin: DVec3::splat(0.5),
         dmax: DVec3::splat(0.01),
         input_floor: 1. / 65535.,
     };
-    let roll = RollSettings::default();
-    let photo = PhotoSettings::default();
-    let base = ProcessingParameters::positive(cal, roll, photo, DMat3::IDENTITY).unwrap();
-    for changed in [
-        PhotoSettings {
-            contrast: 1.2,
-            ..photo
-        },
-        PhotoSettings {
-            pivot: 0.25,
-            ..photo
-        },
-        PhotoSettings {
-            contrast_colour_mix: 0.25,
-            ..photo
-        },
-        PhotoSettings {
-            saturation: 1.3,
-            ..photo
-        },
-        PhotoSettings {
-            saturation_density: 0.25,
-            ..photo
-        },
-    ] {
-        let parameters =
-            ProcessingParameters::positive(cal, roll, changed, DMat3::IDENTITY).unwrap();
-        assert_ne!(bytemuck::bytes_of(&parameters), bytemuck::bytes_of(&base));
-    }
     let extreme = negative(cal, 0.1, Balance::default());
-    assert!(ProcessingParameters::positive(extreme, roll, photo, DMat3::IDENTITY).is_ok());
+    let limits = wgpu::Limits::default();
+    let area = SourceRegion {
+        x: 0,
+        y: 0,
+        width: 1,
+        height: 1,
+    };
+    let valid = AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(
+        AdjustmentLayerSettings::default(),
+    )])
+    .unwrap();
     assert!(
-        ProcessingParameters::positive(
+        GpuAdjustmentLayers::validate_limits(
+            &limits,
             extreme,
-            roll,
-            PhotoSettings {
-                contrast: 1.5,
-                ..photo
-            },
-            DMat3::IDENTITY
+            RollSettings::default(),
+            &valid,
+            DMat3::IDENTITY,
+            area
+        )
+        .is_ok()
+    );
+    let overflowing =
+        AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(AdjustmentLayerSettings {
+            contrast: 1.5,
+            ..Default::default()
+        })])
+        .unwrap();
+    assert!(
+        GpuAdjustmentLayers::validate_limits(
+            &limits,
+            extreme,
+            RollSettings::default(),
+            &overflowing,
+            DMat3::IDENTITY,
+            area
         )
         .is_err()
     );
@@ -579,16 +742,24 @@ fn gpu_parameters_reject_overflow_instead_of_silent_cpu_fallback() {
         ..RollSettings::default()
     };
     assert!(
-        ProcessingParameters::positive(
+        AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(AdjustmentLayerSettings {
+            exposure: 16.0,
+            ..Default::default()
+        })])
+        .and_then(|snapshot| GpuAdjustmentLayers::validate_limits(
+            &wgpu::Limits::default(),
             interpretation,
             roll,
-            PhotoSettings {
-                exposure: 16.0,
-                ..Default::default()
-            },
+            &snapshot,
             DMat3::IDENTITY,
-        )
+            SourceRegion {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1
+            }
+        ))
         .is_err()
     );
-    assert_eq!(std::mem::size_of::<ProcessingParameters>(), 176);
+    assert_eq!(std::mem::size_of::<ProcessingParameters>(), 128);
 }

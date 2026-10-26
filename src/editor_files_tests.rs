@@ -218,6 +218,8 @@ enum SaveInput {
 
 fn numeric_save(route: SaveInput) {
     let mut editor = fixture();
+    // Keep the numeric controls visible below the layer list in this event fixture.
+    editor.scopes.visible = false;
     if !matches!(route, SaveInput::Shortcut) {
         host::App::native_menu_installed(&mut editor);
     }
@@ -247,7 +249,7 @@ fn numeric_save(route: SaveInput) {
             .iter()
             .filter(|(label, rect)| label.contains("0.00") && rect.min.y >= exposure.min.y)
             .min_by(|(_, a), (_, b)| a.min.y.total_cmp(&b.min.y))
-            .unwrap()
+            .unwrap_or_else(|| panic!("exposure value is not visible: {shapes:?}"))
             .1
             .center();
         click(app, &context, number);
@@ -270,7 +272,7 @@ fn numeric_save(route: SaveInput) {
                 .into(),
             )],
         );
-        assert_eq!(app.read(|e| e.photo.exposure), 0.);
+        assert_eq!(app.read(|e| e.adjustment_layer_settings.exposure), 0.);
         use crate::platform::menu::Action;
         let events = app.update(|e| match route {
             SaveInput::NativeMenu => {
@@ -324,6 +326,11 @@ fn numeric_save(route: SaveInput) {
                 .unwrap()
                 .source(id)
                 .unwrap()
+                .adjustment_layers
+                .as_ref()
+                .unwrap()
+                .layers[0]
+                .adjustment
                 .photo
                 .exposure,
             7.123456789
@@ -462,7 +469,7 @@ fn save_decision_queues_the_snapshot_with_its_original_continuation() {
         .save(&path, crate::project::Save::New)
         .unwrap();
     let id = editor.current_source.unwrap();
-    editor.photo.exposure = 1.25;
+    editor.adjustment_layer_settings.exposure = 1.25;
     let context = egui::Context::default();
     with_application(editor, |app| {
         app.enter(|e, cx| e.guard_transition(Transition::Close, cx));
@@ -486,6 +493,11 @@ fn save_decision_queues_the_snapshot_with_its_original_continuation() {
                 .unwrap()
                 .source(id)
                 .unwrap()
+                .adjustment_layers
+                .as_ref()
+                .unwrap()
+                .layers[0]
+                .adjustment
                 .photo
                 .exposure,
             1.25
@@ -504,7 +516,7 @@ fn project_replace_decision_preserves_destination_snapshot_and_continuation() {
     let path = directory.path().join("existing.antitone");
     std::fs::write(&path, b"existing destination").unwrap();
     let id = editor.current_source.unwrap();
-    editor.photo.exposure = 1.25;
+    editor.adjustment_layer_settings.exposure = 1.25;
     editor.project_overwrite = Some((path.clone(), Some(Transition::New)));
     let context = egui::Context::default();
     with_application(editor, |app| {
@@ -527,6 +539,11 @@ fn project_replace_decision_preserves_destination_snapshot_and_continuation() {
                 .unwrap()
                 .source(id)
                 .unwrap()
+                .adjustment_layers
+                .as_ref()
+                .unwrap()
+                .layers[0]
+                .adjustment
                 .photo
                 .exposure,
             1.25
@@ -549,7 +566,7 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
         let mut editor = super::super::tests::authored_fixture(&["patches.dng"]);
         editor.set_dmin(Some(DVec3::splat(0.8)));
         editor.set_dmax(Some(DVec3::splat(0.02)));
-        editor.photo.exposure = 1.25;
+        editor.adjustment_layer_settings.exposure = 1.25;
         editor.roll.exposure = -0.25;
         editor.crop = Some(Crop::from_region(Rect {
             x: 20,
@@ -581,7 +598,10 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
             editor.calibration().unwrap()
         );
         assert_eq!(expected.recipe.roll, editor.roll);
-        assert_eq!(expected.recipe.grade.global(), editor.photo);
+        assert_eq!(
+            expected.recipe.grade.layers()[0].photo,
+            editor.adjustment_layer_settings
+        );
         assert_eq!(expected.recipe.composition.crop(), editor.crop.unwrap());
         let services = editor.export_services.as_ref().unwrap().clone();
         let mut draft = export_batch::Draft::new(OutputTarget::Srgb, directory.path().to_owned());
@@ -684,8 +704,9 @@ fn fixture() -> Editor {
                     input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                 },
                 reference_only: false,
-                photo: PhotoSettings::default(),
-                local_adjustments: None,
+                adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
+                    AdjustmentLayerSettings::default(),
+                )),
                 repairs: Default::default(),
                 orientation: Default::default(),
                 crop: None,
@@ -707,13 +728,13 @@ fn orientation_is_source_owned_and_restored_without_changing_grade_on_load() {
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
             let id = editor.current_source.unwrap();
-            editor.photo = PhotoSettings {
+            editor.adjustment_layer_settings = AdjustmentLayerSettings {
                 contrast: 0.4,
                 pivot: 0.25,
                 contrast_colour_mix: 0.75,
                 saturation: 1.3,
                 saturation_density: 0.25,
-                ..PhotoSettings::default()
+                ..AdjustmentLayerSettings::default()
             };
             editor.roll_orientation.horizontal = true;
             editor.roll_orientation.turn_clockwise();
@@ -727,7 +748,12 @@ fn orientation_is_source_owned_and_restored_without_changing_grade_on_load() {
             }));
             let crop = editor.crop;
             let orientation = editor.photo_orientation;
-            let grade = (editor.roll, editor.photo, editor.dmin(), editor.dmax());
+            let grade = (
+                editor.roll,
+                editor.adjustment_layer_settings,
+                editor.dmin(),
+                editor.dmax(),
+            );
             editor.sync_document();
             assert_eq!(editor.document.project.orientation, editor.roll_orientation);
             assert_eq!(
@@ -738,33 +764,50 @@ fn orientation_is_source_owned_and_restored_without_changing_grade_on_load() {
             other.path = "second.ARW".into();
             other.orientation = PhotoOrientation::default();
             other.crop = None;
-            other.photo = PhotoSettings {
+            other.adjustment_layers.as_mut().unwrap().layers[0]
+                .adjustment
+                .photo = AdjustmentLayerSettings {
                 contrast: 1.6,
                 saturation: 0.7,
                 contrast_colour_mix: 0.25,
                 saturation_density: 0.75,
-                ..PhotoSettings::default()
+                ..AdjustmentLayerSettings::default()
             };
-            let other_photo = other.photo;
+            let other_photo = other.adjustment_layers.as_ref().unwrap().layers[0]
+                .adjustment
+                .photo;
             let other_id = editor.document.project.add_source(other).unwrap();
             editor.load("second.ARW".into(), cx);
             assert_eq!(editor.current_source, Some(other_id));
-            assert_eq!(editor.photo, other_photo);
+            assert_eq!(editor.adjustment_layer_settings, other_photo);
             editor.load("fixture.ARW".into(), cx);
             assert_eq!(editor.current_source, Some(id));
             assert_eq!(
-                (editor.roll, editor.photo, editor.dmin(), editor.dmax()),
+                (
+                    editor.roll,
+                    editor.adjustment_layer_settings,
+                    editor.dmin(),
+                    editor.dmax()
+                ),
                 grade
             );
             editor.load("temporary-reference.ARW".into(), cx);
-            assert_eq!(editor.photo, PhotoSettings::default());
+            assert_eq!(
+                editor.adjustment_layer_settings,
+                AdjustmentLayerSettings::default()
+            );
             assert_eq!(editor.photo_orientation, PhotoOrientation::default());
             assert!(editor.crop.is_none());
             editor.load("fixture.ARW".into(), cx);
             assert_eq!(editor.photo_orientation, orientation);
             assert_eq!(editor.crop, crop);
             assert_eq!(
-                (editor.roll, editor.photo, editor.dmin(), editor.dmax()),
+                (
+                    editor.roll,
+                    editor.adjustment_layer_settings,
+                    editor.dmin(),
+                    editor.dmax()
+                ),
                 grade
             );
             assert_eq!(editor.roll_orientation, editor.document.project.orientation);
@@ -776,7 +819,7 @@ fn orientation_is_source_owned_and_restored_without_changing_grade_on_load() {
 #[test]
 fn failed_and_stale_document_results_preserve_state_and_active_request() {
     let mut editor = fixture();
-    editor.photo.exposure = 7.123456789012345;
+    editor.adjustment_layer_settings.exposure = 7.123456789012345;
     editor.sync_document();
     let before = editor.document.project.clone();
     let active = editor.id;
@@ -811,7 +854,7 @@ fn failed_and_stale_document_results_preserve_state_and_active_request() {
                     .load(std::sync::atomic::Ordering::Relaxed),
                 active
             );
-            assert_eq!(editor.photo.exposure, 7.123456789012345);
+            assert_eq!(editor.adjustment_layer_settings.exposure, 7.123456789012345);
             assert!(editor.document.dirty());
         });
         app.pump();
@@ -856,17 +899,17 @@ fn save_snapshot_flushes_current_photo_and_retains_other_source_settings() {
     let mut other = editor.document.project.source(one).unwrap().clone();
     other.path = "unvisited.ARW".into();
     let two = editor.document.project.add_source(other).unwrap();
-    editor.photo = PhotoSettings {
+    editor.adjustment_layer_settings = AdjustmentLayerSettings {
         exposure: 7.123456789012345,
         contrast: 1.6,
         pivot: 0.25,
         contrast_colour_mix: 0.75,
         saturation: 1.3,
         saturation_density: 0.25,
-        ..PhotoSettings::default()
+        ..AdjustmentLayerSettings::default()
     };
     editor.roll.exposure = -0.23456789012345678;
-    let photo = editor.photo;
+    let photo = editor.adjustment_layer_settings;
     let roll = editor.roll;
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("snapshot.antitone");
@@ -874,10 +917,29 @@ fn save_snapshot_flushes_current_photo_and_retains_other_source_settings() {
         app.enter(|e, cx| e.save_project(path.clone(), crate::project::Save::New, None, cx));
         app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
         let snapshot = crate::project::Project::load(&path).unwrap();
-        assert_eq!(snapshot.source(one).unwrap().photo, photo);
         assert_eq!(
-            snapshot.source(two).unwrap().photo,
-            PhotoSettings::default()
+            snapshot
+                .source(one)
+                .unwrap()
+                .adjustment_layers
+                .as_ref()
+                .unwrap()
+                .layers[0]
+                .adjustment
+                .photo,
+            photo
+        );
+        assert_eq!(
+            snapshot
+                .source(two)
+                .unwrap()
+                .adjustment_layers
+                .as_ref()
+                .unwrap()
+                .layers[0]
+                .adjustment
+                .photo,
+            AdjustmentLayerSettings::default()
         );
         assert_eq!(snapshot.roll, roll);
         assert_eq!(snapshot.processing_model, crate::PROCESSING_MODEL_VERSION);
@@ -982,8 +1044,21 @@ fn command_save_uses_the_current_document_after_control_processing() {
     with_application(editor, |app| {
         ui_frame(app, &context, vec![]);
         app.update(|e| {
-            e.photo.exposure = 7.123456789012345;
-            assert_eq!(e.document.project.source(id).unwrap().photo.exposure, 0.);
+            e.adjustment_layer_settings.exposure = 7.123456789012345;
+            assert_eq!(
+                e.document
+                    .project
+                    .source(id)
+                    .unwrap()
+                    .adjustment_layers
+                    .as_ref()
+                    .unwrap()
+                    .layers[0]
+                    .adjustment
+                    .photo
+                    .exposure,
+                0.
+            );
         });
         ui_frame(
             app,
@@ -1002,8 +1077,13 @@ fn command_save_uses_the_current_document_after_control_processing() {
                 .unwrap()
                 .source(id)
                 .unwrap()
+                .adjustment_layers
+                .as_ref()
+                .unwrap()
+                .layers[0]
+                .adjustment
                 .photo,
-            app.read(|e| e.photo)
+            app.read(|e| e.adjustment_layer_settings)
         );
     });
 }

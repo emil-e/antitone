@@ -1,4 +1,5 @@
 use super::*;
+use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::processing::Calibration;
 use crate::{
     color::Balance,
@@ -7,15 +8,15 @@ use crate::{
 };
 use std::sync::atomic::AtomicU64;
 
+#[cfg(target_os = "macos")]
+#[path = "gpu_working_view_adjustment_layer_resource_tests.rs"]
+mod adjustment_layer_resources;
 #[path = "gpu_working_view_colour_tests.rs"]
 mod colour;
 #[path = "gpu_working_view_identity_tests.rs"]
 mod identity;
 #[path = "gpu_working_view_inspection_tests.rs"]
 mod inspection;
-#[cfg(target_os = "macos")]
-#[path = "gpu_working_view_local_resource_tests.rs"]
-mod local_resources;
 #[path = "gpu_working_view_performance_tests.rs"]
 mod performance;
 #[path = "gpu_repair_view_tests.rs"]
@@ -79,14 +80,26 @@ fn frame(scan: &Scan) -> FrameRaster {
 }
 
 fn processing_input(
+    device: &wgpu::Device,
     input: impl Into<InputSettings>,
     roll: RollSettings,
-    photo: PhotoSettings,
+    photo: AdjustmentLayerSettings,
     scan: &Scan,
 ) -> ProcessingInput {
-    ProcessingParameters::interpret(input, roll, photo, scan.camera_to_ap1)
-        .unwrap()
-        .into()
+    crate::gpu::GpuAdjustmentLayers::new(
+        device,
+        input,
+        roll,
+        AdjustmentLayerSnapshot::new(vec![crate::adjustment_layers::AdjustmentLayer::global(
+            photo,
+        )])
+        .unwrap(),
+        scan.camera_to_ap1,
+        scan.area,
+    )
+    .map(Arc::new)
+    .unwrap()
+    .into()
 }
 
 fn read(device: &wgpu::Device, queue: &wgpu::Queue, source: &wgpu::Buffer) -> Vec<[f32; 4]> {
@@ -228,7 +241,7 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
             .unwrap();
             let original = read(&device, &queue, &source.pixels);
             assert!(original.iter().all(|p| (p[3] as u32 & 8) != 0));
-            let photo = PhotoSettings {
+            let photo = AdjustmentLayerSettings {
                 exposure: 0.7,
                 wb: Balance {
                     warmth: 0.2,
@@ -238,8 +251,11 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
                 saturation: 1.3,
                 ..Default::default()
             };
-            let snapshot = PhotoGradeSnapshot::new(photo, vec![]).unwrap();
-            let input = processing_input(cal, roll, photo, &scan);
+            let snapshot = AdjustmentLayerSnapshot::new(vec![
+                crate::adjustment_layers::AdjustmentLayer::global(photo),
+            ])
+            .unwrap();
+            let input = processing_input(&device, cal, roll, photo, &scan);
             let view = RenderedView::new(
                 &device,
                 source.clone(),
@@ -303,13 +319,12 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
             p3.ensure_submitted(&device, &queue, &gate, &context);
             image(&device, &queue, &p3.image);
             assert_eq!(original, read(&device, &queue, &source.pixels));
-            let other = PhotoGradeSnapshot::new(
-                PhotoSettings {
+            let other = AdjustmentLayerSnapshot::new(vec![
+                crate::adjustment_layers::AdjustmentLayer::global(AdjustmentLayerSettings {
                     exposure: 1.3,
                     ..photo
-                },
-                vec![],
-            )
+                }),
+            ])
             .unwrap();
             assert!(
                 RenderedView::new(
@@ -328,7 +343,7 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
                 dmin: cal.dmin * 1.01,
                 ..cal
             };
-            let changed_input = processing_input(changed_cal, roll, photo, &scan);
+            let changed_input = processing_input(&device, changed_cal, roll, photo, &scan);
             assert!(
                 RenderedView::new(
                     &device,

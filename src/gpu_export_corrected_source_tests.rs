@@ -1,5 +1,5 @@
 use super::*;
-use crate::local_adjustments::SpatialPipeline;
+use crate::adjustment_layers::AdjustmentLayerPipeline;
 use tiff::decoder::{Decoder, DecodingResult};
 
 #[test]
@@ -54,7 +54,8 @@ fn common_worker_preserves_fractional_above_white_sony_sources_with_residual_cor
     recipe.neutral.correction = scan.flat_field().cloned();
     let input = recipe.neutral.processing_input().unwrap();
     let scalar =
-        SpatialPipeline::new(input, recipe.roll, recipe.grade.clone(), scan.camera_to_ap1).unwrap();
+        AdjustmentLayerPipeline::new(input, recipe.roll, recipe.grade.clone(), scan.camera_to_ap1)
+            .unwrap();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("captured.tif");
     let read = |path: &Path| {

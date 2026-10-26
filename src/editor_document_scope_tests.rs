@@ -38,6 +38,7 @@ fn document_retirement_cancels_child_continuations_and_closes_cache_despite_capt
             .unwrap();
         app.update(|scope| {
             scope.visit.measurement = Some(measurement::Pending {
+                target: None,
                 kind: Pick::Dmin,
                 _task: task,
             })

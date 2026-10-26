@@ -40,7 +40,7 @@ fn fixture(scan: &Scan) -> (Project, SourceId) {
             path: "fixture.dng".into(),
             reference_only: false,
             development: source_development,
-            photo: Default::default(),
+
             orientation: Default::default(),
             crop: Some(crate::crop::Crop {
                 center: [
@@ -54,7 +54,9 @@ fn fixture(scan: &Scan) -> (Project, SourceId) {
                 angle: 0.13,
             }),
             repairs: Default::default(),
-            local_adjustments: None,
+            adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
+                Default::default(),
+            )),
         })
         .unwrap();
     (project, id)

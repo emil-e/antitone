@@ -753,13 +753,18 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
         .project
         .source_mut(image_key.source.id)
         .unwrap()
-        .photo = PhotoSettings {
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .layers[0]
+        .adjustment
+        .photo = AdjustmentLayerSettings {
         contrast: 1.2,
         pivot: 0.25,
         contrast_colour_mix: 0.5,
         saturation: 1.3,
         saturation_density: 0.5,
-        ..PhotoSettings::default()
+        ..AdjustmentLayerSettings::default()
     };
     assert!(editor.calibration().is_some());
     assert!(

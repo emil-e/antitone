@@ -47,13 +47,13 @@ fn retiring_a_visit_discards_local_tool_state_without_changing_accepted_adjustme
                 .project
                 .source(source)
                 .unwrap()
-                .local_adjustments
+                .adjustment_layers
                 .as_ref()
                 .unwrap()
-                .adjustments[0]
+                .layers[0]
                 .id;
-            editor.select_adjustment(crate::editor::adjustments::Target::Local(id));
-            editor.document.visit.adjustments.show_coverage = true;
+            editor.select_adjustment_layer(crate::editor::adjustment_layers::Target::Layer(id));
+            editor.document.visit.adjustment_layers.show_coverage = true;
             if radial {
                 editor.begin_radial_mask(None);
             } else {
@@ -67,11 +67,11 @@ fn retiring_a_visit_discards_local_tool_state_without_changing_accepted_adjustme
             let next = editor.request_id();
             editor.replace_photo_scope(next);
             assert!(editor.document.visit.mask_edit.is_none());
-            assert!(!editor.document.visit.adjustments.drawer_open());
-            assert!(!editor.document.visit.adjustments.show_coverage);
+            assert!(!editor.adjustment_layer_owns_delete());
+            assert!(!editor.document.visit.adjustment_layers.show_coverage);
             assert_eq!(
-                editor.adjustment_target(),
-                crate::editor::adjustments::Target::Global
+                editor.adjustment_layer_target(),
+                crate::editor::adjustment_layers::Target::Layer(id)
             );
             editor.finish_mask(true);
             assert_eq!(editor.document.project, accepted);
@@ -205,6 +205,7 @@ fn leaving_a_visit_cancels_its_continuation_but_not_running_source_computation()
             .unwrap();
         app.update(|editor| {
             editor.document.visit.measurement = Some(measurement::Pending {
+                target: None,
                 kind: Pick::Dmin,
                 _task: task,
             });

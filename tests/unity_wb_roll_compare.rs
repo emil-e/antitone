@@ -5,7 +5,6 @@
 
 use antitone::{
     color::AP1_TO_XYZ,
-    processing::Pipeline,
     project::{Project, UNITY_WB},
     raw::Rect,
     roll_analysis::{FrameSamples, MAX_SAMPLES_PER_FRAME, estimate},
@@ -142,14 +141,34 @@ fn unity_wb_roll_analysis_matches_as_shot_look() {
             as_shot_samples.1[i].len(),
             "frame {i}: different eligible sample populations"
         );
-        let unity_pipeline =
-            Pipeline::new(unity.input, unity.roll, unity.photos[i], matrix).unwrap();
-        let as_shot_pipeline =
-            Pipeline::new(as_shot.input, as_shot.roll, as_shot.photos[i], matrix).unwrap();
+        let unity_pipeline = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+            antitone::adjustment_layers::AdjustmentLayer::global(unity.photos[i]),
+        ])
+        .and_then(|layers| {
+            antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+                unity.input,
+                unity.roll,
+                layers,
+                matrix,
+            )
+        })
+        .unwrap();
+        let as_shot_pipeline = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+            antitone::adjustment_layers::AdjustmentLayer::global(as_shot.photos[i]),
+        ])
+        .and_then(|layers| {
+            antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+                as_shot.input,
+                as_shot.roll,
+                layers,
+                matrix,
+            )
+        })
+        .unwrap();
         let unity_mean = antitone::sampling::mean(
             &unity_samples.1[i]
                 .iter()
-                .map(|&p| unity_pipeline.apply(p).map(|v| v.rgb))
+                .map(|&p| unity_pipeline.apply(p, [0, 0]).map(|v| v.rgb))
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap(),
         )
@@ -157,7 +176,7 @@ fn unity_wb_roll_analysis_matches_as_shot_look() {
         let as_shot_mean = antitone::sampling::mean(
             &as_shot_samples.1[i]
                 .iter()
-                .map(|&p| as_shot_pipeline.apply(p).map(|v| v.rgb))
+                .map(|&p| as_shot_pipeline.apply(p, [0, 0]).map(|v| v.rgb))
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap(),
         )

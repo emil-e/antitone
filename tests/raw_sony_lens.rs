@@ -1,4 +1,5 @@
 #![cfg(all(feature = "raw", feature = "project", target_os = "macos"))]
+use antitone::adjustment_layers::AdjustmentLayerSettings;
 
 use std::fs;
 
@@ -489,11 +490,13 @@ fn save_open_retains_lens_identity_and_flat_references_reject_different_maps_at_
             path: file.path().into(),
             reference_only: false,
             development: first_development,
-            photo: Default::default(),
+
             orientation: Default::default(),
             crop: None,
             repairs: Default::default(),
-            local_adjustments: None,
+            adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
+                Default::default(),
+            )),
         })
         .unwrap();
     let map = Arc::new(
@@ -532,13 +535,13 @@ fn save_open_retains_lens_identity_and_flat_references_reject_different_maps_at_
 #[test]
 fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_flat_field() {
     use antitone::{
+        adjustment_layers::{AdjustmentLayerPipeline, AdjustmentLayerSnapshot},
         export::{self, ExrPrecision, Overwrite},
         flat_field::FlatField,
         geometry::{Composition, PhotoOrientation, RollOrientation},
         gpu::{GpuFlatField, SubmissionGate},
         gpu_export::{self, Format, Request},
-        local_adjustments::{PhotoGradeSnapshot, SpatialPipeline},
-        processing::{Calibration, InputSettings, PhotoSettings, RollSettings},
+        processing::{Calibration, InputSettings, RollSettings},
         renderer::GpuRenderer,
         rendering::OutputTarget,
     };
@@ -582,12 +585,15 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
             input_floor: scan.input_floor,
         };
         let roll = RollSettings::default();
-        let grade = PhotoGradeSnapshot::new(
-            PhotoSettings {
-                contrast: 1.1,
-                ..Default::default()
-            },
-            Vec::new(),
+        let grade = AdjustmentLayerSnapshot::new(
+            std::iter::once(antitone::adjustment_layers::AdjustmentLayer::global(
+                AdjustmentLayerSettings {
+                    contrast: 1.1,
+                    ..Default::default()
+                },
+            ))
+            .chain(Vec::new())
+            .collect(),
         )
         .unwrap();
         let composition = Composition::new(
@@ -597,7 +603,8 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
         )
         .unwrap();
         let input = InputSettings::negative(scan.processing_calibration(calibration).unwrap());
-        let scalar = SpatialPipeline::new(input, roll, grade.clone(), scan.camera_to_ap1).unwrap();
+        let scalar =
+            AdjustmentLayerPipeline::new(input, roll, grade.clone(), scan.camera_to_ap1).unwrap();
         for format in [
             Format::Tiff(OutputTarget::Srgb),
             Format::Exr(ExrPrecision::Full),

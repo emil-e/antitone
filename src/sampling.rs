@@ -1,7 +1,7 @@
 use glam::{DMat2, DMat3, DVec2, DVec3};
 
 use crate::Error;
-use crate::color::{Balance, neutral_wb};
+use crate::color::{Balance, ap1_to_cones, neutral_wb, opponent_coordinates};
 use crate::processing::{Inversion, NegativeInput};
 
 pub const FIT_RESIDUAL_TOLERANCE: f64 = 1e-9;
@@ -115,12 +115,61 @@ pub fn roll_dmin(pixels: &[DVec3], input_floor: f64) -> Result<DVec3, Error> {
     Ok(result)
 }
 
-pub fn photo_neutral_weighted(pixels: &[(DVec3, f64)]) -> Result<Balance, Error> {
+/// Fit the selected layer's WB before its contrast/saturation, using each sample's
+/// effective layer weight. Samples contain exposed upstream AP1, patch area and layer weight.
+pub fn adjustment_layer_white_balance(pixels: &[(DVec3, f64, f64)]) -> Result<Balance, Error> {
+    weighted_mean_iter(pixels.iter().map(|&(rgb, area, _)| Ok((rgb, area))))?;
+    if pixels
+        .iter()
+        .any(|&(_, _, weight)| !weight.is_finite() || !(0. ..=1.).contains(&weight))
+    {
+        return Err(Error::InvalidParameter(
+            "WB layer weights must be within 0..1",
+        ));
+    }
+    if !pixels
+        .iter()
+        .any(|&(_, area, weight)| area > 0. && weight > 0.)
+    {
+        return Err(Error::UnusableSample(
+            "WB patch is outside the enabled layer's coverage",
+        ));
+    }
+    let cones = ap1_to_cones();
+    let white = cones * DVec3::ONE;
+    let samples: Vec<_> = pixels
+        .iter()
+        .map(|&(rgb, area, weight)| (cones * rgb * area, weight))
+        .collect();
+    fit_balance(
+        |coordinates| {
+            let offsets = Balance {
+                warmth: coordinates.x,
+                tint: coordinates.y,
+            }
+            .offsets()?;
+            let sample: DVec3 = samples
+                .iter()
+                .map(|&(rgb, weight)| rgb * (offsets * weight).exp())
+                .sum();
+            if !sample.is_finite() || sample.min_element() <= 0. {
+                return Err(Error::UnusableSample(
+                    "WB patch has invalid Bradford cone responses",
+                ));
+            }
+            Ok(opponent_coordinates((white / sample).ln()))
+        },
+        Balance::default(),
+        Conditioning::Relative,
+    )
+}
+
+pub fn white_balance_weighted(pixels: &[(DVec3, f64)]) -> Result<Balance, Error> {
     neutral_wb(weighted_mean(pixels)?)
 }
 
-/// Samples are positive-image AP1 working RGB before the existing photo WB.
-pub fn photo_neutral(pixels_before_wb: &[DVec3]) -> Result<Balance, Error> {
+/// Samples are positive-image AP1 working RGB before the balance being fitted.
+pub fn white_balance(pixels_before_wb: &[DVec3]) -> Result<Balance, Error> {
     neutral_wb(mean(pixels_before_wb)?)
 }
 
@@ -193,9 +242,34 @@ fn fit_roll_neutral(
         ))
     };
 
-    let mut x = DVec2::new(negative.balance.warmth, negative.balance.tint);
+    fit_balance(residual, negative.balance, Conditioning::Absolute)
+}
+
+// Gamma fitting rejects weak anchor information; layer WB can have a small,
+// well-conditioned Jacobian solely because coverage attenuates every sample.
+enum Conditioning {
+    Absolute,
+    Relative,
+}
+
+fn fit_balance(
+    residual: impl Fn(DVec2) -> Result<DVec2, Error>,
+    initial: Balance,
+    conditioning: Conditioning,
+) -> Result<Balance, Error> {
+    let mut x = DVec2::new(initial.warmth, initial.tint);
     for _ in 0..32 {
         let r = residual(x)?;
+        let numerical_floor = match conditioning {
+            Conditioning::Absolute => 0.,
+            Conditioning::Relative => 16. * f64::EPSILON,
+        };
+        if numerical_floor != 0. && r.length() <= numerical_floor {
+            return Ok(Balance {
+                warmth: x.x,
+                tint: x.y,
+            });
+        }
         let mut jacobian = DMat2::ZERO;
         for axis in 0..2 {
             let mut lo = x;
@@ -204,19 +278,33 @@ fn fit_roll_neutral(
             hi[axis] = (x[axis] + DERIVATIVE_STEP).min(1.0);
             *jacobian.col_mut(axis) = (residual(hi)? - residual(lo)?) / (hi[axis] - lo[axis]);
         }
+        let scale = match conditioning {
+            Conditioning::Absolute => 1.,
+            Conditioning::Relative => jacobian
+                .to_cols_array()
+                .into_iter()
+                .map(f64::abs)
+                .fold(0., f64::max),
+        };
+        if !scale.is_finite() || scale == 0. {
+            return Err(Error::UnusableSample(
+                "neutral patch has insufficient correction information",
+            ));
+        }
+        jacobian /= scale;
         let det = jacobian.determinant();
         if !jacobian.is_finite() || !det.is_finite() || det.abs() < MIN_JACOBIAN_DETERMINANT {
             return Err(Error::UnusableSample(
-                "gamma patch has insufficient slope information (near an anchor)",
+                "neutral patch has insufficient correction information",
             ));
         }
-        if r.length() < FIT_RESIDUAL_TOLERANCE {
+        if r.length() <= FIT_RESIDUAL_TOLERANCE * scale + numerical_floor {
             return Ok(Balance {
                 warmth: x.x,
                 tint: x.y,
             });
         }
-        let delta = jacobian.inverse() * r;
+        let delta = jacobian.inverse() * (r / scale);
         let mut accepted = false;
         for attempt in 0..16 {
             let step = 0.5_f64.powi(attempt);
@@ -234,9 +322,9 @@ fn fit_roll_neutral(
         }
         if !accepted {
             return Err(Error::UnusableSample(
-                "no usable gamma correction within the control range",
+                "no usable neutral correction within the control range",
             ));
         }
     }
-    Err(Error::UnusableSample("gamma fit did not converge"))
+    Err(Error::UnusableSample("neutral fit did not converge"))
 }

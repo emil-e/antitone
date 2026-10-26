@@ -103,7 +103,7 @@ impl Editor {
             || self.transition.is_some()
             || self.project_overwrite.is_some()
             || self.removal_pending.is_some()
-            || self.document.visit.adjustments.confirming()
+            || self.document.visit.adjustment_layers.confirming()
     }
 
     pub(super) fn application_menu_state(&self) -> State {

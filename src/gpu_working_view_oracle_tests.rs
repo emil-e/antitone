@@ -1,5 +1,6 @@
 //! Original-footprint, scalar-mask and encoded-lifetime regressions on production objects.
 use super::*;
+use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::{crop::Crop, geometry::Composition};
 
 fn cropped(area: SourceRegion, region: SourceRegion, output: [u32; 2], angle: f64) -> FrameRaster {
@@ -69,8 +70,17 @@ fn physical_view_colour_matches_scalar_continuous_source_masks() {
             })
             .collect::<Vec<_>>();
         let source = authored_source(&device, renderer, kernels, &values, frame);
-        let snapshot = PhotoGradeSnapshot::new(PhotoSettings::default(), local_pair(area)).unwrap();
-        let scalar = crate::local_adjustments::LocalGrade::new(snapshot.locals().to_vec()).unwrap();
+        let snapshot = AdjustmentLayerSnapshot::new(
+            std::iter::once(crate::adjustment_layers::AdjustmentLayer::global(
+                AdjustmentLayerSettings::default(),
+            ))
+            .chain(local_pair(area))
+            .collect(),
+        )
+        .unwrap();
+        let scalar =
+            crate::adjustment_layers::AdjustmentLayerStack::new(snapshot.layers().to_vec())
+                .unwrap();
         let view = render(
             &device,
             &queue,
@@ -159,10 +169,13 @@ fn physical_view_original_footprints_match_scalar_correction_signed_hdr_and_floo
         )
         .unwrap()
         .unwrap();
-        let scalar = crate::local_adjustments::SpatialPipeline::new(
+        let scalar = crate::adjustment_layers::AdjustmentLayerPipeline::new(
             input,
             roll,
-            PhotoGradeSnapshot::new(PhotoSettings::default(), vec![]).unwrap(),
+            AdjustmentLayerSnapshot::new(vec![crate::adjustment_layers::AdjustmentLayer::global(
+                AdjustmentLayerSettings::default(),
+            )])
+            .unwrap(),
             scan.camera_to_ap1,
         )
         .unwrap();
@@ -207,15 +220,32 @@ fn physical_view_encoded_versions_survive_owner_release_and_abandoned_encoders_d
         )
         .unwrap();
         let source = authored_source(&device, renderer, kernels, &values, frame);
-        let photo = PhotoSettings {
+        let photo = AdjustmentLayerSettings {
             exposure: 1.,
             ..Default::default()
         };
-        let snapshot = PhotoGradeSnapshot::new(photo, vec![]).unwrap();
+        let snapshot =
+            AdjustmentLayerSnapshot::new(vec![crate::adjustment_layers::AdjustmentLayer::global(
+                photo,
+            )])
+            .unwrap();
         let roll = RollSettings::default();
         let input = ProcessingInput::from(
-            ProcessingParameters::interpret(negative(0.65), roll, photo, source.spec.matrix)
-                .unwrap(),
+            crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+                crate::adjustment_layers::AdjustmentLayer::global(photo),
+            ])
+            .and_then(|snapshot| {
+                crate::gpu::GpuAdjustmentLayers::new(
+                    &device,
+                    negative(0.65),
+                    roll,
+                    snapshot,
+                    source.spec.matrix,
+                    source.spec.area,
+                )
+            })
+            .map(Arc::new)
+            .unwrap(),
         );
         let view = RenderedView::new(
             &device,

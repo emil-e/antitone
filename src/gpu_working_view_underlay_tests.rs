@@ -1,4 +1,5 @@
 use super::*;
+use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::processing::{NegativeInput, Response};
 
 fn source(
@@ -224,7 +225,7 @@ fn physical_view_underlay_chart_fills_only_missing_detail_with_one_coherent_targ
         let mut previous_base = None;
         let mut worst = 0f64;
         for epoch in 0..3 {
-            let photo = PhotoSettings {
+            let photo = AdjustmentLayerSettings {
                 exposure: f64::from(epoch) * 0.5 - 0.5,
                 contrast: 1.1,
                 saturation: 1.2,
@@ -234,8 +235,11 @@ fn physical_view_underlay_chart_fills_only_missing_detail_with_one_coherent_targ
                 },
                 ..Default::default()
             };
-            let processing = processing_input(input, roll, photo, &scan);
-            let snapshot = PhotoGradeSnapshot::new(photo, vec![]).unwrap();
+            let processing = processing_input(&device, input, roll, photo, &scan);
+            let snapshot = AdjustmentLayerSnapshot::new(vec![
+                crate::adjustment_layers::AdjustmentLayer::global(photo),
+            ])
+            .unwrap();
             for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
                 let detail = RenderedView::new(
                     &device,
@@ -488,7 +492,7 @@ fn physical_view_underlay_constant_signed_hdr_charts_have_no_tone_or_colour_seam
         let spec = ViewSourceSpec::new(13, regional, input, scan.camera_to_ap1, None).unwrap();
         let mut base_spec = spec.underlay().unwrap();
         base_spec.frame.output = [8, 8];
-        let photo = PhotoSettings {
+        let photo = AdjustmentLayerSettings {
             exposure: 2.,
             contrast: 0.7,
             saturation: 1.4,
@@ -498,7 +502,7 @@ fn physical_view_underlay_constant_signed_hdr_charts_have_no_tone_or_colour_seam
             },
             ..Default::default()
         };
-        let processing = processing_input(input, roll, photo, &scan);
+        let processing = processing_input(&device, input, roll, photo, &scan);
         let mut worst = 0f32;
         for rgb in [[0.; 3], [0.18; 3], [-0.01, 1.5, 0.04]] {
             let value = [rgb[0], rgb[1], rgb[2], 8.];
@@ -517,7 +521,10 @@ fn physical_view_underlay_constant_signed_hdr_charts_have_no_tone_or_colour_seam
                         s,
                         input,
                         roll,
-                        PhotoGradeSnapshot::new(photo, vec![]).unwrap(),
+                        AdjustmentLayerSnapshot::new(vec![
+                            crate::adjustment_layers::AdjustmentLayer::global(photo),
+                        ])
+                        .unwrap(),
                         &processing,
                         target,
                         None,
@@ -581,15 +588,18 @@ fn physical_view_underlay_in_flight_callbacks_do_not_retain_support_or_renderer_
         );
         let owners = [Arc::downgrade(&detail_source), Arc::downgrade(&base_source)];
         let renderer_owner = Arc::downgrade(&renderer);
-        let photo = PhotoSettings::default();
-        let input = processing_input(cal, roll, photo, &scan);
+        let photo = AdjustmentLayerSettings::default();
+        let input = processing_input(&device, cal, roll, photo, &scan);
         let make = |s| {
             RenderedView::new(
                 &device,
                 s,
                 cal,
                 roll,
-                PhotoGradeSnapshot::new(photo, vec![]).unwrap(),
+                AdjustmentLayerSnapshot::new(vec![
+                    crate::adjustment_layers::AdjustmentLayer::global(photo),
+                ])
+                .unwrap(),
                 &input,
                 OutputTarget::Srgb,
                 None,
@@ -666,15 +676,18 @@ fn physical_view_underlay_texture_composition_does_not_inherit_storage_buffer_si
             base_spec,
             &[[0.18, 0.18, 0.18, 8.]; 64],
         );
-        let photo = PhotoSettings::default();
-        let input = processing_input(cal, roll, photo, &scan);
+        let photo = AdjustmentLayerSettings::default();
+        let input = processing_input(&device, cal, roll, photo, &scan);
         let make = |s| {
             RenderedView::new(
                 &device,
                 s,
                 cal,
                 roll,
-                PhotoGradeSnapshot::new(photo, vec![]).unwrap(),
+                AdjustmentLayerSnapshot::new(vec![
+                    crate::adjustment_layers::AdjustmentLayer::global(photo),
+                ])
+                .unwrap(),
                 &input,
                 OutputTarget::Srgb,
                 None,

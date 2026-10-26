@@ -56,7 +56,10 @@ fn renderer_exports_exact_rotated_tiff_and_both_exr_precisions_and_stops_safely(
         }
         .into(),
         roll: RollSettings::default(),
-        grade: PhotoGradeSnapshot::new(Default::default(), vec![]).unwrap(),
+        grade: AdjustmentLayerSnapshot::new(vec![
+            crate::adjustment_layers::AdjustmentLayer::global(Default::default()),
+        ])
+        .unwrap(),
         repairs: &[],
         composition,
         format,

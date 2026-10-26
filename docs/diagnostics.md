@@ -225,28 +225,28 @@ Match `latency_frame`/`latency_completion` session events by their `id` field. T
 
 For native scheduling and shared native builds, see [native development](native-development.md#editor-scheduling).
 
-## Local processing and reuse
+## Adjustment-layer processing and reuse
 
-The local feature uses normal device-aware editor admission. These diagnostics isolate original-sample processing and immutable snapshots; the [composed workflow checks](development.md#local-grading-and-shared-consumers) separately exercise controls and normal workers:
+Adjustment layers use complete-stack editor admission. These diagnostics isolate original-sample processing and immutable snapshots; the [composed workflow checks](development.md#adjustment-layers-and-shared-consumers) separately exercise controls and normal workers:
 
 ```sh
-ANTITONE_LOCAL_PERF_QUICK=1 cargo test --locked --offline --release \
-  --features editor --test local_adjustment_performance -- --ignored --nocapture --test-threads=1
+ANTITONE_ADJUSTMENT_LAYER_PERF_QUICK=1 cargo test --locked --offline --release \
+  --features editor --test adjustment_layer_performance -- --ignored --nocapture --test-threads=1
 cargo test --locked --offline --release --features gpu --lib \
   paired_kernel_variants -- --ignored --nocapture --test-threads=1
 ANTITONE_RAW_SAMPLES=/absolute/samples cargo test --locked --offline --release \
-  --features editor --lib real_raw_local_preview_tiles_and_refinement \
+  --features editor --lib real_raw_adjustment_layer_preview_tiles_and_refinement \
   -- --ignored --nocapture --test-threads=1
 ```
 
-For a bounded local-stack ownership observation on the production working view:
+For a bounded layer-stack ownership observation on the production working view:
 
 ```sh
 cargo test --locked --offline --release --features editor --lib \
-  physical_view_local_stack_resources -- --ignored --nocapture --test-threads=1
+  physical_view_adjustment_layer_resources -- --ignored --nocapture --test-threads=1
 ```
 
-The [diagnostic](../src/gpu_working_view_local_resource_tests.rs) uses an authored RAW, a 1080p detail grid and the production whole-composition underlay with correction off/on, numeric/geometry edits and both targets. It samples same-process footprint/resident/Metal allocation and checkpoints current/building, deferred encoded consumers and retirement. Set `ANTITONE_SCREEN_RAW=1 ANTITONE_RAW_SAMPLES=/absolute/samples` for the supplied native-size source (headers must pass the existing 600-MiB diagnostic source bound); both variants use the existing pressure/free-memory/swap/growth stops, and timings without a coordinated window are indicative, not isolated interaction latency.
+The [diagnostic](../src/gpu_working_view_adjustment_layer_resource_tests.rs) uses an authored RAW, a 1080p detail grid and the production whole-composition underlay with correction off/on, numeric/geometry edits and both targets. It samples same-process footprint/resident/Metal allocation and checkpoints current/building, deferred encoded consumers and retirement. Set `ANTITONE_SCREEN_RAW=1 ANTITONE_RAW_SAMPLES=/absolute/samples` for the supplied native-size source (headers must pass the existing 600-MiB diagnostic source bound); both variants use the existing pressure/free-memory/swap/growth stops, and timings without a coordinated window are indicative, not isolated interaction latency.
 
 Original-sample processing shares the editor's f32 inversion for integer and continuous inputs. [Continuous-source checks](../tests/gpu_continuous.rs), [film-response checks](../tests/gpu_film_response.rs) and [original export checks](../src/gpu_export_tests.rs) exercise the model and exact floor flags.
 
@@ -304,7 +304,7 @@ ANTITONE_PHOTO_OUTPUT="$PWD/.cache/photographic-FRESH" \
   --test photographic_samples -- --ignored --nocapture --test-threads=1
 ```
 
-It develops the train calibration references and three photographs (`DSC04520`, `DSC04522`, `DSC04524`) in Negative's unity-WB basis, writes paired 512×384 original-pixel TIFF crops in both targets, and varies correction, photographic/local grades and their blend endpoints/interiors. Reports include RGB16 difference distributions, counts above one 8-bit-code equivalent, nonclipped reference coverage and export time. Inspect the paired files before attributing a difference to precision; the outputs also include GPU-versus-OCIO rendering differences. Crop timings include export setup and encoding, and do not predict full-frame throughput. The [full-size exercise](#export) measures that workload separately.
+It develops the train calibration references and three photographs (`DSC04520`, `DSC04522`, `DSC04524`) in Negative's unity-WB basis, writes paired 512×384 original-pixel TIFF crops in both targets, and varies correction, ordered adjustment layers and their blend endpoints/interiors. Reports include RGB16 difference distributions, counts above one 8-bit-code equivalent, nonclipped reference coverage and export time. Inspect the paired files before attributing a difference to precision; the outputs also include GPU-versus-OCIO rendering differences. Crop timings include export setup and encoding, and do not predict full-frame throughput. The [full-size exercise](#export) measures that workload separately.
 
 ## View sampling quality oracles
 
@@ -412,7 +412,7 @@ Rendering scripts share `scripts/generate-ocio-reference.sh`, which regenerates 
 
 ## Export
 
-[Export checks](development.md#export-checks) distinguish production GPU/worker workflows, exact encoder serialization and independent scalar/OCIO photographic references. [GPU exports](../tests/gpu_export.rs) reopen original-sample TIFF/AP0 EXR with ordered locals, correction, orientation and straightening; [reference export tests](../tests/export.rs) retain scalar file-code/profile/compression and failure checks behind `ocio-reference`. No reference is a production fallback.
+[Export checks](development.md#export-checks) distinguish production GPU/worker workflows, exact encoder serialization and independent scalar/OCIO photographic references. [GPU exports](../tests/gpu_export.rs) reopen original-sample TIFF/AP0 EXR with ordered layers, correction, orientation and straightening; [reference export tests](../tests/export.rs) retain scalar file-code/profile/compression and failure checks behind `ocio-reference`. No reference is a production fallback.
 
 During an agreed GPU window, the opt-in full-size resource exercise retains production physical detail/underlay while exporting and then regrading that retained source:
 

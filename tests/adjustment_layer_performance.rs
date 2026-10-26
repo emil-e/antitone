@@ -1,13 +1,13 @@
 #![cfg(all(feature = "ui", feature = "render"))]
+use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
+    adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSnapshot},
     color::Balance,
     geometry::{SourcePoint, SourceRegion},
     gpu::{
-        GpuPhotoGrade, ProcessingInput, ProcessingKernel, ProcessingParameters, ProcessingSource,
-        SourceGeometry,
+        GpuAdjustmentLayers, ProcessingInput, ProcessingKernel, ProcessingSource, SourceGeometry,
     },
-    local_adjustments::{GradientMask, LocalAdjustment, PhotoGradeSnapshot},
-    processing::{Calibration, PhotoSettings, RollSettings},
+    processing::{Calibration, RollSettings},
     rendering::OutputTarget,
     viewer::GpuImage,
 };
@@ -21,16 +21,16 @@ const AREA: SourceRegion = SourceRegion {
     height: 5472,
 };
 
-fn locals(count: usize, photographic: bool) -> Vec<LocalAdjustment> {
+fn layers(count: usize, photographic: bool) -> Vec<AdjustmentLayer> {
     (0..count)
-        .map(|i| LocalAdjustment {
+        .map(|i| AdjustmentLayer {
             mask: if i % 2 == 0 {
-                GradientMask::Linear {
+                AdjustmentLayerCoverage::Linear {
                     start: SourcePoint([900., 800.]),
                     end: SourcePoint([7000., 4400.]),
                 }
             } else {
-                GradientMask::Radial {
+                AdjustmentLayerCoverage::Radial {
                     center: SourcePoint([4100., 2750.]),
                     radii: [3500., 2300.],
                     angle: 0.3,
@@ -38,7 +38,7 @@ fn locals(count: usize, photographic: bool) -> Vec<LocalAdjustment> {
                 }
             },
             photo: if photographic {
-                PhotoSettings {
+                AdjustmentLayerSettings {
                     exposure: 0.25,
                     wb: Balance {
                         warmth: 0.005,
@@ -51,7 +51,7 @@ fn locals(count: usize, photographic: bool) -> Vec<LocalAdjustment> {
                     ..Default::default()
                 }
             } else {
-                PhotoSettings {
+                AdjustmentLayerSettings {
                     exposure: if i % 2 == 0 { 0.25 } else { -0.125 },
                     ..Default::default()
                 }
@@ -95,7 +95,7 @@ fn local_stage_cost_at_live_preview_and_refinement_tile_sizes() {
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let quick = std::env::var_os("ANTITONE_LOCAL_PERF_QUICK").is_some();
+        let quick = std::env::var_os("ANTITONE_ADJUSTMENT_LAYER_PERF_QUICK").is_some();
         let sizes: &[[u32; 2]] = if quick {
             &[[1024, 640]]
         } else {
@@ -123,7 +123,7 @@ fn local_stage_cost_at_live_preview_and_refinement_tile_sizes() {
             input_floor: 1. / 65535.,
         };
         let roll = RollSettings::default();
-        let global = PhotoSettings::default();
+        let global = AdjustmentLayerSettings::default();
         for &size in sizes {
             let n = size[0] * size[1];
             let pixels: Vec<_> = (0..n)
@@ -181,29 +181,25 @@ fn local_stage_cost_at_live_preview_and_refinement_tile_sizes() {
                     let mut unsupported = None;
                     for _ in 0..3 {
                         let start = Instant::now();
-                        let result = if count == 0 {
-                            ProcessingParameters::positive(
-                                calibration,
-                                roll,
-                                global,
-                                DMat3::IDENTITY,
+                        let result = GpuAdjustmentLayers::new(
+                            &device,
+                            calibration,
+                            roll,
+                            AdjustmentLayerSnapshot::new(
+                                std::iter::once(
+                                    antitone::adjustment_layers::AdjustmentLayer::global(global),
+                                )
+                                .chain(layers(count, photographic))
+                                .collect(),
                             )
-                            .map(|_| None)
-                        } else {
-                            GpuPhotoGrade::new(
-                                &device,
-                                calibration,
-                                roll,
-                                PhotoGradeSnapshot::new(global, locals(count, photographic))
-                                    .unwrap(),
-                                DMat3::IDENTITY,
-                                AREA,
-                            )
-                            .map(|grade| Some(Arc::new(grade)))
-                        };
+                            .unwrap(),
+                            DMat3::IDENTITY,
+                            AREA,
+                        )
+                        .map(Arc::new);
                         match result {
                             Ok(grade) => {
-                                prepared = grade;
+                                prepared = Some(grade);
                                 preparation.push(start.elapsed().as_secs_f64() * 1000.);
                             }
                             Err(error) => {
@@ -218,21 +214,12 @@ fn local_stage_cost_at_live_preview_and_refinement_tile_sizes() {
                         );
                         continue;
                     }
-                    let parameters =
-                        ProcessingParameters::positive(calibration, roll, global, DMat3::IDENTITY)
-                            .unwrap();
-                    let input = prepared.as_ref().map_or_else(
-                        || ProcessingInput::from(parameters),
-                        |grade| grade.clone().into(),
-                    );
+                    let prepared = prepared.unwrap();
+                    let input = ProcessingInput::from(prepared.clone());
                     let encode = |encoder: &mut wgpu::CommandEncoder| {
-                        if let Some(grade) = &prepared {
-                            kernel
-                                .encode_grade(&device, encoder, &source, &output, grade)
-                                .unwrap();
-                        } else {
-                            kernel.encode(&device, encoder, &source, &output, parameters);
-                        }
+                        kernel
+                            .encode_grade(&device, encoder, &source, &output, &prepared)
+                            .unwrap();
                     };
                     for _ in 0..warmups {
                         completion(&device, &queue, encode);
@@ -259,7 +246,7 @@ fn local_stage_cost_at_live_preview_and_refinement_tile_sizes() {
                         median(rendered),
                         source.byte_len(),
                         output.size(),
-                        prepared.as_ref().map_or(0, |grade| grade.byte_len())
+                        prepared.byte_len()
                     );
                 }
             }

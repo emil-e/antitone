@@ -24,7 +24,7 @@ impl Editor {
             || self.allow_close
             || self.export_modal()
             || self.removal_pending.is_some()
-            || self.document.visit.adjustments.confirming()
+            || self.document.visit.adjustment_layers.confirming()
     }
 
     pub(super) fn fullscreen_available(&self) -> bool {

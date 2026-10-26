@@ -101,7 +101,13 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
         for (source, prior) in editor.document.project.sources.iter().zip(&before.sources) {
             assert_eq!(source.orientation, prior.orientation);
             assert_eq!(source.crop, prior.crop);
-            assert_eq!(source.photo.wb, Balance::default());
+            assert_eq!(
+                source.adjustment_layers.as_ref().unwrap().layers[0]
+                    .adjustment
+                    .photo
+                    .wb,
+                Balance::default()
+            );
         }
         let expected = 3000. / 4031.;
         assert!(
@@ -120,6 +126,11 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
                 .project
                 .source(ids[0])
                 .unwrap()
+                .adjustment_layers
+                .as_ref()
+                .unwrap()
+                .layers[0]
+                .adjustment
                 .photo
                 .exposure
                 > editor
@@ -127,6 +138,11 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
                     .project
                     .source(ids[1])
                     .unwrap()
+                    .adjustment_layers
+                    .as_ref()
+                    .unwrap()
+                    .layers[0]
+                    .adjustment
                     .photo
                     .exposure
         );
@@ -220,8 +236,9 @@ fn state() -> Editor {
                     input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                 },
                 reference_only: false,
-                photo: PhotoSettings::default(),
-                local_adjustments: None,
+                adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
+                    AdjustmentLayerSettings::default(),
+                )),
                 repairs: Default::default(),
                 orientation: Default::default(),
                 crop: None,
@@ -235,16 +252,16 @@ fn state() -> Editor {
     editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
     editor.set_gamma(0.9);
     editor.roll.exposure = 0.;
-    editor.photo.exposure = 1.23456789;
-    editor.photo.wb = Balance {
+    editor.adjustment_layer_settings.exposure = 1.23456789;
+    editor.adjustment_layer_settings.wb = Balance {
         warmth: 0.3,
         tint: -0.2,
     };
-    editor.photo.contrast = 0.8;
-    editor.photo.pivot = 0.3;
-    editor.photo.contrast_colour_mix = 0.4;
-    editor.photo.saturation = 1.2;
-    editor.photo.saturation_density = 0.6;
+    editor.adjustment_layer_settings.contrast = 0.8;
+    editor.adjustment_layer_settings.pivot = 0.3;
+    editor.adjustment_layer_settings.contrast_colour_mix = 0.4;
+    editor.adjustment_layer_settings.saturation = 1.2;
+    editor.adjustment_layer_settings.saturation_density = 0.6;
     editor.roll.wb = Balance {
         warmth: 0.2,
         tint: -0.1,
@@ -313,10 +330,12 @@ fn outcome(editor: &Editor) -> Outcome {
         tint: 0.1,
     };
     for (index, source) in document.project.sources.iter_mut().enumerate() {
-        source.photo = PhotoSettings {
+        source.adjustment_layers.as_mut().unwrap().layers[0]
+            .adjustment
+            .photo = AdjustmentLayerSettings {
             exposure: if index == 0 { 0.4 } else { -0.4 },
             wb: Balance::default(),
-            ..PhotoSettings::default()
+            ..AdjustmentLayerSettings::default()
         };
     }
     document.project.analysis_area = Some([52, 42, 720, 540]);
@@ -334,7 +353,10 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
     let mut second = editor.document.project.sources[0].clone();
     second.id = SourceId(0);
     second.path = "second.ARW".into();
-    second.photo.exposure = 0.;
+    second.adjustment_layers.as_mut().unwrap().layers[0]
+        .adjustment
+        .photo
+        .exposure = 0.;
     editor.document.project.add_source(second).unwrap();
     let before = editor.document.project.clone();
     editor.viewport.zoom = Some(1.7);
@@ -375,9 +397,33 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
     assert_eq!(editor.gamma(), before.input.gamma());
     assert_eq!(Some(editor.response()), Editor::response_of(before.input));
     assert_eq!(editor.roll.wb, expected.roll.wb);
-    assert_eq!(editor.photo, expected.sources[0].photo);
-    assert_ne!(editor.photo, before.sources[0].photo);
-    assert_eq!(editor.document.project.sources[1].photo.exposure, -0.4);
+    assert_eq!(
+        editor.adjustment_layer_settings,
+        expected.sources[0]
+            .adjustment_layers
+            .as_ref()
+            .unwrap()
+            .layers[0]
+            .adjustment
+            .photo
+    );
+    assert_ne!(
+        editor.adjustment_layer_settings,
+        before.sources[0].adjustment_layers.as_ref().unwrap().layers[0]
+            .adjustment
+            .photo
+    );
+    assert_eq!(
+        editor.document.project.sources[1]
+            .adjustment_layers
+            .as_ref()
+            .unwrap()
+            .layers[0]
+            .adjustment
+            .photo
+            .exposure,
+        -0.4
+    );
     for (mut after, prior) in editor
         .document
         .project
@@ -387,13 +433,22 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
         .zip(&before.sources)
     {
         assert_eq!(
-            after.photo,
-            PhotoSettings {
-                exposure: after.photo.exposure,
-                ..PhotoSettings::default()
+            after.adjustment_layers.as_ref().unwrap().layers[0]
+                .adjustment
+                .photo,
+            AdjustmentLayerSettings {
+                exposure: after.adjustment_layers.as_ref().unwrap().layers[0]
+                    .adjustment
+                    .photo
+                    .exposure,
+                ..AdjustmentLayerSettings::default()
             }
         );
-        after.photo = prior.photo;
+        after.adjustment_layers.as_mut().unwrap().layers[0]
+            .adjustment
+            .photo = prior.adjustment_layers.as_ref().unwrap().layers[0]
+            .adjustment
+            .photo;
         assert_eq!(&after, prior);
     }
     assert_eq!(editor.document.project.development(), before.development());
@@ -412,15 +467,15 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
     assert!(editor.original.refining.is_none() && editor.original.settled.is_none());
     assert!(editor.document.dirty());
     editor.roll.exposure = 0.;
-    editor.photo.exposure = 0.;
-    editor.photo.wb = Balance {
+    editor.adjustment_layer_settings.exposure = 0.;
+    editor.adjustment_layer_settings.wb = Balance {
         warmth: 0.25,
         tint: -0.15,
     };
-    let manual_photo = editor.photo;
+    let manual_photo = editor.adjustment_layer_settings;
     editor.sync_document();
     assert_eq!(editor.roll.exposure, 0.); // Manual zero is not an auto-placement trigger.
-    assert_eq!(editor.photo, manual_photo);
+    assert_eq!(editor.adjustment_layer_settings, manual_photo);
 }
 
 #[test]
@@ -458,7 +513,12 @@ fn failure_cancel_and_invalid_gpu_combination_preserve_all_processing_state() {
         );
         assert_eq!(editor.document.project, before);
         assert_eq!(editor.roll, before.roll);
-        assert_eq!(editor.photo, before.sources[0].photo);
+        assert_eq!(
+            editor.adjustment_layer_settings,
+            before.sources[0].adjustment_layers.as_ref().unwrap().layers[0]
+                .adjustment
+                .photo
+        );
         assert!(!editor.busy);
     }
 }
@@ -818,8 +878,18 @@ fn real_ambiguous_first_frame_uses_roll_opening_instead_of_holder() {
             .into_iter()
             .zip(&before.sources)
         {
-            assert_eq!(after.photo.wb, Balance::default());
-            after.photo = prior.photo;
+            assert_eq!(
+                after.adjustment_layers.as_ref().unwrap().layers[0]
+                    .adjustment
+                    .photo
+                    .wb,
+                Balance::default()
+            );
+            after.adjustment_layers.as_mut().unwrap().layers[0]
+                .adjustment
+                .photo = prior.adjustment_layers.as_ref().unwrap().layers[0]
+                .adjustment
+                .photo;
             assert_eq!(&after, prior);
         }
         let [x, y, w, h] = editor.document.project.analysis_area.unwrap();
@@ -899,8 +969,8 @@ fn click_analyze(editor: Editor, limit: Duration) -> Editor {
     owner.into_inner().unwrap()
 }
 
-#[path = "editor_local_analysis_tests.rs"]
-mod locals;
+#[path = "editor_adjustment_layer_analysis_tests.rs"]
+mod layers;
 #[path = "editor_analysis_review_tests.rs"]
 mod review_tests;
 
@@ -958,11 +1028,11 @@ fn photo_numeric_focus_commit_precedes_analysis_area_preparation_snapshot() {
             "numeric point {point:?}, labels {labels:?}"
         );
         super::super::tests::app_frame(app, &ctx, vec![egui::Event::Text("0.7654321".into())]);
-        assert_eq!(app.read(|e| e.photo.exposure), 0.);
+        assert_eq!(app.read(|e| e.adjustment_layer_settings.exposure), 0.);
         click_label(app, &ctx, "Roll");
         app.read(|e| {
             assert_eq!(
-                e.photo.exposure, 0.7654321,
+                e.adjustment_layer_settings.exposure, 0.7654321,
                 "tab={} status={}",
                 e.tab, e.status
             )
@@ -987,6 +1057,11 @@ fn photo_numeric_focus_commit_precedes_analysis_area_preparation_snapshot() {
                     .project
                     .source(e.current_source.unwrap())
                     .unwrap()
+                    .adjustment_layers
+                    .as_ref()
+                    .unwrap()
+                    .layers[0]
+                    .adjustment
                     .photo
                     .exposure,
                 0.7654321
@@ -1001,7 +1076,7 @@ fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade(
     let editor = ready_state();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.photo.contrast = 1.2;
+            editor.adjustment_layer_settings.contrast = 1.2;
             editor.source = false;
             editor.working.compare = true;
             let ctx = egui::Context::default();

@@ -5,7 +5,7 @@ use crate::processing::InputSettings;
 pub(super) struct ControlSettings {
     pub input: InputSettings,
     pub roll: RollSettings,
-    pub photo: PhotoSettings,
+    pub photo: AdjustmentLayerSettings,
 }
 
 impl ControlSettings {
@@ -13,20 +13,20 @@ impl ControlSettings {
         Self {
             input: editor.input,
             roll: editor.roll,
-            photo: editor.photo,
+            photo: editor.adjustment_layer_settings,
         }
     }
 
     pub(super) fn apply(self, editor: &mut Editor) {
         editor.input = self.input;
         editor.roll = self.roll;
-        editor.photo = self.photo;
+        editor.adjustment_layer_settings = self.photo;
     }
 }
 
-fn reset_photo(photo: &mut PhotoSettings, reset: controls::Reset) {
+fn reset_photo(photo: &mut AdjustmentLayerSettings, reset: controls::Reset) {
     use controls::{Parameter as P, Reset as R};
-    let defaults = PhotoSettings::default();
+    let defaults = AdjustmentLayerSettings::default();
     match reset {
         R::Parameter(kind, _) => {
             let value = kind.default();
@@ -105,22 +105,22 @@ fn reset_roll(input: &mut InputSettings, roll: &mut RollSettings, reset: control
 #[derive(Clone, Copy)]
 pub(super) enum Scope {
     Roll,
-    Photo(SourceId, adjustments::Target),
+    Photo(SourceId, adjustment_layers::Target),
     Rendering,
 }
 
 pub(super) enum Command {
     Reset(Scope, controls::Reset),
-    InvertLocal(crate::project::AdjustmentId, bool),
+    InvertAdjustmentLayer(crate::project::AdjustmentLayerId, bool),
     OrderInput {
-        start: Option<crate::project::AdjustmentId>,
-        drop: Option<(adjustments::OrderKey, usize)>,
+        start: Option<crate::project::AdjustmentLayerId>,
+        drop: Option<(adjustment_layers::OrderKey, usize)>,
         finish: bool,
     },
     Photo(crop_editor::ToolAction),
     Roll(analysis::Orientation),
-    Adjustment(adjustments::Action),
-    ToggleAdjustments,
+    Adjustment(adjustment_layers::Action),
+
     CreateMask(bool),
     Pick(Pick),
     ResetRepairs(SourceId),
@@ -137,13 +137,7 @@ impl Editor {
         if candidate == previous || !candidate.input.ready() {
             return Ok(());
         }
-        if candidate.input != previous.input || candidate.roll != previous.roll {
-            self.validate_processing(candidate.input, candidate.roll, candidate.photo)
-        } else {
-            self.dust_validate_processing(candidate.input, candidate.roll, candidate.photo)?;
-            self.positive_processing(candidate.input, candidate.roll, candidate.photo)
-                .map(|_| ())
-        }
+        self.validate_processing(candidate.input, candidate.roll, candidate.photo)
     }
 
     // Numeric widgets must resolve focus loss and pass admission before a separate
@@ -167,35 +161,34 @@ impl Editor {
                     .map(|()| candidate.apply(self))
             }
             Scope::Photo(source, target) if Some(source) == self.current_source => match target {
-                adjustments::Target::Global => {
-                    let previous = ControlSettings::capture(self);
-                    let mut candidate = previous;
-                    reset_photo(&mut candidate.photo, reset);
-                    self.validate_control_edit(previous, candidate)
-                        .map(|()| candidate.apply(self))
+                adjustment_layers::Target::None => {
+                    Err(Error::InvalidParameter("no selected adjustment layer"))
                 }
-                adjustments::Target::Local(id) => self.edit_adjustments(|locals| {
-                    let record = locals
-                        .adjustments
-                        .iter_mut()
-                        .find(|record| record.id == id)
-                        .ok_or(Error::InvalidParameter("unknown local adjustment"))?;
-                    match reset {
-                        controls::Reset::Parameter(controls::Parameter::Strength, _) => {
-                            record.adjustment.strength = 1.
-                        }
-                        controls::Reset::Parameter(controls::Parameter::Feather, _) => {
-                            if let crate::local_adjustments::GradientMask::Radial {
-                                feather, ..
-                            } = &mut record.adjustment.mask
-                            {
-                                *feather = controls::DEFAULT_RADIAL_FEATHER;
+                adjustment_layers::Target::Layer(id) => {
+                    self.edit_adjustment_layers_named("Reset settings", |layers| {
+                        let record = layers
+                            .layers
+                            .iter_mut()
+                            .find(|record| record.id == id)
+                            .ok_or(Error::InvalidParameter("unknown adjustment layer"))?;
+                        match reset {
+                            controls::Reset::Parameter(controls::Parameter::Strength, _) => {
+                                record.adjustment.strength = 1.
                             }
+                            controls::Reset::Parameter(controls::Parameter::Feather, _) => {
+                                if let crate::adjustment_layers::AdjustmentLayerCoverage::Radial {
+                                    feather,
+                                    ..
+                                } = &mut record.adjustment.mask
+                                {
+                                    *feather = controls::DEFAULT_RADIAL_FEATHER;
+                                }
+                            }
+                            _ => reset_photo(&mut record.adjustment.photo, reset),
                         }
-                        _ => reset_photo(&mut record.adjustment.photo, reset),
-                    }
-                    Ok(())
-                }),
+                        Ok(())
+                    })
+                }
             },
             Scope::Photo(..) => Err(Error::InvalidParameter("reset source changed")),
             Scope::Rendering => {
@@ -206,8 +199,8 @@ impl Editor {
         if let Err(error) = result {
             self.status = format!("Reset rejected: {error}");
         }
-        // Local admission already records its complete candidate.
-        if !matches!(scope, Scope::Photo(_, adjustments::Target::Local(_))) {
+        // Layer admission already records its complete candidate.
+        if !matches!(scope, Scope::Photo(_, adjustment_layers::Target::Layer(_))) {
             self.record_edit(
                 before,
                 "Reset settings",
@@ -222,13 +215,13 @@ impl Editor {
     pub(super) fn apply_control_command(&mut self, command: Command, cx: &UiContext<'_, Self>) {
         match command {
             Command::Reset(scope, reset) => self.reset_control(scope, reset),
-            Command::InvertLocal(id, invert) => {
-                if let Err(error) = self.edit_adjustments(|locals| {
-                    let record = locals
-                        .adjustments
+            Command::InvertAdjustmentLayer(id, invert) => {
+                if let Err(error) = self.edit_adjustment_layers(|layers| {
+                    let record = layers
+                        .layers
                         .iter_mut()
                         .find(|record| record.id == id)
-                        .ok_or(Error::InvalidParameter("unknown local adjustment"))?;
+                        .ok_or(Error::InvalidParameter("unknown adjustment layer"))?;
                     record.adjustment.invert = invert;
                     Ok(())
                 }) {
@@ -239,17 +232,11 @@ impl Editor {
                 start,
                 drop,
                 finish,
-            } => self.adjustment_order_input(start, drop, finish),
+            } => self.adjustment_layer_order_input(start, drop, finish),
             Command::Photo(action) => self.apply_photo_tool_action(action),
             Command::Roll(action) => self.apply_roll_orientation(action),
-            Command::Adjustment(action) => self.apply_adjustment_action(action),
-            Command::ToggleAdjustments => {
-                if self.document.visit.adjustments.drawer_open() {
-                    self.close_adjustments();
-                } else {
-                    self.open_adjustments();
-                }
-            }
+            Command::Adjustment(action) => self.apply_adjustment_layer_action(action),
+
             Command::CreateMask(radial) => {
                 if radial {
                     self.begin_radial_mask(None);

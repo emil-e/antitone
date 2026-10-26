@@ -1,5 +1,6 @@
 use super::{
-    Adjustments, Editor, LoadCache, Ready, SelectionTiming, Task, TaskRequest, UiContext, source,
+    AdjustmentLayerEditor, Editor, LoadCache, Ready, SelectionTiming, Task, TaskRequest, UiContext,
+    source,
 };
 use crate::processing::InputSettings;
 use crate::source_store::SourceKey;
@@ -88,18 +89,21 @@ impl Editor {
             self.cancel_analysis();
         }
         self.thumbnails.cancel();
-        self.document.visit.adjustments = Adjustments::default();
+        self.document.visit.adjustment_layers = AdjustmentLayerEditor::default();
         self.document.visit.mask_edit = None;
         self.current_source = self.document.find_source(&path);
         if selecting_photo {
             self.roll_selection
                 .reconcile(&self.document.project.order, self.current_source);
         }
-        self.photo = self
+        self.adjustment_layer_settings = self
             .current_source
             .and_then(|id| self.document.project.source(id).ok())
-            .map(|source| source.photo)
+            .and_then(|source| source.adjustment_layers.as_ref())
+            .and_then(|layers| layers.layers.last())
+            .map(|record| record.adjustment.photo)
             .unwrap_or_default();
+        self.refresh_adjustment_layer_selection();
         self.photo_orientation = self
             .current_source
             .and_then(|id| self.document.project.source(id).ok())
@@ -228,7 +232,10 @@ impl Editor {
                 }
                 if self.current_source.is_none() {
                     let mut record = ready.record.clone();
-                    record.photo = self.photo;
+                    self.overlay_adjustment_layer_settings(
+                        &mut record,
+                        self.adjustment_layer_settings,
+                    );
                     record.orientation = self.photo_orientation;
                     record.crop = self.crop;
                     match self.document.register(record) {

@@ -1,7 +1,8 @@
 #![cfg(feature = "project")]
+use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
     flat_field::FlatField,
-    processing::{DEFAULT_GAMMA, InputSettings, NegativeInput, PhotoSettings, Response},
+    processing::{DEFAULT_GAMMA, InputSettings, NegativeInput, Response},
     project::{Development, FlatFieldSettings, Project, Save, Source, SourceDevelopment, SourceId},
 };
 use glam::{DMat3, DVec3};
@@ -33,8 +34,9 @@ fn fixture() -> Project {
             input_floor: 1. / 65535.,
         },
         reference_only: false,
-        photo: PhotoSettings::default(),
-        local_adjustments: None,
+        adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
+            AdjustmentLayerSettings::default(),
+        )),
         repairs: Default::default(),
         orientation: Default::default(),
         crop: None,

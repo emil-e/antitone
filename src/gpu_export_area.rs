@@ -409,7 +409,7 @@ pub(super) fn write(
             .with_calibration(request.scan.processing_calibration(base)?),
         None => request.input,
     };
-    let grade = Arc::new(GpuPhotoGrade::new(
+    let grade = Arc::new(GpuAdjustmentLayers::new(
         device,
         input,
         request.roll,
@@ -420,7 +420,7 @@ pub(super) fn write(
     let repairs = crate::gpu::repairs::Snapshot::logical(request.repairs.to_vec())?;
     repairs.require_area(request.scan.area)?;
     if !repairs.0.is_empty() {
-        GpuPhotoGrade::validate_repaired(
+        GpuAdjustmentLayers::validate_repaired(
             device,
             input,
             request.roll,

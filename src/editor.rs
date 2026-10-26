@@ -1,5 +1,7 @@
+use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::{
     Error,
+    adjustment_layers::AdjustmentLayerSnapshot,
     application::UiContext,
     color::Balance,
     coverage::Coverage,
@@ -7,9 +9,8 @@ use crate::{
     export::ExrPrecision,
     geometry::{Composition, PhotoOrientation, RollOrientation},
     gpu::{ProcessingInput, ProcessingParameters, ProcessingSignature},
-    local_adjustments::PhotoGradeSnapshot,
     platform::host,
-    processing::{Calibration, InputSettings, PhotoSettings, RollSettings},
+    processing::{Calibration, InputSettings, RollSettings},
     raw::Rect,
     refinement::ViewRequest,
     rendering::OutputTarget,
@@ -74,9 +75,9 @@ mod look_workflow;
 #[path = "editor_processing.rs"]
 mod processing;
 use processing::Grades;
-#[path = "editor_adjustments.rs"]
-mod adjustments;
-use adjustments::Adjustments;
+#[path = "editor_adjustment_layers.rs"]
+mod adjustment_layers;
+use adjustment_layers::AdjustmentLayerEditor;
 #[path = "editor_working_view.rs"]
 mod working_view;
 #[path = "editor_working_workflow.rs"]
@@ -196,7 +197,7 @@ enum Pick {
 struct PickReturn {
     path: PathBuf,
     selected: usize,
-    adjustment: Option<(SourceId, adjustments::Target)>,
+    adjustment: Option<(SourceId, adjustment_layers::Target)>,
 }
 
 #[derive(Clone, Copy)]
@@ -337,7 +338,7 @@ pub struct Editor {
     input: InputSettings,
     input_switch: Option<InputSettings>,
     roll: RollSettings,
-    photo: PhotoSettings,
+    adjustment_layer_settings: AdjustmentLayerSettings,
 
     roll_orientation: RollOrientation,
     photo_orientation: PhotoOrientation,
@@ -516,7 +517,7 @@ impl Editor {
             input,
             input_switch: None,
             roll: RollSettings::default(),
-            photo: PhotoSettings::default(),
+            adjustment_layer_settings: AdjustmentLayerSettings::default(),
 
             roll_orientation: RollOrientation::default(),
             photo_orientation: PhotoOrientation::default(),
@@ -849,7 +850,8 @@ impl Editor {
         }
         if target.ready()
             && !self.document.project.sources.is_empty()
-            && let Err(error) = self.validate_processing(target, self.roll, self.photo)
+            && let Err(error) =
+                self.validate_processing(target, self.roll, self.adjustment_layer_settings)
         {
             self.status = error.to_string();
             return;
@@ -895,6 +897,7 @@ impl Editor {
 
     fn sync_document(&mut self) {
         let input = self.input;
+        let adjustment_layer_target = self.adjustment_layer_target();
         let project = &mut self.document.project;
         project.input = input;
         project.roll = self.roll;
@@ -907,7 +910,14 @@ impl Editor {
             let source = project
                 .source_mut(id)
                 .expect("active source belongs to document");
-            source.photo = self.photo;
+            if let adjustment_layers::Target::Layer(layer) = adjustment_layer_target
+                && let Some(record) = source
+                    .adjustment_layers
+                    .as_mut()
+                    .and_then(|layers| layers.layers.iter_mut().find(|record| record.id == layer))
+            {
+                record.adjustment.photo = self.adjustment_layer_settings;
+            }
             source.orientation = self.photo_orientation;
             source.crop = self.crop;
         }
@@ -1009,9 +1019,9 @@ impl Editor {
             self.selected = context.selected;
             if let Some((source, target)) = context.adjustment
                 && self.current_source == Some(source)
-                && self.adjustment_target() != target
+                && self.adjustment_layer_target() != target
             {
-                self.select_adjustment(target);
+                self.select_adjustment_layer(target);
             }
         }
         if let Some(view) = view {
@@ -1052,7 +1062,7 @@ impl Editor {
                     selected: self.selected,
                     adjustment: self
                         .current_source
-                        .map(|source| (source, self.adjustment_target())),
+                        .map(|source| (source, self.adjustment_layer_target())),
                 });
         }
         if let Some((layout, pixels_per_point)) = self.last_layout {
@@ -1192,12 +1202,7 @@ impl Editor {
             && self.flat_edit.is_none()
             && self.document.visit.ready.is_some();
         let mut start_pick = None;
-        if self.tab == 1 {
-            // A conditional indicator must not change the following inputs' auto-ID sequence.
-            ui.push_id("adjustment-target-indicator", |ui| {
-                self.adjustment_target_label(ui)
-            });
-        }
+
         egui::ScrollArea::vertical()
             .id_salt(("inspector", self.tab))
             .show(ui, |ui| {
@@ -1417,7 +1422,7 @@ impl Editor {
                         self.crop_controls(ui);
                         self.dust_controls(ui, cx);
                     });
-                    if self.adjustment_controls(ui, cx, editable, can_pick) {
+                    if self.adjustment_layer_controls(ui, cx, editable, can_pick) {
                         start_pick = Some(Pick::Wb);
                     }
                 } else {

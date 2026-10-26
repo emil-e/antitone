@@ -2,7 +2,7 @@
 use antitone::{
     color::ap1_to_ap0,
     export::{self, ExrPrecision, ImageSize, Overwrite},
-    processing::{Calibration, InputSettings, PhotoSettings, Pipeline, RollSettings},
+    processing::{Calibration, InputPipeline, InputSettings, RollSettings},
     profiles,
     raw::Rect,
     rendering::{CpuRenderer, OutputTarget},
@@ -43,8 +43,7 @@ fn corrected_full_size_tiff_and_ap0_exr_reopen() {
         ..RollSettings::default()
     };
     let input = InputSettings::negative(calibration);
-    let pipeline =
-        Pipeline::new(input, roll, PhotoSettings::default(), scan.camera_to_ap1).unwrap();
+    let pipeline = InputPipeline::new(input, roll, scan.camera_to_ap1).unwrap();
     let size = ImageSize {
         width: a.width,
         height: a.height,

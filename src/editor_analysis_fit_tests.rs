@@ -112,8 +112,26 @@ fn captured_services_fit_reviewed_support_and_keep_only_bounded_statistics_per_f
         request.areas.as_ref().unwrap().entries
     );
     assert!(
-        after.source(before.order[0]).unwrap().photo.exposure
-            > after.source(before.order[1]).unwrap().photo.exposure
+        after
+            .source(before.order[0])
+            .unwrap()
+            .adjustment_layers
+            .as_ref()
+            .unwrap()
+            .layers[0]
+            .adjustment
+            .photo
+            .exposure
+            > after
+                .source(before.order[1])
+                .unwrap()
+                .adjustment_layers
+                .as_ref()
+                .unwrap()
+                .layers[0]
+                .adjustment
+                .photo
+                .exposure
     );
     assert_eq!(request.document.project, before);
     assert_eq!(request.document.cache().charges().retained, 0);

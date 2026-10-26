@@ -87,7 +87,7 @@ impl Editor {
     ) {
         if self.document.visit.mask_edit.is_some()
             || self.document.auto_crop_edit.is_some()
-            || self.document.visit.adjustments.confirming()
+            || self.document.visit.adjustment_layers.confirming()
         {
             return;
         }

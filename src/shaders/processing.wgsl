@@ -4,7 +4,6 @@ struct Parameters {
     anchor: vec4f,
     post: array<vec4f, 3>,
     shape: vec4f,
-    creative: array<vec4f, 3>,
     stage: u32,
 }
 @group(0) @binding(0)
@@ -24,10 +23,11 @@ fn main(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) group
     }
     let source = convert_source(scans[index], index);
     if parameters.stage != STAGE_SOURCE {
-        // Graded positive render: interpret the input stage, then shared grade + locals.
-        let global = process_film(source);
-        positives[index] =
-            finish_pixel(ProcessedPixel(local_grade(global.rgb, index), global.flags));
+        // Graded positive render: interpret the input stage and Roll, then the layer stack.
+        let positive = process_film(source);
+        positives[index] = finish_pixel(
+                ProcessedPixel(adjustment_layer_grade(positive.rgb, index), positive.flags),
+            );
     } else {
         // Raw source inspection: no interpretation, no creative grade.
         positives[index] = process_camera_source(source);

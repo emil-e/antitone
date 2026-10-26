@@ -7,8 +7,8 @@ use std::{cell::RefCell, rc::Rc, time::Instant};
 
 #[path = "editor_kittest_activity.rs"]
 mod activity;
-#[path = "editor_kittest_adjustments.rs"]
-mod adjustments;
+#[path = "editor_kittest_adjustment_layers.rs"]
+mod adjustment_layers;
 #[path = "editor_kittest_analysis.rs"]
 mod analyze;
 #[path = "editor_kittest_auto_crop.rs"]
@@ -453,7 +453,7 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
         !editor.busy && editor.document_pending.is_none()
     });
     harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
-    harness.update(|editor| editor.photo.exposure = 1.25);
+    harness.update(|editor| editor.adjustment_layer_settings.exposure = 1.25);
     harness.update(|editor| editor.sync_document());
     let before = harness.read(|editor| editor.document.project.clone());
     let selected = harness.read(|editor| editor.current_source);
@@ -574,7 +574,7 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
         !editor.busy && editor.document_pending.is_none()
     });
     harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
-    harness.update(|editor| editor.photo.exposure = 1.25);
+    harness.update(|editor| editor.adjustment_layer_settings.exposure = 1.25);
     harness.update(|editor| editor.sync_document());
     let directory = tempfile::tempdir().unwrap();
     let project_path = directory.path().join("project.json");
@@ -586,7 +586,7 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
     });
     harness.update(|editor| *editor.document = saved);
     let saved_bytes = std::fs::read(&project_path).unwrap();
-    harness.update(|editor| editor.photo.exposure = 2.);
+    harness.update(|editor| editor.adjustment_layer_settings.exposure = 2.);
     harness.update(|editor| editor.sync_document());
     let before = harness.read(|editor| editor.document.project.clone());
     let selected = harness.read(|editor| editor.current_source);
@@ -1092,8 +1092,8 @@ fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
             editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
             editor.set_dmax(Some(DVec3::splat(128. / 4031.)));
             editor.set_gamma(0.75);
-            editor.photo.exposure = 0.5;
-            editor.photo.wb = Balance {
+            editor.adjustment_layer_settings.exposure = 0.5;
+            editor.adjustment_layer_settings.wb = Balance {
                 warmth: 0.1,
                 tint: -0.05,
             };

@@ -10,9 +10,8 @@ developed camera RGB
     Digital: scene-referred positive
   → camera-to-AP1 colour conversion
   → ungraded working positive (optional source-owned dust repair here)
-  → exposure and photographic white balance
-  → Photo contrast and saturation
-  → ordered source-anchored local grades, when present
+  → Roll exposure and photographic white balance
+  → ordered adjustment layers: exposure, white balance, contrast and saturation
   → working positive, ready for rendering or EXR
 ```
 
@@ -64,33 +63,33 @@ Photographic WB instead acts on the interpreted positive. Antitone uses Bradford
 | Development WB | Unity for Negative; each source's as-shot for Digital |
 | Gamma balance | Changes the native-channel inversion curves |
 | Roll WB | Shared photographic colour balance after inversion |
-| Photo WB | Individual photographic colour balance after Roll WB |
+| Layer WB | Photographic colour balance at that layer's position after Roll WB |
 
-Manual gamma-neutral fitting uses individually inverted, full-resolution samples; neutral means AP1 white, not equal camera channels. WB picks estimate a replacement at their own scope — the Photo pick measures after Roll WB, the Roll pick bypasses both photographic WB settings.
+Manual gamma-neutral fitting uses individually inverted, full-resolution samples; neutral means AP1 white, not equal camera channels. WB picks estimate a replacement at their own scope. The Photo pick measures after preceding layers and fits the selected layer's WB before its contrast/saturation, accounting for coverage, inversion, strength and exposure. An uncovered patch or correction outside the control range rejects. The Roll pick bypasses layer grading and Roll WB.
 
 ## Grade in a common working space
 
-After input interpretation, each source's metadata-derived camera matrix maps the positive to AP1/ACEScg with a D60 white. This gives grading and rendering a common basis — a pragmatic colour conversion, not proof that the original scene's spectra or film dyes have been recovered. Roll and Photo exposure add in stops; the working result retains signed and above-one values, so a negative AP1 component is not by itself a failed scan.
+After input interpretation, each source's metadata-derived camera matrix maps the positive to AP1/ACEScg with a D60 white. This gives grading and rendering a common basis — a pragmatic colour conversion, not proof that the original scene's spectra or film dyes have been recovered. Roll and layer exposure use stops; the working result retains signed and above-one values, so a negative AP1 component is not by itself a failed scan.
 
 ### Ungraded positive and repair placement
 
-The ungraded positive is full-resolution signed/HDR AP1 after input interpretation and camera conversion, but before photographic Roll or Photo controls. `Pipeline::ungraded` keeps that boundary explicit: Negative includes correction and calibrated inversion; Digital preserves scene-referred light.
+The ungraded positive is full-resolution signed/HDR AP1 after input interpretation and camera conversion, but before Roll or layer controls. `InputPipeline::ungraded` keeps that boundary explicit: Negative includes correction and calibrated inversion; Digital preserves scene-referred light.
 
-The provisional Dust tool heals here. RAW-development WB and gamma balance are upstream; exposure, photographic WB, contrast, saturation and locals are downstream. Calibration, response, correction or development changes legitimately require asynchronous reevaluation; downstream grading does not. Every independent repair reads the same unrepaired input and preserves signed/HDR values.
+The provisional Dust tool heals here. RAW-development WB and gamma balance are upstream; exposure, photographic WB, contrast, saturation and adjustment layers are downstream. Calibration, response, correction or development changes legitimately require asynchronous reevaluation; downstream grading does not. Every independent repair reads the same unrepaired input and preserves signed/HDR values.
 
 Healing and nonlinear grading do not commute, so pre-grade donor matching can differ from matching graded input. Full-resolution repair composition precedes view filtering; saved repairs identify this stage through an explicit [project repair contract](projects.md#source-owned-dust-repairs). Viewer and TIFF/AP0 EXR consume those repairs; [navigation thumbnails](editor.md#positive-thumbnail-reuse) and measurement inputs omit them.
 
 ### One accepted image recipe
 
-[Full image recipes](../src/image_recipe.rs) capture accepted source/development, input interpretation and active correction, committed enabled repairs, Global/ordered-local grades, composition and the immutable creative-look asset. Navigation recipes retain grade/look/composition but omit repair payload. Numeric look identity affects rendering, not neutral healing or graded-AP1 reuse. Output target and format are consumer choices, including EXR's explicit look bypass; metadata-only repair IDs, look labels and disabled instructions do not change photographic identity. [Source-aware resolution](../src/repair_source.rs) shares the neutral sampling boundary across interactive and offscreen work.
+[Full image recipes](../src/image_recipe.rs) capture accepted source/development, input interpretation and active correction, committed enabled repairs, ordered adjustment layers, composition and the immutable creative-look asset. Navigation recipes retain grade/look/composition but omit repair payload. Numeric look identity affects rendering, not neutral healing or graded-AP1 reuse. Output target and format are consumer choices, including EXR's explicit look bypass; metadata-only repair IDs, look labels and disabled instructions do not change photographic identity. [Source-aware resolution](../src/repair_source.rs) shares the neutral sampling boundary across interactive and offscreen work.
 
 ### Photo contrast and saturation
 
 Contrast scales a log-like ACEScct signal around a pivot; its Colour preservation blend reduces some contrast-driven colour changes without promising constant perceived saturation. Saturation blends between preserving AP1 luminance and anchoring the largest RGB channel, which gives the Density control its darkening character. Neither endpoint is a physical dye or print simulation.
 
-### Local grades change controls, not rendered pixels
+### Adjustment layers change controls, not rendered pixels
 
-A linear or radial gradient determines how much of a local photographic adjustment reaches each original source pixel. Global grading runs first; ordered locals then apply exposure, Bradford WB, contrast and saturation in AP1 before rendering or geometric averaging, and their order matters across nonlinear stages.
+Each layer has the same photographic controls and global, linear-gradient or radial-gradient coverage. Layers run bottom to top in the editor's list, applying exposure, Bradford WB, contrast and saturation in AP1 before rendering or geometric averaging. Global coverage is simply weight one; a whole-image finishing grade can follow a gradient, and nonlinear stages make order significant.
 
 Coverage, inversion and strength produce a weight between zero and one: exposure and WB scale by it, while contrast and saturation interpolate toward identity. Thus half coverage of +1 EV means +0.5 EV — not a halfway blend of two output pixels. Masks are analytic gradients, not retained rasters; [geometry](geometry.md#source-anchored-local-masks) explains why composition and navigation must not move them. The scalar pipeline and GPU grades consume immutable snapshots; full-stack preflight rejects nonfinite constants and overflowing intermediates rather than clamping.
 
@@ -114,11 +113,11 @@ The current model is **4**. Negative calibration must be finite and satisfy `Dmi
 
 ## Working on this area
 
-- [Processing](../src/processing.rs): calibration, response, defaults, domains and pipeline order.
+- [Processing](../src/processing.rs): calibration, response, domains and Roll interpretation.
 - [Colour](../src/color.rs): working-space matrices, balance coordinates and Bradford WB.
 - [Photographic grading](../src/photographic.rs): contrast/saturation and stable signed evaluation.
 - [Sampling](../src/sampling.rs): manual reference and neutral fitting.
 - [GPU processing](../src/gpu.rs): the production implementation and preflight.
-- [Local grades](../src/local_adjustments.rs) and [GPU grades](../src/gpu_local_adjustments.rs): ordered masks, weighted controls and snapshots.
+- [Adjustment layers](../src/adjustment_layers.rs) and [GPU grades](../src/gpu_adjustment_layers.rs): coverage, shared control settings and complete ordered snapshots.
 
 The scalar implementation is the f64 reference. Exact equations, supported ranges and numerical gates live with the implementation and its tests: [camera inversion](../tests/camera_inversion.rs), [film response](../tests/film_response.rs), [photographic grading](../tests/photographic.rs) and [GPU processing](../tests/gpu_processing.rs). Start with the relevant [development checks](development.md#feature-specific-checks).

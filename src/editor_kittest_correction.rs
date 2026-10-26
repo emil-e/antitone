@@ -292,24 +292,35 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         // The roll neutral reference drives gamma balance; roll WB fills per-photo WB.
         pick_patch(&mut harness, "Pick neutral for gamma balance", region);
         harness.read(|editor| assert_eq!(editor.balance(), balance));
-        let (editor_input, roll, photo) =
-            harness.read(|editor| (editor.input(), editor.roll, editor.photo));
+        let (editor_input, roll, photo) = harness.read(|editor| {
+            (
+                editor.input(),
+                editor.roll,
+                editor.adjustment_layer_settings,
+            )
+        });
         let (region, balance) = patches
             .iter()
             .find_map(|(r, _)| {
-                scan.photo_neutral(*r, &editor_input, roll, photo)
-                    .ok()
-                    .map(|b| (*r, b))
+                scan.white_balance_coverage(
+                    Coverage::rectangle(*r),
+                    &editor_input,
+                    roll,
+                    AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+                    Some(crate::adjustment_layers::AdjustmentLayer::global(photo)),
+                )
+                .ok()
+                .map(|b| (*r, b))
             })
             .expect("usable corrected photo-neutral patch");
         stage(&mut harness, "Photo");
         pick_patch(&mut harness, "Pick neutral for white balance", region);
-        harness.read(|editor| assert_eq!(editor.photo.wb, balance));
+        harness.read(|editor| assert_eq!(editor.adjustment_layer_settings.wb, balance));
         harness.update(|editor| {
-            adjustments::install_locals(editor);
+            adjustment_layers::install_layers(editor);
             editor
-                .edit_adjustments(|locals| {
-                    locals.adjustments[0].adjustment.photo.exposure = 0.125;
+                .edit_adjustment_layers(|layers| {
+                    layers.layers[0].adjustment.photo.exposure = 0.125;
                     Ok(())
                 })
                 .unwrap();

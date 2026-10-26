@@ -7,15 +7,18 @@
     target_os = "macos"
 ))]
 use antitone as api;
+use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
+    adjustment_layers::{
+        AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerPipeline, AdjustmentLayerSnapshot,
+    },
     crop::Crop,
     export::{self, Overwrite},
     flat_field::FlatField,
     geometry::{Composition, SourcePoint, SourceRegion},
     gpu::{GpuFlatField, SubmissionGate},
     gpu_export::{self, Format, Request},
-    local_adjustments::{GradientMask, LocalAdjustment, PhotoGradeSnapshot, SpatialPipeline},
-    processing::{InputSettings, PhotoSettings, RollSettings},
+    processing::{InputSettings, RollSettings},
     renderer::GpuRenderer,
     rendering::OutputTarget,
     scan::Scan,
@@ -115,7 +118,7 @@ fn photographic_tiff_pairs() {
                 ("mixed", 0.5, 0.5),
             ] {
                 let photo = if edited != "none" {
-                    PhotoSettings {
+                    AdjustmentLayerSettings {
                         exposure: 2.,
                         wb: antitone::color::Balance {
                             warmth: 0.15,
@@ -128,18 +131,18 @@ fn photographic_tiff_pairs() {
                         ..Default::default()
                     }
                 } else {
-                    PhotoSettings::default()
+                    AdjustmentLayerSettings::default()
                 };
-                let locals = if edited != "none" {
-                    vec![LocalAdjustment {
-                        mask: GradientMask::Linear {
+                let layers = if edited != "none" {
+                    vec![AdjustmentLayer {
+                        mask: AdjustmentLayerCoverage::Linear {
                             start: SourcePoint([region.x as f64, region.y as f64]),
                             end: SourcePoint([
                                 (region.x + region.width) as f64,
                                 (region.y + region.height) as f64,
                             ]),
                         },
-                        photo: PhotoSettings {
+                        photo: AdjustmentLayerSettings {
                             exposure: -0.5,
                             wb: antitone::color::Balance {
                                 warmth: -0.1,
@@ -158,10 +161,16 @@ fn photographic_tiff_pairs() {
                 } else {
                     vec![]
                 };
-                let grade = PhotoGradeSnapshot::new(photo, locals).unwrap();
+                let grade = AdjustmentLayerSnapshot::new(
+                    std::iter::once(antitone::adjustment_layers::AdjustmentLayer::global(photo))
+                        .chain(layers)
+                        .collect(),
+                )
+                .unwrap();
                 let roll = RollSettings::default();
                 let pipeline =
-                    SpatialPipeline::new(input, roll, grade.clone(), scan.camera_to_ap1).unwrap();
+                    AdjustmentLayerPipeline::new(input, roll, grade.clone(), scan.camera_to_ap1)
+                        .unwrap();
                 for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
                     let label = format!("{name}-{corrected}-{edited}-{target:?}");
                     let gpu_path = output.join(format!("{label}-f32.tif"));

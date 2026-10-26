@@ -2,11 +2,11 @@
 use crate::export_timing::timed;
 use crate::{
     Error,
+    adjustment_layers::AdjustmentLayerSnapshot,
     export::{self, ExrPrecision, ImageSize, Overwrite},
     frame_raster::FrameRaster,
     geometry::{Composition, SourceRegion},
-    gpu::{GpuFlatField, GpuPhotoGrade, ProcessingSource, SourceGeometry, SubmissionGate},
-    local_adjustments::PhotoGradeSnapshot,
+    gpu::{GpuAdjustmentLayers, GpuFlatField, ProcessingSource, SourceGeometry, SubmissionGate},
     processing::{InputSettings, RollSettings},
     renderer::GpuRenderer,
     rendering::OutputTarget,
@@ -61,7 +61,7 @@ pub struct Request<'a> {
     pub field: Option<Arc<GpuFlatField>>,
     pub input: InputSettings,
     pub roll: RollSettings,
-    pub grade: PhotoGradeSnapshot,
+    pub grade: AdjustmentLayerSnapshot,
     pub repairs: &'a [Arc<crate::dust_repair::EvaluatedRepair>],
     pub composition: Composition,
     pub format: Format,

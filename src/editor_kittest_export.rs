@@ -250,13 +250,18 @@ fn opening_export_commits_pending_photo_numeric_text_before_blocking_the_workspa
         harness.step();
         open(&mut harness);
         harness.read(|editor| {
-            assert_eq!(editor.photo.exposure, 1.25);
+            assert_eq!(editor.adjustment_layer_settings.exposure, 1.25);
             assert_eq!(
                 editor
                     .document
                     .project
                     .source(editor.current_source.unwrap())
                     .unwrap()
+                    .adjustment_layers
+                    .as_ref()
+                    .unwrap()
+                    .layers[0]
+                    .adjustment
                     .photo
                     .exposure,
                 1.25
@@ -264,7 +269,7 @@ fn opening_export_commits_pending_photo_numeric_text_before_blocking_the_workspa
         });
         harness.get_by_label("Cancel").click();
         harness.step();
-        harness.read(|editor| assert_eq!(editor.photo.exposure, 1.25));
+        harness.read(|editor| assert_eq!(editor.adjustment_layer_settings.exposure, 1.25));
     });
 }
 

@@ -1,8 +1,9 @@
 use super::*;
+use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
     color::Balance,
     gpu::{GpuFlatField, SourceGeometry},
-    processing::{Calibration, PhotoSettings, RollSettings},
+    processing::{Calibration, RollSettings},
     renderer::GpuRenderer,
     viewer::ImagePaint,
 };
@@ -38,7 +39,6 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                 let parameters = ProcessingParameters::positive(
                     calibration,
                     RollSettings::default(),
-                    PhotoSettings::default(),
                     DMat3::IDENTITY,
                 )
                 .unwrap();
@@ -128,23 +128,35 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                 )
                 .await
                 .unwrap();
-                let tile_parameters = ProcessingParameters::positive(
-                    calibration,
-                    RollSettings::default(),
-                    PhotoSettings {
-                        wb: Balance {
-                            warmth: 0.2,
-                            tint: -0.1,
-                        },
-                        exposure: -1.,
-                        ..PhotoSettings::default()
-                    },
-                    DMat3::IDENTITY,
-                )
-                .unwrap();
+                let tile_parameters =
+                    antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+                        antitone::adjustment_layers::AdjustmentLayer::global(
+                            AdjustmentLayerSettings {
+                                wb: Balance {
+                                    warmth: 0.2,
+                                    tint: -0.1,
+                                },
+                                exposure: -1.,
+                                ..AdjustmentLayerSettings::default()
+                            },
+                        ),
+                    ])
+                    .and_then(|snapshot| {
+                        antitone::gpu::GpuAdjustmentLayers::new(
+                            &device,
+                            calibration,
+                            RollSettings::default(),
+                            snapshot,
+                            DMat3::from_diagonal(DVec3::new(1.2, 0.7, 1.1)),
+                            [0, 0, 32, 1].into(),
+                        )
+                    })
+                    .map(|grade| antitone::gpu::ProcessingInput::from(std::sync::Arc::new(grade)))
+                    .unwrap();
                 let mut encoder = device.create_command_encoder(&Default::default());
                 assert!(thumbnail.prepare(&device, &mut encoder, ProcessingParameters::source()));
-                tile.encode(&device, &mut encoder, tile_parameters);
+                tile.encode_processing(&device, &mut encoder, &tile_parameters)
+                    .unwrap();
                 scope.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
                 assert!(!image.prepare(&device, &mut encoder, parameters));
                 queue.submit([encoder.finish()]);

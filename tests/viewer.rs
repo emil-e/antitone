@@ -1,15 +1,20 @@
 #![cfg(all(feature = "ui", feature = "render", feature = "ocio-reference"))]
+use antitone::adjustment_layers::{
+    AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
+};
+use antitone::gpu::{GpuAdjustmentLayers, ProcessingInput};
 use antitone::{
     color::{Balance, ap1_to_ap0},
     flat_field::FlatField,
     gpu::{GpuFlatField, ProcessingParameters, SourceGeometry},
     processing::{
-        Calibration, DEFAULT_GAMMA, InputSettings, PhotoSettings, Pipeline, Response, RollSettings,
+        Calibration, DEFAULT_GAMMA, InputPipeline, InputSettings, Response, RollSettings,
     },
     rendering::{CpuRenderer, OutputTarget},
     viewer::GpuImage,
 };
 use glam::{DMat3, DVec3};
+use std::sync::Arc;
 
 #[test]
 fn corrected_viewer_shares_the_field_and_matches_both_cpu_output_targets() {
@@ -66,7 +71,7 @@ fn corrected_viewer_shares_the_field_and_matches_both_cpu_output_targets() {
         };
         let calibration = field.processing_calibration(base).unwrap();
         let mut cases = vec![(
-            ProcessingParameters::source(),
+            ProcessingInput::from(ProcessingParameters::source()),
             scans.iter().map(|p| matrix * p).collect::<Vec<_>>(),
         )];
         for response in [
@@ -88,15 +93,11 @@ fn corrected_viewer_shares_the_field_and_matches_both_cpu_output_targets() {
                 exposure: -2.,
                 ..RollSettings::default()
             };
-            let pipeline = Pipeline::new(input, roll, PhotoSettings::default(), matrix).unwrap();
+            let pipeline = InputPipeline::new(input, roll, matrix).unwrap();
             cases.push((
-                ProcessingParameters::positive(
-                    input.negative_input().unwrap(),
-                    roll,
-                    PhotoSettings::default(),
-                    matrix,
-                )
-                .unwrap(),
+                ProcessingParameters::positive(input.negative_input().unwrap(), roll, matrix)
+                    .map(ProcessingInput::from)
+                    .unwrap(),
                 scans
                     .iter()
                     .map(|p| pipeline.apply(*p).unwrap().rgb)
@@ -111,7 +112,9 @@ fn corrected_viewer_shares_the_field_and_matches_both_cpu_output_targets() {
             assert_eq!(image.processing_byte_len(), (64 * 8, 64 * 16));
             for (parameters, working) in &cases {
                 let mut encoder = device.create_command_encoder(&Default::default());
-                image.encode(&device, &mut encoder, *parameters);
+                image
+                    .encode_processing(&device, &mut encoder, parameters)
+                    .unwrap();
                 queue.submit([encoder.finish()]);
                 let expected = CpuRenderer::new(target).unwrap().render(working).unwrap();
                 let actual = read(&device, &queue, &image.linear).await;
@@ -215,7 +218,7 @@ fn corrected_rotated_tiles_use_original_source_coordinates_before_native_camera_
             exposure: -1.,
             ..RollSettings::default()
         };
-        let photo = PhotoSettings {
+        let photo = AdjustmentLayerSettings {
             wb: Balance {
                 warmth: 0.13,
                 tint: -0.07,
@@ -229,9 +232,28 @@ fn corrected_rotated_tiles_use_original_source_coordinates_before_native_camera_
                 base
             };
             let input = InputSettings::negative(calibration);
-            let pipeline = Pipeline::new(input, roll, photo, matrix).unwrap();
-            let parameters =
-                ProcessingParameters::positive(calibration, roll, photo, matrix).unwrap();
+            let pipeline = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+                antitone::adjustment_layers::AdjustmentLayer::global(photo),
+            ])
+            .and_then(|layers| {
+                antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+                    input, roll, layers, matrix,
+                )
+            })
+            .unwrap();
+            let parameters = AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(photo)])
+                .and_then(|snapshot| {
+                    GpuAdjustmentLayers::new(
+                        &device,
+                        calibration,
+                        roll,
+                        snapshot,
+                        matrix,
+                        [0, 0, 8192, 8192].into(),
+                    )
+                })
+                .map(|grade| ProcessingInput::from(Arc::new(grade)))
+                .unwrap();
             let working: Vec<_> = (area.y..area.y + area.height)
                 .flat_map(|y| {
                     (area.x..area.x + area.width)
@@ -246,6 +268,7 @@ fn corrected_rotated_tiles_use_original_source_coordinates_before_native_camera_
                                 .apply(
                                     DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.
                                         * gain,
+                                    [0, 0],
                                 )
                                 .unwrap()
                                 .rgb
@@ -323,7 +346,8 @@ fn corrected_rotated_tiles_use_original_source_coordinates_before_native_camera_
                                 .unwrap();
                                 let mut encoder =
                                     device.create_command_encoder(&Default::default());
-                                tile.encode(&device, &mut encoder, parameters);
+                                tile.encode_processing(&device, &mut encoder, &parameters)
+                                    .unwrap();
                                 average.accumulate(&device, &mut encoder, &tile.linear, [x, y]);
                                 queue.submit([encoder.finish()]);
                                 device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
@@ -430,7 +454,7 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
             exposure: -2.,
             ..RollSettings::default()
         };
-        let photo = PhotoSettings {
+        let photo = AdjustmentLayerSettings {
             wb: Balance {
                 warmth: -0.1,
                 tint: 0.2,
@@ -438,12 +462,18 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
             exposure: 0.5,
             contrast: 1.2,
             saturation: 1.3,
-            ..PhotoSettings::default()
+            ..AdjustmentLayerSettings::default()
         };
-        let pipeline = Pipeline::new(input, roll, photo, matrix).unwrap();
+        let pipeline = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+            antitone::adjustment_layers::AdjustmentLayer::global(photo),
+        ])
+        .and_then(|layers| {
+            antitone::adjustment_layers::AdjustmentLayerPipeline::new(input, roll, layers, matrix)
+        })
+        .unwrap();
         let positive: Vec<_> = scans
             .iter()
-            .map(|p| pipeline.apply(*p).unwrap().rgb)
+            .map(|p| pipeline.apply(*p, [0, 0]).unwrap().rgb)
             .collect();
         let films: Vec<_> = [
             Response::film(),
@@ -464,19 +494,33 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
                     tint: -0.1,
                 },
             };
-            let pipeline = Pipeline::new(settings, roll, photo, matrix).unwrap();
+            let pipeline = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+                antitone::adjustment_layers::AdjustmentLayer::global(photo),
+            ])
+            .and_then(|layers| {
+                antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+                    settings, roll, layers, matrix,
+                )
+            })
+            .unwrap();
             let values: Vec<_> = scans
                 .iter()
-                .map(|s| pipeline.apply(*s).unwrap().rgb)
+                .map(|s| pipeline.apply(*s, [0, 0]).unwrap().rgb)
                 .collect();
             (
-                ProcessingParameters::positive(
-                    settings.negative_input().unwrap(),
-                    roll,
-                    photo,
-                    matrix,
-                )
-                .unwrap(),
+                AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(photo)])
+                    .and_then(|snapshot| {
+                        GpuAdjustmentLayers::new(
+                            &device,
+                            settings.negative_input().unwrap(),
+                            roll,
+                            snapshot,
+                            matrix,
+                            [0, 0, 8192, 8192].into(),
+                        )
+                    })
+                    .map(|grade| ProcessingInput::from(Arc::new(grade)))
+                    .unwrap(),
                 values,
             )
         })
@@ -496,22 +540,33 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
             assert_eq!(rendered.processing_byte_len(), (0, 0));
             assert!(rendered.write_source(&queue, &pixels).is_err());
             for (parameters, working) in [
-                (ProcessingParameters::source(), &working),
                 (
-                    ProcessingParameters::positive(
-                        input.negative_input().unwrap(),
-                        roll,
-                        photo,
-                        matrix,
-                    )
-                    .unwrap(),
+                    ProcessingInput::from(ProcessingParameters::source()),
+                    &working,
+                ),
+                (
+                    AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(photo)])
+                        .and_then(|snapshot| {
+                            GpuAdjustmentLayers::new(
+                                &device,
+                                input.negative_input().unwrap(),
+                                roll,
+                                snapshot,
+                                matrix,
+                                [0, 0, 8192, 8192].into(),
+                            )
+                        })
+                        .map(|grade| ProcessingInput::from(Arc::new(grade)))
+                        .unwrap(),
                     &positive,
                 ),
-                (films[0].0, &films[0].1),
-                (films[1].0, &films[1].1),
+                (films[0].0.clone(), &films[0].1),
+                (films[1].0.clone(), &films[1].1),
             ] {
                 let mut encoder = device.create_command_encoder(&Default::default());
-                image.encode(&device, &mut encoder, parameters);
+                image
+                    .encode_processing(&device, &mut encoder, &parameters)
+                    .unwrap();
                 queue.submit([encoder.finish()]);
                 let expected = CpuRenderer::new(target).unwrap().render(working).unwrap();
                 let actual = read(&device, &queue, &image.linear).await;

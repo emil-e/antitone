@@ -174,7 +174,7 @@ fn native_edit_actions_preserve_the_focused_numeric_control() {
         harness.event(egui::Event::Text("2.25".into()));
         harness.key_press(egui::Key::Enter);
         harness.try_run_realtime().unwrap();
-        harness.read(|editor| assert_eq!(editor.photo.exposure, 2.25));
+        harness.read(|editor| assert_eq!(editor.adjustment_layer_settings.exposure, 2.25));
 
         harness.get_by_role_and_label(role, "Exposure").click();
         harness.step();
@@ -183,7 +183,12 @@ fn native_edit_actions_preserve_the_focused_numeric_control() {
         harness.step();
         harness.key_press(egui::Key::Escape);
         harness.step();
-        harness.read(|editor| assert_eq!(editor.photo.exposure, 2.25, "Escape discards the draft"));
+        harness.read(|editor| {
+            assert_eq!(
+                editor.adjustment_layer_settings.exposure, 2.25,
+                "Escape discards the draft"
+            )
+        });
     });
 }
 

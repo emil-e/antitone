@@ -381,11 +381,13 @@ fn encode_original(
         device,
         bytemuck::bytes_of(&flat::FieldGeometry::uncorrected(Some(geometry))),
     );
-    let (locals, context) = input
-        .grade()
-        .map_or((&kernel.empty_locals, &kernel.empty_local_context), |g| {
-            (&g.buffer, &g.context)
-        });
+    let (layers, context) = input.grade().map_or(
+        (
+            &kernel.empty_adjustment_layers,
+            &kernel.empty_adjustment_layer_context,
+        ),
+        |g| (&g.buffer, &g.context),
+    );
     let mut offset = 0;
     for region in geometry.regions() {
         let tile = uniform(
@@ -415,7 +417,7 @@ fn encode_original(
                     entry(1, output),
                     entry(2, &parameters),
                     entry(5, &field),
-                    entry(6, locals),
+                    entry(6, layers),
                     entry(7, context),
                     entry(12, &buffer),
                     entry(13, &tile),

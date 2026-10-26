@@ -2,11 +2,11 @@
 //! Requires pinned LibRaw and the committed patch DNG; `gpu` supplies the parameter ABI, not a device.
 //! Overwrites five generated `.cache/probes` artifacts. Includes two explicit code-floor cases.
 //! These are numerical inputs, not photographic calibration or an independent output oracle.
+use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
     color::Balance,
     geometry::SourceRaster,
-    gpu::ProcessingParameters,
-    processing::{Calibration, PhotoSettings, Pipeline, RollSettings},
+    processing::{Calibration, RollSettings},
     raw::{RawFile, Rect},
     scan::Scan,
 };
@@ -64,20 +64,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         exposure: 0.5,
         ..RollSettings::default()
     };
-    let photo = PhotoSettings {
+    let photo = AdjustmentLayerSettings {
         exposure: 0.25,
         wb: Balance {
             warmth: -0.25,
             tint: 0.15,
         },
-        ..PhotoSettings::default()
+        ..AdjustmentLayerSettings::default()
     };
-    let parameters = ProcessingParameters::interpret(input, roll, photo, matrix)?;
-    let pipeline = Pipeline::new(input, roll, photo, matrix)?;
+    let pipeline = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+        antitone::adjustment_layers::AdjustmentLayer::global(photo),
+    ])
+    .and_then(|layers| {
+        antitone::adjustment_layers::AdjustmentLayerPipeline::new(input, roll, layers, matrix)
+    })?;
     let mut working = Vec::with_capacity(codes.len());
     let mut flags = Vec::with_capacity(codes.len());
     for &[r, g, b, _] in &codes {
-        let pixel = pipeline.apply(DVec3::new(r as f64, g as f64, b as f64) / 65535.)?;
+        let pixel = pipeline.apply(DVec3::new(r as f64, g as f64, b as f64) / 65535., [0, 0])?;
         working.push(pixel.rgb.as_vec3().extend(1.));
         flags.push(
             pixel
@@ -101,10 +105,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         bytemuck::cast_slice(&working),
     )?;
     fs::write(".cache/probes/camera-floor-flags-model4.u8", flags)?;
-    fs::write(
-        ".cache/probes/camera-processing-model4.bin",
-        bytemuck::bytes_of(&parameters),
-    )?;
     println!("camera_reference authored_pixels=1024 code_floor_cases=2 output=.cache/probes");
     Ok(())
 }

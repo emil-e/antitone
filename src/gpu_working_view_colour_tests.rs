@@ -1,12 +1,13 @@
 //! Production working-view model, mapped masks and encoded-resource lifetime checks.
 use super::*;
+use crate::adjustment_layers::AdjustmentLayerSettings;
 #[path = "gpu_working_view_model_tests.rs"]
 mod model;
 #[path = "gpu_working_view_oracle_tests.rs"]
 mod oracles;
 use crate::{
+    adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
     geometry::{FramePoint, SourcePoint, SourceRegion},
-    local_adjustments::{GradientMask, LocalAdjustment},
 };
 
 pub(super) fn authored_source(
@@ -38,7 +39,7 @@ fn render(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     source: Arc<ViewSource>,
-    snapshot: PhotoGradeSnapshot,
+    snapshot: AdjustmentLayerSnapshot,
     target: OutputTarget,
 ) -> Arc<RenderedView> {
     render_with_basis(
@@ -56,14 +57,14 @@ fn render_with_basis(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     source: Arc<ViewSource>,
-    snapshot: PhotoGradeSnapshot,
+    snapshot: AdjustmentLayerSnapshot,
     target: OutputTarget,
     input: impl Into<InputSettings>,
     roll: RollSettings,
 ) -> Arc<RenderedView> {
     let settings = input.into();
     let grade = Arc::new(
-        GpuPhotoGrade::new(
+        GpuAdjustmentLayers::new(
             device,
             settings,
             roll,
@@ -87,8 +88,8 @@ fn render_with_basis(
     view
 }
 
-fn photo() -> PhotoSettings {
-    PhotoSettings {
+fn photo() -> AdjustmentLayerSettings {
+    AdjustmentLayerSettings {
         exposure: 0.25,
         wb: Balance {
             warmth: 0.005,
@@ -102,14 +103,14 @@ fn photo() -> PhotoSettings {
     }
 }
 
-fn local_pair(area: SourceRegion) -> Vec<LocalAdjustment> {
+fn local_pair(area: SourceRegion) -> Vec<AdjustmentLayer> {
     let x = area.x as f64;
     let y = area.y as f64;
     let w = area.width as f64;
     let h = area.height as f64;
     vec![
-        LocalAdjustment {
-            mask: GradientMask::Linear {
+        AdjustmentLayer {
+            mask: AdjustmentLayerCoverage::Linear {
                 start: SourcePoint([x + w * 0.15, y + h * 0.2]),
                 end: SourcePoint([x + w * 0.85, y + h * 0.8]),
             },
@@ -118,14 +119,14 @@ fn local_pair(area: SourceRegion) -> Vec<LocalAdjustment> {
             invert: true,
             strength: 0.6,
         },
-        LocalAdjustment {
-            mask: GradientMask::Radial {
+        AdjustmentLayer {
+            mask: AdjustmentLayerCoverage::Radial {
                 center: SourcePoint([x + w * 0.5, y + h * 0.5]),
                 radii: [w * 0.4, h * 0.4],
                 angle: 0.3,
                 feather: 0.8,
             },
-            photo: PhotoSettings {
+            photo: AdjustmentLayerSettings {
                 exposure: 0.3125,
                 ..photo()
             },

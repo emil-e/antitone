@@ -3,16 +3,16 @@ use crate::geometry::SourcePoint;
 use glam::DVec2;
 
 fn seed(editor: &mut Editor) {
-    adjustments::install_locals(editor);
+    adjustment_layers::install_layers(editor);
     let area = editor.document.visit.ready.as_ref().unwrap().area;
     let source = editor
         .document
         .project
         .source_mut(editor.current_source.unwrap())
         .unwrap();
-    source.local_adjustments.as_mut().unwrap().adjustments[0]
+    source.adjustment_layers.as_mut().unwrap().layers[0]
         .adjustment
-        .mask = GradientMask::Radial {
+        .mask = AdjustmentLayerCoverage::Radial {
         center: SourcePoint([
             area.x as f64 + area.width as f64 * 0.5,
             area.y as f64 + area.height as f64 * 0.5,
@@ -28,8 +28,8 @@ fn screen(editor: &Editor, point: SourcePoint) -> egui::Pos2 {
     layout.screen_frame_point(layout.composition.source_to_frame(point))
 }
 
-fn point(mask: GradientMask, unit: DVec2) -> SourcePoint {
-    let GradientMask::Radial {
+fn point(mask: AdjustmentLayerCoverage, unit: DVec2) -> SourcePoint {
+    let AdjustmentLayerCoverage::Radial {
         center,
         radii,
         angle,
@@ -49,7 +49,7 @@ fn point(mask: GradientMask, unit: DVec2) -> SourcePoint {
 
 fn open_mask_controls(harness: &mut Harness<'_, Editor>) {
     harness.try_run_realtime().unwrap();
-    adjustments::open_drawer(harness);
+    adjustment_layers::show_layers(harness);
 }
 
 #[test]
@@ -88,9 +88,9 @@ fn radial_release_accepts_defaults_and_hard_edges_while_escape_discards_tiny_ges
                     editor.status
                 )
             });
-            let locals = harness.read(adjustments::locals);
-            let record = locals.adjustments.last().unwrap();
-            let GradientMask::Radial {
+            let layers = harness.read(adjustment_layers::layers);
+            let record = layers.layers.last().unwrap();
+            let AdjustmentLayerCoverage::Radial {
                 center,
                 radii,
                 feather,
@@ -103,12 +103,12 @@ fn radial_release_accepts_defaults_and_hard_edges_while_escape_discards_tiny_ges
             assert_eq!(radii[0], radii[1]);
             assert_eq!(feather, 0.8);
             assert_eq!(record.adjustment.strength, 1.);
-            assert_eq!(record.adjustment.photo, PhotoSettings::default());
+            assert_eq!(record.adjustment.photo, AdjustmentLayerSettings::default());
             open_mask_controls(&mut harness);
             workflow::enter_numeric(&mut harness, "Feather", "0");
-            let GradientMask::Radial { feather, .. } = harness.read(|editor| {
-                adjustments::locals(editor)
-                    .adjustments
+            let AdjustmentLayerCoverage::Radial { feather, .. } = harness.read(|editor| {
+                adjustment_layers::layers(editor)
+                    .layers
                     .last()
                     .unwrap()
                     .adjustment
@@ -157,7 +157,7 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
                 assert!(
                     editor.mask_pointer_interest(editor.last_layout.unwrap().0, center_screen),
                     "target={:?} mask={original:?}",
-                    editor.adjustment_target()
+                    editor.adjustment_layer_target()
                 )
             });
             hold_drag(
@@ -193,7 +193,7 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
             drag(&mut harness, axis, axis + along * 12.);
             harness.read(|editor| assert!(editor.document.visit.mask_edit.is_none()));
             let resized = harness.read(accepted_mask);
-            let GradientMask::Radial {
+            let AdjustmentLayerCoverage::Radial {
                 center: original_center,
                 radii: original_radii,
                 angle: original_angle,
@@ -202,7 +202,7 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
             else {
                 unreachable!()
             };
-            let GradientMask::Radial {
+            let AdjustmentLayerCoverage::Radial {
                 center,
                 radii,
                 angle,
@@ -225,7 +225,7 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
                 center_screen + egui::emath::Rot2::from_angle(0.4) * (handle - center_screen),
             );
             let rotated = harness.read(accepted_mask);
-            let GradientMask::Radial {
+            let AdjustmentLayerCoverage::Radial {
                 angle: moved_angle,
                 center: moved_center,
                 radii: moved_radii,
@@ -253,7 +253,7 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
                 )
             });
             drag(&mut harness, diamond, hard);
-            let GradientMask::Radial {
+            let AdjustmentLayerCoverage::Radial {
                 feather: hard_edge, ..
             } = harness.read(accepted_mask)
             else {
@@ -274,7 +274,9 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
                     "numeric Enter is not a geometry-session action"
                 )
             });
-            let GradientMask::Radial { feather, angle, .. } = harness.read(accepted_mask) else {
+            let AdjustmentLayerCoverage::Radial { feather, angle, .. } =
+                harness.read(accepted_mask)
+            else {
                 unreachable!()
             };
             assert_eq!(feather, 0.375);
@@ -284,17 +286,17 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
                 expected
                     .source_mut(editor.current_source.unwrap())
                     .unwrap()
-                    .local_adjustments
+                    .adjustment_layers
                     .as_mut()
                     .unwrap()
-                    .adjustments[0]
+                    .layers[0]
                     .adjustment
                     .mask = accepted_mask(editor)
             });
             harness.read(|editor| assert_eq!(
             editor.document.project,
             expected,
-            "IDs, allocator, photographic values, other locals and composition survive geometry edits"
+            "IDs, allocator, photographic values, other layers and composition survive geometry edits"
         ));
         }
     });

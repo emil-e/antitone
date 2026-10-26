@@ -281,7 +281,7 @@ impl WorkingView {
         &mut self,
         settings: &InputSettings,
         roll: RollSettings,
-        snapshot: PhotoGradeSnapshot,
+        snapshot: AdjustmentLayerSnapshot,
         input: &ProcessingInput,
         target: OutputTarget,
         context: &egui::Context,
@@ -856,7 +856,9 @@ impl Editor {
         let matrix = glam::DMat3::from_cols_array_2d(&ready.record.development.camera_to_ap1);
         let snapshot = match input.grade() {
             Some(grade) => grade.snapshot().clone(),
-            None => PhotoGradeSnapshot::new(self.photo, vec![])?,
+            None => AdjustmentLayerSnapshot::new(vec![
+                crate::adjustment_layers::AdjustmentLayer::global(self.adjustment_layer_settings),
+            ])?,
         };
         let spec = ViewSourceSpec::new(
             self.id,

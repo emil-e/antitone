@@ -61,7 +61,11 @@ fn dense_repaired_unit_accounts_host_and_gpu_uploads_separately_from_retained_re
         dmax: DVec3::splat(0.02),
         input_floor: scan.input_floor,
     };
-    let grade = PhotoGradeSnapshot::new(Default::default(), vec![]).unwrap();
+    let grade =
+        AdjustmentLayerSnapshot::new(vec![crate::adjustment_layers::AdjustmentLayer::global(
+            Default::default(),
+        )])
+        .unwrap();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("not-opened.tif");
     let run = |repairs| {

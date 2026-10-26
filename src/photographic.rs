@@ -1,5 +1,5 @@
 //! Signed AP1 photographic grade; ACEScct is a temporary contrast coordinate.
-use crate::{Error, color::AP1_TO_XYZ, processing::PhotoSettings};
+use crate::{Error, adjustment_layers::AdjustmentLayerSettings, color::AP1_TO_XYZ};
 use glam::DVec3;
 
 const TOE: f64 = 0.0078125;
@@ -55,14 +55,14 @@ fn mix(
 
 #[derive(Debug, Clone, Copy)]
 pub struct Grade {
-    photo: PhotoSettings,
+    photo: AdjustmentLayerSettings,
     pub(crate) qp: f64,
     pub(crate) q0: f64,
     pub(crate) black: f64,
 }
 
 impl Grade {
-    pub fn new(photo: PhotoSettings) -> Result<Self, Error> {
+    pub fn new(photo: AdjustmentLayerSettings) -> Result<Self, Error> {
         for (value, low, high, name) in [
             (photo.contrast, 0.4, 1.6, "contrast must be within 0.4..1.6"),
             (photo.pivot, 0.01, 1., "pivot must be within 0.01..1"),
@@ -133,47 +133,6 @@ impl Grade {
     }
 
     #[cfg(feature = "gpu")]
-    pub(crate) fn intermediate_bound(&self, input: f64) -> f64 {
-        let mut peak = input;
-        let mut output = input;
-        if self.photo.contrast != 1. {
-            let a = self.photo.contrast;
-            // The secant gain is bounded by the largest derivative on [-B,B].
-            // Derivative extrema occur at the linear toe or the positive endpoint;
-            // a decode-branch crossing is continuous and introduces no new maximum.
-            let derivative = |x: f64| {
-                let q = self.qp + a * (encode(x) - self.qp);
-                let e = if x <= TOE {
-                    SLOPE
-                } else {
-                    1. / (LOG_SCALE * x)
-                };
-                let d = if q <= CUT {
-                    1. / SLOPE
-                } else {
-                    LOG_SCALE * decode(q)
-                };
-                a * e * d
-            };
-            let gain = a.max(derivative(input.min(TOE))).max(derivative(input));
-            output = self
-                .tone(-input)
-                .abs()
-                .max(self.tone(input).abs())
-                .max(self.black.abs() + gain * input);
-            peak = peak.max(SLOPE * input * a.max(1.)).max(output);
-        }
-        if self.photo.saturation != 1. {
-            // Include chroma subtraction, scaled chroma and grey addition, not
-            // only the final blended output. AP1 Y is a positive unit-sum row.
-            peak = peak
-                .max(2. * output)
-                .max((1. + 2. * self.photo.saturation) * output);
-        }
-        peak
-    }
-
-    #[cfg(feature = "gpu")]
     pub(crate) fn weighted_bounds(&self, input: f64, strength: f64) -> (f64, f64) {
         let mut peak = input;
         let mut output = input;
@@ -182,7 +141,7 @@ impl Grade {
             let low = end.min(1.);
             let high = end.max(1.);
             let curve = |amount| Self {
-                photo: PhotoSettings {
+                photo: AdjustmentLayerSettings {
                     contrast: amount,
                     ..self.photo
                 },

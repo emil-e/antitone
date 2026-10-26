@@ -5,13 +5,14 @@
     feature = "ocio-reference",
     target_os = "macos"
 ))]
+use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
+    adjustment_layers::{AdjustmentLayerPipeline, AdjustmentLayerSnapshot},
     export::{self, ExrPrecision, Overwrite},
     geometry::{Composition, PhotoOrientation, RollOrientation},
     gpu::SubmissionGate,
     gpu_export::{self, Format, Request},
-    local_adjustments::{PhotoGradeSnapshot, SpatialPipeline},
-    processing::{Calibration, InputSettings, PhotoSettings, RollSettings},
+    processing::{Calibration, InputSettings, RollSettings},
     renderer::GpuRenderer,
     rendering::OutputTarget,
     scan::Scan,
@@ -39,7 +40,7 @@ fn source() -> (
     Scan,
     Calibration,
     RollSettings,
-    PhotoGradeSnapshot,
+    AdjustmentLayerSnapshot,
     Composition,
 ) {
     let scan = Scan::open(
@@ -53,13 +54,16 @@ fn source() -> (
         input_floor: scan.input_floor,
     };
     let roll = RollSettings::default();
-    let grade = PhotoGradeSnapshot::new(
-        PhotoSettings {
-            contrast: 0.8,
-            saturation: 1.3,
-            ..Default::default()
-        },
-        Vec::new(),
+    let grade = AdjustmentLayerSnapshot::new(
+        std::iter::once(antitone::adjustment_layers::AdjustmentLayer::global(
+            AdjustmentLayerSettings {
+                contrast: 0.8,
+                saturation: 1.3,
+                ..Default::default()
+            },
+        ))
+        .chain(Vec::new())
+        .collect(),
     )
     .unwrap();
     let composition = Composition::new(
@@ -85,7 +89,7 @@ fn gpu_tiff_matches_scalar_ocio_within_one_rgb16_code_on_authored_patches() {
     let (device, queue, renderer) = context();
     let (scan, calibration, roll, grade, composition) = source();
     let directory = tempfile::tempdir().unwrap();
-    let pipeline = SpatialPipeline::new(
+    let pipeline = AdjustmentLayerPipeline::new(
         InputSettings::negative(calibration),
         roll,
         grade.clone(),
@@ -148,7 +152,7 @@ fn gpu_exr_uses_shared_working_precision_through_linear_ap0_on_authored_patches(
     let (device, queue, renderer) = context();
     let (scan, calibration, roll, grade, composition) = source();
     let directory = tempfile::tempdir().unwrap();
-    let pipeline = SpatialPipeline::new(
+    let pipeline = AdjustmentLayerPipeline::new(
         InputSettings::negative(calibration),
         roll,
         grade.clone(),
@@ -283,52 +287,50 @@ fn gpu_exr_uses_shared_working_precision_through_linear_ap0_on_authored_patches(
 #[test]
 fn corrected_ordered_locals_reopen_after_native_permutations_and_rotated_coverage() {
     use antitone::{
+        adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
         crop::Crop,
         flat_field::FlatField,
         frame_raster::FrameRaster,
         geometry::{Flips, QuarterTurns, SourcePoint},
         gpu::GpuFlatField,
-        local_adjustments::{GradientMask, LocalAdjustment},
     };
     use exr::prelude::*;
     let (device, queue, renderer) = context();
     let (mut scan, calibration, roll, base, _) = source();
     let directory = tempfile::tempdir().unwrap();
     let area = scan.area;
-    let grade = PhotoGradeSnapshot::new(
-        base.global(),
-        vec![
-            LocalAdjustment {
-                mask: GradientMask::Linear {
-                    start: SourcePoint([32., 24.]),
-                    end: SourcePoint([224., 168.]),
-                },
-                photo: PhotoSettings {
-                    exposure: 0.5,
-                    ..Default::default()
-                },
-                enabled: true,
-                invert: false,
-                strength: 0.7,
+    let grade = AdjustmentLayerSnapshot::new(vec![
+        antitone::adjustment_layers::AdjustmentLayer::global(base.layers()[0].photo),
+        AdjustmentLayer {
+            mask: AdjustmentLayerCoverage::Linear {
+                start: SourcePoint([32., 24.]),
+                end: SourcePoint([224., 168.]),
             },
-            LocalAdjustment {
-                mask: GradientMask::Radial {
-                    center: SourcePoint([128., 96.]),
-                    radii: [96., 64.],
-                    angle: 0.3,
-                    feather: 0.65,
-                },
-                photo: PhotoSettings {
-                    contrast: 1.02,
-                    saturation: 1.1,
-                    ..Default::default()
-                },
-                enabled: true,
-                invert: true,
-                strength: 0.8,
+            photo: AdjustmentLayerSettings {
+                exposure: 0.5,
+                ..Default::default()
             },
-        ],
-    )
+            enabled: true,
+            invert: false,
+            strength: 0.7,
+        },
+        AdjustmentLayer {
+            mask: AdjustmentLayerCoverage::Radial {
+                center: SourcePoint([128., 96.]),
+                radii: [96., 64.],
+                angle: 0.3,
+                feather: 0.65,
+            },
+            photo: AdjustmentLayerSettings {
+                contrast: 1.02,
+                saturation: 1.1,
+                ..Default::default()
+            },
+            enabled: true,
+            invert: true,
+            strength: 0.8,
+        },
+    ])
     .unwrap();
     for corrected in [false, true] {
         let field = corrected.then(|| {
@@ -348,7 +350,7 @@ fn corrected_ordered_locals_reopen_after_native_permutations_and_rotated_coverag
         });
         scan.set_flat_field(field.clone()).unwrap();
         let gpu_field = field.map(|f| Arc::new(GpuFlatField::new(&device, f).unwrap()));
-        let scalar = SpatialPipeline::new(
+        let scalar = AdjustmentLayerPipeline::new(
             scan.processing_calibration(calibration).unwrap(),
             roll,
             grade.clone(),

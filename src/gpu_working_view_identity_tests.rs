@@ -1,11 +1,12 @@
 use super::*;
+use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::{
+    adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
     geometry::SourcePoint,
-    local_adjustments::{GradientMask, LocalAdjustment},
 };
 
 #[test]
-fn working_view_requires_matching_global_and_local_grades() {
+fn working_view_requires_the_complete_matching_layer_stack() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
         let scan = scan();
@@ -25,12 +26,12 @@ fn working_view_requires_matching_global_and_local_grades() {
         )
         .unwrap()
         .unwrap();
-        let local = LocalAdjustment {
-            mask: GradientMask::Linear {
+        let local = AdjustmentLayer {
+            mask: AdjustmentLayerCoverage::Linear {
                 start: SourcePoint([0., 0.]),
                 end: SourcePoint([256., 192.]),
             },
-            photo: PhotoSettings {
+            photo: AdjustmentLayerSettings {
                 exposure: 0.75,
                 ..Default::default()
             },
@@ -38,13 +39,17 @@ fn working_view_requires_matching_global_and_local_grades() {
             invert: false,
             strength: 1.,
         };
-        let photo = PhotoSettings {
+        let photo = AdjustmentLayerSettings {
             exposure: 0.5,
             ..Default::default()
         };
-        let snapshot = PhotoGradeSnapshot::new(photo, vec![local]).unwrap();
+        let snapshot = AdjustmentLayerSnapshot::new(vec![
+            crate::adjustment_layers::AdjustmentLayer::global(photo),
+            local,
+        ])
+        .unwrap();
         let input = ProcessingInput::from(Arc::new(
-            crate::gpu::GpuPhotoGrade::new(
+            crate::gpu::GpuAdjustmentLayers::new(
                 &device,
                 cal,
                 roll,
@@ -54,8 +59,22 @@ fn working_view_requires_matching_global_and_local_grades() {
             )
             .unwrap(),
         ));
-        let global = ProcessingParameters::positive(cal, roll, photo, scan.camera_to_ap1).unwrap();
-        let admit = |snapshot: PhotoGradeSnapshot, input: &ProcessingInput| {
+        let global = crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+            crate::adjustment_layers::AdjustmentLayer::global(photo),
+        ])
+        .and_then(|snapshot| {
+            crate::gpu::GpuAdjustmentLayers::new(
+                &device,
+                cal,
+                roll,
+                snapshot,
+                scan.camera_to_ap1,
+                scan.area,
+            )
+        })
+        .map(Arc::new)
+        .unwrap();
+        let admit = |snapshot: AdjustmentLayerSnapshot, input: &ProcessingInput| {
             RenderedView::new(
                 &device,
                 source.clone(),
@@ -68,25 +87,25 @@ fn working_view_requires_matching_global_and_local_grades() {
             )
         };
         assert!(admit(snapshot.clone(), &input).is_ok());
-        let wrong_global = PhotoGradeSnapshot::new(
-            PhotoSettings {
+        let wrong_global = AdjustmentLayerSnapshot::new(vec![
+            crate::adjustment_layers::AdjustmentLayer::global(AdjustmentLayerSettings {
                 exposure: 0.6,
                 ..photo
-            },
-            vec![local],
-        )
+            }),
+            local,
+        ])
         .unwrap();
         assert!(admit(wrong_global, &input).is_err());
-        let wrong_local = PhotoGradeSnapshot::new(
-            photo,
-            vec![LocalAdjustment {
-                photo: PhotoSettings {
+        let wrong_local = AdjustmentLayerSnapshot::new(vec![
+            crate::adjustment_layers::AdjustmentLayer::global(photo),
+            AdjustmentLayer {
+                photo: AdjustmentLayerSettings {
                     exposure: 0.5,
                     ..local.photo
                 },
                 ..local
-            }],
-        )
+            },
+        ])
         .unwrap();
         assert!(admit(wrong_local, &input).is_err());
         assert!(admit(snapshot, &ProcessingInput::from(global)).is_err());

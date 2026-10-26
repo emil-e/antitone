@@ -22,7 +22,7 @@ Crop, picker and reference-area edits have temporary interaction state. Apply pr
 
 Tools deliberately use different views to reach what they measure: Dmin/Dmax expose uncropped oriented source so film margins are reachable; a bare-light reference exposes untransformed source; gamma/WB picks retain the working photograph's composition while their fitting uses declared measurement inputs. Applying a calibration or neutral pick captures the source lease and numerical inputs at admission, so later state cannot retarget the measurement. [Architecture](architecture.md) explains the execution and ownership model.
 
-Fixed tool shelves sit below the stage tabs. Roll contains shared orientation, Analyze and Auto-crop; Photo contains turn/flip, Crop, Dust and the Adjustments drawer. Active controls appear above ordinary inspector sections; clicking an active Crop/Auto-crop cancels its draft, and opening Crop/Auto-crop/Dust closes the Adjustments drawer without changing applied grades. Tools arbitrate canvas ownership rather than running competing gestures. [Analyze's roll review](roll-analysis.md#1-choose-what-to-sample) is its own review transaction over per-photo sampling drafts; browsing and exception edits never change accepted support or grading.
+Fixed tool shelves sit below the stage tabs. Roll contains shared orientation, Analyze and Auto-crop; Photo contains turn/flip, Crop and Dust, with a persistent Layers inspector section. Active controls appear above ordinary inspector sections; clicking an active Crop/Auto-crop cancels its draft, and opening Crop/Auto-crop/Dust cancels gradient interaction without changing layer selection or accepted grades. Tools arbitrate canvas ownership rather than running competing gestures. [Analyze's roll review](roll-analysis.md#1-choose-what-to-sample) is its own review transaction over per-photo sampling drafts; browsing and exception edits never change accepted support or grading.
 
 ### Auto-crop is an explicit accepted edit
 
@@ -38,7 +38,7 @@ Dust is direct canvas work, not a per-repair Apply/Cancel transaction. An unmodi
 
 Mask admission is based on marked pixels and a bounded processing area, not a fixed side length. If a held stroke exceeds the budget, the draft and brush turn red and release discards the whole rejected stroke, preserving existing repairs rather than committing a truncated prefix.
 
-Repairs evaluate asynchronously from the same immutable, full-resolution **ungraded AP1**: correction and camera conversion are upstream; grading and locals are downstream. Source, input interpretation or correction changes invalidate evaluated values; downstream grading and navigation reuse them. Manual masks bypass detector thresholds; automatic proposals use conservative GPU screening. The workflow and admission lifecycle — document-owned tasks, cooperative cancellation, typed completion outside painting — is [the architecture's](architecture.md), not a per-tool mechanism.
+Repairs evaluate asynchronously from the same immutable, full-resolution **ungraded AP1**: correction and camera conversion are upstream; adjustment layers are downstream. Source, input interpretation or correction changes invalidate evaluated values; downstream grading and navigation reuse them. Manual masks bypass detector thresholds; automatic proposals use conservative GPU screening. The workflow and admission lifecycle — document-owned tasks, cooperative cancellation, typed completion outside painting — is [the architecture's](architecture.md), not a per-tool mechanism.
 
 Accepted repair instructions participate in ordinary [project saving and dirty protection](projects.md#source-owned-dust-repairs); TIFF/EXR export consumes the accepted set, including before the photo has been viewed.
 
@@ -99,13 +99,13 @@ Developed-source inspection uses the same automatically lens-corrected developme
 
 Source and positive caches have distinct identities: switching modes reacquires the appropriate source rather than grading an inverted positive as source light. Missing Negative calibration forces source-only presentation; completing a usable Dmin/Dmax pair returns to the positive. Digital is ready without anchors.
 
-## Immutable local-grade routing
+## Immutable adjustment-layer routing
 
-Local grades are recipe values, not rendered pixels: selected and cached previews, thumbnails and scopes share complete processing snapshots, and each image owns only its mutable output/preparation state. Roll WB, calibration/correction, camera basis, Global settings and ordered local values invalidate a grade; names, IDs, view selection and source-inspection WB/EV do not. [Processing](processing.md#local-grades-change-controls-not-rendered-pixels) owns what that means for the recipe.
+Adjustment layers are recipe values, not rendered pixels: selected and cached previews, thumbnails and scopes share complete processing snapshots, and each image owns only its mutable output/preparation state. Roll WB, calibration/correction, camera basis, ordered layer values invalidate a grade; names, IDs, view selection and source-inspection WB/EV do not. [Processing](processing.md#adjustment-layers-change-controls-not-rendered-pixels) owns what that means for the recipe.
 
-The Adjustments drawer opens local editing. It contains only locals, offers linear/radial creation, and shows Strength, Invert and radial Feather directly below the list. Photographic controls stay visible but greyed until a local is selected — they cannot edit Global while the tool is open. Closing hides handles and coverage but retains all accepted local effects.
+The Layers section creates global, linear and radial layers above the selection and displays processing order bottom to top. One set of photographic controls targets the selected layer, named in the Layers header even when the list is collapsed. Strength, gradient inversion and radial Feather appear below the list. Empty stacks and ineffective controls remain visible but greyed out; the initial global layer has the same selection, reordering and deletion behavior as any other layer.
 
-The creation icons arm a one-shot gesture: a valid released stroke creates and selects a new adjustment with grading immediately available and no Apply step. Drags outside the selected shape's handles navigate instead of redrawing it; Escape cancels only the current gesture. Rows drag to reorder with an insertion line, double-click renames inline, and Delete/Backspace on the Photo stage removes the active local through a stale-safe confirmation. A rejected creation stays armed for retry; a rejected refinement returns to accepted geometry.
+The creation icons arm a one-shot gesture: a valid released stroke creates and selects a new adjustment with grading immediately available and no Apply step. Drags outside the selected shape's handles navigate instead of redrawing it; Escape cancels only the current gesture. Rows drag to reorder with an insertion line, double-click renames inline, and Delete/Backspace on the Photo stage removes the selected layer through a stale-safe confirmation. A rejected creation stays armed for retry; a rejected refinement returns to accepted geometry. Mask artwork and handle interaction hide when Layers is collapsed or while adjusting values, preserving the coverage preference. Active gradient gestures keep their guides until completion.
 
 ## A stable working view while grading
 
@@ -157,7 +157,7 @@ Two [native owners](../src/editor_development.rs) at most serve selected/referen
 
 ### Positive thumbnail reuse
 
-Positive navigation cards interpret a small camera-RGB proxy, then apply Global/local grading, look and output target. They favor responsive browsing and recognizable photographs over original-sample fidelity. Use the main viewer or exports to inspect Dust repairs rather than inferring their accuracy from a small navigation card.
+Positive navigation cards interpret a small camera-RGB proxy, then apply ordered layer grading, look and output target. They favor responsive browsing and recognizable photographs over original-sample fidelity. Use the main viewer or exports to inspect Dust repairs rather than inferring their accuracy from a small navigation card.
 
 Compatible neutral products survive grade, look and target changes. While an update prepares, the previous card stays visible with an updating indicator if source, correction, framing and target match. Replacements retire older outputs for that source; shared look allocations are charged once across cards.
 

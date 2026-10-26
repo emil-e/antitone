@@ -17,8 +17,9 @@ fn record(path: &str) -> Source {
             input_floor: 1. / 65535.,
         },
         reference_only: false,
-        photo: Default::default(),
-        local_adjustments: None,
+        adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
+            Default::default(),
+        )),
         repairs: Default::default(),
         orientation: Default::default(),
         crop: None,
@@ -280,7 +281,7 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
             assert!(app.read(|e| e.document.visit.ready.is_some()));
             let selected = app.read(|e| e.current_source);
             let mut scan = Scan::open(&root.join("illuminated-patches.dng"), None).unwrap();
-            let (rgb, original) = app.update(|e| {
+            let (rgb, original, selected_layer) = app.update(|e| {
                 e.set_dmin(Some(
                     scan.reference(Rect {
                         x: 16,
@@ -299,17 +300,60 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
                     })
                     .unwrap(),
                 ));
+                let mut layers =
+                    crate::project::AdjustmentLayers::with_global(AdjustmentLayerSettings {
+                        exposure: 0.7,
+                        ..AdjustmentLayerSettings::default()
+                    });
+                let selected_layer = layers.layers[0].id;
+                layers
+                    .add(
+                        "Finishing".into(),
+                        crate::adjustment_layers::AdjustmentLayer::global(
+                            AdjustmentLayerSettings {
+                                exposure: -0.4,
+                                contrast: 0.8,
+                                ..AdjustmentLayerSettings::default()
+                            },
+                        ),
+                    )
+                    .unwrap();
+                e.document
+                    .project
+                    .source_mut(e.current_source.unwrap())
+                    .unwrap()
+                    .adjustment_layers = Some(layers);
+                e.refresh_adjustment_layer_selection();
+                e.select_adjustment_layer(adjustment_layers::Target::Layer(selected_layer));
                 e.sync_document();
-                ((e.dmin(), e.dmax()), e.document.project.clone())
+                (
+                    (e.dmin(), e.dmax()),
+                    e.document.project.clone(),
+                    selected_layer,
+                )
             });
-            app.enter(|e, cx| e.begin_flat_edit(root.join("bare-light.dng"), None, cx));
+            app.enter(|e, cx| {
+                e.begin_flat_edit(root.join("bare-light.dng"), None, cx);
+                e.sync_document();
+                assert_eq!(
+                    e.adjustment_layer_target(),
+                    adjustment_layers::Target::Layer(selected_layer)
+                );
+                assert_eq!(e.document.project, original);
+            });
             app.run_until(Duration::from_secs(60), |e| !e.busy);
             app.enter(|e, cx| {
+                e.sync_document();
+                assert_eq!(e.document.project, original);
                 assert_eq!(e.pick, Some(Pick::Flat));
                 assert!(e.region.is_some());
                 e.finish_pick(cx);
                 assert_eq!(e.document.project, original);
                 assert_eq!(e.current_source, selected);
+                assert_eq!(
+                    e.adjustment_layer_target(),
+                    adjustment_layers::Target::Layer(selected_layer)
+                );
             });
             app.enter(|e, cx| e.begin_flat_edit(root.join("bare-light.dng"), None, cx));
             app.run_until(Duration::from_secs(60), |e| !e.busy);
@@ -317,6 +361,21 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
             app.run_until(Duration::from_secs(60), |e| !e.busy);
             let settings = app.read(|e| {
                 assert!(e.correction.is_some(), "{}", e.status);
+                assert_eq!(
+                    e.adjustment_layer_target(),
+                    adjustment_layers::Target::Layer(selected_layer)
+                );
+                assert_eq!(
+                    e.document
+                        .project
+                        .source(selected.unwrap())
+                        .unwrap()
+                        .adjustment_layers,
+                    original
+                        .source(selected.unwrap())
+                        .unwrap()
+                        .adjustment_layers
+                );
                 assert_eq!(e.document.project.order, original.order);
                 assert_eq!((e.dmin(), e.dmax()), rgb);
                 assert_eq!(e.current_source, selected);

@@ -25,7 +25,7 @@ fn setup<R>(test: impl FnOnce(Harness<'_, Editor>, tempfile::TempDir) -> R) -> R
             e.set_dmin(Some(DVec3::splat(3000. / 4031.)));
             e.set_dmax(Some(DVec3::splat(128. / 4031.)));
             e.set_gamma(0.75);
-            e.photo.exposure = 0.5;
+            e.adjustment_layer_settings.exposure = 0.5;
             e.source = false;
             e.roll_orientation.turn_clockwise();
             e.photo_orientation.flips.horizontal = true;

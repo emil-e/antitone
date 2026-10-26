@@ -1,9 +1,8 @@
+use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
     Error,
     color::{AP1_TO_XYZ, Balance, wb_matrix},
-    processing::{
-        Calibration, DEFAULT_GAMMA, Inversion, NegativeInput, PhotoSettings, Pipeline, Response,
-    },
+    processing::{Calibration, DEFAULT_GAMMA, Inversion, NegativeInput, Response},
     roll_analysis::{FrameSamples, MAX_SAMPLES_PER_FRAME, estimate},
 };
 use glam::{DMat3, DVec3};
@@ -98,12 +97,33 @@ fn per_channel_development_scale_preserves_the_analyzed_positive_look() {
     assert!((scaled.roll.exposure - unity.roll.exposure).abs() < 1e-9);
     assert!((scaled.photos[0].exposure - unity.photos[0].exposure).abs() < 1e-9);
 
-    let unity_pipeline = Pipeline::new(unity.input, unity.roll, unity.photos[0], matrix).unwrap();
-    let scaled_pipeline =
-        Pipeline::new(scaled.input, scaled.roll, scaled.photos[0], matrix).unwrap();
+    let unity_pipeline = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+        antitone::adjustment_layers::AdjustmentLayer::global(unity.photos[0]),
+    ])
+    .and_then(|layers| {
+        antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+            unity.input,
+            unity.roll,
+            layers,
+            matrix,
+        )
+    })
+    .unwrap();
+    let scaled_pipeline = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+        antitone::adjustment_layers::AdjustmentLayer::global(scaled.photos[0]),
+    ])
+    .and_then(|layers| {
+        antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+            scaled.input,
+            scaled.roll,
+            layers,
+            matrix,
+        )
+    })
+    .unwrap();
     for (&a, &b) in source_unity.iter().zip(&source_scaled) {
-        let a = unity_pipeline.apply(a).unwrap().rgb;
-        let b = scaled_pipeline.apply(b).unwrap().rgb;
+        let a = unity_pipeline.apply(a, [0, 0]).unwrap().rgb;
+        let b = scaled_pipeline.apply(b, [0, 0]).unwrap().rgb;
         assert!((a - b).abs().max_element() < 1e-10, "{a:?} != {b:?}");
     }
 }
@@ -155,9 +175,9 @@ fn usable_film_is_pooled_without_requiring_every_frame_to_supply_base() {
         assert!((p.roll.exposure + p.photos[index].exposure - total).abs() < 1e-11);
         assert_eq!(
             p.photos[index],
-            PhotoSettings {
+            AdjustmentLayerSettings {
                 exposure: p.photos[index].exposure,
-                ..PhotoSettings::default()
+                ..AdjustmentLayerSettings::default()
             }
         );
     }
@@ -301,11 +321,21 @@ fn one_hdr_outlier_does_not_move_the_p99_capped_exposure_prior_or_clamp_working_
     close(calibration(&before).dmax, calibration(&after).dmax);
     assert!((after.roll.exposure - before.roll.exposure).abs() < 1e-14);
     assert!((after.photos[0].exposure - before.photos[0].exposure).abs() < 1e-14);
-    let pipeline =
-        Pipeline::new(after.input, after.roll, after.photos[0], DMat3::IDENTITY).unwrap();
+    let pipeline = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+        antitone::adjustment_layers::AdjustmentLayer::global(after.photos[0]),
+    ])
+    .and_then(|layers| {
+        antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+            after.input,
+            after.roll,
+            layers,
+            DMat3::IDENTITY,
+        )
+    })
+    .unwrap();
     let y: Vec<_> = source
         .iter()
-        .map(|&p| (AP1_TO_XYZ * pipeline.apply(p).unwrap().rgb).y)
+        .map(|&p| (AP1_TO_XYZ * pipeline.apply(p, [0, 0]).unwrap().rgb).y)
         .collect();
     assert!(
         y[0] > 65536.,

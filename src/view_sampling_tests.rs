@@ -1,5 +1,10 @@
 //! CPU sampling oracles only: approximation errors are not GPU agreement tolerances.
+use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::{
+    adjustment_layers::{
+        AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerPipeline, AdjustmentLayerSnapshot,
+        AdjustmentLayerStack,
+    },
     color::{Balance, wb_matrix},
     crop::Crop,
     flat_field::FlatField,
@@ -8,13 +13,7 @@ use crate::{
         Composition, Flips, FramePoint, PhotoOrientation, QuarterTurns, RollOrientation,
         SourcePoint, SourceRegion,
     },
-    local_adjustments::{
-        GradientMask, LocalAdjustment, LocalGrade, PhotoGradeSnapshot, SpatialPipeline,
-    },
-    photographic::Grade,
-    processing::{
-        Calibration, Inversion, InvertedPixel, PhotoSettings, RollSettings, exposure_multiplier,
-    },
+    processing::{Calibration, Inversion, InvertedPixel, RollSettings, exposure_multiplier},
     rendering::{CpuRenderer, OutputTarget},
 };
 use glam::{DMat3, DVec3};
@@ -152,11 +151,11 @@ fn raster(area: SourceRegion, rotated: bool, output: [u32; 2]) -> FrameRaster {
     .unwrap()
 }
 
-fn snapshot(area: SourceRegion, case: &str, edit: usize) -> PhotoGradeSnapshot {
+fn snapshot(area: SourceRegion, case: &str, edit: usize) -> AdjustmentLayerSnapshot {
     let global = if case == "identity" {
-        PhotoSettings::default()
+        AdjustmentLayerSettings::default()
     } else {
-        PhotoSettings {
+        AdjustmentLayerSettings {
             exposure: 0.25 + edit as f64 * 0.125,
             wb: Balance {
                 warmth: 0.005 + edit as f64 * 0.001,
@@ -171,14 +170,14 @@ fn snapshot(area: SourceRegion, case: &str, edit: usize) -> PhotoGradeSnapshot {
     };
     let x = f64::from(area.x) + f64::from(area.width) / 2.;
     let y = f64::from(area.y) + f64::from(area.height) / 2.;
-    let locals = if case == "locals" {
+    let layers = if case == "layers" {
         vec![
-            LocalAdjustment {
-                mask: GradientMask::Linear {
+            AdjustmentLayer {
+                mask: AdjustmentLayerCoverage::Linear {
                     start: SourcePoint([x - 2., y]),
                     end: SourcePoint([x + 2., y]),
                 },
-                photo: PhotoSettings {
+                photo: AdjustmentLayerSettings {
                     exposure: 1.,
                     contrast: 1.01,
                     saturation: 1.02,
@@ -188,14 +187,14 @@ fn snapshot(area: SourceRegion, case: &str, edit: usize) -> PhotoGradeSnapshot {
                 invert: false,
                 strength: 1.,
             },
-            LocalAdjustment {
-                mask: GradientMask::Radial {
+            AdjustmentLayer {
+                mask: AdjustmentLayerCoverage::Radial {
                     center: SourcePoint([x, y]),
                     radii: [8., 6.],
                     angle: 0.3,
                     feather: 0.5,
                 },
-                photo: PhotoSettings {
+                photo: AdjustmentLayerSettings {
                     exposure: -0.5,
                     wb: Balance {
                         warmth: -0.005,
@@ -211,19 +210,24 @@ fn snapshot(area: SourceRegion, case: &str, edit: usize) -> PhotoGradeSnapshot {
     } else {
         vec![]
     };
-    PhotoGradeSnapshot::new(global, locals).unwrap()
+    AdjustmentLayerSnapshot::new(
+        std::iter::once(crate::adjustment_layers::AdjustmentLayer::global(global))
+            .chain(layers)
+            .collect(),
+    )
+    .unwrap()
 }
 
 struct Stages {
     inversion: Inversion,
     matrix: DMat3,
-    global: Grade,
-    locals: LocalGrade,
-    full: SpatialPipeline,
+
+    layers: AdjustmentLayerStack,
+    full: AdjustmentLayerPipeline,
 }
 
 impl Stages {
-    fn new(source: &Source, grade: PhotoGradeSnapshot) -> Self {
+    fn new(source: &Source, grade: AdjustmentLayerSnapshot) -> Self {
         let roll = RollSettings {
             exposure: -0.125,
             wb: Balance {
@@ -231,19 +235,14 @@ impl Stages {
                 tint: -0.001,
             },
         };
-        let photo = grade.global();
-        let gain = exposure_multiplier(roll.exposure).unwrap()
-            * exposure_multiplier(photo.exposure).unwrap();
+        let gain = exposure_multiplier(roll.exposure).unwrap();
         Self {
             inversion: Inversion::new(source.calibration).unwrap(),
-            // Match the scalar Pipeline's exposure and white-balance ordering.
-            matrix: wb_matrix(photo.wb).unwrap()
-                * wb_matrix(roll.wb).unwrap()
-                * source.matrix
-                * gain,
-            global: Grade::new(photo).unwrap(),
-            locals: LocalGrade::new(grade.locals().to_vec()).unwrap(),
-            full: SpatialPipeline::new(source.calibration, roll, grade, source.matrix).unwrap(),
+            // Match the scalar InputPipeline's exposure and white-balance ordering.
+            matrix: wb_matrix(roll.wb).unwrap() * source.matrix * gain,
+            layers: AdjustmentLayerStack::new(grade.layers().to_vec()).unwrap(),
+            full: AdjustmentLayerPipeline::new(source.calibration, roll, grade, source.matrix)
+                .unwrap(),
         }
     }
 
@@ -253,9 +252,8 @@ impl Stages {
         pixel
     }
 
-    fn after_creative(&self, mut pixel: InvertedPixel, point: SourcePoint) -> InvertedPixel {
-        pixel.rgb = self.global.apply(pixel.rgb).unwrap();
-        self.locals.apply(pixel, point).unwrap()
+    fn after_creative(&self, pixel: InvertedPixel, point: SourcePoint) -> InvertedPixel {
+        self.layers.apply(pixel, point).unwrap()
     }
 }
 
@@ -301,7 +299,7 @@ struct Comparison {
 fn compare(
     source: &Source,
     frame: FrameRaster,
-    grade: PhotoGradeSnapshot,
+    grade: AdjustmentLayerSnapshot,
     target: OutputTarget,
 ) -> Comparison {
     let stages = Stages::new(source, grade);
@@ -360,7 +358,7 @@ fn compare(
                     .iter()
                     .map(|&(p, w)| (source.camera[source.index(p)], w)),
             );
-            // Filtering uses a continuous footprint centre for locals: intentionally approximate, not original provenance.
+            // Filtering uses a continuous footprint centre for layers: intentionally approximate, not original provenance.
             let centre = frame.source_point([f64::from(x) + 0.5, f64::from(y) + 0.5]);
             let camera_filtered =
                 stages.after_creative(stages.before_creative(camera_mean), centre);
@@ -452,7 +450,7 @@ fn report(
 #[test]
 fn split_scalar_stages_preserve_original_sample_processing() {
     let source = synthetic("signed-hdr-floor").corrected();
-    let stages = Stages::new(&source, snapshot(source.area, "locals", 1));
+    let stages = Stages::new(&source, snapshot(source.area, "layers", 1));
     let mut saw_floor = false;
     let mut saw_signed = false;
     let mut saw_hdr = false;
@@ -479,7 +477,7 @@ fn axis_aligned_complete_original_support_matches_exact_coverage() {
     let source = synthetic("checker");
     let frame = raster(source.area, false, [8, 6]);
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-        let result = compare(&source, frame, snapshot(source.area, "locals", 0), target);
+        let result = compare(&source, frame, snapshot(source.area, "layers", 0), target);
         let (rms, max) = error(&result.exact, &result.candidates[5].1);
         assert!(rms < 1e-14 && max < 1e-14);
         assert!(
@@ -506,7 +504,7 @@ fn native_pixel_permutations_need_no_additional_support_for_grading() {
     .unwrap();
     let frame = FrameRaster::full(composition).unwrap();
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-        let result = compare(&source, frame, snapshot(source.area, "locals", 1), target);
+        let result = compare(&source, frame, snapshot(source.area, "layers", 1), target);
         for (_, output) in &result.candidates[3..] {
             let (rms, max) = error(&result.exact, output);
             assert!(rms < 1e-14 && max < 1e-14);
@@ -519,7 +517,7 @@ fn filtered_representations_are_not_exact_and_can_lose_native_floor_evidence() {
     let source = synthetic("signed-hdr-floor").corrected();
     let frame = raster(source.area, true, [8, 6]);
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-        let result = compare(&source, frame, snapshot(source.area, "locals", 0), target);
+        let result = compare(&source, frame, snapshot(source.area, "layers", 0), target);
         assert!(result.floor_loss_pixels > 0);
         for (_, output) in &result.candidates[..3] {
             assert!(
@@ -538,7 +536,7 @@ fn view_support_is_grade_target_independent_but_navigation_changes_provenance() 
         .flat_map(|y| (0..8).map(move |x| support(frame, [x, y], 2)))
         .collect();
     for edit in 0..3 {
-        let stages = Stages::new(&source, snapshot(source.area, "locals", edit));
+        let stages = Stages::new(&source, snapshot(source.area, "layers", edit));
         let input: Vec<_> = retained
             .iter()
             .flat_map(|s| {
@@ -597,7 +595,7 @@ fn retaining_acquired_exact_support_preserves_detail_across_grade_and_target_edi
         .collect();
     assert!(retained.iter().all(|s| s.samples.len() > 1));
     for edit in 0..3 {
-        let grade = snapshot(source.area, "locals", edit);
+        let grade = snapshot(source.area, "layers", edit);
         let stages = Stages::new(&source, grade.clone());
         let original: Vec<_> = source
             .pixels()
@@ -644,7 +642,7 @@ fn synthetic_view_sampling_quality() {
             for rotated in [false, true] {
                 let output = if rotated { [6, 8] } else { [8, 6] };
                 let frame = raster(source.area, rotated, output);
-                for case in ["identity", "global", "locals"] {
+                for case in ["identity", "global", "layers"] {
                     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
                         let comparison =
                             compare(&source, frame, snapshot(source.area, case, 0), target);
@@ -693,7 +691,7 @@ fn raw_view_sampling_quality() {
             };
             for rotated in [false, true] {
                 let output = if rotated { [6, 8] } else { [8, 6] };
-                for case in ["identity", "global", "locals"] {
+                for case in ["identity", "global", "layers"] {
                     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
                         let comparison = compare(
                             &source,

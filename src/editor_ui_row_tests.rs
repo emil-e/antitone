@@ -372,3 +372,64 @@ fn sections_keep_pinned_expansion_and_independent_reset_without_domain_fixtures(
         }
     }
 }
+
+#[test]
+fn section_context_labels_preserve_disclosure_identity_and_full_accessible_names() {
+    for width in [270., 315.] {
+        let context = Context::default();
+        let title =
+            "Layers: A long selected layer name that needs truncation in a narrow inspector";
+        let render = |title: &str, events| {
+            frame(&context, width, true, events, |ui| {
+                section(
+                    ui,
+                    "selected-layer",
+                    title,
+                    SectionHeader {
+                        summary: "",
+                        changed: false,
+                        reset: None,
+                        tool: None,
+                        default_open: Some(true),
+                    },
+                    |ui| ui.label("Layer contents"),
+                )
+                .0
+                .is_some()
+            })
+        };
+        render(title, vec![]);
+        let (open, output) = render(title, vec![]);
+        assert!(open);
+        let header = output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|(_, node)| node.label() == Some(title))
+            .unwrap();
+        let id = header.0;
+        let rect = header.1.bounds().unwrap();
+        let point = egui::pos2(
+            ((rect.x0 + rect.x1) / 2.) as f32,
+            ((rect.y0 + rect.y1) / 2.) as f32,
+        );
+        render(title, pointer(point, true));
+        let (open, _) = render(title, pointer(point, false));
+        assert!(!open);
+        let (open, output) = render("Layers: Renamed", vec![]);
+        assert!(!open);
+        let header = output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|(_, node)| node.label() == Some("Layers: Renamed"))
+            .unwrap();
+        assert_eq!(header.0, id);
+    }
+}

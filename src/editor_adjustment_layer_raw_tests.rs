@@ -5,18 +5,20 @@
     target_os = "macos"
 ))]
 use crate as api;
+use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::raw_test_support::train_raw;
 use api::{
+    adjustment_layers::{
+        AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerPipeline, AdjustmentLayerSnapshot,
+    },
     color::Balance,
     crop::Crop,
     frame_raster::FrameRaster,
     geometry::{Composition, FramePoint, SourcePoint, SourceRaster, SourceRegion},
     gpu::{
-        GpuPhotoGrade, ProcessingInput, ProcessingKernel, ProcessingParameters, ProcessingSource,
-        SourceGeometry,
+        GpuAdjustmentLayers, ProcessingInput, ProcessingKernel, ProcessingSource, SourceGeometry,
     },
-    local_adjustments::{GradientMask, LocalAdjustment, PhotoGradeSnapshot, SpatialPipeline},
-    processing::{PhotoSettings, RollSettings},
+    processing::RollSettings,
     refinement::{ViewRequest, refine},
     rendering::{CpuRenderer, OutputTarget},
     viewer::GpuImage,
@@ -27,7 +29,7 @@ use std::{
     time::Instant,
 };
 
-fn locals(area: SourceRegion, count: usize, photographic: bool) -> Vec<LocalAdjustment> {
+fn layers(area: SourceRegion, count: usize, photographic: bool) -> Vec<AdjustmentLayer> {
     let point = |x: f64, y: f64| {
         SourcePoint([
             f64::from(area.x) + x * f64::from(area.width),
@@ -35,14 +37,14 @@ fn locals(area: SourceRegion, count: usize, photographic: bool) -> Vec<LocalAdju
         ])
     };
     (0..count)
-        .map(|i| LocalAdjustment {
+        .map(|i| AdjustmentLayer {
             mask: if i % 2 == 0 {
-                GradientMask::Linear {
+                AdjustmentLayerCoverage::Linear {
                     start: point(0.15, 0.15),
                     end: point(0.85, 0.85),
                 }
             } else {
-                GradientMask::Radial {
+                AdjustmentLayerCoverage::Radial {
                     center: point(0.5, 0.5),
                     radii: [0.43 * f64::from(area.width), 0.4 * f64::from(area.height)],
                     angle: 0.3,
@@ -50,7 +52,7 @@ fn locals(area: SourceRegion, count: usize, photographic: bool) -> Vec<LocalAdju
                 }
             },
             photo: if photographic {
-                PhotoSettings {
+                AdjustmentLayerSettings {
                     exposure: 0.25,
                     wb: Balance {
                         warmth: 0.005,
@@ -63,7 +65,7 @@ fn locals(area: SourceRegion, count: usize, photographic: bool) -> Vec<LocalAdju
                     ..Default::default()
                 }
             } else {
-                PhotoSettings {
+                AdjustmentLayerSettings {
                     exposure: if i % 2 == 0 { 0.25 } else { -0.125 },
                     ..Default::default()
                 }
@@ -164,11 +166,11 @@ fn mapped_pixels(
 
 #[test]
 #[ignore = "read-only train RAW, diagnostic calibration, Metal parity/timing and rotated local refinement; run explicitly in release"]
-fn real_raw_local_preview_tiles_and_refinement() {
+fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
     let (scan, calibration) = train_raw::load();
     let area = scan.area;
     let roll = RollSettings::default();
-    let graded_global = PhotoSettings {
+    let graded_global = AdjustmentLayerSettings {
         exposure: -2.,
         contrast: 1.05,
         saturation: 1.2,
@@ -252,52 +254,42 @@ fn real_raw_local_preview_tiles_and_refinement() {
             });
             let mut global_output = Vec::new();
             for (global, count, photographic) in [
-                (PhotoSettings::default(), 0, false),
-                (PhotoSettings::default(), 2, false),
-                (PhotoSettings::default(), 2, true),
-                (PhotoSettings::default(), 3, true),
+                (AdjustmentLayerSettings::default(), 0, false),
+                (AdjustmentLayerSettings::default(), 2, false),
+                (AdjustmentLayerSettings::default(), 2, true),
+                (AdjustmentLayerSettings::default(), 3, true),
                 (graded_global, 0, false),
                 (graded_global, 4, true),
             ] {
-                let snapshot =
-                    PhotoGradeSnapshot::new(global, locals(area, count, photographic)).unwrap();
+                let snapshot = AdjustmentLayerSnapshot::new(
+                    std::iter::once(crate::adjustment_layers::AdjustmentLayer::global(global))
+                        .chain(layers(area, count, photographic))
+                        .collect(),
+                )
+                .unwrap();
                 let tick = Instant::now();
-                let grade = if count == 0 {
-                    None
-                } else {
-                    match GpuPhotoGrade::new(
-                        &device,
-                        calibration,
-                        roll,
-                        snapshot.clone(),
-                        scan.camera_to_ap1,
-                        area,
-                    ) {
-                        Ok(grade) => Some(Arc::new(grade)),
-                        Err(error) => {
-                            println!(
-                                "local_raw path={label} global={global:?} count={count} photographic={photographic} unsupported={error}"
-                            );
-                            continue;
-                        }
+                let grade = match GpuAdjustmentLayers::new(
+                    &device,
+                    calibration,
+                    roll,
+                    snapshot.clone(),
+                    scan.camera_to_ap1,
+                    area,
+                ) {
+                    Ok(grade) => Arc::new(grade),
+                    Err(error) => {
+                        println!(
+                            "local_raw path={label} global={global:?} count={count} photographic={photographic} unsupported={error}"
+                        );
+                        continue;
                     }
                 };
-                let parameters =
-                    ProcessingParameters::positive(calibration, roll, global, scan.camera_to_ap1)
-                        .unwrap();
                 let preparation_ms = tick.elapsed().as_secs_f64() * 1000.;
-                let input = grade.as_ref().map_or_else(
-                    || ProcessingInput::from(parameters),
-                    |grade| grade.clone().into(),
-                );
+                let input = ProcessingInput::from(grade.clone());
                 let encode = |encoder: &mut wgpu::CommandEncoder| {
-                    if let Some(grade) = &grade {
-                        kernel
-                            .encode_grade(&device, encoder, &source, &output, grade)
-                            .unwrap();
-                    } else {
-                        kernel.encode(&device, encoder, &source, &output, parameters);
-                    }
+                    kernel
+                        .encode_grade(&device, encoder, &source, &output, &grade)
+                        .unwrap();
                 };
                 completion(&device, &queue, encode);
                 let processing_ms = median(
@@ -319,11 +311,12 @@ fn real_raw_local_preview_tiles_and_refinement() {
                                 .abs()
                                 .max_element()
                                 > 2e-5),
-                        "{label}: active locals must change the real RAW output"
+                        "{label}: active layers must change the real RAW output"
                     );
                 }
                 let pipeline =
-                    SpatialPipeline::new(calibration, roll, snapshot, scan.camera_to_ap1).unwrap();
+                    AdjustmentLayerPipeline::new(calibration, roll, snapshot, scan.camera_to_ap1)
+                        .unwrap();
                 let mut working = Vec::with_capacity(pixels.len());
                 let mut worst = 0_f64;
                 let mut signed = 0;
@@ -360,7 +353,7 @@ fn real_raw_local_preview_tiles_and_refinement() {
                     pixels.len(),
                     source.byte_len(),
                     output.size(),
-                    grade.as_ref().map_or(0, |grade| grade.byte_len())
+                    grade.byte_len()
                 );
                 for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
                     let mut image = GpuImage::new_continuous_shared(
@@ -407,14 +400,14 @@ fn real_raw_local_preview_tiles_and_refinement() {
                         "local_raw path={label} count={count} photographic={photographic} target={target:?} processing_aces_median_ms={rendered_ms:.3} worst_render_absolute_error={worst:.9e}"
                     );
                 }
-                if global == PhotoSettings::default() && count == 2 && photographic {
-                    refinement_grade = grade;
+                if global == AdjustmentLayerSettings::default() && count == 2 && photographic {
+                    refinement_grade = Some(grade);
                 }
             }
         }
         let grade = refinement_grade
             .expect("the RAW fixture must support two photographic stages for refinement parity");
-        let pipeline = SpatialPipeline::new(
+        let pipeline = AdjustmentLayerPipeline::new(
             calibration,
             roll,
             grade.snapshot().clone(),

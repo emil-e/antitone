@@ -135,13 +135,19 @@ pub(super) fn calibrated_workflow<R>(
         harness.read(|editor| assert_eq!(editor.gamma(), 0.75));
         stage(&mut harness, "Photo");
         enter_numeric(&mut harness, "Exposure", "0.5");
-        harness.read(|editor| assert_eq!(editor.photo.exposure, 0.5, "{}", editor.status));
-        enter_numeric(&mut harness, "Warmth", "0.1");
-        enter_numeric(&mut harness, "Tint", "-0.05");
-        harness.read(|editor| assert_eq!(editor.photo.exposure, 0.5));
         harness.read(|editor| {
             assert_eq!(
-                editor.photo.wb,
+                editor.adjustment_layer_settings.exposure, 0.5,
+                "{}",
+                editor.status
+            )
+        });
+        enter_numeric(&mut harness, "Warmth", "0.1");
+        enter_numeric(&mut harness, "Tint", "-0.05");
+        harness.read(|editor| assert_eq!(editor.adjustment_layer_settings.exposure, 0.5));
+        harness.read(|editor| {
+            assert_eq!(
+                editor.adjustment_layer_settings.wb,
                 Balance {
                     warmth: 0.1,
                     tint: -0.05
@@ -161,7 +167,7 @@ pub(super) fn wait_settled(harness: &mut Harness<'_, Editor>) {
                 e.source_parameters(e.source_exposure)
                     .map(ProcessingInput::from)
             } else {
-                e.positive_processing(e.input, e.roll, e.photo)
+                e.positive_processing(e.input, e.roll, e.adjustment_layer_settings)
             }
             .unwrap();
             !e.working.updating
@@ -468,30 +474,41 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_return_use_widget
 #[test]
 fn physical_view_local_edits_use_current_input_and_clear_recovered_render_errors() {
     use crate::{
+        adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
         geometry::SourcePoint,
-        local_adjustments::{GradientMask, LocalAdjustment},
-        project::LocalAdjustments,
+        project::AdjustmentLayers,
     };
     calibrated_workflow(|mut harness, _capture, _directory| {
         wait_for(&mut harness, |e| e.working.support_ready());
         harness.render().unwrap();
         let initial = harness.read(|editor| editor.working.displayed.clone().unwrap());
         let source_id = harness.read(|editor| editor.current_source.unwrap());
+        let original_layers = harness.read(|editor| {
+            editor
+                .document
+                .visit
+                .ready
+                .as_ref()
+                .unwrap()
+                .record
+                .adjustment_layers
+                .clone()
+        });
         let area = harness.read(|editor| editor.document.visit.ready.as_ref().unwrap().area);
-        let mut locals = LocalAdjustments::default();
+        let mut layers = AdjustmentLayers::default();
         for exposure in [0.5, -0.25] {
-            locals
+            layers
                 .add(
                     format!("Local {exposure}"),
-                    LocalAdjustment {
-                        mask: GradientMask::Linear {
+                    AdjustmentLayer {
+                        mask: AdjustmentLayerCoverage::Linear {
                             start: SourcePoint([f64::from(area.x), f64::from(area.y)]),
                             end: SourcePoint([
                                 f64::from(area.x + area.width),
                                 f64::from(area.y + area.height),
                             ]),
                         },
-                        photo: PhotoSettings {
+                        photo: AdjustmentLayerSettings {
                             exposure,
                             ..Default::default()
                         },
@@ -504,10 +521,10 @@ fn physical_view_local_edits_use_current_input_and_clear_recovered_render_errors
         }
         for edit in 0..4 {
             match edit {
-                1 => locals.adjustments[0].adjustment.photo.exposure = 0.75,
-                2 => locals.adjustments.reverse(),
+                1 => layers.layers[0].adjustment.photo.exposure = 0.75,
+                2 => layers.layers.reverse(),
                 3 => {
-                    locals.adjustments.remove(0);
+                    layers.layers.remove(0);
                 }
                 _ => (),
             }
@@ -517,12 +534,17 @@ fn physical_view_local_edits_use_current_input_and_clear_recovered_render_errors
                     .project
                     .source_mut(source_id)
                     .unwrap()
-                    .local_adjustments = Some(locals.clone());
+                    .adjustment_layers = Some(layers.clone());
+                editor.refresh_adjustment_layer_selection();
                 editor
                     .validate_document_candidate(&editor.document)
                     .unwrap();
                 editor
-                    .positive_processing(editor.input, editor.roll, editor.photo)
+                    .positive_processing(
+                        editor.input,
+                        editor.roll,
+                        editor.adjustment_layer_settings,
+                    )
                     .unwrap()
             });
             harness.step();
@@ -532,7 +554,7 @@ fn physical_view_local_edits_use_current_input_and_clear_recovered_render_errors
                 let displayed = editor.working.displayed.as_ref().unwrap();
                 assert!(displayed.same_source_as(&initial));
                 assert_eq!(displayed.processing, input.signature());
-                assert!(
+                assert_eq!(
                     editor
                         .document
                         .visit
@@ -540,8 +562,8 @@ fn physical_view_local_edits_use_current_input_and_clear_recovered_render_errors
                         .as_ref()
                         .unwrap()
                         .record
-                        .local_adjustments
-                        .is_none(),
+                        .adjustment_layers,
+                    original_layers,
                     "Ready remains the original accepted-load record"
                 );
             });
@@ -551,9 +573,9 @@ fn physical_view_local_edits_use_current_input_and_clear_recovered_render_errors
                 .positive_processing(
                     editor.input,
                     editor.roll,
-                    PhotoSettings {
-                        exposure: editor.photo.exposure + 1.,
-                        ..editor.photo
+                    AdjustmentLayerSettings {
+                        exposure: editor.adjustment_layer_settings.exposure + 1.,
+                        ..editor.adjustment_layer_settings
                     },
                 )
                 .unwrap();
@@ -663,7 +685,7 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_refer
                         .output_retained(),
                     "dragging/scopes must not allocate a second presentation path"
                 );
-                exposures.push(editor.photo.exposure);
+                exposures.push(editor.adjustment_layer_settings.exposure);
             });
         }
         let end = slider.right_center() - egui::vec2(8., 0.);

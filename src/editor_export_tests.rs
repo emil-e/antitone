@@ -177,7 +177,7 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
         editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
         editor.set_dmax(Some(DVec3::splat(128. / 4031.)));
         editor.roll = RollSettings::default();
-        editor.photo = PhotoSettings {
+        editor.adjustment_layer_settings = AdjustmentLayerSettings {
             contrast: 0.8,
             saturation: 1.3,
             ..Default::default()
@@ -227,6 +227,11 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
         edited
             .source_mut(editor.current_source.unwrap())
             .unwrap()
+            .adjustment_layers
+            .as_mut()
+            .unwrap()
+            .layers[0]
+            .adjustment
             .photo
             .exposure = 0.75;
         editor = wait(editor, |editor, cx| {
@@ -238,14 +243,14 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
             );
             assert!(editor.export_operation.pending.is_some());
             // Later accepted edits/source identity cannot change the captured file recipe.
-            editor.photo.exposure = 0.75;
+            editor.adjustment_layer_settings.exposure = 0.75;
             editor.sync_document();
             editor.id += 7;
         });
         assert!(editor.failure.is_none(), "{}", editor.status);
         assert_eq!(tiff_pixels(&captured), expected);
         assert_eq!(editor.document.project, edited);
-        assert_eq!(editor.photo.exposure, 0.75);
+        assert_eq!(editor.adjustment_layer_settings.exposure, 0.75);
         // A refused destination remains intact even after the visible authority and grade change.
         let bytes = std::fs::read(&source).unwrap();
         editor = wait(editor, |editor, cx| {

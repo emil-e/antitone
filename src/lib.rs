@@ -1,3 +1,4 @@
+pub mod adjustment_layers;
 #[cfg(feature = "ui")]
 pub mod application;
 #[cfg(feature = "project")]
@@ -28,7 +29,6 @@ pub mod gpu_export;
 #[cfg(feature = "project")]
 pub mod image_recipe;
 pub mod lens;
-pub mod local_adjustments;
 #[cfg(feature = "logging")]
 pub mod logging;
 #[cfg(any(feature = "project", feature = "gpu"))]

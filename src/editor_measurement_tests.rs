@@ -1,4 +1,5 @@
 use super::*;
+use crate::adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot};
 use crate::application::Application;
 use crate::editor::{development, thumbnails};
 use crate::{blocking_jobs::BlockingJobs, raw::Rect, source_store::SourceStore};
@@ -282,7 +283,8 @@ fn cancelling_a_running_measurement_retains_its_source_until_the_computation_ret
         region: Coverage::rectangle(scan.area),
         input: crate::processing::InputSettings::default(),
         roll: RollSettings::default(),
-        photo: PhotoSettings::default(),
+        upstream: AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+        layer: None,
     };
     drop(scan);
     let state = std::cell::RefCell::new(Some(()));
@@ -370,7 +372,8 @@ fn native_acquisition_wait_does_not_occupy_blocking_job_capacity() {
             region: Coverage::rectangle(region),
             input: crate::processing::InputSettings::default(),
             roll: RollSettings::default(),
-            photo: PhotoSettings::default(),
+            upstream: AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+            layer: None,
         };
         measurement_jobs
             .run(move || input.measure().map_err(|error| error.to_string()))
@@ -431,7 +434,8 @@ fn measurement_captures_correction_and_all_five_kinds_keep_their_declared_inputs
             region,
             input: calibration.into(),
             roll: RollSettings::default(),
-            photo: PhotoSettings::default(),
+            upstream: AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+            layer: None,
         };
         let Measurement::Reference(value) = input.measure().unwrap() else {
             panic!("expected reference")
@@ -453,9 +457,9 @@ fn measurement_captures_correction_and_all_five_kinds_keep_their_declared_inputs
             },
             ..RollSettings::default()
         };
-        let photo = PhotoSettings {
+        let photo = AdjustmentLayerSettings {
             exposure: 0.25,
-            ..PhotoSettings::default()
+            ..AdjustmentLayerSettings::default()
         };
         let input = Input {
             source: source.clone(),
@@ -464,21 +468,29 @@ fn measurement_captures_correction_and_all_five_kinds_keep_their_declared_inputs
             region: middle,
             input: calibration.into(),
             roll,
-            photo,
+            upstream: AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+            layer: (kind == Pick::Wb).then(|| AdjustmentLayer::global(photo)),
         };
         let mut reference = Scan::from_source(source.clone());
         let expected = match kind {
             Pick::Gamma => reference.roll_neutral_coverage(middle, &input.input),
-            Pick::RollWb => reference.photo_neutral_coverage(
+            Pick::RollWb => reference.white_balance_coverage(
                 middle,
                 &input.input,
                 RollSettings {
                     wb: Balance::default(),
                     ..roll
                 },
-                PhotoSettings::default(),
+                AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+                None,
             ),
-            _ => reference.photo_neutral_coverage(middle, &input.input, roll, photo),
+            _ => reference.white_balance_coverage(
+                middle,
+                &input.input,
+                roll,
+                AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+                Some(AdjustmentLayer::global(photo)),
+            ),
         }
         .unwrap();
         let Measurement::Balance(value) = input.measure().unwrap() else {
@@ -486,4 +498,272 @@ fn measurement_captures_correction_and_all_five_kinds_keep_their_declared_inputs
         };
         assert_eq!(value, expected);
     }
+}
+
+#[test]
+fn layer_white_balance_pick_captures_only_preceding_layers_and_fits_a_replacement() {
+    use crate::{adjustment_layers::AdjustmentLayer, project::AdjustmentLayers};
+    let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
+    editor.input = crate::processing::InputSettings::Digital;
+    editor.roll = RollSettings::default();
+    let source = editor.current_source.unwrap();
+    let upstream = Balance {
+        warmth: 0.2,
+        tint: -0.1,
+    };
+    let mut layers = AdjustmentLayers::with_global(AdjustmentLayerSettings {
+        wb: upstream,
+        exposure: 1.,
+        ..AdjustmentLayerSettings::default()
+    });
+    let selected = layers
+        .add(
+            "Selected".into(),
+            AdjustmentLayer::global(AdjustmentLayerSettings {
+                wb: Balance {
+                    warmth: 0.4,
+                    tint: 0.3,
+                },
+                exposure: 0.5,
+                ..AdjustmentLayerSettings::default()
+            }),
+        )
+        .unwrap();
+    layers
+        .add(
+            "Downstream".into(),
+            AdjustmentLayer::global(AdjustmentLayerSettings {
+                wb: Balance {
+                    warmth: -0.7,
+                    tint: 0.6,
+                },
+                ..AdjustmentLayerSettings::default()
+            }),
+        )
+        .unwrap();
+    editor
+        .document
+        .project
+        .source_mut(source)
+        .unwrap()
+        .adjustment_layers = Some(layers);
+    editor.refresh_adjustment_layer_selection();
+    editor.select_adjustment_layer(crate::editor::adjustment_layers::Target::Layer(selected));
+    let ready = editor.document.visit.ready.as_ref().unwrap();
+    let region = Coverage::rectangle(Rect {
+        x: ready.area.x + ready.area.width / 3,
+        y: ready.area.y + ready.area.height / 3,
+        width: ready.area.width / 3,
+        height: ready.area.height / 3,
+    });
+    let captured = editor.measurement_input(Pick::Wb, region).unwrap();
+    let mut scan = Scan::from_source(ready.developed.clone());
+    let baseline = scan
+        .white_balance_coverage(
+            region,
+            &editor.input,
+            editor.roll,
+            AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+            None,
+        )
+        .unwrap();
+    // Bradford gains add in log coordinates; the selected replacement cancels the upstream WB.
+    let expected = Balance {
+        warmth: baseline.warmth - upstream.warmth,
+        tint: baseline.tint - upstream.tint,
+    };
+    editor
+        .edit_adjustment_layers(|layers| {
+            layers.layers[0].adjustment.photo.wb = Balance::default();
+            Ok(())
+        })
+        .unwrap();
+    let Measurement::Balance(actual) = captured.measure().unwrap() else {
+        panic!("expected a neutral correction");
+    };
+    assert!((actual.warmth - expected.warmth).abs() < 1e-10);
+    assert!((actual.tint - expected.tint).abs() < 1e-10);
+}
+
+#[test]
+fn masked_and_partial_layer_wb_picks_neutralize_the_captured_patch_before_own_creative_controls() {
+    use crate::{
+        adjustment_layers::AdjustmentLayerCoverage, geometry::SourcePoint,
+        project::AdjustmentLayers,
+    };
+    let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
+    editor.input = InputSettings::Digital;
+    editor.roll = RollSettings::default();
+    let source = editor.current_source.unwrap();
+    let ready = editor.document.visit.ready.as_ref().unwrap();
+    let developed = ready.developed.clone();
+    let patch = Rect {
+        x: ready.area.x + ready.area.width / 3,
+        y: ready.area.y + ready.area.height / 3,
+        width: ready.area.width / 3,
+        height: ready.area.height / 3,
+    };
+    let center = [
+        f64::from(patch.x) + f64::from(patch.width) / 2.,
+        f64::from(patch.y) + f64::from(patch.height) / 2.,
+    ];
+    for (mask, invert, strength) in [
+        (AdjustmentLayerCoverage::Global {}, false, 0.45),
+        (
+            AdjustmentLayerCoverage::Linear {
+                start: SourcePoint([f64::from(patch.x), center[1]]),
+                end: SourcePoint([f64::from(patch.x + patch.width), center[1]]),
+            },
+            true,
+            0.7,
+        ),
+        (
+            AdjustmentLayerCoverage::Radial {
+                center: SourcePoint(center),
+                radii: [f64::from(patch.width), f64::from(patch.height)],
+                angle: 0.3,
+                feather: 1.,
+            },
+            false,
+            0.65,
+        ),
+    ] {
+        let selected = AdjustmentLayer {
+            mask,
+            invert,
+            strength,
+            enabled: true,
+            photo: AdjustmentLayerSettings {
+                exposure: 0.5,
+                wb: Balance {
+                    warmth: 0.8,
+                    tint: -0.7,
+                },
+                contrast: 1.5,
+                saturation: 1.8,
+                ..Default::default()
+            },
+        };
+        let mut layers = AdjustmentLayers::default();
+        let id = layers.add("Selected".into(), selected).unwrap();
+        layers
+            .add(
+                "Finishing".into(),
+                AdjustmentLayer::global(AdjustmentLayerSettings {
+                    wb: Balance {
+                        warmth: -0.5,
+                        tint: 0.4,
+                    },
+                    ..Default::default()
+                }),
+            )
+            .unwrap();
+        editor
+            .document
+            .project
+            .source_mut(source)
+            .unwrap()
+            .adjustment_layers = Some(layers);
+        editor.refresh_adjustment_layer_selection();
+        editor.select_adjustment_layer(crate::editor::adjustment_layers::Target::Layer(id));
+        let Measurement::Balance(balance) = editor
+            .measurement_input(Pick::Wb, Coverage::rectangle(patch))
+            .unwrap()
+            .measure()
+            .unwrap()
+        else {
+            panic!("expected WB");
+        };
+        let mut measured = selected;
+        measured.photo.wb = balance;
+        measured.photo.contrast = 1.;
+        measured.photo.saturation = 1.;
+        let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
+            InputSettings::Digital,
+            editor.roll,
+            AdjustmentLayerSnapshot::new(vec![measured]).unwrap(),
+            developed.camera_to_ap1(),
+        )
+        .unwrap();
+        let scan = Scan::from_source(developed.clone());
+        let mut rgb = DVec3::ZERO;
+        for y in patch.y..patch.y + patch.height {
+            for x in patch.x..patch.x + patch.width {
+                rgb += pipeline
+                    .apply(scan.pixel(x, y).unwrap(), [x, y])
+                    .unwrap()
+                    .rgb;
+            }
+        }
+        rgb /= f64::from(patch.width * patch.height);
+        assert!(
+            (rgb - DVec3::splat(rgb.y)).abs().max_element() < 1e-8,
+            "{mask:?}, {balance:?}: {rgb:?}"
+        );
+    }
+}
+
+#[test]
+fn a_completed_wb_pick_cannot_write_to_a_different_selected_layer() {
+    let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
+    let source = editor.current_source.unwrap();
+    let first = editor
+        .document
+        .project
+        .source(source)
+        .unwrap()
+        .adjustment_layers
+        .as_ref()
+        .unwrap()
+        .layers[0]
+        .id;
+    let second = editor
+        .document
+        .project
+        .source_mut(source)
+        .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .add(
+            "Other".into(),
+            AdjustmentLayer::global(AdjustmentLayerSettings {
+                exposure: 0.5,
+                ..Default::default()
+            }),
+        )
+        .unwrap();
+    editor.select_adjustment_layer(crate::editor::adjustment_layers::Target::Layer(first));
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            let task = cx
+                .spawn(|_| async { std::future::pending::<()>().await })
+                .unwrap();
+            let view = editor.document.visit.view;
+            editor.document.visit.measurement = Some(Pending {
+                kind: Pick::Wb,
+                target: Some((source, first)),
+                _task: task,
+            });
+            editor.pick = Some(Pick::Wb);
+            editor.busy = true;
+            editor.select_adjustment_layer(crate::editor::adjustment_layers::Target::Layer(second));
+            let before = editor.document.project.clone();
+            let settings = editor.adjustment_layer_settings;
+            editor.measurement_result(
+                view,
+                Pick::Wb,
+                Ok(Measurement::Balance(Balance {
+                    warmth: 0.3,
+                    tint: 0.2,
+                })),
+                cx,
+            );
+            assert_eq!(editor.document.project, before);
+            assert_eq!(editor.adjustment_layer_settings, settings);
+            assert!(editor.document.visit.measurement.is_none());
+            assert!(!editor.busy);
+            assert!(editor.pick.is_none());
+        });
+    });
 }

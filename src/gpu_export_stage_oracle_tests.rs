@@ -1,9 +1,10 @@
 use super::*;
+use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::{
+    adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerPipeline},
     dust_repair::{DonorChoice, Repair, RepairId, RepairOrigin, SupportMask},
     geometry::SourcePoint,
-    local_adjustments::{GradientMask, LocalAdjustment, SpatialPipeline},
-    processing::{Calibration, InvertedPixel, PhotoSettings},
+    processing::{Calibration, InvertedPixel},
 };
 
 #[test]
@@ -36,8 +37,8 @@ fn production_repairs_grades_look_and_area_match_independent_scalar_ocio_in_line
         input_floor: scan.input_floor,
     };
     let roll = RollSettings::default();
-    let grade = PhotoGradeSnapshot::new(
-        PhotoSettings {
+    let grade = AdjustmentLayerSnapshot::new(vec![
+        crate::adjustment_layers::AdjustmentLayer::global(AdjustmentLayerSettings {
             exposure: 0.5,
             contrast: 0.8,
             saturation: 1.1,
@@ -46,24 +47,24 @@ fn production_repairs_grades_look_and_area_match_independent_scalar_ocio_in_line
                 tint: -0.03,
             },
             ..Default::default()
-        },
-        vec![LocalAdjustment {
-            mask: GradientMask::Linear {
+        }),
+        AdjustmentLayer {
+            mask: AdjustmentLayerCoverage::Linear {
                 start: SourcePoint([f64::from(a.x), f64::from(a.y)]),
                 end: SourcePoint([f64::from(a.x + a.width), f64::from(a.y + a.height)]),
             },
-            photo: PhotoSettings {
+            photo: AdjustmentLayerSettings {
                 exposure: 0.5,
                 ..Default::default()
             },
             enabled: true,
             invert: false,
             strength: 0.7,
-        }],
-    )
+        },
+    ])
     .unwrap();
     let pipeline =
-        SpatialPipeline::new(calibration, roll, grade.clone(), scan.camera_to_ap1).unwrap();
+        AdjustmentLayerPipeline::new(calibration, roll, grade.clone(), scan.camera_to_ap1).unwrap();
     let centre = [a.x + a.width / 2, a.y + a.height / 2];
     let repair = Repair {
         id: RepairId(1),

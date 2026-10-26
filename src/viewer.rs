@@ -388,7 +388,7 @@ impl GpuImage {
         input.require_source(&processing.source)
     }
 
-    /// Prepare an immutable global/local input; invalid inputs leave the prior preparation intact.
+    /// Prepare an immutable adjustment-layer input; invalid inputs leave the prior preparation intact.
     pub fn prepare_processing(
         &self,
         device: &wgpu::Device,

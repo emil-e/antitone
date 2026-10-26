@@ -1,18 +1,19 @@
 //! Bounded local-stack ownership observation; not pressure or native-presentation acceptance.
 use super::*;
+use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::{
+    adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
     cache_observation as observation,
     geometry::SourcePoint,
-    local_adjustments::{GradientMask, LocalAdjustment},
 };
 
 #[test]
 #[ignore = "bounded 1080p local working-view resources with existing pressure/swap/growth stops"]
-fn physical_view_local_stack_resources() {
+fn physical_view_adjustment_layer_resources() {
     observation::with_monitor(exercise).unwrap();
 }
 
-fn snapshot(scan: &Scan, local: bool, edit: u32) -> Result<PhotoGradeSnapshot, Error> {
+fn snapshot(scan: &Scan, local: bool, edit: u32) -> Result<AdjustmentLayerSnapshot, Error> {
     let area = scan.area;
     let (x, y, w, h) = (
         f64::from(area.x),
@@ -21,26 +22,28 @@ fn snapshot(scan: &Scan, local: bool, edit: u32) -> Result<PhotoGradeSnapshot, E
         f64::from(area.height),
     );
     let masks = [
-        GradientMask::Linear {
+        AdjustmentLayerCoverage::Linear {
             start: SourcePoint([x, y]),
             end: SourcePoint([x + w, y + h]),
         },
-        GradientMask::Radial {
+        AdjustmentLayerCoverage::Radial {
             center: SourcePoint([x + w * 0.5, y + h * 0.5]),
             radii: [w * 0.5, h * 0.7],
             angle: 0.2 + f64::from(edit.saturating_sub(1)) * 0.01,
             feather: 0.8,
         },
     ];
-    PhotoGradeSnapshot::new(
-        PhotoSettings::default(),
-        if local {
+    AdjustmentLayerSnapshot::new(
+        std::iter::once(crate::adjustment_layers::AdjustmentLayer::global(
+            AdjustmentLayerSettings::default(),
+        ))
+        .chain(if local {
             masks
                 .into_iter()
                 .enumerate()
-                .map(|(i, mask)| LocalAdjustment {
+                .map(|(i, mask)| AdjustmentLayer {
                     mask,
-                    photo: PhotoSettings {
+                    photo: AdjustmentLayerSettings {
                         exposure: if i == 0 {
                             0.25 + f64::from(edit.min(1)) * 0.025
                         } else {
@@ -57,7 +60,8 @@ fn snapshot(scan: &Scan, local: bool, edit: u32) -> Result<PhotoGradeSnapshot, E
                 .collect()
         } else {
             vec![]
-        },
+        })
+        .collect(),
     )
 }
 
@@ -158,7 +162,7 @@ fn exercise(
         let mut encoded: Option<(wgpu::CommandBuffer, wgpu::Texture)> = None;
         for (case, local, edit, target) in [
             ("global", false, 0, OutputTarget::DisplayP3),
-            ("locals", true, 0, OutputTarget::DisplayP3),
+            ("layers", true, 0, OutputTarget::DisplayP3),
             ("numeric", true, 1, OutputTarget::DisplayP3),
             ("geometry", true, 2, OutputTarget::DisplayP3),
             ("target", true, 2, OutputTarget::Srgb),
@@ -167,7 +171,7 @@ fn exercise(
             let next = monitor.phase(case, || {
                 let snapshot = snapshot(&scan, local, edit)?;
                 let input: ProcessingInput = if local {
-                    Arc::new(GpuPhotoGrade::new(
+                    Arc::new(GpuAdjustmentLayers::new(
                         device,
                         cal,
                         RollSettings::default(),
@@ -177,7 +181,13 @@ fn exercise(
                     )?)
                     .into()
                 } else {
-                    processing_input(cal, RollSettings::default(), snapshot.global(), &scan)
+                    processing_input(
+                        device,
+                        cal,
+                        RollSettings::default(),
+                        crate::adjustment_layers::AdjustmentLayerSettings::default(),
+                        &scan,
+                    )
                 };
                 let make = |source, old| {
                     RenderedView::new(

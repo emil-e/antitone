@@ -114,7 +114,8 @@ impl Editor {
                 ));
             }
             if review.replaces_photos {
-                let consequence = "Analyze will replace Photo adjustments and remove any local adjustments and masks.";
+                let consequence =
+                    "Analyze will replace Photo layers and remove any adjustment layers and masks.";
                 if let Some(warning) = &mut warning {
                     warning.push_str(&format!("\n{consequence}"));
                 } else {
@@ -586,7 +587,7 @@ impl Editor {
 
     pub(super) fn canvas_input_allowed(&self, ui: &egui::Ui, canvas: egui::Rect) -> bool {
         if self.menus.panel.is_some()
-            || self.document.visit.adjustments.confirming()
+            || self.document.visit.adjustment_layers.confirming()
             || egui::Popup::is_any_open(ui.ctx())
         {
             return false;

@@ -40,9 +40,14 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
                 .project
                 .source_mut(ids[0])
                 .unwrap()
+                .adjustment_layers
+                .as_mut()
+                .unwrap()
+                .layers[0]
+                .adjustment
                 .photo
                 .exposure = 0.123456789012345;
-            e.photo.exposure = 0.123456789012345;
+            e.adjustment_layer_settings.exposure = 0.123456789012345;
             e.sync_document();
             *e.document = e
                 .document
@@ -225,7 +230,13 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
             assert_eq!(editor.document.project.order, vec![new_id]);
             let source = editor.document.project.source(new_id).unwrap();
             assert_eq!(source.path, paths[0]);
-            assert_eq!(source.photo.exposure, 0.);
+            assert_eq!(
+                source.adjustment_layers.as_ref().unwrap().layers[0]
+                    .adjustment
+                    .photo
+                    .exposure,
+                0.
+            );
             assert!(source.repairs.repairs().is_empty());
             assert_eq!(editor.document.project.sources.len(), 2);
             assert!(
@@ -236,7 +247,7 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
                     .unwrap()
                     .reference_only
             );
-            assert_eq!(editor.photo.exposure, 0.);
+            assert_eq!(editor.adjustment_layer_settings.exposure, 0.);
         });
         harness.read(|editor| assert!(editor.document.visit.ready.is_some()));
         for (path, bytes) in paths.iter().zip(originals) {

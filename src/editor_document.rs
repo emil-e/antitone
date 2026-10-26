@@ -245,13 +245,7 @@ impl Document {
                     ),
                     None => input,
                 };
-                super::processing::validate_source(
-                    device,
-                    &refined,
-                    self.project.roll,
-                    source,
-                    source.photo,
-                )?;
+                super::processing::validate_source(device, &refined, self.project.roll, source)?;
             }
         }
         for source in &self.project.sources {
@@ -598,8 +592,9 @@ pub(super) fn source_metadata(
         path: absolute(path)?,
         development: metadata_development(metadata, fixed_wb)?,
         reference_only: false,
-        photo: Default::default(),
-        local_adjustments: None,
+        adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
+            Default::default(),
+        )),
         repairs: Default::default(),
         orientation: metadata.photo_orientation()?,
         crop: None,

@@ -42,8 +42,9 @@ impl SourceKey {
             path: path.to_path_buf(),
             development: self.source.clone(),
             reference_only: false,
-            photo: Default::default(),
-            local_adjustments: None,
+            adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
+                Default::default(),
+            )),
             repairs: Default::default(),
             orientation: Default::default(),
             crop: None,
@@ -108,7 +109,7 @@ impl Product {
             + if positive {
                 std::mem::size_of::<crate::gpu::view::ViewSource>()
                     + std::mem::size_of::<crate::gpu::view::RenderedView>()
-                    + 2 * std::mem::size_of::<crate::gpu::GpuPhotoGrade>()
+                    + 2 * std::mem::size_of::<crate::gpu::GpuAdjustmentLayers>()
             } else {
                 0
             }
@@ -195,7 +196,7 @@ impl ImageKey {
                 )?;
             }
             bytes = bytes.checked_add(
-                2 * (crate::gpu::GpuPhotoGrade::byte_len_for(&recipe.grade)
+                2 * (crate::gpu::GpuAdjustmentLayers::byte_len_for(&recipe.grade)
                     + recipe.grade.retained_bytes() as u64),
             )?;
         }
@@ -953,11 +954,7 @@ impl Editor {
                 .source_parameters_for(source, self.source_exposure)
                 .map(Into::into);
         }
-        let photo = if self.current_source == Some(source.id) {
-            self.photo
-        } else {
-            source.photo
-        };
+        let photo = self.adjustment_layer_settings;
         let input = self.input();
         if input.ready() {
             self.positive_processing_for_source(input, self.roll, source, photo)

@@ -37,8 +37,8 @@ Antitone organises the work into three tabs, matching the order you use them:
   illumination correction, calibration (Dmin/Dmax), the negative response, roll white
   balance and roll exposure. This is also where **Analyze** lives.
 - **Photo** — everything about one photograph: crop and straighten, dust repair, and
-  your photographic grade (exposure, white balance, contrast, saturation, local
-  adjustments).
+  your photographic grade through ordered adjustment layers (exposure, white balance,
+  contrast and saturation with global or gradient coverage).
 - **Rendering** — the creative look and the output colour space used for the preview and
   TIFF export.
 

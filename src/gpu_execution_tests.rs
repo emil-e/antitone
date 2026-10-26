@@ -1,32 +1,45 @@
 use super::*;
+use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::processing::Calibration;
 use crate::{
+    adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSnapshot},
     color::Balance,
     geometry::{SourcePoint, SourceRegion},
-    local_adjustments::{GradientMask, LocalAdjustment, PhotoGradeSnapshot},
 };
 use std::time::Instant;
 
 struct Variant {
     name: String,
     kernel: ProcessingKernel,
-    global_only: bool,
+    empty_stack_only: bool,
 }
 
 async fn variant(
     device: &wgpu::Device,
     baseline: &ProcessingKernel,
     workgroup: u32,
-    global_only: bool,
+    empty_stack_only: bool,
     shader: &str,
 ) -> Variant {
     let name = format!(
         "wg{workgroup}{}",
-        if global_only { "-global-only" } else { "" }
+        if empty_stack_only {
+            "-empty-stack-only"
+        } else {
+            ""
+        }
     );
-    let shader = if global_only {
-        assert_eq!(shader.matches("local_grade(global.rgb, index)").count(), 1);
-        shader.replace("local_grade(global.rgb, index)", "global.rgb")
+    let shader = if empty_stack_only {
+        assert_eq!(
+            shader
+                .matches("adjustment_layer_grade(positive.rgb, index)")
+                .count(),
+            1
+        );
+        shader.replace(
+            "adjustment_layer_grade(positive.rgb, index)",
+            "positive.rgb",
+        )
     } else {
         shader.to_owned()
     };
@@ -35,7 +48,7 @@ async fn variant(
         label: Some(&name),
         source: wgpu::ShaderSource::Wgsl(shader.into()),
     });
-    // Keep identical resource bindings even when a specialized entry does not use locals.
+    // Keep identical resource bindings even when a specialized entry does not use layers.
     let entries: Vec<_> = (0..8)
         .map(|binding| wgpu::BindGroupLayoutEntry {
             binding,
@@ -77,7 +90,7 @@ async fn variant(
     }
     Variant {
         name,
-        global_only,
+        empty_stack_only,
         kernel: ProcessingKernel {
             #[cfg(feature = "editor")]
             module,
@@ -88,8 +101,8 @@ async fn variant(
             output_stride: 16,
             workgroup_size: workgroup,
             identity: baseline.identity.clone(),
-            empty_locals: baseline.empty_locals.clone(),
-            empty_local_context: baseline.empty_local_context.clone(),
+            empty_adjustment_layers: baseline.empty_adjustment_layers.clone(),
+            empty_adjustment_layer_context: baseline.empty_adjustment_layer_context.clone(),
         },
     }
 }
@@ -197,30 +210,26 @@ fn paired_kernel_variants() {
             dmax: DVec3::new(0.008, 0.004, 0.002),
             input_floor: 1. / 65535.,
         };
-        let parameters = ProcessingParameters::positive(
-            calibration,
-            RollSettings::default(),
-            PhotoSettings::default(),
-            DMat3::IDENTITY,
-        )
-        .unwrap();
+        let parameters =
+            ProcessingParameters::positive(calibration, RollSettings::default(), DMat3::IDENTITY)
+                .unwrap();
         for (case, count, photographic, blend) in [
-            ("global", 0, false, None),
+            ("empty", 0, false, None),
             ("two-exposure", 2, false, None),
             ("two-photographic", 2, true, None),
             ("two-rgb-y", 2, true, Some(0.)),
             ("two-ratio-max", 2, true, Some(1.)),
             ("sixteen-exposure", 16, false, None),
         ] {
-            let locals = (0..count)
-                .map(|i| LocalAdjustment {
+            let layers: Vec<_> = (0..count)
+                .map(|i| AdjustmentLayer {
                     mask: if i % 2 == 0 {
-                        GradientMask::Linear {
+                        AdjustmentLayerCoverage::Linear {
                             start: SourcePoint([900., 800.]),
                             end: SourcePoint([7000., 4400.]),
                         }
                     } else {
-                        GradientMask::Radial {
+                        AdjustmentLayerCoverage::Radial {
                             center: SourcePoint([4100., 2750.]),
                             radii: [3500., 2300.],
                             angle: 0.3,
@@ -228,7 +237,7 @@ fn paired_kernel_variants() {
                         }
                     },
                     photo: if photographic {
-                        PhotoSettings {
+                        AdjustmentLayerSettings {
                             exposure: 0.25,
                             wb: Balance {
                                 warmth: 0.005,
@@ -241,7 +250,7 @@ fn paired_kernel_variants() {
                             ..Default::default()
                         }
                     } else {
-                        PhotoSettings {
+                        AdjustmentLayerSettings {
                             exposure: if i % 2 == 0 { 0.25 } else { -0.125 },
                             ..Default::default()
                         }
@@ -255,11 +264,18 @@ fn paired_kernel_variants() {
                 None
             } else {
                 Some(
-                    GpuPhotoGrade::new(
+                    GpuAdjustmentLayers::new(
                         &device,
                         calibration,
                         RollSettings::default(),
-                        PhotoGradeSnapshot::new(PhotoSettings::default(), locals).unwrap(),
+                        AdjustmentLayerSnapshot::new(
+                            std::iter::once(crate::adjustment_layers::AdjustmentLayer::global(
+                                AdjustmentLayerSettings::default(),
+                            ))
+                            .chain(layers)
+                            .collect(),
+                        )
+                        .unwrap(),
                         DMat3::IDENTITY,
                         area,
                     )
@@ -289,7 +305,7 @@ fn paired_kernel_variants() {
             let expected = read_pixels(&device, &queue, &output);
             let active: Vec<_> = variants
                 .iter()
-                .filter(|v| !v.global_only || count == 0)
+                .filter(|v| !v.empty_stack_only || count == 0)
                 .collect();
             for variant in &active {
                 run(&variant.kernel);

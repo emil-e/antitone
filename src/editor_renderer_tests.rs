@@ -4,8 +4,8 @@ use crate::renderer::RendererCache;
 use std::sync::atomic::AtomicU64;
 
 #[cfg(feature = "ocio-reference")]
-#[path = "editor_local_adjustment_raw_tests.rs"]
-mod local_adjustments;
+#[path = "editor_adjustment_layer_raw_tests.rs"]
+mod adjustment_layers;
 
 #[cfg(feature = "ocio-reference")]
 #[test]
@@ -16,7 +16,6 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
         frame_raster::FrameRaster,
         geometry::{Flips, FramePoint, PhotoOrientation, QuarterTurns, RollOrientation},
         gpu::GpuFlatField,
-        processing::Pipeline,
         rendering::CpuRenderer,
     };
     pollster::block_on(async {
@@ -48,10 +47,21 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
             })
             .unwrap();
         let roll = RollSettings::default();
-        let photo = PhotoSettings::default();
-        let pipeline = Pipeline::new(calibration, roll, photo, scan.camera_to_ap1).unwrap();
+        let photo = AdjustmentLayerSettings::default();
+        let pipeline = crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+            crate::adjustment_layers::AdjustmentLayer::global(photo),
+        ])
+        .and_then(|layers| {
+            crate::adjustment_layers::AdjustmentLayerPipeline::new(
+                calibration,
+                roll,
+                layers,
+                scan.camera_to_ap1,
+            )
+        })
+        .unwrap();
         let parameters =
-            ProcessingParameters::positive(calibration, roll, photo, scan.camera_to_ap1).unwrap();
+            ProcessingParameters::positive(calibration, roll, scan.camera_to_ap1).unwrap();
         let renderer = RendererCache::default().get(&device, &queue).unwrap();
         let generation = AtomicU64::new(0);
         for angle in [-23.7_f64, 31.2] {
@@ -96,7 +106,12 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
             let mut working = Vec::new();
             for y in bounds.y..bounds.y + bounds.height {
                 for x in bounds.x..bounds.x + bounds.width {
-                    working.push(pipeline.apply(scan.pixel(x, y).unwrap()).unwrap().rgb);
+                    working.push(
+                        pipeline
+                            .apply(scan.pixel(x, y).unwrap(), [x, y])
+                            .unwrap()
+                            .rgb,
+                    );
                 }
             }
             for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
@@ -229,7 +244,6 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
                 input_floor: scan.input_floor,
             },
             RollSettings::default(),
-            PhotoSettings::default(),
             scan.camera_to_ap1,
         )
         .unwrap();

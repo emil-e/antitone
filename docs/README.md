@@ -29,7 +29,7 @@ Where each area's implementation lives — navigation, not specification. Follow
 | Area | Start here | Responsibility |
 | --- | --- | --- |
 | Processing | [processing](../src/processing.rs), [photographic](../src/photographic.rs), [colour](../src/color.rs) | Scalar reference, response and positive grading |
-| Spatial grades | [local processing](../src/local_adjustments.rs), [GPU grades](../src/gpu_local_adjustments.rs), [editor routing](../src/editor_processing.rs) | Immutable snapshots, analytic masks, source-owned tools, whole-document admission |
+| Adjustment layers | [scalar processing](../src/adjustment_layers.rs), [GPU grades](../src/gpu_adjustment_layers.rs), [editor routing](../src/editor_processing.rs) | Immutable snapshots, analytic masks, source-owned layers, whole-document admission |
 | RAW source | [raw](../src/raw.rs), [scan](../src/scan.rs), [source preparation](../src/editor_source.rs), [native bridge](../native/raw_bridge.cpp) | LibRaw ownership, camera RGB and capture diagnostics |
 | DNG backend | [adapter](../src/dng.rs), [native owner](../native/dng_bridge.cpp) | Direct SDK development and decode-free inspection in the shared source model |
 | Scan correction | [flat-field](../src/flat_field.rs), [GPU map](../src/gpu_flat_field.rs) | Source-coordinate illumination gains |

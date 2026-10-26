@@ -23,9 +23,11 @@ fn fixture() -> (Project, SourceId) {
                 input_floor: antitone::processing::CAMERA_INPUT_FLOOR,
             },
             reference_only: false,
-            photo: Default::default(),
+
             repairs: RepairSet::default(),
-            local_adjustments: None,
+            adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
+                Default::default(),
+            )),
             orientation: Default::default(),
             crop: None,
         })

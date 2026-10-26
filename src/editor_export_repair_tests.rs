@@ -130,7 +130,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             Some(recipe.neutral.source_development.decode.fixed_wb),
         )
         .unwrap();
-        let pipeline = crate::local_adjustments::SpatialPipeline::new(
+        let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
             recipe.neutral.processing_input().unwrap(),
             recipe.roll,
             recipe.grade.clone(),

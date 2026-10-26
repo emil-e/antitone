@@ -1,4 +1,5 @@
 #![cfg(all(feature = "raw", target_os = "macos"))]
+use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
     color::AP1_TO_XYZ, flat_field::FlatField, processing::Calibration, raw::Rect, scan::Scan,
 };
@@ -158,9 +159,7 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
     #[cfg(feature = "project")]
     {
         use antitone::{
-            processing::{
-                CAMERA_INPUT_FLOOR, DEFAULT_GAMMA, InputSettings, PhotoSettings, Response,
-            },
+            processing::{CAMERA_INPUT_FLOOR, DEFAULT_GAMMA, InputSettings, Response},
             project::{FlatFieldSettings, Project, Save, Source, SourceDevelopment, SourceId},
         };
         let decode = scan.source().metadata().development(scan.fixed_wb);
@@ -193,8 +192,9 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
                         input_floor: scan.source().input_floor(),
                     },
                     reference_only,
-                    photo: PhotoSettings::default(),
-                    local_adjustments: None,
+                    adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
+                        AdjustmentLayerSettings::default(),
+                    )),
                     repairs: Default::default(),
                     orientation: Default::default(),
                     crop: None,
@@ -248,7 +248,7 @@ fn authored_corrected_dng_exports_reopen_in_rgb16_and_ap0() {
     use antitone::{
         color::ap1_to_ap0,
         export::{self, ExrPrecision, ImageSize, Overwrite},
-        processing::{InputSettings, PhotoSettings, Pipeline, RollSettings},
+        processing::{InputPipeline, InputSettings, RollSettings},
         profiles,
         rendering::{CpuRenderer, OutputTarget},
     };
@@ -256,8 +256,7 @@ fn authored_corrected_dng_exports_reopen_in_rgb16_and_ap0() {
     let anchors = calibration(&mut scan);
     let roll = RollSettings::default();
     let input = InputSettings::negative(scan.processing_calibration(anchors).unwrap());
-    let pipeline =
-        Pipeline::new(input, roll, PhotoSettings::default(), scan.camera_to_ap1).unwrap();
+    let pipeline = InputPipeline::new(input, roll, scan.camera_to_ap1).unwrap();
     let size = ImageSize {
         width: scan.area.width,
         height: scan.area.height,

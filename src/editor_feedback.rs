@@ -33,7 +33,7 @@ impl Failure {
             FailureKind::FlatCorrection => (
                 Severity::Error,
                 "Could not change correction",
-                "The correction change was not applied. Your existing correction, calibration and Photo adjustments are unchanged. Review the details before trying again.",
+                "The correction change was not applied. Your existing correction, calibration and Photo layers are unchanged. Review the details before trying again.",
             ),
             FailureKind::Save => (
                 Severity::Error,
@@ -43,12 +43,12 @@ impl Failure {
             FailureKind::Look => (
                 Severity::Error,
                 "Could not prepare look",
-                "Your existing look and adjustments are unchanged. Review the details, then choose another look or LUT file.",
+                "Your existing look and layers are unchanged. Review the details, then choose another look or LUT file.",
             ),
             FailureKind::LookRendering => (
                 Severity::Error,
                 "Could not render look",
-                "The look could not be rendered. Your selection and photographic adjustments are unchanged. Review the details before trying again.",
+                "The look could not be rendered. Your selection and photographic layers are unchanged. Review the details before trying again.",
             ),
             FailureKind::Export => (
                 Severity::Error,

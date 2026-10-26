@@ -4,7 +4,7 @@ fn idle_host_polling_completes_projected_look_admission_without_another_frame_or
     use crate::{
         gpu::SubmissionGate,
         looks::{LookAsset, LookOrigin, Lut3D},
-        processing::{Calibration, PhotoSettings, RollSettings},
+        processing::{Calibration, RollSettings},
     };
     use glam::DVec3;
     use std::time::{Duration, Instant};
@@ -43,7 +43,6 @@ fn idle_host_polling_completes_projected_look_admission_without_another_frame_or
                     input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                 },
                 RollSettings::default(),
-                PhotoSettings::default(),
                 DMat3::IDENTITY,
             )
             .unwrap(),

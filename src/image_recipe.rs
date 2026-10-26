@@ -1,11 +1,11 @@
 //! Immutable accepted positive-image choices, independent of execution and output target.
 use crate::{
     Error,
+    adjustment_layers::AdjustmentLayerSnapshot,
     dust_repair::Repair,
     flat_field::FlatField,
     geometry::Composition,
-    local_adjustments::PhotoGradeSnapshot,
-    processing::{InputSettings, PhotoSettings, RollSettings},
+    processing::{InputSettings, RollSettings},
     project::{Project, Source, SourceDevelopment, SourceId},
 };
 use std::sync::Arc;
@@ -24,7 +24,7 @@ pub struct NeutralRecipe {
 pub struct ImageRecipe {
     pub neutral: NeutralRecipe,
     pub roll: RollSettings,
-    pub grade: PhotoGradeSnapshot,
+    pub grade: AdjustmentLayerSnapshot,
     pub composition: Composition,
     pub look: Option<Arc<crate::looks::LookAsset>>,
     repairs: Vec<Repair>,
@@ -76,7 +76,7 @@ impl ImageRecipe {
                 .map_or(0, |field| field.retained_bytes())
             + self.look.as_ref().map_or(0, |look| look.retained_bytes())
             + self.grade.retained_bytes()
-            - std::mem::size_of::<PhotoGradeSnapshot>()
+            - std::mem::size_of::<AdjustmentLayerSnapshot>()
             + self.repairs.capacity() * std::mem::size_of::<Repair>()
             + self
                 .repairs
@@ -118,7 +118,7 @@ impl Project {
                 "positive recipe requires calibration".into(),
             ));
         }
-        self.image_recipe_for_source(source, &self.input, self.roll, source.photo)
+        self.image_recipe_for_source(source, &self.input, self.roll)
     }
 
     /// Navigation thumbnails capture grading and geometry without retaining or evaluating dust.
@@ -130,13 +130,7 @@ impl Project {
                 "positive recipe requires calibration".into(),
             ));
         }
-        self.capture_recipe(
-            source,
-            &self.input,
-            self.roll,
-            source.photo,
-            RepairCapture::Omit,
-        )
+        self.capture_recipe(source, &self.input, self.roll, RepairCapture::Omit)
     }
 
     /// Explicit viewer/candidate overlays reuse recipe construction without changing accepted records.
@@ -145,9 +139,8 @@ impl Project {
         source: &Source,
         input: &InputSettings,
         roll: RollSettings,
-        photo: PhotoSettings,
     ) -> Result<ImageRecipe, Error> {
-        self.capture_recipe(source, input, roll, photo, RepairCapture::Accepted)
+        self.capture_recipe(source, input, roll, RepairCapture::Accepted)
     }
 
     fn capture_recipe(
@@ -155,7 +148,7 @@ impl Project {
         source: &Source,
         input: &InputSettings,
         roll: RollSettings,
-        photo: PhotoSettings,
+
         repairs: RepairCapture,
     ) -> Result<ImageRecipe, Error> {
         let include_repairs = matches!(repairs, RepairCapture::Accepted);
@@ -178,7 +171,7 @@ impl Project {
                 correction: self.active_flat_field().map(|field| field.map.clone()),
             },
             roll,
-            grade: PhotoGradeSnapshot::new(photo, source.grade_snapshot()?.locals().to_vec())?,
+            grade: source.grade_snapshot()?,
             composition,
             look: self.output.look.clone(),
             repairs: if include_repairs {

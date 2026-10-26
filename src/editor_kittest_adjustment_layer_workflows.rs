@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn created_linear_and_radial_locals_survive_normal_save_open_source_return_and_gpu_exports() {
+fn gradient_layers_then_global_finish_survive_save_open_source_return_and_gpu_exports() {
     workflow::calibrated_workflow(|mut harness, _, directory| {
         stage(&mut harness, "Roll");
         workflow::enter_numeric(&mut harness, "Gamma", "0.6");
@@ -25,6 +25,8 @@ fn created_linear_and_radial_locals_survive_normal_save_open_source_return_and_g
             });
             workflow::enter_numeric(&mut harness, "Exposure", exposure);
         }
+        click(&mut harness, "Add global");
+        workflow::enter_numeric(&mut harness, "Contrast", "0.75");
         harness.update(|editor| {
             let area = editor.document.visit.ready.as_ref().unwrap().area;
             editor.crop = Some(Crop::from_region(area).straightened(area, 0.11).unwrap());
@@ -42,16 +44,21 @@ fn created_linear_and_radial_locals_survive_normal_save_open_source_return_and_g
                 .grade_snapshot()
                 .unwrap()
         });
-        assert_eq!(snapshot.locals().len(), 2);
-        assert_eq!(snapshot.locals()[0].photo.exposure, 0.35);
-        assert_eq!(snapshot.locals()[1].photo.exposure, -0.125);
+        assert_eq!(snapshot.layers().len(), 4);
+        assert_eq!(
+            snapshot.layers()[3].mask,
+            AdjustmentLayerCoverage::Global {}
+        );
+        assert_eq!(snapshot.layers()[3].photo.contrast, 0.75);
+        assert_eq!(snapshot.layers()[1].photo.exposure, 0.35);
+        assert_eq!(snapshot.layers()[2].photo.exposure, -0.125);
         assert!(matches!(
-            snapshot.locals()[0].mask,
-            GradientMask::Linear { .. }
+            snapshot.layers()[1].mask,
+            AdjustmentLayerCoverage::Linear { .. }
         ));
         assert!(matches!(
-            snapshot.locals()[1].mask,
-            GradientMask::Radial { .. }
+            snapshot.layers()[2].mask,
+            AdjustmentLayerCoverage::Radial { .. }
         ));
         let path = directory.path().join("local-tools.json");
         harness.enter(|editor, cx| {
@@ -92,8 +99,10 @@ fn created_linear_and_radial_locals_survive_normal_save_open_source_return_and_g
         wait_for(&mut harness, |editor| !editor.busy);
         harness.read(|editor| {
             assert_eq!(
-                editor.adjustment_target(),
-                super::super::super::adjustments::Target::Global
+                editor.adjustment_layer_target(),
+                super::super::super::adjustment_layers::Target::Layer(
+                    crate::project::AdjustmentLayerId(4)
+                )
             )
         });
         harness.read(|editor| assert_eq!(editor.document.project, saved));
@@ -109,9 +118,9 @@ fn created_linear_and_radial_locals_survive_normal_save_open_source_return_and_g
             .size()
         });
         for (name, format) in [
-            ("locals-srgb.tif", OutputFormat::Tiff(OutputTarget::Srgb)),
-            ("locals-p3.tif", OutputFormat::Tiff(OutputTarget::DisplayP3)),
-            ("locals.exr", OutputFormat::Exr(ExrPrecision::Full)),
+            ("layers-srgb.tif", OutputFormat::Tiff(OutputTarget::Srgb)),
+            ("layers-p3.tif", OutputFormat::Tiff(OutputTarget::DisplayP3)),
+            ("layers.exr", OutputFormat::Exr(ExrPrecision::Full)),
         ] {
             let destination = directory.path().join(name);
             harness.enter(|editor, cx| {

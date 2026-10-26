@@ -1,4 +1,5 @@
 use super::*;
+use crate::adjustment_layers::AdjustmentLayerSettings;
 use std::time::Instant;
 
 /// Production GPU ownership/dispatch probe, not editor input-to-display or aggregate admission.
@@ -136,9 +137,10 @@ fn cost_and_retirement(with_underlay: bool) {
                         .as_ref()
                         .unwrap()
                         .snapshot()
-                        .global()
+                        .layers()[0]
+                        .photo
                 } else {
-                    PhotoSettings {
+                    AdjustmentLayerSettings {
                         exposure: 0.25 * f64::from(edit),
                         wb: if case == "wb" {
                             Balance {
@@ -153,7 +155,7 @@ fn cost_and_retirement(with_underlay: bool) {
                         ..Default::default()
                     }
                 };
-                let input = processing_input(cal, roll, photo, &scan);
+                let input = processing_input(&device, cal, roll, photo, &scan);
                 let target = if case == "target-only" && edit % 2 == 0 {
                     OutputTarget::Srgb
                 } else {
@@ -171,7 +173,10 @@ fn cost_and_retirement(with_underlay: bool) {
                         s,
                         cal,
                         roll,
-                        PhotoGradeSnapshot::new(photo, vec![]).unwrap(),
+                        AdjustmentLayerSnapshot::new(vec![
+                            crate::adjustment_layers::AdjustmentLayer::global(photo),
+                        ])
+                        .unwrap(),
                         &input,
                         target,
                         old,

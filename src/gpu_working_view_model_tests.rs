@@ -1,5 +1,6 @@
 //! Stage factoring and asymmetric source coverage on production working views.
 use super::*;
+use crate::adjustment_layers::AdjustmentLayerSettings;
 
 #[test]
 fn digital_source_marks_neutral_coverage() {
@@ -33,7 +34,7 @@ fn digital_source_marks_neutral_coverage() {
 }
 
 #[test]
-fn working_positive_applies_exposure_wb_and_global_grade_once_for_every_input_stage() {
+fn working_positive_applies_roll_and_layer_grading_once_for_every_input_stage() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
         let area = SourceRegion {
@@ -52,7 +53,8 @@ fn working_positive_applies_exposure_wb_and_global_grade_once_for_every_input_st
             DVec3::splat(0.6),
         ];
         for settings in [InputSettings::Digital, negative(0.65)] {
-            let neutral = crate::processing::Pipeline::ungraded(settings, DMat3::IDENTITY).unwrap();
+            let neutral =
+                crate::processing::InputPipeline::ungraded(settings, DMat3::IDENTITY).unwrap();
             let pixels: Vec<[f32; 4]> = camera
                 .iter()
                 .map(|&sample| {
@@ -83,10 +85,10 @@ fn working_positive_applies_exposure_wb_and_global_grade_once_for_every_input_st
                             Balance::default()
                         },
                     };
-                    let photo = PhotoSettings {
+                    let photo = AdjustmentLayerSettings {
                         exposure: photo_ev,
                         ..if colour {
-                            PhotoSettings {
+                            AdjustmentLayerSettings {
                                 wb: Balance {
                                     warmth: -0.12,
                                     tint: 0.06,
@@ -97,10 +99,15 @@ fn working_positive_applies_exposure_wb_and_global_grade_once_for_every_input_st
                                 ..Default::default()
                             }
                         } else {
-                            PhotoSettings::default()
+                            AdjustmentLayerSettings::default()
                         }
                     };
-                    let snapshot = PhotoGradeSnapshot::new(photo, Vec::new()).unwrap();
+                    let snapshot = AdjustmentLayerSnapshot::new(
+                        std::iter::once(crate::adjustment_layers::AdjustmentLayer::global(photo))
+                            .chain(Vec::new())
+                            .collect(),
+                    )
+                    .unwrap();
                     let rendered = render_with_basis(
                         &device,
                         &queue,
@@ -111,11 +118,20 @@ fn working_positive_applies_exposure_wb_and_global_grade_once_for_every_input_st
                         roll,
                     );
                     let actual = read(&device, &queue, &rendered.graded.as_ref().unwrap().pixels);
-                    let cpu =
-                        crate::processing::Pipeline::new(settings, roll, photo, DMat3::IDENTITY)
-                            .unwrap();
+                    let cpu = crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+                        crate::adjustment_layers::AdjustmentLayer::global(photo),
+                    ])
+                    .and_then(|layers| {
+                        crate::adjustment_layers::AdjustmentLayerPipeline::new(
+                            settings,
+                            roll,
+                            layers,
+                            DMat3::IDENTITY,
+                        )
+                    })
+                    .unwrap();
                     for (&sample, pixel) in camera.iter().zip(actual) {
-                        let expected = cpu.apply(sample).unwrap().rgb;
+                        let expected = cpu.apply(sample, [0, 0]).unwrap().rgb;
                         assert_eq!(pixel[3], 8., "grading must preserve source coverage");
                         let actual = DVec3::new(pixel[0].into(), pixel[1].into(), pixel[2].into());
                         assert!(
