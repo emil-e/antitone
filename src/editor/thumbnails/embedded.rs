@@ -23,14 +23,11 @@ struct Work {
     request: Request,
     cancelled: Arc<AtomicBool>,
     reply: futures_channel::oneshot::Sender<Result<Option<egui::ColorImage>, String>>,
-    // Last to drop: producer admission includes native/decode and captured-payload cleanup.
-    _admission: async_lock::SemaphoreGuardArc,
 }
 
 #[derive(Clone)]
 struct Services {
     commands: mpsc::Sender<Work>,
-    admission: Arc<async_lock::Semaphore>,
 }
 
 impl Services {
@@ -53,14 +50,10 @@ impl Services {
                 let _ = work.reply.send(image);
             }
         });
-        Self {
-            commands,
-            admission: Arc::new(async_lock::Semaphore::new(1)),
-        }
+        Self { commands }
     }
 
     async fn load(self, request: Request, cancelled: Arc<AtomicBool>) -> Completion {
-        let admission = self.admission.acquire_arc().await;
         let (reply, result) = futures_channel::oneshot::channel();
         if self
             .commands
@@ -68,7 +61,6 @@ impl Services {
                 request,
                 cancelled,
                 reply,
-                _admission: admission,
             })
             .is_err()
         {

@@ -19,12 +19,15 @@ Completed commits:
 2. Editor/source/analysis/thumbnail consumers use providers. Native requests contain no stores, parent caches, retention choices or admission permits. Weak completed-result discovery covers the native-completion/cache-publication handoff without retaining pixels strongly.
 3. BlockingJobs and editor/service plumbing removed. Shared blocking-pool execution captures panics without global admission. Thumbnail scheduling no longer reads foreground-pool idleness or polls for that permit. Lifecycle tests use explicit native/GPU barriers or a test-only pre-dispatch pause; serialization-policy assertions were removed or replaced with actual resource/publication checks.
 
+4. Embedded-preview requests use their existing single worker directly; its extra semaphore was redundant with serial execution. Cancelled queued work checks its stop flag before IO. Removed the unused async-lock dependency; preview lifecycle tests protect cancellation and stale publication rather than a producer permit.
+
 Prior architecture diagrams remain isolated in the architecture-walkthrough worktree.
 
 ## Verification and limits
 - Editor production check and editor library/test clippy with warnings denied passed.
 - Complete affected editor domain, native development, provider and blocking-execution tests: 766 passed, 9 existing opt-in diagnostics ignored.
 - UI-test build passed; 17 composed activity, Analyze, export, dust-persistence, source-working and underlay tests passed on Metal.
+- Embedded-preview worker checks: production editor check and all 18 embedded-preview unit/workflow tests passed after removing its redundant semaphore.
 - Earlier focused acquisition, joining, cache/thumbnail and cancellation suites passed.
 - Full editor-feature library attempt reached unrelated spatial-math tests before a five-minute timeout. Its one editor cancellation-fixture failure was corrected; the completed editor-domain run includes that case. No full-library pass claimed.
 - No Windows runtime or native-window automation performed. GPU implementation files remain unchanged.

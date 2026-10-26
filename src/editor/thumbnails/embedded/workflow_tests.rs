@@ -51,13 +51,7 @@ fn request(editor: &mut Editor, cx: &UiContext<'_, Editor>, context: &egui::Cont
 
 fn controlled() -> (Services, mpsc::Receiver<Work>) {
     let (commands, requests) = mpsc::channel();
-    (
-        Services {
-            commands,
-            admission: Arc::new(async_lock::Semaphore::new(1)),
-        },
-        requests,
-    )
+    (Services { commands }, requests)
 }
 
 fn finish(work: Work) {
@@ -149,12 +143,11 @@ fn composed_editor_registers_visible_demand_then_uses_completed_camera_textures(
 }
 
 #[test]
-fn document_retirement_drops_publication_but_private_producer_retains_serial_admission() {
+fn document_retirement_discards_old_results_and_queues_current_demand() {
     let (first, _first_directory) = document(1);
     let (second, _second_directory) = document(1);
     let next = wanted(&second);
     let (services, requests) = controlled();
-    let admission = services.admission.clone();
     let editor = editor(first, services);
     let context = egui::Context::default();
     with_application(editor, |app| {
@@ -170,17 +163,9 @@ fn document_retirement_drops_publication_but_private_producer_retains_serial_adm
         });
         app.pump();
         assert!(first.cancelled.load(Ordering::Relaxed));
-        assert!(admission.try_acquire().is_none());
-        assert!(
-            requests.try_recv().is_err(),
-            "replacement awaits the producer-owned permit"
-        );
-        let Work {
-            request: _,
-            cancelled: _,
-            reply,
-            _admission,
-        } = first;
+        let next_work = requests.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(next_work.request.key, next[0].1.source);
+        let Work { reply, .. } = first;
         assert!(
             reply
                 .send(Ok(Some(egui::ColorImage::filled(
@@ -190,10 +175,6 @@ fn document_retirement_drops_publication_but_private_producer_retains_serial_adm
                 .is_err(),
             "retired document has no result waiter"
         );
-        drop(_admission);
-        app.pump();
-        let next_work = requests.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert_eq!(next_work.request.key, next[0].1.source);
         finish(next_work);
         app.run_until(Duration::from_secs(5), |editor| {
             editor.document.embedded_preview.is_none()
@@ -210,15 +191,13 @@ fn document_retirement_drops_publication_but_private_producer_retains_serial_adm
                 [8, 16]
             );
         });
-        assert!(admission.try_acquire().is_some());
     });
 }
 
 #[test]
-fn application_retirement_signals_stop_without_releasing_private_producer_admission() {
+fn application_retirement_signals_stop_and_discards_the_private_producers_result() {
     let (document, _directory) = document(1);
     let (services, requests) = controlled();
-    let admission = services.admission.clone();
     let editor = editor(document, services);
     let context = egui::Context::default();
     with_application(editor, |app| {
@@ -227,16 +206,7 @@ fn application_retirement_signals_stop_without_releasing_private_producer_admiss
         let work = requests.recv_timeout(Duration::from_secs(5)).unwrap();
         app.close_execution();
         assert!(work.cancelled.load(Ordering::Relaxed));
-        assert!(admission.try_acquire().is_none());
-        let Work {
-            request: _,
-            cancelled: _,
-            reply,
-            _admission,
-        } = work;
-        assert!(reply.send(Ok(None)).is_err());
-        drop(_admission);
-        assert!(admission.try_acquire().is_some());
+        assert!(work.reply.send(Ok(None)).is_err());
         app.read(|editor| assert!(editor.thumbnails.embedded.entries.is_empty()));
     });
 }
