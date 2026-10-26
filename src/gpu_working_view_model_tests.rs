@@ -52,9 +52,13 @@ fn working_positive_applies_roll_and_layer_grading_once_for_every_input_stage() 
             DVec3::new(0.08, 0.12, 0.16),
             DVec3::splat(0.6),
         ];
-        for settings in [InputSettings::Digital, negative(0.65)] {
-            let neutral =
-                crate::processing::InputPipeline::ungraded(settings, DMat3::IDENTITY).unwrap();
+        for (settings, normalization) in [
+            (InputSettings::Digital, 1.),
+            (InputSettings::Digital, 2.25_f64.exp2()),
+            (negative(0.65), 1.),
+        ] {
+            let matrix = DMat3::IDENTITY * normalization;
+            let neutral = crate::processing::InputPipeline::ungraded(settings, matrix).unwrap();
             let pixels: Vec<[f32; 4]> = camera
                 .iter()
                 .map(|&sample| {
@@ -63,7 +67,7 @@ fn working_positive_applies_roll_and_layer_grading_once_for_every_input_stage() 
                 })
                 .collect();
             let source = Arc::new(ViewSource {
-                spec: ViewSourceSpec::new(1, frame, settings, DMat3::IDENTITY, None).unwrap(),
+                spec: ViewSourceSpec::new(1, frame, settings, matrix, None).unwrap(),
                 renderer: renderer.clone(),
                 kernels: kernels.clone(),
                 pixels: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -123,10 +127,7 @@ fn working_positive_applies_roll_and_layer_grading_once_for_every_input_stage() 
                     ])
                     .and_then(|layers| {
                         crate::adjustment_layers::AdjustmentLayerPipeline::new(
-                            settings,
-                            roll,
-                            layers,
-                            DMat3::IDENTITY,
+                            settings, roll, layers, matrix,
                         )
                     })
                     .unwrap();

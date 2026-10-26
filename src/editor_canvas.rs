@@ -439,7 +439,9 @@ impl Editor {
         let spec = if inspection {
             crate::gpu::view::ViewSourceSpec::inspection(self.id, frame, proxy.matrix(), field)
         } else {
-            crate::gpu::view::ViewSourceSpec::new(self.id, frame, settings, proxy.matrix(), field)
+            let source = self.document.project.source(self.current_source?).ok()?;
+            let matrix = self.document.positive_matrix(source, settings).ok()?;
+            crate::gpu::view::ViewSourceSpec::new(self.id, frame, settings, matrix, field)
         }
         .ok()?
         .with_repairs(parameters.repairs.clone());

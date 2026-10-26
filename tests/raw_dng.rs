@@ -407,7 +407,7 @@ fn authored_export_image() -> (antitone::export::ImageSize, Vec<DVec3>) {
 
 #[cfg(all(feature = "export", feature = "ocio-reference"))]
 #[test]
-fn authored_dng_model4_exports_reopen_as_rgb16_tiff_and_ap0_exr() {
+fn authored_dng_model5_exports_reopen_as_rgb16_tiff_and_ap0_exr() {
     use antitone::{
         color::ap1_to_ap0,
         export::{self, ExrPrecision, Overwrite},

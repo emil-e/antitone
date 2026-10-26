@@ -10,7 +10,7 @@ use std::{
     sync::Arc,
 };
 
-const MAGIC: &[u8; 8] = b"ANTTHM03";
+const MAGIC: &[u8; 8] = b"ANTTHM04";
 const LIMIT: u64 = 128 << 20;
 
 #[derive(Serialize, Deserialize)]
@@ -21,6 +21,7 @@ struct Header {
     width: u32,
     height: u32,
     checksum: String,
+    reference: Option<crate::exposure_reference::ReferenceExposure>,
 }
 
 pub(super) struct DiskCache {
@@ -39,7 +40,7 @@ impl DiskCache {
 
     pub fn default_location() -> Option<Self> {
         crate::sys::cache_dir("antitone").map(|root| Self {
-            root: root.join("thumbnails-v3"),
+            root: root.join("thumbnails-v4"),
             budget: LIMIT,
         })
     }
@@ -50,7 +51,8 @@ impl DiskCache {
         }
         // File stats are disposable cache freshness, not persisted photograph identity.
         let identity = serde_json::to_vec(&(
-            3,
+            4,
+            crate::exposure_metadata::VERSION,
             SOURCE_SIZE,
             Proxy::SAMPLING_VERSION,
             &key.file,
@@ -97,7 +99,7 @@ impl DiskCache {
         let bytes = bytemuck::cast_slice_mut(&mut pixels);
         file.read_exact(bytes)?;
         let mut tail = [0; 1];
-        if file.read(&mut tail)? != 0 || blake3::hash(bytes).to_hex().as_str() != header.checksum {
+        if file.read(&mut tail)? != 0 || checksum(bytes, &header.reference)? != header.checksum {
             return Err(invalid("thumbnail cache pixel checksum/length"));
         }
         if pixels.iter().flatten().any(|v| {
@@ -105,13 +107,27 @@ impl DiskCache {
         }) {
             return Err(invalid("thumbnail cache continuous sample range"));
         }
+        if let Some(value) = &header.reference {
+            crate::processing::exposure_multiplier(value.ev())
+                .map_err(|_| invalid("thumbnail starting exposure range"))?;
+            if let crate::exposure_reference::ReferenceExposure::Matched(matched) = value
+                && (matched.samples < 128 || !matched.spread.is_finite() || matched.spread < 0.)
+            {
+                return Err(invalid("thumbnail reference statistics"));
+            }
+        }
+        let reference_exposure = std::sync::OnceLock::new();
+        if let Some(value) = header.reference {
+            let _ = reference_exposure.set(value);
+        }
         // Disposable LRU access time; failure here doesn't invalidate verified cached pixels.
         let _ = file.set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::now()));
         Ok(Some(Arc::new(Proxy {
             width: header.width,
             height: header.height,
-            pixels,
+            pixels: std::sync::Arc::new(pixels),
             matrix: glam::DMat3::from_cols_array_2d(&header.source.camera_to_ap1),
+            reference_exposure,
         })))
     }
 
@@ -125,12 +141,14 @@ impl DiskCache {
     pub fn store(&self, key: &SourceKey, proxy: &Proxy) -> io::Result<()> {
         fs::create_dir_all(&self.root)?;
         let bytes = bytemuck::cast_slice(&proxy.pixels);
+        let reference = proxy.reference_exposure.get().cloned();
         let header = serde_json::to_vec(&Header {
             file: key.file.clone(),
             source: key.source.clone(),
             width: proxy.width,
             height: proxy.height,
-            checksum: blake3::hash(bytes).to_hex().to_string(),
+            checksum: checksum(bytes, &reference)?,
+            reference,
         })?;
         let mut file = tempfile::NamedTempFile::new_in(&self.root)?;
         file.write_all(MAGIC)?;
@@ -167,6 +185,16 @@ impl DiskCache {
     }
 }
 
+fn checksum(
+    pixels: &[u8],
+    reference: &Option<crate::exposure_reference::ReferenceExposure>,
+) -> io::Result<String> {
+    let mut digest = blake3::Hasher::new();
+    digest.update(pixels);
+    digest.update(&serde_json::to_vec(reference)?);
+    Ok(digest.finalize().to_hex().to_string())
+}
+
 fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
@@ -200,6 +228,7 @@ mod tests {
             },
         };
         let proxy = Proxy {
+            reference_exposure: Default::default(),
             width: 2,
             height: 1,
             pixels: vec![
@@ -210,7 +239,8 @@ mod tests {
                     12345.125,
                     0.,
                 ],
-            ],
+            ]
+            .into(),
             matrix: glam::DMat3::IDENTITY,
         };
         (key, proxy)
@@ -281,7 +311,7 @@ mod tests {
             crate::processing::MAX_CAMERA_SOURCE_CODE + 1.,
         ] {
             let (key, mut proxy) = fixture();
-            proxy.pixels[0][0] = value;
+            std::sync::Arc::make_mut(&mut proxy.pixels)[0][0] = value;
             cache.store(&key, &proxy).unwrap();
             assert!(cache.load(&key).is_err());
         }
@@ -312,6 +342,48 @@ mod tests {
         other.source.camera_to_ap1[0][0] = 2.;
         fs::copy(cache.path(&key).unwrap(), cache.path(&other).unwrap()).unwrap();
         assert!(cache.load(&other).is_err());
+    }
+
+    #[test]
+    fn starting_exposure_survives_restart_and_is_covered_by_the_payload_checksum() {
+        use crate::exposure_reference::{ReferenceExposure, StartingExposure};
+        let directory = tempfile::tempdir().unwrap();
+        let cache = DiskCache::at(directory.path().into());
+        let (key, proxy) = fixture();
+        let reference = ReferenceExposure::Matched(StartingExposure {
+            ev: 2.4,
+            samples: 2048,
+            spread: 0.2,
+        });
+        proxy.reference_exposure.set(reference.clone()).unwrap();
+        cache.store(&key, &proxy).unwrap();
+        let loaded = DiskCache::at(directory.path().into())
+            .load(&key)
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded.reference_exposure.get(), Some(&reference));
+        assert_eq!(loaded.pixels, proxy.pixels);
+        let path = cache.path(&key).unwrap();
+        let bytes = fs::read(&path).unwrap();
+        let length = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
+        let mut header: Header = serde_json::from_slice(&bytes[12..12 + length]).unwrap();
+        if let Some(ReferenceExposure::Matched(value)) = &mut header.reference {
+            value.ev = 1.9;
+        }
+        let changed = serde_json::to_vec(&header).unwrap();
+        let mut result = MAGIC.to_vec();
+        result.extend_from_slice(&(changed.len() as u32).to_le_bytes());
+        result.extend_from_slice(&changed);
+        result.extend_from_slice(&bytes[12 + length..]);
+        fs::write(path, result).unwrap();
+        assert!(
+            cache
+                .load(&key)
+                .err()
+                .expect("corrupt reference must reject")
+                .to_string()
+                .contains("checksum")
+        );
     }
 
     #[test]

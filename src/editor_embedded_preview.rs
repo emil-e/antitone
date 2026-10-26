@@ -1,5 +1,4 @@
 use super::*;
-use image::{ImageDecoder, metadata::Orientation};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(test)]
@@ -14,6 +13,7 @@ struct Request {
     key: SourceKey,
     path: PathBuf,
     source: Source,
+    store: Arc<crate::source_store::SourceStore>,
 }
 
 enum Completion {
@@ -223,6 +223,7 @@ impl EmbeddedPreviews {
                 key: key.clone(),
                 path: path.clone(),
                 source,
+                store: document.cache().clone(),
             },
             cancelled,
         ))
@@ -403,71 +404,24 @@ fn load(request: &Request, active: &impl Fn() -> bool) -> Result<Option<egui::Co
     if !active() || FileKey::new(&request.path) != request.key.file {
         return Ok(None);
     }
-    let (actual, mut raw) =
-        document::open_source(&request.path, Some(request.key.source.decode.fixed_wb))
-            .map_err(|e| e.to_string())?;
-    document::verify_source(&request.source, &actual).map_err(|e| e.to_string())?;
-    let Some(thumbnail) = raw.embedded_thumbnail().map_err(|e| e.to_string())? else {
-        return Ok(None);
-    };
-    if !active() {
-        return Ok(None);
-    }
-    let image = decode(thumbnail)?;
+    let preview = request.store.preview(&request.key.file, || {
+        crate::embedded_preview::read(&request.path, &request.source.development)
+    })?;
     if !active() || FileKey::new(&request.path) != request.key.file {
         return Ok(None);
     }
-    Ok(image)
+    Ok(preview.map(|preview| colour_image(&preview)))
 }
 
+fn colour_image(preview: &crate::embedded_preview::Preview) -> egui::ColorImage {
+    egui::ColorImage::from_rgb(
+        [preview.rgb.width() as usize, preview.rgb.height() as usize],
+        preview.rgb.as_raw(),
+    )
+}
+
+#[cfg(test)]
 fn decode(thumbnail: crate::raw::EmbeddedThumbnail) -> Result<Option<egui::ColorImage>, String> {
-    let mut decoder = image::codecs::jpeg::JpegDecoder::new(std::io::Cursor::new(thumbnail.jpeg))
-        .map_err(|e| e.to_string())?;
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(2048);
-    limits.max_image_height = Some(2048);
-    limits.max_alloc = Some(32 * 1024 * 1024);
-    decoder.set_limits(limits).map_err(|e| e.to_string())?;
-    let profile = decoder.icc_profile().map_err(|e| e.to_string())?;
-    if profile.is_none() && thumbnail.color_space != 1 {
-        return Ok(None);
-    }
-    let orientation = decoder
-        .exif_metadata()
-        .map_err(|e| e.to_string())?
-        .as_deref()
-        .and_then(Orientation::from_exif_chunk);
-    let orientation = match orientation {
-        Some(orientation) => orientation,
-        None => match thumbnail.flip {
-            0 => Orientation::NoTransforms,
-            3 => Orientation::Rotate180,
-            5 => Orientation::Rotate270,
-            6 => Orientation::Rotate90,
-            _ => return Ok(None),
-        },
-    };
-    let mut image = image::DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
-    image.apply_orientation(orientation);
-    if image.width() > SOURCE_SIZE || image.height() > SOURCE_SIZE {
-        image = image.thumbnail(SOURCE_SIZE, SOURCE_SIZE);
-    }
-    let mut image = image.into_rgb8();
-    if let Some(profile) = profile {
-        let input = lcms2::Profile::new_icc(&profile).map_err(|e| e.to_string())?;
-        let output = lcms2::Profile::new_srgb();
-        let transform = lcms2::Transform::<u8, u8>::new(
-            &input,
-            lcms2::PixelFormat::RGB_8,
-            &output,
-            lcms2::PixelFormat::RGB_8,
-            lcms2::Intent::RelativeColorimetric,
-        )
-        .map_err(|e| e.to_string())?;
-        transform.transform_in_place(image.as_mut());
-    }
-    Ok(Some(egui::ColorImage::from_rgb(
-        [image.width() as usize, image.height() as usize],
-        image.as_raw(),
-    )))
+    crate::embedded_preview::decode(thumbnail)
+        .map(|preview| preview.map(|preview| colour_image(&preview)))
 }

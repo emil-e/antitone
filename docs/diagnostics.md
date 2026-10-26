@@ -293,6 +293,19 @@ cargo test --locked --offline --features editor --lib gpu::view::tests::colour \
 
 [Model and geometry checks](../src/gpu_working_view_model_tests.rs) cover Digital coverage, exactly-once exposure, asymmetric crops and rounded proxy dimensions. [Scalar/sampling/lifetime checks](../src/gpu_working_view_oracle_tests.rs) cover continuous original-coordinate masks, corrected footprints, floor provenance and deferred encoded consumers after owner release. These isolate stage and sampling behavior from the working view's filtering-before-grading approximation.
 
+## Digital starting brightness
+
+Use supplied read-only RAWs to inspect [camera-reference initialization](processing.md#digital-starting-brightness) and shared-preview cost:
+
+```sh
+ANTITONE_EXPOSURE_SOURCES="/absolute/photo.ARW:/absolute/photo.dng" \
+ANTITONE_EXPOSURE_OUTPUT="$PWD/.cache/digital-start-FRESH" \
+  cargo test --locked --offline --release --features raw,dng-sdk,project,ocio-reference \
+  --lib photo_preparation::photographic:: -- --ignored --nocapture
+```
+
+The source list uses the platform path separator (`:` on macOS, `;` on Windows). Reports separate header, preview, development, preparation and repeated-preparation costs. Optional small PNG panels show camera reference, normalized zero EV and initialized output through the CPU ACES reference. Inspect framing, brightness and retained colour differences together; the estimator matches a scalar, not the camera's rendering style. Unusable references report an explicit unavailable reason, so a successful diagnostic exit alone does not establish a brightness match.
+
 ## Photographic arithmetic
 
 Use the [paired-output diagnostic](../tests/photographic_samples.rs) to inspect ordinary f32 photographic processing against the scalar/OCIO model:

@@ -24,6 +24,13 @@ impl Drop for CacheScope {
     }
 }
 
+// Captured freshness lets parameter preflight address completed metering without filesystem IO.
+#[derive(Clone)]
+struct HeaderPreview {
+    view: crate::raw::SourcePreview,
+    file: crate::source_revision::FileKey,
+}
+
 #[derive(Clone)]
 pub(super) struct Document {
     pub project: Project,
@@ -32,7 +39,7 @@ pub(super) struct Document {
     saved: Project,
     cache: Arc<CacheScope>,
     parent_cache: Option<Arc<SourceStore>>,
-    source_previews: std::collections::HashMap<SourceId, crate::raw::SourcePreview>,
+    source_previews: std::collections::HashMap<SourceId, HeaderPreview>,
     #[cfg(test)]
     pub(super) fixture_directory: Option<Arc<tempfile::TempDir>>,
 }
@@ -86,8 +93,9 @@ impl Document {
     }
 
     pub fn fork_cache(&mut self) {
+        let fork = self.cache.0.fork(0);
         self.parent_cache = Some(self.cache.0.clone());
-        self.cache = Arc::new(CacheScope(Arc::new(SourceStore::new(0))));
+        self.cache = Arc::new(CacheScope(Arc::new(fork)));
     }
 
     pub fn accept_cache(&mut self, previous: &Arc<SourceStore>) {
@@ -112,27 +120,54 @@ impl Document {
         id: SourceId,
         metadata: &Metadata,
         fixed_wb: [f64; 4],
+        file: crate::source_revision::FileKey,
     ) {
-        self.source_previews
-            .insert(id, metadata.source_preview(fixed_wb));
+        self.source_previews.insert(
+            id,
+            HeaderPreview {
+                view: metadata.source_preview(fixed_wb),
+                file,
+            },
+        );
     }
 
     pub(super) fn source_preview(&self, source: &Source) -> crate::raw::SourcePreview {
         self.source_previews
             .get(&source.id)
-            .copied()
+            .map(|header| header.view)
             .unwrap_or_default()
     }
 
-    fn read_source_preview(
-        path: &Path,
-        wb: Option<[f64; 4]>,
-    ) -> Result<(Source, crate::raw::SourcePreview)> {
+    fn read_source_preview(path: &Path, wb: Option<[f64; 4]>) -> Result<(Source, HeaderPreview)> {
         let (source, raw) = open_source(path, wb)?;
         let preview = raw
             .metadata
             .source_preview(source.development.decode.fixed_wb);
-        Ok((source, preview))
+        Ok((
+            source,
+            HeaderPreview {
+                view: preview,
+                file: raw.file.clone(),
+            },
+        ))
+    }
+
+    pub(super) fn positive_matrix(
+        &self,
+        source: &Source,
+        input: crate::processing::InputSettings,
+    ) -> Result<glam::DMat3> {
+        let matrix = glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1);
+        if let Some(header) = self.source_previews.get(&source.id)
+            && let Some(key) = SourceKey::from_revision(
+                &self.source_path(source.id)?,
+                header.file.clone(),
+                &source.development,
+            )
+        {
+            return self.cache().positive_matrix(&key, &input);
+        }
+        Ok(matrix)
     }
 
     pub(super) fn refresh_source(&mut self, id: SourceId) -> Result<()> {
@@ -245,7 +280,13 @@ impl Document {
                     ),
                     None => input,
                 };
-                super::processing::validate_source(device, &refined, self.project.roll, source)?;
+                super::processing::validate_source_with_matrix(
+                    device,
+                    refined,
+                    self.project.roll,
+                    source,
+                    self.positive_matrix(source, refined)?,
+                )?;
             }
         }
         for source in &self.project.sources {
@@ -275,7 +316,8 @@ impl Document {
         mut progress: impl FnMut(usize, usize),
     ) -> Result<Self> {
         let path = absolute(path)?;
-        let (project, spatial_metadata) = Project::load_with_spatial_metadata(&path)?;
+        let (mut project, spatial_metadata) = Project::load_with_spatial_metadata(&path)?;
+        let exposure_metadata = project.exposure_metadata.take().unwrap_or_default();
         let mut document = Self {
             saved: project.clone(),
             project,
@@ -295,6 +337,11 @@ impl Document {
             progress(index + 1, total);
         }
         document.spatial_metadata = Arc::new(document.ready_spatial_metadata());
+        document
+            .cache()
+            .restore_exposure_metadata(&exposure_metadata, &document.project, |id| {
+                document.source_path(id)
+            });
         Ok(document)
     }
 
@@ -475,9 +522,12 @@ impl Document {
         }
         candidate.validate_with_device(device)?;
         let metadata = self.ready_spatial_metadata();
-        candidate
-            .project
-            .save_with_spatial_metadata(&path, policy, &metadata)?;
+        let mut snapshot = candidate.project.clone();
+        let exposure = self
+            .cache()
+            .exposure_metadata(&self.project, |id| self.source_path(id));
+        snapshot.exposure_metadata = (!exposure.entries.is_empty()).then_some(exposure);
+        snapshot.save_with_spatial_metadata(&path, policy, &metadata)?;
         candidate.spatial_metadata = Arc::new(metadata);
         candidate.path = Some(path);
         candidate.saved = candidate.project.clone();
@@ -553,18 +603,7 @@ pub(super) fn metadata_development(
     metadata: &Metadata,
     fixed_wb: [f64; 4],
 ) -> Result<SourceDevelopment> {
-    let matrix = metadata.camera_to_ap1()?;
-    let area = metadata.image_area()?;
-    Ok(SourceDevelopment {
-        decode: metadata.development(fixed_wb),
-        lens_correction: metadata.lens_identity()?,
-        dng_development: metadata.dng_identity(),
-        dimensions: metadata.source_dimensions()?,
-        active_area: [area.x, area.y, area.width, area.height],
-        camera_model: metadata.camera_model(),
-        camera_to_ap1: matrix.to_cols_array_2d(),
-        input_floor: metadata.input_floor()?,
-    })
+    SourceDevelopment::from_metadata(metadata, fixed_wb)
 }
 
 #[cfg(test)]

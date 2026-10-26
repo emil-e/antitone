@@ -199,9 +199,10 @@ fn cached_proxy_finishes_repair_bearing_navigation_cards_without_a_developable_r
         document.project.source(id).unwrap(),
         FileKey::new(&document.source_path(id).unwrap()),
         Arc::new(Proxy {
+            reference_exposure: Default::default(),
             width: 8,
             height: 6,
-            pixels: vec![[5000., 7000., 9000., 0.]; 48],
+            pixels: vec![[5000., 7000., 9000., 0.]; 48].into(),
             matrix: glam::DMat3::IDENTITY,
         }),
     );

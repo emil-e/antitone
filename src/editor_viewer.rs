@@ -8,7 +8,6 @@ impl Editor {
     pub(super) fn source_parameters(&self, exposure: f64) -> Result<ProcessingParameters, Error> {
         if let Some(ready) = &self.document.visit.ready {
             return self.source_preview_parameters(
-                Some(&ready.record.development.decode),
                 ready
                     .developed
                     .metadata()
@@ -22,7 +21,7 @@ impl Editor {
             .or_else(|| self.document.project.sources.first());
         match source {
             Some(source) => self.source_parameters_for(source, exposure),
-            None => self.source_preview_parameters(None, Default::default(), exposure),
+            None => self.source_preview_parameters(Default::default(), exposure),
         }
     }
 
@@ -31,16 +30,11 @@ impl Editor {
         source: &Source,
         exposure: f64,
     ) -> Result<ProcessingParameters, Error> {
-        self.source_preview_parameters(
-            Some(&source.development.decode),
-            self.document.source_preview(source),
-            exposure,
-        )
+        self.source_preview_parameters(self.document.source_preview(source), exposure)
     }
 
     fn source_preview_parameters(
         &self,
-        decode: Option<&crate::project::Development>,
         preview: crate::raw::SourcePreview,
         exposure: f64,
     ) -> Result<ProcessingParameters, Error> {
@@ -50,12 +44,8 @@ impl Editor {
             glam::DMat3::IDENTITY
         };
         ProcessingParameters::source_preview_with_transform(
-            // Only LibRaw normalizes development gains by their maximum.
-            decode
-                .filter(|d| d.contract != crate::project::DNG_DEVELOPMENT_CONTRACT)
-                .map(|d| d.fixed_wb),
-            exposure,
-            transform,
+            // DevelopedSource already restores LibRaw's green-relative exposure scale.
+            None, exposure, transform,
         )
     }
 

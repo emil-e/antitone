@@ -6,6 +6,32 @@ use crate::{
 };
 use std::cell::RefCell;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct NeutralSourceSignature {
+    parameters: [u8; ProcessingParameters::BYTE_LEN],
+    matrix: [u64; 9],
+}
+
+#[cfg(test)]
+impl From<[u8; ProcessingParameters::BYTE_LEN]> for NeutralSourceSignature {
+    fn from(parameters: [u8; ProcessingParameters::BYTE_LEN]) -> Self {
+        Self {
+            parameters,
+            matrix: [0; 9],
+        }
+    }
+}
+
+#[cfg(test)]
+impl Default for NeutralSourceSignature {
+    fn default() -> Self {
+        Self {
+            parameters: [0; ProcessingParameters::BYTE_LEN],
+            matrix: [0; 9],
+        }
+    }
+}
+
 #[derive(PartialEq)]
 struct Key {
     input: InputSettings,
@@ -77,17 +103,33 @@ impl Grades {
     }
 }
 
+#[cfg(test)]
 pub(super) fn validate_source(
     device: Option<&wgpu::Device>,
-    input: &InputSettings,
+    input: impl Into<InputSettings>,
     roll: RollSettings,
     source: &Source,
+) -> Result<(), Error> {
+    validate_source_with_matrix(
+        device,
+        input.into(),
+        roll,
+        source,
+        glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1),
+    )
+}
+
+pub(super) fn validate_source_with_matrix(
+    device: Option<&wgpu::Device>,
+    input: InputSettings,
+    roll: RollSettings,
+    source: &Source,
+    matrix: glam::DMat3,
 ) -> Result<(), Error> {
     let snapshot = source.grade_snapshot()?;
     if !input.ready() {
         return Ok(());
     }
-    let matrix = glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1);
     if let Some(device) = device {
         GpuAdjustmentLayers::validate(
             device,
@@ -110,6 +152,57 @@ pub(super) fn validate_source(
 }
 
 impl Editor {
+    pub(super) fn neutral_source_signature(
+        &self,
+        input: &InputSettings,
+    ) -> Result<NeutralSourceSignature, Error> {
+        let ready = self
+            .document
+            .visit
+            .ready
+            .as_ref()
+            .ok_or(Error::InvalidParameter("positive source unavailable"))?;
+        let input = match input.calibration() {
+            Some(base) => input.with_calibration(self.processing_calibration(base)?),
+            None => *input,
+        };
+        let matrix = ready.developed.positive_matrix(&input)?;
+        let parameters = ProcessingParameters::interpret(input, RollSettings::default(), matrix)?;
+        Ok(NeutralSourceSignature {
+            parameters: bytemuck::bytes_of(&parameters).try_into().unwrap(),
+            matrix: matrix.to_cols_array().map(f64::to_bits),
+        })
+    }
+
+    pub(super) fn validate_repaired_source(
+        &self,
+        input: &InputSettings,
+        roll: RollSettings,
+        snapshot: &AdjustmentLayerSnapshot,
+        bound: DVec3,
+    ) -> Result<(), Error> {
+        if bound == DVec3::ZERO {
+            return Ok(());
+        }
+        let (Some(device), Some(ready)) = (self.working.device(), &self.document.visit.ready)
+        else {
+            return Ok(());
+        };
+        let input = match input.calibration() {
+            Some(base) => input.with_calibration(self.processing_calibration(base)?),
+            None => *input,
+        };
+        crate::gpu::GpuAdjustmentLayers::validate_repaired(
+            device,
+            input,
+            roll,
+            snapshot,
+            ready.developed.positive_matrix(&input)?,
+            ready.area,
+            bound,
+        )
+    }
+
     pub(super) fn validate_document_candidate(&self, document: &Document) -> Result<(), Error> {
         document.validate_with_device(self.grades.device.as_ref())
     }
@@ -122,7 +215,13 @@ impl Editor {
                 self.correction.as_ref().map(|c| c.settings.map.as_ref()),
             )?);
         }
-        validate_source(self.grades.device.as_ref(), &input, self.roll, source)?;
+        validate_source_with_matrix(
+            self.grades.device.as_ref(),
+            input,
+            self.roll,
+            source,
+            self.document.positive_matrix(source, input)?,
+        )?;
         if self.current_source == Some(source.id) {
             self.dust_validate_snapshot(input, self.roll, &source.grade_snapshot()?)?;
         }
@@ -149,9 +248,8 @@ impl Editor {
             .map(|correction| correction.settings.map.clone());
         let snapshot = recipe.grade;
         let look = recipe.look;
-        let matrix =
-            glam::DMat3::from_cols_array_2d(&recipe.neutral.source_development.camera_to_ap1);
         let input = recipe.neutral.processing_input()?;
+        let matrix = self.document.positive_matrix(source, input)?;
         self.grades
             .prepare(
                 source.id,
@@ -207,7 +305,13 @@ impl Editor {
                 )?),
                 None => input,
             };
-            validate_source(self.grades.device.as_ref(), &source_input, roll, &candidate)?;
+            validate_source_with_matrix(
+                self.grades.device.as_ref(),
+                source_input,
+                roll,
+                &candidate,
+                self.document.positive_matrix(&candidate, source_input)?,
+            )?;
         }
         Ok(())
     }

@@ -234,6 +234,28 @@ impl Metadata {
             * self.lens_geometry()?.map_or(1., |g| g.maximum_gain()))
     }
 
+    pub(crate) fn source_scale(&self, fixed_wb: [f64; 4]) -> Result<f64, Error> {
+        if self.uses_sdk() {
+            Ok(1.)
+        } else {
+            crate::processing::libraw_green_scale(fixed_wb)
+        }
+    }
+
+    pub(crate) fn source_input_floor(&self, fixed_wb: [f64; 4]) -> Result<f64, Error> {
+        let floor = self.input_floor()? * self.source_scale(fixed_wb)?;
+        if !floor.is_finite()
+            || !(crate::processing::CAMERA_INPUT_FLOOR
+                ..=crate::processing::CAMERA_INPUT_FLOOR * crate::processing::MAX_SOURCE_GAIN)
+                .contains(&floor)
+        {
+            return Err(Error::Raw(
+                "source normalization exceeds the supported precision range".into(),
+            ));
+        }
+        Ok(floor)
+    }
+
     pub fn source_dimensions(&self) -> Result<[u32; 2], Error> {
         Ok(self
             .lens_geometry()?
@@ -391,20 +413,22 @@ struct NativeView {
     pre_mul: [f64; 4],
 }
 
-#[cfg(feature = "editor")]
+#[cfg(feature = "project")]
 #[repr(C)]
 struct NativeThumbnail {
-    jpeg: *const u8,
+    data: *const u8,
     bytes: u32,
     width: u32,
     height: u32,
     flip: i32,
     color_space: i32,
+    format: u32,
 }
 
-#[cfg(feature = "editor")]
+#[cfg(feature = "project")]
 pub(crate) struct EmbeddedThumbnail {
-    pub jpeg: Vec<u8>,
+    pub data: Vec<u8>,
+    pub rgb_dimensions: Option<[u32; 2]>,
     pub flip: i32,
     pub color_space: i32,
 }
@@ -417,7 +441,7 @@ unsafe extern "C" {
         error: *mut c_char,
         size: usize,
     ) -> *mut c_void;
-    #[cfg(feature = "editor")]
+    #[cfg(feature = "project")]
     fn antitone_raw_thumbnail(
         handle: *mut c_void,
         thumbnail: *mut NativeThumbnail,
@@ -533,6 +557,8 @@ pub struct RawFile {
     corrected: Option<lens_source::CorrectedImage>,
     #[cfg(feature = "dng-sdk")]
     path: std::path::PathBuf,
+    #[cfg(feature = "project")]
+    pub(crate) file: crate::source_revision::FileKey,
     #[cfg(feature = "dng-sdk")]
     dng_source: Option<crate::dng::Source>,
 }
@@ -556,6 +582,8 @@ impl RawFile {
         lens_correction: bool,
         fixed_wb: Option<[f64; 4]>,
     ) -> Result<Self, Error> {
+        #[cfg(feature = "project")]
+        let file = crate::source_revision::FileKey::new(source_path);
         let path = CString::new(source_path.as_os_str().as_encoded_bytes())
             .map_err(|_| Error::Raw("source path contains NUL".into()))?;
         let mut metadata = std::mem::MaybeUninit::<NativeMetadata>::zeroed();
@@ -582,6 +610,8 @@ impl RawFile {
             corrected: None,
             #[cfg(feature = "dng-sdk")]
             path: source_path.to_path_buf(),
+            #[cfg(feature = "project")]
+            file,
             #[cfg(feature = "dng-sdk")]
             dng_source: None,
         };
@@ -602,11 +632,11 @@ impl RawFile {
         Ok(raw)
     }
 
-    #[cfg(feature = "editor")]
+    #[cfg(feature = "project")]
     pub(crate) fn embedded_thumbnail(&mut self) -> Result<Option<EmbeddedThumbnail>, Error> {
         let mut thumbnail = std::mem::MaybeUninit::<NativeThumbnail>::zeroed();
         let mut error = [0; 512];
-        // The bridge extracts only bounded JPEG data; it does not unpack/develop the sensor.
+        // Only a bounded embedded JPEG/RGB8 payload is extracted; the sensor stays untouched.
         let code = unsafe {
             antitone_raw_thumbnail(
                 self.handle.as_ptr(),
@@ -619,14 +649,20 @@ impl RawFile {
             return Err(native_error("embedded thumbnail", &error));
         }
         let thumbnail = unsafe { thumbnail.assume_init() };
-        if thumbnail.jpeg.is_null() {
+        if thumbnail.data.is_null() {
             return Ok(None);
         }
         // Copy the handle-owned bytes before another extraction or closing the unique handle.
-        let jpeg = unsafe { std::slice::from_raw_parts(thumbnail.jpeg, thumbnail.bytes as usize) }
+        let data = unsafe { std::slice::from_raw_parts(thumbnail.data, thumbnail.bytes as usize) }
             .to_vec();
+        let rgb_dimensions = match thumbnail.format {
+            1 => None,
+            2 => Some([thumbnail.width, thumbnail.height]),
+            _ => return Err(Error::Raw("unsupported embedded preview format".into())),
+        };
         Ok(Some(EmbeddedThumbnail {
-            jpeg,
+            data,
+            rgb_dimensions,
             flip: thumbnail.flip,
             color_space: thumbnail.color_space,
         }))
@@ -1055,7 +1091,7 @@ impl RawFile {
             return Ok(Developed {
                 pixels: &[],
                 continuous: Some(source.camera_rgb()),
-                continuous_scale: 65535.,
+                sample_scale: 65535.,
                 width,
                 height,
                 maximum: 65535,
@@ -1072,7 +1108,7 @@ impl RawFile {
             return Ok(Developed {
                 pixels: &[],
                 continuous: Some(&image.pixels),
-                continuous_scale: 1.,
+                sample_scale: 1.,
                 width: image.size[0],
                 height: image.size[1],
                 maximum: view.maximum,
@@ -1100,7 +1136,7 @@ impl RawFile {
         Ok(Developed {
             pixels: unsafe { std::slice::from_raw_parts(view.pixels, count) },
             continuous: None,
-            continuous_scale: 1.,
+            sample_scale: 1.,
             width: view.width,
             height: view.height,
             maximum: view.maximum,
@@ -1167,7 +1203,7 @@ impl FrozenRaw {
 pub struct Developed<'a> {
     pixels: &'a [u16],
     continuous: Option<&'a [[f32; 3]]>,
-    continuous_scale: f32,
+    sample_scale: f32,
     pub width: u32,
     pub height: u32,
     pub maximum: u32,
@@ -1179,7 +1215,18 @@ pub struct Developed<'a> {
 
 impl Developed<'_> {
     pub fn is_continuous(&self) -> bool {
-        self.continuous.is_some()
+        self.continuous.is_some() || self.sample_scale != 1.
+    }
+
+    pub(crate) fn with_source_scale(mut self, gain: f64) -> Result<Self, Error> {
+        let scale = self.sample_scale * gain as f32;
+        if !scale.is_finite() || scale <= 0. {
+            return Err(Error::InvalidParameter(
+                "source scale exceeds floating-point range",
+            ));
+        }
+        self.sample_scale = scale;
+        Ok(self)
     }
 
     pub fn sample_mean(&self, area: Rect, matrix: DMat3) -> Result<DVec3, Error> {
@@ -1210,9 +1257,9 @@ impl Developed<'_> {
     }
 
     pub fn pixel_codes(&self, x: u32, y: u32) -> Result<[u16; 4], Error> {
-        if self.continuous.is_some() {
+        if self.is_continuous() {
             return Err(Error::Raw(
-                "corrected camera samples are continuous, not RGB16 codes".into(),
+                "camera samples are continuous, not RGB16 codes".into(),
             ));
         }
         if x >= self.width || y >= self.height {
@@ -1222,7 +1269,7 @@ impl Developed<'_> {
         Ok(self.pixels[offset..offset + 4].try_into().unwrap())
     }
 
-    /// Camera values on the shared 65535-unit scale; integer samples convert exactly to f32.
+    /// Camera values on the shared 65535-unit scale, retaining fractional/above-white light.
     pub fn pixel_samples(&self, x: u32, y: u32) -> Result<[f32; 4], Error> {
         if x >= self.width || y >= self.height {
             return Err(Error::Raw("pixel outside developed image".into()));
@@ -1230,13 +1277,16 @@ impl Developed<'_> {
         if let Some(pixels) = self.continuous {
             let [r, g, b] = pixels[y as usize * self.width as usize + x as usize];
             return Ok([
-                r * self.continuous_scale,
-                g * self.continuous_scale,
-                b * self.continuous_scale,
+                r * self.sample_scale,
+                g * self.sample_scale,
+                b * self.sample_scale,
                 0.,
             ]);
         }
-        Ok(self.pixel_codes(x, y)?.map(f32::from))
+        let offset = (y as usize * self.width as usize + x as usize) * 4;
+        Ok(std::array::from_fn(|channel| {
+            f32::from(self.pixels[offset + channel]) * self.sample_scale
+        }))
     }
 
     pub fn pixel(&self, x: u32, y: u32) -> Result<DVec3, Error> {
@@ -1440,8 +1490,8 @@ mod tests {
         assert!(raw.diagnostics.is_none());
         assert!(raw.camera_image().is_err());
         assert_eq!(
-            raw.embedded_thumbnail().unwrap().unwrap().jpeg,
-            thumbnail.jpeg
+            raw.embedded_thumbnail().unwrap().unwrap().data,
+            thumbnail.data
         );
         let before = raw.unpack().unwrap();
         let mut plain = RawFile::open(&root.join("patches.dng")).unwrap();
@@ -1457,12 +1507,12 @@ mod tests {
         }
         assert_eq!(raw.unpack().unwrap(), before);
         assert_eq!(
-            raw.embedded_thumbnail().unwrap().unwrap().jpeg,
-            thumbnail.jpeg
+            raw.embedded_thumbnail().unwrap().unwrap().data,
+            thumbnail.data
         );
         drop(raw);
         assert_eq!(
-            image::load_from_memory(&thumbnail.jpeg)
+            image::load_from_memory(&thumbnail.data)
                 .unwrap()
                 .to_rgb8()
                 .dimensions(),
@@ -1483,7 +1533,8 @@ mod tests {
         for (dimensions, expected) in [
             (vec![[512, 344], [160, 120], [320, 216]], [320, 216]),
             (vec![[320, 216], [512, 344]], [320, 216]),
-            (vec![[2049, 64], [160, 120]], [160, 120]),
+            (vec![[2049, 64], [160, 120]], [2049, 64]),
+            (vec![[8193, 64], [160, 120]], [160, 120]),
             (vec![], [16, 8]),
         ] {
             let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/preview.dng");
@@ -1533,7 +1584,7 @@ mod tests {
             std::fs::write(&path, bytes).unwrap();
             let mut raw = RawFile::open(&path).unwrap();
             let thumbnail = raw.embedded_thumbnail().unwrap().unwrap();
-            let image = image::load_from_memory(&thumbnail.jpeg).unwrap();
+            let image = image::load_from_memory(&thumbnail.data).unwrap();
             assert_eq!([image.width(), image.height()], expected);
             assert!(!raw.unpacked);
             assert!(raw.camera_image().is_err());
@@ -1600,10 +1651,10 @@ mod tests {
             let metadata = raw.metadata;
             if extract {
                 let jpeg = raw.embedded_thumbnail().unwrap().unwrap();
-                assert!(jpeg.jpeg.starts_with(&[0xff, 0xd8]));
+                assert!(jpeg.data.starts_with(&[0xff, 0xd8]));
                 println!(
                     "embedded_native bytes={} flip={} color_space={}",
-                    jpeg.jpeg.len(),
+                    jpeg.data.len(),
                     jpeg.flip,
                     jpeg.color_space
                 );
@@ -1663,7 +1714,7 @@ mod tests {
         let developed = Developed {
             pixels: &pixels,
             continuous: None,
-            continuous_scale: 1.,
+            sample_scale: 1.,
             width: 4,
             height: 4,
             maximum: 0,

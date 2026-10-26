@@ -78,6 +78,7 @@ impl Cache {
 }
 
 pub(super) struct Request {
+    pub input: crate::processing::InputSettings,
     pub path: PathBuf,
     pub wb: Option<[f64; 4]>,
     pub expected: Option<Source>,
@@ -93,6 +94,7 @@ pub(super) struct Developed {
     cache: Option<Cache>,
     key: Option<SourceKey>,
     timing: Timing,
+    camera_proxy: Option<Arc<crate::scan::CameraProxy>>,
 }
 
 #[derive(Clone)]
@@ -105,6 +107,7 @@ pub(super) struct Services {
 }
 
 struct Acquisition {
+    references: Arc<SourceStore>,
     request: Request,
     file: thumbnails::FileKey,
     supply: Supply,
@@ -167,6 +170,7 @@ impl Services {
             .map_err(|_| "Source submission worker panicked".to_owned())?
             .map_err(|error| error.to_string())?;
         let Acquisition {
+            references,
             request,
             file,
             supply,
@@ -180,7 +184,7 @@ impl Services {
         self.jobs
             .run(move || {
                 let retired = || cancelled.load(std::sync::atomic::Ordering::Relaxed);
-                request.accept(source, file, &retired, timing)
+                request.accept(source, file, references, &retired, timing)
             })
             .await
             .map_err(|_| "Source preparation worker panicked".to_owned())?
@@ -245,6 +249,10 @@ impl Request {
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Acquisition, Error> {
         let retained = self.retained();
+        let references = self.cache.as_ref().map_or_else(
+            || Arc::new(SourceStore::new(0)),
+            |cache| cache.store.clone(),
+        );
         if independent {
             // The cache may close while native work is queued. Do not use its
             // publication lifetime as authority for an accepted file operation.
@@ -264,6 +272,7 @@ impl Request {
             )?),
         };
         Ok(Acquisition {
+            references,
             request: self,
             file,
             supply,
@@ -302,13 +311,18 @@ impl Request {
             registration_seconds: 0.,
             verification_seconds: 0.,
         };
-        self.accept(source, file, cancelled, timing)
+        let references = self.cache.as_ref().map_or_else(
+            || Arc::new(SourceStore::new(0)),
+            |cache| cache.store.clone(),
+        );
+        self.accept(source, file, references, cancelled, timing)
     }
 
     fn accept(
         self,
         source: Arc<DevelopedSource>,
         file: thumbnails::FileKey,
+        references: Arc<SourceStore>,
         cancelled: &dyn Fn() -> bool,
         mut timing: Timing,
     ) -> Result<Developed, Error> {
@@ -323,6 +337,9 @@ impl Request {
         let mut scan = Scan::from_source(source);
         document::verify_scan(&record, &scan)?;
         timing.verification_seconds = tick.elapsed().as_secs_f64();
+        let prepared = references.prepare_source(self.input, scan.source())?;
+        let camera_proxy = prepared.proxy;
+        scan = Scan::from_source(prepared.source);
         self.require_live(cancelled)?;
         // A captured revision can disable cache publication, never be refreshed to
         // relabel pixels developed from an earlier file version.
@@ -351,6 +368,7 @@ impl Request {
             cache: self.cache,
             key,
             timing,
+            camera_proxy,
         })
     }
 }
@@ -375,9 +393,12 @@ impl Developed {
         let tick = std::time::Instant::now();
         let (width, height, pixels) = scan.preview_source(1024)?;
         let proxy = self
-            .cache
-            .as_ref()
-            .and_then(|cache| self.key.as_ref().and_then(|key| cache.store.get_proxy(key)))
+            .camera_proxy
+            .or_else(|| {
+                self.cache
+                    .as_ref()
+                    .and_then(|cache| self.key.as_ref().and_then(|key| cache.store.get_proxy(key)))
+            })
             .map_or_else(|| thumbnails::Proxy::from_scan(&scan).map(Arc::new), Ok)?;
         if let Some(cache) = &self.cache
             && let Some(key) = &self.key

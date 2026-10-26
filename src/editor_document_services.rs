@@ -111,6 +111,12 @@ pub(super) fn candidate(
     }
     if let Some((loaded, selected)) = reuse
         && let Some((_, ready)) = previous.filter(|(active, _)| *active == loaded)
+        && document
+            .project
+            .source(selected)
+            .is_ok_and(|source| source.development == ready.record.development)
+        && (document.project.input.is_negative()
+            || ready.developed.reference_exposure.get().is_some())
     {
         return Ok(Candidate {
             prepared: Prepared {
@@ -124,7 +130,11 @@ pub(super) fn candidate(
             source: None,
         });
     }
-    let selected = selected_override.unwrap_or_else(|| document.project.order.first().copied());
+    let selected = selected_override.unwrap_or_else(|| {
+        reuse
+            .map(|(_, selected)| selected)
+            .or_else(|| document.project.order.first().copied())
+    });
     let source = selected
         .map(|id| source_request(&document, id, correction.clone()))
         .transpose()?;
@@ -151,6 +161,7 @@ fn source_request(
     let wb = Some(expected.development.decode.fixed_wb);
     let cache = source::Cache::new(&path, Some(&expected), document);
     Ok(source::Request {
+        input: document.project.input,
         path,
         expected: Some(expected),
         wb,

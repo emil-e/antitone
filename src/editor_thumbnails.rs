@@ -419,6 +419,9 @@ impl Thumbnails {
         let Some(proxy) = self.sources.get_proxy(&native_key) else {
             return Ok(None);
         };
+        if !document.project.input.is_negative() && proxy.reference_exposure.get().is_none() {
+            return Ok(None);
+        }
         let Some((device, queue, renderers)) = &self.gpu else {
             return Ok(None);
         };

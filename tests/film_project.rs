@@ -50,7 +50,7 @@ fn camera_model_roundtrips_explicit_response_and_rejects_missing_or_unknown_shap
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("film.antitone.json");
     let mut film = project();
-    assert_eq!(film.processing_model, 4);
+    assert_eq!(film.processing_model, antitone::PROCESSING_MODEL_VERSION);
     assert_eq!(
         match negative(&film) {
             InputSettings::Negative { response, .. } => *response,

@@ -113,10 +113,13 @@ fn crop_preview_keeps_original_coordinate_repairs_through_rotation_and_resize() 
     let damaged = directory.path().join("damaged.dng");
     std::fs::write(&damaged, bytes).unwrap();
     editor_harness(|mut h, capture| {
+        h.update(|e| {
+            e.input = crate::processing::InputSettings::Digital;
+            e.sync_document();
+        });
         h.enter(|e, cx| e.add_raws(vec![damaged], cx));
         wait_for(&mut h, |e| !e.busy && e.document.visit.ready.is_some());
         h.update(|e| {
-            e.input = crate::processing::InputSettings::Digital;
             e.source = false;
             e.adjustment_layer_settings.exposure = 0.75;
             e.photo_orientation.turn_clockwise();
@@ -279,13 +282,17 @@ fn crop_pixels_follow_straightening_orientation_resize_and_clipped_navigation() 
         (crate::geometry::QuarterTurns::One, true, false),
     ] {
         editor_harness(|mut harness, capture| {
+            if digital {
+                harness.update(|editor| {
+                    editor.input = crate::processing::InputSettings::Digital;
+                    editor.sync_document();
+                });
+            }
             harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
             wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
             harness.update(|editor| {
                 assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
-                if digital {
-                    editor.input = crate::processing::InputSettings::Digital;
-                } else {
+                if !digital {
                     editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
                     editor.set_dmax(Some(DVec3::splat(128. / 4031.)));
                     editor.set_gamma(0.75);

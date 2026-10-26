@@ -43,6 +43,7 @@ fn fixture(
     };
     let ready = futures_lite::future::block_on(services.clone().prepare(
         source::Request {
+            input: document.project.input,
             path: path.clone(),
             wb: Some(document.project.development().as_ref().unwrap().fixed_wb),
             expected: Some(document.project.source(source_id).unwrap().clone()),

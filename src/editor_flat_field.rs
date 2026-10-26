@@ -190,6 +190,7 @@ impl Editor {
             .as_ref()
             .map(|source| LoadCache::new(&path, Some(source), &self.document));
         source::Request {
+            input: self.input(),
             path,
             wb,
             expected,

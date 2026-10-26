@@ -1,4 +1,6 @@
 use super::*;
+#[path = "dust_repair_normalization_tests.rs"]
+mod normalization;
 
 #[test]
 fn linear_distance_transform_preserves_every_reference_distance_bit() {

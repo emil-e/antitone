@@ -38,10 +38,9 @@ fn codes(scan: &Scan) -> Vec<[f32; 4]> {
 
 fn key(document: &Document) -> SourceKey {
     let id = document.project.order[0];
-    SourceKey::capture_with_development(
+    SourceKey::capture(
         &document.source_path(id).unwrap(),
         &document.project.source(id).unwrap().development,
-        document.project.development().as_ref().unwrap(),
     )
     .unwrap()
 }

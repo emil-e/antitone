@@ -158,9 +158,10 @@ fn navigation_pixels_keep_ordered_layer_grades_look_and_target() {
         document.project.source(id).unwrap(),
         FileKey::new(&document.source_path(id).unwrap()),
         Arc::new(Proxy {
+            reference_exposure: Default::default(),
             width: size[0],
             height: size[1],
-            pixels: pixels.clone(),
+            pixels: pixels.clone().into(),
             matrix: DMat3::IDENTITY,
         }),
     );

@@ -322,7 +322,7 @@ impl Originals {
         let source = ProcessingSource::new_continuous(
             device,
             &vec![[0.; 4]; (size[0] * size[1]) as usize],
-            request.scan.camera_to_ap1,
+            request.scan.positive_matrix(&request.input)?,
         )?;
         let working = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("bounded original graded AP1 scratch"),
@@ -414,7 +414,7 @@ pub(super) fn write(
         input,
         request.roll,
         request.grade.clone(),
-        request.scan.camera_to_ap1,
+        request.scan.positive_matrix(&input)?,
         request.scan.area,
     )?);
     let repairs = crate::gpu::repairs::Snapshot::logical(request.repairs.to_vec())?;
@@ -425,7 +425,7 @@ pub(super) fn write(
             input,
             request.roll,
             &request.grade,
-            request.scan.camera_to_ap1,
+            request.scan.positive_matrix(&input)?,
             request.scan.area,
             repairs.bound(),
         )?;

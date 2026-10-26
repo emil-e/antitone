@@ -23,6 +23,26 @@ static_assert(sizeof(AntitoneRawView) == 64);
 static_assert(sizeof(AntitoneRawThumbnail) == 32);
 
 namespace {
+class PreviewRaw : public LibRaw {
+public:
+    int preview_color_space(INT64 offset) const {
+        unsigned declared = 0;
+        const unsigned count =
+            std::min(libraw_internal_data.identify_data.tiff_nifds, unsigned(LIBRAW_IFD_MAXCOUNT));
+        for (unsigned i = 0; i < count; ++i) {
+            if (tiff_ifd[i].offset != offset || !tiff_ifd[i].dng_levels.preview_colorspace)
+                continue;
+            const auto value = tiff_ifd[i].dng_levels.preview_colorspace;
+            if (declared && declared != value)
+                return 65535;
+            declared = value;
+        }
+        // A preview IFD's declaration overrides global RAW EXIF. ICC-bearing JPEGs
+        // are interpreted by the shared decoder even when this label is unknown.
+        return declared ? (declared == 2 ? 1 : 65535) : imgdata.color.ExifColorSpace;
+    }
+};
+
 int check(int code, char *error, size_t size) {
     if (code)
         std::snprintf(error, size, "%s", LibRaw::strerror(code));
@@ -322,7 +342,7 @@ static std::wstring wide_path(const char *path) {
 extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out, char *error,
                                    size_t size) try {
     antitone::NativeLog diagnostic("raw", "open");
-    auto raw = std::make_unique<LibRaw>();
+    auto raw = std::make_unique<PreviewRaw>();
     raw->imgdata.params.use_camera_matrix = 1;
     SonyLensCapture lens;
     raw->set_exifparser_handler(sony_lens_tag, &lens);
@@ -344,7 +364,7 @@ extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out, c
     metadata(*raw, *out);
     out->vendor.sony_lens = selected_sony_lens(*raw, lens);
     diagnostic.complete();
-    return raw.release();
+    return static_cast<LibRaw *>(raw.release());
 } catch (const std::bad_alloc &) {
 
     // Allocation failure must not unwind across the Rust C ABI.
@@ -355,19 +375,26 @@ extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out, c
 extern "C" int antitone_raw_thumbnail(void *handle, AntitoneRawThumbnail *out, char *error,
                                       size_t size) try {
     *out = {};
-    auto &raw = *static_cast<LibRaw *>(handle);
+    auto &raw = *static_cast<PreviewRaw *>(static_cast<LibRaw *>(handle));
     const auto &list = raw.imgdata.thumbs_list;
     int selected = -1;
     uint64_t selected_area = 0;
     bool sufficient = false;
-    // Tiny EXIF thumbnails can letterbox a 3:2 camera image into a 4:3 canvas.
-    // Prefer enough resolution for a 256-pixel filmstrip proxy before minimizing decode cost.
+    // Tiny camera thumbnails can use undocumented framing. Prefer a proxy-sized
+    // reference when available; sharing keeps display and metering decode costs together.
     constexpr unsigned preview_edge = 256;
+    constexpr unsigned max_edge = 8192;
+    constexpr unsigned max_bytes = 8 * 1024 * 1024;
+    constexpr uint64_t max_pixels = 96 * 1024 * 1024 / 3;
     for (int index = 0; index < list.thumbcount; ++index) {
         const auto &item = list.thumblist[index];
-        if (item.tformat != LIBRAW_INTERNAL_THUMBNAIL_JPEG || !item.twidth || !item.theight ||
-            item.twidth > 2048 || item.theight > 2048 || !item.tlength ||
-            item.tlength > 1024 * 1024)
+        const bool jpeg = item.tformat == LIBRAW_INTERNAL_THUMBNAIL_JPEG;
+        const bool rgb = item.tformat == LIBRAW_INTERNAL_THUMBNAIL_PPM &&
+                         ((item.tmisc >> 5) & 7) == 3 && (item.tmisc & 31) == 8;
+        if ((!jpeg && !rgb) || !item.twidth || !item.theight || item.twidth > max_edge ||
+            item.theight > max_edge || uint64_t(item.twidth) * item.theight > max_pixels ||
+            !item.tlength || item.tlength > max_bytes ||
+            (rgb && raw.preview_color_space(item.toffset) != 1))
             continue;
         const bool enough = item.twidth >= preview_edge || item.theight >= preview_edge;
         const uint64_t area = uint64_t(item.twidth) * item.theight;
@@ -384,22 +411,26 @@ extern "C" int antitone_raw_thumbnail(void *handle, AntitoneRawThumbnail *out, c
     if (check(code, error, size))
         return code;
     const auto &thumb = raw.imgdata.thumbnail;
-    if (thumb.tformat != LIBRAW_THUMBNAIL_JPEG || !thumb.thumb || !thumb.tlength ||
-        thumb.tlength > 1024 * 1024 || !thumb.twidth || !thumb.theight || thumb.twidth > 2048 ||
-        thumb.theight > 2048)
+    const bool jpeg = thumb.tformat == LIBRAW_THUMBNAIL_JPEG;
+    const bool rgb = thumb.tformat == LIBRAW_THUMBNAIL_BITMAP && thumb.tcolors == 3 &&
+                     uint64_t(thumb.twidth) * thumb.theight * 3 == thumb.tlength;
+    if ((!jpeg && !rgb) || !thumb.thumb || !thumb.tlength || thumb.tlength > max_bytes ||
+        !thumb.twidth || !thumb.theight || thumb.twidth > max_edge || thumb.theight > max_edge ||
+        uint64_t(thumb.twidth) * thumb.theight > max_pixels)
         return 0;
     // Borrowed until the handle's next thumbnail extraction or close; Rust copies before either.
-    out->jpeg = reinterpret_cast<const uint8_t *>(thumb.thumb);
+    out->data = reinterpret_cast<const uint8_t *>(thumb.thumb);
     out->bytes = thumb.tlength;
     out->width = thumb.twidth;
     out->height = thumb.theight;
     out->flip = list.thumblist[selected].tflip == 0xffff ? raw.imgdata.sizes.flip
                                                          : list.thumblist[selected].tflip;
-    out->color_space = raw.imgdata.color.ExifColorSpace;
+    out->color_space = raw.preview_color_space(list.thumblist[selected].toffset);
+    out->format = jpeg ? 1 : 2;
     return 0;
 } catch (const std::bad_alloc &) {
 
-    std::snprintf(error, size, "Unable to allocate embedded JPEG preview");
+    std::snprintf(error, size, "Unable to allocate embedded preview");
     return -1;
 }
 

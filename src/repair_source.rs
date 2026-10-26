@@ -1,4 +1,8 @@
 //! Source-aware neutral-AP1 sampling shared by interactive and offscreen repair consumers.
+#[cfg(all(test, feature = "project", feature = "ocio-reference"))]
+#[path = "repair_source_normalization_tests.rs"]
+mod normalization_tests;
+
 use crate::{
     Error,
     dust_repair::{self, EvaluatedRepair, Execution, Repair},
@@ -30,7 +34,7 @@ pub(crate) fn evaluate_with(
         Some(base) => input.with_calibration(scan.processing_calibration(base)?),
         None => *input,
     };
-    let pipeline = InputPipeline::ungraded(input, scan.camera_to_ap1)?;
+    let pipeline = InputPipeline::ungraded(input, scan.positive_matrix(&input)?)?;
     dust_repair::evaluate_with(
         repair,
         scan.area,

@@ -22,12 +22,12 @@ use std::{
 #[path = "project_json.rs"]
 mod json;
 
-pub const SCHEMA_VERSION: u32 = 11;
+pub const SCHEMA_VERSION: u32 = 12;
 /// Negative scanning is independent of the camera's as-shot white balance.
 pub const UNITY_WB: [f64; 4] = [1.; 4];
 // Bump when native/raw_bridge.cpp development or scan.rs matrix/normalization/floor contracts change.
 pub const DEVELOPMENT_CONTRACT: &str =
-    "libraw-camera-ahd-sony-shading-active-bilinear-f32-inversion-ap1-floor-v4";
+    "libraw-camera-ahd-sony-shading-active-bilinear-f32-green-referenced-v5";
 pub const DNG_DEVELOPMENT_CONTRACT: &str = "adobe-dng-sdk-camera-post-op-wb-native-quantum-v2";
 pub const OUTPUT_CONTRACT: &str = "ocio-2.6.0-aces2-100nit-antitone-srgb-displayp3-v2";
 type Result<T> = std::result::Result<T, Error>;
@@ -90,6 +90,14 @@ impl Development {
             };
         }
         Self::new(crate::raw::version(), wb)
+    }
+
+    pub(crate) fn source_scale(&self) -> Result<f64> {
+        if self.contract == DEVELOPMENT_CONTRACT {
+            crate::processing::libraw_green_scale(self.fixed_wb)
+        } else {
+            Ok(1.)
+        }
     }
 
     pub(crate) fn validate(&self) -> Result<()> {
@@ -159,6 +167,24 @@ pub struct SourceDevelopment {
 }
 
 impl SourceDevelopment {
+    #[cfg(feature = "raw")]
+    pub(crate) fn from_metadata(
+        metadata: &crate::raw::Metadata,
+        fixed_wb: [f64; 4],
+    ) -> Result<Self> {
+        let area = metadata.image_area()?;
+        Ok(Self {
+            decode: metadata.development(fixed_wb),
+            lens_correction: metadata.lens_identity()?,
+            dng_development: metadata.dng_identity(),
+            dimensions: metadata.source_dimensions()?,
+            active_area: [area.x, area.y, area.width, area.height],
+            camera_model: metadata.camera_model(),
+            camera_to_ap1: metadata.camera_to_ap1()?.to_cols_array_2d(),
+            input_floor: metadata.source_input_floor(fixed_wb)?,
+        })
+    }
+
     pub fn camera_basis(&self) -> CameraBasis {
         CameraBasis {
             camera_model: self.camera_model.clone(),
@@ -208,12 +234,15 @@ impl SourceDevelopment {
         )?;
         require(
             self.input_floor.is_finite()
+                && self.input_floor
+                    >= crate::processing::CAMERA_INPUT_FLOOR * self.decode.source_scale()?
                 && (crate::processing::CAMERA_INPUT_FLOOR
                     ..=crate::processing::CAMERA_INPUT_FLOOR * crate::processing::MAX_SOURCE_GAIN)
                     .contains(&self.input_floor)
                 && (self.lens_correction.is_some()
                     || self.dng_development.is_some()
-                    || self.input_floor == crate::processing::CAMERA_INPUT_FLOOR),
+                    || self.input_floor
+                        == crate::processing::CAMERA_INPUT_FLOOR * self.decode.source_scale()?),
             "source floor must match the supported native or lens-developed domain",
         )
     }
@@ -395,6 +424,13 @@ pub struct Project {
         skip_serializing_if = "crate::spatial_metadata::empty_or_invalid"
     )]
     pub spatial_metadata: Option<crate::spatial_metadata::Metadata>,
+    /// Resolved source initialization accompanies a write without becoming an accepted edit.
+    #[serde(
+        default,
+        deserialize_with = "crate::exposure_metadata::read_cached",
+        skip_serializing_if = "crate::exposure_metadata::empty_or_invalid"
+    )]
+    pub exposure_metadata: Option<crate::exposure_metadata::Metadata>,
 }
 
 fn deserialize_schema<'de, D: serde::Deserializer<'de>>(
@@ -423,6 +459,7 @@ impl Default for Project {
             analysis_area: None,
             analysis_regions: Vec::new(),
             spatial_metadata: None,
+            exposure_metadata: None,
         }
     }
 }

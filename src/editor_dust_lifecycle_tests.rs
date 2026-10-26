@@ -776,7 +776,7 @@ fn corrected_repair_evaluation_uses_only_the_ungraded_positive_and_retains_signe
         loaded: 1,
         source: SourceId(1),
         cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        signature: [0; ProcessingParameters::BYTE_LEN],
+        signature: Default::default(),
         repair,
         input: calibration.into(),
     };

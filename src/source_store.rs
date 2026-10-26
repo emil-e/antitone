@@ -1,6 +1,7 @@
 //! Document-scoped camera data reuse; native and proxy ownership share one byte LRU.
 use crate::{
     Error,
+    embedded_preview::Preview,
     project::SourceDevelopment,
     scan::{CameraProxy, DevelopedSource},
     source_revision::FileKey,
@@ -8,7 +9,7 @@ use crate::{
 use std::{
     collections::VecDeque,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, Weak},
+    sync::{Arc, Mutex, OnceLock, Weak},
 };
 
 /// Capture before development; grade/crop/correction/target/priority and SourceId are excluded.
@@ -18,26 +19,6 @@ pub struct SourceKey {
     locator: PathBuf,
     file: FileKey,
     source: SourceDevelopment,
-}
-
-#[cfg(test)]
-impl SourceKey {
-    pub fn capture_with_development(
-        path: &Path,
-        source: &SourceDevelopment,
-        _development: &crate::project::Development,
-    ) -> Option<Self> {
-        Self::capture(path, source)
-    }
-
-    pub(crate) fn from_revision_with_development(
-        path: &Path,
-        file: FileKey,
-        source: &SourceDevelopment,
-        _development: &crate::project::Development,
-    ) -> Option<Self> {
-        Self::from_revision(path, file, source)
-    }
 }
 
 impl SourceKey {
@@ -116,24 +97,36 @@ pub struct Charges {
 enum Kind {
     Native,
     Proxy,
+    Preview,
 }
 
 #[derive(Clone)]
 enum Owned {
     Native(Arc<DevelopedSource>),
     Proxy(Arc<CameraProxy>),
+    Preview(Arc<Preview>),
 }
 
 enum Borrowed {
     Native(Weak<DevelopedSource>),
     Proxy(Weak<CameraProxy>),
+    Preview(Weak<Preview>),
 }
 
 impl Owned {
+    fn reference(&self) -> Option<&crate::exposure_reference::ReferenceExposure> {
+        match self {
+            Self::Native(source) => source.reference_exposure.get(),
+            Self::Proxy(proxy) => proxy.reference_exposure.get(),
+            Self::Preview(_) => None,
+        }
+    }
+
     fn kind(&self) -> Kind {
         match self {
             Self::Native(_) => Kind::Native,
             Self::Proxy(_) => Kind::Proxy,
+            Self::Preview(_) => Kind::Preview,
         }
     }
 
@@ -141,6 +134,7 @@ impl Owned {
         match self {
             Self::Native(source) => Borrowed::Native(Arc::downgrade(source)),
             Self::Proxy(proxy) => Borrowed::Proxy(Arc::downgrade(proxy)),
+            Self::Preview(preview) => Borrowed::Preview(Arc::downgrade(preview)),
         }
     }
 }
@@ -150,6 +144,7 @@ impl Borrowed {
         match self {
             Self::Native(_) => Kind::Native,
             Self::Proxy(_) => Kind::Proxy,
+            Self::Preview(_) => Kind::Preview,
         }
     }
 
@@ -157,6 +152,7 @@ impl Borrowed {
         match self {
             Self::Native(source) => source.strong_count() != 0,
             Self::Proxy(proxy) => proxy.strong_count() != 0,
+            Self::Preview(preview) => preview.strong_count() != 0,
         }
     }
 
@@ -164,6 +160,7 @@ impl Borrowed {
         match self {
             Self::Native(source) => source.upgrade().map(Owned::Native),
             Self::Proxy(proxy) => proxy.upgrade().map(Owned::Proxy),
+            Self::Preview(preview) => preview.upgrade().map(Owned::Preview),
         }
     }
 
@@ -171,13 +168,64 @@ impl Borrowed {
         match (self, other) {
             (Self::Native(a), Self::Native(b)) => a.ptr_eq(b),
             (Self::Proxy(a), Self::Proxy(b)) => a.ptr_eq(b),
+            (Self::Preview(a), Self::Preview(b)) => a.ptr_eq(b),
             _ => false,
         }
     }
 }
 
+#[derive(Clone, PartialEq)]
+enum ResourceKey {
+    Source(Box<SourceKey>),
+    Preview(FileKey),
+}
+
+#[derive(Clone, Copy)]
+enum KeyRef<'a> {
+    Source(&'a SourceKey),
+    Preview(&'a FileKey),
+}
+
+impl KeyRef<'_> {
+    fn current(self) -> bool {
+        match self {
+            Self::Source(key) => key.current(),
+            Self::Preview(file) => file.current_at(&file.path),
+        }
+    }
+
+    fn matches(self, key: &ResourceKey) -> bool {
+        match (self, key) {
+            (Self::Source(a), ResourceKey::Source(b)) => a == b.as_ref(),
+            (Self::Preview(a), ResourceKey::Preview(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl ResourceKey {
+    fn as_ref(&self) -> KeyRef<'_> {
+        match self {
+            Self::Source(key) => KeyRef::Source(key),
+            Self::Preview(file) => KeyRef::Preview(file),
+        }
+    }
+
+    fn current(&self) -> bool {
+        self.as_ref().current()
+    }
+
+    #[cfg(feature = "editor")]
+    fn allowed(&self, sources: &[SourceKey]) -> bool {
+        match self {
+            Self::Source(key) => sources.contains(key.as_ref()),
+            Self::Preview(file) => sources.iter().any(|source| source.file == *file),
+        }
+    }
+}
+
 struct Entry {
-    key: SourceKey,
+    key: ResourceKey,
     resource: Borrowed,
     retained: Option<Owned>,
     bytes: u64,
@@ -197,7 +245,8 @@ impl State {
     }
 
     fn essential(&self, entry: &Entry) -> bool {
-        entry.resource.kind() == Kind::Proxy && self.protected.contains(&entry.key)
+        entry.resource.kind() == Kind::Proxy
+            && matches!(&entry.key, ResourceKey::Source(key) if self.protected.contains(key.as_ref()))
     }
 
     fn protected_bytes(&self) -> u64 {
@@ -246,20 +295,38 @@ impl State {
         }
     }
 
-    fn evict(&mut self, key: &SourceKey, removed: &mut Vec<Owned>) {
+    fn evict(&mut self, key: KeyRef<'_>, removed: &mut Vec<Owned>) {
         for index in 0..self.entries.len() {
-            if self.entries[index].key == *key {
+            if key.matches(&self.entries[index].key) {
                 self.remove_ownership(index, removed);
             }
         }
     }
 }
 
-/// One store per document; candidates and accepted documents have distinct lifecycles.
-/// Active leases survive eviction/closure. Only selected/visible CPU proxies are protected;
-/// retaining a full native source is always optional, even while a consumer leases it.
+#[cfg(test)]
+#[path = "source_store_exposure_tests.rs"]
+mod exposure_tests;
+#[cfg(test)]
+#[path = "source_store_preview_tests.rs"]
+mod preview_tests;
+
+type PreviewResult = Result<Option<Arc<Preview>>, String>;
+type PreviewFlight = OnceLock<PreviewResult>;
+type PreviewLease = (FileKey, Weak<PreviewFlight>, Weak<Preview>);
+type ExposureMemo = Arc<OnceLock<crate::exposure_reference::ReferenceExposure>>;
+
+pub struct PreparedSource {
+    pub source: Arc<DevelopedSource>,
+    pub proxy: Option<Arc<CameraProxy>>,
+}
+
+/// Pixel ownership is scoped to a document generation; same-document forks share
+/// immutable metering and in-flight preview work. Active leases survive eviction/closure.
 pub struct SourceStore {
     state: Mutex<State>,
+    preview_flights: Arc<Mutex<Vec<PreviewLease>>>,
+    exposures: Arc<Mutex<Vec<(SourceKey, ExposureMemo)>>>,
     #[cfg(feature = "editor")]
     closed: event_listener::Event,
 }
@@ -267,6 +334,8 @@ pub struct SourceStore {
 impl SourceStore {
     pub fn new(budget: u64) -> Self {
         Self {
+            preview_flights: Arc::new(Mutex::new(Vec::new())),
+            exposures: Arc::new(Mutex::new(Vec::new())),
             #[cfg(feature = "editor")]
             closed: event_listener::Event::new(),
             state: Mutex::new(State {
@@ -279,9 +348,30 @@ impl SourceStore {
         }
     }
 
-    fn get_resource(&self, key: &SourceKey, kind: Kind) -> Option<Owned> {
+    /// Same-document candidates isolate pixel publication but retain completed metering
+    /// and in-flight reference work even after optional pixel ownership is evicted.
+    pub fn fork(&self, budget: u64) -> Self {
+        let mut fork = Self::new(budget);
+        fork.exposures = self.exposures.clone();
+        fork.preview_flights = self.preview_flights.clone();
+        fork
+    }
+
+    // Preparation interprets an already captured pixel lease. Acquisition/publication owns
+    // locator freshness; looking up that snapshot must not stat or relabel it.
+    fn peek_resource(&self, key: KeyRef<'_>, kind: Kind) -> Option<Owned> {
+        self.state
+            .lock()
+            .unwrap()
+            .entries
+            .iter()
+            .find(|entry| key.matches(&entry.key) && entry.resource.kind() == kind)
+            .and_then(|entry| entry.resource.upgrade())
+    }
+
+    fn get_resource(&self, key: KeyRef<'_>, kind: Kind) -> Option<Owned> {
         if !key.current() {
-            self.evict(key);
+            self.evict_resource(key);
             return None;
         }
         let mut removed = Vec::new();
@@ -294,7 +384,7 @@ impl SourceStore {
             let index = state
                 .entries
                 .iter()
-                .position(|entry| entry.key == *key && entry.resource.kind() == kind)?;
+                .position(|entry| key.matches(&entry.key) && entry.resource.kind() == kind)?;
             let mut entry = state.entries.remove(index).unwrap();
             let result = entry.resource.upgrade();
             if let Some(resource) = &result {
@@ -308,23 +398,288 @@ impl SourceStore {
         if key.current() {
             result
         } else {
-            self.evict(key);
+            self.evict_resource(key);
             None
         }
     }
 
     pub fn get(&self, key: &SourceKey) -> Option<Arc<DevelopedSource>> {
-        match self.get_resource(key, Kind::Native)? {
+        match self.get_resource(KeyRef::Source(key), Kind::Native)? {
             Owned::Native(source) => Some(source),
-            Owned::Proxy(_) => unreachable!(),
+            _ => unreachable!(),
         }
     }
 
     pub fn get_proxy(&self, key: &SourceKey) -> Option<Arc<CameraProxy>> {
-        match self.get_resource(key, Kind::Proxy)? {
+        match self.get_resource(KeyRef::Source(key), Kind::Proxy)? {
             Owned::Proxy(proxy) => Some(proxy),
-            Owned::Native(_) => unreachable!(),
+            _ => unreachable!(),
         }
+    }
+
+    /// Snapshot completed values only; saving must not start metering unvisited photos.
+    pub fn exposure_metadata(
+        &self,
+        project: &crate::project::Project,
+        path: impl Fn(crate::project::SourceId) -> Result<PathBuf, Error>,
+    ) -> crate::exposure_metadata::Metadata {
+        let ready = self
+            .exposures
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|(key, value)| Some((key.clone(), value.get()?.clone())))
+            .collect::<Vec<_>>();
+        let mut metadata = crate::exposure_metadata::Metadata::default();
+        if project.input.is_negative() {
+            return metadata;
+        }
+        for source in project
+            .sources
+            .iter()
+            .filter(|source| project.order.contains(&source.id))
+        {
+            let Some(key) = path(source.id)
+                .ok()
+                .and_then(|path| SourceKey::capture(&path, &source.development))
+            else {
+                continue;
+            };
+            let Some((_, value)) = ready.iter().find(|(existing, _)| *existing == key) else {
+                continue;
+            };
+            metadata.entries.push(crate::exposure_metadata::Entry {
+                source: source.id,
+                development: source.development.clone(),
+                revision: key.file.revision.clone().unwrap(),
+                reference: value.clone(),
+            });
+        }
+        metadata
+    }
+
+    pub fn restore_exposure_metadata(
+        &self,
+        metadata: &crate::exposure_metadata::Metadata,
+        project: &crate::project::Project,
+        path: impl Fn(crate::project::SourceId) -> Result<PathBuf, Error>,
+    ) {
+        for entry in metadata.for_project(project).entries {
+            let Some(key) = path(entry.source)
+                .ok()
+                .and_then(|path| SourceKey::capture(&path, &entry.development))
+            else {
+                continue;
+            };
+            if key.file.revision.as_ref() == Some(&entry.revision) {
+                let _ = self.exposure_memo(&key).set(entry.reference);
+            }
+        }
+    }
+
+    /// Resolve a developed photo's starting interpretation on a worker. Pixel eviction
+    /// cannot re-meter the same capture; an optional returned proxy reuses metering work.
+    pub fn prepare_source(
+        &self,
+        input: crate::processing::InputSettings,
+        source: &Arc<DevelopedSource>,
+    ) -> Result<PreparedSource, Error> {
+        let development = SourceDevelopment::from_metadata(&source.metadata(), source.fixed_wb())?;
+        let key = SourceKey::from_revision(&source.file.path, source.file.clone(), &development);
+        let source = key
+            .as_ref()
+            .and_then(
+                |key| match self.peek_resource(KeyRef::Source(key), Kind::Native) {
+                    Some(Owned::Native(source)) => Some(source),
+                    _ => None,
+                },
+            )
+            .unwrap_or_else(|| source.clone());
+        let mut prepared = crate::photo_preparation::native(
+            self,
+            &source.file.path,
+            &source.file,
+            &development,
+            input,
+            &source,
+        )?;
+        if let Some(key) = key {
+            if !Arc::ptr_eq(&source, &prepared.source)
+                && let Some(bytes) = prepared.source.retained_bytes()
+                && let Some(Owned::Native(source)) = self.publish_interpretation(
+                    ResourceKey::Source(Box::new(key.clone())),
+                    Owned::Native(prepared.source.clone()),
+                    bytes,
+                    true,
+                )?
+            {
+                prepared.source = source;
+            }
+            if let Some(proxy) = &prepared.proxy {
+                prepared.proxy = Some(self.prepare_proxy(&key, input, proxy)?);
+            }
+        }
+        Ok(prepared)
+    }
+
+    /// Resolve cached pixels against the document's canonical outcome; a restored value
+    /// takes precedence over disposable hints without copying the shared pixel buffer.
+    pub fn prepare_proxy(
+        &self,
+        key: &SourceKey,
+        input: crate::processing::InputSettings,
+        proxy: &Arc<CameraProxy>,
+    ) -> Result<Arc<CameraProxy>, Error> {
+        if !key.matches_proxy(proxy) {
+            return Err(Error::Project(
+                "camera proxy differs from its preparation key".into(),
+            ));
+        }
+        let cached = match self.peek_resource(KeyRef::Source(key), Kind::Proxy) {
+            Some(Owned::Proxy(proxy)) => Some(proxy),
+            _ => None,
+        };
+        let data = cached.clone().unwrap_or_else(|| proxy.clone());
+        let resolved = crate::photo_preparation::proxy(
+            self,
+            &key.locator,
+            &key.file,
+            &key.source,
+            input,
+            &data,
+        )?;
+        if cached
+            .as_ref()
+            .is_some_and(|cached| Arc::ptr_eq(cached, &resolved))
+        {
+            return Ok(resolved);
+        }
+        match self.publish_interpretation(
+            ResourceKey::Source(Box::new(key.clone())),
+            Owned::Proxy(resolved.clone()),
+            resolved.retained_bytes(),
+            true,
+        )? {
+            Some(Owned::Proxy(proxy)) => Ok(proxy),
+            _ => Ok(resolved),
+        }
+    }
+
+    pub(crate) fn exposure_memo(
+        &self,
+        key: &SourceKey,
+    ) -> Arc<OnceLock<crate::exposure_reference::ReferenceExposure>> {
+        let mut exposures = self.exposures.lock().unwrap();
+        if let Some((_, memo)) = exposures.iter().find(|(existing, _)| existing == key) {
+            return memo.clone();
+        }
+        let memo = Arc::new(OnceLock::new());
+        exposures.push((key.clone(), memo.clone()));
+        memo
+    }
+
+    pub(crate) fn completed_reference(
+        &self,
+        key: &SourceKey,
+    ) -> Option<crate::exposure_reference::ReferenceExposure> {
+        self.exposures
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(existing, _)| existing == key)
+            .and_then(|(_, memo)| memo.get())
+            .cloned()
+    }
+
+    #[cfg(feature = "editor")]
+    pub(crate) fn positive_matrix(
+        &self,
+        key: &SourceKey,
+        input: &crate::processing::InputSettings,
+    ) -> Result<glam::DMat3, Error> {
+        crate::scan::positive_matrix(
+            input,
+            glam::DMat3::from_cols_array_2d(&key.source.camera_to_ap1),
+            self.completed_reference(key).as_ref(),
+        )
+    }
+
+    /// Worker-only preview acquisition: extraction/decoding is single-flight, and decoded
+    /// data competes with native/proxy ownership in this store's byte budget.
+    pub(crate) fn preview(
+        &self,
+        file: &FileKey,
+        load: impl FnOnce() -> PreviewResult,
+    ) -> PreviewResult {
+        let key = ResourceKey::Preview(file.clone());
+        if !key.current() {
+            return Err("embedded preview source changed".into());
+        }
+        if let Some(Owned::Preview(preview)) = self.get_resource(key.as_ref(), Kind::Preview) {
+            return Ok(Some(preview));
+        }
+        let flight = {
+            let mut flights = self.preview_flights.lock().unwrap();
+            flights.retain(|(_, flight, ready)| {
+                flight.strong_count() != 0 || ready.strong_count() != 0
+            });
+            match flights
+                .iter()
+                .find(|(key, _, _)| key == file)
+                .and_then(|(_, weak, ready)| {
+                    weak.upgrade().or_else(|| {
+                        ready
+                            .upgrade()
+                            .map(|preview| Arc::new(OnceLock::from(Ok(Some(preview)))))
+                    })
+                }) {
+                Some(flight) => flight,
+                None => {
+                    let flight = Arc::new(OnceLock::new());
+                    if let Some((_, pending, _)) =
+                        flights.iter_mut().find(|(key, _, _)| key == file)
+                    {
+                        *pending = Arc::downgrade(&flight);
+                    } else {
+                        flights.push((file.clone(), Arc::downgrade(&flight), Weak::new()));
+                    }
+                    flight
+                }
+            }
+        };
+        let result = flight
+            .get_or_init(|| {
+                // Another producer may have completed between the first lookup and flight admission.
+                if let Some(Owned::Preview(preview)) =
+                    self.get_resource(key.as_ref(), Kind::Preview)
+                {
+                    Ok(Some(preview))
+                } else {
+                    load()
+                }
+            })
+            .clone()?;
+        if !key.current() {
+            return Err("embedded preview source changed during extraction".into());
+        }
+        if let Some(preview) = &result {
+            if let Some((_, _, ready)) = self
+                .preview_flights
+                .lock()
+                .unwrap()
+                .iter_mut()
+                .find(|(key, _, _)| key == file)
+            {
+                *ready = Arc::downgrade(preview);
+            }
+            self.publish_resource(
+                key,
+                Owned::Preview(preview.clone()),
+                preview.retained_bytes(),
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(result)
     }
 
     /// Unavailable allocation accounting disables admission, not authoritative processing.
@@ -333,6 +688,17 @@ impl SourceStore {
         key: SourceKey,
         source: Arc<DevelopedSource>,
     ) -> Result<Option<Arc<DevelopedSource>>, Error> {
+        if !key.current() {
+            return Ok(None);
+        }
+        if !key.matches(&source) {
+            return Err(Error::Project(
+                "native source differs from its development key".into(),
+            ));
+        }
+        let source = self
+            .completed_reference(&key)
+            .map_or_else(|| source.clone(), |value| source.interpreted(&value));
         let Some(bytes) = source.retained_bytes() else {
             return Ok(None);
         };
@@ -355,7 +721,14 @@ impl SourceStore {
                 "native source differs from its development key".into(),
             ));
         }
-        match self.publish_resource(key, Owned::Native(source), bytes)? {
+        let replace = source.reference_exposure.get().is_some()
+            && self.completed_reference(&key).as_ref() == source.reference_exposure.get();
+        match self.publish_interpretation(
+            ResourceKey::Source(Box::new(key)),
+            Owned::Native(source),
+            bytes,
+            replace,
+        )? {
             Some(Owned::Native(source)) => Ok(Some(source)),
             None => Ok(None),
             _ => unreachable!(),
@@ -375,8 +748,19 @@ impl SourceStore {
                 "camera proxy differs from its development key".into(),
             ));
         }
+        // CPU-only warming does not meter, but must carry any already-known canonical
+        // outcome before a pending selected preview can consume these pixels.
+        let reference = self.completed_reference(&key);
+        let proxy = reference
+            .as_ref()
+            .map_or_else(|| proxy.clone(), |value| proxy.interpreted(value));
         let bytes = proxy.retained_bytes();
-        match self.publish_resource(key, Owned::Proxy(proxy), bytes)? {
+        match self.publish_interpretation(
+            ResourceKey::Source(Box::new(key)),
+            Owned::Proxy(proxy),
+            bytes,
+            reference.is_some(),
+        )? {
             Some(Owned::Proxy(proxy)) => Ok(Some(proxy)),
             None => Ok(None),
             _ => unreachable!(),
@@ -385,9 +769,19 @@ impl SourceStore {
 
     fn publish_resource(
         &self,
-        key: SourceKey,
+        key: ResourceKey,
         incoming: Owned,
         bytes: u64,
+    ) -> Result<Option<Owned>, Error> {
+        self.publish_interpretation(key, incoming, bytes, false)
+    }
+
+    fn publish_interpretation(
+        &self,
+        key: ResourceKey,
+        incoming: Owned,
+        bytes: u64,
+        replace: bool,
     ) -> Result<Option<Owned>, Error> {
         if bytes == 0 {
             return Err(Error::InvalidParameter("source charge must be nonzero"));
@@ -415,6 +809,21 @@ impl SourceStore {
                         return Err(Error::InvalidParameter("existing source charge differs"));
                     }
                     let mut entry = state.entries.remove(index).unwrap();
+                    let existing = if replace
+                        && !entry.resource.same(&weak)
+                        && existing.reference() != incoming.reference()
+                    {
+                        if let Some(owned) = entry.retained.take() {
+                            state.bytes -= entry.bytes;
+                            removed.push(owned);
+                        }
+                        removed.push(existing);
+                        entry.resource = incoming.downgrade();
+                        entry.bytes = bytes;
+                        incoming.clone()
+                    } else {
+                        existing
+                    };
                     state.keep(&mut entry, existing.clone());
                     state.entries.push_back(entry);
                     existing
@@ -440,14 +849,14 @@ impl SourceStore {
         if key.current() {
             Ok(Some(result))
         } else {
-            self.evict(&key);
+            self.evict_resource(key.as_ref());
             Ok(None)
         }
     }
 
     fn insert(
         state: &mut State,
-        key: SourceKey,
+        key: ResourceKey,
         incoming: &Owned,
         bytes: u64,
     ) -> Result<(), Error> {
@@ -470,6 +879,10 @@ impl SourceStore {
 
     /// Drop all cache ownership under this stale key; leases remain valid.
     pub fn evict(&self, key: &SourceKey) {
+        self.evict_resource(KeyRef::Source(key));
+    }
+
+    fn evict_resource(&self, key: KeyRef<'_>) {
         let mut removed = Vec::new();
         self.state.lock().unwrap().evict(key, &mut removed);
         drop(removed);
@@ -535,6 +948,17 @@ impl SourceStore {
                 .collect::<Vec<_>>();
             (moved, protected)
         };
+        let exposures = self
+            .exposures
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(key, _)| allowed.contains(key))
+            .filter_map(|(key, memo)| Some((key.clone(), memo.get()?.clone())))
+            .collect::<Vec<_>>();
+        for (key, value) in exposures {
+            let _ = target.exposure_memo(&key).set(value);
+        }
         target.protect_proxies(
             protected
                 .into_iter()
@@ -542,7 +966,7 @@ impl SourceStore {
                 .collect(),
         );
         for (key, resource, bytes) in moved {
-            if allowed.contains(&key)
+            if key.allowed(allowed)
                 && let Err(error) = target.publish_resource(key, resource, bytes)
             {
                 log::warn!(error = error.to_string().as_str(); "cpu_cache_transfer_rejected");

@@ -290,6 +290,7 @@ fn prepare_source_scheduled(
     cancelled: &dyn Fn() -> bool,
 ) -> Result<(Ready, Scan), Error> {
     let developed = source::Request {
+        input: Default::default(),
         path,
         wb,
         expected: expected.cloned(),

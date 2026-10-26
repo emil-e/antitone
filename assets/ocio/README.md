@@ -8,6 +8,10 @@ These are generated algorithms with two 363-entry 2D parameter tables per target
 
 LUT files contain little-endian f32, one channel for table 0 and three channels for table 1. The viewer expands texels to RGBA32Float without changing values and uses nonfiltering samplers.
 
+## Neutral exposure reference
+
+`exposure-neutral-log2.f32` supports camera-preview brightness estimation without a runtime OCIO dependency. The same generator writes it into `.cache/probes/`: 257 little-endian f32 log2 scene-luminance values, sampled uniformly at display-luminance log2 values from −12 to 0. It inverts the neutral 100-nit sRGB ACES response before encoding; it does not invert a camera's creative rendering. Regenerate with `scripts/generate-ocio-reference.sh`, run the `exposure_reference` tests with `ocio-reference`, then copy the verified payload here. Its SHA-256 is `86253cbf2f979137282ce566a22184b3af7915f7bd747779293bd52a6cfbd2f5`.
+
 ## Fixed reference for creative-look generation
 
 `looks-reference/` separately pins the p3rec50 D65/100-nit **forward and inverse** algorithms and their shared reach/cusp tables, with digests/parameters in `provenance.json`. They serve the native creative-look generator, not the selected output renderer. Its strict compute adapter retains the generated mathematical bodies; changing sRGB/P3 output does not change the creative look. Keep these generated resources outside the text-only material/source catalog. The [look guide](../looks/README.md#native-application-generation) owns generation, conformance fixtures and remaining approximation/acceptance limits.
