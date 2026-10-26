@@ -113,7 +113,7 @@ The current model is **4**. Negative calibration must be finite and satisfy `Dmi
 
 ## Working on this area
 
-- [Processing](../src/processing.rs): calibration, response, domains and Roll interpretation.
+- [Processing](../src/processing.rs): calibration, input interpretation and Roll adjustments.
 - [Colour](../src/color.rs): working-space matrices, balance coordinates and Bradford WB.
 - [Photographic grading](../src/photographic.rs): contrast/saturation and stable signed evaluation.
 - [Sampling](../src/sampling.rs): manual reference and neutral fitting.

@@ -90,10 +90,7 @@ fn completion(
 #[ignore = "bounded synthetic Metal preparation/processing/ACES completion measurements, not presentation latency"]
 fn local_stage_cost_at_live_preview_and_refinement_tile_sizes() {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = antitone::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let quick = std::env::var_os("ANTITONE_ADJUSTMENT_LAYER_PERF_QUICK").is_some();
         let sizes: &[[u32; 2]] = if quick {

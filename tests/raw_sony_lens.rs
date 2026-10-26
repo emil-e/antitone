@@ -1,4 +1,5 @@
 #![cfg(all(feature = "raw", feature = "project", target_os = "macos"))]
+#[cfg(all(feature = "gpu", feature = "export", feature = "ocio-reference"))]
 use antitone::adjustment_layers::AdjustmentLayerSettings;
 
 use std::fs;

@@ -561,10 +561,7 @@ fn restored_filmstrip_height_survives_window_constraints_and_a_fresh_context() {
 fn thumbnail_grades_follow_roll_and_layers_without_inspection_gain_or_redecode() {
     let mut editor = Editor::state();
     *editor.document = fixture();
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::METAL,
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
+    let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
     let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
     editor.initialize_viewer(&device, &queue);

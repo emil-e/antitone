@@ -101,10 +101,7 @@ fn input(device: &wgpu::Device, cal: Calibration, layers: Vec<AdjustmentLayer>) 
 }
 
 async fn device() -> (wgpu::Device, wgpu::Queue) {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::METAL,
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
+    let instance = antitone::gpu::instance();
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
     adapter.request_device(&Default::default()).await.unwrap()
 }
