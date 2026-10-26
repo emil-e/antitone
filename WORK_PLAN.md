@@ -33,9 +33,16 @@ Prior architecture diagrams remain isolated in the architecture-walkthrough work
 - No Windows runtime or native-window automation performed. GPU implementation files remain unchanged.
 - Shared checkout-local native dependencies; offline builds, no downloads/system installs. Disposable artifacts are in .cache/.
 
+## Review and finishing state
+One independent fresh-context review examined the complete change, owning guides and test quality at case/assertion/fixture level. Its three actionable findings were confirmed and addressed:
+- Native retirement now removes unwanted tasks from join discovery atomically before worker-local cleanup; a late replacement starts fresh.
+- Thumbnail consumers drop pending provider futures when their document store closes, without using GPU-ticket changes to retire useful CPU/disk work.
+- The private native throughput diagnostic clears completed-result discovery between measured schedules and asserts actual native-call counts, keeping its oracle leases from turning execution measurements into cache-hit timing.
+
+Both retirement regressions fail with their respective fixes disabled and pass after restoration. Combined native/provider/thumbnail workflow checks: 37 passed, 1 opt-in diagnostic ignored. No private diagnostic workload was run. Owning documentation now explains the provider/cache boundary with one compact diagram; format/link checks pass. UI-feature clippy with warnings denied, separate production editor check, core tests and authored source/DNG integrations also passed before the final retirement fixes.
+
+The final editor/provider/store/revision/cancellation/application regression sweep after these fixes passed: 784 tests, 9 opt-in diagnostics ignored. UI-feature clippy with warnings denied and the separate production editor check also passed.
+
 ## Remaining / next actions
-1. Inspect remaining execution/provider boundaries for stale coupling or clearly redundant admission, without expanding into GPU work or adding frameworks.
-2. Update owning architecture/native/editor/development navigation documentation to the resulting design; keep it concise.
-3. Run source-store/integration and final format/documentation checks, and any targeted verification needed by finishing edits.
-4. Obtain one independent fresh-context review of the full change, explicitly covering test quality and fixture/control assumptions; assess findings with evidence and fix relevant defects.
-5. Record final verification/limits and finish a coherent local commit history. Do not push or open a PR.
+1. Run the focused composed UI/source lifecycle checks in release; finish final format/documentation checks and record limits.
+2. Commit owning documentation and the final plan state. Do not push or open a PR.

@@ -144,6 +144,16 @@ struct Shared {
 }
 
 impl Shared {
+    fn retire_if_unwanted(&self, task: &Arc<Task>) -> bool {
+        let mut state = self.state.lock().unwrap();
+        if !task.demands.lock().unwrap().is_empty() {
+            return false;
+        }
+        // Exclude new joiners before worker-local native cleanup starts.
+        state.tasks.retain(|entry| !Arc::ptr_eq(entry, task));
+        true
+    }
+
     fn close(&self) {
         let tasks = {
             let mut state = self.state.lock().unwrap();
@@ -309,7 +319,7 @@ impl Scheduler {
     ) -> Self {
         #[cfg(not(test))]
         let pressure = crate::sys::memory_pressure;
-        Self::start_workers(2, pressure, move |_| {
+        Self::start_workers(2, pressure, move |_, shared| {
             #[cfg(test)]
             let observe = observe.clone();
             // LibRaw decoded handles and SDK inspected headers stay worker-local across
@@ -317,7 +327,7 @@ impl Scheduler {
             let mut unpacked: HashMap<u64, Unpacked> = HashMap::new();
 
             Box::new(move |task| {
-                if task.demands.lock().unwrap().is_empty() {
+                if shared.retire_if_unwanted(task) {
                     unpacked.remove(&task.id);
                     return Err("source demand retired".into());
                 }
@@ -423,7 +433,7 @@ impl Scheduler {
     fn start_workers(
         count: usize,
         pressure: fn() -> crate::sys::MemoryPressure,
-        build: impl Fn(usize) -> Step + Send + Sync + 'static,
+        build: impl Fn(usize, Arc<Shared>) -> Step + Send + Sync + 'static,
     ) -> Self {
         let shared = Self::shared();
         let build = Arc::new(build);
@@ -434,7 +444,7 @@ impl Scheduler {
             workers.push(std::thread::spawn(move || {
                 // Also wake consumers if a worker unwinds; this is not native/OOM recovery.
                 let _exit = Owner(worker_shared.clone());
-                let mut step = build(slot);
+                let mut step = build(slot, worker_shared.clone());
                 run(worker_shared, slot, pressure, move |task| step(task));
             }));
         }

@@ -365,6 +365,60 @@ fn document_replacement_retires_old_publication_without_stopping_the_shared_work
 }
 
 #[test]
+fn document_retirement_drops_thumbnail_demand_queued_behind_unrelated_native_work() {
+    let (document, _sources) = document(1);
+    let id = document.project.order[0];
+    let path = document.source_path(id).unwrap();
+    let (scheduler, starts, release, calls) = gated(&document);
+    let unrelated = scheduler
+        .submit(
+            development::Request {
+                path,
+                wb: None,
+                expected: None,
+                key: None,
+            },
+            development::Priority::Foreground,
+        )
+        .unwrap();
+    starts.recv_timeout(Duration::from_secs(5)).unwrap();
+    let disk = tempfile::tempdir().unwrap();
+    let editor = editor(document, disk.path(), scheduler.clone());
+    with_application(editor, |app| {
+        app.enter(|editor, access| begin(editor, access, Demand::Visible(vec![id])));
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while scheduler.waiter_count() != 2 {
+            app.pump();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "thumbnail did not queue its source demand"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        app.update(|editor| {
+            editor.document = Document::default().into();
+            editor
+                .thumbnails
+                .bind_sources(editor.document.cache().clone());
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while scheduler.waiter_count() != 1 {
+            app.pump();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "retired thumbnail still owns native demand"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        release.send(()).unwrap();
+        futures_lite::future::block_on(unrelated).unwrap();
+    });
+    scheduler.close_and_wait().unwrap();
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+}
+
+#[test]
 fn application_retirement_drops_waiters_but_running_native_work_finishes_before_cleanup() {
     let (document, _sources) = document(1);
     let store = document.cache().clone();

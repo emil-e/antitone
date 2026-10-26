@@ -403,6 +403,10 @@ pub(super) fn worker(
             pending.push((worker.begin(submission.job), submission.reply));
         }
         for (work, _) in &mut pending {
+            if work.job.store.is_closed() {
+                work.input = Ok(Input::Retired);
+                continue;
+            }
             if let Ok(Input::Loading(load)) = &mut work.input {
                 let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
                 if let std::task::Poll::Ready(result) = load.as_mut().poll(&mut cx) {

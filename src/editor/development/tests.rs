@@ -90,6 +90,48 @@ fn async_joined_consumers_wake_independently_and_share_frozen_pixels() {
 }
 
 #[test]
+fn a_new_demand_during_native_retirement_starts_fresh_instead_of_receiving_retirement() {
+    let file = fixture::bayer_dng();
+    let source = Scan::open(file.path(), Some([1.; 4]))
+        .unwrap()
+        .source()
+        .clone();
+    let job = request(file.path());
+    let (entered, starts) = mpsc::channel();
+    let (release, resume) = mpsc::channel();
+    let (retiring, cleanup) = mpsc::channel();
+    let (release_cleanup, resume_cleanup) = mpsc::channel();
+    let scheduler = Scheduler::start(move |shared| {
+        let owner = shared.clone();
+        let mut unpacked = false;
+        run(shared, 0, crate::sys::memory_pressure, move |task| {
+            if owner.retire_if_unwanted(task) {
+                retiring.send(()).unwrap();
+                resume_cleanup.recv_timeout(Duration::from_secs(5)).unwrap();
+                return Err("source demand retired".into());
+            }
+            if !unpacked {
+                unpacked = true;
+                entered.send(()).unwrap();
+                resume.recv_timeout(Duration::from_secs(5)).unwrap();
+                Ok(None)
+            } else {
+                Ok(Some(source.clone()))
+            }
+        });
+    });
+    let first = scheduler.submit(job.clone(), Priority::Foreground).unwrap();
+    starts.recv_timeout(Duration::from_secs(5)).unwrap();
+    drop(first);
+    release.send(()).unwrap();
+    cleanup.recv_timeout(Duration::from_secs(5)).unwrap();
+    let replacement = scheduler.submit(job, Priority::Foreground).unwrap();
+    release_cleanup.send(()).unwrap();
+    assert!(replacement.wait(|| false).is_ok());
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
 fn async_native_waiters_observe_scheduler_closure_without_waiting_for_native_return() {
     {
         let file = fixture::bayer_dng();
@@ -326,7 +368,22 @@ fn composed_native_overlap_throughput_and_foreground_latency() {
             .map(|c| c.get())
             .unwrap_or(0)
     );
-    let scheduler = Scheduler::new();
+    let native_calls = Arc::new(AtomicUsize::new(0));
+    let observed = native_calls.clone();
+    let scheduler = Scheduler::new_observed(move |_, phase, _| {
+        if matches!(phase, NativePhase::DevelopBegin) {
+            observed.fetch_add(1, Ordering::Relaxed);
+        }
+        Ok(())
+    });
+    let fresh_schedule = || {
+        until(&scheduler, |state| {
+            state.tasks.is_empty() && state.steps == 0
+        });
+        // Oracle leases stay alive; each measured schedule must develop independently.
+        scheduler.owner.0.state.lock().unwrap().live.clear();
+        native_calls.load(Ordering::Relaxed)
+    };
     let name = |i: usize| paths[i].file_name().unwrap().to_string_lossy().into_owned();
     let normal = || {
         matches!(
@@ -341,10 +398,12 @@ fn composed_native_overlap_throughput_and_foreground_latency() {
         .map(|path| {
             (0..3)
                 .map(|rep| {
+                    let before = fresh_schedule();
                     let job = request(path);
                     let start = Instant::now();
                     let developed = scheduler.load(job, Priority::Foreground, || false).unwrap();
                     let wall = start.elapsed();
+                    assert_eq!(native_calls.load(Ordering::Relaxed) - before, 1);
                     println!(
                         "solo {} rep {} {:?} (pressure normal: {})",
                         path.file_name().unwrap().to_string_lossy(),
@@ -359,6 +418,7 @@ fn composed_native_overlap_throughput_and_foreground_latency() {
         .collect();
     let pairs: Vec<Timed> = (0..3)
         .map(|rep| {
+            let before = fresh_schedule();
             let a_job = request(&paths[0]);
             let b_job = request(&paths[1]);
             let start = Instant::now();
@@ -382,6 +442,7 @@ fn composed_native_overlap_throughput_and_foreground_latency() {
                 (a.join().unwrap(), b.join().unwrap())
             });
             let pair = start.elapsed();
+            assert_eq!(native_calls.load(Ordering::Relaxed) - before, 2);
             println!(
                 "yield pair rep {} {} {:?} | {} {:?} | pair {:?} (pressure normal: {})",
                 rep,
@@ -399,6 +460,7 @@ fn composed_native_overlap_throughput_and_foreground_latency() {
     // owners admit them (no yield rule), so this measures the overlap throughput.
     let rolls: Vec<Timed> = (0..3)
         .map(|rep| {
+            let before = fresh_schedule();
             let a_job = request(&paths[0]);
             let b_job = request(&paths[1]);
             let start = Instant::now();
@@ -418,6 +480,7 @@ fn composed_native_overlap_throughput_and_foreground_latency() {
                 (a.join().unwrap(), b.join().unwrap())
             });
             let roll = start.elapsed();
+            assert_eq!(native_calls.load(Ordering::Relaxed) - before, 2);
             println!(
                 "roll rep {} {} {:?} | {} {:?} | roll {:?} (pressure normal: {})",
                 rep,
@@ -434,6 +497,7 @@ fn composed_native_overlap_throughput_and_foreground_latency() {
     let foreground_under_load: Vec<(Duration, Developed)> =
         (0..3)
             .map(|rep| {
+                let before = fresh_schedule();
                 let background_job = request(&paths[1]);
                 let background_scheduler = scheduler.clone();
                 let background = std::thread::spawn(move || {
@@ -453,6 +517,7 @@ fn composed_native_overlap_throughput_and_foreground_latency() {
                     .unwrap();
                 let wall = start.elapsed();
                 let (background_wall, _) = background.join().unwrap();
+                assert_eq!(native_calls.load(Ordering::Relaxed) - before, 2);
                 println!(
                     "foreground-under-load rep {} {} {:?} | background total {:?} (pressure normal: {})",
                     rep,
@@ -802,7 +867,7 @@ fn overlapping_owners_run_native_steps_on_separate_threads() {
     let barrier = Arc::new((Mutex::new(0usize), Condvar::new()));
     let threads = Arc::new(Mutex::new(Vec::new()));
     let recorded = threads.clone();
-    let scheduler = Scheduler::start_workers(2, normal_pressure, move |_| {
+    let scheduler = Scheduler::start_workers(2, normal_pressure, move |_, _| {
         let barrier = barrier.clone();
         let threads = recorded.clone();
         let source = source.clone();
@@ -845,7 +910,7 @@ fn foreground_starts_on_the_free_owner_while_a_background_step_runs() {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Arc::new(Mutex::new(resume));
-    let scheduler = Scheduler::start_workers(2, normal_pressure, move |_| {
+    let scheduler = Scheduler::start_workers(2, normal_pressure, move |_, _| {
         let entered = entered.clone();
         let resume = resume.clone();
         let source = source.clone();
@@ -884,7 +949,7 @@ fn background_work_yields_while_foreground_demand_lives() {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Arc::new(Mutex::new(resume));
-    let scheduler = Scheduler::start_workers(2, normal_pressure, move |_| {
+    let scheduler = Scheduler::start_workers(2, normal_pressure, move |_, _| {
         let entered = entered.clone();
         let resume = resume.clone();
         let source = source.clone();
@@ -979,7 +1044,7 @@ fn closing_the_pair_wakes_waiters_and_stops_both_owners() {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Arc::new(Mutex::new(resume));
-    let scheduler = Scheduler::start_workers(2, normal_pressure, move |_| {
+    let scheduler = Scheduler::start_workers(2, normal_pressure, move |_, _| {
         let entered = entered.clone();
         let resume = resume.clone();
         let source = source.clone();
