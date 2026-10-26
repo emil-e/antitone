@@ -3,10 +3,7 @@ use crate::region_timing;
 use std::sync::{Arc, atomic::AtomicUsize};
 
 pub(in crate::editor) fn request() -> (analysis::Request, tempfile::TempDir, wgpu::Device) {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::METAL,
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
+    let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
     let (device, _) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
     let directory = tempfile::tempdir().unwrap();

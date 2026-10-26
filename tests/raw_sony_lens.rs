@@ -4,6 +4,8 @@ use std::fs;
 
 #[path = "support/sony_fixture.rs"]
 mod fixture;
+#[path = "support/fixture_path.rs"]
+mod fixture_path;
 #[cfg(all(feature = "gpu", feature = "export", feature = "ocio-reference"))]
 #[path = "support/working_precision.rs"]
 mod working_precision;

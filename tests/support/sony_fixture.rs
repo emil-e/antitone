@@ -1,6 +1,6 @@
 //! Authored CFA TIFF with selected-IFD Sony lens data, not a proprietary decoder fixture.
 #![allow(dead_code)]
-use std::io::Write;
+use crate::fixture_path::FixturePath;
 
 #[derive(Clone, Copy)]
 pub(crate) enum Order {
@@ -35,12 +35,7 @@ pub(crate) fn profile_tags(order: Order) -> Vec<Entry> {
 }
 
 /// The optional rendered IFD deliberately carries conflicting coefficients.
-pub(crate) fn source(
-    order: Order,
-    tags: Vec<Entry>,
-    dng: bool,
-    decoy: bool,
-) -> tempfile::NamedTempFile {
+pub(crate) fn source(order: Order, tags: Vec<Entry>, dng: bool, decoy: bool) -> FixturePath {
     source_oriented(order, tags, dng, decoy, 1)
 }
 
@@ -52,7 +47,7 @@ pub(crate) fn source_oriented(
     dng: bool,
     decoy: bool,
     orientation: u16,
-) -> tempfile::NamedTempFile {
+) -> FixturePath {
     let mut bytes = match order {
         Order::Little => b"II\x2a\0\x08\0\0\0".to_vec(),
         Order::Big => b"MM\0\x2a\0\0\0\x08".to_vec(),
@@ -186,8 +181,5 @@ pub(crate) fn source_oriented(
             }
         }
     }
-    let mut file = tempfile::Builder::new().suffix(".arw").tempfile().unwrap();
-    file.write_all(&bytes).unwrap();
-    file.flush().unwrap();
-    file
+    FixturePath::write("fixture.arw", &bytes)
 }

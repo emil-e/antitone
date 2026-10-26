@@ -41,7 +41,7 @@ LibRaw's highlight-safe development divides fixed WB gains by their maximum. Sou
 
 ## Let the OS handle the monitor
 
-The preview converts linear target RGB to extended-sRGB, encodes it once and submits it to an explicitly extended-sRGB-tagged macOS layer (SDR, with EDR disabled). The OS performs the monitor conversion; applying a monitor profile ourselves as well would introduce a second conversion. A correct tagged layer is not proof of a calibrated monitor or of correct behavior on every display.
+The preview converts linear target RGB to extended-sRGB and encodes it once. Presentation is SDR on both platforms: macOS uses an explicitly extended-sRGB-tagged layer with EDR disabled; Windows uses a 10-bit or 8-bit Vulkan swapchain. The OS performs the monitor conversion; applying a monitor profile ourselves as well would introduce a second conversion. A correct tagged layer is not proof of a calibrated monitor or of correct behavior on every display.
 
 ## TIFF and EXR serve different purposes
 
@@ -60,7 +60,7 @@ Selected/all-filmstrip exports run sequentially from captured recipes and source
 ## Working on this area
 
 - [Rendering](../src/rendering.rs) and [native transform definition](../native/rendering_transform.h): shared OCIO configuration.
-- [Presentation](../src/platform/macos.rs): macOS layer tagging.
+- Presentation: [shared host](../src/platform/host.rs), [macOS layer tagging](../src/platform/macos.rs) and [Windows surface selection](../src/platform/windows.rs).
 - [Export](../src/export.rs) and [profiles](../src/profiles.rs): file encoding, colour tagging and destination safety.
 - [Rendering tests](../tests/rendering.rs), [export tests](../tests/export.rs) and [geometry exports](../tests/geometry_export.rs): reference agreement and numerical reopening.
 

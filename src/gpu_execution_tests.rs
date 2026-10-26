@@ -122,10 +122,7 @@ fn read_pixels(device: &wgpu::Device, queue: &wgpu::Queue, output: &wgpu::Buffer
 #[ignore = "paired fresh-dispatch kernel experiments with exact full-raster output comparison; not editor acceptance"]
 fn paired_kernel_variants() {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         println!(
             "kernel_variants adapter={:?} size=[1024,640] samples=9 timing=encode_submit_gpu_completion excludes=upload_rendering_reconstruction",

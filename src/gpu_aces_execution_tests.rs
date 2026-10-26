@@ -353,10 +353,7 @@ impl Executable {
 }
 
 pub(super) async fn context() -> (wgpu::Device, wgpu::Queue, Arc<GpuRenderer>) {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::METAL,
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
+    let instance = crate::gpu::instance();
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
@@ -654,7 +651,7 @@ fn aces_execution_cost() {
                     }
                 }
                 println!(
-                    "aces_execution_cost size={size:?} target={target:?} execution={execution:?} fragment_ms={:.3} candidate_ms={:.3} candidate_encode_ms={:.3} max_error={error} exact_words={exact_words} metal_resource_bytes={} timing=encode_submit_completion excludes=compile_upload_readback_reconstruction_scopes_presentation",
+                    "aces_execution_cost size={size:?} target={target:?} execution={execution:?} fragment_ms={:.3} candidate_ms={:.3} candidate_encode_ms={:.3} max_error={error} exact_words={exact_words} gpu_resource_bytes={} timing=encode_submit_completion excludes=compile_upload_readback_reconstruction_scopes_presentation",
                     median(&baseline),
                     median(&candidate),
                     median(&encode),

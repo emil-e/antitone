@@ -9,10 +9,12 @@ use std::sync::Arc;
 
 #[path = "support/raw_fixture.rs"]
 mod fixture;
+#[path = "support/fixture_path.rs"]
+mod fixture_path;
 const WB: [f64; 4] = [1.0; 4];
 
 struct Input {
-    file: tempfile::NamedTempFile,
+    file: crate::fixture::FixturePath,
     record: Source,
     development: Development,
     key: SourceKey,
@@ -622,16 +624,14 @@ fn duplicate_completions_share_one_charge_and_reject_alias_or_reweighting() {
 
 #[test]
 fn changed_files_reject_prework_publication_and_hits_without_losing_leased_accounting() {
-    use std::io::Write;
-    let mut input = Input::new();
+    let input = Input::new();
     let source = input.source();
     let store = SourceStore::new(10);
     store
         .publish(input.key.clone(), source.clone(), 10)
         .unwrap()
         .unwrap();
-    input.file.as_file_mut().write_all(b"changed").unwrap();
-    input.file.as_file_mut().flush().unwrap();
+    input.file.append(b"changed");
     assert!(store.get(&input.key).is_none());
     assert!(
         store
@@ -653,18 +653,21 @@ fn changed_files_reject_prework_publication_and_hits_without_losing_leased_accou
 #[cfg(unix)]
 #[test]
 fn restored_mtime_and_symlink_retargeting_do_not_make_old_keys_current() {
-    use std::io::{Seek, SeekFrom, Write};
-    let mut input = Input::new();
+    use std::io::Write;
+    let input = Input::new();
     let source = input.source();
     let store = SourceStore::new(10);
     store
         .publish(input.key.clone(), source.clone(), 10)
         .unwrap()
         .unwrap();
-    let modified = input.file.as_file().metadata().unwrap().modified().unwrap();
-    input.file.as_file_mut().seek(SeekFrom::Start(0)).unwrap();
-    input.file.as_file_mut().write_all(b"MM").unwrap();
-    input.file.as_file_mut().set_modified(modified).unwrap();
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(input.file.path())
+        .unwrap();
+    let modified = file.metadata().unwrap().modified().unwrap();
+    file.write_all(b"MM").unwrap();
+    file.set_modified(modified).unwrap();
     assert!(store.get(&input.key).is_none());
 
     let a = Input::new();

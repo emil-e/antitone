@@ -1,9 +1,9 @@
-use std::io::Write;
+pub use crate::fixture_path::FixturePath;
 
 pub const SIDE: u32 = 64;
 
 /// Tiny authored integer-Bayer DNG; no private photographs or GPU work.
-pub fn bayer_dng() -> tempfile::NamedTempFile {
+pub fn bayer_dng() -> FixturePath {
     let short = |value: u16| value.to_le_bytes().to_vec();
     let long = |value: u32| value.to_le_bytes().to_vec();
     let rational = |value: u32| [value.to_le_bytes(), 1u32.to_le_bytes()].concat();
@@ -91,8 +91,5 @@ pub fn bayer_dng() -> tempfile::NamedTempFile {
             bytes.extend_from_slice(&value.to_le_bytes());
         }
     }
-    let mut file = tempfile::Builder::new().suffix(".dng").tempfile().unwrap();
-    file.write_all(&bytes).unwrap();
-    file.flush().unwrap();
-    file
+    FixturePath::write("fixture.dng", &bytes)
 }

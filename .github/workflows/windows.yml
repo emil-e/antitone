@@ -1,0 +1,76 @@
+name: Windows
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build, format and device-free tests
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Install the pinned toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99.0"
+          components: rustfmt, clippy
+      - name: Cache pinned tools and native dependencies
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            .cache/tools
+            .cache/native-deps
+          key: windows-native-${{ hashFiles('scripts/setup-windows.ps1', 'scripts/build-libraw.ps1') }}
+          restore-keys: |
+            windows-native-
+      - name: Cache Cargo downloads
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+      - name: Prepare the toolchain and native dependencies
+        run: powershell -ExecutionPolicy Bypass -File scripts/setup-windows.ps1
+      - name: Runtime packaging selection tests
+        run: powershell -ExecutionPolicy Bypass -File scripts/test-windows-runtime.ps1
+      - name: Formatting
+        run: cargo fmt --all -- --check
+      - name: Production editor clippy
+        # Behaviour on Windows is platform-conditional, so a few items that macOS uses are dead
+        # here; warnings are reported rather than gating the job.
+        run: cargo clippy --locked --features editor --all-targets
+      - name: Numerical core tests
+        run: cargo test --locked --no-default-features
+      - name: Direct-SDK adapter tests
+        run: "cargo test --locked --features dng-sdk --lib dng::"
+      - name: Build the editor
+        run: cargo build --locked --release --features editor --bin antitone
+      - name: Package the portable ZIP
+        run: powershell -ExecutionPolicy Bypass -File scripts/package-windows.ps1 -SkipBuild
+      - name: Upload the local package
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: Antitone-windows-x64-${{ github.sha }}
+          path: |
+            .cache/dist/Antitone-windows-x64.zip
+            .cache/dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7

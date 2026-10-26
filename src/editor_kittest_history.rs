@@ -456,13 +456,16 @@ fn history_numeric_commit_navigation_menu_and_crop_draft_respect_input_ownership
         h.step();
         wait_for(&mut h, |e| !e.busy);
         h.read(|editor| assert_ne!(editor.current_source, edited_photo));
-        h.get_by_role_and_label(egui::accesskit::Role::Button, "Edit")
-            .click();
-        h.step();
-        h.step();
-        h.get_by_label("Undo Photo settings").click();
-        h.step();
-        wait_for(&mut h, |e| !e.busy);
+        h.read(|editor| {
+            assert_eq!(
+                editor
+                    .application_menu_state()
+                    .label(crate::platform::menu::Action::Undo),
+                "Undo Photo settings",
+                "the native menu names the discarded grade"
+            )
+        });
+        native_action(&mut h, crate::platform::menu::Action::Undo);
         h.read(|editor| assert_eq!(editor.current_source, edited_photo));
         h.read(|editor| assert_eq!(editor.photo.exposure, 0.));
         shortcut(&mut h, true);

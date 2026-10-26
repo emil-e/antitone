@@ -175,10 +175,7 @@ fn real_raw_local_preview_tiles_and_refinement() {
         ..Default::default()
     };
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         println!(
             "local_raw adapter={:?} camera={} source_area={area:?} samples=3 warmups=1 timing=encode_submit_gpu_completion excludes=raw_development_upload_readback_reconstruction_scopes_presentation calibration=diagnostic",

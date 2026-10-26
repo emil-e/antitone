@@ -123,7 +123,7 @@ impl Preparation {
                 "coarse_pack",
                 rgb.into_iter().map(|p| [p[0], p[1], p[2]]).collect()
             );
-            let evidence = timed!("native_lines", Evidence::observe([w, h], &rgb))?;
+            let evidence = timed!("region_lines", Evidence::observe([w, h], &rgb))?;
             self.captures.push(timed!(
                 "candidate_grouping",
                 Capture::new(scan.area, [w, h], rgb, evidence)

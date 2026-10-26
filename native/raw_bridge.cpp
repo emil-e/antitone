@@ -11,6 +11,10 @@
 #endif
 #include <memory>
 #include <mutex>
+#include <string>
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 
 static_assert(sizeof(AntitoneRawMetadata) == 656);
 static_assert(sizeof(AntitoneRawSonyLens) == 160);
@@ -37,8 +41,12 @@ class ThreadBudget {
 public:
     explicit ThreadBudget(int count) {
         static std::once_flag blocktime;
+#if defined(__APPLE__) || defined(__linux__)
         // Sleeping workers must not compete with UI work after a tile/job.
         std::call_once(blocktime, [] { kmp_set_blocktime(0); });
+#else
+        (void)blocktime;
+#endif
         omp_set_dynamic(0);
         omp_set_num_threads(count);
     }
@@ -296,6 +304,21 @@ extern "C" const char *antitone_raw_version() {
     return LibRaw::version();
 }
 
+#if defined(_WIN32)
+// LibRaw's narrow path goes through the ANSI code page on Windows, which cannot represent most
+// non-ASCII names; the wide overload keeps UTF-8 paths intact.
+static std::wstring wide_path(const char *path) {
+    const int length = MultiByteToWideChar(CP_UTF8, 0, path, -1, nullptr, 0);
+    if (length <= 0) {
+        throw std::runtime_error("Source path is not valid UTF-8");
+    }
+    std::wstring wide(static_cast<size_t>(length), wchar_t(0));
+    MultiByteToWideChar(CP_UTF8, 0, path, -1, wide.data(), length);
+    wide.resize(static_cast<size_t>(length - 1));
+    return wide;
+}
+#endif
+
 extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out, char *error,
                                    size_t size) try {
     antitone::NativeLog diagnostic("raw", "open");
@@ -303,7 +326,11 @@ extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out, c
     raw->imgdata.params.use_camera_matrix = 1;
     SonyLensCapture lens;
     raw->set_exifparser_handler(sony_lens_tag, &lens);
+#if defined(_WIN32)
+    int code = raw->open_file(wide_path(path).c_str());
+#else
     int code = raw->open_file(path);
+#endif
     if (code != 0)
         diagnostic.complete(code, 2);
     raw->set_exifparser_handler(nullptr, nullptr);

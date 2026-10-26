@@ -266,10 +266,7 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
 fn authored_reference_worker_cancels_applies_and_restores_without_reference_reread() {
     pollster::block_on(async {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw");
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance
             .request_adapter(&Default::default())
             .await

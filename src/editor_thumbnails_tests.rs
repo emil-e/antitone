@@ -957,10 +957,7 @@ fn visible_jobs_remain_suspended_for_foreground_and_reference_work() {
 #[test]
 fn worker_completion_wakes_an_awaiting_service_consumer_without_frame_polling() {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let renderers = Arc::new(crate::renderer::RendererCache::default());
@@ -1379,10 +1376,7 @@ fn crop_draft_cancels_offscreen_prefetch_and_suspends_idle_admission() {
 #[test]
 fn camera_product_forecast_bounds_a_square_continuous_source() {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let renderer = crate::renderer::GpuRenderer::new(&device, &queue)
@@ -1412,10 +1406,7 @@ fn camera_product_forecast_bounds_a_square_continuous_source() {
 #[test]
 fn warm_normal_roll_survives_rapid_forward_and_reverse_scrolling() {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let renderer = crate::renderer::GpuRenderer::new(&device, &queue)
@@ -1565,10 +1556,7 @@ fn obsolete_scroll_work_is_replaced_once_without_dropping_valid_source_seeds() {
 #[test]
 fn disk_worker_reuses_camera_pixels_for_source_and_positive_cards_and_rejects_stale_revisions() {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let directory = tempfile::tempdir().unwrap();

@@ -25,10 +25,7 @@ fn complete_private_roll_prepares_reviews_analyzes_and_round_trips() {
         .collect();
     let revisions: Vec<_> = paths.iter().map(|p| thumbnails::FileKey::new(p)).collect();
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let mut editor = Editor::new(&device, &queue);

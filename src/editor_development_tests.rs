@@ -76,7 +76,7 @@ fn async_joined_consumers_wake_independently_and_keep_zero_budget_native_ownersh
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let scheduler = Scheduler::start(move |shared| {
-        run(shared, 0, crate::resources::memory_pressure, |_| {
+        run(shared, 0, crate::sys::memory_pressure, |_| {
             entered.send(()).unwrap();
             resume.recv().unwrap();
             Ok(Some(source.clone()))
@@ -109,7 +109,7 @@ fn async_native_waiters_observe_store_or_scheduler_closure_without_waiting_for_n
         let (entered, starts) = mpsc::channel();
         let (release, resume) = mpsc::channel();
         let scheduler = Scheduler::start(move |shared| {
-            run(shared, 0, crate::resources::memory_pressure, |_| {
+            run(shared, 0, crate::sys::memory_pressure, |_| {
                 entered.send(()).unwrap();
                 resume.recv().unwrap();
                 Err("retired native call".into())
@@ -163,7 +163,7 @@ fn foreground_runs_before_the_next_background_native_phase_on_one_thread() {
     let worker_trace = trace.clone();
     let scheduler = Scheduler::start(move |shared| {
         let mut phases = HashMap::new();
-        run(shared, 0, crate::resources::memory_pressure, |task| {
+        run(shared, 0, crate::sys::memory_pressure, |task| {
             let phase = phases.entry(task.id).or_insert(0);
             *phase += 1;
             worker_trace
@@ -215,7 +215,7 @@ fn foreground_joins_started_work_after_thumbnail_waiter_cancels_at_zero_budget()
     let calls = Arc::new(AtomicUsize::new(0));
     let worker_calls = calls.clone();
     let scheduler = Scheduler::start(move |shared| {
-        run(shared, 0, crate::resources::memory_pressure, |task| {
+        run(shared, 0, crate::sys::memory_pressure, |task| {
             let call = worker_calls.fetch_add(1, Ordering::Relaxed);
             if call == 0 {
                 entered.send(()).unwrap();
@@ -258,7 +258,7 @@ fn closing_worker_wakes_waiters_without_starting_a_second_development() {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let scheduler = Scheduler::start(move |shared| {
-        run(shared, 0, crate::resources::memory_pressure, |_| {
+        run(shared, 0, crate::sys::memory_pressure, |_| {
             entered.send(()).unwrap();
             resume.recv().unwrap();
             Err("closed native phase".into())
@@ -355,8 +355,8 @@ fn composed_native_overlap_throughput_and_foreground_latency() {
     let name = |i: usize| paths[i].file_name().unwrap().to_string_lossy().into_owned();
     let normal = || {
         matches!(
-            crate::resources::memory_pressure(),
-            crate::resources::MemoryPressure::Normal
+            crate::sys::memory_pressure(),
+            crate::sys::MemoryPressure::Normal
         )
     };
     type Developed = std::sync::Arc<crate::scan::DevelopedSource>;
@@ -582,7 +582,7 @@ fn cancelled_queued_demand_never_develops_or_publishes() {
     let calls = Arc::new(AtomicUsize::new(0));
     let worker_calls = calls.clone();
     let scheduler = Scheduler::start(move |shared| {
-        run(shared, 0, crate::resources::memory_pressure, |task| {
+        run(shared, 0, crate::sys::memory_pressure, |task| {
             assert_eq!(task.id, 1);
             worker_calls.fetch_add(1, Ordering::Relaxed);
             entered.send(()).unwrap();
@@ -630,7 +630,7 @@ fn closing_a_candidate_cancels_only_its_joined_waiter() {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let scheduler = Scheduler::start(move |shared| {
-        run(shared, 0, crate::resources::memory_pressure, |task| {
+        run(shared, 0, crate::sys::memory_pressure, |task| {
             assert_eq!(task.id, 1);
             entered.send(()).unwrap();
             resume.recv().unwrap();
@@ -666,7 +666,7 @@ fn native_failure_fans_out_to_joined_waiters_and_allows_a_new_attempt() {
     let calls = Arc::new(AtomicUsize::new(0));
     let worker_calls = calls.clone();
     let scheduler = Scheduler::start(move |shared| {
-        run(shared, 0, crate::resources::memory_pressure, |_| {
+        run(shared, 0, crate::sys::memory_pressure, |_| {
             if worker_calls.fetch_add(1, Ordering::Relaxed) == 0 {
                 entered.send(()).unwrap();
                 resume.recv().unwrap();
@@ -708,6 +708,9 @@ fn native_failure_fans_out_to_joined_waiters_and_allows_a_new_attempt() {
     assert_eq!(calls.load(Ordering::Relaxed), 2);
 }
 
+// Gated to macOS: LibRaw holds an open RAW with write sharing denied on Windows, so the test cannot
+// change the file beneath a live source.
+#[cfg(target_os = "macos")]
 #[test]
 fn missing_keys_different_revisions_and_unrelated_scopes_do_not_join() {
     let file = fixture::bayer_dng();
@@ -747,7 +750,7 @@ fn parent_joins_candidate_first_work_and_survives_candidate_retirement() {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let scheduler = Scheduler::start(move |shared| {
-        run(shared, 0, crate::resources::memory_pressure, |task| {
+        run(shared, 0, crate::sys::memory_pressure, |task| {
             assert_eq!(task.id, 1);
             entered.send(()).unwrap();
             resume.recv().unwrap();
@@ -805,8 +808,8 @@ fn diagnostic_stop_before_unpack_rejects_without_development_or_publication() {
     assert_eq!(store.charges().retained, 0);
 }
 
-fn normal_pressure() -> crate::resources::MemoryPressure {
-    crate::resources::MemoryPressure::Normal
+fn normal_pressure() -> crate::sys::MemoryPressure {
+    crate::sys::MemoryPressure::Normal
 }
 
 fn synthetic_task(id: u64, path: &std::path::Path, priority: Priority) -> Arc<Task> {
@@ -834,7 +837,7 @@ fn unowned_starts_yield_to_foreground_demand_and_collapse_under_pressure() {
         sdk_steps: 0,
         closed: false,
     };
-    let normal = crate::resources::MemoryPressure::Normal;
+    let normal = crate::sys::MemoryPressure::Normal;
     // While a foreground demand lives, background work starts on neither owner.
     assert!(!eligible(&state, &background, 0, normal));
     assert!(!eligible(&state, &background, 1, normal));
@@ -851,19 +854,19 @@ fn unowned_starts_yield_to_foreground_demand_and_collapse_under_pressure() {
         &state,
         &background,
         0,
-        crate::resources::MemoryPressure::Warning
+        crate::sys::MemoryPressure::Warning
     ));
     assert!(!eligible(
         &state,
         &background,
         1,
-        crate::resources::MemoryPressure::Warning
+        crate::sys::MemoryPressure::Warning
     ));
     assert!(!eligible(
         &state,
         &background,
         1,
-        crate::resources::MemoryPressure::Critical
+        crate::sys::MemoryPressure::Critical
     ));
     // Started work is pinned to its owner regardless of yield and pressure rules.
     background.owner.store(0, Ordering::Relaxed);
@@ -887,7 +890,7 @@ fn sdk_steps_hold_native_execution_exclusive_so_they_keep_the_full_budget() {
         sdk_steps: 0,
         closed: false,
     };
-    let normal = crate::resources::MemoryPressure::Normal;
+    let normal = crate::sys::MemoryPressure::Normal;
     // With nothing in flight both may start; an admitted SDK step therefore
     // records share 1 and keeps the undivided team the SDK route had alone.
     assert!(eligible(&state, &sdk, 0, normal));

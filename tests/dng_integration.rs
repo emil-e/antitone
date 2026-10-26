@@ -13,6 +13,8 @@ use std::{path::Path, sync::Arc};
 
 #[path = "support/dng_fixture.rs"]
 mod fixture;
+#[path = "support/fixture_path.rs"]
+mod fixture_path;
 use fixture::{Fixture, Opcode};
 
 #[cfg(all(

@@ -59,7 +59,6 @@ fn native_viewing_white_matches_an_independent_balanced_development() {
 #[cfg(feature = "dng-sdk")]
 #[test]
 fn sdk_viewing_white_uses_profile_adaptation_without_repeating_development_gains() {
-    use std::io::Write;
     let file = crate::raw::fixture::bayer_dng();
     let mut bytes = std::fs::read(file.path()).unwrap();
     let count = u16::from_le_bytes(bytes[8..10].try_into().unwrap()) as usize;
@@ -70,7 +69,7 @@ fn sdk_viewing_white_uses_profile_adaptation_without_repeating_development_gains
     let offset = u32::from_le_bytes(bytes[entry + 8..entry + 12].try_into().unwrap()) as usize;
     bytes[offset + 4..offset + 8].copy_from_slice(&2u32.to_le_bytes());
     bytes[offset + 16..offset + 20].copy_from_slice(&2u32.to_le_bytes());
-    file.reopen().unwrap().write_all(&bytes).unwrap();
+    std::fs::write(file.path(), &bytes).unwrap();
     let mut unity = crate::scan::Scan::open(file.path(), Some([1.; 4])).unwrap();
     let mut balanced = crate::scan::Scan::open(file.path(), None).unwrap();
     assert_ne!(balanced.fixed_wb, [1.; 4]);

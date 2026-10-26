@@ -197,10 +197,7 @@ fn authored_source_preview_scale_agrees_with_actual_libraw_development_gains() {
 #[test]
 fn source_inspection_gpu_matches_scaled_camera_to_ap1_with_zero_diagnostic_flags() {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let codes = [
@@ -304,10 +301,7 @@ fn camera_matrix_rejects_nonfinite_and_overflowing_values() {
 #[test]
 fn native_and_continuous_transport_preserve_normalization_and_source_addressing() {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let kernel = ProcessingKernel::new(&device).await.unwrap();

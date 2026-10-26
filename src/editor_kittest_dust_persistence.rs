@@ -189,7 +189,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         let signature = h.read(|editor| editor.dust_signature().unwrap());
         let evaluated = h.read(|editor| editor.dust_evaluations(signature));
         let expected = h.read(|editor| editor.document.project.clone());
-        file_menu(&mut h, "New");
+        native_file_action(&mut h, crate::platform::menu::Action::New);
         h.run();
         h.read(|editor| {
             assert!(
@@ -209,7 +209,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
             ))
         });
 
-        file_menu(&mut h, "New");
+        native_file_action(&mut h, crate::platform::menu::Action::New);
         wait_for(&mut h, |e| !e.busy && e.document_pending.is_none());
         h.read(|editor| assert!(editor.document.project.sources.is_empty()));
         open_project(&mut h, path.clone());
@@ -345,7 +345,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
 
         h.get_by_label("Done").click();
         h.step();
-        file_menu(&mut h, "New");
+        native_file_action(&mut h, crate::platform::menu::Action::New);
         wait_for(&mut h, |e| !e.busy && e.document_pending.is_none());
         open_project(&mut h, path);
         wait_for(&mut h, |e| !e.busy && e.document_pending.is_none());

@@ -47,10 +47,7 @@ fn key(document: &Document) -> SourceKey {
 }
 
 async fn gpu() -> (wgpu::Device, wgpu::Queue) {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::METAL,
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
+    let instance = crate::gpu::instance();
     instance
         .request_adapter(&Default::default())
         .await
@@ -268,11 +265,13 @@ fn cpu_only_proper_work_persists_disk_at_zero_limits_then_materializes_on_demand
     });
 }
 
+// Gated to macOS: LibRaw holds an open RAW with write sharing denied on Windows, so the test cannot
+// append to the loaded file.
+#[cfg(target_os = "macos")]
 #[test]
 fn changed_pre_work_revision_loads_authoritatively_without_publishing_a_fresh_key() {
-    use std::io::Write;
     pollster::block_on(async {
-        let mut file = raw_fixture::bayer_dng();
+        let file = raw_fixture::bayer_dng();
         let document = document(file.path());
         let (device, queue) = gpu().await;
         let renderers = crate::renderer::RendererCache::default();
@@ -282,8 +281,7 @@ fn changed_pre_work_revision_loads_authoritatively_without_publishing_a_fresh_ke
         let expected = document.project.source(id).unwrap();
         let wb = wb(&document);
         let cache = LoadCache::new(&path, Some(expected), &document);
-        file.write_all(b"freshness-only annotation").unwrap();
-        file.flush().unwrap();
+        file.append(b"freshness-only annotation");
         let (ready, fresh) = prepare_source_cached(
             &renderers,
             &device,

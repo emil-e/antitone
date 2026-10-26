@@ -7,10 +7,7 @@ use std::{path::PathBuf, time::Duration};
 
 fn editor() -> Editor {
     let (device, queue) = pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         instance
             .request_adapter(&Default::default())
             .await

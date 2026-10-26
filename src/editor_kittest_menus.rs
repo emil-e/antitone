@@ -148,7 +148,7 @@ fn application_panels_can_be_closed_at_both_layouts_without_editing_the_document
 }
 
 #[test]
-fn fallback_edit_menu_preserves_the_focused_numeric_control() {
+fn native_edit_actions_preserve_the_focused_numeric_control() {
     workflow::calibrated_workflow(|mut harness, _, _directory| {
         let role = egui::accesskit::Role::SpinButton;
         harness
@@ -160,52 +160,44 @@ fn fallback_edit_menu_preserves_the_focused_numeric_control() {
         harness.event(egui::Event::Text("1.75".into()));
         harness.step();
         assert!(harness.ctx.text_edit_focused());
-        harness.get_by_label("Edit").click();
-        harness.step();
-        harness.step();
+        harness.read(|editor| {
+            assert!(
+                editor.application_menu_state().enabled(Action::SelectAll),
+                "a focused field keeps the native Edit commands available"
+            )
+        });
+        native_action(&mut harness, Action::SelectAll);
         assert!(
-            !harness
-                .get_by_label("Select All")
-                .accesskit_node()
-                .is_disabled()
+            harness.ctx.text_edit_focused(),
+            "a native Edit command does not surrender text focus"
         );
-        harness.key_press(egui::Key::Escape);
-        harness.step();
-        assert!(!egui::Popup::is_any_open(&harness.ctx));
-        assert!(harness.ctx.text_edit_focused());
-        harness.read(|editor| assert_eq!(editor.photo.exposure, 0.5));
-        harness.get_by_label("Edit").click();
-        harness.step();
-        harness.step();
-        harness.get_by_label("Select All").click();
-        harness.step();
-        harness.step();
-        assert!(harness.ctx.text_edit_focused());
         harness.event(egui::Event::Text("2.25".into()));
         harness.key_press(egui::Key::Enter);
         harness.try_run_realtime().unwrap();
         harness.read(|editor| assert_eq!(editor.photo.exposure, 2.25));
+
+        harness.get_by_role_and_label(role, "Exposure").click();
+        harness.step();
+        assert!(harness.ctx.text_edit_focused());
+        harness.event(egui::Event::Text("3".into()));
+        harness.step();
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+        harness.read(|editor| assert_eq!(editor.photo.exposure, 2.25, "Escape discards the draft"));
     });
 }
 
 #[test]
-fn fallback_file_menu_keeps_unavailable_commands_discoverable() {
+fn native_file_menu_keeps_unavailable_commands_discoverable() {
     editor_harness(|mut harness, _| {
         harness.try_run_realtime().unwrap();
-        harness.get_by_label("File").click();
-        harness.step();
-        harness.step();
+        let state = harness.read(|editor| editor.application_menu_state());
+        assert!(state.enabled(Action::AddScans), "Add Scans stays reachable");
         assert!(
-            !harness
-                .get_by_label("Add Scans…")
-                .accesskit_node()
-                .is_disabled()
+            !state.enabled(Action::Export),
+            "Export stays listed but unavailable without photos"
         );
-        assert!(
-            harness
-                .get_by_label("Export…")
-                .accesskit_node()
-                .is_disabled()
-        );
+        assert_eq!(state.label(Action::AddScans), "Add Scans…");
+        assert_eq!(state.label(Action::Export), "Export…");
     });
 }

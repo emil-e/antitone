@@ -26,10 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn run(camera: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::METAL,
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
+    let instance = antitone::gpu::instance();
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions::default())
         .await?;

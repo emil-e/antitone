@@ -38,8 +38,8 @@ impl DiskCache {
     }
 
     pub fn default_location() -> Option<Self> {
-        std::env::var_os("HOME").map(|home| Self {
-            root: PathBuf::from(home).join(".cache/antitone/thumbnails-v3"),
+        crate::sys::cache_dir("antitone").map(|root| Self {
+            root: root.join("thumbnails-v3"),
             budget: LIMIT,
         })
     }
@@ -183,11 +183,8 @@ mod tests {
                 revision: Some(super::super::FileRevision {
                     bytes: 1,
                     modified: std::time::UNIX_EPOCH,
-                    #[cfg(unix)]
                     device: 1,
-                    #[cfg(unix)]
                     inode: 1,
-                    #[cfg(unix)]
                     changed: (1, 0),
                 }),
             },

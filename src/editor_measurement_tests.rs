@@ -40,16 +40,16 @@ fn drive_until(
     }
 }
 
+// Gated to macOS: LibRaw holds an open RAW with write sharing denied on Windows, so the test cannot
+// change the source beneath the captured measurement.
+#[cfg(target_os = "macos")]
 #[test]
 fn measurement_uses_the_captured_source_and_updates_history_without_receiving_or_painting() {
     pollster::block_on(async {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("working.dng");
         std::fs::copy(fixture("illuminated-patches.dng"), &path).unwrap();
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let renderers = Arc::new(crate::renderer::RendererCache::new(Default::default()));

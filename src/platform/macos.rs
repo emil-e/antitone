@@ -1,9 +1,42 @@
+use objc2::MainThreadMarker;
+use objc2::rc::Retained;
+use objc2_app_kit::{NSApplication, NSApplicationPresentationOptions};
 use objc2_core_graphics::{CGColorSpace, kCGColorSpaceExtendedSRGB};
 
 use crate::Error;
 
+use super::Presentation;
+pub(crate) use super::termination::{
+    Guard as QuitGuard, cancel_on_unwind as quit_cancel_on_unwind,
+};
+
+/// The tagged extended sRGB layer consumes the pipeline's encoded values directly.
+pub(crate) fn presentation() -> Presentation {
+    Presentation {
+        color_space: wgpu::SurfaceColorSpace::Auto,
+        formats: &[wgpu::TextureFormat::Rgba16Float],
+    }
+}
+
+pub(crate) fn configure_presentation(surface: &wgpu::Surface<'_>) -> Result<(), Error> {
+    configure_sdr(surface)
+}
+
 #[cfg(feature = "editor")]
-pub fn set_application_icon() -> Result<(), Box<dyn std::error::Error>> {
+pub fn install_icon() -> Result<(), Box<dyn std::error::Error>> {
+    set_application_icon()
+}
+
+/// Menus are application-drawn on macOS, so the window frame follows the editor's appearance.
+pub(crate) const MENU_STRIP_IS_LIGHT: bool = false;
+
+/// The application icon is set through AppKit; the window carries no icon of its own.
+pub fn configure_window(_window: &winit::window::Window) -> Result<(), Box<dyn std::error::Error>> {
+    Ok(())
+}
+
+#[cfg(feature = "editor")]
+fn set_application_icon() -> Result<(), Box<dyn std::error::Error>> {
     use objc2::{AnyThread, MainThreadMarker};
     use objc2_app_kit::{NSApplication, NSImage};
     use objc2_foundation::NSData;
@@ -18,7 +51,7 @@ pub fn set_application_icon() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Reapply after every configuration: wgpu's SDR configuration clears the layer color space.
-pub fn configure_sdr(surface: &wgpu::Surface<'_>) -> Result<(), Error> {
+fn configure_sdr(surface: &wgpu::Surface<'_>) -> Result<(), Error> {
     // The HAL guard and layer lock prevent concurrent surface access while setting native properties.
     let native = unsafe { surface.as_hal::<wgpu::hal::api::Metal>() }
         .ok_or_else(|| Error::Gpu("managed presentation requires the Metal backend".into()))?;
@@ -46,4 +79,37 @@ pub fn configure_sdr(surface: &wgpu::Surface<'_>) -> Result<(), Error> {
         "presentation_layer"
     );
     Ok(())
+}
+
+pub(crate) struct FullscreenPresentation {
+    app: Retained<NSApplication>,
+    previous: NSApplicationPresentationOptions,
+}
+
+impl FullscreenPresentation {
+    pub(crate) fn new(_window: &winit::window::Window) -> Result<Self, Box<dyn std::error::Error>> {
+        let main = MainThreadMarker::new().ok_or("fullscreen viewing requires the main thread")?;
+        let app = NSApplication::sharedApplication(main);
+        let previous = app.presentationOptions();
+        Ok(Self { app, previous })
+    }
+
+    pub(crate) fn show(&self, _window: &winit::window::Window, focused: bool) {
+        use NSApplicationPresentationOptions as Options;
+        // These paired auto-hide options preserve system access and do not create a fullscreen Space.
+        let desired = if focused {
+            Options::AutoHideDock | Options::AutoHideMenuBar
+        } else {
+            self.previous
+        };
+        if self.app.presentationOptions() != desired {
+            self.app.setPresentationOptions(desired);
+        }
+    }
+}
+
+impl Drop for FullscreenPresentation {
+    fn drop(&mut self) {
+        self.app.setPresentationOptions(self.previous);
+    }
 }

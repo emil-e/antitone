@@ -27,7 +27,10 @@ for photographers, not developers.
 
 ## Download
 
-Antitone is built for **Apple Silicon Macs running macOS 14 or later**.
+Antitone supports **Apple Silicon Macs running macOS 14 or later** and
+**Windows 11 on x64 with a Vulkan-capable GPU driver**.
+
+### macOS
 
 Download `Antitone-macos-arm64.zip` from the [releases page](https://github.com/emil-e/antitone/releases),
 unzip it, and move `Antitone.app` to Applications. The release also publishes
@@ -37,6 +40,13 @@ The build is not notarized by Apple yet, so macOS blocks the first launch. Antit
 signed ad-hoc rather than with a Developer ID, which means one extra approval: try to
 open it once, then allow it under **System Settings → Privacy & Security**, where macOS
 lists the blocked app with an **Open Anyway** button. After that it opens normally.
+
+### Windows
+
+Download `Antitone-windows-x64.zip` from the [releases page](https://github.com/emil-e/antitone/releases).
+Extract the whole folder and run `antitone.exe`, keeping the runtime DLLs beside it.
+The release's `SHA256SUMS` covers both platform packages. The [build guide](docs/build-and-run.md#windows)
+covers building and packaging from source.
 
 ## Current state
 
@@ -49,8 +59,7 @@ This is an early public release, and it says so honestly:
   need no negative calibration and can come from different cameras.
 - One project is one roll; there are no catalogs.
 - Dust cleanup is manual and provisional.
-- macOS on Apple Silicon only for now; broader device coverage is still being tested,
-  and the long-term goal is cross-platform.
+- Supported desktop platforms are macOS on Apple Silicon and Windows 11 on x64.
 
 ## License
 

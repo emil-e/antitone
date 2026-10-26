@@ -484,8 +484,8 @@ pub enum DevelopmentPriority {
 }
 
 impl DevelopmentPriority {
-    fn threads(self, cpus: usize, pressure: crate::resources::MemoryPressure) -> c_int {
-        use crate::resources::MemoryPressure;
+    fn threads(self, cpus: usize, pressure: crate::sys::MemoryPressure) -> c_int {
+        use crate::sys::MemoryPressure;
         let cap = match (self, pressure) {
             (_, MemoryPressure::Critical) => 1,
             (Self::Background, MemoryPressure::Warning) => 1,
@@ -500,7 +500,7 @@ impl DevelopmentPriority {
     fn shared_threads(
         self,
         cpus: usize,
-        pressure: crate::resources::MemoryPressure,
+        pressure: crate::sys::MemoryPressure,
         share: usize,
     ) -> c_int {
         (self.threads(cpus, pressure) / share.max(1) as c_int).max(1)
@@ -712,7 +712,7 @@ impl RawFile {
     fn call_threads(&self) -> c_int {
         self.priority.shared_threads(
             std::thread::available_parallelism().map_or(1, usize::from),
-            crate::resources::memory_pressure(),
+            crate::sys::memory_pressure(),
             self.share,
         )
     }
@@ -1527,9 +1527,11 @@ mod tests {
                 bytes.extend_from_slice(&jpeg);
                 link = start + 2 + 12 * fields;
             }
-            let file = tempfile::Builder::new().suffix(".dng").tempfile().unwrap();
-            std::fs::write(file.path(), bytes).unwrap();
-            let mut raw = RawFile::open(file.path()).unwrap();
+            // An open writer handle would deny the native reader its own open on Windows.
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("fixture.dng");
+            std::fs::write(&path, bytes).unwrap();
+            let mut raw = RawFile::open(&path).unwrap();
             let thumbnail = raw.embedded_thumbnail().unwrap().unwrap();
             let image = image::load_from_memory(&thumbnail.jpeg).unwrap();
             assert_eq!([image.width(), image.height()], expected);
@@ -1694,7 +1696,7 @@ mod tests {
 
     #[test]
     fn development_threads_are_bounded_and_leave_foreground_capacity() {
-        use crate::resources::MemoryPressure::*;
+        use crate::sys::MemoryPressure::*;
         for cpus in 0..=128 {
             for priority in [
                 DevelopmentPriority::Foreground,

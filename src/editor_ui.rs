@@ -26,7 +26,7 @@ pub(super) use hierarchy::{
 
 #[path = "editor_ui_application.rs"]
 mod application;
-pub(super) use application::{AppPanel, MenuFocus, app_panel, application_menus};
+pub(super) use application::{AppPanel, app_panel};
 
 pub(super) const CONTROL_HEIGHT: f32 = 28.;
 /// Inspector rows are tighter than general application controls; the inspector is

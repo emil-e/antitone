@@ -7,7 +7,8 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy}
 use winit::window::{Window, WindowId};
 
 use super::{
-    SubmissionGate, fullscreen::PhotoFullscreen, latency::Trace, macos, menu, termination,
+    QuitGuard, SubmissionGate, configure_presentation, fullscreen::PhotoFullscreen, latency::Trace,
+    menu, presentation, quit_cancel_on_unwind,
 };
 use crate::application::{Application, UiContext};
 
@@ -65,6 +66,11 @@ pub fn run<A: App>(
     let event_loop = EventLoop::<HostEvent>::with_user_event().build()?;
     let context = egui::Context::default();
     context.set_embed_viewports(true);
+    if super::MENU_STRIP_IS_LIGHT {
+        // The native menu is drawn in light system colours, so the window frame follows the menu
+        // rather than the editor's dark appearance; egui would otherwise push its own theme out.
+        context.options_mut(|options| options.sync_window_theme = false);
+    }
     let proxy = event_loop.create_proxy();
     let menu_proxy = proxy.clone();
     let quit_proxy = proxy.clone();
@@ -147,7 +153,7 @@ struct Host<'scope, A, F> {
     application: Application<'scope>,
     app: &'scope RefCell<Option<A>>,
     state: Option<State<'scope, A>>,
-    finishing: Option<termination::Guard>,
+    finishing: Option<QuitGuard>,
     next_repaint: Option<Instant>,
     error: Option<Box<dyn std::error::Error>>,
 }
@@ -204,7 +210,7 @@ impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiContext<'scope, A>
     ApplicationHandler<HostEvent> for Host<'scope, A, F>
 {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let _native_unwind = termination::cancel_on_unwind();
+        let _native_unwind = quit_cancel_on_unwind();
         if self.state.is_some() || self.finishing.is_some() {
             return;
         }
@@ -216,6 +222,7 @@ impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiContext<'scope, A>
                         .with_inner_size(winit::dpi::LogicalSize::new(720.0, 320.0)),
                 )?,
             );
+            super::configure_window(&window)?;
             let gpu = pollster::block_on(Gpu::new(window.clone()))?;
             let access = self.application.access(self.app);
             let prepared = (|| -> Result<_> {
@@ -227,7 +234,7 @@ impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiContext<'scope, A>
                 *self.app.borrow_mut() = Some(app);
                 let termination = if access.read(App::quit_state).is_some() {
                     let proxy = self.proxy.clone();
-                    Some(termination::Guard::install(move || {
+                    Some(QuitGuard::install(move || {
                         proxy.send_event(HostEvent::Quit).is_ok()
                     })?)
                 } else {
@@ -235,7 +242,8 @@ impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiContext<'scope, A>
                 };
                 let menus = access
                     .read(App::menu_state)
-                    .map(|state| menu::native::NativeMenu::new(&state))
+                    .filter(|_| menu::native::SUPPORTED)
+                    .map(|state| menu::native::NativeMenu::new(&state, &window))
                     .transpose()?;
                 if menus.is_some() {
                     access.with_mut(App::native_menu_installed);
@@ -278,7 +286,7 @@ impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiContext<'scope, A>
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: HostEvent) {
-        let _native_unwind = termination::cancel_on_unwind();
+        let _native_unwind = quit_cancel_on_unwind();
         match event {
             HostEvent::ExecutorWake => self.application.drive(),
             HostEvent::Repaint(when) => {
@@ -307,7 +315,7 @@ impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiContext<'scope, A>
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
-        let _native_unwind = termination::cancel_on_unwind();
+        let _native_unwind = quit_cancel_on_unwind();
         let Some(state) = &mut self.state else {
             return;
         };
@@ -355,7 +363,7 @@ impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiContext<'scope, A>
                 Ok(())
             }
             WindowEvent::Focused(focused) => {
-                state.fullscreen.focus_changed(focused);
+                state.fullscreen.focus_changed(&state.gpu.window, focused);
                 Ok(())
             }
             WindowEvent::RedrawRequested => state.draw(&self.context, event_loop),
@@ -372,7 +380,7 @@ impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiContext<'scope, A>
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        let _native_unwind = termination::cancel_on_unwind();
+        let _native_unwind = quit_cancel_on_unwind();
         let mut wake = self.next_repaint;
         if wake.is_some_and(|when| when <= Instant::now()) {
             if let Some(state) = &self.state {
@@ -411,7 +419,7 @@ struct State<'scope, A> {
     viewport: egui::ViewportInfo,
     fullscreen: PhotoFullscreen,
     menus: Option<menu::native::NativeMenu>,
-    termination: Option<termination::Guard>,
+    termination: Option<QuitGuard>,
 }
 
 impl<A: App> State<'_, A> {
@@ -546,11 +554,13 @@ impl<A: App> State<'_, A> {
                 &screen,
             );
             let view = frame.texture.create_view(&Default::default());
+            // Application pipelines always render in the float staging format.
+            let staged = self.gpu.staged.as_ref();
             {
                 let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("managed image and egui UI"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view,
+                        view: staged.map_or(&view, |staged| &staged.view),
                         depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
@@ -563,6 +573,24 @@ impl<A: App> State<'_, A> {
                 self.gpu
                     .renderer
                     .render(&mut pass.forget_lifetime(), &jobs, &screen);
+            }
+            if let (Some(bridge), Some(staged)) = (&self.gpu.bridge, staged) {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("presentation copy"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    ..Default::default()
+                });
+                pass.set_pipeline(&bridge.pipeline);
+                pass.set_bind_group(0, &staged.bind, &[]);
+                pass.draw(0..3, 0..1);
             }
             let commands = commands.into_iter().chain([encoder.finish()]);
             if let (Some(trace), Some(timing)) = (&mut self.gpu.trace, &mut timing) {
@@ -653,6 +681,109 @@ impl<A: App> State<'_, A> {
     }
 }
 
+/// The format every application pipeline renders in; the swapchain bridges from it.
+const STAGED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+fn staged_format(bridge: &Option<Bridge>, surface: wgpu::TextureFormat) -> wgpu::TextureFormat {
+    match bridge {
+        Some(_) => STAGED_FORMAT,
+        None => surface,
+    }
+}
+
+/// One copy pass from the float staging image into a non-float swapchain image.
+struct Bridge {
+    pipeline: wgpu::RenderPipeline,
+    layout: wgpu::BindGroupLayout,
+}
+
+struct StagedTarget {
+    view: wgpu::TextureView,
+    bind: wgpu::BindGroup,
+}
+
+impl Bridge {
+    fn new(device: &wgpu::Device, surface: wgpu::TextureFormat) -> Self {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("presentation copy"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/presentation_copy.wgsl").into(),
+            ),
+        });
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("presentation source"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            }],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("presentation copy"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("presentation copy"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        Self { pipeline, layout }
+    }
+
+    fn target(&self, device: &wgpu::Device, width: u32, height: u32) -> StagedTarget {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("presentation staging"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: STAGED_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&Default::default());
+        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("presentation staging"),
+            layout: &self.layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            }],
+        });
+        StagedTarget { view, bind }
+    }
+}
+
 struct Gpu {
     surface: wgpu::Surface<'static>,
     window: Arc<Window>,
@@ -661,6 +792,9 @@ struct Gpu {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    /// The pipeline's float target, bridged to a non-float swapchain by one copy pass.
+    bridge: Option<Bridge>,
+    staged: Option<StagedTarget>,
     renderer: egui_wgpu::Renderer,
     needs_configure: bool,
     presented: u64,
@@ -669,10 +803,7 @@ struct Gpu {
 
 impl Gpu {
     async fn new(window: Arc<Window>) -> Result<Self> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let surface = instance.create_surface(window.clone())?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -690,11 +821,25 @@ impl Gpu {
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
             .ok_or("surface configuration unavailable")?;
-        config.format = wgpu::TextureFormat::Rgba16Float;
+        let requested = presentation();
+        let supported = surface.get_capabilities(&adapter).formats;
+        config.format = *requested
+            .formats
+            .iter()
+            .find(|format| supported.contains(format))
+            .ok_or_else(|| {
+                format!(
+                    "no supported presentation format: wanted {:?} of {:?}",
+                    requested.formats, supported
+                )
+            })?;
         config.view_formats = vec![config.format];
+        config.color_space = requested.color_space;
+        let bridge = (config.format != wgpu::TextureFormat::Rgba16Float)
+            .then(|| Bridge::new(&device, config.format));
         let renderer = egui_wgpu::Renderer::new(
             &device,
-            config.format,
+            staged_format(&bridge, config.format),
             egui_wgpu::RendererOptions {
                 dithering: false,
                 ..Default::default()
@@ -708,6 +853,8 @@ impl Gpu {
             device,
             queue,
             config,
+            bridge,
+            staged: None,
             renderer,
             needs_configure: true,
             presented: 0,
@@ -717,7 +864,8 @@ impl Gpu {
         gpu.configure(SubmissionGate::default())?;
         log::info!(
             adapter:? = gpu.adapter.get_info(),
-            format:? = gpu.config.format;
+            format:? = gpu.config.format,
+            color_space:? = gpu.config.color_space;
             "gpu_initialized"
         );
 
@@ -745,9 +893,11 @@ impl Gpu {
             .formats
             .contains(&self.config.format)
         {
-            return Err(
-                "RGBA16Float surface unavailable; narrower presentation is not substituted".into(),
-            );
+            return Err(format!(
+                "presentation format {:?} is unavailable on this surface",
+                self.config.format
+            )
+            .into());
         }
         let size = self.window.inner_size();
         if size.width == 0 || size.height == 0 {
@@ -763,7 +913,10 @@ impl Gpu {
         );
 
         submissions.configure(|| self.surface.configure(&self.device, &self.config));
-        macos::configure_sdr(&self.surface)?;
+        configure_presentation(&self.surface)?;
+        if let Some(bridge) = &self.bridge {
+            self.staged = Some(bridge.target(&self.device, self.config.width, self.config.height));
+        }
         self.needs_configure = false;
         if let (Some(trace), Some(start)) = (&self.trace, trace_start) {
             trace.configured(start, self.config.width, self.config.height);

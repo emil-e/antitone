@@ -68,10 +68,7 @@ pub(super) fn authored_fixture(paths: &[&str]) -> Editor {
     static GPU: std::sync::OnceLock<(wgpu::Device, wgpu::Queue)> = std::sync::OnceLock::new();
     let (device, queue) = GPU.get_or_init(|| {
         pollster::block_on(async {
-            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-                backends: wgpu::Backends::METAL,
-                ..wgpu::InstanceDescriptor::new_without_display_handle()
-            });
+            let instance = crate::gpu::instance();
             let adapter = instance
                 .request_adapter(&Default::default())
                 .await
@@ -228,10 +225,7 @@ fn sdk_source_inspection_does_not_repeat_libraw_wb_headroom_compensation() {
 #[test]
 fn refinement_worker_uses_the_submission_gate_supplied_to_the_host() {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let mut editor = Editor::new(&device, &queue);
@@ -288,10 +282,7 @@ fn refinement_worker_uses_the_submission_gate_supplied_to_the_host() {
 #[test]
 fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let renderer = crate::renderer::GpuRenderer::new(&device, &queue)
@@ -898,10 +889,7 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
     } else if let (Some(device), Some(queue)) = (editor.working.device(), editor.working.queue()) {
         (device.clone(), queue.clone())
     } else {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
         pollster::block_on(adapter.request_device(&Default::default())).unwrap()
     };

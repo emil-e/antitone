@@ -79,7 +79,7 @@ fn fullscreen_hides_workspace_and_restores_view_after_window_return() {
     let labels = super::super::tests::ui_labels(output);
     assert!(!labels.iter().any(|(label, _)| matches!(
         label.as_str(),
-        "File" | "Export" | "Roll" | "Photo" | "Rendering" | "Scopes"
+        "Export" | "Roll" | "Photo" | "Rendering" | "Scopes"
     )));
     assert!(labels.iter().any(|(label, _)| label == "Exit fullscreen"));
     let fullscreen_size = egui::vec2(1920., 1080.);

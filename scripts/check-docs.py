@@ -91,9 +91,13 @@ def check_links(files):
 
 def tracked_word_count(path):
     result = subprocess.run(
-        ["git", "show", f"{BASE_REF}:{path}"],
+        # Git paths use forward slashes regardless of the platform.
+        ["git", "show", f"{BASE_REF}:{path.replace(os.sep, '/')}"],
         capture_output=True,
         text=True,
+        # Git emits UTF-8 regardless of the platform's preferred encoding.
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if result.returncode != 0:
@@ -106,9 +110,12 @@ def report_word_growth(files):
         ["git", "diff", "--name-only", BASE_REF, "--", "*.md"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=True,
     ).stdout.split()
     tracked = set(os.path.normpath(p) for p in changed)
+    files = [os.path.normpath(path) for path in files]
     print("\nWord growth vs HEAD (guides grow by accretion; justify any +):")
     found = False
     for path in files:

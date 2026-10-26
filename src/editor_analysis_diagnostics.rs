@@ -135,10 +135,7 @@ fn diagnose_sample_rolls() {
     assert!(!cases.is_empty());
     fs::create_dir(&output).expect("choose a fresh output directory");
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let mut editor = Editor::new(&device, &queue);

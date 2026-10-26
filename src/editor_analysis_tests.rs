@@ -59,10 +59,7 @@ fn mixed_developed_floors_use_one_conservative_analysis_bound_and_recheck_sample
 fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_open_state() {
     pollster::block_on(async {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw");
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance
             .request_adapter(&Default::default())
             .await
@@ -778,10 +775,7 @@ fn real_ambiguous_first_frame_uses_roll_opening_instead_of_holder() {
         let root = std::env::var_os("ANTITONE_SAMPLES")
             .map(PathBuf::from)
             .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("samples"));
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let mut editor = Editor::new(&device, &queue);

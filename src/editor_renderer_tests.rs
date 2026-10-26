@@ -20,10 +20,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
         rendering::CpuRenderer,
     };
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let mut scan = Scan::open(&PathBuf::from("samples/DSC04416.ARW"), None).unwrap();
@@ -185,10 +182,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
 #[test]
 fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let renderers = Arc::new(RendererCache::default());
@@ -347,10 +341,7 @@ fn authored_project_relative_locator_develops_a_cold_thumbnail() {
         let id = document.project.order[0];
         document.project.source_mut(id).unwrap().path = "../inputs/scan.dng".into();
         let source = document.project.source(id).unwrap().clone();
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let mut thumbnails = Thumbnails::with_disk(

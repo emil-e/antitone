@@ -4,10 +4,7 @@ use crate::dust_repair::{DonorChoice, RepairOrigin, SupportMask};
 #[test]
 fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_on_cancellation() {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let mut editor = Editor::new(&device, &queue);

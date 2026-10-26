@@ -138,6 +138,9 @@ mod document_services;
 #[path = "editor_document_workflow.rs"]
 mod document_workflow;
 use document_services::{Preparation, Prepared, Request as DocumentRequest};
+#[cfg(all(test, feature = "raw", feature = "export"))]
+#[path = "editor_ab_probe_tests.rs"]
+mod ab_probe_tests;
 #[path = "editor_export_batch.rs"]
 mod export_batch;
 #[path = "editor_export_dialog.rs"]
@@ -1600,7 +1603,7 @@ impl Editor {
         let previous_settings = editing::ControlSettings::capture(self);
         let was_dirty = self.document.dirty();
         self.disable_blocked_workspace(ui);
-        let _menu_focus = self.workspace_chrome(ui, cx, &mut actions);
+        self.workspace_chrome(ui, cx, &mut actions);
         let (scope_slot, analyze) = self.edit_frame_controls(ui, cx, previous_settings);
         if self.document.analysis_review.is_some() && self.document.analysis_pending.is_none() {
             self.stash_review_region();

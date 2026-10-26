@@ -29,7 +29,7 @@ async fn context() -> (
     Arc<crate::renderer::GpuRenderer>,
     Arc<ViewKernels>,
 ) {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let instance = crate::gpu::instance();
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {

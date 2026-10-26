@@ -17,10 +17,7 @@ use std::path::Path;
 #[test]
 fn deferred_counters_preserve_common_pixels_and_reject_final_collection_before_publication() {
     let (device, queue, renderer) = pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {

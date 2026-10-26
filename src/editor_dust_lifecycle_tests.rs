@@ -73,7 +73,7 @@ fn response(request: &Request, active: SourceRegion) -> Response {
 
 fn gpu_editor() -> Editor {
     let mut e = editor();
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
     let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
     e.working = WorkingView::new(device, queue);

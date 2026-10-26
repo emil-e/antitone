@@ -8,10 +8,7 @@ use crate::{
 use glam::DVec3;
 
 async fn device() -> wgpu::Device {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::METAL,
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
+    let instance = crate::gpu::instance();
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
     adapter.request_device(&Default::default()).await.unwrap().0
 }

@@ -53,8 +53,6 @@ mod region_timing;
 pub mod rendering;
 #[cfg(feature = "raw")]
 pub mod repair_source;
-#[cfg(feature = "raw")]
-mod resources;
 pub mod roll_analysis;
 pub mod sampling;
 #[cfg(feature = "raw")]
@@ -67,11 +65,18 @@ mod source_revision;
 pub mod source_store;
 #[cfg(feature = "project")]
 pub mod spatial_metadata;
+#[cfg(any(
+    feature = "raw",
+    feature = "project",
+    feature = "export",
+    feature = "gpu",
+    feature = "ui"
+))]
+pub(crate) mod sys;
 #[cfg(feature = "editor")]
 pub mod viewport;
 #[cfg(all(
     test,
-    target_os = "macos",
     feature = "gpu",
     feature = "export",
     feature = "raw",
@@ -94,7 +99,13 @@ pub mod viewer;
 #[cfg(all(test, feature = "editor", target_os = "macos"))]
 #[path = "../native/cache_observation.rs"]
 pub(crate) mod cache_observation;
-#[cfg(all(test, feature = "raw", feature = "gpu", target_os = "macos"))]
+#[cfg(all(
+    test,
+    any(feature = "dng-sdk", all(feature = "raw", feature = "project"))
+))]
+#[path = "../tests/support/fixture_path.rs"]
+mod fixture_path;
+#[cfg(all(test, feature = "raw", feature = "gpu"))]
 mod raw_test_support;
 
 #[cfg(all(test, feature = "ocio-reference", target_os = "macos"))]

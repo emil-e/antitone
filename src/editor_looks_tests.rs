@@ -217,10 +217,7 @@ fn failure_cancel_and_document_retirement_preserve_prior_appearance() {
 #[test]
 fn successful_resolution_is_reused_without_requiring_a_prepared_generator() {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let gate = crate::gpu::SubmissionGate::default();

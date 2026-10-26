@@ -74,10 +74,7 @@ fn supplied_m9_editor_import_save_open_and_bounded_exports() {
     let path =
         PathBuf::from(std::env::var_os("ANTITONE_M9_SAMPLE").expect("set ANTITONE_M9_SAMPLE"));
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let mut editor = Editor::new(&device, &queue);
@@ -158,10 +155,7 @@ fn supplied_m9_editor_import_save_open_and_bounded_exports() {
 #[test]
 fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_without_ocio() {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let mut editor = Editor::new(&device, &queue);

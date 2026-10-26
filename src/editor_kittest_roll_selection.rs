@@ -208,7 +208,7 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         harness.read(|editor| assert_eq!(editor.document.cache().protected_bytes(), 0));
         save_capture(&harness.render().unwrap(), "roll-empty-offscreen");
         save_existing_project(&mut harness);
-        file_menu(&mut harness, "New");
+        native_file_action(&mut harness, crate::platform::menu::Action::New);
         wait_for(&mut harness, |e| !e.busy);
         open_project(&mut harness, project_path);
         wait_for(&mut harness, |e| !e.busy);
@@ -316,30 +316,49 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
             )
         });
         harness.read(|editor| assert_eq!(editor.document.project, before));
-        harness
-            .get_by_role_and_label(egui::accesskit::Role::Button, "File")
-            .click();
-        harness.step();
-        harness.step();
+        // The menu bar is native, so the menu tables carry what a File menu offers.
+        let offers_removal = |entries: &[crate::platform::menu::Entry]| {
+            entries.iter().any(|entry| matches!(
+                entry,
+                crate::platform::menu::Entry::Action(action) if action.label().contains("Remove")
+            ))
+        };
         assert!(
-            harness.query_by_label("Remove selected photos…").is_none(),
+            [
+                crate::platform::menu::MENUS,
+                crate::platform::menu::WINDOWS_MENUS
+            ]
+            .iter()
+            .all(|menus| menus.iter().all(|(_, entries)| !offers_removal(entries))),
             "removal is not a File-menu action"
         );
         harness.key_press(egui::Key::Delete);
         harness.step();
+        harness.read(|editor| {
+            assert!(
+                editor.removal_pending.is_some(),
+                "Delete reopens removal after a cancelled one"
+            )
+        });
+        let reopened = harness.read(|editor| editor.removal_pending.clone());
         harness.key_press_modifiers(
             egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
             egui::Key::A,
         );
         harness.step();
-        harness.read(|editor| assert!(editor.removal_pending.is_none()));
+        harness.read(|editor| {
+            assert_eq!(
+                editor.removal_pending, reopened,
+                "the dialog owns the shortcut"
+            )
+        });
         assert_eq!(
             harness.get_by_label("other.dng").accesskit_node().toggled(),
-            Some(egui::accesskit::Toggled::True),
-            "popup owns the shortcut"
+            Some(egui::accesskit::Toggled::True)
         );
         harness.key_press(egui::Key::Escape);
         harness.step();
+        harness.read(|editor| assert!(editor.removal_pending.is_none(), "Escape cancels"));
         harness.get_by_label("patches.dng").click_secondary();
         harness.step();
         harness.step();
